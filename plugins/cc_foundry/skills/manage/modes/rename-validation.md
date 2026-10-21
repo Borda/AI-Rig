@@ -5,7 +5,7 @@
 Triggered after cross-reference propagation (Step 5, rename mode only). Scan for remaining occurrences with word-boundary matching to cut noise from short/common names:
 
 ```bash
-rg --fixed-strings -n '\b<old-name>\b' plugins/ .claude/ README.md docs/ 2>/dev/null \
+rg -n -w --fixed-strings '<old-name>' plugins/ .claude/ README.md docs/ 2>/dev/null \
   || grep -rn "\b<old-name>\b" plugins/ .claude/ README.md docs/ 2>/dev/null \
   | grep -v ".git/" | grep -v "__pycache__"  # timeout: 10000
 ```
@@ -53,7 +53,7 @@ Collect all batch results. Classify each hit:
 After all haiku fixes and user-resolved fixes applied, run one final grep to confirm:
 
 ```bash
-rg --fixed-strings -n '\b<old-name>\b' plugins/ .claude/ README.md docs/ 2>/dev/null \
+rg -n -w --fixed-strings '<old-name>' plugins/ .claude/ README.md docs/ 2>/dev/null \
   || grep -rn "\b<old-name>\b" plugins/ .claude/ README.md docs/ 2>/dev/null \
   | grep -v ".git/" | grep -v "__pycache__"  # timeout: 10000
 ```

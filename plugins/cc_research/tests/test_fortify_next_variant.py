@@ -5,7 +5,8 @@ Covers:
 * Unreadable / null / malformed ``.variant_name`` → ``! BLOCKED``, exit 1
 * Name normalisation, including an already-prefixed and an upper-case label
 * Resume guard: terminal statuses skip and advance the cursor; a timeout status does not
-* Cleanup pre-registration, its fallback accumulator path, and the ``FORTIFY_WORKTREE`` override
+* Cleanup pre-registration in the run-dir accumulator (never a TMPDIR pointer), the ``FORTIFY_WORKTREE`` override,
+  and the stale-worktree marker
 """
 
 from __future__ import annotations
@@ -44,6 +45,16 @@ def _write_variants(fortify: Path, names: list[str]) -> None:
     fortify.joinpath("variants.jsonl").write_text(
         "\n".join(json.dumps({"variant_name": n}) for n in names) + "\n", encoding="utf-8"
     )
+
+
+_FULL_DONE = '{"variant":"variant-full","status":"completed"}\n'
+
+
+def _after_full(sentinels: Path, fortify: Path, names: list[str], results: str = "") -> None:
+    """Lay out a run whose ``full`` variant (line 1) already completed, with the cursor on line 2."""
+    _write_variants(fortify, ["full", *names])
+    fortify.joinpath("results.jsonl").write_text(_FULL_DONE + results, encoding="utf-8")
+    (sentinels / "fortify-variant-idx-testsess").write_text("2\n", encoding="utf-8")
 
 
 @pytest.mark.parametrize(
@@ -94,60 +105,129 @@ def test_blocked_on_unreadable_name(env: tuple[Path, Path], capsys: pytest.Captu
     assert "! BLOCKED — variants.jsonl line 1 has no readable .variant_name" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize(
+    "name",
+    [
+        pytest.param("../../outside", id="parent-traversal"),
+        pytest.param("nested/dir", id="slash"),
+        pytest.param("win\\dir", id="backslash"),
+        pytest.param("a\nb", id="newline"),
+    ],
+)
+def test_blocked_on_unsafe_name(env: tuple[Path, Path], capsys: pytest.CaptureFixture[str], name: str) -> None:
+    """A variant name that would escape ``worktrees/`` or inject an accumulator line is BLOCKED before any write.
+
+    The name is scientist-authored and joined into ``<fortify_dir>/worktrees/<name>`` for ``git worktree add`` and
+    ``remove --force``; a separator escapes that directory and a newline adds an arbitrary path to the cleanup sweep.
+    """
+    sentinels, fortify = env
+    _write_variants(fortify, [name])
+    assert main(["--", str(fortify)]) == 1
+    assert "contains a path separator or control character" in capsys.readouterr().out
+    assert not (sentinels / "fortify-variant-name-testsess").exists()
+
+
 def test_happy_path_writes_name_and_registers_cleanup(
     env: tuple[Path, Path], capsys: pytest.CaptureFixture[str]
 ) -> None:
     sentinels, fortify = env
-    _write_variants(fortify, ["No Augmentation"])
-    accumulator = sentinels / "paths.txt"
-    (sentinels / "fortify-paths-ptr-testsess").write_text(str(accumulator) + "\n", encoding="utf-8")
+    _after_full(sentinels, fortify, ["No Augmentation"])
     assert main(["--", str(fortify)]) == 0
     assert (sentinels / "fortify-variant-name-testsess").read_text(encoding="utf-8") == "variant-no-augmentation\n"
+    accumulator = fortify / "worktree-paths.txt"
     assert accumulator.read_text(encoding="utf-8") == f"{fortify}/worktrees/variant-no-augmentation\n"
-    assert "→ variant 1/1: variant-no-augmentation" in capsys.readouterr().out
+    assert "→ variant 2/2: variant-no-augmentation" in capsys.readouterr().out
 
 
-def test_cleanup_uses_fallback_accumulator_when_pointer_absent(env: tuple[Path, Path]) -> None:
+def test_cleanup_ignores_pointer_sentinel(env: tuple[Path, Path]) -> None:
+    """A repointed ``fortify-paths-ptr`` sentinel in shared TMPDIR no longer redirects the accumulator append."""
     sentinels, fortify = env
-    _write_variants(fortify, ["alpha"])
+    _after_full(sentinels, fortify, ["alpha"])
+    elsewhere = sentinels / "elsewhere.txt"
+    (sentinels / "fortify-paths-ptr-testsess").write_text(str(elsewhere) + "\n", encoding="utf-8")
     assert main(["--", str(fortify)]) == 0
-    fallback = sentinels / "fortify-worktree-paths-fallback-testsess"
-    assert fallback.read_text(encoding="utf-8") == f"{fortify}/worktrees/variant-alpha\n"
+    assert not elsewhere.exists()
+    assert (fortify / "worktree-paths.txt").read_text(encoding="utf-8") == f"{fortify}/worktrees/variant-alpha\n"
 
 
 def test_fortify_worktree_env_override(env: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch) -> None:
     sentinels, fortify = env
-    _write_variants(fortify, ["alpha"])
+    _after_full(sentinels, fortify, ["alpha"])
     monkeypatch.setenv("FORTIFY_WORKTREE", "/custom/wt")
     assert main(["--", str(fortify)]) == 0
-    fallback = sentinels / "fortify-worktree-paths-fallback-testsess"
-    assert fallback.read_text(encoding="utf-8") == "/custom/wt\n"
+    assert (fortify / "worktree-paths.txt").read_text(encoding="utf-8") == "/custom/wt\n"
+
+
+def test_stale_worktree_directory_is_flagged(env: tuple[Path, Path], capsys: pytest.CaptureFixture[str]) -> None:
+    """A worktree directory left by an interrupted attempt is reported so 4f runs before ``git worktree add``."""
+    sentinels, fortify = env
+    _after_full(sentinels, fortify, ["alpha"])
+    (fortify / "worktrees" / "variant-alpha").mkdir(parents=True)
+    assert main(["--", str(fortify)]) == 0
+    assert "FORTIFY_STALE_WORKTREE=1" in capsys.readouterr().out
+
+
+def test_fresh_worktree_directory_is_not_flagged(env: tuple[Path, Path], capsys: pytest.CaptureFixture[str]) -> None:
+    """No pre-existing worktree directory → no stale marker."""
+    sentinels, fortify = env
+    _after_full(sentinels, fortify, ["alpha"])
+    assert main(["--", str(fortify)]) == 0
+    assert "FORTIFY_STALE_WORKTREE" not in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(
     "status",
-    ["completed", "revert-conflict", "revert-missing", "metric-failed"],
+    ["completed", "revert-conflict", "revert-missing", "metric-failed", "diverged"],
 )
 def test_resume_guard_skips_terminal_variant(
     env: tuple[Path, Path], status: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """A variant already recorded with a terminal status is skipped on resume and the cursor moves past it."""
     sentinels, fortify = env
-    _write_variants(fortify, ["alpha", "beta"])
-    fortify.joinpath("results.jsonl").write_text(f'{{"variant":"variant-alpha","status":"{status}"}}\n', "utf-8")
+    _after_full(sentinels, fortify, ["alpha", "beta"], f'{{"variant":"variant-alpha","status":"{status}"}}\n')
     assert main(["--", str(fortify)]) == 0
     out = capsys.readouterr().out
     assert "→ alpha already terminal (non-timeout) in results.jsonl — skipping (resume)" in out
     assert "FORTIFY_SKIP_VARIANT=1" in out
-    assert (sentinels / "fortify-variant-idx-testsess").read_text(encoding="utf-8") == "2\n"
+    assert (sentinels / "fortify-variant-idx-testsess").read_text(encoding="utf-8") == "3\n"
 
 
 def test_resume_guard_retries_timeout_status(env: tuple[Path, Path], capsys: pytest.CaptureFixture[str]) -> None:
-    """A timed-out variant is deliberately retried, unlike the four terminal statuses."""
-    _sentinels, fortify = env
-    _write_variants(fortify, ["alpha"])
-    fortify.joinpath("results.jsonl").write_text('{"variant":"variant-alpha","status":"timeout"}\n', "utf-8")
+    """A timed-out variant is deliberately retried, unlike the terminal statuses."""
+    sentinels, fortify = env
+    _after_full(sentinels, fortify, ["alpha"], '{"variant":"variant-alpha","status":"timeout"}\n')
     assert main(["--", str(fortify)]) == 0
     assert "FORTIFY_SKIP_VARIANT=1" not in capsys.readouterr().out
+
+
+def test_first_line_must_be_full(env: tuple[Path, Path], capsys: pytest.CaptureFixture[str]) -> None:
+    """An ablation on line 1 is refused: the baseline must be measured and reproduced before any ablation."""
+    sentinels, fortify = env
+    _write_variants(fortify, ["no-aug", "full"])
+    assert main(["--", str(fortify)]) == 1
+    assert "! BLOCKED — variants.jsonl line 1 is 'variant-no-aug', not the full variant" in capsys.readouterr().out
+    assert not (sentinels / "fortify-variant-name-testsess").exists()
+
+
+@pytest.mark.parametrize(
+    "results",
+    [
+        pytest.param('{"variant":"variant-full","status":"diverged"}\n', id="diverged"),
+        pytest.param('{"variant":"variant-full","status":"metric-failed"}\n', id="metric-failed"),
+        pytest.param("", id="not-recorded"),
+    ],
+)
+def test_full_first_gate_halts_ablations(
+    env: tuple[Path, Path], capsys: pytest.CaptureFixture[str], results: str
+) -> None:
+    """Past line 1, no ablation runs unless the full variant completed within the divergence tolerance."""
+    sentinels, fortify = env
+    _write_variants(fortify, ["full", "alpha"])
+    fortify.joinpath("results.jsonl").write_text(results, encoding="utf-8")
+    (sentinels / "fortify-variant-idx-testsess").write_text("2\n", encoding="utf-8")
+    assert main(["--", str(fortify)]) == 1
+    assert "! BLOCKED — full-first gate: full variant" in capsys.readouterr().out
+    assert not (fortify / "worktree-paths.txt").exists()
 
 
 @pytest.mark.parametrize(
@@ -192,9 +272,7 @@ def test_blank_lines_do_not_count_toward_total(env: tuple[Path, Path], capsys: p
         pytest.param(
             ["one", "two"], "3\n", "FORTIFY_LOOP_DONE=1 — all 2 variants processed", id="cursor-past-last-is-loop-done"
         ),
-        pytest.param(
-            ["alpha"], "not-a-number\n", "→ variant 1/1: variant-alpha", id="corrupt-cursor-falls-back-to-one"
-        ),
+        pytest.param(["full"], "not-a-number\n", "→ variant 1/1: variant-full", id="corrupt-cursor-falls-back-to-one"),
     ],
 )
 def test_cursor_sentinel_drives_loop_position(

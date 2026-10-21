@@ -45,21 +45,32 @@ candidate mapping or evidence bytes change, retaining the original pointer for b
 A matched GitHub item receives evidence scoped only to its linked review finding, never to distinct requests.
 
 consumers: plugins/cc_oss/skills/resolve/modes/report-intelligence.md (Step 3a), plugins/cc_oss/skills/resolve/SKILL.md
-(Step 3c), plugins/cc_oss/skills/resolve/modes/action-item-dispatch.md (Phase 1 verdict re-check)
+(Step 3c), plugins/cc_oss/skills/resolve/modes/dispatch-prelude.md (C1 evidence recheck),
+plugins/cc_oss/skills/resolve/modes/dispatch-phase1.md (Phase 1 verdict re-check)
+
+``--report-file`` replaces ``--findings`` when the caller holds the consumed report rather than a findings path. The
+findings are then the ``findings.jsonl`` beside the report; an older report without it falls back to the
+``report-findings.jsonl`` resolve parsed into ``--impl-dir``, whose ids are minted in place first.
+``--persist-findings`` records the chosen path for later steps. ``--intake-accepted`` names the report the user
+accepted at gap triage and implies ``--accept-degraded`` when it is the same file as ``--report-file``.
 
 Usage:
     python "${CLAUDE_PLUGIN_ROOT}/bin/merge_action_items.py" --items "$IMPL_DIR/action-items.jsonl" \\
         --findings "$FINDINGS" [--links "$IMPL_DIR/report-links.jsonl"] [--candidates] [--accept-degraded]
     python "${CLAUDE_PLUGIN_ROOT}/bin/merge_action_items.py" --items "$IMPL_DIR/action-items.jsonl" \\
+        --report-file "$REPORT_FILE" --impl-dir "$IMPL_DIR" --persist-findings "$SENTINEL" \\
+        [--intake-accepted "$INTAKE_DEGRADED"] [--candidates]
+    python "${CLAUDE_PLUGIN_ROOT}/bin/merge_action_items.py" --items "$IMPL_DIR/action-items.jsonl" \\
         --recheck-verdicts --review-dir "$(dirname "$REPORT_FILE")" --current-head "$PR_HEAD_OID"
 
 Exit codes:
     0 — merged, candidates printed, or verdicts re-checked
-    1 — unreadable input, a finding missing a required field or carrying an unknown severity, two findings sharing an
-        id, a row or link that is not an object of the expected field types (text fields, a numeric line), a link
-        naming an unknown id, a duplicate item id, version-one findings whose publication is neither valid nor (with
-        ``--accept-degraded``) free of critical gaps, or (with ``--recheck-verdicts``) a validated publication holding
-        findings rows the merge could not use
+    1 — unreadable input, no findings file for ``--report-file`` (message on stdout) or failed id minting, a finding
+        missing a required field or carrying an unknown severity, two findings sharing an id, a row or link that is
+        not an object of the expected field types (text fields, a numeric line), a link naming an unknown id, a
+        duplicate item id, version-one findings whose publication is neither valid nor (with ``--accept-degraded``)
+        free of critical gaps, or (with ``--recheck-verdicts``) a validated publication holding findings rows the
+        merge could not use
 """
 
 from __future__ import annotations
@@ -93,6 +104,7 @@ from find_review_report import (  # noqa: E402
     findings_problem,
     gate_line,
 )
+from mint_finding_ids import main as mint_ids  # noqa: E402
 from mint_finding_ids import normalize_path, read_jsonl, section_slug  # noqa: E402
 
 #: Numeric resolve severity per review severity word. Keyed by the shared vocabulary (a strict zip fails at import if
@@ -561,11 +573,53 @@ def _publication_accepted(report: Path, accept_degraded: bool) -> bool:
     return accept_degraded and not assess_report(report).critical
 
 
+def _same_file(left: str, right: Path) -> bool:
+    """Report whether a path read from a sentinel and a report path name one existing file (``test -ef``)."""
+    try:
+        return bool(left) and os.path.samefile(left, right)
+    except OSError:
+        return False
+
+
+def _select_findings(args: argparse.Namespace) -> int:
+    """Resolve ``--findings`` and ``--accept-degraded`` from ``--report-file``; return an exit code (0 = resolved).
+
+    Args:
+        args: Parsed arguments with ``report_file`` and ``impl_dir`` set; ``findings`` and ``accept_degraded`` are
+            filled in place.
+
+    Returns:
+        0 when a findings file was chosen, 1 when none exists or minting ids for the parsed copy failed.
+    """
+    report = Path(args.report_file)
+    chosen = report.parent / "findings.jsonl"
+    if not chosen.is_file():
+        chosen = Path(args.impl_dir) / "report-findings.jsonl"
+        if not chosen.is_file():
+            print(
+                f"! BLOCKED — no findings.jsonl beside the report; write {chosen.as_posix()} from the parsed report first"
+            )
+            return 1
+        if mint_ids([str(chosen)]):
+            return 1
+    if args.persist_findings:
+        Path(args.persist_findings).write_text(f"{chosen.as_posix()}\n", encoding="utf-8", newline="\n")
+    args.findings = str(chosen)
+    args.accept_degraded = args.accept_degraded or _same_file(args.intake_accepted, report)
+    return 0
+
+
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     """Parse the command line for the merge, candidates and re-check modes."""
     parser = argparse.ArgumentParser(description="Fold oss:review findings into oss:resolve action-items.jsonl.")
     parser.add_argument("--items", required=True, help="$IMPL_DIR/action-items.jsonl (created when absent)")
     parser.add_argument("--findings", help="review findings.jsonl with minted ids")
+    parser.add_argument("--report-file", help="consumed review report; takes its findings instead of --findings")
+    parser.add_argument("--impl-dir", help="resolve item directory holding report-findings.jsonl (with --report-file)")
+    parser.add_argument("--persist-findings", help="write the chosen findings path to this file (with --report-file)")
+    parser.add_argument(
+        "--intake-accepted", default="", help="report the user accepted at gap triage; implies --accept-degraded"
+    )
     parser.add_argument("--links", help="orchestrator-judged semantic matches, one {finding_id, item_id} per line")
     parser.add_argument("--candidates", action="store_true", help="print same-file non-exact pairs; write nothing")
     parser.add_argument("--recheck-verdicts", action="store_true", help="drop verdicts a moved head no longer backs")
@@ -578,14 +632,25 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         "accepted that exact report at resolve's gap triage; never applies to --recheck-verdicts",
     )
     args = parser.parse_args(argv)
-    if not args.recheck_verdicts and not args.findings:
-        parser.error("--findings is required unless --recheck-verdicts is given")
+    if args.report_file and args.findings:
+        parser.error("--report-file and --findings are mutually exclusive")
+    if args.report_file and not args.impl_dir:
+        parser.error("--report-file requires --impl-dir")
+    if not args.recheck_verdicts and not (args.findings or args.report_file):
+        parser.error("--findings or --report-file is required unless --recheck-verdicts is given")
     return args
 
 
 def main(argv: list[str] | None = None) -> int:
     """Merge review findings into the resolve item list, print match candidates, or re-check verdicts."""
     args = _parse_args(argv)
+    # "! BLOCKED —" lines reach the resolve shell block; a Windows console code page would encode the dash as a
+    # byte no UTF-8 reader can decode, losing the whole message.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", newline="\n")
+    if args.report_file and not args.recheck_verdicts and _select_findings(args):
+        return 1
     items_path = Path(args.items)
     try:
         if args.recheck_verdicts:

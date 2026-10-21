@@ -62,16 +62,16 @@ Narrate phase boundaries: `"Phase 1: N parallel-safe fixes launched"` → `"Phas
 4. **Either** returns `blocked` → skip fix agent; add to `blocked_findings` with reason; surface `⚠ GATE-BLOCKED — needs human review: <reason>`
 5. **Both** `approved` → proceed to fix agent
 
-Gate applies at every severity level. Skip only for inline-exception cases (settings.json, CLAUDE.md, dead loops, model tier).
+Gate applies to every finding that misses the fast-path criteria below, at any severity; a user-resolved NON_AUTO_FIXABLE edit (option (c)) is gated like any other before its fix agent runs. Default-report-only NON_AUTO_FIXABLE findings (options a–b) never reach a fix agent, so never reach the gate.
 
-**Trivial-finding fast path** (see `agent-spawn-protocol.md` §Delegation cost discipline): batch parallel-safe findings by file adjacency, prefer `bridge:implement` when `bridge@borda-ai-rig` available. Each call must state exact finding, target paths, current evidence, permitted edits, required result, stop condition, verification command. Bridge absent/disabled → use normal per-file-type agent with `model: haiku`. Reserve full adversarial gate + top-tier agents for CRITICAL/HIGH or cross-file-dependent findings.
+**Trivial-finding fast path** (see `agent-spawn-protocol.md` §Delegation cost discipline): batch parallel-safe findings by file adjacency, prefer `bridge:implement` when `bridge@borda-ai-rig` available. Each call must state exact finding, target paths, current evidence, permitted edits, required result, stop condition, verification command. Bridge absent/disabled → use normal per-file-type agent with `model: haiku`. Reserve full adversarial gate + top-tier agents for findings outside the fast-path criteria (`audit-fix-prompt.md` §Gate fast path): any CRITICAL/HIGH, non-`PARALLEL_SAFE_CATEGORIES` category, or cross-file-dependent.
 
 Fix agent by file type:
 
-- **`.claude/agents/*.md` and `.claude/skills/*/SKILL.md`** → spawn **foundry:curator** — domain expertise in config quality, has `Write`/`Edit` tools
+- **Any `.md` file** (agents, skills, modes, templates, `_shared`, rules, CLAUDE.md, in `.claude/` or `plugins/*/`) → spawn **foundry:curator** — domain expertise in config quality, has `Write`/`Edit` tools
 - **Code files** (`.py`, `.js`, `.ts`, etc.) → spawn **foundry:sw-engineer**
 
-**Phase 4 delegation rule**: edits touching >3 files → delegate to `foundry:sw-engineer` — pass findings list + target file paths; returns compact status JSON.
+**Phase 4 delegation rule**: edits touching >3 files → delegate per file type, same routing as above (`.md` → `foundry:curator`, code → `foundry:sw-engineer`; never `.md` to `foundry:sw-engineer`, whose NOT-for excludes it) — pass findings list + target file paths; returns compact status JSON.
 
 Spawn one agent per affected file, batch all findings per file into single prompt. Issue **all spawns in a single response** for parallelism.
 
@@ -88,13 +88,14 @@ After gate fires (Step 7): finding count > 10 or user picked option (a) "Fix aut
 **Gate failure fallback**: if sub-agent returns `blocked_findings: []` with `fixed > 0` and `failed == 0` but no `gate-<file>.md` files appear in `<RUN_DIR>`, surface `⚠ GATE-SKIPPED — sub-agent did not perform adversarial gate; review fixes manually before merging.` in the Step 11 final report, not only as reply text before further tool calls. Missing `gate-<file>.md` expected — not a failure — for any file the sub-agent recorded under `fast_path` in `fix-summary.md` (mechanical, single-file, no CRITICAL/HIGH — see `audit-fix-prompt.md` §Gate fast path). Fire the warning only when a fixed file is absent from BOTH the gate files and `fast_path`.
 
 ```bash
-IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-AUDIT_TPL=$(cat "${TMPDIR:-/tmp}/audit-state-${CSID}/audit-tpl" 2>/dev/null || python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_skill_subdir.py" audit templates $( [ "$LOCAL_MODE" = true ] && echo "--local" ))
+IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
+IFS= read -r AUDIT_TPL < "${TMPDIR:-/tmp}/audit-state-${CSID}/audit-tpl" 2>/dev/null || AUDIT_TPL=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_skill_subdir.py" audit templates $( [ "$LOCAL_MODE" = true ] && echo "--local" ))
 cat "$AUDIT_TPL/audit-fix-prompt.md"
+echo "AUDIT_TPL=$AUDIT_TPL"
 ```
 
-Spawn dedicated **audit-fix** sub-agent — use full prompt loaded above, pass `<RUN_DIR>` and `$AUDIT_TPL` as context values substituted into prompt. Orchestrator reads only compact JSON envelope returned; does NOT read `fix-summary.md` unless `re_audit_clean: false`, `failed > 0`, or `residual_criticals > 0`.
+Spawn dedicated **audit-fix** sub-agent with explicit `subagent_type="general-purpose"` (it dispatches gate and fix agents itself, so it needs the Agent tool no specialist has) — use full prompt loaded above, pass `<RUN_DIR>` and `$AUDIT_TPL` as context values substituted into prompt. Orchestrator reads only compact JSON envelope returned; does NOT read `fix-summary.md` unless `re_audit_clean: false`, `failed > 0`, or `residual_criticals > 0`.
 
 Finding count ≤ 10 and user picked option (b) "Fix SECURITY + CRITICAL + HIGH" → inline batched pattern (one fix-agent per file, all parallel) acceptable; no dedicated sub-agent.
 
@@ -128,12 +129,10 @@ After Step 8 fix agents complete, before foundry:curator re-audit:
 ```bash
 CODEX_STATUS=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_bridge.py" --status 2>/dev/null || echo "absent")
 [ "$CODEX_STATUS" = "available" ] && CODEX_AVAILABLE=true || CODEX_AVAILABLE=""  # timeout: 5000
-_SHARED=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_shared_path.py" foundry skills/_shared 2>/dev/null || echo "plugins/cc_foundry/skills/_shared")  # timeout: 5000
-[ -f "$_SHARED/codex-prepass.md" ] || { printf "⚠ WARNING: codex-prepass.md not found at $_SHARED — skipping codex pre-pass\n"; CODEX_AVAILABLE=""; }
-[ -n "$CODEX_AVAILABLE" ] && cat "$_SHARED/codex-prepass.md"
+[ -n "$CODEX_AVAILABLE" ] && python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_shared_doc.py" --optional foundry skills/_shared codex-prepass.md  # timeout: 5000
 ```
 
-`$CODEX_AVAILABLE` non-empty: follow codex-prepass.md instructions above, applied to combined diff of Step 8 fixes. Otherwise: `echo "⚠ codex plugin not available — skipping codex pass"`
+`$CODEX_AVAILABLE` non-empty and the codex-prepass.md text printed above (a `⚠ WARNING` line instead = doc missing → skip, as Otherwise): follow codex-prepass.md instructions above, applied to combined diff of Step 8 fixes. Otherwise: `echo "⚠ codex plugin not available — skipping codex pass"`
 
 Treat findings as additional issues entering Step 10 re-audit scope. Skip if Step 8 touched only 1 file.
 
@@ -141,16 +140,14 @@ Treat findings as additional issues entering Step 10 re-audit scope. Skip if Ste
 
 For every file changed in Step 8, spawn **foundry:curator** to confirm fix resolved finding and no new issues introduced. Write full re-audit findings to `<RUN_DIR>/<file-basename>-reaudit.md`; end the full findings file with a `## Confidence` block per quality-gates.md format (Score, Gaps, Refinements); return ONLY compact JSON envelope: `{"status":"done","file":"<RUN_DIR>/<file-basename>-reaudit.md","findings":N,"severity":{"security":N,"critical":N,"high":N,"medium":N,"low":N},"confidence":0.N,"summary":"<filename>: fix confirmed, N residual findings"}`
 
-```bash
-# Replace BROKEN_NAME and FIXED_FILE with the actual values from the finding
-grep -n "BROKEN_NAME" FIXED_FILE
-```
+Confirm a broken-name fix with the Grep tool: pattern = the broken name from the finding, path = the fixed file.
 
 **Confidence re-run**: parse confidence scores from Step 3 and Step 10 summaries. **Score < 0.80**: Step 5b already ran a three-pass remediation (double-reasoning, docs consultation, Codex adversarial) — if Step 10 re-audit still scores < 0.80 after Step 5b, flag with ⚠, include gap in final report. Recurring low-confidence gaps (same gap, same file, multiple runs) → candidate for foundry:curator `<antipatterns-to-flag>` or agent instructions.
 
 **Convergence loop**: re-audit surfaces new fixable findings within gate-selected severity threshold → loop back to Step 8. Repeat until:
 
 - Zero fixable findings remain → mark fix pass complete, or
+- Plateau: weighted score W_n per quality-gates.md §Adversarial Convergence Loop does not strictly decrease versus the prior pass — stop, surface remaining findings with `⚠ NOT CONVERGING`; do not re-enter Step 8 (same follow-up-gate rule as the limit below), or
 - Hard limit: **5 total fix passes** (including initial Step 8) — still not converged → surface all remaining fixable findings with `⚠ CONVERGENCE LIMIT` warning; **do not re-enter Step 8; omit fix options from follow-up gate when convergence limit reached**.
 
 Track pass count via `$RUN_DIR/fix-passes.txt` (persists across bash calls — shell state doesn't). At each Step 10 entry: `IFS= read -r PASS_COUNT < "$RUN_DIR/fix-passes.txt" 2>/dev/null || PASS_COUNT=0; PASS_COUNT=$((PASS_COUNT + 1)); echo "$PASS_COUNT" > "$RUN_DIR/fix-passes.txt"`. If `$PASS_COUNT >= 5`, stop loop immediately — do not re-enter Step 8 regardless of remaining findings. Never suppress findings to clean counter.

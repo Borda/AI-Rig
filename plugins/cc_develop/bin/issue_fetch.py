@@ -19,16 +19,38 @@ Usage:
 
 Exit codes:
     0   — success (``gh`` exited 0); also argparse's ``--help`` exit.
-    1   — invalid (empty or non-numeric) issue number.
+    1   — invalid (empty or non-numeric) issue number, or a ``--repo`` not shaped ``[HOST/]OWNER/REPO``.
     *   — any other exit code reflects ``gh``'s own exit status.
 """
 
 from __future__ import annotations
 
 import argparse
+import re
 import subprocess
 import sys
 from shutil import which
+
+#: One ``--repo`` path segment: a leading ``-`` is excluded so no segment can read as a flag.
+_REPO_SEGMENT = re.compile(r"[A-Za-z0-9_.][A-Za-z0-9_.-]*")
+
+
+def is_valid_repo(repo: str) -> bool:
+    """Report whether ``repo`` has the ``[HOST/]OWNER/REPO`` shape ``gh --repo`` accepts.
+
+    The override can come from a shared-temp sentinel, so it is checked before it reaches ``gh``'s argv. Only
+    ``[A-Za-z0-9_.-]`` segments are allowed, none starting with ``-`` and none consisting of dots alone.
+
+    Examples:
+        >>> is_valid_repo("owner/repo"), is_valid_repo("ghe.example.com/owner/repo"), is_valid_repo("o/.github")
+        (True, True, True)
+        >>> is_valid_repo("repo"), is_valid_repo("-x/repo"), is_valid_repo("../repo"), is_valid_repo("a/b/c/d")
+        (False, False, False, False)
+        >>> is_valid_repo("owner/repo\\n"), is_valid_repo("owner/re po"), is_valid_repo("")
+        (False, False, False)
+    """
+    parts = repo.split("/")
+    return 2 <= len(parts) <= 3 and all(_REPO_SEGMENT.fullmatch(part) and part.strip(".") for part in parts)
 
 
 def _resolve(cmd: str) -> str:
@@ -93,6 +115,9 @@ def main(argv: list[str] | None = None) -> int:
     issue_num = raw[1:] if raw.startswith("#") else raw
     if not issue_num or not issue_num.isdigit():
         print(f"issue-fetch: invalid issue number: '{issue_num}'", file=sys.stderr)
+        return 1
+    if repo and not is_valid_repo(repo):
+        print(f"issue-fetch: invalid --repo (expected [HOST/]OWNER/REPO): {repo!r}", file=sys.stderr)
         return 1
     gh = _resolve("gh")
     cmd = [gh, "issue", "view", issue_num, "--comments"]

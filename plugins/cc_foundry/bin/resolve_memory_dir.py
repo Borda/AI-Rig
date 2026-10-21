@@ -1,11 +1,17 @@
 #!/usr/bin/env python
 """resolve_memory_dir.py — resolve project-scoped Claude memory directory.
 
-Canonical slug transform (matches global ``git-commit.md`` repo-slug algorithm):
+Single slug derivation for every foundry consumer that has to locate ``~/.claude/projects/<slug>/memory``. The slug
+mirrors how Claude Code names its per-project directory (read from the installed Claude Code 2.1.304 bundle, confirmed
+against the directory names under ``~/.claude/projects/``):
 
-1. lowercase
-2. all non-alphanumeric runs collapsed to single ``-``
-3. trailing ``-`` stripped
+1. every UTF-16 code unit outside ``[A-Za-z0-9]`` becomes one ``-`` (no case folding, no run collapsing, no stripping),
+2. a slug longer than 200 characters is cut to 200 and gets ``-<hash>`` appended, where ``<hash>`` is the absolute value
+   of Java's 32-bit ``String.hashCode`` of the original path (UTF-16 code units), written in base 36.
+
+Not modelled: a ``CLAUDE_CONFIG_DIR`` relocation of the Claude home, an ``autoMemoryDirectory`` setting, and Claude
+Code keying a linked git worktree by its canonical repository root. Callers needing those pass the project root
+explicitly or prefer the absolute path Claude Code injects into the session prompt.
 
 Prints absolute ``MEMORY_DIR`` path to stdout.
 
@@ -25,38 +31,84 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import struct
 import subprocess
 import sys
 from pathlib import Path
 
-#: Matches each run of characters outside ``a-z0-9``, which is collapsed into a single hyphen in the slug.
-_SLUG_RE = re.compile(r"[^a-z0-9]+")
+#: Matches each single character outside ``A-Za-z0-9``; Claude Code replaces every one with its own hyphen.
+_NON_ALNUM_RE = re.compile(r"[^A-Za-z0-9]")
+
+#: Longest slug kept verbatim; longer ones are truncated to this length and get a hash suffix.
+_MAX_SLUG_LEN = 200
+
+_BASE36_DIGITS = "0123456789abcdefghijklmnopqrstuvwxyz"
+
+
+def _utf16_code_units(text: str) -> tuple[int, ...]:
+    """Return the UTF-16 code units of ``text``, the unit JavaScript string indexing counts in.
+
+    Examples:
+        >>> _utf16_code_units("a\\u00e9")
+        (97, 233)
+        >>> _utf16_code_units("\\U0001f600")
+        (55357, 56832)
+    """
+    raw = text.encode("utf-16-le", errors="surrogatepass")
+    return struct.unpack(f"<{len(raw) // 2}H", raw)
+
+
+def _path_hash(project_path: str) -> str:
+    """Hash suffix for over-long slugs: ``abs(int32 hashCode)`` in base 36, as Claude Code computes it.
+
+    Examples:
+        >>> _path_hash("")
+        '0'
+        >>> _path_hash("a")
+        '2p'
+    """
+    value = 0
+    for unit in _utf16_code_units(project_path):
+        value = (value * 31 + unit) & 0xFFFFFFFF
+    if value >= 0x80000000:
+        value -= 0x100000000
+    number = abs(value)
+    digits = ""
+    while number:
+        number, remainder = divmod(number, 36)
+        digits = _BASE36_DIGITS[remainder] + digits
+    return digits or "0"
 
 
 def slugify(project_path: str) -> str:
-    """Convert project root path to canonical repo slug.
+    """Convert a project root path to the directory name Claude Code uses under ``~/.claude/projects``.
 
     Args:
-        project_path: Absolute or relative filesystem path.
+        project_path: Absolute project root, as Claude Code sees it (POSIX or Windows form).
 
     Returns:
-        Slug: lowercase, non-alphanumerics collapsed to ``-``, trailing ``-`` stripped.
+        Slug with each non-alphanumeric UTF-16 code unit replaced by ``-``; slugs over 200 characters are cut to 200
+        and suffixed with ``-<hash>``.
 
     Examples:
         >>> slugify("/home/user/MyProject")
-        '-home-user-myproject'
-        >>> slugify("MyProject")
-        'myproject'
-        >>> slugify("foo/bar_baz!")
-        'foo-bar-baz'
-        >>> slugify("---abc---")
-        '-abc'
+        '-home-user-MyProject'
+        >>> slugify("/a b/c.d/e_f")
+        '-a-b-c-d-e-f'
+        >>> slugify("/repo/.claude/worktrees/x")
+        '-repo--claude-worktrees-x'
+        >>> slugify("C:\\\\Users\\\\me\\\\proj")
+        'C--Users-me-proj'
+        >>> slugify("/srv/\\U0001f600")
+        '-srv---'
         >>> slugify("")
         ''
     """
-    lowered = project_path.lower()
-    collapsed = _SLUG_RE.sub("-", lowered)
-    return collapsed.rstrip("-")
+    # a character outside the BMP is two UTF-16 units, and Claude Code replaces each unit
+    slug = _NON_ALNUM_RE.sub(lambda match: "-" * len(_utf16_code_units(match.group())), project_path)
+    if len(slug) <= _MAX_SLUG_LEN:
+        return slug
+    return f"{slug[:_MAX_SLUG_LEN]}-{_path_hash(project_path)}"
 
 
 def _git_toplevel(timeout: int = 5) -> str | None:

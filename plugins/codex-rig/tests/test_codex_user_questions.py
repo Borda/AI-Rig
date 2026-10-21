@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 
 import pytest
+from _skill_text import read_with_references
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 QUESTION_REFERENCE = "shared/codex-user-questions.md"
@@ -266,7 +267,7 @@ def test_question_consumers_preserve_packaged_native_form_priority(relative: str
 @pytest.mark.installed_plugin
 def test_pr_questions_include_the_bound_clickable_target_in_the_question() -> None:
     """Prevent users from having to search prior commentary for a PR decision's target."""
-    guide = (PLUGIN_ROOT / "skills/code-remediate/SKILL.md").read_text(encoding="utf-8")
+    guide = read_with_references(PLUGIN_ROOT / "skills/code-remediate/SKILL.md", "missing-review-decision.md")
 
     assert "For PR-scoped decisions, include the PR number and canonical URL inside the question itself" in guide
     assert "[PR #<number>](<canonical PR URL>)" in guide

@@ -302,9 +302,11 @@ def test_prepare_validates_paths_before_changelog_edit() -> None:
 def test_delegated_changelog_audit_validates_prepare_paths_before_read_or_write() -> None:
     """Agent A must validate its selected path before touching the changelog."""
     release = Path(__file__).parents[2] / "skills/release"
-    skill = (release / "SKILL.md").read_text(encoding="utf-8")
+    delegation = (release / "modes/delegation.md").read_text(encoding="utf-8")
     prompt = (release / "modes/changelog-audit-prompt.md").read_text(encoding="utf-8")
-    dispatch = skill[skill.index("**Phases 5–6 parallel delegation**") : skill.index("Validate both envelopes:")]
+    dispatch = delegation[
+        delegation.index("**Phases 5–6 parallel delegation**") : delegation.index("Validate both envelopes:")
+    ]
     agent_a = prompt[prompt.index("Agent A — Audit changelog") : prompt.index("Agent B — Extract contributors")]
 
     assert 'IFS= read -r RELEASE_MODE < "${TMPDIR:-/tmp}/release-mode-${CSID}"' in dispatch

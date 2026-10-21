@@ -2,7 +2,7 @@
 
 Used by develop mode skills (feature, fix, refactor). Canonical home: cc_foundry `_shared/quality-stack.md`; consumer plugins ship the propagated copy as `foundry--quality-stack.md` (source-plugin prefix — a plugin-local file can never collide with a propagated copy) and load via `cat "$_SHARED/foundry--quality-stack.md"` (not the Read tool — `Bash(cat:*)` grant is version-proof).
 
-> `$_SHARED` = **the loading plugin's own** `skills/_shared`, set by the consumer before `cat`-ing this file. This doc is a byte-identical `propagate_shared.py` copy present in every plugin using it, so it must never name a specific plugin's variable — the sibling files it loads below resolve out of whichever `_shared` the consumer set.
+> `$_SHARED` = **the loading plugin's own** `skills/_shared`, set by the consumer before `cat`-ing this file, and persisted by it in that same fence to `${TMPDIR:-/tmp}/qs-shared-dir-${CSID}` — the sibling-loading fences below run as separate `Bash()` calls and read `$_SHARED` back from that sentinel. This doc is a byte-identical `propagate_shared.py` copy present in every plugin using it, so it must never name a specific plugin's variable — the sibling files it loads below resolve out of whichever `_shared` the consumer set.
 
 Skip branch safety guard in `plan` mode — plan makes no code changes.
 
@@ -27,8 +27,13 @@ Run after all mode-specific steps complete.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-if command -v uv >/dev/null 2>&1; then RUNNER="uv run"
+# project lockfile picks the env — uv present but no uv.lock (poetry/pip repo) must not run outside its env
+if command -v uv >/dev/null 2>&1 && [ -f uv.lock ]; then RUNNER="uv run"
+elif command -v poetry >/dev/null 2>&1 && [ -f poetry.lock ]; then RUNNER="poetry run"
 else RUNNER="python -m"; fi
+# ruff pinned in pre-commit → run the pinned hooks, never bare ruff (version/config drift vs CI)
+USE_PRECOMMIT=0
+[ -f .pre-commit-config.yaml ] && grep -q "ruff" .pre-commit-config.yaml && command -v pre-commit >/dev/null 2>&1 && USE_PRECOMMIT=1
 
 SKIP_RUFF=0
 if ! eval "$RUNNER ruff --version" >/dev/null 2>&1; then
@@ -42,14 +47,15 @@ if ! eval "$RUNNER mypy --version" >/dev/null 2>&1; then
     SKIP_MYPY=1
 fi
 
-# each later block is its own Bash() call — bare $RUNNER/$SKIP_RUFF/$SKIP_MYPY would read empty there (F3)
+# each later block is its own Bash() call — bare $RUNNER/$SKIP_RUFF/$SKIP_MYPY would read empty there
 echo "$RUNNER" > "${TMPDIR:-/tmp}/quality-stack-runner-${CSID}"
 echo "$SKIP_RUFF" > "${TMPDIR:-/tmp}/quality-stack-skip-ruff-${CSID}"
 echo "$SKIP_MYPY" > "${TMPDIR:-/tmp}/quality-stack-skip-mypy-${CSID}"
+echo "$USE_PRECOMMIT" > "${TMPDIR:-/tmp}/quality-stack-precommit-${CSID}"
 ```
 
-- `$RUNNER` (`"uv run"`, `"python -m"`) is a two-token string — a bare `$RUNNER <cmd>` does not word-split under zsh (Claude Code's Bash tool login shell on macOS: no word-splitting on a bare `"$VAR"`, only on unquoted command substitution).
-- Every invocation below routes through `eval "$RUNNER ..."`, safe here because `$RUNNER` is drawn from the two literal values set above, never external input.
+- `$RUNNER` (`"uv run"`, `"poetry run"`, `"python -m"`) is a two-token string — a bare `$RUNNER <cmd>` does not word-split under zsh (Claude Code's Bash tool login shell on macOS: no word-splitting on a bare `"$VAR"`, only on unquoted command substitution).
+- Every invocation below routes through `eval "$RUNNER ..."`, safe here because `$RUNNER` is drawn from the three literal values set above, never external input.
 - `set -o pipefail` (bash/zsh/ksh extension, absent from POSIX `sh`/`dash` — present in both shells this Bash tool resolves to) replaces `${PIPESTATUS[0]}` — zsh has no bash-style `PIPESTATUS`, only a differently-indexed lowercase `$pipestatus`.
 - Every fence below that uses `$RUNNER`, `$SKIP_RUFF`, or `$SKIP_MYPY` re-reads its sentinel first — a fresh `Bash()` call never inherits this block's shell state.
 
@@ -63,13 +69,20 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r RUNNER < "${TMPDIR:-/tmp}/quality-stack-runner-${CSID}" 2>/dev/null || RUNNER="python -m"
 IFS= read -r SKIP_RUFF < "${TMPDIR:-/tmp}/quality-stack-skip-ruff-${CSID}" 2>/dev/null || SKIP_RUFF=0
 IFS= read -r SKIP_MYPY < "${TMPDIR:-/tmp}/quality-stack-skip-mypy-${CSID}" 2>/dev/null || SKIP_MYPY=0
+IFS= read -r USE_PRECOMMIT < "${TMPDIR:-/tmp}/quality-stack-precommit-${CSID}" 2>/dev/null || USE_PRECOMMIT=0
 set -o pipefail
-[ "${SKIP_RUFF:-0}" -ne 1 ] && eval "$RUNNER ruff check <changed_files> --fix"  # timeout: 30000
-[ "${SKIP_RUFF:-0}" -ne 1 ] && eval "$RUNNER ruff format <changed_files>"  # timeout: 30000
-
+if [ "${USE_PRECOMMIT:-0}" -eq 1 ]; then pre-commit run --files <changed_files>  # timeout: 120000
+else
+    [ "${SKIP_RUFF:-0}" -ne 1 ] && eval "$RUNNER ruff check <changed_files> --fix"  # timeout: 30000
+    [ "${SKIP_RUFF:-0}" -ne 1 ] && eval "$RUNNER ruff format <changed_files>"  # timeout: 30000
+fi
+MYPY_EXIT=skipped
 [ "${SKIP_MYPY:-0}" -ne 1 ] && { eval "$RUNNER mypy <changed_files> --no-error-summary" 2>&1 | head -30; MYPY_EXIT=$?; }  # timeout: 30000
-# non-zero = type errors
+echo "MYPY_EXIT=$MYPY_EXIT"
 ```
+
+- Pinned path: `pre-commit run` applies the project's own pinned hooks (ruff included) to the changed files — hook fixes rewrite files, same as `ruff --fix`/`format`. `pre-commit run` exits non-zero whenever a hook modified a file, even with nothing left to fix → on non-zero re-run the same line once; second run non-zero = hook findings left to fix.
+- `MYPY_EXIT` is advisory, never a halt: non-zero = type errors in changed files → fix before the report (or spawn **foundry:linting-expert**, below); list any left unfixed in the report. `skipped` = mypy unavailable.
 
 **xdist capability probe** (wide run only — failure-reading retries below always stay serial). `cc_develop/skills/_shared/runner-detection.md` had its own copy of this probe; deleted — round-2 review (H2) found it write-only, its `XDIST_AVAILABLE`/`XDIST_ARGS` sentinel never consumed anywhere in `cc_develop`, and `plugins/CLAUDE.md` §Self-Contained `_shared` forbids this file reading `cc_develop`'s copy to wire the two together, so the dead code was deleted rather than force-wired:
 
@@ -104,11 +117,8 @@ IFS= read -r DOCTEST_MERGED < "${TMPDIR:-/tmp}/quality-stack-doctest-merged-${CS
 _QS_LOG="${TMPDIR:-/tmp}/quality-stack-run1-${CSID}.log"
 _QS_DOCTEST_ARGS=""
 [ "$DOCTEST_MERGED" = "true" ] && _QS_DOCTEST_ARGS="--doctest-modules <target_module>"
-# Redirect straight to the log, not a pipe — pytest's own exit lands in $? untouched by
-# pipefail/tee (a tee failure on an unwritable $TMPDIR can never mask a real exit-5 config
-# error, §L5), and the log is complete on disk before the next line reads it (a `> >(tee ...)`
-# process substitution runs asynchronously — neither bash nor zsh waits for it, so a grep
-# immediately after could race a still-flushing tee).
+# Redirect to log, not pipe: pytest exit stays in $? (tee failure on unwritable $TMPDIR can't mask real exit-5 config error);
+# log complete on disk before next line greps it (`> >(tee ...)` runs async in bash and zsh — grep would race a flushing tee).
 eval "$RUNNER pytest <test_dir> $_QS_DOCTEST_ARGS -v --tb=short -rfE $XDIST_ARGS" > "$_QS_LOG" 2>&1  # timeout: 600000
 SUITE_EXIT=$?
 tail -20 "$_QS_LOG"
@@ -120,17 +130,9 @@ if [ $SUITE_EXIT -eq 5 ]; then
 fi
 
 if [ $SUITE_EXIT -ne 0 ]; then
-    # Full (untruncated) log on disk, not a tail-capped wrapper — safe to grep every FAILED/ERROR line.
-    # -rfE above reports fixture/collection ERRORs too, not only FAILED — an ERROR-only exit must
-    # still retry, never fall into the empty-set halt below.
-    # sed captures the id as "whitespace-free prefix + at most one [bracket] group" — pytest's
-    # actual node-id grammar (path::name[params], params the only part that may contain spaces
-    # or dashes) — never by searching for a " - " delimiter in free text. A prior "split at the
-    # last ' - '" version over-captured whenever the *reason* itself contained " - " (e.g. an
-    # assertion message like "assert 1 == 2 - extra"); anchoring on id structure instead of
-    # reason content is correct regardless of what the reason text contains. [^[:space:]] not \S
-    # — BSD sed (macOS) has no \S. awk '{print $2}' is gone too — it truncated at the first
-    # whitespace, breaking on any id containing a space inside its bracket params.
+    # Full untruncated log, not tail-capped — safe to grep every FAILED/ERROR line. -rfE reports fixture/collection ERRORs too: ERROR-only exit must still retry, never hit empty-set halt below.
+    # sed captures id by pytest node-id grammar (whitespace-free prefix + at most one [bracket] group; params only part with spaces/dashes), never a " - " split — reason text may contain " - " and over-capture.
+    # [^[:space:]] not \S — BSD sed (macOS) has no \S. No awk '{print $2}' — truncates at first whitespace, breaks on space inside bracket params.
     FAILED_IDS=$(grep -E '^(FAILED|ERROR) ' "$_QS_LOG" | sed -E 's/^(FAILED|ERROR) ([^[:space:]]+(\[[^]]*\])?).*$/\2/' | sort -u)
 
     if [ -z "$FAILED_IDS" ]; then
@@ -140,14 +142,11 @@ if [ $SUITE_EXIT -ne 0 ]; then
         exit 1
     fi
 
-    # No arrays/mapfile — zsh (Claude Code's Bash tool login shell on macOS) has neither mapfile
-    # nor bash's word-splitting on a bare "$VAR"; only unquoted command substitution word-splits
-    # in both shells, so every multi-id use below routes through printf | while-read (subshell,
-    # captured via $(...)).
+    # No arrays/mapfile — zsh (Bash tool login shell on macOS) lacks mapfile and bare-"$VAR" word-splitting; only unquoted
+    # command substitution word-splits in both shells, so every multi-id use routes through printf | while-read inside $(...).
 
-    # A doctest node-id's file part doesn't match either of pytest's default python_files
-    # patterns (test_*.py, *_test.py) — a repo with a custom python_files degrades safely
-    # here (worst case: a real test misclassified as a doctest, never the reverse).
+    # Doctest node-id file part matches neither default python_files pattern (test_*.py, *_test.py); custom python_files
+    # degrades safely (worst case: real test misclassified as doctest, never the reverse).
     DOCTEST_FAILED_IDS=$(printf '%s\n' "$FAILED_IDS" | while IFS= read -r _id; do
         _base=$(basename "${_id%%::*}")
         case "$_base" in
@@ -157,9 +156,8 @@ if [ $SUITE_EXIT -ne 0 ]; then
     done)
 
     if [ -n "$DOCTEST_FAILED_IDS" ]; then
-        # Doctests are deterministic examples, not flaky-eligible tests — a real assertion
-        # mismatch here is a genuine failure on the first read, never routed through retry
-        # or the FLAKY mark-and-ignore prompt (which assumes a markable pytest test function).
+        # Doctests deterministic, not flaky-eligible — mismatch = genuine failure on first read, never routed through
+        # retry or FLAKY mark-and-ignore prompt (assumes a markable pytest test function).
         echo "✗ GENUINE FAILURE: doctest assertion failed:"
         printf '  %s\n' "$DOCTEST_FAILED_IDS"
         echo "Quality stack halted — do not proceed further"
@@ -167,14 +165,9 @@ if [ $SUITE_EXIT -ne 0 ]; then
     fi
 
     # Retry A: exactly the failing node-ids, serial (never -n while reading a failure).
-    # Each id is individually double-quoted *inside* the eval string — quotes are present in
-    # the text eval re-parses, so the id is one argument, never re-split and never glob-eligible
-    # (zsh NOMATCH aborts on a bare "[...]", which every parametrized node-id contains). $, `,
-    # and \ inside an id are escaped first so a quoted id can't reopen substitution. Command
-    # substitution, not a heredoc, feeds the loop: a heredoc in this fence breaks markdown fence
-    # parsing when nested in a list-item context (confirmed) and drops the whole fence's
-    # per-command coverage from the blueprint-permission manifest (repo rule: "isolate any
-    # command carrying a heredoc into its own fenced block" — the real fix is not needing one).
+    # Each id double-quoted *inside* the eval string → one argument, never re-split or glob-eligible (zsh NOMATCH aborts
+    # on bare "[...]", which every parametrized id contains); $, `, \ escaped first so a quoted id can't reopen substitution.
+    # Command substitution, not heredoc: heredoc breaks fence parsing in list-item context and drops whole fence from blueprint manifest.
     _RETRY_ARGS=$(printf '%s\n' "$FAILED_IDS" | while IFS= read -r _id; do
         [ -z "$_id" ] && continue
         _esc="${_id//\\/\\\\}"
@@ -236,11 +229,25 @@ IFS= read -r DOCTEST_MERGED < "${TMPDIR:-/tmp}/quality-stack-doctest-merged-${CS
 set -o pipefail
 if [ "$DOCTEST_MERGED" != "true" ]; then
     eval "$RUNNER pytest --doctest-modules <target_module> -v" 2>&1 | tail -20  # timeout: 600000
-    DOCTEST_EXIT=$?  # non-zero = doctest failures
+    DOCTEST_EXIT=$?  # pipefail: pytest's exit, not tail's
+    # 5 = no doctests in module, not a failure; doctests deterministic → never retried
+    case $DOCTEST_EXIT in
+        0|5) ;;
+        1)
+            echo "✗ GENUINE FAILURE: doctest assertion failed in separate doctest pass"
+            echo "Quality stack halted — do not proceed further"
+            exit 1
+            ;;
+        *)
+            echo "✗ CONFIG ERROR: separate doctest pass exit $DOCTEST_EXIT — pytest interrupted, internal or usage error"
+            echo "Quality stack halted — do not proceed further"
+            exit 1
+            ;;
+    esac
 fi
 ```
 
-**Doctest report status** (3-state, replaces the old pass/fail derivation — `report-templates.md:30` reads this): `not-merged` when `DOCTEST_MERGED=false` (degraded path, separate pass above ran instead); else `pass` when `SUITE_EXIT=0` or the merged run's only failures were non-doctest (already resolved by retry above); else `fail` — a doctest id was present in `DOCTEST_FAILED_IDS` and the run already halted before reaching this line.
+**Doctest report status** (3-state, replaces the old pass/fail derivation — `report-templates.md:30` reads this): `not-merged` when `DOCTEST_MERGED=false` and the separate pass above exited `0` or `5` (degraded path, nothing failed); else `pass` when `SUITE_EXIT=0` or the merged run's only failures were non-doctest (already resolved by retry above); else `fail` — a doctest id was present in `DOCTEST_FAILED_IDS`, or the separate pass exited non-zero other than `5`, and the run already halted before reaching this line.
 
 Spawn **foundry:linting-expert** agent if mypy or ruff issues need non-trivial fixes.
 
@@ -273,12 +280,15 @@ Mandatory after quality stack. Degrades gracefully if Codex unavailable.
 Load `codex-prepass.md` via `cat` (not the Read tool — `Bash(cat:*)` grant is version-proof) and run Codex pre-pass on changes.
 
 ```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r _SHARED < "${TMPDIR:-/tmp}/qs-shared-dir-${CSID}" 2>/dev/null || _SHARED=""
+[ -n "$_SHARED" ] || { echo "! BLOCKED — qs-shared-dir sentinel missing; consumer must persist its own _shared dir before loading this file"; exit 1; }
 cat "$_SHARED/codex-prepass.md"  # timeout: 5000
 ```
 
 ### Codex pre-pass: additional inline steps (step 1 is in the shared file)
 
-2. **Collect findings**: build `CODEX_FINDINGS` — bullet list of every flagged issue from `codex:review` output. Nothing found or step skipped → set `CODEX_FINDINGS=""`. Review read-only, no working-tree changes.
+2. **Collect findings**: build `CODEX_FINDINGS` — bullet list of every flagged issue from `bridge:review` output. Nothing found or step skipped → set `CODEX_FINDINGS=""`. Review read-only, no working-tree changes.
 3. **Actor context**: note whether Codex involved (found real issues acted on). Pass as context when committing — `git-commit.md` decides trailers.
 
 Include `### Codex Pre-pass` section in final report:
@@ -289,14 +299,14 @@ Include `### Codex Pre-pass` section in final report:
 
 ## Progressive Review Loop
 
-Max 3 cycles. Applied after quality stack. **`oss:*` skills are NEVER auto-invoked from develop flows** — run only on explicit user request. Escalation below uses `/develop:review` (local-diff multi-agent review; requires `develop` plugin — the consumers of this file).
+Max 3 cycles. Applied after quality stack. **`oss:*` skills are NEVER auto-invoked from develop flows** — run only on explicit user request. Escalation below spawns review agents directly — `/develop:review` (requires `develop` plugin) is `disable-model-invocation`, offered only as a user-run follow-up.
 
 **Cycle 1: Confidence-gated review escalation**
 
 - Compute concern signal after quality stack: any unresolved critical/high finding, OR `CODEX_FINDINGS` non-empty and not yet verified. Envelope confidence alone is NOT a trigger — template envelopes print 0.88, so a `< 0.9` arm fired on nearly every run, nesting a full multi-agent `/develop:review` (~5-6 spawns) without a concrete finding to chase; low confidence without findings goes to the report as a stated gap instead
 - No concern → skip directly to report; in the final report list optional follow-ups the user may explicitly request (`/develop:review` for a deeper local pass; `/oss:review` once a PR exists)
-- Concern present → invoke `/develop:review` scoped to the modified files. `CODEX_FINDINGS` non-empty → prepend to review brief: "Codex pre-pass found the following — verify these, do not rediscover: $CODEX_FINDINGS". Also seed quality-stack's own findings as "already checked — verify, do not rediscover"
-- Capture review state: `{agents_with_findings, unresolved_findings, files_reviewed}`
+- Concern present → spawn review dimension agents directly, scoped to the modified files — `/develop:review` is `disable-model-invocation`, so a `Skill()` call never runs it. Pick agents by changed-file concern: `foundry:sw-engineer` (correctness, always), `foundry:qa-specialist` (test gaps), `foundry:linting-expert` (lint/type residue), `foundry:perf-optimizer` / `foundry:solution-architect` / `foundry:doc-scribe` only when the diff touches their domain. `CODEX_FINDINGS` non-empty → prepend to every brief: "Codex pre-pass found the following — verify these, do not rediscover: $CODEX_FINDINGS". Also seed quality-stack's own findings as "already checked — verify, do not rediscover". Run dir, prompt ending and health monitoring: same as Cycle 2 below — set up the run dir here, Cycle 2 reuses it
+- Capture review state from the envelopes: `{agents_with_findings, unresolved_findings, files_reviewed}`
 - Clean (no critical/high findings): skip to report
 
 **Cycle 2: Targeted re-check**
@@ -304,8 +314,22 @@ Max 3 cycles. Applied after quality stack. **`oss:*` skills are NEVER auto-invok
 - Fix critical/high findings from Cycle 1
 - Re-run quality stack on modified files only — scoped via `codemap-py query test-impact "<changed_module>"` (per file, then union): non-empty `pytest_cmd` **and** the result's `index.stale` is false and `index.query_complete` is true → re-run that scoped test set instead of the quality stack's directory-wide pytest line. Both freshness fields live under the nested `index` object, never at the top level — a top-level read finds nothing and trusts a stale index. Codemap absent, empty result, `index.stale` true, or `index.query_complete` not true → honest fallback to the full quality-stack re-run — never silently claim file-scoping the instruction can't actually perform
 - Scoped re-runs only shorten the fix loop: whenever Cycle 2 ends clean after any fix, run the full quality stack (its directory-wide pytest line, the repository's own settings) once before the report — the last code change is never verified by a scoped set alone
-- Set up run dir for file-based handoff: `RUN_DIR=".developments/$(date -u +%Y-%m-%dT%H-%M-%SZ)"; mkdir -p "$RUN_DIR"`
-- For each agent type in `agents_with_findings`: spawn directly (not `/oss:review`) with focused prompt scoped to modified files + prior findings. Each agent prompt must end with: "Write your full findings to `$RUN_DIR/<agent-name>.md` using the Write tool. Return ONLY a compact JSON envelope: `{\"status\":\"done\",\"findings\":N,\"severity\":{\"critical\":N,\"high\":N,\"medium\":N,\"low\":N},\"file\":\"$RUN_DIR/<agent-name>.md\",\"confidence\":0.N,\"summary\":\"<agent-name>: N critical, N high\"}`"
+- Run dir for file-based handoff — Cycle 1 creates a fresh one before its spawns (first block; fresh every run, so a prior run's `<agent-name>.md` never masks a timeout), Cycle 2 re-reads it (second block); spawn prompts carry the printed literal path, never `$RUN_DIR`:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+RUN_DIR=".developments/$(date -u +%Y-%m-%dT%H-%M-%SZ)"
+mkdir -p "$RUN_DIR"; echo "$RUN_DIR" > "${TMPDIR:-/tmp}/qs-review-run-dir-${CSID}"; echo "RUN_DIR=$RUN_DIR"
+```
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/qs-review-run-dir-${CSID}" 2>/dev/null || RUN_DIR=""
+[ -n "$RUN_DIR" ] || { echo "! BLOCKED — review run-dir sentinel missing; Cycle 1 run-dir block never ran"; exit 1; }
+echo "RUN_DIR=$RUN_DIR"
+```
+
+- For each agent type in `agents_with_findings`: spawn directly (not `/oss:review`) with focused prompt scoped to modified files + prior findings. Each agent prompt must end with (`$RUN_DIR` substituted with the printed path): "Write your full findings to `$RUN_DIR/<agent-name>.md` using the Write tool. Return ONLY a compact JSON envelope: `{\"status\":\"done\",\"findings\":N,\"severity\":{\"critical\":N,\"high\":N,\"medium\":N,\"low\":N},\"file\":\"$RUN_DIR/<agent-name>.md\",\"confidence\":0.N,\"summary\":\"<agent-name>: N critical, N high\"}`"
 
 Replace bare agent names in spawn prompts with `foundry:` prefixed equivalents: `foundry:sw-engineer`, `foundry:qa-specialist`, `foundry:linting-expert`, `foundry:doc-scribe`, `foundry:perf-optimizer`, `foundry:solution-architect`.
 
@@ -340,6 +364,9 @@ Replace bare agent names in spawn prompts with `foundry:` prefixed equivalents: 
 Load `codex-delegation.md` via `cat` (not the Read tool — `Bash(cat:*)` grant is version-proof) and apply delegation criteria. Delegate mechanical follow-up tasks to Codex when accurate specific brief writable.
 
 ```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r _SHARED < "${TMPDIR:-/tmp}/qs-shared-dir-${CSID}" 2>/dev/null || _SHARED=""
+[ -n "$_SHARED" ] || { echo "! BLOCKED — qs-shared-dir sentinel missing; consumer must persist its own _shared dir before loading this file"; exit 1; }
 cat "$_SHARED/codex-delegation.md"  # timeout: 5000
 ```
 

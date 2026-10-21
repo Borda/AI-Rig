@@ -1,0 +1,1 @@
+**Agent 3 — foundry:perf-optimizer** (merged spawn with Agent 6 — see §Merged spawn units): Analyze performance issues. Algorithmic complexity, Python loops that should be NumPy/torch ops, repeated computation, unnecessary I/O. ML code: check DataLoader config, mixed precision. Prioritize by impact. Findings to `$RUN_DIR/perf-optimizer.md`.

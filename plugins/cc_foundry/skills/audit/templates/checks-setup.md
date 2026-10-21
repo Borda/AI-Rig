@@ -147,7 +147,7 @@ MEMORY.md has 200-line truncation limit. Three sub-checks:
 **11b — Stale version pins**:
 
 ```bash
-MEMORY_FILE="$HOME/.claude/projects/$(git rev-parse --show-toplevel | sed 's|[/.]|-|g')/memory/MEMORY.md" # timeout: 3000
+MEMORY_FILE="$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_memory_dir.py" 2>/dev/null)/MEMORY.md" # timeout: 10000
 if [ -f "$MEMORY_FILE" ]; then
     grep -nE '(v[0-9]+\.[0-9]+\.[0-9]+|as of [A-Z][a-z]+ 20[0-9]{2})' "$MEMORY_FILE" || echo "no stale pins found" # timeout: 5000
 else
@@ -158,7 +158,7 @@ fi
 **11c — Absorbed feedback files**:
 
 ```bash
-MEMORY_DIR="$HOME/.claude/projects/$(git rev-parse --show-toplevel | sed 's|[/.]|-|g')/memory" # timeout: 3000
+MEMORY_DIR="$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_memory_dir.py" 2>/dev/null)" # timeout: 10000
 if [ -d "$MEMORY_DIR" ]; then
     ls "$MEMORY_DIR"/feedback_*.md 2>/dev/null || echo "no feedback files" # timeout: 5000
 else
@@ -198,8 +198,9 @@ else
     for plugin_dir in plugins/*/; do
         plugin_name=$(basename "$plugin_dir")
         plugin_json="$plugin_dir.claude-plugin/plugin.json"
+        [ -f "$plugin_json" ] || plugin_json="$plugin_dir.codex-plugin/plugin.json"
         [ -f "$plugin_json" ] || continue
-        disk_ver=$(python -c "import json; print(json.load(open('$plugin_json'))['version'])" 2>/dev/null)
+        disk_ver=$(python -c "import json,sys; print(json.load(open(sys.argv[1]))['version'])" "$plugin_json" 2>/dev/null)
         head_ver=$(git show HEAD:"$plugin_json" 2>/dev/null | python -c "import sys,json; print(json.load(sys.stdin)['version'])" 2>/dev/null)
         [ -z "$head_ver" ] && continue  # new plugin, no HEAD yet
         if [ "$disk_ver" = "$head_ver" ]; then

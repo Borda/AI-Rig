@@ -7,7 +7,9 @@ CLI exit codes.
 from __future__ import annotations
 
 import subprocess
+import time
 from pathlib import Path
+from unittest import mock
 
 import check_gitignored_refs as cgr
 import pytest
@@ -82,6 +84,34 @@ class TestCandidateTokens:
         """
         assert cgr.candidate_tokens(line) == []
 
+    def test_long_separator_run_is_scanned_in_linear_time(self) -> None:
+        """A very long ``a/a/a/...`` line without a watched directory is scanned in well under a second.
+
+        Unbounded prefix repetition made this scan quadratic (about 12 s at this length), so one crafted tracked line
+        could stall the pre-commit hook. The limit is far above the linear cost and far below the quadratic one.
+        """
+        line = "a/" * 32000
+
+        started = time.perf_counter()
+        tokens = cgr.candidate_tokens(line)
+        elapsed = time.perf_counter() - started
+
+        assert tokens == []
+        assert elapsed < 5.0
+
+    def test_prefix_deeper_than_cap_still_yields_watched_tail(self) -> None:
+        """A watched path below more directories than the prefix cap is still detected, with its prefix truncated.
+
+        The cap only bounds the leading directories carried in the token; the watched directory and the document below
+        it, which decide whether the reference is private, always survive.
+        """
+        line = "a/" * (cgr.MAX_PREFIX_SEGMENTS + 8) + ".plans/active/plan.md"
+
+        tokens = cgr.candidate_tokens(line)
+
+        assert len(tokens) == 1
+        assert tokens[0].endswith(".plans/active/plan.md")
+
 
 class TestScanFile:
     """Covers scan_file() classification against a real git checkout."""
@@ -127,6 +157,40 @@ class TestScanFile:
 
         with pytest.raises(RuntimeError, match="git check-ignore failed"):
             cgr.is_ignored(repo / ".plans" / "active" / "plan_secret-design.md", repo)
+
+    def test_git_calls_are_time_bounded(self, repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The ``git check-ignore`` call carries the module timeout so a hung git cannot stall the hook."""
+        run = mock.MagicMock(return_value=subprocess.CompletedProcess([], 1))
+        monkeypatch.setattr(cgr.subprocess, "run", run)
+
+        cgr.is_ignored(repo / ".plans" / "active" / "plan_secret-design.md", repo)
+
+        assert run.call_args.kwargs["timeout"] == cgr.GIT_TIMEOUT_SECONDS
+
+    def test_target_outside_checkout_is_not_a_violation(self, tmp_path: Path) -> None:
+        """A ``..`` token reaching an existing file above the checkout is skipped instead of crashing the hook.
+
+        ``git check-ignore`` exits 128 for a path outside the repository; the document is not this repository's private
+        evidence, so the reference must pass rather than raise.
+        """
+        checkout = tmp_path / "checkout"
+        checkout.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=checkout, check=True)
+        outside = tmp_path / ".plans" / "outside.md"
+        outside.parent.mkdir()
+        outside.write_text("not this repository\n", encoding="utf-8")
+        source = checkout / "README.md"
+        source.write_text("See ../.plans/outside.md\n", encoding="utf-8")
+
+        assert cgr.scan_file(source, checkout) == []
+
+    def test_oversized_file_is_skipped(self, repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A file above the size cap is not read, so a huge tracked blob cannot exhaust memory in the hook."""
+        monkeypatch.setattr(cgr, "MAX_FILE_BYTES", 8)
+        source = repo / "BIG.md"
+        source.write_text("Authority: .plans/active/plan_secret-design.md\n", encoding="utf-8")
+
+        assert cgr.scan_file(source, repo) == []
 
     @pytest.mark.parametrize(
         ("name", "text"),

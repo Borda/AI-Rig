@@ -87,6 +87,24 @@ class TestWatch:
         write_batch("qa", "qa-specialist\tqa.md\tsoon\n")
         assert aw.watch(tmp_path, _SPAWNED)["timed_out"] == ["qa-specialist"]
 
+    def test_deliverable_older_than_the_batch_is_not_done(self, tmp_path: Path, write_batch) -> None:
+        """A same-path file left by an earlier run does not count as this batch's deliverable.
+
+        Run dirs and deliverable paths repeat across iterations; a stale non-empty file written before the batch file
+        would otherwise close the row as done before the new agent wrote anything.
+        """
+        stale = tmp_path / "review.md"
+        stale.write_text("old findings\n", encoding="utf-8", newline="\n")
+        os.utime(stale, (_SPAWNED - 600, _SPAWNED - 600))
+        write_batch("review", f"curator\t{stale}\t900\n")
+        assert aw.watch(tmp_path, _SPAWNED + 10)["pending"] == ["curator"]
+
+    def test_unreadable_batch_file_surfaces_as_timed_out(self, tmp_path: Path, write_batch) -> None:
+        """A batch file that cannot be decoded is reported as a timed-out row instead of crashing the watch."""
+        path = write_batch("qa", "")
+        path.write_bytes(b"\xff\xfe\xfa")
+        assert aw.watch(tmp_path, _SPAWNED)["timed_out"] == ["qa?"]
+
     def test_no_batch_files_is_an_empty_report(self, tmp_path: Path) -> None:
         """Before any spawn the report is empty rather than an error."""
         assert aw.watch(tmp_path, _SPAWNED) == {"agents": [], "open": 0, "pending": [], "timed_out": []}
@@ -100,6 +118,14 @@ class TestMain:
         lines = capsys.readouterr().out.splitlines()
         assert len(lines) == 1
         assert json.loads(lines[0])["agents"][0]["name"] == "intel"
+
+    def test_state_dir_without_rows_fails(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+        """An existing dir with no batch rows is a lost or wrong run dir, reported with a non-zero exit.
+
+        The watch only ever runs after a spawn, so an empty report would hide every agent as "nothing outstanding".
+        """
+        assert aw.main(["--state-dir", str(tmp_path)]) == 2
+        assert "no agent-watch rows" in json.loads(capsys.readouterr().out)["error"]
 
     def test_missing_state_dir_fails(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
         """A lost IMPL_DIR is an error, not an empty watch that would hide every agent."""

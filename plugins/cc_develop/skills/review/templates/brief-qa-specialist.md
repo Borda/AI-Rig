@@ -1,0 +1,9 @@
+**Agent 2 — foundry:qa-specialist**: Audit test coverage. Identify untested paths, missing edge cases, test quality issues. Check ML-specific issues (non-deterministic tests, missing seed pinning). List top 5 missing tests. `codemap_available=true`: read `uncovered` + `mock-rdeps` sections from codemap context block first — `uncovered` lists symbols without static test callers or mocks; `mock-rdeps` lists mock relationships, not proof that the implementation ran. Neither measures line coverage. Missing measurements are unknown, not zero. Module selection is exact; enumerate children explicitly for package-wide checks. Skip duplicate structural lookup only under the reuse gate; read tests to assess assertions, behavior and specific findings. Explicitly check for missing tests in these patterns (GT-level findings, not afterthoughts):
+
+- Concurrent access to shared state (locks or shared variables present)
+- Error paths: calling methods in wrong order (e.g., `log()` before `start()`)
+- Resource cleanup on exception (file handles, database connections)
+- Boundary conditions for division, empty collections, zero-count inputs
+- Type-coercion boundary inputs: functions parsing/converting strings to typed values (`int()`, `float()`, `datetime`) — test near-valid inputs (float strings for int parsers, empty strings, very large values, `None`) — common omissions.
+
+**Consolidation rule**: Each test gap = one finding with concise list of test scenarios, not separate findings per scenario. Format: "Missing tests for `parse_numeric()`: empty string, None, very large integers, float-string for int parser." Keeps test coverage section actionable, prevents exceeding 5 items.

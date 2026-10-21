@@ -2,6 +2,8 @@
 rem Bootstrap a Python 3.10+ runtime on native Windows without a POSIX shell.
 rem Probe each candidate before running the workload once; preserve argv and exit.
 setlocal
+set "NoDefaultCurrentDirectoryInExePath=1"
+REM Callers must not pass untrusted free text through %*.
 set "PROBE=import sys;raise SystemExit(0 if sys.version_info >= (3,10) else 127)"
 python.exe -c "%PROBE%" <nul >nul 2>&1
 if not errorlevel 1 goto :python

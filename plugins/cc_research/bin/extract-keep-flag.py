@@ -6,7 +6,7 @@ ${BASH_REMATCH[1]}, and zsh — the harness shell — populates $match instead, 
 ``--keep "..."`` silently resolved to the empty string.
 
 Usage: python extract-keep-flag.py <sentinel-slug> "$ARGUMENTS" [--venue-choices A,B,C]
-                                   [--out-file PATH]
+                                   [--out-file PATH] [--inlined]
   <sentinel-slug> is the sentinel's own slug, not the skill name (research:run writes
   `research-run-keep-items`, so it passes `research-run`).
   --out-file writes the keep value to PATH instead of the slug-derived sentinel, creating
@@ -16,16 +16,24 @@ Usage: python extract-keep-flag.py <sentinel-slug> "$ARGUMENTS" [--venue-choices
   --venue-choices additionally parses `--venue <token>`, validates it against the given
   comma-separated list, and writes it to ${TMPDIR:-/tmp}/<sentinel-slug>-venue-${CSID}.
   An absent --venue is legal and writes an empty value; the caller's skip rule reads it.
+  --inlined marks a call made from a skill that a parent skill loaded inline (sweep running
+  judge or run): the parent's live contract must survive, so the stale-contract clear is skipped.
 Argv is parsed by hand, not argparse: five live call sites pass "$ARGUMENTS" positionally and
   that string routinely starts with `--`, which argparse would reject as an unknown option.
 Side effects: clears a stale .temp/state/skill-contract.md left by a crashed prior run
   (compaction-contract.md §Lifecycle) and writes the keep value to
   ${TMPDIR:-/tmp}/<sentinel-slug>-keep-items-${CSID}. Also prints it (may be empty).
   Both happen before venue validation, so an invalid venue still leaves them written.
+  Sentinels are written atomically (sibling mkstemp file, then os.replace), so a symlink planted at a
+  predictable sentinel name in a shared temp dir is replaced, never followed.
+  The clear is skipped, leaving contract and owner stamp untouched, under --inlined and when the
+  owner stamp names a different session than CLAUDE_CODE_SESSION_ID: concurrent sessions in one
+  working directory share that path, and the hooks already ignore a foreign-stamped contract.
+  No stamp, an unreadable stamp or an unset CLAUDE_CODE_SESSION_ID still clears.
 Requires: CSID exported by the caller — a child's own parent process id is the calling shell,
   not the Claude Code process, so deriving it here would name a different sentinel.
-Exit codes: 0 = ok · 1 = state cleanup or sentinel write failed · 2 = missing slug, missing
-  session ID, invalid --venue value, or an --out-file that is empty or outside the temp dir
+Exit codes: 0 = ok · 1 = state cleanup or sentinel write failed · 2 = missing or malformed slug,
+  missing or malformed session ID, invalid --venue value, or an --out-file that is empty or outside the temp dir
   and working directory
 Most call sites do not check the exit code: every one of them exports CSID on the preceding
   line, so the exit-2 identity paths are unreachable from a skill. Only those two identity
@@ -36,6 +44,9 @@ Most call sites do not check the exit code: every one of them exports CSID on th
 
 from __future__ import annotations
 
+import contextlib
+import errno
+import json
 import os
 import re
 import sys
@@ -52,6 +63,13 @@ _VENUE_RE = re.compile(r"--venue[ \t\r\f\v]+(\S+)")
 #: CWD-relative, exactly as the shell original: the contract belongs to the project the skill
 #: is running in, which is the caller's working directory, not this script's location.
 _CONTRACT = Path(".temp/state/skill-contract.md")
+
+#: Stamp that write_skill_contract.py writes beside the contract: {"session_id", "sha256", "written_at"}.
+_OWNER = _CONTRACT.with_suffix(".owner")
+
+#: Shape of the slug and session ID, joined into sentinel file names. No separators, so neither can leave the temp
+#: dir.
+_NAME_RE = re.compile(r"[A-Za-z0-9._-]+")
 
 
 def option_value(argv: list[str], name: str) -> str:
@@ -111,6 +129,84 @@ def _within(candidate: Path, roots: tuple[Path, ...]) -> bool:
     return False
 
 
+def _make_private_dirs(path: Path) -> None:
+    """Create ``path`` and any missing parents, giving each directory this call creates mode 0700.
+
+    ``Path.mkdir(parents=True)`` creates parents with the default mode, which leaves a new per-session state directory
+    listable by other users. Existing directories keep their mode: the temp dir itself (``/tmp`` on Linux) belongs to
+    root. The ``chmod`` is best-effort, since native Windows ignores POSIX mode bits.
+
+    Raises:
+        OSError: When a missing directory cannot be created, or a non-directory sits in the way.
+    """
+    missing = [directory for directory in (path, *path.parents) if not directory.exists()]
+    for directory in reversed(missing):
+        try:
+            directory.mkdir(mode=0o700)
+        except FileExistsError:
+            continue  # created concurrently by someone else; not this call's to re-mode
+        with contextlib.suppress(OSError):
+            os.chmod(directory, 0o700)  # mkdir's mode is masked by the umask; restate it exactly
+    if not path.is_dir():
+        raise NotADirectoryError(errno.ENOTDIR, "expected a directory", str(path))
+
+
+def _write_atomic(path: Path, text: str) -> None:
+    """Replace ``path`` with ``text`` through a sibling temp file, never writing through an existing entry at ``path``.
+
+    A plain ``write_text`` follows a symlink planted at a predictable name in a shared temp dir and overwrites its
+    target. ``mkstemp`` opens a fresh name ``O_EXCL`` (so it also refuses a symlink) with mode 0600, and ``os.replace``
+    swaps the directory entry itself, leaving any symlink's target untouched. An entry another user already owns at
+    ``path`` is refused first (``lstat``, so a foreign symlink counts too); native Windows has no ``os.getuid``, so the
+    check is skipped there, where the per-user temp dir already keeps other users out.
+
+    Args:
+        path: Destination file; its parent directory must exist.
+        text: Content written verbatim, with LF newlines.
+
+    Raises:
+        PermissionError: When ``path`` exists and belongs to another user; nothing is written.
+        OSError: When the temp file cannot be created, written or moved into place; the temp file is removed first.
+    """
+    getuid = getattr(os, "getuid", None)
+    try:
+        owner = os.lstat(path).st_uid
+    except FileNotFoundError:
+        owner = None
+    if getuid is not None and owner is not None and owner != getuid():
+        raise PermissionError(
+            errno.EPERM,
+            "sentinel is owned by another user; remove it, or point TMPDIR at a directory only you can write",
+            str(path),
+        )
+    descriptor, temp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text)
+        os.replace(temp_name, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(temp_name)
+        raise
+
+
+def _stamped_by_other_session() -> bool:
+    """Report whether the contract's owner stamp names a session other than the running one.
+
+    Missing, unreadable or malformed stamps, and an unset ``CLAUDE_CODE_SESSION_ID``, answer ``False``: the caller then
+    clears as it always did, so a crashed prior run is still cleaned up.
+    """
+    session_id = os.environ.get("CLAUDE_CODE_SESSION_ID")
+    if not session_id:
+        return False
+    try:
+        stamp = json.loads(_OWNER.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    stamped = stamp.get("session_id") if isinstance(stamp, dict) else None
+    return isinstance(stamped, str) and bool(stamped) and stamped != session_id
+
+
 def _write_venue(slug: str, args: str, choices: str, sentinel: Path) -> int:
     """Validate ``--venue`` against ``choices`` and persist it.
 
@@ -130,7 +226,7 @@ def _write_venue(slug: str, args: str, choices: str, sentinel: Path) -> int:
         print(f"{slug}: invalid --venue '{venue}' — valid: {', '.join(valid)}", file=sys.stderr)
         return 2
     try:
-        sentinel.write_text(venue + "\n", encoding="utf-8", newline="\n")
+        _write_atomic(sentinel, venue + "\n")
     except OSError as exc:
         print(f"extract-keep-flag: cannot write {sentinel}: {exc}", file=sys.stderr)
         return 1
@@ -175,8 +271,8 @@ def _write_keep_sentinel(sentinel: Path, keep_items: str) -> int | None:
     try:
         # The per-session state directory is the caller's to name but not always its to
         # create: with --out-file this script may be the first writer into it.
-        sentinel.parent.mkdir(parents=True, exist_ok=True)
-        sentinel.write_text(keep_items + "\n", encoding="utf-8", newline="\n")
+        _make_private_dirs(sentinel.parent)
+        _write_atomic(sentinel, keep_items + "\n")
     except OSError as exc:
         print(f"extract-keep-flag: cannot write {sentinel}: {exc}", file=sys.stderr)
         return 1
@@ -204,15 +300,22 @@ def main(argv: list[str]) -> int:
     if not csid:
         print("extract-keep-flag: CSID not exported by caller", file=sys.stderr)
         return 2
+    if any(not _NAME_RE.fullmatch(value) or ".." in value for value in (slug, csid)):
+        print(
+            "extract-keep-flag: slug and CSID must use letters, digits, '.', '_' or '-' and must not contain '..'",
+            file=sys.stderr,
+        )
+        return 2
 
     match = _KEEP_RE.search(args)
     keep_items = match.group(1) if match else ""
 
-    try:
-        _CONTRACT.unlink(missing_ok=True)
-    except OSError as exc:
-        print(f"extract-keep-flag: cannot clear {_CONTRACT}: {exc}", file=sys.stderr)
-        return 1
+    if "--inlined" not in argv[3:] and not _stamped_by_other_session():
+        try:
+            _CONTRACT.unlink(missing_ok=True)
+        except OSError as exc:
+            print(f"extract-keep-flag: cannot clear {_CONTRACT}: {exc}", file=sys.stderr)
+            return 1
 
     tmp = Path(os.environ.get("TMPDIR") or tempfile.gettempdir())
     sentinel = _resolve_sentinel_path(slug, csid, out_file, "--out-file" in argv[3:], tmp)

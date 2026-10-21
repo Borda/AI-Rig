@@ -14,7 +14,9 @@ Tier cascade
 * **Tier 1** — Locate ``get_plugin_install_path.py`` (canonical foundry helper),
   invoke it for the requested plugin, and validate that ``<installPath>/<subdir>``
   exists. Helper search order: (a) ``$CLAUDE_PLUGIN_ROOT/bin/...``,
-  (b) newest cached foundry version, (c) source-tree dev fallback.
+  (b) newest cached version of this script's own plugin, (c) the helper beside
+  this script. The working directory is never searched for the helper, and a
+  recorded ``installPath`` outside the marketplace cache is rejected.
 * **Tier 2** — Glob ``~/.claude/plugins/cache/borda-ai-rig/<plugin>/*/<subdir>``,
   skip version dirs carrying ``.orphaned_at``, return newest by semver. Degraded
   fallback only: it runs when the registry has no usable record (helper missing,
@@ -23,7 +25,12 @@ Tier cascade
   Claude Code actually loads.
 * **Tier 3** — Source-tree fallback ``plugins/cc_<plugin>/<subdir>``, then
   ``plugins/<plugin>/<subdir>`` for un-prefixed provider dirs such as
-  ``codemap-py`` (warn to stderr).
+  ``codemap-py`` (warn to stderr). Relative to the working directory, so each
+  candidate is used only when the working directory is that plugin's own source
+  repository: ``plugins/<dir>/.claude-plugin/plugin.json`` must parse as a JSON
+  object whose ``name`` equals ``<plugin>``. Anywhere else that tree is the text
+  of whatever repository the session was opened in, so it is skipped and the
+  cascade ends at the not-found exit.
 
 Cross-plugin use
 ----------------
@@ -43,8 +50,9 @@ fallback line. See ``plugins/CLAUDE.md``
 Exit codes
 ----------
 * ``0`` — A path was emitted to stdout (any tier).
-* ``1`` — All tiers failed: helper missing, no cache hit, and source-tree
-  fallback also not present on disk. Plugin genuinely absent.
+* ``1`` — All tiers failed: helper missing, no cache hit, and no source-tree
+  fallback that is both present on disk and inside the plugin's own source
+  repository. Nothing is printed on stdout.
 * ``2`` — Invalid argument (bad PLUGIN or SUBDIR token).
 
 Usage
@@ -61,6 +69,7 @@ Usage
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -68,9 +77,9 @@ import sys
 from pathlib import Path
 
 #: Allowed shape of a plugin name: letters, digits, underscore and hyphen only.
-_PLUGIN_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
+_PLUGIN_RE = re.compile(r"[a-zA-Z0-9_-]+")
 #: Allowed shape of a plugin-relative subdirectory: letters, digits, underscore, hyphen and slash.
-_SUBDIR_RE = re.compile(r"^[a-zA-Z0-9_/-]+$")
+_SUBDIR_RE = re.compile(r"[a-zA-Z0-9_/-]+")
 #: Marketplace name under which plugins are cached, used to locate the plugin cache directory.
 _MARKETPLACE = "borda-ai-rig"
 
@@ -119,21 +128,33 @@ def _validate_plugin(plugin: str) -> None:
             ...
         ValueError: invalid PLUGIN: '../evil'
     """
-    if not _PLUGIN_RE.match(plugin):
+    if not _PLUGIN_RE.fullmatch(plugin):
         raise ValueError(f"invalid PLUGIN: {plugin!r}")
 
 
 def _validate_subdir(subdir: str) -> None:
-    """Reject subdir tokens containing ``..`` or unexpected metacharacters.
+    """Reject subdir tokens that are absolute, contain ``..`` or hold unexpected metacharacters.
+
+    A leading ``/`` is rejected because joining an absolute path onto the plugin root discards the root
+    (``Path("a") / "/etc" == Path("/etc")``), so ``/etc`` would resolve outside the plugin. An empty segment
+    (``//``) is rejected for the same reason: only relative, ``..``-free tokens stay under the install.
 
     Args:
         subdir: Subdirectory path inside the plugin install.
 
     Raises:
-        ValueError: When ``subdir`` fails the regex check or contains ``..``.
+        ValueError: When ``subdir`` fails the regex check, is absolute, has an empty segment, or contains ``..``.
 
     Examples:
         >>> _validate_subdir("skills/_shared")
+        >>> _validate_subdir("/etc")
+        Traceback (most recent call last):
+            ...
+        ValueError: invalid SUBDIR: '/etc'
+        >>> _validate_subdir("skills//_shared")
+        Traceback (most recent call last):
+            ...
+        ValueError: invalid SUBDIR: 'skills//_shared'
         >>> _validate_subdir("../etc/passwd")
         Traceback (most recent call last):
             ...
@@ -143,7 +164,7 @@ def _validate_subdir(subdir: str) -> None:
             ...
         ValueError: invalid SUBDIR: 'skills/../etc'
     """
-    if not _SUBDIR_RE.match(subdir) or ".." in subdir:
+    if not _SUBDIR_RE.fullmatch(subdir) or ".." in subdir or subdir.startswith("/") or "//" in subdir:
         raise ValueError(f"invalid SUBDIR: {subdir!r}")
 
 
@@ -164,6 +185,37 @@ def _cache_root(home: Path) -> Path:
     return home / ".claude" / "plugins" / "cache" / _MARKETPLACE
 
 
+def _own_plugin_name(plugin_dir: Path) -> str:
+    """Return the cache name of the plugin whose root is ``plugin_dir``.
+
+    The name comes from ``.claude-plugin/plugin.json``. The directory name is wrong in an installed cache, where
+    the root is ``<cache>/<plugin>/<version>`` and its basename is the version (``0.68.1``), so deriving the name
+    from it never matches a cache dir. In a source checkout the directory is ``cc_<plugin>``, the fallback when
+    the manifest is missing, unreadable or carries an unsafe name.
+
+    Args:
+        plugin_dir: Root of the plugin this script ships in.
+
+    Returns:
+        Short plugin name (e.g. ``"foundry"``).
+
+    Examples:
+        >>> import tempfile
+        >>> from pathlib import Path
+        >>> with tempfile.TemporaryDirectory() as d:
+        ...     _own_plugin_name(Path(d) / "cc_oss")
+        'oss'
+    """
+    try:
+        manifest = json.loads((plugin_dir / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
+        name = manifest.get("name") if isinstance(manifest, dict) else None
+    except (OSError, ValueError):
+        name = None
+    if isinstance(name, str) and _PLUGIN_RE.fullmatch(name):
+        return name
+    return plugin_dir.name.removeprefix("cc_")
+
+
 def _locate_helper(home: Path, env_root: str | None) -> Path | None:
     """Find ``get_plugin_install_path.py`` across known locations.
 
@@ -174,7 +226,13 @@ def _locate_helper(home: Path, env_root: str | None) -> Path | None:
 
     1. ``$CLAUDE_PLUGIN_ROOT/bin/get_plugin_install_path.py`` when env set.
     2. Newest semver under ``<cache>/<own-plugin>/*/bin/get_plugin_install_path.py``.
-    3. Source-tree dev fallback ``plugins/<own-plugin-dir>/bin/…`` (repo-relative).
+    3. The helper shipped in this script's own ``bin/`` directory.
+
+    The working directory is never searched. The helper is *executed*, so a
+    cwd-relative ``plugins/<dir>/bin/get_plugin_install_path.py`` would run
+    whatever a checked-out repository plants at that path — a contributor
+    checkout under review, for instance. The own-``bin/`` copy covers the
+    source-tree case that lookup used to serve, from an absolute path.
 
     Args:
         home: User home directory.
@@ -188,7 +246,7 @@ def _locate_helper(home: Path, env_root: str | None) -> Path | None:
         if candidate.is_file():
             return candidate
     own_plugin_dir = Path(__file__).resolve().parent.parent
-    own_cache = _cache_root(home) / own_plugin_dir.name.removeprefix("cc_")
+    own_cache = _cache_root(home) / _own_plugin_name(own_plugin_dir)
     if own_cache.is_dir():
         versions = [
             v for v in own_cache.iterdir() if v.is_dir() and (v / "bin" / "get_plugin_install_path.py").is_file()
@@ -196,11 +254,9 @@ def _locate_helper(home: Path, env_root: str | None) -> Path | None:
         if versions:
             versions.sort(key=lambda p: _version_key(p.name))
             return versions[-1] / "bin" / "get_plugin_install_path.py"
-    # repo-relative on purpose (matches tier-3 shared-path fallback): an absolute
-    # path here would always resolve, letting the helper tier win even with no install
-    source_fallback = Path("plugins") / own_plugin_dir.name / "bin" / "get_plugin_install_path.py"
-    if source_fallback.is_file():
-        return source_fallback
+    own_helper = Path(__file__).resolve().with_name("get_plugin_install_path.py")
+    if own_helper.is_file():
+        return own_helper
     return None
 
 
@@ -215,6 +271,13 @@ def _tier1_registry(home: Path, plugin: str, subdir: str, env_root: str | None) 
     alias stub, dropping every caller to the newest-cache tier without a
     trace.
 
+    The registry read is ``<home>/.claude/plugins/installed_plugins.json``,
+    passed explicitly so the ``home`` argument governs the helper too. A
+    recorded ``installPath`` outside ``<home>/.claude/plugins/cache/borda-ai-rig``
+    is rejected: Claude Code installs every plugin of this marketplace there,
+    so a path elsewhere means a hand-edited or foreign record, and the
+    resolved directory holds instructions skills load.
+
     Args:
         home: User home directory.
         plugin: Plugin short-name.
@@ -227,9 +290,10 @@ def _tier1_registry(home: Path, plugin: str, subdir: str, env_root: str | None) 
     helper = _locate_helper(home, env_root)
     if helper is None:
         return None
+    registry = home / ".claude" / "plugins" / "installed_plugins.json"
     try:
         completed = subprocess.run(  # noqa: S603 — args fully internal
-            [sys.executable, str(helper), _MARKETPLACE, plugin],
+            [sys.executable, str(helper), _MARKETPLACE, plugin, "--registry", str(registry)],
             capture_output=True,
             text=True,
             check=False,
@@ -241,6 +305,8 @@ def _tier1_registry(home: Path, plugin: str, subdir: str, env_root: str | None) 
         return None
     install_path = completed.stdout.strip()
     if not install_path:
+        return None
+    if not Path(install_path).resolve().is_relative_to(_cache_root(home).resolve()):
         return None
     candidate = Path(install_path) / subdir
     if candidate.is_dir():
@@ -282,6 +348,46 @@ def _tier2_cache(home: Path, plugin: str, subdir: str) -> Path | None:
     return candidates[-1][1]
 
 
+def _source_dirs(plugin: str) -> tuple[Path, Path]:
+    """Return the working-directory-relative source checkouts tier 3 may use, in lookup order.
+
+    Claude plugins live under a ``cc_``-prefixed folder; provider plugins such as
+    codemap-py use the bare name.
+
+    Examples:
+        >>> [p.as_posix() for p in _source_dirs("oss")]
+        ['plugins/cc_oss', 'plugins/oss']
+    """
+    return Path("plugins") / f"cc_{plugin}", Path("plugins") / plugin
+
+
+def _is_own_source_checkout(plugin_dir: Path, plugin: str) -> bool:
+    """Report whether ``plugin_dir`` is ``plugin``'s own source checkout, judged by its manifest.
+
+    Args:
+        plugin_dir: Candidate plugin root, relative to the working directory.
+        plugin: Plugin short-name the manifest must carry.
+
+    Returns:
+        ``True`` when ``.claude-plugin/plugin.json`` parses as a JSON object whose ``name`` is exactly ``plugin``.
+
+    Examples:
+        >>> import tempfile
+        >>> with tempfile.TemporaryDirectory() as d:
+        ...     manifest = Path(d) / ".claude-plugin" / "plugin.json"
+        ...     before = _is_own_source_checkout(Path(d), "oss")
+        ...     manifest.parent.mkdir()
+        ...     _ = manifest.write_text('{"name": "oss"}', encoding="utf-8")
+        ...     (before, _is_own_source_checkout(Path(d), "oss"), _is_own_source_checkout(Path(d), "foundry"))
+        (False, True, False)
+    """
+    try:
+        manifest = json.loads((plugin_dir / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(manifest, dict) and manifest.get("name") == plugin
+
+
 def resolve(plugin: str, subdir: str, *, home: Path | None = None, env_root: str | None = None) -> tuple[str, int]:
     """Resolve ``<plugin>/<subdir>`` via the four-tier cascade.
 
@@ -297,8 +403,9 @@ def resolve(plugin: str, subdir: str, *, home: Path | None = None, env_root: str
 
     Returns:
         Tuple ``(path, tier)`` where ``tier`` is the originating tier
-        (``0``–``3``) or ``-1`` when even the source-tree fallback
-        target does not exist on disk (caller should exit 1).
+        (``0``–``3``) or ``-1`` when no source-tree fallback is both on
+        disk and inside the plugin's own source repository (caller should
+        exit 1 and must not read the returned path).
 
     Examples:
         >>> import os, tempfile
@@ -342,12 +449,14 @@ def resolve(plugin: str, subdir: str, *, home: Path | None = None, env_root: str
         return str(hit), 2
     # Source-tree fallback targets the on-disk folder: cc_-prefixed for the
     # Claude plugins, bare for provider plugins such as codemap-py; `plugin`
-    # stays bare for the cache/registry tiers.
-    source_fallback = Path("plugins") / f"cc_{plugin}" / subdir
-    for candidate in (source_fallback, Path("plugins") / plugin / subdir):
-        if candidate.is_dir():
+    # stays bare for the cache/registry tiers. Callers read files from it, so a
+    # cwd tree counts only inside that plugin's own source repository.
+    source_dirs = _source_dirs(plugin)
+    for plugin_dir in source_dirs:
+        candidate = plugin_dir / subdir
+        if candidate.is_dir() and _is_own_source_checkout(plugin_dir, plugin):
             return candidate.as_posix(), 3
-    return source_fallback.as_posix(), -1
+    return (source_dirs[0] / subdir).as_posix(), -1
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -376,6 +485,16 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     path, tier = resolve(args.plugin, args.subdir)
+    refused = [d for d in _source_dirs(args.plugin) if (d / args.subdir).is_dir()]
+    if tier == -1 and refused:
+        print(
+            f"! resolve_shared_path: {args.plugin} not found in registry or cache, and the working directory is not the "
+            f"{args.plugin} plugin source repository (no {refused[0].as_posix()}/.claude-plugin/plugin.json naming "
+            f"{args.plugin}) — refusing to read {(refused[0] / args.subdir).as_posix()}; "
+            f"install {args.plugin}@{_MARKETPLACE}",
+            file=sys.stderr,
+        )
+        return 1
     if tier == -1:
         print(
             f"resolve_shared_path: {args.plugin} not found in registry, cache, or source tree",

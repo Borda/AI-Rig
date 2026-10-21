@@ -3342,10 +3342,10 @@ def run_benchmark_pattern_checks(run: CalibrationRun) -> None:
             )
         path = run.paths.skills_dir / skill / "SKILL.md"
         text = read_text(path)
-        if skill == "code-remediate":
-            # Calibration checks every route; ordinary skill execution still loads this
-            # reference only when evaluating or executing the parallel route.
-            text += "\n" + read_text(path.parent / "references" / "parallel-lifecycle.md")
+        # Calibration checks every route; ordinary skill execution loads each reference
+        # only when its trigger applies (parallel route, recovery path, chunked run).
+        for reference in sorted((path.parent / "references").glob("*.md")):
+            text += "\n" + read_text(reference)
         for pattern in patterns:
             if re.search(pattern, text, flags=re.IGNORECASE) is None:
                 run.append_check(f"advisory:benchmark-skill-miss:{skill}:{pattern}")

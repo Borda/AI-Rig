@@ -14,7 +14,11 @@ import pytest
 
 _SKILLS = Path(__file__).resolve().parents[1] / "skills"
 _AGENT_RESOLUTION = _SKILLS / "_shared" / "agent-resolution.md"
-_HELPER_RUN = 'bin/dev_test_targets.py" --pytest-cmd "$PYTEST_CMD" --run'
+
+
+def _helper_run(skill: str) -> str:
+    """Return the selector call a loop skill runs: sentinels supply the pytest command and the run directory."""
+    return f'bin/dev_test_targets.py" --skill {skill} --run'
 
 
 def _read(relative: str) -> str:
@@ -71,13 +75,14 @@ class TestAgentWaits:
         """Refactor team mode resumes on notifications; the former every-5-minutes check is gone."""
         team = _read("refactor/modes/team-mode.md")
         assert "every 5 min" not in team
-        assert "At most one liveness probe per wake-up" in team
+        assert "At most one liveness probe" not in team
+        assert "never a liveness probe" in team
 
     @pytest.mark.parametrize("skill", ["refactor", "fix", "debug"])
     def test_skill_points_at_the_shared_wait_rule(self, skill: str) -> None:
         """Each spawning skill loads the shared wait rule and says it applies to its spawns."""
         text = _read(f"{skill}/SKILL.md")
-        assert 'cat "$_DEV_SHARED/agent-resolution.md"' in text
+        assert 'bin/dev_load_shared.py" agent-resolution.md' in text
         assert "§Agent waits — no polling" in text
 
 
@@ -128,7 +133,7 @@ def test_call_batching_never_moves_a_question_later(skill: str) -> None:
 def test_loops_run_targeted_tests_only(skill: str, start: str, end: str) -> None:
     """Fix and refactor loops select tests per change and never fall back to the whole test directory."""
     loop = _section(f"{skill}/SKILL.md", start, end)
-    assert _HELPER_RUN in loop
+    assert _helper_run(skill) in loop
     assert "Full suite fallback" not in loop
     assert "full suite fallback" not in loop
     assert "Re-run full test suite" not in loop
@@ -218,7 +223,9 @@ class TestAgentWatchDeadlines:
     @pytest.mark.parametrize("skill", ["refactor", "fix", "debug", "review", "feature", "plan"])
     def test_each_run_gets_a_fresh_watch_dir(self, skill: str) -> None:
         """Agent Resolution starts every run with a fresh watch dir, so a prior run's batches never report as stale."""
-        assert '> "${TMPDIR:-/tmp}/dev-agent-watch-dir-${CSID}"  # fresh per run' in _read(f"{skill}/SKILL.md")
+        text = _read(f"{skill}/SKILL.md")
+        assert 'bin/dev_shared_resolve.py" --init' in text
+        assert "fresh dev-agent-watch-dir per run" in text
 
 
 def test_review_small_diff_never_reviewed_inline() -> None:

@@ -1,14 +1,14 @@
 <!-- file: codemap-context.md — consumers: plugin-local codemap-context.md wrappers (foundry, develop) read this file from the active codemap-py install via `resolve_shared_path.py codemap-py claude-skills/_shared`; provider→consumer wiring uses the codemap-py.integration.v2 managed-block body with a v1 sentinel schema -->
 
-# Codemap context contract — v4
+# Codemap context contract — v5
 
 Plugin-agnostic structural-context contract. Consumers read this file live from the active `codemap-py` install (no local copies — the text always matches the CLI actually installed). Wrappers add only per-agent query maps + flag surfaces + plugin-local batch/cache paths; query mechanics, evidence-line contract, completeness/staleness semantics, batch pre-flight, effort tiers stay maintained here.
 
-> `v4` = context-contract doc version — bump on query-set or evidence-contract change. Provider→consumer wiring uses `codemap-py.integration.v2` managed-block body with `v1` sentinel schema (see `shared/integration-contract.md`), independent of this doc version.
+> `v5` = context-contract doc version — bump on query-set or evidence-contract change. Provider→consumer wiring uses `codemap-py.integration.v2` managed-block body with `v1` sentinel schema (see `shared/integration-contract.md`), independent of this doc version.
 
 ## Target derivation — pluggable (consumer supplies)
 
-`TARGET_MODULE` (dotted), `TARGET_FN` (bare name), `CODEMAP_QUERY_KIND` = **consumer-supplied inputs** — contract doesn't derive them. Consumer wrapper/SKILL sets them from `$ARGUMENTS`, review diff, or finding before reading this file. `CODEMAP_QUERY_KIND=skip` = executable zero-query route for a fully localized edit. Safe adaptive vocabulary: `skip`, `central`, `callers`, `blast`, `dependencies`, `test-impact`, `coupling`, `standard`; unset/unknown value preserves legacy `standard` batch.
+`TARGET_MODULE` (dotted), `TARGET_FN` (bare name), `CODEMAP_QUERY_KIND` = **consumer-supplied inputs** — contract doesn't derive them. Consumer wrapper/SKILL sets them from `$ARGUMENTS`, review diff, or finding before reading this file. `CODEMAP_QUERY_KIND=skip` = executable zero-query route for a fully localized edit. Safe adaptive vocabulary: `skip`, `central`, `callers`, `blast`, `dependencies`, `test-impact`, `coupling`, `standard`; unset/unknown value preserves legacy `standard` batch. Optional `TARGET_QUALIFIED` (`module::function`) = consumer-supplied target of the `test-impact` route; unset → that route falls back to `TARGET_MODULE`.
 
 - explicit `module.path` or `module.path::function` in args → split into `TARGET_MODULE` / `TARGET_FN`
 - module-only known → set `TARGET_MODULE`, leave `TARGET_FN` empty
@@ -37,20 +37,20 @@ _ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || _ROOT="$PWD"
 PROJ=$(basename "$_ROOT")
 _IDX="${CODEMAP_INDEX_DIR:-$_ROOT/.cache/codemap}"
 _CM_ROUTE="${CODEMAP_QUERY_KIND:-standard}"
-if [ "$_CM_ROUTE" != "skip" ] && command -v scan-query >/dev/null 2>&1 && [ -f "${_IDX}/${PROJ}.json" ]; then
+if [ "$_CM_ROUTE" != "skip" ] && command -v codemap-py >/dev/null 2>&1 && [ -f "${_IDX}/${PROJ}.json" ]; then
     # refresh SHA-changed files only; never full-build mid-task
-    [ "${SCAN_NO_AUTOBUILD:-0}" = "1" ] || scan-index --incremental 2>/dev/null || true
+    [ "${SCAN_NO_AUTOBUILD:-0}" = "1" ] || codemap-py index --incremental 2>/dev/null || true
     _CM_N=0 _CM_H=0 _CM_STALE=0 _CM_NONEXH=0
     # tsv only for flat wide tables: rdeps/test-impact exit 1 "format_not_tabular", symbol = 1 row.
     # --format is codemap-py 0.37.0+; older builds exit 2 with empty stdout, so probe once.
     _CM_TSV=0
-    case "$(scan-query --help 2>&1)" in *--format*) _CM_TSV=1 ;; esac
+    case "$(codemap-py query --help 2>&1)" in *--format*) _CM_TSV=1 ;; esac
     _cq() {
         local out err envelope fmt=json rc=0; _CM_N=$((_CM_N+1))
         err=$(mktemp "${TMPDIR:-/tmp}/codemap-envelope-XXXXXX")
         case "${_CM_TSV}:$1" in
-            1:central|1:coupled|1:fn-rdeps|1:fn-blast) fmt=tsv; out=$(scan-query --timeout 5 --format tsv "$@" 2>"$err") || rc=$? ;;
-            *)                                        out=$(scan-query --timeout 5 "$@" 2>"$err") || rc=$? ;;
+            1:central|1:coupled|1:fn-rdeps|1:fn-blast) fmt=tsv; out=$(codemap-py query --timeout 5 --format tsv "$@" 2>"$err") || rc=$? ;;
+            *)                                        out=$(codemap-py query --timeout 5 "$@" 2>"$err") || rc=$? ;;
         esac
         envelope=$(cat "$err" 2>/dev/null); rm -f "$err"
         if [ "$rc" -ne 0 ]; then printf 'codemap query unavailable: %s\n' "$1" >&2; return 0; fi
@@ -96,7 +96,7 @@ if [ "$_CM_ROUTE" != "skip" ] && command -v scan-query >/dev/null 2>&1 && [ -f "
 fi
 ```
 
-> Consumer wrappers run this batch pattern (or a shorter inline variant — `central --top 3` + one derived query — for quick tasks), pointing here for full map. `scan-query` not found or index missing → pre-flight emits nothing, callers fall back to normal exploration path.
+> Consumer wrappers run this batch pattern (or a shorter inline variant — `central --top 3` + one derived query — for quick tasks), pointing here for full map. `codemap-py` not found or index missing → pre-flight emits nothing, callers fall back to normal exploration path.
 
 ## Evidence-line contract
 
@@ -121,7 +121,7 @@ Consumers may skip re-querying **only** when `completeness=exhaustive`.
 
 ## Coverage metadata in output
 
-Each `scan-query` result carries `index` block with per-command coverage fields:
+Each `codemap-py query` result carries `index` block with per-command coverage fields:
 
 - `index.method` — analysis technique used (`static-ast`, `import-graph`, `index-lookup`, `ast-flags`).
 - `index.not_covered` — what method structurally misses (list); non-empty → surface as scope caveat in response. Targeted source/runtime evidence may answer a different dynamic-behavior question; do not claim it makes the static graph complete.
@@ -153,7 +153,7 @@ Set `CODEMAP_QUERY_KIND=skip`, skip Codemap when exact file+symbol supplied for 
 
 ## Extended scan — multi-file / API changes
 
-Task touches multiple modules or changes public-API surface → run per-affected-module reverse-dependency scan. Interpret: any `rdeps` output = external callers affected; `coupled` output = co-change pairs. Fallback for one known module: `scan-query rdeps <mod> --top 10 2>/dev/null || true`.
+Task touches multiple modules or changes public-API surface → run per-affected-module reverse-dependency scan. Interpret: any `rdeps` output = external callers affected; `coupled` output = co-change pairs. Fallback for one known module: `codemap-py query rdeps <mod> --top 10 2>/dev/null || true`.
 
 Risk tier by `rdep_count`:
 
@@ -169,4 +169,4 @@ Known symbol + file >~300 lines: `symbol <mod::name>` → take line span → `Re
 
 ## Result-prepend contract
 
-Prepend returned results as `## Structural Context (codemap)` section to any agent spawn prompt, with hotspot JSON + per-query output. `codemap_evidence:` line at end of block reports retrieval reliability; agents may skip re-querying only when `completeness=exhaustive`. `scan-query` unavailable or index missing → emit one-line ⚠ to stderr, proceed with file-read context.
+Prepend returned results as `## Structural Context (codemap)` section to any agent spawn prompt, with hotspot JSON + per-query output. `codemap_evidence:` line at end of block reports retrieval reliability; agents may skip re-querying only when `completeness=exhaustive`. `codemap-py` unavailable or index missing → emit one-line ⚠ to stderr, proceed with file-read context.

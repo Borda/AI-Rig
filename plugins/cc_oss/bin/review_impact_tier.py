@@ -25,8 +25,9 @@ Tiers:
   modules (visualization, plotting, examples, docs, scripts, notebooks), or is private with
   no caller outside them.
 
-Fail-safe: unreadable input, no changed modules, unmapped ``.py`` files, a missing
-``codemap-py`` binary, or a failed ``fn-blast`` query all yield ``FULL`` — unknown impact is
+Fail-safe: unreadable or oversized input (over ``MAX_INPUT_CHARS``), no changed modules,
+unmapped ``.py`` files, a missing ``codemap-py`` binary, or a failed ``fn-blast`` query all
+yield ``FULL`` — unknown impact is
 never trimmed. Exit code is always 0 so the calling skill block never aborts on it.
 """
 
@@ -70,6 +71,11 @@ IMPORTER_THRESHOLD = 5
 #: Upper bound on fn-blast queries per run; symbols past the cap fail safe to FULL.
 #: Matches the review's own fn-rdeps/fn-blast context loop cap, which bounds block wall time.
 SYMBOL_CAP = 12
+
+#: Largest diff-impact JSON read from stdin, in characters; matches the 10 MiB guard sibling scripts put on their
+#: inputs. The read stops one character past it, so a runaway or hostile payload is never held whole in memory, and
+#: oversized input is reported as unknown impact (FULL) rather than parsed.
+MAX_INPUT_CHARS = 10 * 1024 * 1024
 
 #: Verdict printed when the change reaches the main path or its impact cannot be determined.
 FULL = "FULL"
@@ -172,6 +178,9 @@ def run_fn_blast(qname: str) -> dict | None:
     exe = shutil.which("codemap-py")
     if exe is None:
         return None
+    # qname derives from PR file names: a leading "-" would parse as a codemap-py option; unknown impact reads as FULL
+    if qname.startswith("-") or any(ch.isspace() or ord(ch) < 32 for ch in qname):
+        return None
     try:
         proc = subprocess.run(  # noqa: S603 - argv list, no shell
             [exe, "query", "--timeout", "8", "fn-blast", qname],
@@ -270,8 +279,13 @@ def main(argv: list[str]) -> int:
         description="Print FULL or LIGHT review depth from codemap-py diff-impact JSON (stdin) plus fn-blast.",
     )
     parser.parse_args(argv)
+    raw = sys.stdin.read(MAX_INPUT_CHARS + 1)
+    if len(raw) > MAX_INPUT_CHARS:
+        # Exit 0, not 2: the calling block redirects stdout into the impact sentinel and must never abort on it
+        print(f"{FULL} · impact unknown: diff-impact input exceeds {MAX_INPUT_CHARS} characters")
+        return 0
     try:
-        payload = json.loads(sys.stdin.read())
+        payload = json.loads(raw)
     except (json.JSONDecodeError, ValueError):
         payload = None
     tier, reason = classify(payload)

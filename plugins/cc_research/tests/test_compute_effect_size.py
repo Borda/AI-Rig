@@ -171,6 +171,20 @@ class TestMainCLI:
         assert exit_code == 2
         assert message in captured.err
 
+    def test_oversized_stdin_exits_two(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Stdin longer than the cap → exit 2 before parsing, so a runaway producer cannot exhaust memory.
+
+        The payload here is valid JSON padded past a lowered cap: the size check, not the parser, must reject it.
+        """
+        monkeypatch.setattr(ces, "MAX_STDIN_CHARS", 32)
+        monkeypatch.setattr("sys.stdin", _StdinStub(json.dumps({"n": 8, "statistic": 36.0, "pad": "x" * 64})))
+        exit_code = ces.main([])
+        captured = capsys.readouterr()
+        assert exit_code == 2
+        assert "stdin exceeds 32 characters" in captured.err
+
 
 class _StdinStub:
     """Minimal stdin replacement supporting ``.read()`` for monkeypatch."""
@@ -179,6 +193,6 @@ class _StdinStub:
         """Store parser input that ``read`` will return."""
         self._content = content
 
-    def read(self) -> str:
-        """Return the configured stdin text to the parser under test."""
-        return self._content
+    def read(self, size: int = -1) -> str:
+        """Return the configured stdin text, at most ``size`` characters when non-negative, as ``TextIO.read`` does."""
+        return self._content if size < 0 else self._content[:size]

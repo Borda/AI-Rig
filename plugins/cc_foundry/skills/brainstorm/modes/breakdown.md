@@ -13,7 +13,7 @@ Read file at given path. Check `**Status**:` field:
 
 #### Step D1: Present tree summary
 
-Read all open branches from file. Build compact tree summary (same format as Step 3) and one-sentence description of each open branch, with count of open and closed branches. Write it to `.reports/brainstorm/<slug>-tree.md` first; it is printed once, rendered as normal Markdown, as the last reply text before the first D2 question call (SKILL.md §Tree summary format). Each D2 question text carries the tree headline, relevant branch names/numbers, open/closed counts and `→ .reports/brainstorm/<slug>-tree.md`. Keep the question text to at most 6 plain lines (target 600 characters, hard cap 1,500), with no table, no pipe layout and no code fence. Options carry labels and one-line action descriptions, no `preview`; place the recommended option second without changing labels or answer mapping.
+Read all open branches from file. Build compact tree summary (same format as Step 3) and one-sentence description of each open branch, with count of open and closed branches. Write it to `.reports/brainstorm/<ts>/<slug>-tree.md` first; it is printed once, rendered as normal Markdown, as the last reply text before the first D2 question call (SKILL.md §Tree summary format). Each D2 question text carries the tree headline, relevant branch names/numbers, open/closed counts and `→ .reports/brainstorm/<ts>/<slug>-tree.md`. Keep the question text to at most 6 plain lines (target 600 characters, hard cap 1,500), with no table, no pipe layout and no code fence. Options carry labels and one-line action descriptions, no `preview`; place the recommended option second without changing labels or answer mapping.
 
 #### Step D2: Distillation questions
 
@@ -21,7 +21,7 @@ Ask up to **5 distillation questions** to narrow open branches into single direc
 
 Start with these (adapt based on tree content):
 
-1. "Which open branch best captures the core direction you want to pursue?" — list each open branch as lettered option. Note: if tree was saved and this branch doesn't already have ✓ status in file, update it to `resolved — chosen in distillation` in tree file; do not re-save file here — spec file written in D3 will reflect accepted direction.
+1. "Which open branch best captures the core direction you want to pursue?" — at most 4 options (AskUserQuestion cap): ≤4 open branches → one lettered option each; more → the 3 strongest branches as options plus `Another branch` (user replies with its number — branch numbers are in the printed tree and question text), never one option per branch. Note: if tree was saved and this branch doesn't already have ✓ status in file, update it to `resolved — chosen in distillation` in tree file; do not re-save file here — spec file written in D3 will reflect accepted direction.
 2. "Should any remaining open branches be combined with chosen direction, or are they separate concerns?"
 3. "What is the single most important success criterion for this idea?" 4–5. Ask additional questions based on gaps in open threads section or unresolved tensions between branches
 
@@ -29,7 +29,7 @@ After questions, briefly restate distilled direction in 2–3 sentences — synt
 
 #### Step D3: Write spec
 
-Build spec section by section into one assembled draft. Write nothing to disk until the full draft is assembled; then Write all 6 sections to `.reports/brainstorm/<slug>-spec-draft.md` first — a scratch copy for reading, not the approved spec. The full draft is printed once, rendered as normal Markdown, as the last reply text before the D3 question call. The question text carries the Goal headline, section count and `→ .reports/brainstorm/<slug>-spec-draft.md`. Keep the question text to at most 6 plain lines (target 600 characters, hard cap 1,500), with no table, no pipe layout and no code fence. Options carry labels and one-line action descriptions, no `preview`; place the recommended option second without changing labels or answer mapping.
+Build spec section by section into one assembled draft. Write nothing to disk until the full draft is assembled; then Write all 6 sections to `.reports/brainstorm/<ts>/<slug>-spec-draft.md` first — a scratch copy for reading, not the approved spec. The full draft is printed once, rendered as normal Markdown, as the last reply text before the D3 question call. The question text carries the Goal headline, section count and `→ .reports/brainstorm/<ts>/<slug>-spec-draft.md`. Keep the question text to at most 6 plain lines (target 600 characters, hard cap 1,500), with no table, no pipe layout and no code fence. Options carry labels and one-line action descriptions, no `preview`; place the recommended option second without changing labels or answer mapping.
 
 Once all 6 sections are assembled and the draft is saved and printed, invoke a single single-select `AskUserQuestion` for the full spec, with the plain draft summary in the question text and no `preview`:
 
@@ -53,7 +53,7 @@ On **(b)**: revise named sections, rewrite the draft file, print the revised dra
 
 **Section 6 — Exploration notes** (summary of closed branches and why) Draw from Pruning log in tree. Context for future readers — what was considered and rejected.
 
-**Gate**: do not write the spec to `.plans/blueprint/` until all 6 sections drafted and individually approved — the `.reports/` draft copy is only the reading copy, never the approved spec.
+**Gate**: do not write the spec to `.plans/blueprint/` until all 6 sections drafted and the full spec approved via option (a) of the single D3 question — the `.reports/` draft copy is only the reading copy, never the approved spec.
 
 **Graduation checklist** — verify before writing to disk:
 
@@ -101,7 +101,7 @@ After all sections approved: write to `.plans/blueprint/YYYY-MM-DD-<slug>.md` (n
 After writing spec, suggest:
 
 - **Spec targets `.claude/` config**: `/foundry:manage update <name> .plans/blueprint/<spec-file>` or `/foundry:manage create <type> <name> "description"`
-- **Spec targets application code or mixed changes**: `/brainstorm breakdown .plans/blueprint/<spec-file>` to generate action plan (action plan may emit `/develop:feature` and `/develop:fix` invocations — these require the `develop` plugin)
+- **Spec targets application code or mixed changes**: `/foundry:brainstorm breakdown .plans/blueprint/<spec-file>` to generate action plan (action plan may emit `/develop:feature` and `/develop:fix` invocations — these require the `develop` plugin)
 
 ### Action plan mode (Status: draft)
 
@@ -122,7 +122,7 @@ For each blocking question: call `AskUserQuestion` — one at a time, in order. 
    - Application code change → `/develop:feature "<goal>"` or `/develop:fix "<symptom>"` (requires `develop` plugin)
    - Documentation → `/develop:feature "<doc goal>"` (requires `develop` plugin)
    - Verification/testing → `/develop:feature "<test goal>"` (requires `develop` plugin) or manual check command
-3. Build ordered task table and Write it to `.reports/brainstorm/<slug>-plan.md` first. It is printed once, rendered as normal Markdown, as the last reply text before Step B3's question, which carries the plan headline, task count, task 1's invocation and `→ .reports/brainstorm/<slug>-plan.md` as plain text (see B3):
+3. Build ordered task table and Write it to `.reports/brainstorm/<ts>/<slug>-plan.md` first. It is printed once, rendered as normal Markdown, as the last reply text before Step B3's question, which carries the plan headline, task count, task 1's invocation and `→ .reports/brainstorm/<ts>/<slug>-plan.md` as plain text (see B3):
 
 > *Note: `/develop:feature` and `/develop:fix` require the `develop` plugin. If not installed, replace those commands with appropriate manual workflow.*
 
@@ -141,25 +141,25 @@ Spec: <file path>
 
 #### Step B3: Post-plan prompt
 
-**Model-invocability check**: inspect task 1's invocation from the action plan table (Step B2). If it resolves to `/foundry:manage create ...` / `/foundry:manage update ...` (or any other skill with `disable-model-invocation: true`), task 1 is **not** model-invocable — carry task 1's invocation in the question text, and omit the "Start task 1 now" option below. Otherwise task 1 is model-invocable — offer it normally.
+**Model-invocability check**: inspect task 1's invocation from the action plan table (Step B2). If it is a slash command — `/foundry:manage create ...` / `/foundry:manage update ...`, `/develop:feature ...`, `/develop:fix ...` (every `/develop:*` skill carries `disable-model-invocation: true`), or any other skill with `disable-model-invocation: true` — task 1 is **not** model-invocable — carry task 1's invocation in the question text, and omit the "Start task 1 now" option below. Only a full shell command (system install, shell setup, manual check command) is model-invocable — offer it normally.
 
-Both variants below are single-select. The action plan from Step B2 is saved to `.reports/brainstorm/<slug>-plan.md` first and printed once, rendered as normal Markdown, as the last reply text before the question. In both variants the question text carries the plan headline, task count, task 1's invocation and `→ .reports/brainstorm/<slug>-plan.md`. Keep the question text to at most 6 plain lines (target 600 characters, hard cap 1,500), with no table, no pipe layout and no code fence. Options carry labels and one-line action descriptions, no `preview`; place the recommended option second without changing labels or answer mapping.
+Both variants below are single-select. The action plan from Step B2 is saved to `.reports/brainstorm/<ts>/<slug>-plan.md` first and printed once, rendered as normal Markdown, as the last reply text before the question. In both variants the question text carries the plan headline, task count, task 1's invocation and `→ .reports/brainstorm/<ts>/<slug>-plan.md`. Keep the question text to at most 6 plain lines (target 600 characters, hard cap 1,500), with no table, no pipe layout and no code fence. Options carry labels and one-line action descriptions, no `preview`; place the recommended option second without changing labels or answer mapping.
 
 **When task 1 is model-invocable**, call `AskUserQuestion` tool — do NOT write options as plain text first. Map options directly into tool call arguments, with the plain plan summary in the question text and no `preview`:
 
 - question: "Plan ready. What next?"
 - (a) label: `Start task 1 now` — description: proceed immediately with task 1 invocation (★ recommended)
 - (b) label: `Copy plan` — description: output plan table as clean markdown block, then stop
-- (c) label: `Revise spec first` — description: stop; revise spec and re-run `/brainstorm breakdown <spec>`
+- (c) label: `Revise spec first` — description: stop; revise spec and re-run `/foundry:brainstorm breakdown <spec>`
 
-On **(a)** (requires `develop` plugin): before dispatching, verify no active `/develop:feature` task for this spec exists in TaskList — call `TaskList` and scan for tasks naming the spec slug or referencing `/develop:feature` against same spec file; if found, surface existing task to user and skip dispatch (prevents double-dispatch on re-entry). Otherwise proceed immediately with invocation from task 1. On **(b)**: output plan table as clean markdown block, then stop. On **(c)**: stop and tell user to revise spec and re-run `/brainstorm breakdown <spec>`.
+On **(a)**: before running, call `TaskList` and scan for an active task naming the spec slug or task 1's command; if found, surface existing task to user and skip the run (prevents double-dispatch on re-entry). Otherwise run task 1's shell command immediately via the Bash tool with an explicit `timeout`. On **(b)**: output plan table as clean markdown block, then stop. On **(c)**: stop and tell user to revise spec and re-run `/foundry:brainstorm breakdown <spec>`.
 
 **When task 1 is NOT model-invocable**, call `AskUserQuestion` with task 1's invocation and the plain plan summary in the question text, no `preview`; the saved action plan table is printed once immediately before this call:
 
 - question: "Plan ready. Task 1 requires manual invocation: `<task 1 invocation>`. What next?"
 - (a) label: `Copy plan` — description: output plan table as clean markdown block, then stop (★ recommended)
-- (b) label: `Revise spec first` — description: stop; revise spec and re-run `/brainstorm breakdown <spec>`
+- (b) label: `Revise spec first` — description: stop; revise spec and re-run `/foundry:brainstorm breakdown <spec>`
 
-On **(a)**: output plan table as clean markdown block, then stop. On **(b)**: stop and tell user to revise spec and re-run `/brainstorm breakdown <spec>`. Either way, end the final reply (after the last tool call) with task 1's invocation as a copy-pasteable command.
+On **(a)**: output plan table as clean markdown block, then stop. On **(b)**: stop and tell user to revise spec and re-run `/foundry:brainstorm breakdown <spec>`. Either way, end the final reply (after the last tool call) with task 1's invocation as a copy-pasteable command.
 
 End with `## Confidence` block per CLAUDE.md output standards.

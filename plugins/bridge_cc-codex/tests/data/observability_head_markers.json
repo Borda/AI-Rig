@@ -4,8 +4,8 @@
     "- Detached calls return their job identifier separately.",
     "MCP is complementary to the bridge as a whole but mandatory for the Codex \u2192 Claude Code direction.",
     "Long-running implementation work may be detached. Use the job identifier printed by the bridge to",
-    "/bridge:status <job-id>",
-    "/bridge:result <job-id>"
+    "/bridge:status [--workspace PATH] <job-id>",
+    "/bridge:result [--workspace PATH] <job-id>"
   ],
   "claude-skills/implement/SKILL.md": [
     "Return compact public envelope. `verdict`, `findings`, `files_touched`, `remaining`, and `blockers`"

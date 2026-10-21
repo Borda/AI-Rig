@@ -1,6 +1,6 @@
 ---
 name: create
-description: 'Interactive outline co-creation for developer advocacy content — collects format, audience profile, story arc (Problem→Journey→Insight→Action), and voice/tone; detects out-of-scope requests (FAQs, comparison tables); surfaces conflicts between user brief and audience needs. Writes approved outline to .plans/content/<slug>-outline.md for foundry:creator to execute. Use when starting a blog post, Marp slide deck, social thread, talk abstract, or lightning talk. SKIP: idea generation before an outline exists (use foundry:brainstorm — brainstorm explores directions into a tree; create turns an already-approved outline into finished content).'
+description: 'Interactive outline co-creation for developer advocacy content — collects format, audience profile, story arc (Problem→Journey→Insight→Action), and voice/tone; detects out-of-scope requests (FAQs, comparison tables); surfaces conflicts between user brief and audience needs. Writes approved outline to .plans/content/<slug>-outline.md for foundry:creator to execute. Use when starting a blog post, Marp slide deck, social thread, talk abstract, or lightning talk. SKIP: idea generation before an outline exists (use foundry:brainstorm — brainstorm explores directions into a tree; create co-creates the outline, foundry:creator writes the finished artifact).'
 argument-hint: '[topic]'
 disable-model-invocation: true
 allowed-tools: Write, Bash, TaskCreate, TaskUpdate, TaskList, AskUserQuestion, Agent
@@ -33,12 +33,14 @@ NOT for: implementation, code gen, README writing (use `foundry:doc-scribe`), st
 - No $ARGUMENTS: AskUserQuestion — "What are you trying to write about, and for whom?" (free text). After answer, re-check against out-of-scope conditions: answer describes FAQs, comparison tables, feature matrices, README content, or docstrings: stop. Respond: "This format doesn't fit a narrative arc — use `foundry:doc-scribe` for structured reference content." No further steps.
 - Out-of-scope gate (when $ARGUMENTS provided): brief describes FAQs, comparison tables, feature matrices, or ref docs: stop. Respond: "This format doesn't fit a narrative arc — use `foundry:doc-scribe` for structured reference content." No further steps.
 
-## Step 2 — Format and audience (1 AskUserQuestion call — 2 questions)
+## Step 2 — Format and audience (1 AskUserQuestion call — 2 questions; +1 follow-up call when Q1 = (d))
 
-**Format + audience** (single AskUserQuestion call with 2 questions):
+**Format + audience** (single AskUserQuestion call with 2 questions; AskUserQuestion allows at most 4 options per question, so the two short talk formats share slot (d)):
 
-- Q1 "What content format?": (a) blog post · (b) conference / meetup talk with Marp slide deck ★ · (c) social thread (X/LinkedIn) · (d) talk abstract (CFP submission) · (e) lightning talk (5–10 min)
+- Q1 "What content format?": (a) blog post · (b) conference / meetup talk with Marp slide deck ★ · (c) social thread (X/LinkedIn) · (d) short talk — talk abstract (CFP submission) or lightning talk (5–10 min)
 - Q2 "Who is the audience?": (a) beginners — new to problem space ★ · (b) intermediate — familiar with basics, seeking depth · (c) expert — know landscape, want novel insight · (d) describe your own profile
+
+Q1 = (d) → one follow-up AskUserQuestion call, 1 question "Which short talk format?": (a) talk abstract (CFP submission) · (b) lightning talk (5–10 min). No ★ — pure user choice. All five formats stay reachable.
 
 After answer: restate one sentence covering format + audience ("Got it — a [format] for [audience description].").
 
@@ -110,29 +112,19 @@ created: YYYY-MM-DD
 
 - Confirm file path to user.
 
-- Derive artifact extension `<ext>` from format selected in Step 2 — substitute literal value into spawn prompt before invoking `Agent()`; never pass literal `<ext>` placeholder. Mapping:
+- Artifact extension `<ext>` = `md` for every supported Step 2 format (Marp deck included) — substitute it literally into the spawn prompt before invoking `Agent()`, so the path on disk is `.plans/content/<slug>.md`, never `.plans/content/<slug>.<ext>`. A future format with a different extension must add its own mapping here.
 
-  | Format (Step 2 choice) | `<ext>` |
-  | -- | -- |
-  | a) blog post | `md` |
-  | b) conference / meetup talk with Marp slide deck | `md` (Marp markdown) |
-  | c) social thread (X/LinkedIn) | `md` |
-  | d) talk abstract (CFP submission) | `md` |
-  | e) lightning talk | `md` |
+> Creator spawn prompt must require an envelope even on exhaustion — `partial: true` plus what was finished.
 
-  Every supported format currently renders to a markdown source file, so `<ext>` resolves to `md` in every branch — substitution must still happen explicitly so artifact path on disk is `.plans/content/<slug>.md`, not `.plans/content/<slug>.<ext>`. If a future format uses a different extension, extend the table.
-
-> **Agent budget** — each spawn costs ~120,851 tok fixed overhead (~73 tool-calls' worth) plus ~12.0 s/call, so work under ~73 calls is cheaper done inline: spawn nothing — work-displacement only; an isolation-motivated spawn (adversarial reviewer, distinct specialist role, model tier, worktree) runs regardless of size. Keep each agent near ~55 tool-calls; past ~60 they stall without returning an envelope, forcing reconstruction from disk. Every spawn prompt must require an envelope even on exhaustion — `partial: true` plus what was finished.
-
-- End with `AskUserQuestion` gate, two options: (a) **Generate the full artifact now** — spawn `foundry:creator` via `Agent(subagent_type='foundry:creator', prompt='Read <outline-path> and generate the complete <format> artifact. Output file path: .plans/content/<slug>.<ext>')` where `<outline-path>` is resolved path from anti-overwrite step above, and `<slug>`, `<format>`, `<ext>` substituted from generated outline (see extension table above) before the call — never pass literal angle-bracket placeholders to spawned agent. (b) **Stop here** — I'll invoke `foundry:creator` manually when ready.
+- End with `AskUserQuestion` gate, two options: (a) **Generate the full artifact now** — spawn `foundry:creator` via `Agent(subagent_type='foundry:creator', name='creator-<slug>', description='write <format> artifact', prompt='Read <outline-path> and generate the complete <format> artifact. Output file path: .plans/content/<slug>.<ext>. Return ONLY a JSON envelope: status, file (path actually written, counter suffix included), partial (true on exhaustion, plus what was finished), confidence (your Confidence score).')` where `<outline-path>` is resolved path from anti-overwrite step above, and `<slug>`, `<format>`, `<ext>` substituted from generated outline (`<ext>` per the extension rule above) before the call — never pass literal angle-bracket placeholders to spawned agent. (b) **Stop here** — I'll invoke `foundry:creator` manually when ready.
 
   **Substitution verification before issuing Agent call (mandatory)**:
 
-  1. Construct final prompt string with all placeholders replaced
-  2. Scan constructed string for remaining `<` or `>` characters; either present means substitution incomplete — resolve missing value(s) before spawning
+  1. Construct final prompt, `name` and `description` strings with all placeholders replaced
+  2. Scan all three constructed strings for remaining `<` or `>` characters; either present means substitution incomplete — resolve missing value(s) before spawning
   3. Confirm outline file path in prompt matches `<outline-path>` exactly (resolved path including any counter suffix, not a guess)
 
-  If user selects (a), issue Agent() call in same response turn AFTER verification above passes. Do not narrate intent — call the tool. Same response: Write `.temp/create/agent-watch-creator.tsv` = `creator\t<artifact output path>\t900` (`_shared/agent-spawn-protocol.md` §Deadlines), end the turn — never `ScheduleWakeup`, `ListAgents`, `Monitor`, a filler call, a "waiting" line, or a sleep. On its notification run `python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/agent_watch.py" --state-dir ".temp/create"` once; row not `done` → report the artifact as ⏱ `timed_out`.
+  If user selects (a), issue Agent() call in same response turn AFTER verification above passes. Do not narrate intent — call the tool. Same response: Write `.temp/create/agent-watch-creator.tsv` = `creator-<slug>\t-\t900` (`_shared/agent-spawn-protocol.md` §Deadlines) — envelope-only row: creator's anti-overwrite may write `<slug>-2.md`, so a fixed deliverable path could match a stale prior artifact and mark `done` at once. End the turn — never `ScheduleWakeup`, `ListAgents`, `Monitor`, a filler call, a "waiting" line, or a sleep. On its notification run `python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/agent_watch.py" --state-dir ".temp/create"` once; notification carried the envelope → done, report its `file` path; no envelope → report the artifact as ⏱ `timed_out`.
 
 - End with `## Confidence` block per quality-gates.md protocol, score based on outline coverage of topic, arc, audience.
 
@@ -142,9 +134,9 @@ created: YYYY-MM-DD
 
 - **Execution model**: `disable-model-invocation: true` — Claude itself follows this SKILL.md as workflow template directly in main context (no autonomous sub-agent dispatch during outline phase). Step 4 gate selects (a): exactly one sub-agent spawned, `foundry:creator` (executes outline, writes full artifact). No other sub-agent invocations by this skill.
 
-- Question budget: **3 `AskUserQuestion` calls / 4 questions** when a topic is supplied (step 2 = 1 call carrying 2 questions; steps 3 and 4 = 1 question each). Topic absent adds step 1's opener → 4 calls / 5 questions. Each arc-conflict round in step 3 re-invokes that call → up to 6 calls / 7 questions worst case.
+- Question budget: **3 `AskUserQuestion` calls / 4 questions** when a topic is supplied (step 2 = 1 call carrying 2 questions; steps 3 and 4 = 1 question each). Step 2 short-talk follow-up (Q1 = (d)) adds 1 call / 1 question. Topic absent adds step 1's opener → 4 calls / 5 questions. Each arc-conflict round in step 3 re-invokes that call → up to 7 calls / 8 questions worst case.
 
-- Each AskUserQuestion uses lettered options with one ★ recommended default.
+- Each AskUserQuestion uses lettered options with one ★ recommended default, except the step 2 short-talk follow-up (pure user choice, no ★).
 
 - After each answer, restate understanding in 1–2 sentences before proceeding.
 
@@ -156,6 +148,6 @@ created: YYYY-MM-DD
 
 - `foundry:creator` reads output outline file, generates full artifact autonomously.
 
-- Outline spec files written to `.plans/content/` — see `artifact-lifecycle.md` for TTL policy (30d).
+- Outline spec files written to `.plans/content/` — `.plans/` is manual lifecycle, never auto-deleted (`artifact-lifecycle.md`).
 
 </notes>

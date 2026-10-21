@@ -19,8 +19,12 @@ Outputs:
     status 2 when the required path argument is absent.
 
 Failure:
-    Missing or unreadable program files are conservatively classified as simple; malformed
-    text is decoded with replacement characters rather than aborting the judge workflow.
+    A missing or unreadable program file prints a stderr diagnostic, prints ``true`` and
+    returns status 2. ``true`` fails closed: a "simple" verdict would skip the architect and
+    Codex passes and let the judge rate methodology sound with no program read at all,
+    while consumers capture stdout only (``X=$(python detect-complexity.py ...)``) and never
+    see the exit status. Malformed text is decoded with replacement characters rather than
+    aborting the judge workflow.
 
 Used by:
     Research judge skills that gate optional architect/Codex passes on program scope.
@@ -47,12 +51,12 @@ _CROSS_DOMAIN_RE = re.compile(
 )
 
 
-def _lines(program: Path) -> list[str]:
-    """Program lines without terminators; empty list when the file is missing or unreadable."""
+def _lines(program: Path) -> list[str] | None:
+    """Program lines without terminators; ``None`` when the file is missing or unreadable."""
     try:
         return program.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
-        return []
+        return None
 
 
 def _strategy(lines: list[str]) -> str:
@@ -74,8 +78,8 @@ def _strategy(lines: list[str]) -> str:
 def main(argv: list[str]) -> int:
     """Print the complexity verdict for argv's program path, or return 2 when absent.
 
-    ``argv`` includes the executable name. Missing or unreadable files yield ``false`` through :func:`_lines`; the
-    inspected program is never executed.
+    ``argv`` includes the executable name. A missing or unreadable file prints ``true`` (fail closed — run the full
+    review) and returns 2; the inspected program is never executed.
     """
     program = argv[1] if len(argv) > 1 else ""
     if not program:
@@ -83,6 +87,10 @@ def main(argv: list[str]) -> int:
         return 2
 
     lines = _lines(Path(program))
+    if lines is None:
+        print(f"detect-complexity: cannot read program file {program!r}; treating as complex", file=sys.stderr)
+        print("true")
+        return 2
     scope_count = sum(1 for line in lines if _SCOPE_RE.search(line))
     is_complex = scope_count > 1 or _strategy(lines) == "arch" or any(_CROSS_DOMAIN_RE.search(line) for line in lines)
 

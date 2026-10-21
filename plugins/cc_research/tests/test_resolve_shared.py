@@ -4,7 +4,8 @@ Output contract:
 
 * Cache hit → newest non-orphaned ``research/<version>/skills/_shared``.
 * No cache → source-tree fallback ``plugins/cc_research/skills/_shared``
-  with stderr warning. Always exits 0.
+  with stderr warning, only when the working directory is the research source repository
+  (``plugins/cc_research/.claude-plugin/plugin.json`` naming ``research``); otherwise exit 1.
 """
 
 from __future__ import annotations
@@ -75,13 +76,120 @@ def test_main_cache_hit_no_warning(
     assert captured.err == ""
 
 
+def _write_file(root: Path, relpath: str, text: str) -> None:
+    """Create ``root/relpath`` with ``text``, making parent directories as needed."""
+    target = root / relpath
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(text, encoding="utf-8")
+
+
 def test_main_fallback_warns(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Warn while returning a successful fallback without a cache."""
-    monkeypatch.setattr(resolve_shared.Path, "home", classmethod(lambda _cls: tmp_path))
+    """Inside the research source repository, warn while returning a successful fallback without a cache."""
+    _write_file(tmp_path, "plugins/cc_research/.claude-plugin/plugin.json", '{"name": "research"}')
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(resolve_shared.Path, "home", classmethod(lambda _cls: tmp_path / "home"))
     rc = resolve_shared.main([])
     captured = capsys.readouterr()
     assert rc == 0
     assert captured.out.strip() == "plugins/cc_research/skills/_shared"
     assert "source-tree fallback" in captured.err
+
+
+@pytest.mark.parametrize(
+    ("relpath", "text"),
+    [
+        pytest.param("plugins/cc_research/README.md", "readme", id="no-manifest"),
+        pytest.param(
+            "plugins/cc_research/.claude-plugin/plugin.json", '{"name": "develop"}', id="manifest-names-other-plugin"
+        ),
+        pytest.param("plugins/cc_research/.claude-plugin/plugin.json", "{not json", id="malformed-manifest"),
+    ],
+)
+def test_main_untrusted_cwd_exits_nonzero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], relpath: str, text: str
+) -> None:
+    """With no install, a cwd lacking research's own manifest is refused even without flags.
+
+    A repository under analysis can carry its own ``plugins/cc_research/skills/_shared``; printing it would let a caller
+    ``cat`` that repository's text as protocol.
+    """
+    (tmp_path / "plugins" / "cc_research" / "skills" / "_shared").mkdir(parents=True)
+    _write_file(tmp_path, relpath, text)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(resolve_shared.Path, "home", classmethod(lambda _cls: tmp_path / "home"))
+    rc = resolve_shared.main([])
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.out == ""
+    assert "not the research plugin source repository" in captured.err
+
+
+@pytest.fixture
+def cached_shared(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Build a cached research ``_shared`` dir with two docs; pin ``HOME``, ``TMPDIR``, ``CSID`` to ``tmp_path``."""
+    shared = tmp_path / ".claude/plugins/cache/borda-ai-rig/research/0.5.2/skills/_shared"
+    shared.mkdir(parents=True)
+    (shared / "agent-resolution.md").write_text("# agents\n", encoding="utf-8")
+    (shared / "unsupported-flag-protocol.md").write_text("# flags\n", encoding="utf-8")
+    tmp = tmp_path / "tmp"
+    tmp.mkdir()
+    monkeypatch.setattr(resolve_shared.Path, "home", classmethod(lambda _cls: tmp_path))
+    monkeypatch.setenv("TMPDIR", str(tmp))
+    monkeypatch.setenv("CSID", "sess1")
+    return shared
+
+
+def test_persist_writes_session_scoped_sentinel(cached_shared: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """``--persist`` writes ``<tmp>/<slug>-<CSID>`` (resolved path, trailing newline) and still prints the path."""
+    rc = resolve_shared.main(["--persist", "research-shared"])
+    sentinel = Path(__import__("os").environ["TMPDIR"]) / "research-shared-sess1"
+    assert rc == 0
+    assert sentinel.read_text(encoding="utf-8") == f"{cached_shared}\n"
+    assert capsys.readouterr().out.strip() == str(cached_shared)
+
+
+def test_emit_prints_docs_in_order_without_path(cached_shared: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """``--emit`` prints each document in argument order and does not print the path itself."""
+    rc = resolve_shared.main(["--emit", "unsupported-flag-protocol.md", "--emit", "agent-resolution.md"])
+    assert rc == 0
+    assert capsys.readouterr().out == "# flags\n# agents\n"
+
+
+def test_persist_and_emit_together(cached_shared: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """The Agent Resolution call shape persists the sentinel and emits the doc in one run."""
+    rc = resolve_shared.main(["--persist", "research-shared", "--emit", "agent-resolution.md"])
+    assert rc == 0
+    assert capsys.readouterr().out == "# agents\n"
+    assert (Path(__import__("os").environ["TMPDIR"]) / "research-shared-sess1").is_file()
+
+
+def test_missing_doc_fails_with_bang_message(cached_shared: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """A document absent from ``_shared`` exits 1 with a ``!`` message instead of printing nothing."""
+    rc = resolve_shared.main(["--emit", "no-such-doc.md"])
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.err.startswith("! no-such-doc.md not found under")
+    assert captured.out == ""
+
+
+@pytest.mark.parametrize("doc", ["../secret.md", "sub/doc.md", "..\\secret.md", ".."])
+def test_emit_rejects_non_basename(cached_shared: Path, doc: str, capsys: pytest.CaptureFixture[str]) -> None:
+    """``--emit`` refuses anything but a bare file name, so it cannot read outside ``_shared``."""
+    assert resolve_shared.main(["--emit", doc]) == 2
+    assert capsys.readouterr().out == ""
+
+
+def test_unresolvable_shared_dir_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """No cache and no source tree under the cwd → exit 1 with the resolution-failed message, nothing persisted."""
+    monkeypatch.setattr(resolve_shared.Path, "home", classmethod(lambda _cls: tmp_path))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    monkeypatch.setenv("CSID", "sess1")
+    rc = resolve_shared.main(["--persist", "research-shared", "--emit", "agent-resolution.md"])
+    assert rc == 1
+    assert "! Plugin path resolution failed" in capsys.readouterr().err
+    assert not (tmp_path / "research-shared-sess1").exists()

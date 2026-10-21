@@ -142,3 +142,24 @@ class TestArgparseCLI:
         )
         assert result.returncode == 0
         assert (tmp_path / result.stdout.strip()).is_dir()
+
+
+@pytest.mark.parametrize(
+    ("argv", "label"),
+    [
+        pytest.param(["myskill\n", "runs"], "slug-trailing-newline", id="slug-trailing-newline"),
+        pytest.param(["myskill", "runs\n"], "base-trailing-newline", id="base-trailing-newline"),
+    ],
+)
+def test_trailing_newline_is_rejected(
+    argv: list[str], label: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A newline-terminated slug or base dir is invalid, not silently accepted.
+
+    The validators are anchored with ``$``, which ``re.match`` lets match before a final newline; a value pasted with a
+    trailing newline would then reach the filesystem as a directory name.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    assert main(argv) == 2, label
+    assert not any(tmp_path.iterdir())

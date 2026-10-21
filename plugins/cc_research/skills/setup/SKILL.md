@@ -4,7 +4,6 @@ description: "Post-install setup for the research plugin. Run once after install
 argument-hint: '[--approve]'
 allowed-tools: Bash, AskUserQuestion
 effort: low
-model: sonnet
 ---
 
 <objective>
@@ -46,29 +45,18 @@ Parse `$ARGUMENTS` for `--approve` (case-insensitive) → `APPROVE_ALL=true`, el
 
 ## Step 1: Python
 
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-PYTHON_CMD=""
-for c in python python3; do
-    command -v "$c" >/dev/null 2>&1 && "$c" --version 2>/dev/null | grep -qE "Python 3\.(1[0-9]|[2-9][0-9])" && PYTHON_CMD="$c" && break
-done
-if [ -z "$PYTHON_CMD" ] && command -v py >/dev/null 2>&1 && py -3 --version 2>/dev/null | grep -qE "Python 3\.(1[0-9]|[2-9][0-9])"; then
-    PYTHON_CMD="py -3"
-fi
-[ -z "$PYTHON_CMD" ] && { printf "! Python 3.10+ not found — install it and re-run /research:setup\n"; exit 1; }
-printf "  Python: %s\n" "$PYTHON_CMD"
-echo "$PYTHON_CMD" > "${TMPDIR:-/tmp}/research-setup-python-${CSID}"
-```
+The probe runs at the head of the Step 2 block, in the same call: nothing is decided between them.
 
 ## Step 2: Dry run — see what would change
 
 `$CLAUDE_PLUGIN_ROOT` is the installed plugin version. `sync_rules.py` re-validates it (manifest exists, parses, declares `research`; `rules/` is a real directory holding at least one non-empty regular `*.md`) and aborts before touching anything if any check fails.
 
 ```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r PYTHON_CMD < "${TMPDIR:-/tmp}/research-setup-python-${CSID}" 2>/dev/null || PYTHON_CMD=python
+# later steps run bare `python` (plugin bin/python shim on PATH) — probe that exact command
+python --version 2>&1 | grep -qE "Python 3\.(1[0-9]|[2-9][0-9])" || { printf "! Python 3.10+ not found as 'python' — install it and re-run /research:setup\n"; exit 1; }
+printf "  Python: %s\n" "$(python --version 2>&1)"
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}"
-$PYTHON_CMD "$PLUGIN_ROOT/bin/sync_rules.py" --plugin-name research --plugin-root "$PLUGIN_ROOT" --dry-run  # timeout: 15000
+python "$PLUGIN_ROOT/bin/sync_rules.py" --plugin-name research --plugin-root "$PLUGIN_ROOT" --dry-run  # timeout: 15000
 ```
 
 Non-zero exit → print stderr verbatim and stop; nothing was modified.
@@ -78,19 +66,15 @@ Non-zero exit → print stderr verbatim and stop; nothing was modified.
 Run without `--dry-run`. `APPROVE_ALL=true` → run the `--approve` block below instead:
 
 ```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r PYTHON_CMD < "${TMPDIR:-/tmp}/research-setup-python-${CSID}" 2>/dev/null || PYTHON_CMD=python
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}"
-$PYTHON_CMD "$PLUGIN_ROOT/bin/sync_rules.py" --plugin-name research --plugin-root "$PLUGIN_ROOT"  # timeout: 15000
+python "$PLUGIN_ROOT/bin/sync_rules.py" --plugin-name research --plugin-root "$PLUGIN_ROOT"  # timeout: 15000
 ```
 
 `APPROVE_ALL=true` variant (also used when re-running after (b) in Step 4):
 
 ```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r PYTHON_CMD < "${TMPDIR:-/tmp}/research-setup-python-${CSID}" 2>/dev/null || PYTHON_CMD=python
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}"
-$PYTHON_CMD "$PLUGIN_ROOT/bin/sync_rules.py" --plugin-name research --plugin-root "$PLUGIN_ROOT" --approve  # timeout: 15000
+python "$PLUGIN_ROOT/bin/sync_rules.py" --plugin-name research --plugin-root "$PLUGIN_ROOT" --approve  # timeout: 15000
 ```
 
 Output lines, one per destination: `linked:` · `unchanged:` · `replaced (--approve):` · `removed obsolete:` · `conflict, kept as-is:` · `FAILED:`.
@@ -115,9 +99,9 @@ On **(b)**, run the `--approve` block from Step 3 and report the resulting `repl
 
 This plugin ships its own `permissions-allow.json` and `permissions-deny.json`. Claude Code does not read them from the plugin manifest, so without this step they are inert files — the allow entries never suppress a prompt and the deny entries never block anything.
 
-Merge is idempotent: `unique` keeps existing entries from duplicating. Each plugin merges only its own pair; the allow merge replaces the exact obsolete repository API rule and preserves every other entry.
+Merge is idempotent: existing entries never duplicate. Each plugin merges only its own pair; the allow merge replaces the exact obsolete repository API rule and preserves every other entry.
 
-Create the file when this is a first install, and back it up before any write — a standalone install may reach this step with no `~/.claude/settings.json` at all:
+The validation below uses Python’s standard JSON parser, so jq is not required. Create the file when this is a first install, and back it up before any write — a standalone install may reach this step with no `~/.claude/settings.json` at all:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -131,47 +115,21 @@ Report: "Backed up ~/.claude/settings.json → ~/.claude/settings.json.bak-<time
 
 Before merging, remove only the obsolete `Bash(gh api repos/*:*)` entry; nothing replaces it. Preserve the four broad allow entries already in settings, because foundry uses the same strings: `Bash(gh api repos/*)`, `Bash(gh api graphql:*)`, `Bash(git branch:*)`, and `Bash(git tag:*)`. Preserve every other user allow entry, all deny entries, and unrelated settings.
 
-Writes merged `permissions.allow` array:
+Writes merged `permissions.allow` and `permissions.deny` arrays via `merge_settings_permissions.py` — one atomic write covers both arrays, so allow never lands without deny. A missing or invalid shipped file aborts the block with settings unchanged. The same block then validates what was written: settings.json that no longer parses is restored from the backup taken above, the failure is printed, and the block exits 1 — report it and stop; zero exit → continue to Step 6:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}"
-_jq_result=$(jq --slurpfile perms "$PLUGIN_ROOT/.claude-plugin/permissions-allow.json" \
-    '.permissions.allow = (((.permissions.allow // []) | map(select(. != "Bash(gh api repos/*:*)"))) + $perms[0] | unique)' \
-    ~/.claude/settings.json)  # timeout: 5000
-[ $? -eq 0 ] && [ -n "$_jq_result" ] && printf '%s\n' "$_jq_result" > "${TMPDIR:-/tmp}/research_setup_tmp.json-${CSID}" && mv "${TMPDIR:-/tmp}/research_setup_tmp.json-${CSID}" ~/.claude/settings.json || { printf "! jq failed merging permissions.allow — settings.json unchanged\n"; exit 1; }
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/merge_settings_permissions.py" --allow "$PLUGIN_ROOT/.claude-plugin/permissions-allow.json" --drop-allow 'Bash(gh api repos/*:*)' --drop-allow 'Bash(claude:*)' --drop-allow 'Bash(find:*)' --drop-allow 'Bash(node:*)' --drop-allow 'Bash(sed:*)' --deny "$PLUGIN_ROOT/.claude-plugin/permissions-deny.json" || { printf "! permissions merge failed — settings.json unchanged\n"; exit 1; }  # timeout: 5000
+if ! python -m json.tool ~/.claude/settings.json > /dev/null; then  # timeout: 5000
+    IFS= read -r SETUP_BAK_TS < "${TMPDIR:-/tmp}/research-setup-bak-ts-${CSID}" 2>/dev/null || SETUP_BAK_TS=$(ls -t "$HOME/.claude/settings.json.bak-"* 2>/dev/null | head -1 | sed 's/.*\.bak-//')
+    cp "$HOME/.claude/settings.json.bak-${SETUP_BAK_TS}" ~/.claude/settings.json  # timeout: 5000
+    printf "! settings.json failed validation after the merge — restored from %s\n" "$HOME/.claude/settings.json.bak-${SETUP_BAK_TS}"
+    exit 1
+fi
 ```
 
-Report: "Added N new permissions.allow entries (M already present)." Also report whether the exact obsolete repository API rule was removed.
-
-Writes merged `permissions.deny` array:
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}"
-_jq_result=$(jq --slurpfile deny "$PLUGIN_ROOT/.claude-plugin/permissions-deny.json" \
-    '.permissions.deny = ((.permissions.deny // []) + $deny[0] | unique)' \
-    ~/.claude/settings.json)  # timeout: 5000
-[ $? -eq 0 ] && [ -n "$_jq_result" ] && printf '%s\n' "$_jq_result" > "${TMPDIR:-/tmp}/research_setup_tmp.json-${CSID}" && mv "${TMPDIR:-/tmp}/research_setup_tmp.json-${CSID}" ~/.claude/settings.json || { printf "! jq failed merging permissions.deny — settings.json unchanged\n"; exit 1; }
-```
-
-Report: "Added N new permissions.deny entries (M already present)." Also report: "stale gh deny entries from older versions: run /foundry:setup" (requires `foundry` plugin).
-
-Deny wins over allow in Claude Code, so merging both in either order yields the same effective policy.
-
-Validate what was written; settings.json that no longer parses is restored from the backup taken above:
-
-```bash
-jq empty ~/.claude/settings.json  # timeout: 5000
-```
-
-Zero exit → continue to Step 6. Non-zero exit → restore, report the failure, and stop:
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r SETUP_BAK_TS < "${TMPDIR:-/tmp}/research-setup-bak-ts-${CSID}" 2>/dev/null || SETUP_BAK_TS=$(ls -t "$HOME/.claude/settings.json.bak-"* 2>/dev/null | head -1 | sed 's/.*\.bak-//')
-cp "$HOME/.claude/settings.json.bak-${SETUP_BAK_TS}" ~/.claude/settings.json  # timeout: 5000
-```
+Writeback happens in-bash above (atomic rename). Report from the script's two output lines: "Added N new permissions.allow entries (M already present)." plus whether the exact obsolete repository API rule was removed (`dropped`), and "Added N new permissions.deny entries (M already present)." Also report: "stale gh deny entries from older versions: run /foundry:setup" (requires `foundry` plugin).
 
 ## Step 6: Report
 

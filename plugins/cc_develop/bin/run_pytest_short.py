@@ -23,7 +23,7 @@ passes its whole selection this way). ``--log PATH`` also writes the full, untru
 
 Exit codes:
     0 — pytest passed.
-    1 — target resolved outside the project directory (containment guard).
+    1 — target option-shaped or resolved outside the project directory, or ``--log`` outside it and the temp dir.
     1-5 — pytest reported failure/collection error (propagated unchanged).
     2 — pytest_cmd not in the allowlist (before pytest runs); also argparse's bad-argument exit.
 """
@@ -31,9 +31,11 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import os
 import shlex
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from shutil import which
 
@@ -52,15 +54,21 @@ _DEFAULT_TAIL_N: int = 20
 
 
 def _validate_target_in_cwd(target: str) -> None:
-    """Reject targets that resolve outside the current working directory.
+    """Reject option-shaped targets and targets that resolve outside the current working directory.
+
+    A target starting with ``-`` is refused outright: ``Path("-p")`` resolves under the working directory, so
+    containment alone lets an option-shaped token such as ``-p``, ``-c`` or ``--rootdir=...`` reach pytest's argv.
 
     Args:
         target: Raw target string from argv (file/dir path or pytest node id).
 
     Raises:
-        SystemExit: With exit code 1 if the resolved target escapes ``Path.cwd()``.
+        SystemExit: With exit code 1 if the target starts with ``-`` or its resolved path escapes ``Path.cwd()``.
             Pytest node ids (``path::nodeid``) have the path portion validated.
     """
+    if target.startswith("-"):
+        print(f"run-pytest-short: rejected option-shaped target: {target}", file=sys.stderr)
+        sys.exit(1)
     path_part = target.split("::", 1)[0]
     if not path_part:
         return
@@ -74,6 +82,33 @@ def _validate_target_in_cwd(target: str) -> None:
             file=sys.stderr,
         )
         sys.exit(1)
+
+
+def is_allowed_pytest_cmd(cmd: str) -> bool:
+    """Report whether ``cmd`` is one of the pytest launch commands this runner executes.
+
+    Public so ``dev_test_targets.py`` applies the same allowlist to the command it only prints in plan mode.
+
+    Examples:
+        >>> is_allowed_pytest_cmd("uv run pytest"), is_allowed_pytest_cmd("pytest; rm -rf /")
+        (True, False)
+    """
+    return cmd in _PYTEST_ALLOWLIST
+
+
+def within_workspace(path: str) -> bool:
+    """Report whether ``path`` resolves inside the working directory or the session temp dir.
+
+    Output paths (``--log``, ``--record-dir``) are created and written without further checks, so they are fenced to
+    the two places the skills legitimately write: the project (``.developments/<run>``) and ``$TMPDIR``.
+
+    Examples:
+        >>> within_workspace("logs/run.log")
+        True
+    """
+    resolved = Path(path).resolve()
+    roots = (Path.cwd(), Path(os.environ.get("TMPDIR") or tempfile.gettempdir()))
+    return any(resolved.is_relative_to(root.resolve()) for root in roots)
 
 
 # Hard cap on captured subprocess output (50 MB) — guards against adversarial test floods.
@@ -195,6 +230,9 @@ def main(argv: list[str] | None = None) -> int:
 
     for target in targets:
         _validate_target_in_cwd(target)
+    if log_path and not within_workspace(log_path):
+        print(f"run-pytest-short: rejected --log outside project and temp directories: {log_path}", file=sys.stderr)
+        return 1
 
     parts = shlex.split(pytest_cmd)
     parts[0] = _resolve(parts[0])

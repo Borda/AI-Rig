@@ -26,7 +26,7 @@ argparse is present only to supply ``-h/--help``.
 
 Exit codes:
     0  Success — value printed to stdout.
-    1  No balanced JSON object could be recovered from the input.
+    1  No balanced JSON object could be recovered from the input, or the input is over the size cap.
     2  Object recovered but the requested field is absent.
     3  Usage error (no field argument).
 """
@@ -40,6 +40,10 @@ from typing import Any
 
 #: Field names that request the entire recovered JSON object instead of one field of it.
 _WHOLE_OBJECT_ALIASES = frozenset({".", "_object", ""})
+#: Most characters of input accepted; an agent reply is far smaller, and recovery cost grows with input length.
+_MAX_INPUT_CHARS = 1_000_000
+#: Brace positions that may fail to parse before the scan gives up; each failure can cost a pass over the input.
+_MAX_FAILED_STARTS = 1000
 
 
 def recover_json_object(text: str) -> dict[str, Any] | None:
@@ -83,23 +87,24 @@ def recover_json_object(text: str) -> dict[str, Any] | None:
         >>> recover_json_object('{"a":1} and then {"b":2}')
         {'b': 2}
     """
-    open_positions = [i for i, ch in enumerate(text) if ch == "{"]
+    decoder = json.JSONDecoder()
     valid_objects: list[tuple[int, int, dict[str, Any]]] = []
-    for start in open_positions:
-        candidate = text[start:]
-        # json.loads only accepts trailing whitespace; truncate from the right
-        # past each '}' so prose following the object does not poison the parse.
-        for end in range(len(candidate), 0, -1):
-            if candidate[end - 1] != "}":
-                continue
-            try:
-                parsed = json.loads(candidate[:end])
-            except json.JSONDecodeError:
-                continue
-            if isinstance(parsed, dict):
-                valid_objects.append((start, start + end, parsed))
+    covered_until = 0  # starts inside an already-recovered object cannot be outermost
+    failed_starts = 0
+    for start, ch in enumerate(text):
+        if ch != "{" or start < covered_until:
+            continue
+        # raw_decode reads one value from `start` and ignores what follows, so prose after the object
+        # needs no truncation loop and each start costs one pass instead of one per closing brace.
+        try:
+            parsed, end = decoder.raw_decode(text, start)
+        except (json.JSONDecodeError, RecursionError):
+            failed_starts += 1
+            if failed_starts >= _MAX_FAILED_STARTS:
                 break
-            break  # parsed but wasn't an object — try the next '{'
+            continue
+        valid_objects.append((start, end, parsed))
+        covered_until = end
     outermost_objects = [
         current
         for current in valid_objects
@@ -180,7 +185,10 @@ def main(argv: list[str] | None = None) -> int:
     if len(args) >= 2 and args[1] != "-":
         text = args[1]
     else:
-        text = sys.stdin.read()
+        text = sys.stdin.read(_MAX_INPUT_CHARS + 1)
+    if len(text) > _MAX_INPUT_CHARS:
+        print(f"! extract_json_field: input exceeds {_MAX_INPUT_CHARS} characters", file=sys.stderr)
+        return 1
 
     obj = recover_json_object(text)
     if obj is None:

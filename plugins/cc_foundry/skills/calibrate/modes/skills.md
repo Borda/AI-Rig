@@ -6,7 +6,7 @@
 
 Skill domains:
 
-- `/audit` → synthetic `.claude/` config with N injected structural issues. **Focus on cross-file JUDGMENT issues** (tool-grant mismatch, inter-file contract split, dead dispatch path) — mechanical/deterministic classes (fence, tag, README/version drift, mode-dispatch, bash-persistence, orphaned-bin) already recall-benchmarked at 100% by `plugins/cc_foundry/tests/audit/test_audit_static.py` (Step-1b Layer-1 driver), so injecting those adds no signal; inject defects a per-file pass would MISS to measure Layer-2 holistic pass.
+- `/foundry:audit` → synthetic `.claude/` config with N injected structural issues. **Focus on cross-file JUDGMENT issues** (tool-grant mismatch, inter-file contract split, dead dispatch path) — mechanical/deterministic classes (fence, tag, README/version drift, mode-dispatch, bash-persistence, orphaned-bin) already recall-benchmarked at 100% by `plugins/cc_foundry/tests/audit/test_audit_static.py` (Step-1b Layer-1 driver), so injecting those adds no signal; inject defects a per-file pass would MISS to measure Layer-2 holistic pass.
 - `/oss:review` → **currently excluded** — skill fetches live GitHub PR via `gh`; synthetic Python input cannot substitute; pipeline generates problems but skill cannot run them; deferred until fixture diff-format mocking added *(skip — even if oss plugin present)*
 - `/research:plan` → synthetic optimization goal (e.g. "reduce pytest runtime by 30%"); measure whether plan mode produces complete, valid `program.md` with all required sections, plausible `metric_cmd`, correct `direction`, coherent `scope_files` *(research plugin required — skip if `$RESEARCH_AVAILABLE` empty)*
 - `/research:judge` → synthetic `program.md` with N injected plan-quality issues (e.g. missing guard command, absent `direction`, non-existent `scope_files` path, invalid `agent_strategy`); measure whether judge correctly identifies each injected issue at right severity *(research plugin required — skip if `$RESEARCH_AVAILABLE` empty)*
@@ -24,10 +24,8 @@ Skill domains:
 - `/oss:analyse` → synthetic GitHub issue number (fixture: known type, known thread length, known duplicate link); measure whether thread analysis correctly classifies item type (issue/PR/discussion), surfaces duplicate, produces actionable summary; ground truth = injected issue metadata *(oss plugin required — skip if `$OSS_AVAILABLE` empty)*
 - `/oss:analyse vitality` → synthetic repo vitality dataset (fixture: known axis scores, known signal values per axis); measure whether vitality scoring phase correctly scores each axis and produces health scorecard matching ground truth; ground truth = injected per-axis scores and label thresholds *(oss plugin required — skip if `$OSS_AVAILABLE` empty; calibrates scoring phase only — data fetching via gh API excluded)*
 - `/oss:release` → synthetic git log with N commits of known classification (breaking, feature, fix, internal); measure whether release notes correctly classify each commit and omit internal-only entries; ground truth = injected commit metadata and expected output sections *(oss plugin required — skip if `$OSS_AVAILABLE` empty)*
-- `/distill:memory` → synthetic `.notes/lessons.md` corpus with N injected lessons of known disposition (→ rule, → agent update, → skill update, → already covered, → too narrow); measure whether distill correctly classifies each lesson and generates accurate proposals; ground truth = injected dispositions and target files
-- `/manage:create` → synthetic create-agent and create-skill directives; measure whether output file has valid frontmatter, correct structure, NOT-for clause, non-empty domain content; ground truth = structural completeness checklist
-- `/manage:update` → synthetic rename and content-edit directives against fixture agent/skill file; measure whether cross-reference propagation complete and description-changed flag correctly set; ground truth = known cross-ref targets in fixture
-- `/brainstorm` → synthetic creative brief or feature goal; measure whether brainstorm correctly generates spec file with required sections (goal, constraints, options) and blueprint tree with coherent structure; ground truth = required sections checklist
+- `/foundry:distill memory` → synthetic `.notes/lessons.md` corpus with N injected lessons of known disposition (→ rule, → agent update, → skill update, → already covered, → too narrow); measure whether distill correctly classifies each lesson and generates accurate proposals; ground truth = injected dispositions and target files
+- `/foundry:manage update` → synthetic rename and content-edit directives against fixture agent/skill file; measure whether cross-reference propagation complete and description-changed flag correctly set; ground truth = known cross-ref targets in fixture
 - `/humanizer` → synthetic human-facing prose seeded with N AI-writing tells of known class (LLM-vocabulary cliché, banned construction, formatting tell — taxonomy from `humanizer`'s own SKILL.md); run the target in `check <file>` read-only mode so scoring reads a findings list, not a rewritten file; recall = injected tells reported; `scope_fp` = flagged spans that were never injected (punishes over-flagging of ordinary human prose); ground truth = the injected tell list with class per span
 
 ### Step 2: Spawn skill pipeline subagents
@@ -45,21 +43,21 @@ For mode-specific targets (`/research:plan`, `/research:judge`): prepend relevan
 
 Read resolved path (plan wizard steps P-P0–P-P3 for `/research:plan`; steps J1–J6 for `/research:judge`). `<TARGET>` substitution uses kebab form without leading slash (e.g. `research-plan`, `research-judge`).
 
-For `/research:judge`, calibration pattern mirrors `/audit`: inject N specific known issues into synthetic `program.md`, score recall of injected issues against judge's findings list. Ground truth = injected issues and severities (per J2 severity table: critical/high/medium/low).
+For `/research:judge`, calibration pattern mirrors `/foundry:audit`: inject N specific known issues into synthetic `program.md`, score recall of injected issues against judge's findings list. Ground truth = injected issues and severities (per J2 severity table: critical/high/medium/low).
 
 For `/research:plan`, calibration measures output completeness: generate synthetic goal, score whether produced `program.md` (a) contains all four required sections (Goal, Metric, Guard, Config), (b) has `direction` field, (c) has non-empty `scope_files`, (d) includes plausible `metric_cmd`. Ground truth = checklist; recall = fraction of checklist items present.
 
-Resolve template dir first — no `~/.claude/skills/` copy exists (setup symlinks only `rules/*.md` and `TEAM_PROTOCOL.md`):
+Load the pipeline template first — no `~/.claude/skills/` copy exists (setup symlinks only `rules/*.md` and `TEAM_PROTOCOL.md`):
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/calibrate-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
-CALIB_TPL=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_skill_subdir.py" calibrate templates $([ "$LOCAL_MODE" = "true" ] && echo --local))  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" calibrate templates pipeline-prompt.md $([ "$LOCAL_MODE" = "true" ] && echo --local)  # timeout: 5000
 ```
 
-Each subagent receives pipeline template from `$CALIB_TPL/pipeline-prompt.md` with substitutions:
+Each subagent receives the pipeline template printed above with substitutions:
 
-- `<TARGET>` = skill name including `/` prefix (e.g., `/audit`)
+- `<TARGET>` = skill name including `/` prefix (e.g., `/foundry:audit`)
 - `<DOMAIN>` = domain string from table above for that skill
 - `<N>` = 3 (fast) or 10 (full)
 - `<TIMESTAMP>` = current run timestamp
@@ -70,43 +68,39 @@ Each subagent receives pipeline template from `$CALIB_TPL/pipeline-prompt.md` wi
 **Partial-calibration principle**: individual skill modes with deterministic, auditable outputs can be calibrated even when full orchestration skill cannot. Full `optimize run` loop (requires live metric commands, git state, real guard scripts) excluded. Sub-modes producing structured, inspectable output in scope:
 
 - `optimize plan` — config wizard; output is `program.md` checkable against completeness schema
-- `optimize judge` — plan auditor; output is findings list checkable against injected known issues (same pattern as `/audit`)
+- `optimize judge` — plan auditor; output is findings list checkable against injected known issues (same pattern as `/foundry:audit`)
 
-Other orchestration-heavy skills excluded: `resolve`, `manage`, `develop`, `research`, `create` (content outline co-creation — interactive; no deterministic ground truth). Outputs too context-dependent or long-horizon for synthetic ground truth without significant test infrastructure. (`/brainstorm` moved to domain table above — see line 28.)
+Other orchestration-heavy skills excluded: `resolve`, `manage`, `develop`, `research`. Outputs too context-dependent or long-horizon for synthetic ground truth without significant test infrastructure.
+
+Interactive skills excluded — their workflow is driven by `AskUserQuestion` answers, which a calibration pipeline subagent cannot receive, and no deterministic ground truth exists: `create` (content outline co-creation), `/brainstorm` (idea-to-spec co-creation), `/foundry:manage create` (scaffold choices confirmed with the user).
 
 Run dir per skill: `.reports/calibrate/<TIMESTAMP>/<TARGET>/` (strip `/` from target name for dir, e.g. `audit` or `review`)
 
 ### Future Candidates
 
-Modes evaluated for calibration but deferred — significant barriers. `/audit` Check 19 skips modes listed here to avoid false-positive recommendations.
+Modes evaluated for calibration but deferred — significant barriers. `/foundry:audit` Check 22 skips modes listed here to avoid false-positive recommendations. Modes already in the domain table above (`/oss:analyse`, `/oss:analyse vitality`, `/oss:release` notes incl. `--changelog`/`--summary`, `/foundry:distill memory`) are not repeated here.
 
 | Mode | Barrier | Re-evaluate when |
 | -- | -- | -- |
-| `/analyse-thread` | Requires GitHub API mocking — thread analysis fetches live issue/PR data | GitHub fixture infrastructure exists |
-| `/analyse-health` | Requires live GitHub API — health overview fetches real repo stats (issue/PR counts) | GitHub fixture infrastructure exists |
-| `/analyse-ecosystem` | Requires live GitHub API — ecosystem analysis fetches real package/dependency data | GitHub fixture infrastructure exists |
-| `/release-notes` | Requires controlled git history — output depends on real commit range | Git-history fixture helper exists |
-| `/release-changelog` | Same as `/release-notes` — git-history dependent | Git-history fixture helper exists |
-| `/release-summary` | Same as `/release-notes` — git-history dependent | Git-history fixture helper exists |
-| `/release-audit` | Requires controlled repo state (version tags, CHANGELOG, CI status) | Release fixture infrastructure exists |
-| `/release-demo` | Requires controlled git history — output depends on real commit range | Git-history fixture helper exists |
-| `/develop-plan` | Output somewhat subjective; no clear ground-truth checklist beyond section presence | Structured plan schema formalized |
-| `/distill-review` | Reads real agent/skill files; synthetic roster possible but overlaps `/audit` calibration | Distinct synthetic scenarios identified |
-| `/distill-prune` | Likely calibratable — construct synthetic memory corpus with known entries to drop (stale, redundant, duplicated-in-CLAUDE.md), score recall of correct drop/trim/keep decisions; ground truth constructable | Synthetic memory corpus fixtures built |
-| `/distill-memory` | Promoted to domain table — synthetic lesson corpus calibration now defined | — |
-| `/distill-external` | Calibratable with two concrete GT fixture cases: **(1) caveman plugin** — narrow communication-mode tool, no local overlap → GT outcome: install-as-is recommendation; **(2) Karpathy autoresearch** — research automation with strong structural overlap to `research:` plugin → GT outcome: Group A candidates map to research plugin, digest recommended. Score whether adoption-table lane assignments (adopt-as-is/tweak/discuss/skip) and install-as-is flag match GT. Ground truth constructable without live external source — fixture = static snapshot of each tool's agent/skill/rule files. | GT fixture snapshots authored |
+| `/oss:analyse ecosystem` | Requires live GitHub API — ecosystem analysis fetches real package/dependency data | GitHub fixture infrastructure exists |
+| `/oss:release audit` | Requires controlled repo state (version tags, CHANGELOG, CI status) | Release fixture infrastructure exists |
+| `/oss:release demo` | Requires controlled git history — output depends on real commit range | Git-history fixture helper exists |
+| `/develop:plan` | Output somewhat subjective; no clear ground-truth checklist beyond section presence | Structured plan schema formalized |
+| `/foundry:distill` (default, no mode) | Reads real agent/skill files; synthetic roster possible but overlaps `/foundry:audit` calibration | Distinct synthetic scenarios identified |
+| `/foundry:distill prune` | Likely calibratable — construct synthetic memory corpus with known entries to drop (stale, redundant, duplicated-in-CLAUDE.md), score recall of correct drop/trim/keep decisions; ground truth constructable | Synthetic memory corpus fixtures built |
+| `/foundry:distill external` | Calibratable with two concrete GT fixture cases: **(1) caveman plugin** — narrow communication-mode tool, no local overlap → GT outcome: install-as-is recommendation; **(2) Karpathy autoresearch** — research automation with strong structural overlap to `research:` plugin → GT outcome: Group A candidates map to research plugin, digest recommended. Score whether adoption-table lane assignments (adopt-as-is/tweak/discuss/skip) and install-as-is flag match GT. Ground truth constructable without live external source — fixture = static snapshot of each tool's agent/skill/rule files. | GT fixture snapshots authored |
 
 **Excluded** (inherently non-calibratable — documented to avoid recurring evaluation):
 
 - `/resolve` — orchestrates live PR review, lint, push; fully external-service-dependent
-- `/manage` (delete, perm ops) — CRUD on config files with no structured findings list to score; `/manage:create` and `/manage:update` promoted to domain table with structural completeness ground truth
+- `/foundry:manage` (delete, perm ops) — CRUD on config files with no structured findings list to score; `/foundry:manage update` promoted to domain table with structural completeness ground truth; `/foundry:manage create` excluded as interactive (Interactive skills excluded note)
 - `/develop:feature`/`/develop:fix`/`/develop:refactor`/`/develop:debug` — full dev lifecycle; requires git, tests, linting; blast-radius sub-task calibratable via `/codemap-py:query-code` (`fn-blast`) above
 - `/research:topic` — SOTA literature search; depends on live web results; no deterministic ground truth
 - `/investigate` — open-ended diagnosis; output varies completely by symptom
 - `/foundry:session` — session lifecycle management — no quality signal; output fully context-dependent
 - `/foundry:profile` — thin wrapper over `bin/timing_analyzer.py` and `bin/cost_analyzer.py`; output is deterministic analyzer text already pinned by `tests/test_timing_analyzer.py` and `tests/test_cost_analyzer.py`, so a run would score the scripts rather than the instructions
 - `/calibrate` itself — meta-calibration circular
-- `/research:run` — sustained iteration loop with live metric commands and git state
+- `/research:run` (full multi-iteration loop only — R0–R3 setup steps calibrated in domain table above) — sustained iteration loop with live metric commands and git state
 - `/research:run --resume` — continuation of run; same barriers as run
 - `/research:sweep` (sustained multi-run execution only — auto-plan/judge-gate/handoff phase calibrated in domain table above) — same barrier as `/research:run`'s excluded full loop: live metrics and git state
 - `/research:fortify` (live ablation-execution phase only — F1–F3 ranking/reviewer-questions calibrated in domain table above) — requires completed `/research:run` ablation output; ground truth not constructable synthetically for this remaining phase

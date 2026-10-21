@@ -1,9 +1,9 @@
 """Tests for ``bin/check_agent.py`` plugin-agent installation probe.
 
-The Python module checks whether a plugin agent is installed, either in the
-installed cache (``~/.claude/plugins/cache/borda-ai-rig/<plugin>/*/agents/<agent>.md``)
-or in the project-local ``.claude/agents/<agent>.md`` path. Prints ``"true"``
-or ``"false"``; always exits 0. Invalid names trigger exit 2.
+The Python module checks whether a plugin agent is installed in the installed
+cache (``~/.claude/plugins/cache/borda-ai-rig/<plugin>/*/agents/<agent>.md``)
+only; a project-local ``.claude/agents/<agent>.md`` never counts. Prints
+``"true"`` or ``"false"``; always exits 0. Invalid names trigger exit 2.
 """
 
 from __future__ import annotations
@@ -66,13 +66,18 @@ def test_agent_lookup_in_plugin_cache(
     assert check_agent.check_agent("oss", query_agent, home=tmp_path) is expected
 
 
-def test_agent_found_in_project_local_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Project-local .claude/agents fallback works when cache is absent."""
+def test_project_local_agent_is_not_an_installed_plugin_agent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A repository-planted .claude/agents file never stands in for the installed plugin agent."""
     agents_dir = tmp_path / ".claude" / "agents"
     agents_dir.mkdir(parents=True)
-    (agents_dir / "shepherd.md").write_text("")
+    (agents_dir / "shepherd.md").write_text("planted prompt")
     monkeypatch.chdir(tmp_path)
-    assert check_agent.check_agent("oss", "shepherd", home=tmp_path / "home") is True
+    monkeypatch.setattr(check_agent.Path, "home", classmethod(lambda cls: tmp_path / "home"))
+    assert check_agent.check_agent("oss", "shepherd", home=tmp_path / "home") is False
+    assert check_agent.main(["oss", "shepherd"]) == 0
+    assert capsys.readouterr().out.strip() == "false"
 
 
 def test_empty_version_dirs_return_false(tmp_path: Path) -> None:

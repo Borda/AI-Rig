@@ -6,6 +6,7 @@ field, no JSON, stdin, usage error).
 
 from __future__ import annotations
 
+import io
 import json
 import sys
 
@@ -16,6 +17,43 @@ from extract_json_field import format_field, recover_json_object
 # ---------------------------------------------------------------------------
 # recover_json_object
 # ---------------------------------------------------------------------------
+
+
+class TestRecoveryIsBounded:
+    """Recovery stays linear on large objects and gives up on pathological input instead of stalling the caller."""
+
+    def test_large_object_with_many_nested_braces_is_recovered(self) -> None:
+        """Twenty thousand nested objects parse in one pass.
+
+        The earlier scan retried every ``{`` against every trailing ``}``, so a big reply made the caller wait minutes.
+        """
+        payload = {"items": [{"i": i} for i in range(20_000)]}
+
+        assert recover_json_object("result: " + json.dumps(payload) + " done") == payload
+
+    def test_unclosed_deep_nesting_gives_up_without_raising(self) -> None:
+        """An unclosed, deeply nested run of braces yields ``None`` rather than a ``RecursionError`` or a long scan."""
+        assert recover_json_object('{"a":' * 100_000) is None
+
+    def test_input_over_the_cap_is_refused(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Stdin longer than the cap exits 1 with a diagnostic; the cap is read from one character past it."""
+        monkeypatch.setattr(extract_json_field, "_MAX_INPUT_CHARS", 10)
+        monkeypatch.setattr(sys, "stdin", io.StringIO('{"a":1}' + " " * 4))
+
+        assert extract_json_field.main(["a", "-"]) == 1
+        assert "exceeds" in capsys.readouterr().err
+
+    def test_input_at_the_cap_is_accepted(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Input exactly at the cap still parses."""
+        monkeypatch.setattr(extract_json_field, "_MAX_INPUT_CHARS", 7)
+        monkeypatch.setattr(sys, "stdin", io.StringIO('{"a":1}'))
+
+        assert extract_json_field.main(["a", "-"]) == 0
+        assert capsys.readouterr().out == "1\n"
 
 
 class TestRecoverJsonObject:

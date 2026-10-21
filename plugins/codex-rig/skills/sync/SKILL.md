@@ -11,7 +11,7 @@ description: Dry-run active plugin cache drift; refresh/reinstall only with appr
 
 Inspect and refresh the public-GitHub Codex Rig plugin through supported Codex CLI operations. Never copy files into an installed cache, edit Codex configuration by hand, or treat cached package directories as mutable source trees.
 
-Sync never mutates external agent files. Direct plugin installation does not install Codex-home permissions; explicit setup or sync invokes the installed-package GitHub profile helper preserving explicit default permissions and supplying `local-workflow` when no default exists. This checkout separately defines a project-local opt-in profile. Never edit Codex home by hand in place of this managed lifecycle. Before plugin removal, run `agent-shims remove` while manager is still available. After refresh or reinstall, run `agent-shims doctor` to report prior shim residue; new installation and relinking remain platform-blocked. Report unknown or modified `codex-rig-*.toml` files without removing, adopting, or repairing them.
+Sync never mutates external agent files. Direct plugin installation does not install Codex-home permissions; explicit setup or sync invokes the installed-package GitHub profile helper preserving explicit default permissions and supplying `local-workflow` when no default exists. This checkout separately defines a project-local opt-in profile. Never edit Codex home by hand in place of this managed lifecycle. Before plugin removal, run `agent-shims remove` while manager is still available. On native Windows, where `agent-shims remove` is platform-blocked, run `agent-shims doctor` instead, record its reported residue, and proceed with that documented residue; manual shim removal stays the user's action. After refresh or reinstall, run `agent-shims doctor` to report prior shim residue; new installation and relinking remain platform-blocked. Report unknown or modified `codex-rig-*.toml` files without removing, adopting, or repairing them.
 
 ## Input Schema
 
@@ -31,7 +31,7 @@ Only frozen marketplace and plugin identifiers are accepted. `check` is default 
 
 ### 01: Create the result directory
 
-Create `.reports/codex/sync/<timestamp>/` in consuming project. Record Codex CLI version, resolved executable, `CODEX_HOME` presence without secret values, operating system, and requested mode.
+Run `create_run.py --skill sync` per `../../shared/helper-cli-contract.md` in consuming project. Record Codex CLI version, resolved executable, `CODEX_HOME` presence without secret values, operating system, and requested mode.
 
 ### 02: Inspect current state without mutation
 
@@ -48,7 +48,7 @@ For one active installation, resolve selected cache path reported or implied by 
 
 Inspect the managed `github-read` config state without writing: report absent, current, or unverifiable. Inspect legacy plugin-owned reader and PR rules for safe removal; an edited or unrecognized owned rule blocks setup before writes. Absence is valid before setup and does not authorize installation during `check`.
 
-### Global instruction health
+### 02b: Global instruction health
 
 At explicit check or after an approved refresh, run the active installed package's `scripts/install_global_agents.py --check --source <installed-package>/assets/AGENTS.md --codex-home <home>`, where `<installed-package>` is the selected cache path from step 02. The block renders the plugin root, so a marketplace-checkout `--source` needs `--plugin-root <installed-package>` or reports a current block as `stale-managed-template`. A nonzero result is degraded instruction composition even when package hashes pass. Report overlapping or stale global policy and the bounded recognizable legacy skill signatures; do not declare healthy or delete user skills automatically. For a verified old duplicate prefix, prepare its exact digest and review the prefix before offering the separate `--migrate-legacy-prefix-sha256` lifecycle action. That action backs up the entire file and preserves the custom suffix; it does not remove legacy skills. Source checkout edits do not update an active installation.
 
@@ -64,7 +64,7 @@ Show installed state, marketplace source, configured ref or default-branch track
 
 After approval, use only commands confirmed by authoritative help:
 
-Apply full networked CLI approval/denial contract in `../../shared/native-skill-contract.md` to the complete owning command for each Git marketplace add/upgrade or `sync_codex.py` wrapper that owns one. Operation-specific brief: `Action and purpose`: refresh approved marketplace and reconcile selected Codex Rig plugin; `External capability`: marketplace download and lifecycle refresh; `Credential behavior`: use configured Codex marketplace access without reading or changing credentials; `Filesystem and worktree effects`: change local plugin cache and Codex-home plugin state, never source worktree; `Retry policy and safe denial outcome`: stop turn on denial, leave checked state unchanged. Runtime approval is separate from lifecycle approval, never expands marketplace, plugin, ref, or mutation scope; never request a broad `codex` approval prefix. Local marketplace/plugin listing stays sandboxed. `codex plugin add` from configured snapshot needs no separate network escalation; an approved wrapper already owns its nested marketplace add/upgrade.
+Apply full networked CLI approval/denial contract in [Networked CLI Approval](../../shared/native-skill-contract.md#networked-cli-approval) and [Approval Brief](../../shared/native-skill-contract.md#approval-brief) to the complete owning command for each Git marketplace add/upgrade or `sync_codex.py` wrapper that owns one. Operation-specific brief: `Action and purpose`: refresh approved marketplace and reconcile selected Codex Rig plugin; `External capability`: marketplace download and lifecycle refresh; `Credential behavior`: use configured Codex marketplace access without reading or changing credentials; `Filesystem and worktree effects`: change local plugin cache and Codex-home plugin state, never source worktree; `Retry policy and safe denial outcome`: stop turn on denial, leave checked state unchanged. Runtime approval is separate from lifecycle approval, never expands marketplace, plugin, ref, or mutation scope; never request a broad `codex` approval prefix. Local marketplace/plugin listing stays sandboxed. `codex plugin add` from configured snapshot needs no separate network escalation; an approved wrapper already owns its nested marketplace add/upgrade.
 
 ```bash
 codex plugin marketplace add Borda/AI-Rig
@@ -72,11 +72,11 @@ codex plugin marketplace upgrade borda-ai-rig
 codex plugin add codex-rig@borda-ai-rig
 ```
 
-`Borda/AI-Rig` (the GitHub-style slug the CLI's `marketplace add` expects) and `borda-ai-rig` (the frozen id used by `upgrade`, `plugin add`, and everywhere else in this file) name the same marketplace — the latter matches the `name` field in the repo's `.agents/plugins/marketplace.json`, the canonical id source. Supply each literally as shown; nothing here implies the CLI derives one from the other.
+`Borda/AI-Rig` (the GitHub-style slug the CLI's `marketplace add` expects) and `borda-ai-rig` (the frozen id used by `upgrade`, `plugin add`, and everywhere else in this file) name the same marketplace — the latter matches the marketplace `name` reported by `codex plugin marketplace list --json` in step 02, the canonical id source. Supply each literally as shown; nothing here implies the CLI derives one from the other.
 
 For release pin, supply `--ref` with published revision whose Codex Rig package includes `scripts/install_github_read_rules.py`; older helper-free revisions cannot complete this refresh workflow. Native `sync_codex.py` accepts same selection through `--codex-ref`.
 
-Omitting `--ref` follows remote default branch. An explicit ref pins it. Never silently change existing marketplace between pinned and unpinned modes: report mismatch, require legacy shim cleanup before deliberate marketplace removal and re-addition. Never use `git clone`, edit marketplace configuration, delete old cache directories, or force update. A failed refresh must preserve and report prior installation state; never claim rollback unless CLI evidence proves it.
+Omitting `--ref` follows remote default branch. An explicit ref pins it. Never silently change existing marketplace between pinned and unpinned modes: report mismatch, require legacy shim cleanup before deliberate marketplace removal and re-addition (on native Windows, the documented `agent-shims doctor` residue replaces the blocked `remove`). Never use `git clone`, edit marketplace configuration, delete old cache directories, or force update. A failed refresh must preserve and report prior installation state; never claim rollback unless CLI evidence proves it.
 
 The native sync wrapper verifies selected source package hashes/closure and required profile helper before managed-plugin removal. An already configured explicit pin is checked before marketplace mutation; default-branch refresh and new marketplace registration may precede source verification.
 

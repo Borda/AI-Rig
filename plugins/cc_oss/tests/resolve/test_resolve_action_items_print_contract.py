@@ -11,6 +11,17 @@ import pytest
 
 _SKILL = Path(__file__).resolve().parents[2] / "skills/resolve/SKILL.md"
 _RESOLVE_DIR = _SKILL.parent
+
+_DISPATCH_PARTS = ("prelude", "phase1", "phase2", "phase3")
+
+
+def _dispatch_text() -> str:
+    """Join Step 8's dispatch files in load order: prelude, Phase 1, Phase 2, Phase 3."""
+    return "\n".join(
+        (_RESOLVE_DIR / f"modes/dispatch-{part}.md").read_text(encoding="utf-8") for part in _DISPATCH_PARTS
+    )
+
+
 _PR_INTELLIGENCE = _SKILL.parent / "modes/pr-intelligence.md"
 _REPORT_INTELLIGENCE = _SKILL.parent / "modes/report-intelligence.md"
 
@@ -267,28 +278,28 @@ class TestNoReplyTextBeforeAQuestion:
                 id="push-compact-hint-in-question-text",
             ),
             pytest.param(
-                "modes/action-item-dispatch.md",
+                "modes/dispatch-phase2.md",
                 "**Group-preview gate",
                 "Derive `<group_tag>`",
                 "2. The question text closes with this line",
                 id="custom-gate-compact-hint-in-question-text",
             ),
             pytest.param(
-                "modes/action-item-dispatch.md",
+                "modes/dispatch-phase1.md",
                 "**Challenge double-timeout gate**",
                 "Drop block",
                 '\nLong wait? `/compact` now — state persisted in <IMPL_DIR>, resume lossless."',
                 id="timeout-gate-compact-hint-in-question-text",
             ),
             pytest.param(
-                "modes/action-item-dispatch.md",
+                "modes/dispatch-phase2.md",
                 "**Group-preview gate",
                 "Derive `<group_tag>`",
                 "with the step 1 group count and table path in the question text and no option `preview` fields",
                 id="custom-groups-in-question-text",
             ),
             pytest.param(
-                "modes/action-item-dispatch.md",
+                "modes/dispatch-phase1.md",
                 "**Challenge double-timeout gate**",
                 "Drop block",
                 "The items go in the question text itself",
@@ -337,7 +348,7 @@ def test_bulk_text_has_only_the_ordered_fixed_lines() -> None:
 
 def test_group_gate_prints_groups_once_without_restating_them() -> None:
     """Custom dispatch saves every group and prints them once; the question keeps count and path only."""
-    text = (_RESOLVE_DIR / "modes/action-item-dispatch.md").read_text(encoding="utf-8")
+    text = _dispatch_text()
     gate = _route(text, "**Group-preview gate", "Derive `<group_tag>`")
     for marker in (
         "phase2-groups-table.md",

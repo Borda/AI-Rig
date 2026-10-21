@@ -50,6 +50,8 @@ CONTRACT_MAX_BYTES = 256 * 1024
 OWNER_MAX_BYTES = 4 * 1024
 METADATA_SENTINEL = "- gate-metadata:"
 METADATA_LINE = re.compile(r"    - (?:(calls_ahead): ([0-9]{1,6})|(drop): (.*)|(interactive): (false))")
+# The session id is spliced into a transcript glob, so wildcard and separator characters are rejected up front.
+SESSION_ID = re.compile(r"[0-9A-Za-z-]+")
 # Fixed argument-free invocation keeps a skill's calling shell block deterministic.
 USAGE = "usage: compact_gate.py (no arguments)"
 # Opt-in switch for holding the run at a paying boundary; any other value keeps the non-blocking advise default.
@@ -180,6 +182,8 @@ def _decide(row: dict[str, Any], home: Path, raw: bytes | None) -> str:
         return "no contract"
     if not row["session_id"]:
         return "no session id"
+    if not SESSION_ID.fullmatch(row["session_id"]):
+        return "invalid session id"
     reason = _owner_reason(raw, row["session_id"])
     if reason:
         return reason

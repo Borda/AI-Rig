@@ -80,7 +80,7 @@ If still `true`, write draft to `$SHEPHERD_DIR/draft.md`, then spawn:
 > **Agent waits** — SKILL.md §Agent wait discipline (batch `shepherd`); never `ScheduleWakeup`, `ListAgents` or a `Monitor` loop.
 
 ```text
-Agent(subagent_type="oss:shepherd", prompt="Review the full release draft at <$SHEPHERD_DIR/draft.md> for public-facing voice and tone. Apply shepherd voice guidelines: human and direct, no internal jargon, no staff names, no internal maintenance details. Write the revised content to <$SHEPHERD_DIR/shepherd-revised.md>. Return ONLY: {\"status\":\"done\",\"changes\":N,\"file\":\"<$SHEPHERD_DIR/shepherd-revised.md>\"}")
+Agent(subagent_type="oss:shepherd", name="shepherd-draft", description="Voice-review release draft", prompt="Review the full release draft at <$SHEPHERD_DIR/draft.md> for public-facing voice and tone. Apply shepherd voice guidelines: human and direct, no internal jargon, no staff names, no internal maintenance details. Write the revised content to <$SHEPHERD_DIR/shepherd-revised.md>. Return ONLY: {\"status\":\"done\",\"changes\":N,\"file\":\"<$SHEPHERD_DIR/shepherd-revised.md>\"}")
 ```
 
 If `oss:shepherd` not available, use draft content directly — skip shepherd review. Humanizer is independent of shepherd availability: still run a `foundry:humanizer` pass (requires `foundry` plugin) on the draft before writing to disk on this branch — shepherd's absence doesn't exempt the draft from it.
@@ -129,7 +129,7 @@ Shepherd review policy (applies when `$SHEPHERD_AVAILABLE == true`):
 
     This plan file has two consumers: shepherd (voice review, one artifact to review in a single pass — below) and the Apply step directly below it — **no script ingests this file**; the model reads it and applies it itself.
 
-    If `$SHEPHERD_AVAILABLE`, dispatch shepherd on this JSON directly (same availability check as above): `Agent(subagent_type="oss:shepherd", prompt="Review wording of every string in each section's \"add\" array in the JSON at <$APPEND_ITEMS_FILE> for public-facing voice/tone (same guidelines as full release notes — human and direct, no internal jargon, no staff names). Never touch \"remove\" arrays — those are match substrings, not published prose. Preserve every key exactly; write the same JSON shape with only \"add\" string values reworded to <$SHEPHERD_DIR/append-items-revised.json>. Return ONLY: {\"status\":\"done\",\"file\":\"<$SHEPHERD_DIR/append-items-revised.json>\"}")`; on success use the revised file as `$APPEND_ITEMS_FILE`, else keep the unrevised one.
+    If `$SHEPHERD_AVAILABLE`, dispatch shepherd on this JSON directly (same availability check as above): `Agent(subagent_type="oss:shepherd", name="shepherd-append-items", description="Voice-review append items", prompt="Review wording of every string in each section's \"add\" array in the JSON at <$APPEND_ITEMS_FILE> for public-facing voice/tone (same guidelines as full release notes — human and direct, no internal jargon, no staff names). Never touch \"remove\" arrays — those are match substrings, not published prose. Preserve every key exactly; write the same JSON shape with only \"add\" string values reworded to <$SHEPHERD_DIR/append-items-revised.json>. Return ONLY: {\"status\":\"done\",\"file\":\"<$SHEPHERD_DIR/append-items-revised.json>\"}")`; on success use the revised file as `$APPEND_ITEMS_FILE`, else keep the unrevised one.
 
     **Apply the plan to `$APPEND_STAGE/DRAFT.md` — Read + Edit tool, never a parsing script:**
 
@@ -197,43 +197,67 @@ Shepherd review policy (applies when `$SHEPHERD_AVAILABLE == true`):
 
 <!-- branch: changelog-confirm — only with --changelog flag; call 2 of ≤2 on notes+changelog path; max 4 total on prepare+changelog+draft path -->
 
-- **`--changelog`** (if set): no shepherd (structured, internal) → invoke `AskUserQuestion`: "Ready to prepend to `$CHANGELOG_FILE`?" Options: (a) Proceed · (b) Preview only. On (b): display content, stop. On (a): derive `VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo "")` and `VERSION_BARE="${VERSION#v}"`. **Idempotency check**: inspect `$APPEND_STAGE/$CHANGELOG_FILE` for every notes run for a version header in any supported form (`## [1.2.0]`, `## [v1.2.0]`, `## v1.2.0`, `## 1.2.0`). Skip if present; otherwise prepend after `# Changelog` in that candidate file. Notify using `$CHANGELOG_FILE`, never the stage path.
+- **`--changelog`**: fresh shell, so reload the flag first and skip the rest of this bullet unless it prints `DO_CHANGELOG=true` (the same line gives `$CHANGELOG_FILE`):
 
-**Collapse guard** (used by the `SUMMARY.md`/`MIGRATION.md` merges below — the two whole-file artifacts with no section structure of their own to sanity-check against; `$ARTIFACT` = whichever of the two is being merged this cycle).
+  ```bash
+  export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+  IFS= read -r DO_CHANGELOG < "${TMPDIR:-/tmp}/release-do-changelog-${CSID}" 2>/dev/null || DO_CHANGELOG="false"
+  IFS= read -r CHANGELOG_FILE < "${TMPDIR:-/tmp}/release-changelog-file-${CSID}" 2>/dev/null || CHANGELOG_FILE=""
+  echo "DO_CHANGELOG=$DO_CHANGELOG CHANGELOG_FILE=$CHANGELOG_FILE"  # timeout: 3000
+  ```
+
+  Set: no shepherd (structured, internal) → invoke `AskUserQuestion`: "Ready to prepend to `$CHANGELOG_FILE`?" Options: (a) Proceed · (b) Preview only. On (b): display content, stop. On (a): derive the target version from the notes range endpoint, never from the last released tag — that tag's header already sits in the changelog, so the idempotency check would always skip:
+
+  ```bash
+  export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+  IFS= read -r COMPLETED_RANGE < "${TMPDIR:-/tmp}/release-range-${CSID}" 2>/dev/null || COMPLETED_RANGE=""
+  TARGET_VERSION=$(git describe --tags --exact-match "${COMPLETED_RANGE##*..}" 2>/dev/null) || TARGET_VERSION=""
+  echo "TARGET_VERSION=${TARGET_VERSION:-none}"  # timeout: 3000
+  ```
+
+  **Idempotency check**: inspect `$APPEND_STAGE/$CHANGELOG_FILE` for every notes run. `TARGET_VERSION` set → look for its header in any supported form (`## [1.2.0]`, `## [v1.2.0]`, `## v1.2.0`, `## 1.2.0`, with `v` stripped for the bare forms). `none` (endpoint is not a tag) → look for `## [Unreleased]`. Skip if present; otherwise prepend after `# Changelog` in that candidate file. Notify using `$CHANGELOG_FILE`, never the stage path.
+
+**Collapse guard** (used by the `SUMMARY.md`/`MIGRATION.md` merges below — the two whole-file artifacts with no section structure of their own to sanity-check against; both blocks check `$APPEND_STAGE/SUMMARY.md` and `$APPEND_STAGE/MIGRATION.md` by fixed name).
 
 - A cheap, mechanical byte-count trip-wire, not a parser — the one destructive-irreversible failure mode a purely LLM-driven merge can't self-correct from (the actual historical bug here was a whole-file wipe of MIGRATION.md), kept deliberately minimal so it never reintroduces the schema-brittleness this redesign retires.
 - DRAFT.md's own sections are NOT guarded this way — a section legitimately emptying down to a dropped header (all items struck, nothing added) is intended behavior, not corruption, since the rest of the file is still there to sanity-check against.
 
-Before this cycle's Read+Edit merge against `$ARTIFACT` begins:
+Before this cycle's Read+Edit merges begin:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-_BEFORE=$(wc -c < "$ARTIFACT" 2>/dev/null || echo 0)
-echo "${_BEFORE:-0}" > "${TMPDIR:-/tmp}/release-collapse-guard-${CSID}"  # timeout: 3000
+IFS= read -r APPEND_STAGE < "${TMPDIR:-/tmp}/release-append-stage-${CSID}" 2>/dev/null || APPEND_STAGE=""
+[ -n "$APPEND_STAGE" ] || { echo "Error: append stage missing — collapse guard not armed" >&2; exit 1; }
+for A in SUMMARY MIGRATION; do
+    echo "$([ -f "$APPEND_STAGE/$A.md" ] && wc -c < "$APPEND_STAGE/$A.md" | tr -d ' ' || echo 0)" > "${TMPDIR:-/tmp}/release-collapse-guard-$A-${CSID}"
+done  # timeout: 3000
 ```
 
-After every Edit-tool operation against `$ARTIFACT` this cycle completes:
+After every Edit-tool operation against either artifact this cycle completes:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r _BEFORE < "${TMPDIR:-/tmp}/release-collapse-guard-${CSID}" 2>/dev/null || _BEFORE=0
-_AFTER=$(wc -c < "$ARTIFACT" 2>/dev/null || echo 0)
-if [ "${_BEFORE:-0}" -gt 200 ] && [ "${_AFTER:-0}" -lt 20 ]; then
-    echo "⚠ $ARTIFACT content collapsed from ${_BEFORE}B to ${_AFTER}B during merge"
-fi  # timeout: 3000
+IFS= read -r APPEND_STAGE < "${TMPDIR:-/tmp}/release-append-stage-${CSID}" 2>/dev/null || APPEND_STAGE=""
+for A in SUMMARY MIGRATION; do
+    IFS= read -r _BEFORE < "${TMPDIR:-/tmp}/release-collapse-guard-$A-${CSID}" 2>/dev/null || { echo "Error: collapse guard not armed for $A.md" >&2; exit 1; }
+    _AFTER=$([ -f "$APPEND_STAGE/$A.md" ] && wc -c < "$APPEND_STAGE/$A.md" | tr -d ' ' || echo 0)
+    if [ "${_BEFORE:-0}" -gt 200 ] && [ "${_AFTER:-0}" -lt 20 ]; then
+        echo "! BLOCKED — $A.md collapsed from ${_BEFORE}B to ${_AFTER}B during merge" >&2; exit 1
+    fi
+done  # timeout: 3000
 ```
 
-Tripped → restore `$ARTIFACT` to the exact content read via the Read tool at the start of this merge cycle (Write tool — the model still holds it in context; no git dependency), stop, surface `⚠ $ARTIFACT merge refused — content would collapse from a substantial file to near-empty; restored pre-merge content, review the cross-cycle strike list manually.` Never leave a collapsed file in place. The 200B/20B threshold is a coarse "was this substantively non-empty before, is it now essentially gone" check — not a markdown-structure inspection.
+Tripped (block exits 1 naming the artifact) → restore that artifact to the exact content read via the Read tool at the start of this merge cycle (Write tool — the model still holds it in context; no git dependency), stop, surface `⚠ <artifact> merge refused — content would collapse from a substantial file to near-empty; restored pre-merge content, review the cross-cycle strike list manually.` Never leave a collapsed file in place. The 200B/20B threshold is a coarse "was this substantively non-empty before, is it now essentially gone" check — not a markdown-structure inspection.
 
 - **`--summary`** (if set): no shepherd (internal).
 - `$MARKER_VALID == true`: stable user-visible path `SUMMARY.md` at repo root; edit only `$APPEND_STAGE/SUMMARY.md`.
-  - Candidate missing (first append) → `cp "<executive-summary-draft>" "$APPEND_STAGE/SUMMARY.md"`; candidate exists → Read it (Read tool), locate `### Since last draft` inside it (create on first use, append to it on later cycles — internal prose accumulates here, unlike DRAFT.md's re-folded Summary in Append-merge step 5 above), Edit tool in this increment's paragraph (internal prose from Draft executive summary — not DRAFT.md's pitch bullets), guarded by **Collapse guard** above (`$ARTIFACT=$APPEND_STAGE/SUMMARY.md`).
+  - Candidate missing (first append) → `cp "<executive-summary-draft>" "$APPEND_STAGE/SUMMARY.md"`; candidate exists → Read it (Read tool), locate `### Since last draft` inside it (create on first use, append to it on later cycles — internal prose accumulates here, unlike DRAFT.md's re-folded Summary in Append-merge step 5 above), Edit tool in this increment's paragraph (internal prose from Draft executive summary — not DRAFT.md's pitch bullets), guarded by **Collapse guard** above.
   - A merge failure must never silently fall through to an overwrite.
   - Source-backed corrections to stale prose belong to the final cross-artifact truth gate.
   - Notify using `SUMMARY.md`, never the stage path.
 - Otherwise: with `--append`, write the full fallback summary to `$APPEND_STAGE/SUMMARY.md`; for plain notes, write it to `$APPEND_STAGE/.temp/output-release-summary-$BRANCH-$DATE.md`, creating its parent directory inside the candidate. Publish to `.temp/output-release-summary-$BRANCH-$DATE.md` with the draft and marker. Notify using the user-visible path.
 - **`--migration`** (if set): shepherd review (public-facing).
-  - `$MARKER_VALID == true`: stable user-visible path `MIGRATION.md` at repo root; edit only `$APPEND_STAGE/MIGRATION.md`. Candidate missing (first append) → `cp "<migration-guide-draft>" "$APPEND_STAGE/MIGRATION.md"`; candidate exists → Read it (Read tool); for each new symbol write-up (Draft migration guide), Edit tool to append a new `### <symbol>` block; for each `CROSS_CYCLE_MATCH` targeting `MIGRATION.md`, Edit tool to strike the exact matched block (unique surrounding context, same discipline as DRAFT.md). Guarded by **Collapse guard** above (`$ARTIFACT=$APPEND_STAGE/MIGRATION.md`) — this is the artifact whose whole-file wipe was the actual historical bug; the guard remains a mechanical backstop. Notify using `MIGRATION.md`, never the stage path.
+  - `$MARKER_VALID == true`: stable user-visible path `MIGRATION.md` at repo root; edit only `$APPEND_STAGE/MIGRATION.md`. Candidate missing (first append) → `cp "<migration-guide-draft>" "$APPEND_STAGE/MIGRATION.md"`; candidate exists → Read it (Read tool); for each new symbol write-up (Draft migration guide), Edit tool to append a new `### <symbol>` block; for each `CROSS_CYCLE_MATCH` targeting `MIGRATION.md`, Edit tool to strike the exact matched block (unique surrounding context, same discipline as DRAFT.md). Guarded by **Collapse guard** above — this is the artifact whose whole-file wipe was the actual historical bug; the guard remains a mechanical backstop. Notify using `MIGRATION.md`, never the stage path.
   - Otherwise: with `--append`, write the full fallback migration guide to `$APPEND_STAGE/MIGRATION.md`; for plain notes, write it to `$APPEND_STAGE/.temp/output-release-migration-$BRANCH-$DATE.md`, creating its parent directory inside the candidate. Publish to `.temp/output-release-migration-$BRANCH-$DATE.md` with the draft and marker. Notify using the user-visible path.
 
 **Candidate validation and publication** (runs once after the artifact edits above; live notes artifacts remain untouched until publication):
@@ -346,9 +370,11 @@ After the sealed candidate passes the full truth gate, publish it:
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r BRANCH < "${TMPDIR:-/tmp}/release-setup-${CSID}/BRANCH" 2>/dev/null || BRANCH=""
 IFS= read -r DO_APPEND < "${TMPDIR:-/tmp}/release-do-append-${CSID}" 2>/dev/null || DO_APPEND="false"
+IFS= read -r RELEASE_MODE < "${TMPDIR:-/tmp}/release-mode-${CSID}" 2>/dev/null || RELEASE_MODE="notes"
 IFS= read -r APPEND_STAGE < "${TMPDIR:-/tmp}/release-append-stage-${CSID}" 2>/dev/null || APPEND_STAGE=""
+[ "$RELEASE_MODE" != notes ] || [ -n "$APPEND_STAGE" ] || { echo "Error: append stage missing — nothing published" >&2; exit 1; }
 if [ -n "$APPEND_STAGE" ]; then
-    [ -n "$APPEND_STAGE" ] && [ -f "$APPEND_STAGE/candidate.json" ] || { echo "Error: sealed append candidate missing" >&2; exit 1; }
+    [ -f "$APPEND_STAGE/candidate.json" ] || { echo "Error: sealed append candidate missing" >&2; exit 1; }
     python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/release_append_publish.py" publish --branch "$BRANCH" --stage "$APPEND_STAGE" || exit 1
 fi
 ```

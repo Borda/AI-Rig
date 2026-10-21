@@ -253,6 +253,13 @@ def test_python_fallback_no_runtime_has_bounded_diagnostic(tmp_path: Path) -> No
     assert result.stderr == "python: no Python 3.10+ found on PATH (python3, python3.10-python3.20); install one\n"
 
 
+def test_windows_python_launcher_disables_implicit_current_directory_lookup() -> None:
+    """Set the cmd search guard inside setlocal before probing any interpreter."""
+    source = (PLUGINS_DIR / "cc_foundry/bin/python.cmd").read_text(encoding="utf-8")
+    guard = source.index('set "NoDefaultCurrentDirectoryInExePath=1"')
+    assert source.index("setlocal") < guard < source.index("python.exe -c")
+
+
 @pytest.mark.skipif(shutil.which("cmd") is None, reason="needs native Windows cmd")
 def test_native_windows_python_launcher_preserves_workload(tmp_path: Path) -> None:
     """A real cmd process runs the installed launcher without any POSIX shell."""

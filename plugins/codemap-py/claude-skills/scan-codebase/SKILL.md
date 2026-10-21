@@ -11,9 +11,9 @@ effort: low
 
 **Python only**: `ast.parse` extracts import graph + symbol metadata from all `.py`; non-Python excluded. Writes `.cache/codemap/<project>.json`; no external deps. Zero-Python project still writes empty index; queries return nothing.
 
-Per module: import graph, blast-radius metrics, **symbol list** (classes/functions/methods + line ranges). Symbols let `scan-query symbol` / `find-symbol` return target source, avoiding full-file reads.
+Per module: import graph, blast-radius metrics, **symbol list** (classes/functions/methods + line ranges). Symbols let `codemap-py query symbol` / `find-symbol` return target source, avoiding full-file reads.
 
-Agents/develop skills query via `scan-query` for deps, blast radius, coupling, symbol source before edits.
+Agents/develop skills query via `codemap-py query` for deps, blast radius, coupling, symbol source before edits.
 
 NOT for: querying existing index (use `/codemap-py:query-code`); integration health checks or wiring consumer integration (use `/codemap-py:integration` — `audit`/`plan`/`apply`); non-code input (contracts, prose, config-only review). On out-of-scope input: state scope mismatch and stop — never answer "for reference only" with partial findings.
 
@@ -25,55 +25,45 @@ NOT for: querying existing index (use `/codemap-py:query-code`); integration hea
 
 Build invocation from `$ARGUMENTS`. Pass supplied `--root <path>` and/or `--incremental`; never literal placeholders.
 
-**Unknown-flag check**: before `parse_scan_args.py`, find `$ARGUMENTS` `--` tokens except `--root`, `--incremental`. If any, print `! Unknown flag(s): <tokens>` then `Supported: --root <path>, --incremental`; exit 1. Never AskUserQuestion: disable-model-invocation:true makes it unreachable. Rosters + shell must use exact `Unknown flag(s)` wording, no synonym. Preflight exit `1` is skill-local shortcut accepted in `shared/capability-contract.md`; CLI syntax errors remain §7.5 exit `2`. Trailing `--root` with no value (would silently fall back to default-root scan): print `! --root requires a value` + same `Supported:` line; exit 1 — distinct message, never the `Unknown flag(s)` wording.
+**Unknown-flag check**: `setup_scan_env.py` validates `$ARGUMENTS` with the same tokenizer that extracts `--root` (quoted paths stay one token). Any `--` token except `--root <path>` and `--incremental` → it prints `! Unknown flag(s): <tokens>` then `Supported: --root <path>, --incremental` and exits 5; the block prints that stderr unchanged and exits 1. Never AskUserQuestion: disable-model-invocation:true makes it unreachable. Rosters + shell must use exact `Unknown flag(s)` wording, no synonym. Preflight exit `1` is skill-local shortcut accepted in `shared/capability-contract.md`; CLI syntax errors remain exit `2` per its §Shared exit-code contract. `--root` with no value (would silently fall back to default-root scan): `! --root requires a value` + same `Supported:` line; exit 1 — distinct message, never the `Unknown flag(s)` wording.
 
-```bash
-# timeout: 10000
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-# tr|awk not for-loop — zsh doesn't word-split unquoted vars; for-loop saw whole string as one token, always false-flagged "--root <path>" unsupported
-# awk skips token after --root same as old _SKIP_NEXT; parse_scan_args.py handles quoted paths
-_ARGS_UNKNOWN=$(printf '%s\n' "$ARGUMENTS" | tr ' ' '\n' \
-  | awk '/^--root$/{skip=1;next} skip{skip=0;next} /^--incremental$/{next} /^--/{print}' | tr '\n' ' ')
-_ARGS_UNKNOWN="${_ARGS_UNKNOWN% }"
-# trailing --root with no value: parse_scan_args.py's _ROOT_RE needs \s+ plus a value, so a bare
-# trailing --root matches nothing and silently falls back to default-root scan — distinct error
-# class from unknown flags below, own message (not the pinned "Unknown flag(s)" wording)
-_ARGS_LAST_TOK=$(printf '%s\n' "$ARGUMENTS" | tr ' ' '\n' | awk 'NF{last=$0} END{print last}')
-[ "$_ARGS_LAST_TOK" = "--root" ] && { printf "! --root requires a value\nSupported: --root <path>, --incremental\n" >&2; exit 1; }
-[ -z "$_ARGS_UNKNOWN" ] || { printf "! Unknown flag(s): %s\nSupported: --root <path>, --incremental\n" "$_ARGS_UNKNOWN" >&2; exit 1; }
-SETUP_STDERR="${TMPDIR:-/tmp}/codemap-setup-err-$$-${CSID}"
-SCAN_STATE_FILE=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/setup_scan_env.py" --arguments "$ARGUMENTS" 2>"$SETUP_STDERR")
-if [ $? -ne 0 ] || [ -z "$SCAN_STATE_FILE" ]; then
-  printf "! setup_scan_env.py failed"; [ -s "$SETUP_STDERR" ] && printf ": %s" "$(cat "$SETUP_STDERR")"; printf "\n"; exit 1
-fi
-# project-scoped — bare CSID collides across concurrent repos in one session
-_CM_PROJ_SLUG=$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
-printf '%s\n' "$SCAN_STATE_FILE" > "${TMPDIR:-/tmp}/codemap-state-ref-${_CM_PROJ_SLUG}-${CSID}"  # subsequent blocks read without knowing PID
-```
+Step 1 exits non-zero → report its error and stop; never run Step 2 or Step 3.
 
 ```bash
 # timeout: 400000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _CM_PROJ_SLUG=$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
-IFS= read -r SCAN_STATE_FILE < "${TMPDIR:-/tmp}/codemap-state-ref-${_CM_PROJ_SLUG}-${CSID}" 2>/dev/null || SCAN_STATE_FILE=""
-[ -n "$SCAN_STATE_FILE" ] && [ -f "$SCAN_STATE_FILE" ] || { printf "! codemap state missing — re-run from the beginning\n"; exit 1; }
+# success marker for Step 2 — cleared first so a failed run never inherits an earlier success
+rm -f "${TMPDIR:-/tmp}/codemap-scan-ok-${_CM_PROJ_SLUG}-${CSID}"
+SETUP_STDERR="${TMPDIR:-/tmp}/codemap-setup-err-$$-${CSID}"
+SCAN_STATE_FILE=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/setup_scan_env.py" --arguments "$ARGUMENTS" 2>"$SETUP_STDERR")
+_SETUP_RC=$?
+# 5 = $ARGUMENTS rejected — stderr already holds the exact pinned wording; a prefix would bury it
+[ "$_SETUP_RC" -eq 5 ] && { cat "$SETUP_STDERR" >&2; exit 1; }
+if [ "$_SETUP_RC" -ne 0 ] || [ -z "$SCAN_STATE_FILE" ]; then
+  printf "! setup_scan_env.py failed"; [ -s "$SETUP_STDERR" ] && printf ": %s" "$(cat "$SETUP_STDERR")"; printf "\n"; exit 1
+fi
+# project-scoped — bare CSID collides across concurrent repos in one session
+printf '%s\n' "$SCAN_STATE_FILE" > "${TMPDIR:-/tmp}/codemap-state-ref-${_CM_PROJ_SLUG}-${CSID}"  # Step 2 reads without knowing PID
 # -O owned-by-uid, ! -L not-symlink — defense-in-depth on mktemp; last check before sourcing (executed), fails closed on shared-TMPDIR collision
 [ -O "$SCAN_STATE_FILE" ] && [ ! -L "$SCAN_STATE_FILE" ] || { printf "! codemap state file failed ownership/symlink check — aborting\n" >&2; exit 1; }
 # shellcheck source=/dev/null
 . "$SCAN_STATE_FILE"
 # NUL-delimited — avoids eval; written by parse_scan_args.py
 _ARGS_FILE="${TMPDIR:-/tmp}/codemap-scan-args-nul-$$-${CSID}"
-python3 "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/parse_scan_args.py" "$SCAN_ARGS_RAW" --nul-output "$_ARGS_FILE"
+# unchecked failure left SCAN_ARGS empty → silent default git-root full scan reported as success
+python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/parse_scan_args.py" "$SCAN_ARGS_RAW" --nul-output "$_ARGS_FILE" && [ -f "$_ARGS_FILE" ] || { printf "! parse_scan_args.py failed — scan not started\n" >&2; exit 1; }
 SCAN_ARGS=()
 while IFS= read -r -d '' _arg; do
   SCAN_ARGS+=("$_arg")
 done < "$_ARGS_FILE"
 rm -f "$_ARGS_FILE"
-# dispatcher, not scan-index alias — alias leases in-engine too (graph.main wraps build+publish in rwgate.write_index) but skips dispatcher's interpreter probe (exit 127 on no eligible CPython) and is a deprecated shim, removed no earlier than 1.0.0. SCAN_BIN stays setup_scan_env.py's existence preflight (dispatcher needs same binary present).
-# PATH-literal first token — expansion-bearing form matches no bare-name allow prefix; absolute launcher is interactive fallback
+# dispatcher, not deprecated scan-index alias (removed ≥1.0.0): alias leases in-engine too (graph.main wraps build+publish in rwgate.write_index) but skips interpreter probe (exit 127, no eligible CPython)
+# SCAN_BIN stays setup_scan_env.py's existence preflight — dispatcher needs same binary
+# PATH-literal first token — expansion-bearing form matches no bare-name allow prefix; absolute launcher = interactive fallback
 command -v codemap-py >/dev/null 2>&1 || { printf "! codemap-py not on PATH — run \"\${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/codemap-py\" index as one standalone command instead\n" >&2; exit 1; }
 codemap-py index --timeout 360 "${SCAN_ARGS[@]}"
-# capture rc BEFORE branching — inside `if ! cmd; then`, $? is the negated compound's status (always 0), never the scanner's
+# capture rc BEFORE branching — in `if ! cmd; then`, $? = negated compound status (always 0), never scanner's
 _SCAN_RC=$?
 if [ "$_SCAN_RC" -ne 0 ]; then
     printf "! codemap-py index failed (exit %d) — index may be stale or incomplete\n" "$_SCAN_RC"
@@ -81,6 +71,7 @@ if [ "$_SCAN_RC" -ne 0 ]; then
     rm -f "${TMPDIR:-/tmp}/codemap-incremental-noop-${PROJ_SLUG}-${CSID}"
     exit 1
 fi
+printf 'ok\n' > "${TMPDIR:-/tmp}/codemap-scan-ok-${_CM_PROJ_SLUG}-${CSID}"
 ```
 
 **`--root` naming**: index uses `basename(<path>)`, unlike default git-root basename. After a custom-root scan, retain exact path printed by scanner as `<emitted-index-path>`; later query must use `--index <emitted-index-path> --root <same-root>`. `--root` is path resolution only, doesn't select the index. After custom-root scan, verify path via `resolve_index_env.py`. `--root .` handled specially — `setup_scan_env.py` falls back to git-root basename, same as omitting `--root`.
@@ -99,19 +90,25 @@ After scan, read index and report compact summary:
 ```bash
 # timeout: 15000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-# skip if Step 1 failed — index may not exist
 _GIT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 _CM_PROJ_SLUG=$(basename "$_GIT_ROOT")
+# Step 1 failed → no success marker → stop; index may not exist
+IFS= read -r _SCAN_OK < "${TMPDIR:-/tmp}/codemap-scan-ok-${_CM_PROJ_SLUG}-${CSID}" 2>/dev/null || _SCAN_OK=""
+[ "$_SCAN_OK" = "ok" ] || { printf "! Step 1 scan did not succeed — not reporting stats\n"; exit 1; }
 IFS= read -r SCAN_STATE_FILE < "${TMPDIR:-/tmp}/codemap-state-ref-${_CM_PROJ_SLUG}-${CSID}" 2>/dev/null || SCAN_STATE_FILE=""
 [ -n "$SCAN_STATE_FILE" ] && [ -f "$SCAN_STATE_FILE" ] || { printf "! codemap state missing — re-run /codemap-py:scan-codebase\n"; exit 1; }
 # shellcheck source=/dev/null
 . "$SCAN_STATE_FILE"
 PROJ_NAME="${PROJ_NAME:-$(basename "$_GIT_ROOT")}"
-# git-root-anchored, not CWD — matches resolve_proj_index.py's <git-root-or-cwd>/.cache/codemap layout
-_IDX="${CODEMAP_INDEX_DIR:-${_GIT_ROOT}/.cache/codemap}"
+# scanner writes <scan-root>/.cache/codemap (graph._resolve_out_path); no --root (or ".") = git root
+# sentinel, not $(…) capture — `>` truncates first, so a failed call never leaves an earlier root
+_ROOT_FILE="${TMPDIR:-/tmp}/codemap-scan-root-${_CM_PROJ_SLUG}-${CSID}"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/parse_scan_args.py" "$SCAN_ARGS_RAW" --print-root > "$_ROOT_FILE" 2>/dev/null && IFS= read -r _SCAN_ROOT < "$_ROOT_FILE" || _SCAN_ROOT="."
+[ "$_SCAN_ROOT" = "." ] && _SCAN_ROOT="$_GIT_ROOT"
+_IDX="${CODEMAP_INDEX_DIR:-${_SCAN_ROOT}/.cache/codemap}"
 if [ -f "${_IDX}/${PROJ_NAME}.json" ]; then
     # scan-stats.py reads SCAN_ARGS env (e.g. --root src/mypackage) for project root
-    SCAN_ARGS="$SCAN_ARGS_RAW" python3 "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/scan-stats.py"
+    SCAN_ARGS="$SCAN_ARGS_RAW" python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/scan-stats.py"
     # --incremental noop check — sentinel set by Step 1 on fallback to full scan
     if [ -f "${TMPDIR:-/tmp}/codemap-incremental-noop-${PROJ_SLUG}-${CSID}" ]; then
         echo "[codemap] Note: --incremental had no prior index — full scan ran instead"

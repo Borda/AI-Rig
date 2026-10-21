@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from collections.abc import Callable
 from pathlib import Path
 
@@ -16,6 +17,25 @@ import merge_action_items as mai
 import pytest
 
 _BASH = shutil.which("bash")
+
+
+@pytest.mark.parametrize("stream", ["stdout", "stderr"])
+def test_report_cli_uses_utf8_with_a_non_utf8_console(tmp_path: Path, stream: str) -> None:
+    """Shell consumers can decode gate verdicts and path diagnostics as UTF-8 regardless of console encoding."""
+    report_dir = tmp_path / "review-é"
+    report_dir.mkdir()
+    report = _publication(report_dir, None, "blocked")
+    args = [sys.executable, str(Path(frr.__file__)), "--report", str(report)]
+    if stream == "stderr":
+        args.extend(["--path-out", str(report_dir / "absent" / "selected.txt")])
+    env = {**os.environ, "PYTHONIOENCODING": "cp1252"}
+    result = subprocess.run(args, env=env, capture_output=True, check=False, timeout=15)
+
+    assert result.returncode == (1 if stream == "stderr" else 0), result.stderr
+    output = getattr(result, stream).decode("utf-8")
+    assert "é" in output
+    assert "—" in output
+    assert "\r\n" not in output
 
 
 def _publication(tmp_path: Path, outcome: str | None = "APPROVE", readiness: str = "complete") -> Path:
@@ -388,7 +408,7 @@ def test_resolve_shell_consumers_accept_empty_confirmed_sidecar(tmp_path: Path, 
     plugin = Path(__file__).resolve().parents[2]
     source = plugin / "skills/resolve" / ("SKILL.md" if pr_mode else "modes/report-intelligence.md")
     blocks = re.findall(r"```bash\n(.*?)```", source.read_text(encoding="utf-8"), re.DOTALL)
-    block = next(block for block in blocks if 'FINDINGS="$(dirname "$REPORT_FILE")/findings.jsonl"' in block)
+    block = next(block for block in blocks if "--persist-findings" in block)
     env = {
         **os.environ,
         "CLAUDE_PLUGIN_ROOT": plugin.as_posix(),
@@ -562,7 +582,10 @@ def test_late_rejection_routes_to_existing_ground_publisher() -> None:
     assert "Stage 1's existing confirmed-ground block and terminal publisher" in skill
     assert "Retain the original reviewed SHA, exact ground/reason and provenance" in skill
     assert "including its conduct/license confirmation safeguards" in skill
-    dispatch = (plugin / "skills/resolve/modes/action-item-dispatch.md").read_text(encoding="utf-8")
+    dispatch = "\n".join(
+        (plugin / f"skills/resolve/modes/dispatch-{p}.md").read_text(encoding="utf-8")
+        for p in ("prelude", "phase1", "phase2", "phase3")
+    )
     assert "reuse applicable proved checks without rerunning them" in dispatch
     assert "This parent proof never supplies the independent [confirmed] verifier marker" in dispatch
     assert "Part 2 — for EVERY item whose problem exists" in dispatch

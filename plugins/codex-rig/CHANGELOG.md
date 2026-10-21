@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.37.1
+
+- Link the shipped commit response template back to existing-conflict recovery policy, so maintainers can trace and synchronize the merge commit guidance in both directions.
+- `code-review`, `code-remediate` and `assess` state the GitHub-read execution rule once, and their call sites point to it. The always-loaded skill text is shorter and collection behaviour is unchanged.
+- Code Review is read-only: it screens an open PR for close advice and never writes to GitHub; the explicit Suggestion table matches the validator and the review reference files load only when their trigger applies.
+- Code Remediate runs review feedback as its own section after a successful promote and only for completed admission, accepts `kind=user`, fails any forced checkout or ref update run without explicit confirmation (not only `--force`), defines `auto` mode, and names the unavailable-diff file; finalize and review lookup admit only promoted results.
+- Optimize stages per-iteration record files and creates the ledger once, and requires `metric_cmd`/`guard_cmd` only for single and campaign runs.
+- Assess runs its self-review inside the final step and scopes the diff check to analysed paths; Research plans packs first and dispatches one specialist wave after the codemap artifact.
+- Audit step 09 lists the source-layout agent headings and packaged role files, and runs the calibration gate only for candidate evaluation.
+- Calibrate no longer promises scope, pace, apply or gate-skip fields, marks `--layout source` as legacy, and lists every shebang entry point in its CLI roster.
+- Manage requires the validator sections in `ownership.md`, applies delegated edits itself, and loads the portable parallel-read reference only for `parallel-read`; Kaggle, Sync and Implement gain the matching run-creation, Windows and numbering fixes.
+- Release fails the range check only after baseline inference, lints written deliverables, and keeps raw contributor emails in `private/`; Kaggle notebooks handle missing-value display, top-20 numeric columns and non-contiguous mask labels.
+- Agent-shims states that install only reports the platform block; Challenge-resolve is explicit-request only with a soft reviewer token target and chunk handling in a conditional reference.
+- Investigate records the failing command's interpreter next to the PATH Python; Native Skill Contract names `campaign.py finish` as a helper-computed append.
+- Code Review and Code Remediate load far less instruction text per run: their long recovery procedures (validation, report and source recovery, batched review, historical routes, collection failure, existing conflicts, missing review decision) moved into `references/*.md` files read only when that recovery actually triggers, with the recovery steps themselves unchanged. Implement and Manage likewise share one `shared/portable-parallel-read.md`, and repeated GitHub-read, parent-serial, report-confirmation and no-combined-score rules are stated once, so a rule change now lands in one place instead of drifting between copies.
+
 ## 0.37.0
 
 - Add a native-telemetry profile report for selected Codex sessions and agents, preserving cumulative token semantics, inclusive tool timing, private-content exclusion and optional supplied-rate estimates. Native `/status`, `/usage` and OTel remain the collection surfaces; unavailable attribution stays explicit.

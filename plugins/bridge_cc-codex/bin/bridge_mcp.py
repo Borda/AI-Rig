@@ -44,6 +44,7 @@ from bridge_call import (  # noqa: E402
     DEFAULT_TIMEOUTS,
     Request,
     run_request,
+    validate_caller_identifier,
     validate_request_transport_budget,
 )
 from user_questions_mcp import MAX_DECISIONS, Decision  # noqa: E402
@@ -306,13 +307,16 @@ def _request_from_arguments(verb: str, arguments: dict[str, Any], trusted_worksp
         value = arguments.get(name)
         if value is not None and (not isinstance(value, str) or not value):
             raise ValueError(f"{name} must be a non-empty string")
+    # Same identifier rule as the CLI: both values reach the Claude child's argv or prompt text.
+    for name in ("model", "run_id"):
+        validate_caller_identifier(name, arguments.get(name))
     supported = arguments.get("supported_efforts", [])
     if not isinstance(supported, list) or not all(isinstance(item, str) and item for item in supported):
         raise ValueError("supported_efforts must be an array of non-empty strings")
     if "supported_efforts" in arguments and not supported:
         raise ValueError("supported_efforts must not be empty when supplied")
     workspace = trusted_workspace.resolve()
-    refusal = _workspace_refusal(workspace) if verb == "implement" else None
+    refusal = (_workspace_refusal(workspace) or _project_marker_refusal(workspace)) if verb == "implement" else None
     if refusal is not None:
         raise ValueError(
             f"write-capable bridge calls need a project workspace; the MCP host launched this server from {refusal}"
@@ -393,6 +397,25 @@ def _directory_identity(path: Path) -> tuple[int, int] | None:
     return (info.st_dev, info.st_ino) if info.st_ino else None
 
 
+#: Credential directories under the user home whose whole subtree no Bridge call may root.
+CREDENTIAL_HOME_NAMES = (".ssh", ".aws", ".gnupg", ".kube", ".docker")
+
+
+def _credential_roots() -> list[Path]:
+    """Return credential and system-configuration directories whose whole subtree no Bridge call may root.
+
+    A write-capable run rooted in ``~/.ssh`` or ``/etc`` could read or rewrite keys and host configuration, which no
+    project task needs. ``/etc`` is POSIX-only; Windows keeps its system configuration outside any user-chosen folder.
+    """
+    roots: list[Path] = []
+    home = _user_home()
+    if home is not None:
+        roots.extend((home / name).resolve() for name in CREDENTIAL_HOME_NAMES)
+    if os.name != "nt":
+        roots.append(Path("/etc").resolve())
+    return roots
+
+
 def _workspace_refusal(canonical: Path) -> str | None:
     """Return why a canonical folder may not root Bridge calls, or ``None`` when it may.
 
@@ -408,7 +431,46 @@ def _workspace_refusal(canonical: Path) -> str | None:
     lineage_identities = {_directory_identity(folder) for folder in (canonical, *canonical.parents)}
     if any(canonical.is_relative_to(root) for root in config_roots) or lineage_identities & config_identities:
         return "an agent configuration home such as ~/.claude or ~/.codex"
+    if any(canonical.is_relative_to(root) for root in _credential_roots()):
+        return "a credential or system configuration directory such as ~/.ssh or /etc"
     return None
+
+
+#: Names whose presence marks a folder as a project root; a write-capable run must be rooted in or below one.
+#: ``.git`` may be a directory or, in a linked worktree or submodule, a file.
+PROJECT_MARKER_NAMES = (
+    ".git",
+    ".hg",
+    ".svn",
+    "pyproject.toml",
+    "setup.py",
+    "setup.cfg",
+    "package.json",
+    "Cargo.toml",
+    "go.mod",
+    "pom.xml",
+    "build.gradle",
+    "build.gradle.kts",
+    "CMakeLists.txt",
+    "Makefile",
+)
+
+
+def _project_marker_refusal(canonical: Path) -> str | None:
+    """Return why a folder shows no project for a write-capable run, or ``None`` when it or an ancestor does.
+
+    The denylist in :func:`_workspace_refusal` cannot name every sensitive folder; an acceptEdits run is limited to
+    folders that carry project evidence. The search covers the folder and its ancestors below the filesystem root, the
+    user home and the home's ancestors, so a marker there, such as a dotfiles repository in the home, does not make
+    every folder beneath it a project.
+    """
+    stops = _refused_write_roots(canonical)
+    for folder in (canonical, *canonical.parents):
+        if folder in stops:
+            break
+        if any((folder / name).exists() for name in PROJECT_MARKER_NAMES):
+            return None
+    return "a folder with no project marker such as .git or pyproject.toml in it or its parents"
 
 
 def _result(request_id: Any, value: dict[str, Any]) -> dict[str, Any]:

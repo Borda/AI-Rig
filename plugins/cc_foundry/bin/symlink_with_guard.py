@@ -94,7 +94,11 @@ _RULE_PREFIX = "foundry-"
 #: `_is_foundry_managed`). Restricting to filesystem-safe characters prevents a
 #: caller from sneaking shell metacharacters or path traversal sequences past
 #: downstream consumers that may interpret matches loosely.
-_MARKER_ALLOWED = re.compile(r"^[A-Za-z0-9_/.-]+$")
+_MARKER_ALLOWED = re.compile(r"[A-Za-z0-9_/.-]+")
+
+#: A marker must carry a real name. A bare separator such as ``/`` is substring-contained in every absolute link
+#: target, so accepting it would make both unconditional purge scopes delete every symlink they hold.
+_MARKER_NAME = re.compile(r"[A-Za-z0-9]{3,}")
 
 
 def _validate_marker(marker: str) -> None:
@@ -104,7 +108,8 @@ def _validate_marker(marker: str) -> None:
         marker: User-supplied substring used to identify foundry-managed links.
 
     Raises:
-        ValueError: If ``marker`` is empty or contains disallowed characters.
+        ValueError: If ``marker`` is empty, contains disallowed characters, or has no name of three or more letters
+            or digits.
 
     Examples:
         >>> _validate_marker("borda-ai-rig/foundry/")  # no raise
@@ -113,13 +118,20 @@ def _validate_marker(marker: str) -> None:
         ... except ValueError:
         ...     print("rejected")
         rejected
+        >>> try:
+        ...     _validate_marker("/")
+        ... except ValueError:
+        ...     print("rejected")
+        rejected
     """
     if not marker:
         raise ValueError("marker cannot be empty")
-    if not _MARKER_ALLOWED.match(marker):
+    if not _MARKER_ALLOWED.fullmatch(marker):
         raise ValueError(
             f"marker contains disallowed characters: {marker!r} — allowed: [A-Za-z0-9_/.-]",
         )
+    if not _MARKER_NAME.search(marker):
+        raise ValueError(f"marker must contain a name of 3+ letters or digits, got: {marker!r}")
 
 
 def _assert_dest_under_home_claude(dest: Path, home: Path) -> Path:
@@ -784,7 +796,13 @@ def _run_create_mode(args: argparse.Namespace, home: Path) -> int:
         return 2
     src = Path(os.path.abspath(args.src))
     plugin_root_bases = _base_paths(Path(args.plugin_root))
-    if not any(src.is_relative_to(base) for base in plugin_root_bases):
+    # The lexical test alone passes a link inside the plugin root that points elsewhere, and the copy tier would
+    # then materialise that outside content under ~/.claude.
+    real_src = Path(_strip_extended_prefix(os.path.realpath(src)))
+    if not (
+        any(src.is_relative_to(base) for base in plugin_root_bases)
+        and any(real_src.is_relative_to(base) for base in plugin_root_bases)
+    ):
         print(f"symlink_with_guard: --src must be under --plugin-root, got: {src}", file=sys.stderr)
         return 2
     try:

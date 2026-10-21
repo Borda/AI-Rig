@@ -78,7 +78,7 @@ echo "$CODEMAP_CONTEXT_STAGE"  > "${TMPDIR:-/tmp}/oss-review-codemap-context-sta
 These query families feed exactly one dimension each; under default `FANOUT_MAX` cap that dimension is often not spawned — running them for every PR was 57% of query volume with no benchmarked win. Gate on **final ranked lineup**, not PR mode flags:
 
 - `foundry:qa-specialist` in the final lineup → run the qa block
-- `foundry:doc-scribe` in the final lineup → run the docs block
+- documentation dimension in the final lineup (merged lint+docs unit led by `foundry:linting-expert`, or standalone `foundry:doc-scribe`) → run the docs block
 - neither → skip both; the staged context is already complete
 
 qa block (mock coverage v4.1 + test gaps v4.2):
@@ -87,13 +87,11 @@ qa block (mock coverage v4.1 + test gaps v4.2):
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r CLEAN_ARGS < "${TMPDIR:-/tmp}/oss-review-pr-tag-${CSID}" 2>/dev/null || CLEAN_ARGS=""
 IFS= read -r CODEMAP_CONTEXT_STAGE < "${TMPDIR:-/tmp}/oss-review-codemap-context-stage-${CLEAN_ARGS}-${CSID}" 2>/dev/null || CODEMAP_CONTEXT_STAGE=""
-[ -n "$CODEMAP_CONTEXT_STAGE" ] && [ -f "$CODEMAP_CONTEXT_STAGE" ] && while IFS= read -r mod; do
-    [ -n "$mod" ] || continue
-    echo "### QA queries: $mod"
-    codemap-py query --timeout 5 mock-rdeps "$mod" 2>/dev/null
-    codemap-py query --timeout 5 uncovered --top 20 "$mod" 2>/dev/null
-    echo
-done < "${TMPDIR:-/tmp}/oss-review-changed-mods-${CLEAN_ARGS}-${CSID}" >> "$CODEMAP_CONTEXT_STAGE"
+_MODS="${TMPDIR:-/tmp}/oss-review-changed-mods-${CLEAN_ARGS}-${CSID}"
+[ -n "$CODEMAP_CONTEXT_STAGE" ] && [ -f "$CODEMAP_CONTEXT_STAGE" ] && [ -s "$_MODS" ] || exit 0
+# one codemap-py process for every module x query; --timeout is a whole-process alarm, scaled 5 s x 2 queries x N modules. Alarm/failure → batch prints nothing → `render --fallback` reruns each unanswered query alone, --timeout 5 as before: one slow query loses only its own line
+_N=$(wc -l < "$_MODS")
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/codemap_batch.py" build qa "$_MODS" | codemap-py query --timeout $((_N * 10)) batch - 2>/dev/null | python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/codemap_batch.py" render --fallback qa "$_MODS" >> "$CODEMAP_CONTEXT_STAGE"  # timeout: 330000 — per module ≤10 s batch alarm + ≤20 s fallback (2 queries x 10 s kill bound), 300 s at the 10-module cap
 ```
 
 docs block (stale doc refs v4.5 + doc coverage v4.4):
@@ -102,13 +100,10 @@ docs block (stale doc refs v4.5 + doc coverage v4.4):
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r CLEAN_ARGS < "${TMPDIR:-/tmp}/oss-review-pr-tag-${CSID}" 2>/dev/null || CLEAN_ARGS=""
 IFS= read -r CODEMAP_CONTEXT_STAGE < "${TMPDIR:-/tmp}/oss-review-codemap-context-stage-${CLEAN_ARGS}-${CSID}" 2>/dev/null || CODEMAP_CONTEXT_STAGE=""
-[ -n "$CODEMAP_CONTEXT_STAGE" ] && [ -f "$CODEMAP_CONTEXT_STAGE" ] && while IFS= read -r mod; do
-    [ -n "$mod" ] || continue
-    echo "### Docs queries: $mod"
-    codemap-py query --timeout 5 xrefs --broken "$mod" 2>/dev/null
-    codemap-py query --timeout 5 undocumented "$mod" 2>/dev/null
-    echo
-done < "${TMPDIR:-/tmp}/oss-review-changed-mods-${CLEAN_ARGS}-${CSID}" >> "$CODEMAP_CONTEXT_STAGE"
+_MODS="${TMPDIR:-/tmp}/oss-review-changed-mods-${CLEAN_ARGS}-${CSID}"
+[ -n "$CODEMAP_CONTEXT_STAGE" ] && [ -f "$CODEMAP_CONTEXT_STAGE" ] && [ -s "$_MODS" ] || exit 0
+_N=$(wc -l < "$_MODS")  # whole-process alarm and --fallback as in the qa block
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/codemap_batch.py" build docs "$_MODS" | codemap-py query --timeout $((_N * 10)) batch - 2>/dev/null | python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/codemap_batch.py" render --fallback docs "$_MODS" >> "$CODEMAP_CONTEXT_STAGE"  # timeout: 330000 — per module ≤10 s batch alarm + ≤20 s fallback (2 queries x 10 s kill bound), 300 s at the 10-module cap
 ```
 
 `codemap_available=true`: Step 2 copies `$CODEMAP_CONTEXT_STAGE` to `$RUN_DIR/codemap-context.md` after `$RUN_DIR` created. Every dimension-agent spawn prompt in Step 2 must then include a literal block (substituted from `$RUN_DIR/codemap-context.md`):

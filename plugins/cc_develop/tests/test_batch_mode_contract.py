@@ -15,6 +15,7 @@ import pytest
 
 _DEVELOP = Path(__file__).resolve().parent.parent
 _BATCH_MODE = _DEVELOP / "skills" / "_shared" / "batch-mode.md"
+_BATCH_BISECT = _DEVELOP / "skills" / "_shared" / "batch-bisect.md"
 _FEATURE_SKILL = _DEVELOP / "skills" / "feature" / "SKILL.md"
 _REFACTOR_SKILL = _DEVELOP / "skills" / "refactor" / "SKILL.md"
 
@@ -22,6 +23,15 @@ _REFACTOR_SKILL = _DEVELOP / "skills" / "refactor" / "SKILL.md"
 def _text(path: Path) -> str:
     """Read a skill/shared-doc file once per call."""
     return path.read_text(encoding="utf-8")
+
+
+def _batch_text() -> str:
+    """Return ``batch-mode.md`` followed by ``batch-bisect.md``, the failure-path procedure it loads.
+
+    The bisect section moved out of ``batch-mode.md`` so a passing batch never pays for it; every design pin over the
+    bisect mechanism reads the pair as one document, in load order.
+    """
+    return _text(_BATCH_MODE) + "\n" + _text(_BATCH_BISECT)
 
 
 def _bash_fences(text: str) -> list[str]:
@@ -202,7 +212,7 @@ class TestBatchModeDesign:
         ``BATCH_ID``/``N``, the non-overlap predicate, the 4-edit batch cap, and the scoping of batch mode away from the
         review loops. The rationale for each pair is in the comment above its case.
         """
-        text = _text(_BATCH_MODE)
+        text = _batch_text()
         assert first in text
         assert second in text
 
@@ -217,7 +227,7 @@ class TestBatchModeDesign:
         tree``) captures tracked and untracked content alike without ever touching the real index, branch, or stash
         list.
         """
-        text = _text(_BATCH_MODE)
+        text = _batch_text()
         assert "GIT_INDEX_FILE=" in text
         assert "git write-tree" in text
         assert 'git commit-tree "$_TREE" -p HEAD' in text
@@ -264,7 +274,7 @@ class TestBatchModeDesign:
         rather than a ``<skill>`` placeholder) and the cap-accounting prose. The rationale for each is in the comment
         above its case.
         """
-        text = _text(_BATCH_MODE)
+        text = _batch_text()
         assert present in text
         assert absent not in text
 
@@ -304,7 +314,7 @@ class TestBatchModeDesign:
         bisect's patch loop, and the post-bisect size-write and identity-clear fences (split into two by round-4's N9
         fix, each needing its own ``BATCH_ID`` read-back).
         """
-        text = _text(_BATCH_MODE)
+        text = _batch_text()
         assert text.count('IFS= read -r BATCH_ID < "${TMPDIR:-/tmp}/dev-batch-id-${CSID}"') == 5
 
     def test_bisect_n_is_a_real_loop_variable_not_prose(self) -> None:
@@ -314,7 +324,7 @@ class TestBatchModeDesign:
         iteration") with no producing command — run verbatim, ``N`` expands empty, ``git diff "" "<sha>"`` exits 128,
         and no patch is written. The loop bound is derived from the persisted ``N`` total, never assumed.
         """
-        text = _text(_BATCH_MODE)
+        text = _batch_text()
         assert "IFS= read -r _N_TOTAL <" in text
         assert "_BATCH_EDITS=$((_N_TOTAL - 1))" in text
         assert 'for N in $(seq 1 "$_BATCH_EDITS"); do' in text
@@ -329,7 +339,7 @@ class TestBatchModeDesign:
         review (N9) split them into two fences (a ``rm -f`` fence is flagged ``is_dangerous`` regardless of what else
         shares it) and replaced the literal ``<skill>`` placeholder with a real ``_SKILL`` variable.
         """
-        text = _text(_BATCH_MODE)
+        text = _batch_text()
         assert 'echo "$_BATCH_EDITS" > "${TMPDIR:-/tmp}/dev-${_SKILL}-batch-size-${CSID}"' in text
         assert (
             'rm -f "${TMPDIR:-/tmp}/dev-batch-id-${CSID}" "${TMPDIR:-/tmp}/dev-batch-n-${CSID}" '
@@ -349,6 +359,7 @@ class TestBatchModeDesign:
         "path",
         [
             pytest.param(_BATCH_MODE, id="batch-mode"),
+            pytest.param(_BATCH_BISECT, id="batch-bisect"),
             pytest.param(_FEATURE_SKILL, id="feature-skill"),
             pytest.param(_REFACTOR_SKILL, id="refactor-skill"),
         ],
@@ -400,7 +411,7 @@ class TestBatchModeDesign:
         Covers the missing pre-snapshot guard ahead of ``git diff`` and the missing ``batch-n`` total guard ahead of the
         ``_BATCH_EDITS`` subtraction. The rationale for each is in the comment above its case.
         """
-        text = _text(_BATCH_MODE)
+        text = _batch_text()
         assert marker in text
         assert text.index(anchor) < text.index(later)
 
@@ -411,16 +422,16 @@ class TestBatchModeWiring:
     @pytest.mark.parametrize(
         ("path", "marker"),
         [
-            # batch mode ships default-on, ``--no-batch`` opts out: BATCH_ENABLED defaults to true when the sentinel is
-            # absent.
+            # batch mode ships default-on, ``--no-batch`` opts out: each skill calls ``dev_batch_gate.py``, which treats
+            # an absent sentinel as on (tests/test_dev_batch_gate.py::TestBatchOn covers the default itself).
             pytest.param(
                 _FEATURE_SKILL,
-                '[ "$BATCH_ENABLED" = "false" ] || BATCH_ENABLED=true',
+                'bin/dev_batch_gate.py" feature; then',
                 id="feature-batch-defaults-true",
             ),
             pytest.param(
                 _REFACTOR_SKILL,
-                '[ "$BATCH_ENABLED" = "false" ] || BATCH_ENABLED=true',
+                'bin/dev_batch_gate.py" refactor; then',
                 id="refactor-batch-defaults-true",
             ),
             # the cap-accounting increment defaults BATCH_SIZE to 1 — the no-batch path is unchanged.
@@ -445,8 +456,8 @@ class TestBatchModeWiring:
     def test_cap_and_default_wiring_marker_present(self, path: Path, marker: str) -> None:
         """The feature/refactor skills and ``batch-mode.md`` still carry the opt-in default and cap-accounting wiring.
 
-        BATCH_ENABLED defaults to true when its sentinel is absent, the cycle increment defaults ``BATCH_SIZE`` to 1 so
-        the no-batch path is unchanged, and the cap counts edits processed rather than batches or cycles.
+        Batch mode defaults to on when its sentinel is absent, the cycle increment defaults ``BATCH_SIZE`` to 1 so the
+        no-batch path is unchanged, and the cap counts edits processed rather than batches or cycles.
         """
         assert marker in _text(path)
 
@@ -470,18 +481,20 @@ class TestBatchModeWiring:
             # Round-4 review (N9) found batch-mode.md's size-write fences used a literal ``<skill>`` placeholder — a
             # fenced block can never substitute a ``<placeholder>`` at runtime, and it can never match the permission
             # manifest either. The fix has each calling skill write its own name once, inside the same gate that
-            # decides whether to load batch-mode.md at all — so a no-batch run never writes the sentinel.
+            # decides whether to load batch-mode.md at all — so a no-batch run never writes the sentinel. The gate is
+            # now ``dev_batch_gate.py``, guarding the ``dev_load_shared.py`` call with ``if ... then``
+            # (tests/test_dev_batch_gate.py pins that the script writes the sentinel only when batch mode is on).
             pytest.param(
                 _FEATURE_SKILL,
-                'echo "feature" > "${TMPDIR:-/tmp}/dev-batch-skill-${CSID}"',
-                'cat "$_DEV_SHARED/batch-mode.md"',
+                'bin/dev_batch_gate.py" feature; then',
+                'bin/dev_load_shared.py" batch-mode.md',
                 id="feature-writes-skill-name-sentinel-before-loading-batch-mode",
             ),
             # Same N9 fix as feature/SKILL.md, mirrored for refactor's own batch-mode gate.
             pytest.param(
                 _REFACTOR_SKILL,
-                'echo "refactor" > "${TMPDIR:-/tmp}/dev-batch-skill-${CSID}"',
-                'cat "$_DEV_SHARED/batch-mode.md"',
+                'bin/dev_batch_gate.py" refactor; then',
+                'bin/dev_load_shared.py" batch-mode.md',
                 id="refactor-writes-skill-name-sentinel-before-loading-batch-mode",
             ),
         ],
@@ -495,3 +508,18 @@ class TestBatchModeWiring:
         text = _text(path)
         assert marker in text
         assert text.index(marker) < text.index(later)
+
+    def test_bisect_procedure_loads_only_on_the_failure_path(self) -> None:
+        """``batch-mode.md`` carries the load of the bisect procedure, not the procedure itself.
+
+        A passing batch never reaches the bisect, so its procedure lives in ``batch-bisect.md`` and is read only after
+        the run fence printed a failing ``BATCH_RUN_EXIT``. The load line is declared (``> loads:``) in the consumer so
+        the shared-file orphan check finds it, and it comes after the run fence that produces the exit value.
+        """
+        text = _text(_BATCH_MODE)
+        load = 'bin/dev_load_shared.py" batch-bisect.md'
+        loop = 'for N in $(seq 1 "$_BATCH_EDITS"); do'
+        assert "> loads: batch-bisect.md" in text
+        assert text.index('echo "BATCH_RUN_EXIT=$BATCH_RUN_EXIT"') < text.index(load)
+        assert loop not in text
+        assert loop in _text(_BATCH_BISECT)

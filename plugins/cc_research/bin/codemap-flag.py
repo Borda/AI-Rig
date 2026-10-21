@@ -17,10 +17,19 @@ Exit codes: 0 = resolved Â· 1 = ``--codemap`` (strict) but codemap unavailable Â
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+#: Sibling import: bin/ is not a package. Putting it on the path resolves the private writer whether this file runs as
+#: a script, under the test conftest, or as a doctest module.
+_BIN_DIR = str(Path(__file__).resolve().parent)
+if _BIN_DIR not in sys.path:
+    sys.path.insert(0, _BIN_DIR)
+
+from _sentinel_io import write_private_text  # noqa: E402
 
 # Currency sentinel basename read back by skills/_shared/codemap-gates.md. Owned here
 # because codemap_resolve.py is byte-identical across plugins and cannot name one.
@@ -73,7 +82,7 @@ def main(argv: list[str]) -> int:
     """Resolve --codemap/--no-codemap and persist the skill's codemap-enabled sentinel."""
     slug = argv[1] if len(argv) > 1 else ""
     args = argv[2] if len(argv) > 2 else ""
-    if not slug:
+    if len(argv) <= 1:
         print("codemap-flag: missing <sentinel-slug> argument", file=sys.stderr)
         return 2
     # No "shared" fallback here, unlike the other bin/ scripts: this script's contract is
@@ -81,6 +90,10 @@ def main(argv: list[str]) -> int:
     csid = os.environ.get("CSID") or os.environ.get("CLAUDE_CODE_SESSION_ID") or ""
     if not csid:
         print("codemap-flag: CSID not exported by caller", file=sys.stderr)
+        return 2
+
+    if any(not re.fullmatch(r"[A-Za-z0-9._-]+", value) or ".." in value for value in (slug, csid)):
+        print("codemap-flag: invalid sentinel slug or session identity", file=sys.stderr)
         return 2
 
     raw = _resolve_mode(args)
@@ -98,7 +111,7 @@ def main(argv: list[str]) -> int:
     tmp = Path(os.environ.get("TMPDIR") or tempfile.gettempdir())
     sentinel = tmp / f"{slug}-codemap-enabled-{csid}"
     try:
-        sentinel.write_text(enabled + "\n", encoding="utf-8")
+        write_private_text(sentinel, enabled + "\n")
     except OSError as exc:
         print(f"codemap-flag: cannot write {sentinel}: {exc}", file=sys.stderr)
         return 1

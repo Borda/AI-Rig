@@ -28,16 +28,22 @@ Usage:
 Exit codes:
     0   resolved
     1   no source file found for the target
+    2   invalid ``--name`` or ``--timestamp`` (path separators, dots or other characters outside ``[A-Za-z0-9_-]``)
 """
 
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
 #: Default source-tree directory that contains the plugin folders searched for an agent file.
 PLUGINS_ROOT = Path("plugins")
+#: Allowed shape of a plugin, agent or skill name: no separators or dots, so it cannot leave its directory.
+_NAME_RE = re.compile(r"[A-Za-z0-9_-]+")
+#: Allowed shape of the run timestamp embedded in the proposal path; empty means no timestamp.
+_TIMESTAMP_RE = re.compile(r"[A-Za-z0-9_-]*")
 #: Plugin assumed when the requested agent name carries no ``plugin:`` prefix.
 DEFAULT_PLUGIN = "foundry"
 
@@ -77,7 +83,14 @@ def main() -> int:
     parser.add_argument("--local", action="store_true", help="label failures as --local for the caller")
     args = parser.parse_args()
 
-    plugin, _, rel = split_target(args.name)
+    plugin, rest, rel = split_target(args.name)
+    if not (_NAME_RE.fullmatch(plugin) and _NAME_RE.fullmatch(rest) and _TIMESTAMP_RE.fullmatch(args.timestamp)):
+        print(
+            f"! invalid --name {args.name!r} or --timestamp {args.timestamp!r} "
+            "(allowed: letters, digits, '_' and '-' around one optional 'plugin:' prefix)",
+            file=sys.stderr,
+        )
+        return 2
     resolved = resolve(plugin, rel)
     if resolved is None:
         label = "⚠ --local:" if args.local else "⚠"

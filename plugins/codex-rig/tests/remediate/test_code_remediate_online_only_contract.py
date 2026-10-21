@@ -6,9 +6,12 @@ import json
 from pathlib import Path
 
 import pytest
+from _skill_text import read_reference_body
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 CODE_REMEDIATE_SKILL = PLUGIN_ROOT / "skills" / "code-remediate" / "SKILL.md"
+#: Section moved out of SKILL.md and loaded only when a requested PR review report is missing.
+MISSING_REVIEW_DECISION = CODE_REMEDIATE_SKILL.parent / "references" / "missing-review-decision.md"
 
 
 @pytest.mark.installed_plugin
@@ -135,10 +138,9 @@ def test_missing_requested_report_blocks_continuation_until_explicit_decision() 
 def test_missing_requested_pr_review_has_repair_fresh_partial_and_pending_routes() -> None:
     """Offer feasible bounded recovery and preserve explicit partial and pending decisions."""
     skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
-    decision = skill.split("### Missing requested PR review decision", maxsplit=1)[1].split(
-        "### Preliminary finding intake", maxsplit=1
-    )[0]
+    decision = read_reference_body(MISSING_REVIEW_DECISION, "Missing requested PR review decision")
 
+    assert "references/missing-review-decision.md" in skill
     assert "`mode=pr` and `REQUESTED_REPORT=true`" in decision
     assert "explicit PR report paths" in decision
     assert "Run a fresh code review for [PR #<number>](<canonical PR URL>) before remediation?" in decision
@@ -175,9 +177,7 @@ def test_requested_review_sibling_routes_cannot_bypass_decision() -> None:
 def test_available_findings_cannot_bypass_missing_requested_review_approval() -> None:
     """Require a bound answer even when usable findings already exist."""
     skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
-    decision = skill.split("### Missing requested PR review decision", 1)[1].split("### Preliminary finding intake", 1)[
-        0
-    ]
+    decision = read_reference_body(MISSING_REVIEW_DECISION, "Missing requested PR review decision")
     assert "only after compatibility assessment and feasible automatic recovery" in decision
     assert "A version mismatch or repairable derived artifact alone does not trigger this question" in decision
     assert "Repair existing review and add missing coverage (Recommended)" in decision
@@ -201,8 +201,8 @@ def test_available_findings_cannot_bypass_missing_requested_review_approval() ->
 @pytest.mark.installed_plugin
 def test_unavailable_pr_question_links_target_without_claiming_source_review() -> None:
     """Keep failed collection identifiable without presenting artifact closure as a review."""
-    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
-    branch = skill.split("  - d. ", 1)[1].split("\n- **No /", 1)[0]
+    decision = read_reference_body(MISSING_REVIEW_DECISION, "Missing requested PR review decision")
+    branch = decision.split("  - d. ", 1)[1].split("\n- **No /", 1)[0]
 
     assert "[PR #<number>](<canonical PR URL>) could not be retrieved" in branch
     assert "no source review ran" in branch

@@ -62,6 +62,7 @@ def test_sentinels_and_dirs(project: Path, capsys: pytest.CaptureFixture[str]) -
     assert _sentinel(project, "eda-only") == "false\n"
     assert _sentinel(project, "inference-only") == "false\n"
     assert _sentinel(project, "offline-setup") == "false\n"
+    assert _sentinel(project, "resume") == "old.py\n"
     assert _sentinel(project, "keep-items") == "plan, decisions\n"
     assert (project / "work" / ".experiments" / "kaggle").is_dir()
     out = capsys.readouterr().out
@@ -75,6 +76,7 @@ def test_absent_flags_report_placeholders(project: Path, capsys: pytest.CaptureF
     out = capsys.readouterr().out
     assert "Type: auto-detect" in out
     assert "Resume: none" in out
+    assert _sentinel(project, "resume") == "\n"
     assert _sentinel(project, "keep-items") == "\n"
 
 

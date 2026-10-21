@@ -316,19 +316,49 @@ function scanTopLevel(text) {
   return [separators, substitutions];
 }
 
+/**
+ * True when a `$(...)` body is really a `$(( ... ))` arithmetic expansion: the paren it
+ * opens closes at the very end of the body (`$((echo a); echo b)` is a command substitution).
+ */
+function isArithmetic(inner) {
+  if (!(inner.startsWith("(") && inner.endsWith(")"))) return false;
+  const read = readDelimited(inner, 1, "(", ")");
+  return read[1] === inner.length && read[0] === inner.slice(1, -1);
+}
+
+/**
+ * Position in `edges` of the separator closing the segment that starts after `edges[index]`.
+ * Inside `[[ ... ]]` the `&&` / `||` operators join conditions, not commands, so a `[[` test
+ * stays one segment; a `[[` never closed by a `]]` word leaves the segment unmerged.
+ */
+function conditionalEnd(command, edges, index) {
+  const end = index + 1;
+  const opener = commandWords(command.slice(edges[index] + 1, edges[end]));
+  if (opener.length === 0 || opener[0] !== "[[") return end;
+  for (let candidate = end; candidate < edges.length; candidate++) {
+    const words = command.slice(edges[index] + 1, edges[candidate]).split(WS_SPLIT_RE);
+    if (words.indexOf("]]") !== -1) return candidate;
+  }
+  return end;
+}
+
 /** Split a command into unquoted segments, including substitution bodies (recursively). */
 function splitSegments(command) {
   const scanned = scanTopLevel(command);
-  const parts = [];
-  let previous = 0;
-  for (const position of scanned[0]) {
-    parts.push(command.slice(previous, position));
-    previous = position + 1;
+  const edges = [-1].concat(scanned[0], [command.length]);
+  const segments = [];
+  let index = 0;
+  while (index < edges.length - 1) {
+    const end = conditionalEnd(command, edges, index);
+    const segment = command.slice(edges[index] + 1, edges[end]);
+    if (hasContent(segment)) segments.push(segment);
+    index = end;
   }
-  parts.push(command.slice(previous));
-  const segments = parts.filter(hasContent);
   for (const inner of scanned[1]) {
-    for (const segment of splitSegments(inner)) segments.push(segment);
+    const bodies = isArithmetic(inner) ? scanTopLevel(inner)[1] : [inner];
+    for (const body of bodies) {
+      for (const segment of splitSegments(body)) segments.push(segment);
+    }
   }
   return segments;
 }
@@ -355,9 +385,14 @@ const DEFERRING_COMMANDS = new Set([
   "bash",
   "sh",
   "zsh",
+  "dash",
+  "ksh",
 ]);
-const GIT_DANGER_TOKENS = new Set(["push", "commit", "reset", "revert"]);
+const SHELL_INTERPRETERS = new Set(["bash", "sh", "zsh", "dash", "ksh"]);
+const SHELL_RESERVED_WORDS = new Set(["if", "then", "elif", "else", "while", "until", "do", "!"]);
+const GIT_DANGER_TOKENS = new Set(["push", "commit", "reset", "revert", "restore", "clean"]);
 const GIT_FORCE_TOKENS = new Set(["--force", "--force-with-lease", "-f"]);
+const GIT_BRANCH_DELETE_TOKENS = new Set(["-D", "-d", "--delete"]);
 const ASSIGNMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
 
 /** Split a segment into bare tokens with grouping and quote characters removed. */
@@ -386,23 +421,195 @@ function gitIsDangerous(tokens) {
   for (const token of tokens) {
     if (GIT_DANGER_TOKENS.has(token) || GIT_FORCE_TOKENS.has(token)) return true;
   }
-  return tokens.indexOf("worktree") !== -1 && tokens.indexOf("remove") !== -1;
+  const has = (word) => tokens.indexOf(word) !== -1;
+  if (has("worktree") && has("remove")) return true;
+  if (has("checkout") && (has("--") || has("."))) return true;
+  if (has("branch") && tokens.some((token) => GIT_BRANCH_DELETE_TOKENS.has(token))) return true;
+  return has("stash") && (has("drop") || has("clear"));
 }
 
-/** True when one segment runs a destructive command, directly or through a deferring command. */
-function segmentIsDangerous(segment) {
-  const tokens = segmentTokens(segment);
-  const split = commandHead(tokens);
-  const head = split[0];
-  const rest = split[1];
-  if (DANGER_COMMANDS.has(head)) return true;
-  if (head === "git") return gitIsDangerous(tokens);
-  if (!DEFERRING_COMMANDS.has(head)) return false;
+/** True when any token is a short-option cluster carrying `letter` (`-i`, `-ni`, `-i.bak`). */
+function hasShortFlag(tokens, letter) {
+  const pattern = new RegExp("^-[A-Za-z]*" + letter);
+  return tokens.some((token) => pattern.test(token));
+}
+
+/** True when a `sed` segment rewrites its input files in place. */
+function sedEditsInPlace(tokens) {
+  return hasShortFlag(tokens, "i") || tokens.some((token) => token.startsWith("--in-place"));
+}
+
+/** True when a `gh api` segment issues an HTTP DELETE. */
+function ghApiDeletes(tokens) {
+  if (tokens.indexOf("api") === -1) return false;
+  const methods = [];
+  tokens.forEach((token, index) => {
+    if (token === "-X" || token === "--method") {
+      if (index + 1 < tokens.length) methods.push(tokens[index + 1]);
+    } else if (token.startsWith("--method=")) {
+      methods.push(token.slice("--method=".length));
+    } else if (token.startsWith("-X")) {
+      methods.push(token.slice(2).replace(/^=+/, ""));
+    }
+  });
+  return methods.some((method) => method.toUpperCase() === "DELETE");
+}
+
+/** True when a shell invocation runs the script piped into it (`curl … | sh`). */
+function readsScriptFromStdin(args) {
+  if (hasShortFlag(args, "c")) return false;
+  const operands = args.filter((token) => !token.startsWith("-"));
+  return operands.length === 0 || hasShortFlag(args, "s") || args.indexOf("-") !== -1;
+}
+
+/** Command-specific destructive-use checks, keyed by command word and fed the segment's tokens. */
+const TOOL_CHECKS = new Map([
+  ["git", gitIsDangerous],
+  ["sed", sedEditsInPlace],
+  ["gh", ghApiDeletes],
+]);
+
+/**
+ * Find the word after a `NAME=value` assignment whose value may span several words.
+ * An unterminated quote, `(` or `{` falls back to skipping the assignment word alone.
+ */
+function assignmentEnd(words, start) {
+  let quote = "";
+  let depth = 0;
+  for (let index = start; index < words.length; index++) {
+    const word = words[index];
+    for (let at = 0; at < word.length; at++) {
+      const char = word[at];
+      if (char === "\\") {
+        at += 1;
+      } else if (quote) {
+        if (char === quote) quote = "";
+      } else if (char === "'" || char === '"' || char === "`") {
+        quote = char;
+      } else if (char === "(" || char === "{") {
+        depth += 1;
+      } else if ((char === ")" || char === "}") && depth) {
+        depth -= 1;
+      }
+    }
+    if (!quote && !depth) return index + 1;
+  }
+  return start + 1;
+}
+
+/** Whitespace words of a segment from its command word on (reserved words and assignments skipped). */
+function commandWords(segment) {
+  const words = segment.split(WS_SPLIT_RE).filter((word) => word);
+  let index = 0;
+  while (index < words.length) {
+    const bare = stripChars(words[index], "(){}");
+    if (!bare || SHELL_RESERVED_WORDS.has(bare)) {
+      index += 1;
+    } else if (ASSIGNMENT_RE.test(bare)) {
+      index = assignmentEnd(words, index);
+    } else {
+      break;
+    }
+  }
+  return words.slice(index);
+}
+
+/** True when the command word is itself an expansion (`$CMD`, `${CMD}`, `$(...)`, backtick). */
+function headIsExpansion(words) {
+  if (words.length === 0) return false;
+  const head = stripChars(stripChars(words[0], "(){}"), "'\"");
+  const base = head.slice(head.lastIndexOf("/") + 1);
+  return base.startsWith("$") || base.startsWith("`");
+}
+
+/** True when the arguments of a command that merely carries another command hold a destructive one. */
+function deferredIsDangerous(head, rest) {
   if (rest.indexOf("-delete") !== -1) return true;
+  if (SHELL_INTERPRETERS.has(head) && readsScriptFromStdin(rest)) return true;
   for (const token of rest) {
     if (DANGER_COMMANDS.has(token.slice(token.lastIndexOf("/") + 1))) return true;
   }
-  return rest.indexOf("git") !== -1 && gitIsDangerous(rest);
+  for (const [name, check] of TOOL_CHECKS) {
+    if (rest.indexOf(name) !== -1 && check(rest)) return true;
+  }
+  return false;
+}
+
+// One `case` pattern: unquoted chars other than space, parentheses and `|`, escapes, or quoted runs.
+// ASCII whitespace spelled out, matching the Python generator's `_CASE_PATTERN` exactly.
+const CASE_PATTERN = "(?:[^ \\t\\n\\r\\f\\v()'\"|\\\\]|\\\\.|\"[^\"]*\"|'[^']*')+";
+const CASE_LABEL_RE = new RegExp("^[ \\t\\n\\r\\f\\v]*\\(?" + CASE_PATTERN + "\\)");
+const CASE_IN_RE = /[ \t]in(?:[ \t]|$)/;
+const FUNCTION_NAME_RE = /^[A-Za-z_][A-Za-z0-9_-]*$/;
+
+/** Index just past a leading `case` arm label (`b)`), or -1 when the text opens with none. */
+function caseLabelEnd(text) {
+  const match = CASE_LABEL_RE.exec(text);
+  return match ? match[0].length : -1;
+}
+
+/** Command text of a `case` arm written on the `case … in` line itself, or null. */
+function caseLineArm(text) {
+  if (commandWords(text)[0] !== "case") return null;
+  const keyword = CASE_IN_RE.exec(text);
+  if (!keyword) return null;
+  const after = text.slice(keyword.index + keyword[0].length);
+  const end = caseLabelEnd(after);
+  return end === -1 ? null : after.slice(end);
+}
+
+/** Name a segment defines as a shell function (`f() {`, `f () {`, `function f {`), or null. */
+function functionName(words) {
+  let name = "";
+  if (words.length > 1 && words[0] === "function") {
+    name = words[1].endsWith("()") ? words[1].slice(0, -2) : words[1];
+  } else if (words.length > 0 && words[0].endsWith("()")) {
+    name = words[0].slice(0, -2);
+  } else if (words.length > 1 && words[1] === "()") {
+    name = words[0];
+  }
+  return FUNCTION_NAME_RE.test(name) ? name : null;
+}
+
+/** Words after a function definition's name and opening brace. */
+function functionBody(words) {
+  const start = words[0] === "function" || (words.length > 1 && words[1] === "()") ? 2 : 1;
+  let body = words.slice(start);
+  while (body.length > 0 && (body[0] === "{" || body[0] === "(")) body = body.slice(1);
+  return body;
+}
+
+/**
+ * Commands a segment runs behind syntax that hides them from the command-word check: a `case`
+ * label, an arm on the `case … in` line, a function definition. Judged in addition to the
+ * segment as written, never instead of it.
+ */
+function hiddenCommands(segment) {
+  const hidden = [];
+  const labelEnd = caseLabelEnd(segment);
+  if (labelEnd !== -1) hidden.push(segment.slice(labelEnd));
+  const arm = caseLineArm(segment);
+  if (arm !== null) hidden.push(arm);
+  const words = commandWords(segment);
+  if (functionName(words) !== null) hidden.push(functionBody(words).join(" "));
+  return hidden;
+}
+
+/** True when one segment runs a destructive command, including one hidden behind a label or function definition. */
+function segmentIsDangerous(segment) {
+  return [segment, ...hiddenCommands(segment)].some(commandIsDangerous);
+}
+
+/** True when one command runs a destructive command, directly or through a deferring command. */
+function commandIsDangerous(segment) {
+  const words = commandWords(segment);
+  const tokens = segmentTokens(words.join(" "));
+  const split = commandHead(tokens);
+  const head = split[0];
+  if (DANGER_COMMANDS.has(head) || headIsExpansion(words)) return true;
+  const check = TOOL_CHECKS.get(head);
+  if (check) return check(tokens);
+  return DEFERRING_COMMANDS.has(head) && deferredIsDangerous(head, split[1]);
 }
 
 /** True when any segment of `command` is destructive. */

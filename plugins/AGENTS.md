@@ -96,6 +96,7 @@ Root `AGENTS.md` and the shipped Codex Rig global template (`plugins/codex-rig/a
 - Every commit touching a plugin's non-test file must apply exactly one SemVer bump to that plugin from its HEAD baseline, except a generated package manifest updated only to record test-file bytes.
 - A commit changing only files under `plugins/<name>/tests/` needs no bump. When the plugin ships its tests, regenerate and validate the package manifest for those test bytes without bumping the version or updating the changelog.
 - Pure test, CI, and documentation changes need no changelog entry unless they change shipped product or plugin behavior.
+- Every changelog bullet states what changed and its user-visible impact. A bare file or mechanism name ("Sync report-header-table.js", "update helper", "refactor") says nothing; name the behaviour, and trace each claim to the diff.
 - Each touched plugin is evaluated independently, and one commit applies at most one bump per plugin.
 - Before changing a version, run `git diff HEAD --name-only -- plugins/<name>/` and stop with no bump when every changed path is under `tests/`, or the only additional path is the generated package manifest updated for those tests.
 - Otherwise read the baseline with `git show HEAD:plugins/<name>/.claude-plugin/plugin.json | grep version` and the on-disk version with `grep version plugins/<name>/.claude-plugin/plugin.json`; stop if disk already differs from HEAD.

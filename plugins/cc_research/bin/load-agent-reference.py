@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """load-agent-reference.py — resolve an agent's references/ sidecar dir and emit one fragment.
 
-Source tree first, plugin cache second (the installed layout has no plugins/ dir). Missing
+Source tree first, plugin cache second (the installed layout has no plugins/ dir). With
+``CLAUDE_PLUGIN_ROOT`` unset, the cwd-relative ``plugins/cc_research`` tree counts as the source
+tree only when the working directory is the research plugin's own source repository (its
+``plugins/cc_research/.claude-plugin/plugin.json`` names ``research``); anywhere else it is the
+text of the repository the session was opened in, so it is skipped with a stderr notice. Missing
 sidecar dir is fatal — the agent cannot run degraded without knowing its own reference set.
 A missing individual fragment is not: the caller supplies the degraded-mode line to print
 instead, because that text names per-fragment fallbacks and is genuinely different per doc.
@@ -12,11 +16,12 @@ Exit codes: 0 = fragment or degraded message emitted · 1 = sidecar dir unresolv
 
 from __future__ import annotations
 
-import fnmatch
 import os
 import re
 import sys
 from pathlib import Path
+
+from resolve_shared import source_repo_marker_present  # sibling bin/ script; same source-repository gate
 
 #: Allowed shape of an agent name used to build a reference path: letters, digits, underscore and hyphen only.
 _AGENT_RE = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -31,7 +36,7 @@ def _is_safe_fragment(value: str) -> bool:
     ``"C:foo.md"`` is rejected too — ``PurePath`` joins reset to a drive-qualified
     right-hand operand, letting it escape the sidecar directory regardless of the left
     operand. ``agent`` is validated separately against :data:`_AGENT_RE` (it also feeds
-    an ``fnmatch`` glob in :func:`_cached_sidecar`); this check covers ``fragment``,
+    a ``Path.glob`` pattern in :func:`_cached_sidecar`); this check covers ``fragment``,
     which is joined onto the resolved sidecar directory and never globbed.
 
     Examples:
@@ -53,24 +58,54 @@ def _is_safe_fragment(value: str) -> bool:
     return bool(_FRAGMENT_RE.fullmatch(value))
 
 
+def _version_key(name: str) -> list[int]:
+    """Sort key for a cache version directory name: its digit runs as integers.
+
+    Examples:
+        >>> _version_key("0.9.0") < _version_key("0.29.0")
+        True
+    """
+    return [int(run) for run in re.findall(r"\d+", name)]
+
+
 def _cached_sidecar(agent: str) -> Path | None:
-    """First installed-cache dir matching */research/*/references/<agent>, as `find | head -1`."""
+    """Newest non-orphaned installed-cache dir ``<marketplace>/research/<version>/references/<agent>``.
+
+    The glob is fixed-depth, so only the research plugin's own version directories are visited — never a walk of the
+    whole plugin cache. A version carrying ``.orphaned_at`` is a superseded install and is skipped.
+    """
     cache = Path.home() / ".claude" / "plugins" / "cache"
-    pattern = f"*/research/*/references/{agent}"
-    for parent, dirnames, _ in os.walk(cache):
-        for dirname in dirnames:
-            candidate = os.path.join(parent, dirname)
-            if fnmatch.fnmatch(candidate, pattern):
-                return Path(candidate)
-    return None
+    candidates = [
+        sidecar
+        for sidecar in cache.glob(f"*/research/*/references/{agent}")
+        if sidecar.is_dir() and not (sidecar.parent.parent / ".orphaned_at").exists()
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda sidecar: _version_key(sidecar.parent.parent.name))
 
 
 def _sidecar_dir(agent: str) -> Path | None:
-    """Source-tree sidecar if present, else the installed-cache copy, else None."""
-    root = os.environ.get("CLAUDE_PLUGIN_ROOT") or "plugins/cc_research"
+    """Plugin-root or trusted source-tree sidecar if present, else the installed-cache copy, else None."""
+    plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
+    root = plugin_root or "plugins/cc_research"
     local = Path(root) / "references" / agent
     if local.is_dir():
-        return local
+        if plugin_root:
+            return local
+        # A cwd-relative tree is whatever repository the session was opened in; trust it only in the source repo.
+        if source_repo_marker_present():
+            print(
+                "load-agent-reference: CLAUDE_PLUGIN_ROOT unset — reading cwd-relative plugins/cc_research (local dev only)",
+                file=sys.stderr,
+            )
+            return local
+        print(
+            "load-agent-reference: CLAUDE_PLUGIN_ROOT unset — ignoring cwd-relative plugins/cc_research: the working "
+            "directory is not the research plugin source repository (no plugins/cc_research/.claude-plugin/plugin.json "
+            "naming research)",
+            file=sys.stderr,
+        )
     cached = _cached_sidecar(agent)
     return cached if cached is not None and cached.is_dir() else None
 

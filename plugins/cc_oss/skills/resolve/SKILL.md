@@ -1,6 +1,6 @@
 ---
 name: resolve
-description: "OSS maintainer fast-close workflow for GitHub PRs. Three phases: (1) PR intelligence — reads full thread, linked issues, PR body to synthesize contribution motivation and classify every comment into action items; (2) conflict resolution — checks out PR branch (fork-aware via gh pr checkout), merges BASE into it, resolves conflicts semantically using contributor's intent as priority lens; (3) implements each action item as separate attributed commit via Codex, pushes back to contributor's fork. Supports three source modes: pr (live GitHub comments only), report (latest /review report findings as action items, no GitHub re-fetch), and pr + report (both sources aggregated and deduplicated in one pass). Also accepts bare comment text for single-comment dispatch. NOT for reply drafting to /oss:analyse findings (use /oss:analyse --reply (requires `oss` plugin)). NOT for code diff review of PR changes (use /oss:review). NOT for release preparation (use /oss:release). NOT for fixing local bugs unrelated to a PR (use /develop:fix; requires develop plugin). TRIGGER when: PR is ready to close and has open comments, conflicts, or review findings to address; user says 'close this PR', 'resolve comments on PR #N', or 'implement review findings'."
+description: "OSS maintainer fast-close workflow for GitHub PRs. Three phases: (1) PR intelligence — reads full thread, linked issues, PR body to synthesize contribution motivation and classify every comment into action items; (2) conflict resolution — checks out PR branch (fork-aware via gh pr checkout), merges BASE into it, resolves conflicts semantically using contributor's intent as priority lens; (3) implements each action item via specialist agents (Codex for eligible mechanical items) and commits per the chosen commit mode — one attributed commit per item by default — then pushes back to contributor's fork. Supports three source modes: pr (live GitHub comments only), report (latest /review report findings as action items, no GitHub re-fetch), and pr + report (both sources aggregated and deduplicated in one pass). Also accepts bare comment text for single-comment dispatch. NOT for reply drafting to /oss:analyse findings (use /oss:analyse --reply (requires `oss` plugin)). NOT for code diff review of PR changes (use /oss:review). NOT for release preparation (use /oss:release). NOT for fixing local bugs unrelated to a PR (use /develop:fix; requires develop plugin). TRIGGER when: PR is ready to close and has open comments, conflicts, or review findings to address; user says 'close this PR', 'resolve comments on PR #N', or 'implement review findings'."
 argument-hint: <PR number or URL> [report] | report | <review comment text> [--no-challenge] [--agent <name>] [--codemap] [--no-codemap] [--worktree] [--keep "<items>"]
 disable-model-invocation: true
 model: sonnet
@@ -14,11 +14,11 @@ OSS maintainer fast-close workflow. PR number → three phases fire automaticall
 
 1. **PR intelligence** — synthesize motivation from PR body, linked issues, thread; classify comments into action items
 2. **Conflict resolution** — checkout PR branch (fork-aware), merge `BASE_REF`, resolve conflicts with contributor intent as priority lens
-3. **Action item implementation** — implement each item as separate commit attributed to review comment, push to contributor's fork
+3. **Action item implementation** — implement each item (specialists first, Codex for eligible mechanical items), committed per `COMMIT_MODE` — default one commit per item, attributed to its review comment — then push to contributor's fork
 
 Result: conflict-free PR branch pushed to fork, ready to merge — no GitHub UI.
 
-**Core invariant — transparent, reversible**: every action = visible named git object. Use `git merge` (new commit, two parents), never `git rebase` (rewrites SHA, kills revert/cherry-pick). Each action item = own commit — granular revert always possible.
+**Core invariant — transparent, reversible**: every action = visible named git object. Use `git merge` (new commit, two parents), never `git rebase` (rewrites SHA, kills revert/cherry-pick). Default commit mode `each`: every action item = own commit — granular revert always possible. The Step 3d modes `grouped`, `all` and `stage` trade that granularity for fewer commits (or none); every one still leaves named git objects, never rewritten history.
 
 Bare comment text → skip to Codex dispatch (Step 12).
 
@@ -36,14 +36,14 @@ Bare comment text → skip to Codex dispatch (Step 12).
 - **`--no-codemap`**: optional — disable codemap structural context (on by default when codemap installed + index present)
 - **`--codemap`**: optional — strict mode: stop and report if codemap not installed or index missing
 - **`--agent <name>`**: optional — use `<name>` agent for implementation instead of Codex; must be an implementation agent or the `bridge:implement` Skill marker.
-  - Bare name auto-prefixed with `foundry:` if no plugin prefix detected (e.g. `--agent sw-engineer` → `foundry:sw-engineer`; `--agent linting-expert` → `foundry:linting-expert`; `--agent doc-scribe` → `foundry:doc-scribe`); explicit prefix also accepted (`--agent foundry:sw-engineer`); see routing table in `action-item-dispatch.md`.
+  - Bare name auto-prefixed with `foundry:` if no plugin prefix detected (e.g. `--agent sw-engineer` → `foundry:sw-engineer`; `--agent linting-expert` → `foundry:linting-expert`; `--agent doc-scribe` → `foundry:doc-scribe`); explicit prefix also accepted (`--agent foundry:sw-engineer`); see routing table in `dispatch-prelude.md`.
   - **`--agent` also applies to `INTEL_AGENT` (Step 3b thread intelligence)** — explicit real Agent types override label/title routing for classification as well.
   - `bridge:implement` is never passed to `Agent`: classification falls back to label/title routing, C1 candidates use the Skill route, and other items use the change-to-specialist table.
 
 NOT-for additions (scope guards):
 
 - **NOT for non-Python source PRs** (TypeScript, Go, Rust, Java) unless action items are limited to documentation or CI/CD changes — Step 9's lint-qa gate runs Python-specific tools (`ruff`/`mypy`); non-Python PRs get partial or no static-analysis review. For non-Python repos, run `/oss:resolve` in `report` mode with manually-curated findings.
-- **NOT for branches with uncommitted local edits** — the `report`-mode no-PR# path operates on the current branch as-is; uncommitted changes get committed alongside the action items. Stash (`git stash`) or commit local edits before invoking — workflow doesn't auto-stash.
+- **NOT for branches with uncommitted local edits** — the `report`-mode no-PR# path operates on the current branch as-is; uncommitted changes would be committed alongside the action items, so its branch safety check below stops on tracked modifications (`git status --porcelain -uno`). Stash (`git stash`) or commit local edits before invoking — workflow doesn't auto-stash.
 
 </inputs>
 
@@ -52,13 +52,7 @@ NOT-for additions (scope guards):
 CHALLENGE_TIMEOUT_S=300  # intel + challenge agent deadline; tightened from CLAUDE.md §6 default 900s
 AGENT_DEADLINE_S=900     # conflict, specialist, QA/lint agent deadline — checked at wake-ups, never polled
 ```
-> Bash timeout convention — `# timeout: N` annotations in bash blocks are honored by the Claude Code
->
-> Bash tool (sets tool-level timeout). Shell enforcement (`timeout S cmd` prefix) is NOT required for
->
-> skills executed exclusively via Claude Code. Shell prefix added only for commands that could hang
->
-> in direct-shell execution (git push, gh pr checkout).
+> Shell `timeout S cmd` prefix only for commands that could hang in direct-shell execution (git push, gh pr checkout); `# timeout: N` covers the rest.
 </constants>
 
 <compaction>
@@ -66,7 +60,7 @@ AGENT_DEADLINE_S=900     # conflict, specialist, QA/lint agent deadline — chec
 > loads: compaction-contract.md
 
 - Boundary 0: before the Step 3d item-selection gate — longest idle window of the run; contract makes a mid-wait `/compact` lossless.
-- Boundary 1: end of Phase 1 challenge (`action-item-dispatch.md`), before Phase 2 implementation dispatch. Closes the gap where Phase 1's parallel challenge agents and all of Phase 2's worktree-held implementation ran with no refresh, so a compaction anywhere in either phase resumed at Step 3d and re-asked an already-answered gate.
+- Boundary 1: end of Phase 1 challenge (opening block of `dispatch-phase2.md`), before Phase 2 implementation dispatch. Closes the gap where Phase 1's parallel challenge agents and all of Phase 2's worktree-held implementation ran with no refresh, so a compaction anywhere in either phase resumed at Step 3d and re-asked an already-answered gate.
 - Boundary 2: end of Step 8 — per-item implementation loop complete, before Step 9 lint gate. Contract overwrites on each iteration (latest state wins).
 - Boundary 3: start of Step 11 — before final report write, after push.
 - Preserve at boundary 0: PR#, `IMPL_DIR`, `action-items.jsonl`, `pr-intelligence.md`, `pr-vars.sh` paths.
@@ -79,7 +73,7 @@ AGENT_DEADLINE_S=900     # conflict, specialist, QA/lint agent deadline — chec
 
 <workflow>
 
-<!-- Symbol legend: ⚠ = warning/skipped (non-blocking, proceed with caution) · ⛔ = blocked/stop (halt workflow, do not proceed) -->
+<!-- Symbol legend: ⚠ = warning/skipped (non-blocking, proceed with caution) · `! BLOCKED —` = blocked/stop (halt workflow, do not proceed; communication.md form) · ⛔ = the same stop as emitted on stderr by bin/ scripts only -->
 
 <!-- Agent resolution: see _OSS_SHARED/agent-resolution.md -->
 
@@ -108,7 +102,7 @@ Two blocking user gates cut this workflow into three **runs**; an explicit "don'
 Two overlaps, each riding work that shares no data dependency with its partner:
 
 - **Step 4 + Step 5 beside the Step 3b intel agent.** Checkout and the `--no-commit` merge need only `PR_NUMBER`, never any intelligence output, so they run in the same turn that spawns `INTEL_AGENT` instead of waiting for its envelope.
-- **Step 7a beside the Step 8 Phase 1 challenge, after the gate.** Conflict resolution does not depend on which items get selected, and the challenge only reads, so both fire in one response once Step 3d has answered. While files conflict, Phase 1 reads every file from the pinned PR head (`git show <PR head oid>:<file>`), never the half-merged disk copy — one consistent snapshot whenever 7b commits (`action-item-dispatch.md` Phase 1).
+- **Step 7a beside the Step 8 Phase 1 challenge, after the gate.** Conflict resolution does not depend on which items get selected, and the challenge only reads, so both fire in one response once Step 3d has answered. While files conflict, Phase 1 reads every file from the pinned PR head (`git show <PR head oid>:<file>`), never the half-merged disk copy — one consistent snapshot whenever 7b commits (`dispatch-phase1.md`).
 
 **Finding collection is one stream.** Everything up to the Step 3d picker (intel, merge findings, table) runs with no conflict agent in flight, so no agent notification or tool output interleaves with the `AskUserQuestion` call that `enforce-resolve-table.js` checks. Conflict agents once ran beside that call and the required table failed to land often enough to cost the picker a retry; the overlap moved behind the gate, where the user is not waiting on a table.
 
@@ -117,6 +111,8 @@ Two dependencies bound the Run 2 fan. **Step 6a consumes the contribution motiva
 Degenerate cases, all reducing to the old serial order with no special handling: `report` mode with no PR# skips Steps 4–7 entirely; zero conflicted files means Step 5 commits the merge itself, Step 7a spawns nothing and Phase 1 runs alone; `--no-challenge` or zero selected items leaves Step 7a alone in the fan; `--worktree` enters the worktree inside Step 4, so an `INTEL_AGENT` spawned moments earlier keeps writing to the absolute `IMPL_DIR` it was handed.
 
 ## Agent wait discipline — no polling, per-agent deadlines
+
+<!-- policy-sibling: plugins/cc_develop/skills/_shared/agent-resolution.md (§Agent waits — no polling), plugins/cc_research/skills/_shared/agent-resolution.md (§Agent waits — no polling) — same agent_watch.py no-polling wait contract -->
 
 Every spawned agent (intel, conflict, Phase 1 challenge, Phase 2 specialists, Step 9 QA/lint) runs in the background. Waiting on one is **never** a tool call:
 
@@ -171,13 +167,10 @@ _PREFLIGHT_RC=$?
 IFS= read -r CODEX_AVAILABLE < "${TMPDIR:-/tmp}/resolve-preflight-CODEX_AVAILABLE-${CSID}" 2>/dev/null || CODEX_AVAILABLE="false"
 IFS= read -r GH_OK < "${TMPDIR:-/tmp}/resolve-preflight-GH_OK-${CSID}" 2>/dev/null || GH_OK="true"
 # --worktree/--keep: worktree off HEAD pre-Step4 checkout (worktree-isolation.md §resolve)
-# shared flag/--keep parser (C5; also analyse/review SKILL.md)
-eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/parse-skill-flags.py" --flags worktree "$ARGUMENTS")"
-WT_ENABLED="$FLAG_WORKTREE"
-echo "${KEEP_ITEMS:-}" > "${TMPDIR:-/tmp}/resolve-keep-items-${CSID}"  # compaction-contract.md §keep: semantics
+# shared flag/--keep parser (C5; also analyse/review SKILL.md); --keep-state: no eval, writes resolve-{worktree,clean-args,keep-items}-${CSID} (compaction-contract.md §keep: semantics), owner-safe clear of a crashed run's stale contract (§Lifecycle)
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/parse-skill-flags.py" --flags worktree --keep-state resolve "$ARGUMENTS" >/dev/null  # timeout: 5000
+IFS= read -r WT_ENABLED < "${TMPDIR:-/tmp}/resolve-worktree-${CSID}" 2>/dev/null || WT_ENABLED=false
 echo "$WT_ENABLED" > "${TMPDIR:-/tmp}/oss-resolve-worktree-${CSID}"
-# stale contract, crashed prior run (compaction-contract.md §Lifecycle)
-rm -f .temp/state/skill-contract.md
 
 # codemap: auto-on if installed; --no-codemap off; --codemap strict (stop if missing)
 # loads: detect_codemap.py — consumers: resolve/SKILL.md, review/SKILL.md
@@ -219,10 +212,11 @@ esac
 echo "→ Using: $REVIEW_FILE"
 ```
 
-Read `$REVIEW_FILE`. Extract PR number from header:
+Read `$REVIEW_FILE`. Extract PR number — path first, header second, never the first digit run anywhere (a Title like "v2 parser" would yield 2):
 
-- Pattern: `## Code Review: PR #<N>` or `## Code Review: <N>`
-- Grep: `grep -oE '(PR #|#)?[0-9]+' "$REVIEW_FILE" | head -1 | grep -oE '[0-9]+'`
+- Path: `.reports/review/pr-<N>/run-<NNN>/review-report.md` → `<N>`
+- Header: the YAML `PR: #<N>` line, else a `## Code Review: PR #<N>` heading
+- Grep: `sed -nE 's/^(PR:[[:space:]]*|## Code Review: (PR )?)#?([1-9][0-9]*)([[:space:]].*)?$/\3/p' "$REVIEW_FILE" | head -1`
 
 PR found → set `$ARGUMENTS = <N>`, proceed PR mode. Print: `→ Resolved PR #<N> from review output.`
 
@@ -236,14 +230,21 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 [ -f "${CLAUDE_PLUGIN_ROOT}/bin/parse-resolve-args.py" ] || { echo "Error: parse-resolve-args.py not found — verify oss plugin installation"; exit 1; }  # timeout: 5000
 # parse-resolve-args.py anchors on "<PR#> [report]" alone — ANY surviving flag token routes to
 # comment-dispatch and drops PR_NUMBER. Every supported flag must be stripped here, not just codemap/keep.
-eval "$(python "${CLAUDE_PLUGIN_ROOT}/bin/parse-skill-flags.py" --flags no-codemap,codemap,worktree,no-challenge --value-flags agent "$ARGUMENTS")"  # timeout: 5000
-ARGUMENTS="$CLEAN_ARGS"
+# --keep-state also writes resolve-no-challenge-${CSID}, read by Step 8 Phase 1; no stale contract yet (first write: Step 3d), so the second clear is a no-op
+python "${CLAUDE_PLUGIN_ROOT}/bin/parse-skill-flags.py" --flags no-codemap,codemap,worktree,no-challenge --value-flags agent --keep-state resolve "$ARGUMENTS" >/dev/null  # timeout: 5000
+IFS= read -r ARGUMENTS < "${TMPDIR:-/tmp}/resolve-clean-args-${CSID}" 2>/dev/null || ARGUMENTS=""
+IFS= read -r VALUE_AGENT < "${TMPDIR:-/tmp}/resolve-agent-${CSID}" 2>/dev/null || VALUE_AGENT=""
 case "${VALUE_AGENT:-}" in
     '') ;;
     *:*) ;;
     *) VALUE_AGENT="foundry:$VALUE_AGENT" ;;
 esac
-echo "$FLAG_NO_CHALLENGE" > "${TMPDIR:-/tmp}/resolve-no-challenge-${CSID}"  # read by Step 8 Phase 1
+# a leftover --token would route "42 --full" to comment dispatch (bridge:implement then gets that text as a review comment): strip it when the rest is a PR/report request; bare comment text keeps its dashes
+_REST=$(printf '%s' "$ARGUMENTS" | sed -E 's/(^|[[:space:]])--[A-Za-z][A-Za-z-]*//g; s/^[[:space:]]+//; s/[[:space:]]+$//')  # timeout: 3000
+if [ "$_REST" != "$ARGUMENTS" ] && [ -n "$_REST" ] && ! python "${CLAUDE_PLUGIN_ROOT}/bin/parse-resolve-args.py" "$_REST" | grep -qx 'MODE=comment-dispatch'; then
+    echo "UNKNOWN_FLAGS=$(printf '%s\n' "$ARGUMENTS" | tr -s '[:space:]' '\n' | grep -E '^--[A-Za-z][A-Za-z-]*$' | tr '\n' ' ')"
+    ARGUMENTS="$_REST"
+fi
 echo "${VALUE_AGENT:-}" > "${TMPDIR:-/tmp}/resolve-agent-override-${CSID}"
 echo skip > "${TMPDIR:-/tmp}/resolve-post-pr-action-${CSID}"  # Step 3d push question overwrites; a run that never reaches it must not inherit last run's `open`
 # `unset`, not `skip`/`push`: a run that never records a Step 3d push answer must neither push nor inherit last run's `push` — Step 10 asks instead
@@ -268,33 +269,28 @@ if grep -qvE "^[A-Z_][A-Z0-9_]*=([A-Za-z0-9_./:#@+-]*|'[^']*')$" "$tmpenv"; then
 fi
 . "$tmpenv"
 # sets: PR_NUMBER, PR_URL, MODE, ARGUMENTS ('#' stripped, comment-dispatch only)
+# parser keeps a non-/pull/ GitHub URL as MODE=pr, empty PR_NUMBER (never comment dispatch); every PR step keys on PR_NUMBER
+if [ "$MODE" = pr ] && [ -z "$PR_NUMBER" ]; then echo "! BLOCKED — not a pull-request URL: $PR_URL — /oss:resolve takes a PR number or a .../pull/N URL"; exit 1; fi
 echo "${PR_NUMBER:-n/a}" > "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}"  # timeout: 3000
-# liveness sentinel — cheap same-session signal for oss:review's Step 7 already-running check;
-# never read back by this skill itself, only written here, cleared on the report/reject-gate
-# stops right below and at completion (Step 11/12) — see review/SKILL.md. Tolerated for the same
-# reason a crashed skill-contract.md is (compaction.md §Stale-contract caution), though this one
-# does NOT self-heal the same way: skill-contract.md is unconditionally rm'd at Step 0 of ANY
-# later resolve run regardless of PR, but this sentinel is only overwritten when a later run
-# reaches THIS line again — a prose-level stop before it (Step 3d skip-all, an
-# internal `! BLOCKED` sentinel-loss guard) leaves it stale for the rest of the session, silently
-# suppressing oss:review's gate for that exact PR on every later invocation, not just once.
-# Deliberately not chased into every such exit path — accepted, not eliminated. `report` mode's
-# value can never numeric-match a review's PR tag by design: a no-PR resolve run must never
-# suppress any review's gate.
+# liveness sentinel for oss:review's Step 7 already-running check; write-only here, cleared at report/reject-gate stops below + Step 11/12 (review/SKILL.md)
+# stale-tolerated like a crashed skill-contract.md, but no Step 0 rm: only overwritten when a later run reaches this line, so a stop before it
+# (Step 3d skip-all, `! BLOCKED` sentinel-loss guard) suppresses oss:review's gate for that PR all session — accepted, not chased into every exit
+# `report` value never numeric-matches a review's PR tag: a no-PR run must never suppress any review's gate
 case "$PR_NUMBER" in ''|n/a|*[!0-9]*) echo "report" > "${TMPDIR:-/tmp}/oss-resolve-active-${CSID}" ;; *) echo "$PR_NUMBER" > "${TMPDIR:-/tmp}/oss-resolve-active-${CSID}" ;; esac  # timeout: 3000
 : > "${TMPDIR:-/tmp}/resolve-base-ref-${CSID}"  # Step 4 or report mode must publish this run's base before Step 9
 : > "${TMPDIR:-/tmp}/resolve-head-ref-${CSID}"  # empty = no PR branch; Step 9.0 would otherwise re-merge a prior PR's target into local work
 : > "${TMPDIR:-/tmp}/resolve-pr-ref-${CSID}"  # Step 4 or local report mode must publish this run's commit reference
+echo targeted > "${TMPDIR:-/tmp}/resolve-change-scope-${CSID}"  # Step 8 prelude overwrites; a run that skips Step 8 must not inherit last run's lint-only (it would skip QA)
 ```
 
 <!-- branch: unsupported-flags — isolated; ≤1 call; fires only when unknown flags present -->
 
-**Unsupported flag check** — after `eval`, scan remaining `$ARGUMENTS` for any `--<token>` not in `{--no-challenge, --agent, --codemap, --no-codemap, --worktree}`. Found → invoke `AskUserQuestion` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown tokens). Supported: `--no-challenge`, `--agent <name>`, `--codemap`, `--no-codemap`, `--worktree`, `--keep "<items>"`.
+**Unsupported flag check** — the parse block above prints `UNKNOWN_FLAGS=<tokens>` when a PR/report request carried a `--<token>` outside `{--no-challenge, --agent, --codemap, --no-codemap, --worktree}`, and has already removed those tokens from `$ARGUMENTS` (the parser anchors on `<PR#> [report]` alone: a surviving token would reroute the run to comment dispatch and drop `PR_NUMBER`). Printed → invoke `AskUserQuestion` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (the tokens are already stripped; proceed). Bare comment text is never scanned: its dashes are text. Supported: `--no-challenge`, `--agent <name>`, `--codemap`, `--no-codemap`, `--worktree`, `--keep "<items>"`.
 
 - `MODE="pr+report"` or `MODE="report"` → resolve the report source with the **Report source resolution** block below (executable, not prose), then branch on its printed `REPORT_STATUS`.
-  - `MODE="report"` additionally: extract PR# from the report header if present; no PR# in header → add branch safety check before Step 8 — `CURRENT=$(git branch --show-current); DEFAULT=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||'); [ -z "$DEFAULT" ] && DEFAULT=$(git remote show origin 2>/dev/null | grep 'HEAD branch' | awk '{print $NF}'); [ -z "$DEFAULT" ] && { printf "! BLOCKED — cannot determine default branch; refusing to proceed\n"; exit 1; }; [ "$CURRENT" = "$DEFAULT" ] && { echo "⛔ On default branch '$CURRENT' — report mode without PR# must not operate on default branch; check out a feature branch first"; exit 1; }`
+  - `MODE="report"` additionally: extract PR# from the report header if present; no PR# in header → add branch safety check before Step 8 — `CURRENT=$(git branch --show-current); DEFAULT=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||'); [ -z "$DEFAULT" ] && DEFAULT=$(git remote show origin 2>/dev/null | grep 'HEAD branch' | awk '{print $NF}'); [ -z "$DEFAULT" ] && { printf "! BLOCKED — cannot determine default branch; refusing to proceed\n"; exit 1; }; [ "$CURRENT" = "$DEFAULT" ] && { echo "! BLOCKED — on default branch '$CURRENT': report mode without PR# must not operate on default branch; check out a feature branch first"; exit 1; }; [ -z "$(git status --porcelain -uno)" ] || { echo "! BLOCKED — uncommitted edits on '$CURRENT': report mode without PR# commits on this branch as-is; commit or stash them first"; exit 1; }`
 - `MODE="pr"` → continue Step 2; only when the reject gate printed `incomplete-review-report`, run **Report source resolution** first for its gap triage
-- `MODE="comment-dispatch"` → branch safety check before Step 12: `export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"; IFS= read -r WT_ENABLED < "${TMPDIR:-/tmp}/oss-resolve-worktree-${CSID}" 2>/dev/null; [ "$WT_ENABLED" = "true" ] || WT_ENABLED=false; CURRENT=$(git branch --show-current); DEFAULT=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||'); [ -z "$DEFAULT" ] && DEFAULT=$(git remote show origin 2>/dev/null | grep 'HEAD branch' | awk '{print $NF}'); [ -z "$DEFAULT" ] && { printf "! BLOCKED — cannot determine default branch; refusing to proceed\n"; exit 1; }; [ "$CURRENT" = "$DEFAULT" ] && { echo "⛔ On default branch '$CURRENT' — comment dispatch must not commit to default branch"; exit 1; }; [ "$WT_ENABLED" = "true" ] && echo "⚠ --worktree has no effect in comment-dispatch mode"` → jump to Step 12
+- `MODE="comment-dispatch"` → branch safety check before Step 12: `export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"; IFS= read -r WT_ENABLED < "${TMPDIR:-/tmp}/oss-resolve-worktree-${CSID}" 2>/dev/null; [ "$WT_ENABLED" = "true" ] || WT_ENABLED=false; CURRENT=$(git branch --show-current); DEFAULT=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||'); [ -z "$DEFAULT" ] && DEFAULT=$(git remote show origin 2>/dev/null | grep 'HEAD branch' | awk '{print $NF}'); [ -z "$DEFAULT" ] && { printf "! BLOCKED — cannot determine default branch; refusing to proceed\n"; exit 1; }; [ "$CURRENT" = "$DEFAULT" ] && { echo "! BLOCKED — on default branch '$CURRENT': comment dispatch must not commit to default branch"; exit 1; }; [ "$WT_ENABLED" = "true" ] && echo "⚠ --worktree has no effect in comment-dispatch mode"` → jump to Step 12
 
 ### Reject-gate check (every mode — run the block even without a `PR_NUMBER`)
 
@@ -312,122 +308,17 @@ The gate's `--path-out` sentinel (`${TMPDIR:-/tmp}/resolve-report-file-${CSID}`)
 
 ### Report source resolution (`report` and `pr + report` modes; `pr` mode only after an incomplete-report gate)
 
-Run this block — it is the single lookup for both modes, and the **only** sanctioned way to conclude that no report exists. A prose-only lookup here was silently skipped in a real run, and the orchestrator re-ran a full `oss:review` fan-out while a matching report sat on disk and its path had already been printed by the reject gate one block earlier.
+<!-- loads: report-intake.md -->
 
-It is also the single intake triage. A report failing the publication contract (`⛔ BLOCKED — incomplete-review-report`) is graded by `find_review_report.py --assess` instead of stopping blind; a standing rejection, an invalid `--pr` or a failed path publication stays `blocked`. Resolve never edits or regenerates the review's report, sidecars or findings to clear a gap — no self-heal. Its only write into a review run stays Step 11's `resolution.jsonl` ledger.
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-# timeout: 45000 — gate and --assess may each call gh
-_SENTINEL="${TMPDIR:-/tmp}/resolve-report-file-${CSID}"
-_GATE_OUT="${TMPDIR:-/tmp}/resolve-gate-out-${CSID}"
-_GAPS="${TMPDIR:-/tmp}/resolve-intake-gaps-${CSID}"
-_RERUN="${TMPDIR:-/tmp}/resolve-intake-rerun-${CSID}"
-unsetopt nomatch 2>/dev/null  # zsh: unmatched glob stays literal as in bash, ls drops it; NOMATCH would report a present report missing
-IFS= read -r PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || PR_NUMBER=""
-IFS= read -r INTAKE_ACCEPTED < "${TMPDIR:-/tmp}/resolve-intake-degraded-${CSID}" 2>/dev/null || INTAKE_ACCEPTED=""
-# PR# → re-run the PR-scoped lookup (idempotent): sentinel trustworthy only if the reject gate ran THIS run for THIS PR,
-# and another PR's newest report would merge the wrong findings. No PR# → gate wrote the sentinel empty; glob newest-of-any
-case "$PR_NUMBER" in
-    ""|n/a)
-        REPORT_FILE=$(ls -t .reports/review/*/review-report.md .reports/review/*/*/review-report.md .reports/codex/review/*/review-notes.md 2>/dev/null | head -1)
-        echo "$REPORT_FILE" > "$_SENTINEL"
-        set -- --report "$REPORT_FILE" ;;
-    *) REPORT_FILE=""; set -- --pr "$PR_NUMBER" ;;
-esac
-: > "$_GATE_OUT"
-GATE_RC=0
-case "$1:$REPORT_FILE" in
-    --report: | --report:.reports/codex/review/*) ;;  # missing or codex-lineage: nothing to gate
-    *) python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/find_review_report.py" "$@" --path-out "$_SENTINEL" > "$_GATE_OUT"; GATE_RC=$?; cat "$_GATE_OUT" ;;  # timeout: 6000
-esac
-# exit 1 without the incomplete marker = still-rejected PR, bad --pr or lost path; never swallowed, never triaged
-if [ "$GATE_RC" -ne 0 ]; then
-    grep -q 'incomplete-review-report' "$_GATE_OUT" || { echo "REPORT_STATUS=blocked"; rm -f "${TMPDIR:-/tmp}/oss-resolve-active-${CSID}"; exit 1; }
-    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/find_review_report.py" "$@" --assess --path-out "$_SENTINEL" > "$_GAPS"; ASSESS_RC=$?; cat "$_GAPS"  # timeout: 15000 — may call gh for head_moved
-    # degraded-only gaps can still carry REJECT_: premise problem, never consumable
-    grep -q '"gate": "Gate: REJECT_' "$_GAPS" && { : > "$_SENTINEL"; echo "⛔ incomplete review report still records a rejection — address the ground, then rerun /oss:review"; ASSESS_RC=1; }
-    [ "$ASSESS_RC" -eq 1 ] && { echo "REPORT_STATUS=blocked"; rm -f "${TMPDIR:-/tmp}/oss-resolve-active-${CSID}"; exit 1; }
-    IFS= read -r REPORT_FILE < "$_SENTINEL" 2>/dev/null || REPORT_FILE=""
-    # -ef, not string equality: report mode accepts a relative path, a later PR-scoped lookup publishes it absolute
-    if [ "$ASSESS_RC" -ne 0 ] || [ -z "$REPORT_FILE" ] || [ -z "$INTAKE_ACCEPTED" ] || ! [ "$REPORT_FILE" -ef "$INTAKE_ACCEPTED" ]; then
-        : > "${TMPDIR:-/tmp}/oss-resolve-active-${CSID}"  # paused on the triage question; Intake proceed re-arms it
-        # targeted-rerun admissibility comes from fill-gaps' own planner, never re-derived in prose
-        python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/fill_gaps_scope.py" triage --assessment="$_GAPS" --pr="$PR_NUMBER" > "$_RERUN" || : > "$_RERUN"; cat "$_RERUN"  # timeout: 15000
-        [ "$ASSESS_RC" -eq 0 ] && echo "REPORT_STATUS=gaps" || echo "REPORT_STATUS=gaps-critical"
-        echo "GAPS_FILE=$_GAPS"
-        echo "RERUN_FILE=$_RERUN"
-        exit 0
-    fi
-    echo "→ Intake degraded, accepted earlier this run: $REPORT_FILE"
-fi
-IFS= read -r REPORT_FILE < "$_SENTINEL" 2>/dev/null || REPORT_FILE=""
-[ -f "$REPORT_FILE" ] || REPORT_FILE=""  # sentinel may outlive its report (TTL sweep, failed --path-out write)
-echo "$REPORT_FILE" > "$_SENTINEL"
-case "$REPORT_FILE" in
-    "")                      echo "REPORT_STATUS=missing" ;;
-    .reports/codex/review/*) echo "REPORT_STATUS=codex-lineage" ;;
-    *)                       echo "REPORT_STATUS=ok" ;;
-esac
-echo "REPORT_FILE=$REPORT_FILE"
-```
-
-Branch on the printed `REPORT_STATUS` — read it from stdout, never assume it:
-
-- `blocked` → stop the fix pipeline; retain the printed reason (rejected PR, including an incomplete report that still records a rejection; failed path publication; or an invalid `--pr` value). Diagnostic/recovery questions remain available. Repair or rerun the producer before consuming findings; never treat this as `missing` or start remediation from its notes.
-- `gaps` / `gaps-critical` → **Gap triage** below. The first printed JSON line (also saved at `GAPS_FILE`) is the whole assessment, the second (`RERUN_FILE`) the targeted-rerun verdict; `gaps-critical` has already emptied the report sentinel, so no later step can consume that report.
-- `ok` → print `→ Reusing review report: <REPORT_FILE>`; `report` mode continues at Step 3a, `pr + report` at Step 3c, `pr` mode at Step 2 (pr mode never merges report findings). **Never start a review when a report is already resolved.**
-- `codex-lineage` → this parser reads `oss:review`'s section schema only, not codex's flat H1/H2/M1-bullet schema. Treat as `missing` for the gate below, stating the lineage as the reason.
-- `missing` with **no `PR_NUMBER`** (bare `report` on the current branch) → nothing to offer: there is no second source and no PR to review. Stop with `No review report found in .reports/review/ or .reports/codex/review/ — run /oss:review <PR#> first, or provide a PR number`.
-- `missing` with a known `PR_NUMBER` → **do not spawn anything.** The caller asked for report findings; producing them is a decision, not a fallback. Invoke `AskUserQuestion` (actual tool call — prose question is a violation):
-
-<!-- branch: report-missing — fires only when `report` requested, PR# known, and no readable report resolved -->
-
-```text
-"No readable review report for PR #<N>. How should /oss:resolve get the findings you asked for?"
-  (a) Continue without report findings — GitHub comments only (pr + report mode only)
-  (b) Stop — print the /oss:review <PR#> command to run first, then re-invoke resolve  (Recommended)
-  (c) Abort — I'll run the review myself
-```
-
-- Offer (a) only in `pr + report` — bare `report` has no second source, so its menu is (b)/(c).
-- Selected (a) → print `⚠ no report findings merged — GitHub comments only` and continue in pr mode.
-- Selected (b) → print `→ Run /oss:review <PR#>, then re-invoke /oss:resolve <PR#> report`, and stop. **Never invoke `Skill(skill="oss:review", …)` here** — `oss:review` ends its own run in a Step 7a `AskUserQuestion` asking the user what to do next, so there is no structural "return" to resume this block on: the whole nested multi-agent fan-out would run only to leave the resume instruction sitting in context, unenforceable across the exact kind of compaction this fix exists to survive. Print the command and let the user re-invoke `/oss:resolve` themselves — the same pattern `oss:review`'s own Step 7a already uses.
-- Selected (c) → stop.
-
-#### Gap triage
-
-<!-- branch: report-gaps — fires only when the gate printed incomplete-review-report and --assess graded it -->
-
-Never self-heal: no edit or regeneration of the review's report, `review-validation.json` or `findings.jsonl`, whatever the user picks; Step 11's `resolution.jsonl` append stays the only write into that run.
-
-1. Print the gap table, once, as the last text before the question. First line `Review report <report> — <critical> critical · <degraded> degraded gaps (contract <contract>)`, then `| Rule | Severity | Subject |` with one row per `gaps[]` entry of the printed JSON, critical rows first. A non-empty `recorded_rejection` adds the line `⛔ report records a rejection (<recorded_rejection>) it cannot certify — a full rerun re-decides it`. The question text carries a plain summary of the gap table regardless — printed text before a tool call can vanish, so the decision never depends on it — in at most 6 lines: the first line, the rejection line when present, the `RERUN_FILE` verdict's `reason` when it is not admissible, then critical gaps as `rule subject`, as many as fit with a final `+N more` when they do not, and as its last line `Long wait? /compact now — gap assessment saved at <GAPS_FILE>, resume lossless.` (the question may idle past the prompt-cache lifetime).
-2. Invoke `AskUserQuestion` (actual tool call), one question, `multiSelect: false`. The rerun options need a PR number — `PR_NUMBER`, else the `RERUN_FILE` JSON's `pr` (the report header's PR); none → drop both reruns. **Rerun review for selected gaps** is offered only when the `RERUN_FILE` JSON says `admissible: true` (empty or unreadable = not admissible): `fill_gaps_scope.py triage` applies the planner's own checks — selectable subjects, recorded commit id, moved head, terminal REJECT, and whether the carried records can pass the publication gate — and always requires a QA or security role a gap names. Required subjects may include a carried record no gap names (for example the candidate behind a row the grader could not attribute, or behind a carried row resolve's merge cannot use). Nothing required and no gap-named subject → the optional lists hold every recorded subject that plans alone. A gap-named QA or security role that no request can name or re-run makes the rerun not admissible. Not admissible → its `reason`, which always points to a full review, goes in the question summary (step 1). The gap JSON's `head_moved` is `null` (PR head not checked) and the rerun verdict is admissible → offer the same options but mark none recommended: the planner re-checks the head and may still refuse.
-   - `gaps` → (a) **Proceed with valid parts** · (b) **Rerun review for selected gaps** (Recommended) · (c) **Full rerun** · (d) **Abort**. Not admissible → (a) **Proceed with valid parts** · (b) **Full rerun** (Recommended) · (c) **Abort**. No PR number → (a) **Proceed with valid parts** · (b) **Abort**, no option marked recommended.
-   - `gaps-critical` → **never offer Proceed.** Admissible → (a) **Full rerun** · (b) **Rerun review for selected gaps** (Recommended) · (c) **Abort**. Not admissible → (a) **Full rerun** (Recommended) · (b) **Abort**. No PR number → no question: print `⛔ review report has critical gaps and names no PR — rerun /oss:review on its PR` and stop.
-3. Act on the answer:
-   - **Proceed with valid parts** → run the **Intake proceed** block below; on its `REPORT_STATUS=ok` continue as `ok` above. Confirmed `findings.jsonl` rows become action items through the normal Step 3a/3c merge, which passes `--accept-degraded` for exactly this report; the Phase 1 verdict re-check stays strict, so its parent proof is never reused as a shortcut; `open_concerns` stay non-actionable (`report-intelligence.md` **Review findings source**); the final report's **Review Intake** section lists every gap (Step 11).
-   - **Rerun review for selected gaps** → choose the subjects from the `RERUN_FILE` JSON; never re-derive them from the gap table. `required_roles` and `required_candidates` are always in the selection (the rerun refuses without them). The optional `roles` and `candidates` are the user's choice: one optional subject and nothing required → no follow-up, take it. One optional subject beside required ones → a follow-up `AskUserQuestion`, `multiSelect: false`, options `Include <subject>` and `Required only`. 2–16 → a follow-up `AskUserQuestion`, `multiSelect: true`, one option per optional subject labelled `Role: <name>` or `Candidate: <id>`, split as evenly as possible over ceil(n/4) questions (`Gaps 1/2`, …), so each carries 2–4 options and the call at most 4 questions; its question text names the required subjects as already included. Past 16 → one question, `multiSelect: true`, options `All roles` and `All candidates` when both optional kinds exist; a single kind → `multiSelect: false`, options `All <kind>` and `Required only`. Print `→ Run /oss:review <N> --fill-gaps "<report>" --roles "<role,role>" --candidates "<id,id>"` with the JSON's `report` path inside the double quotes (paths may hold spaces), omitting a flag whose list is empty, then `→ then re-invoke /oss:resolve <same arguments>`, and stop. Nothing selected and nothing required → stop as **Abort**.
-   - **Full rerun** → print `→ Run /oss:review <N>, then re-invoke /oss:resolve <same arguments>` and stop.
-   - **Abort** → stop.
-
-Neither rerun invokes `Skill(skill="oss:review", …)` — same reason as the report-missing gate's (b): review ends in its own `AskUserQuestion`, leaving no return point to resume intake on. The block already cleared the liveness sentinel for every stop.
-
-**Intake proceed** — only on **Proceed with valid parts**. It re-grades the published report rather than trusting the earlier answer, so a stray run can never accept a critical or rejecting report:
+Single lookup for both modes, the **only** sanctioned way to conclude that no report exists, and the intake triage for an incomplete report (**Gap triage**, **Intake proceed**). Load and execute it when `MODE` is `report` or `pr + report`, or `pr` after the reject gate printed `incomplete-review-report`; `pr` mode otherwise and `comment-dispatch` skip it.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r REPORT_FILE < "${TMPDIR:-/tmp}/resolve-report-file-${CSID}" 2>/dev/null || REPORT_FILE=""
-IFS= read -r PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || PR_NUMBER=""
-[ -f "$REPORT_FILE" ] || { echo "! BLOCKED — no consumable report published; Proceed needs zero critical gaps"; exit 1; }
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/find_review_report.py" --report "$REPORT_FILE" --assess > "${TMPDIR:-/tmp}/resolve-intake-gaps-${CSID}" || { echo "! BLOCKED — report has critical gaps; Proceed is not available"; exit 1; }  # timeout: 15000 — may call gh for head_moved
-grep -q '"gate": "Gate: REJECT_' "${TMPDIR:-/tmp}/resolve-intake-gaps-${CSID}" && { echo "! BLOCKED — report records a rejection; Proceed is not available"; exit 1; }
-printf '%s\n' "$REPORT_FILE" > "${TMPDIR:-/tmp}/resolve-intake-degraded-${CSID}"
-case "$PR_NUMBER" in ''|n/a|*[!0-9]*) echo "report" > "${TMPDIR:-/tmp}/oss-resolve-active-${CSID}" ;; *) echo "$PR_NUMBER" > "${TMPDIR:-/tmp}/oss-resolve-active-${CSID}" ;; esac
-echo "⚠ Review intake degraded — consuming the valid parts of $REPORT_FILE"
-echo "REPORT_STATUS=ok"
-echo "REPORT_FILE=$REPORT_FILE"
+IFS= read -r _OSS_RESOLVE < "${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}" 2>/dev/null || _OSS_RESOLVE=""  # reload (Check 41)
+cat "$_OSS_RESOLVE/modes/report-intake.md"  # timeout: 5000
 ```
+
+Execute its blocks (loaded above), then branch on the printed `REPORT_STATUS`.
 
 ### Create all workflow tasks upfront
 
@@ -448,8 +339,8 @@ TASK_CLOSE    = TaskCreate(subject="Steps 10–11: Push and final report [if pr 
 | Step | Updates | Rides with |
 | -- | -- | -- |
 | 2 | `TASK_GATHER` → `in_progress` | the Step 3a/3b `cat` block |
-| 4 | `TASK_CHECKOUT` → `in_progress` (or `TASK_CHECKOUT`, `TASK_CONFLICT` → `deleted` when skipped) | the Step 4 branch-safety block |
-| 4 end | `TASK_CHECKOUT` → `completed` | the FORK_REMOTE block |
+| 4 | `TASK_CHECKOUT` → `in_progress` (or `TASK_CHECKOUT`, `TASK_CONFLICT` → `deleted` when skipped) | the Step 4 checkout block |
+| 4 end | `TASK_CHECKOUT` → `completed` | the same Step 4 checkout block |
 | 5 | `TASK_CONFLICT` → `in_progress` | the `conflict-resolution.md` load |
 | 3d | `TASK_GATHER` → `completed`, `TASK_SELECT` → `in_progress` | the boundary-0 contract block, before the selection prompt |
 | Run 2 fan | `TASK_SELECT` → `completed` | the fan's first tool call (Step 3e creates) |
@@ -524,17 +415,10 @@ IFS= read -r REPORT_FILE < "${TMPDIR:-/tmp}/resolve-report-file-${CSID}" 2>/dev/
 IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
 [ -n "$IMPL_DIR" ] && [ -f "$IMPL_DIR/action-items.jsonl" ] || { echo "! BLOCKED — Step 3b action-items.jsonl missing"; exit 1; }
 [ -f "$REPORT_FILE" ] || { echo "! BLOCKED — report sentinel empty; run Report source resolution (Step 1) first"; exit 1; }
-FINDINGS="$(dirname "$REPORT_FILE")/findings.jsonl"
-if [ ! -f "$FINDINGS" ]; then
-    FINDINGS="$IMPL_DIR/report-findings.jsonl"
-    [ -f "$FINDINGS" ] || { echo "! BLOCKED — no findings.jsonl beside the report; write $FINDINGS from the parsed report first"; exit 1; }
-    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/mint_finding_ids.py" "$FINDINGS" || exit 1  # timeout: 5000
-fi
-printf '%s\n' "$FINDINGS" > "${TMPDIR:-/tmp}/resolve-findings-file-${CSID}"
 IFS= read -r INTAKE_DEGRADED < "${TMPDIR:-/tmp}/resolve-intake-degraded-${CSID}" 2>/dev/null || INTAKE_DEGRADED=""
-# only the report the user accepted at Gap triage; -ef: relative vs absolute spelling of one file
-[ -n "$INTAKE_DEGRADED" ] && [ "$INTAKE_DEGRADED" -ef "$REPORT_FILE" ] && ACCEPT_DEGRADED="--accept-degraded" || ACCEPT_DEGRADED=""
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/merge_action_items.py" --items "$IMPL_DIR/action-items.jsonl" --findings "$FINDINGS" --candidates ${ACCEPT_DEGRADED:+"$ACCEPT_DEGRADED"}  # timeout: 5000
+# the script picks findings.jsonl beside the report (else mints the parsed $IMPL_DIR copy) and persists its path;
+# --intake-accepted admits only the report accepted at Gap triage, compared by file identity (relative vs absolute spelling)
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/merge_action_items.py" --items "$IMPL_DIR/action-items.jsonl" --report-file "$REPORT_FILE" --impl-dir "$IMPL_DIR" --persist-findings "${TMPDIR:-/tmp}/resolve-findings-file-${CSID}" --intake-accepted "$INTAKE_DEGRADED" --candidates  # timeout: 5000
 ```
 
 Step 2 — for each printed pair, decide whether the finding and the GitHub item describe the same problem (similar description, not merely the same file). Write the accepted pairs with the Write tool to `$IMPL_DIR/report-links.jsonl`, one `{"finding_id": "<id>", "item_id": <N>}` per line; write an empty file when none match. Then merge:
@@ -615,10 +499,8 @@ Longest idle window of the run sits here (median ~15 min, measured up to 16 h) �
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || _IMPL_DIR=""
 IFS= read -r _PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || _PR_NUMBER="n/a"
-IFS= read -r _KEEP < "${TMPDIR:-/tmp}/resolve-keep-items-${CSID}" 2>/dev/null || _KEEP=""
 _PRESERVE="pr=$_PR_NUMBER, impl-dir=$_IMPL_DIR, intel=$_IMPL_DIR/pr-intelligence.md, items=$_IMPL_DIR/action-items.jsonl, vars=$_IMPL_DIR/pr-vars.sh"
-[ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:resolve" "item selection (Step 3d gate)" "$_IMPL_DIR" "$_PRESERVE" "resume: re-read action-items.jsonl + pr-intelligence.md, re-issue Step 3d AskUserQuestion; Steps 6-7a not yet dispatched — Step 5 left the merge staged, resolve it in the Run 2 fan (Step 7b join)"  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" --keep-sentinel resolve-keep-items "oss:resolve" "item selection (Step 3d gate)" "$_IMPL_DIR" "$_PRESERVE" "resume: re-read action-items.jsonl + pr-intelligence.md, re-issue Step 3d AskUserQuestion; Steps 6-7a not yet dispatched — Step 5 left the merge staged, resolve it in the Run 2 fan (Step 7b join)"  # timeout: 5000
 ```
 
 The hint line `` Long wait? `/compact` now — state persisted in <IMPL_DIR>, resume lossless. `` goes into the `question` text of Step 3d's first question — Call 1's bulk question (**Bulk question text** below), or the push question on the push-only path. Never as reply text, never Bash stdout: 5.5-family models may return reply text written before a tool call as an empty progress update, and tool output is not reliably shown to the user.
@@ -741,7 +623,7 @@ Type a topic for each item ID (e.g. '1=style 2=logic 3=tests'), or type 'auto' t
 
 `labels` only: write the pairs with the Write tool to `$IMPL_DIR/group-labels.tsv`, one `<id>\t<topic>` row per pair — numeric ids only, topic lowercased with every character outside `[a-z0-9-]` replaced by `-`. The Write tool, not a shell `echo`: the topics are user free text, and Step 8's group commit reads this file instead of asking again.
 
-**Dispatch-granularity question** — placed per the slot table above, asked when pending or resolved/addressed items are available (omitted on the empty-list push-only path; bulk action = (d) skip-all discards the answer, as for topic-group). It sets **wave width and sub-group size only**: specialist routing, the file-ownership tiebreak, and the import-coupling merge are correctness guards, never widened or dropped by any answer. The per-spawn item cap is width, so `(c)` widens it from 5 to 8 — never drops it: no answer hands one agent more than 8 items, and one file's overflow runs as chained links (`action-item-dispatch.md` Phase 2).
+**Dispatch-granularity question** — placed per the slot table above, asked when pending or resolved/addressed items are available (omitted on the empty-list push-only path; bulk action = (d) skip-all discards the answer, as for topic-group). It sets **wave width and sub-group size only**: specialist routing, the file-ownership tiebreak, and the import-coupling merge are correctness guards, never widened or dropped by any answer. The per-spawn item cap is width, so `(c)` widens it from 5 to 8 — never drops it: no answer hands one agent more than 8 items, and one file's overflow runs as chained links (`dispatch-phase2.md`).
 
 ```text
 Dispatch-granularity question — multiSelect: FALSE
@@ -757,7 +639,7 @@ Set `DISPATCH_MODE`:
 - (a) → `auto` · (b) → `sequential` · (c) → `per-specialist` · (d) → `preview` · unanswered → `auto` (default)
 - (a) is both default and recommended, so it stays first — deliberate exception to the recommended-second convention: the (a)–(d) letters key the fixed sentinel blocks below and the preview gate's re-ask.
 - Groups cannot be shown here: Phase 2 forms them from `SURVIVING_ITEMS` after Phase 1's challenge verdicts, so a concrete list does not exist at Step 3d. (d) Custom is the only path to approving real groups and costs one extra gate at the Phase 1 → Phase 2 boundary; the other three answers keep this run gate-free from here to dispatch.
-- `preview` is not a width. At that boundary `action-item-dispatch.md` re-asks with the group count and table path in the question text, never the group rows, saves their table and prints it once as the last text of the reply message that issues the (a)/(b)/(c) re-ask, then the orchestrator runs the matching block below a second time to record the resolved width.
+- `preview` is not a width. At that boundary `dispatch-phase2.md` re-asks with the group count and table path in the question text, never the group rows, saves their table and prints it once as the last text of the reply message that issues the (a)/(b)/(c) re-ask, then the orchestrator runs the matching block below a second time to record the resolved width.
 
 `(a)` auto:
 
@@ -906,7 +788,7 @@ IFS= read -r _PP < "${TMPDIR:-/tmp}/resolve-post-pr-action-${CSID}" 2>/dev/null 
 echo "commit-mode=$_CM group-strategy=$_GS dispatch-mode=$_DM push=$_PA post-pr=$_PP"  # timeout: 3000
 ```
 
-**No per-pass item cap** — every selected ID enters Step 3e and Step 8 in this pass; never trim a selection or defer a remainder to a rerun. Step 8 bounds load per agent instead (`action-item-dispatch.md` §Caps: ≤12 items per challenge agent, ≤5 per implementation spawn — ≤8 under `per-specialist`, one file's overflow chained — wave-paced). **Large-selection notice** — rides in the ≥19 call's Q1 question text (**Bulk question text** line 4, more than 50 pending): a field the call itself renders, read while the user is still choosing the scope. Never as reply text before a tool call (5.5-family models may return that as an empty progress update) and never in a task subject (task tools may be disabled, and a subject update lands after the user's last answer). After bulk resolution, more than 50 selected → Step 11's final report repeats it as one line, `→ <N> items selected — all ran in this pass; challenge fanned out at ≤12 items/agent.` No question, no trim.
+**No per-pass item cap** — every selected ID enters Step 3e and Step 8 in this pass; never trim a selection or defer a remainder to a rerun. Step 8 bounds load per agent instead (`dispatch-prelude.md` §Caps: ≤12 items per challenge agent, ≤5 per implementation spawn — ≤8 under `per-specialist`, one file's overflow chained — wave-paced). **Large-selection notice** — rides in the ≥19 call's Q1 question text (**Bulk question text** line 4, more than 50 pending): a field the call itself renders, read while the user is still choosing the scope. Never as reply text before a tool call (5.5-family models may return that as an empty progress update) and never in a task subject (task tools may be disabled, and a subject update lands after the user's last answer). After bulk resolution, more than 50 selected → Step 11's final report repeats it as one line, `→ <N> items selected — all ran in this pass; challenge fanned out at ≤12 items/agent.` No question, no trim.
 
 ## Step 7b join: dispatch and collect conflict resolutions — opens Run 2
 
@@ -921,17 +803,10 @@ Persist the completed intake report in `pr-intelligence.md` and selected scope i
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || _IMPL_DIR=""
 IFS= read -r _PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || _PR_NUMBER="n/a"
-IFS= read -r _KEEP < "${TMPDIR:-/tmp}/resolve-keep-items-${CSID}" 2>/dev/null || _KEEP=""
 _PRESERVE="pr=$_PR_NUMBER, impl-dir=$_IMPL_DIR, items=$_IMPL_DIR/action-items.jsonl, selected-items=$_IMPL_DIR/selected-items.txt, item-tasks=$_IMPL_DIR/item-tasks.tsv, conflict-tasks=$_IMPL_DIR/conflict-tasks.tsv, conflict-envelope=$_IMPL_DIR/conflict-envelope.json, watch=$_IMPL_DIR/agent-watch-conflict.tsv + $_IMPL_DIR/agent-watch-challenge.tsv (after fan), Step 3d answered (sentinels hold commit-mode, dispatch-mode, push-auth)"
-[ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:resolve" "Run 2 fan (conflict resolve ‖ Phase 1 early wave)" "$_IMPL_DIR" "$_PRESERVE; phase-report=$_IMPL_DIR/pr-intelligence.md" "resume: never re-issue Step 3d; re-cat own agent-resolution.md, modes/conflict-resolution.md and modes/action-item-dispatch.md; neither agent-watch-conflict.tsv nor agent-watch-challenge.tsv exists → fan not spawned: run the Fan response (7a + Phase 1 early wave, arm watches); else run agent_watch.py first; merge may be uncommitted (MERGE_HEAD) — never re-dispatch Step 7a while agent-watch-conflict.tsv has an open row; collect 7b when conflict-envelope.json exists, then C1, late wave, Phase 2" -- calls_ahead=40 "drop=expanded PR intelligence and action-item analysis"  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" --keep-sentinel resolve-keep-items "oss:resolve" "Run 2 fan (conflict resolve ‖ Phase 1 early wave)" "$_IMPL_DIR" "$_PRESERVE; phase-report=$_IMPL_DIR/pr-intelligence.md" "resume: never re-issue Step 3d; re-cat own agent-resolution.md, modes/conflict-resolution.md, modes/dispatch-prelude.md and modes/dispatch-phase1.md (the last only when resolve-no-challenge is not true; current phase only); neither agent-watch-conflict.tsv nor agent-watch-challenge.tsv exists → fan not spawned: run the Fan response (7a + Phase 1 early wave, arm watches); else run agent_watch.py first; merge may be uncommitted (MERGE_HEAD) — never re-dispatch Step 7a while agent-watch-conflict.tsv has an open row; collect 7b when conflict-envelope.json exists, then C1, late wave, Phase 2" -- calls_ahead=40 "drop=expanded PR intelligence and action-item analysis"  # timeout: 5000
 IFS= read -r _OSS_SHARED < "${TMPDIR:-/tmp}/resolve-oss-shared-${CSID}" 2>/dev/null || _OSS_SHARED=""
-[ -z "$_OSS_SHARED" ] && _OSS_SHARED="plugins/cc_oss/skills/_shared"
-_CC="$_OSS_SHARED/compaction-contract.md"; [ -f "$_CC" ] || _CC="plugins/cc_oss/skills/_shared/compaction-contract.md"
-sed -n '/^## Boundary step$/,/^## Acceptance criteria$/{/^## Acceptance criteria$/!p;}' "$_CC"
-_RS="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/bin/resolve_shared_path.py}"
-[ -n "$_RS" ] || _RS=$(ls plugins/cc_*/bin/resolve_shared_path.py 2>/dev/null | head -1)
-[ -f "$_RS" ] && _GD=$(python "$_RS" foundry bin 2>/dev/null) && [ -f "$_GD/compact_gate.py" ] && python "$_GD/compact_gate.py" || echo "compact-gate: continue (foundry gate unavailable)"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/compaction_boundary.py" "$_OSS_SHARED"
 ```
 
 Follow the Boundary step printed above before any fan spawn; report is the run-dir’s `pr-intelligence.md`, with the preserved selection and task maps. Only an opt-in `stop` decision defers the fan until `continue`; an `advise` decision carries its hint into the fan response's final text.
@@ -941,7 +816,7 @@ Follow the Boundary step printed above before any fan spawn; report is the run-d
 No conflicted files → no 7a; `--no-challenge` or an empty early set → no early wave.
 
 4. **Each notification** — persist any envelope, run the watch check, then consume what landed: a challenge reply goes through Phase 1's verdict processing at once; the conflict envelope goes to 7b below. Order between the two never matters.
-5. **7b** (`### 7b: Verify and complete merge` in `conflict-resolution.md`) — confirm `git diff --name-only --diff-filter=U` is empty, no residual conflict markers remain staged, mark each conflict task `completed` (all in one response), commit the merge; `TaskUpdate(task_id=TASK_CONFLICT, status="completed")` rides with the commit call; with zero conflicts there is no 7b, so the close rides with the fan's first response instead. A conflict agent that returned nothing is `timed_out` — surface it with ⏱, run Phase 3's cleanup block (it holds the branch mutex since the prelude), and stop before C1 and Phase 2 rather than implementing on an unmerged tree: jump to Step 11 and state `merge uncommitted — finish with git commit, or git merge --abort`. Challenge results stay on disk. Then re-point the HEAD fingerprint the Step 8 prelude took (when it ran) before the merge commit existed; the block refuses when the commit's first parent is not that fingerprint, since a foreign local commit would otherwise be absorbed:
+5. **7b** (`### 7b: Verify and complete merge` in `conflict-resolution.md`) — confirm `git diff --name-only --diff-filter=U` is empty, no residual conflict markers remain staged, mark each conflict task `completed` (all in one response), commit the merge; `TaskUpdate(task_id=TASK_CONFLICT, status="completed")` rides with the commit call; with zero conflicts there is no 7b, so the close rides with the fan's first response instead. A conflict agent that returned nothing is `timed_out` — surface it with ⏱, run the stop-path release fence in `dispatch-prelude.md` (the run holds the branch mutex since the prelude), and stop before C1 and Phase 2 rather than implementing on an unmerged tree: jump to Step 11 and state `merge uncommitted — finish with git commit, or git merge --abort`. Challenge results stay on disk. Then re-point the HEAD fingerprint the Step 8 prelude took (when it ran) before the merge commit existed; the block refuses when the commit's first parent is not that fingerprint, since a foreign local commit would otherwise be absorbed:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -950,7 +825,7 @@ IFS= read -r _PRIOR < "${TMPDIR:-/tmp}/resolve-base-sha-${CSID}" 2>/dev/null || 
 git rev-parse HEAD > "${TMPDIR:-/tmp}/resolve-base-sha-${CSID}"  # timeout: 3000
 ```
 
-6. **Join complete** = merge committed and every early-wave chunk, single-item retry, caucus and double-timeout gate settled or ⏱. Only then do C1, the Phase 1 late wave and Phase 2 begin (`action-item-dispatch.md`): C1 edits the tree, and retries read it.
+6. **Join complete** = merge committed and every early-wave chunk, single-item retry, caucus and double-timeout gate settled or ⏱. Only then do C1, the Phase 1 late wave and Phase 2 begin (`dispatch-prelude.md`, `dispatch-phase1.md`, `dispatch-phase2.md`): C1 edits the tree, and retries read it.
 
 Nothing to fan (no conflicted files and an empty early set, or `report` mode with no PR#) → no-op, continue with the prep response.
 
@@ -1000,24 +875,19 @@ IFS= read -r _OSS_SHARED < "${TMPDIR:-/tmp}/resolve-oss-shared-${CSID}" 2>/dev/n
 
 *Skip only when `MODE = report` with no PR# (`$PR_NUMBER` unset — no remote branch to check out). In pr mode, runs unconditionally regardless of `SELECTED_ITEMS` — conflict resolution must happen even when 0 action items selected.*
 
-When skipping, both ride with the next real call: `TaskUpdate(task_id=TASK_CHECKOUT, status="deleted")`, `TaskUpdate(task_id=TASK_CONFLICT, status="deleted")`. Otherwise `TaskUpdate(task_id=TASK_CHECKOUT, status="in_progress")` rides with the branch-safety block below, and `TaskUpdate(task_id=TASK_CHECKOUT, status="completed")` with the FORK_REMOTE block.
+When skipping, both ride with the next real call: `TaskUpdate(task_id=TASK_CHECKOUT, status="deleted")`, `TaskUpdate(task_id=TASK_CONFLICT, status="deleted")`. Otherwise `TaskUpdate(task_id=TASK_CHECKOUT, status="in_progress")` and `TaskUpdate(task_id=TASK_CHECKOUT, status="completed")` both ride with the one Step 4 block below.
 
-**Branch-safety pre-check** — must run BEFORE `gh pr checkout` so a wrong-branch commit is impossible (per `git-commit.md` Gate 2). Verify PR's `headRefName` isn't repo's default branch — `gh pr checkout` of a same-repo PR whose HEAD = default branch would land on default; any later commit (Step 8) would violate Gate 2:
+**Branch-safety pre-check** — must run BEFORE `gh pr checkout` so a wrong-branch commit is impossible (per `git-commit.md` Gate 2). Verify PR's `headRefName` isn't repo's default branch — `gh pr checkout` of a same-repo PR whose HEAD = default branch would land on default; any later commit (Step 8) would violate Gate 2. One block, in order: the pre-check (`resolve_pr_refs.py`), the `gh` check + checkout + same-branch verify, then the `FORK_REMOTE`/`PR_REF` derivation for Step 10. Every hard `exit 1` ends the whole block, so a failed stage never reaches the next:
 
 ```bash
+# timeout: 45000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || PR_NUMBER=""
-case "$PR_NUMBER" in ''|n/a|*[!0-9]*) echo "⛔ Step 4 PR number sentinel missing or invalid; refusing checkout"; exit 1 ;; esac
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/resolve_pr_refs.py" --pr "$PR_NUMBER"  # timeout: 15000
-```
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-# gh = hard prereq: gh pr checkout has no fallback path (folded here — its own block cost a call per run)
+case "$PR_NUMBER" in ''|n/a|*[!0-9]*) echo "! BLOCKED — Step 4 PR number sentinel missing or invalid; refusing checkout"; exit 1 ;; esac
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/resolve_pr_refs.py" --pr "$PR_NUMBER" || exit $?  # timeout: 15000
+# gh = hard prereq: gh pr checkout has no fallback path
 command -v gh >/dev/null 2>&1 || { echo "! BLOCKED — gh CLI required; install: https://cli.github.com"; exit 1; }
-# fresh shell (Check 41) — reload what resolve_pr_refs.py persisted above
-IFS= read -r PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || PR_NUMBER=""
-case "$PR_NUMBER" in ''|n/a|*[!0-9]*) echo "⛔ Step 4 PR number sentinel missing or invalid; refusing checkout"; exit 1 ;; esac
+# resolve_pr_refs.py persisted these sentinels; a child process cannot export them
 IFS= read -r PR_HEAD_REF < "${TMPDIR:-/tmp}/resolve-head-ref-${CSID}" 2>/dev/null || PR_HEAD_REF=""
 IFS= read -r PR_HEAD_OID < "${TMPDIR:-/tmp}/resolve-pr-head-oid-${CSID}" 2>/dev/null || PR_HEAD_OID=""
 # SHA-first: skip if at PR head — avoids worktree conflict (gh pr checkout aliases pr-N-slug if branch active elsewhere)
@@ -1028,45 +898,37 @@ if [ -n "$PR_HEAD_OID" ] && [ "$LOCAL_SHA" = "$PR_HEAD_OID" ]; then
     CURRENT=$(git branch --show-current 2>/dev/null)
     if [ -n "$PR_HEAD_REF" ] && [ "$CURRENT" != "$PR_HEAD_REF" ]; then
         echo "→ Re-aligning local branch: $CURRENT → $PR_HEAD_REF (same SHA $LOCAL_SHA)"
-        git switch "$PR_HEAD_REF" 2>/dev/null \
-            || git switch -c "$PR_HEAD_REF" "$LOCAL_SHA" \
-            || { echo "⛔ Cannot switch to $PR_HEAD_REF — aborting (branch active in another worktree?)"; exit 1; }
+        git switch --end-of-options "$PR_HEAD_REF" 2>/dev/null \
+            || git switch -c "$PR_HEAD_REF" --end-of-options "$LOCAL_SHA" \
+            || { echo "! BLOCKED — Cannot switch to $PR_HEAD_REF — aborting (branch active in another worktree?)"; exit 1; }
     fi
 else
     # hard-exit on failure — else HEAD_REF set but git stuck on caller branch, Step8 commits land wrong branch
     # --branch required: w/o it gh CLI v2.93+ falls back to pr<N> alias on collision → Step10 push makes unrelated branch (CRITICAL bug pyDeprecate 2026-06-13T08:33Z)
-    gh pr checkout "$PR_NUMBER" --branch "$PR_HEAD_REF" \
-        || { echo "⛔ gh pr checkout failed — aborting (network, branch deleted, auth expired, or local conflicts)"; exit 1; }   # timeout: 15000
+    gh pr checkout "$PR_NUMBER" --branch="$PR_HEAD_REF" \
+        || { echo "! BLOCKED — gh pr checkout failed — aborting (network, branch deleted, auth expired, or local conflicts)"; exit 1; }   # timeout: 15000
 fi
 # verify in the same call — checkout must land on the expected branch, else abort before Step 8 can commit
 HEAD_REF="$PR_HEAD_REF"
 IFS= read -r IS_CROSS_REPO < "${TMPDIR:-/tmp}/resolve-is-cross-repo-${CSID}" 2>/dev/null || IS_CROSS_REPO=""
-[ -n "$HEAD_REF" ] && [ -n "$IS_CROSS_REPO" ] || { echo "⛔ Step 4 verify: HEAD_REF/IS_CROSS_REPO sentinels missing — checkout state unverifiable, aborting before Step 8 can commit"; exit 1; }
+[ -n "$HEAD_REF" ] && [ -n "$IS_CROSS_REPO" ] || { echo "! BLOCKED — Step 4 verify: HEAD_REF/IS_CROSS_REPO sentinels missing — checkout state unverifiable, aborting before Step 8 can commit"; exit 1; }
 git remote -v | grep '(fetch)' | head -10 # timeout: 3000
 git status  # timeout: 3000
 CURRENT_BRANCH=$(git branch --show-current 2>/dev/null)  # timeout: 3000
 # same-repo: branch must equal PR_HEAD_REF, no alias — gh falls back to pr<N> on collision; assert as hard gate
 if [ "$IS_CROSS_REPO" = "false" ] && [ "$CURRENT_BRANCH" != "$PR_HEAD_REF" ]; then
-    echo "⛔ SAME-REPO RULE VIOLATION: on '$CURRENT_BRANCH' but PR headRefName='$PR_HEAD_REF' — branch alias (pr<N>) created instead of using original branch. Aborting to prevent push to wrong branch."
+    echo "! BLOCKED — SAME-REPO RULE VIOLATION: on '$CURRENT_BRANCH' but PR headRefName='$PR_HEAD_REF' — branch alias (pr<N>) created instead of using original branch. Aborting to prevent push to wrong branch."
     exit 1
 fi
-[ "$CURRENT_BRANCH" = "$HEAD_REF" ] || { echo "⛔ checkout did not land on $HEAD_REF (current: $CURRENT_BRANCH) — aborting before Step 8 can commit to wrong branch"; exit 1; }  # timeout: 3000
-```
-
-Determine `FORK_REMOTE` for push in Step 10:
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || PR_NUMBER=""
-case "$PR_NUMBER" in ''|n/a|*[!0-9]*) echo "⛔ Step 4 PR number sentinel missing or invalid; refusing PR reference"; exit 1 ;; esac
+[ "$CURRENT_BRANCH" = "$HEAD_REF" ] || { echo "! BLOCKED — checkout did not land on $HEAD_REF (current: $CURRENT_BRANCH) — aborting before Step 8 can commit to wrong branch"; exit 1; }  # timeout: 3000
+# FORK_REMOTE for the Step 10 push; truncate first so a failed derivation leaves no stale value
 : > "${TMPDIR:-/tmp}/resolve-pr-ref-${CSID}"
 : > "${TMPDIR:-/tmp}/resolve-fork-remote-${CSID}"
-IFS= read -r IS_CROSS_REPO < "${TMPDIR:-/tmp}/resolve-is-cross-repo-${CSID}" 2>/dev/null || IS_CROSS_REPO="false"
 if [ "$IS_CROSS_REPO" = "true" ]; then
     IFS= read -r FORK_REMOTE < "${TMPDIR:-/tmp}/resolve-head-repo-owner-${CSID}" 2>/dev/null || FORK_REMOTE=""
     [ -n "$FORK_REMOTE" ] || FORK_REMOTE=$(gh pr view "$PR_NUMBER" --json headRepositoryOwner --jq .headRepositoryOwner.login) # sentinel-miss fallback only # timeout: 6000
-    PR_URL=$(gh pr view "$PR_NUMBER" --json url --jq .url) || { echo "⛔ Could not resolve fork PR URL"; exit 1; } # timeout: 6000
-    [[ "$PR_URL" =~ ^https://[^/]+/[^/]+/[^/]+/pull/${PR_NUMBER}$ ]] || { echo "⛔ Fork PR URL does not match PR number"; exit 1; }
+    PR_URL=$(gh pr view "$PR_NUMBER" --json url --jq .url) || { echo "! BLOCKED — Could not resolve fork PR URL"; exit 1; } # timeout: 6000
+    [[ "$PR_URL" =~ ^https://[^/]+/[^/]+/[^/]+/pull/${PR_NUMBER}$ ]] || { echo "! BLOCKED — Fork PR URL does not match PR number"; exit 1; }
     PR_REF="$PR_URL"
 else
     FORK_REMOTE="origin"
@@ -1107,7 +969,7 @@ When skipping, `TaskUpdate(task_id=TASK_IMPL, status="deleted")` rides with Step
 
 Step 8 starts inside the Run 2 fan (Step 7b join): its prelude and the Phase 1 early wave run while the merge is still uncommitted; C1, the Phase 1 late wave and Phase 2 wait for the join.
 
-**Codemap index identity (if `CODEMAP_ENABLED=true`)**: resolve the index path the next block reuses. No query runs here — per-item blast radius is action-item-dispatch.md's **Pre-loop blast-radius scan**, which resolves each item's canonical module first and passes it as `rdeps`' positional argument.
+**Codemap index identity (if `CODEMAP_ENABLED=true`)**: resolve the index path the next block reuses. No query runs here — per-item blast radius is dispatch-prelude.md's **Pre-loop blast-radius scan**, which resolves each item's canonical module first and passes it as `rdeps`' positional argument.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -1117,18 +979,20 @@ if [ "$CODEMAP_ENABLED" = "true" ]; then
     _ROOT=$(git rev-parse --show-toplevel 2>/dev/null); [ -n "$_ROOT" ] || _ROOT="$PWD"
     _PROJ=$(basename "$_ROOT")
     _IDX="${CODEMAP_INDEX_DIR:-$_ROOT/.cache/codemap}"
+    echo "${_IDX}/${_PROJ}.json" > "${TMPDIR:-/tmp}/resolve-codemap-index-${CSID}"  # timeout: 3000
 fi
 ```
 
-Blast radius, top callers and coupling pairs reach each implementation agent through action-item-dispatch.md's own `ITEM_CALLERS` context, not from this step.
+Blast radius, top callers and coupling pairs reach each implementation agent through the prelude's printed per-item `← callers:` lines (blast-radius scan), not from this step.
 
-**Review pre-flight cache** — reuse per-module codemap answers `/review` already computed, so Step 8 blast-radius scan issues 0 duplicate pre-flight queries when a fresh review artifact exists (contract + artifact shape in `$_DEV_SHARED/codemap-context.md` §Review→resolve pre-flight cache; requires `develop`/`oss` codemap wiring). Locate latest review run-dir, materialize per-module cache once, before per-item loop:
+**Review pre-flight cache** — reuse per-module codemap answers `/review` already computed, so Step 8 blast-radius scan issues 0 duplicate pre-flight queries when a fresh review artifact exists (artifact shape and freshness rule in the `bin/codemap_cache.py` docstring; the source is the `$RUN_DIR/codemap-context.md` that `/oss:review` Step 2 copies from its `modes/codemap-context.md` staging; requires codemap). Locate latest review run-dir, materialize per-module cache once, before per-item loop. The newest context of any PR is taken on purpose: `codemap_cache.py read` freshness-gates every answer against the current index, so a context from another PR degrades to a cache miss, never to wrong data:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r CODEMAP_ENABLED < "${TMPDIR:-/tmp}/resolve-codemap-enabled-${CSID}" 2>/dev/null || CODEMAP_ENABLED="false"  # timeout: 3000
+IFS= read -r _IDX_FILE < "${TMPDIR:-/tmp}/resolve-codemap-index-${CSID}" 2>/dev/null || _IDX_FILE=""  # git-root-anchored path from the index-identity block
 CODEMAP_CACHE_DIR=""
 if [ "$CODEMAP_ENABLED" = "true" ]; then
-    _IDX_FILE="${_IDX}/${_PROJ}.json"  # both set above; git-root-anchored
     CODEMAP_CACHE_DIR=".temp/resolve/codemap-context"  # resolve-owned; stable across the run
     mkdir -p "$CODEMAP_CACHE_DIR"  # timeout: 3000
     # review's pre-flight blob: .temp/review/<ts>/codemap-context.md
@@ -1147,37 +1011,61 @@ fi
 echo "${CODEMAP_CACHE_DIR}" > "${TMPDIR:-/tmp}/resolve-codemap-cache-dir-${CSID}"  # timeout: 3000
 ```
 
-`action-item-dispatch.md`'s per-item blast-radius scan reads this cache first (freshness-gated `codemap_cache.py read`) and only calls `codemap-py query` on a cache miss — see its **Pre-loop blast-radius scan**. Empty `CODEMAP_CACHE_DIR` (no review artifact, or oss helper absent) → every module is a cache miss and the scan queries live, unchanged from prior behaviour.
+`dispatch-prelude.md`'s per-item blast-radius scan reads this cache first (freshness-gated `codemap_cache.py read`) and only calls `codemap-py query` on a cache miss — see its **Pre-loop blast-radius scan**. Empty `CODEMAP_CACHE_DIR` (no review artifact, or oss helper absent) → every module is a cache miss and the scan queries live, unchanged from prior behaviour.
 
-<!-- Step 8 defined in action-item-dispatch.md -->
+<!-- Step 8 defined in modes/dispatch-prelude.md, dispatch-phase1.md, dispatch-phase2.md, dispatch-phase3.md -->
+
+> loads: dispatch-prelude.md · dispatch-phase1.md · dispatch-phase2.md · dispatch-phase3.md
+
+Read `--no-challenge` from its sentinel, not from the raw argument blob — SKILL.md Step 1 strips every flag token before mode parsing, so `$ARGUMENTS` no longer carries it here. The block loads `dispatch-phase1.md` only without the flag:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _OSS_RESOLVE < "${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}" 2>/dev/null || _OSS_RESOLVE=""  # reload (Check 41)
-cat "$_OSS_RESOLVE/modes/action-item-dispatch.md"  # timeout: 5000
+[ -f "${TMPDIR:-/tmp}/resolve-no-challenge-${CSID}" ] && IFS= read -r NO_CHALLENGE < "${TMPDIR:-/tmp}/resolve-no-challenge-${CSID}" || NO_CHALLENGE="false"
+echo "NO_CHALLENGE=$NO_CHALLENGE"
+cat "$_OSS_RESOLVE/modes/dispatch-prelude.md"
+[ "$NO_CHALLENGE" = "true" ] || cat "$_OSS_RESOLVE/modes/dispatch-phase1.md"  # timeout: 5000
 ```
 
-`action-item-dispatch.md` (loaded above) — execute its prelude (IMPL_AGENT routing, IMPL_DIR init, blast-radius scan, plus a branch mutex + HEAD fingerprint so a second concurrent resolve aborts and an external mid-flight write surfaces at merge-back), then run its three-phase dispatch directly in the orchestrator:
+`NO_CHALLENGE=true` → skip Phase 1 entirely; `SURVIVING_ITEMS` = all `SELECTED_ITEMS`, every item treated `VALID`, Challenge Log section omitted from the report.
 
-1. Phase 1 challenge (parallel by domain, read-only).
-2. Phase 2 implementation (parallel, one isolated `git worktree` per specialist; groups formed by specialist then a file-ownership + import-coupling tiebreak so items that would collide on same file — or across an import edge — land in one worktree).
-3. Phase 3 merge-back (sequential cherry-pick, whole worktree groups ordered most-central-first so foundational commits land before dependents, `TaskUpdate` per item as its commit lands).
+Execute the prelude (IMPL_AGENT routing, IMPL_DIR init, blast-radius scan, plus a branch mutex + HEAD fingerprint so a second concurrent resolve aborts and an external mid-flight write surfaces at merge-back, C1, shared Challenge-log append block), then run the three-phase dispatch directly in the orchestrator. Load each later phase file only when that phase starts — on resume, re-cat the prelude plus the current phase file only:
+
+1. Phase 1 challenge (parallel by domain, read-only) — `dispatch-phase1.md`, loaded above.
+
+2. Phase 2 implementation (parallel, one isolated `git worktree` per specialist; groups formed by specialist then a file-ownership + import-coupling tiebreak so items that would collide on same file — or across an import edge — land in one worktree). Load once the Step 7b join, C1 and the Phase 1 late wave have finished:
+
+   ```bash
+   export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+   IFS= read -r _OSS_RESOLVE < "${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}" 2>/dev/null || _OSS_RESOLVE=""
+   cat "$_OSS_RESOLVE/modes/dispatch-phase2.md"  # timeout: 5000
+   ```
+
+3. Phase 3 merge-back (sequential cherry-pick, whole worktree groups ordered most-central-first so foundational commits land before dependents, `TaskUpdate` per item as its commit lands). Load once every Phase 2 group's fences ran or it is ⏱:
+
+   ```bash
+   export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+   IFS= read -r _OSS_RESOLVE < "${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}" 2>/dev/null || _OSS_RESOLVE=""
+   cat "$_OSS_RESOLVE/modes/dispatch-phase3.md"  # timeout: 5000
+   ```
 
 `TaskUpdate` calls stay orchestrator-owned throughout — Phase 1/2 subagents never touch task list (subagent can't drive parent's task list); only Phase 3, run by orchestrator itself after each cherry-pick, flips a task to `completed`. Explains why tasks flip in item-priority order during Phase 3 even though the work producing them ran concurrently in Phase 2.
 
-`action-item-dispatch.md` has no per-pass item cap: every selected item runs in one pass, never a rerun for a remainder. It bounds load per agent instead — ≤12 items per Phase 1 challenge agent (`ceil(n/12)` chunks per domain), ≤5 per Phase 2 implementation spawn (≤8 under `per-specialist`; one file's overflow runs as sequential chained links) — and paces both in pool-capped waves.
+Step 8 has no per-pass item cap: every selected item runs in one pass, never a rerun for a remainder. It bounds load per agent instead — ≤12 items per Phase 1 challenge agent (`ceil(n/12)` chunks per domain), ≤5 per Phase 2 implementation spawn (≤8 under `per-specialist`; one file's overflow runs as sequential chained links) — and paces both in pool-capped waves.
 
-**Straggler gate — before leaving Step 8**: `action-item-dispatch.md`'s per-item close-out (REJECT, skipped, cherry-pick landed — including the C1 Codex-direct shortcut, which never enters Phase 1/2/3 at all) should have already terminated every id in `item-tasks.tsv`; this catches whichever one didn't. UNVERIFIED tasks are durable pending obligations with owner/next_check/closure, excluded from implementation recovery and carried into Step 9/final Open Concerns. Never move on to Step 9 over any other open child — that hid the original leak. Fails closed on a lost `IMPL_DIR` sentinel: distinct from "no items were selected," which the file's own absence still reports safely.
+**Straggler gate — before leaving Step 8**: the dispatch files' per-item close-out (REJECT, skipped, cherry-pick landed — including the C1 Codex-direct shortcut, which never enters Phase 1/2/3 at all) should have already terminated every id in `item-tasks.tsv`; this catches whichever one didn't. UNVERIFIED tasks are durable pending obligations with owner/next_check/closure, excluded from implementation recovery and carried into Step 9/final Open Concerns. Never move on to Step 9 over any other open child — that hid the original leak. Fails closed on a lost `IMPL_DIR` sentinel: distinct from "no items were selected," which the file's own absence still reports safely. One Bash call, run once, unedited: the gate loop lists each open id in `straggler-check-ids.txt`, then the confirmation loop checks every listed id in the same run.
 
 ```bash
+# timeout: 8000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
 [ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing; cannot verify child tasks before leaving Step 8"; exit 1; }
 if [ -f "$IMPL_DIR/item-tasks.tsv" ]; then
-    : > "$IMPL_DIR/straggler-check-ids.txt"  # the confirmation block below reads its ids here, never from a placeholder
+    : > "$IMPL_DIR/straggler-check-ids.txt"  # the confirmation loop below reads its ids here, never from a placeholder
     _SKIPPED_IDS=$(cut -f1 "$IMPL_DIR/skipped-items.txt" 2>/dev/null)
     # anchored right after id= — resolution= is the field placed there, before any free-text field
-    # (action-item-dispatch.md's producer template), so a reviewer's quoted text can never match it
+    # (dispatch-prelude.md's producer template), so a reviewer's quoted text can never match it
     _REJECTED_IDS=$(grep -iE '^id[[:space:]]*=[[:space:]]*[0-9]+[[:space:]]+resolution[[:space:]]*=[[:space:]]*rejected' "$IMPL_DIR/challenge-log.txt" 2>/dev/null | sed -n 's/^id[[:space:]]*=[[:space:]]*\([0-9]*\).*/\1/p')
     _ALREADY_FIXED_IDS=$(sed -n 's/^id=\([0-9][0-9]*\) resolution=already-fixed evidence=ALREADY_FIXED .*/\1/p' "$IMPL_DIR/challenge-log.txt")
     _UNVERIFIED_IDS=$(sed -n 's/^id=\([0-9][0-9]*\) resolution=unverified evidence=UNVERIFIED .*/\1/p' "$IMPL_DIR/challenge-log.txt")
@@ -1192,27 +1080,14 @@ if [ -f "$IMPL_DIR/item-tasks.tsv" ]; then
     done < "$IMPL_DIR/item-tasks.tsv"
 else
     echo "n/a — report mode or no items selected"
+    exit 0
 fi
 # timeout: 3000
-```
-
-- Bash printed `n/a` → no per-item tasks were created, proceed straight to the flip below.
-- `closed:` lines need nothing further; ALREADY_FIXED already completed its task from validated historical evidence.
-- `pending:` lines remain pending and visible in resolution.jsonl/final Open Concerns; never require an implementation commit, delete the task, or enter straggler implementation recovery for these UNVERIFIED obligations.
-- A `! skipping` line names a malformed row (empty task id) — investigate `item-tasks.tsv` directly via `TaskList`/`grep` for that item id before proceeding; never guess its status.
-- For every `check:` line: call `TaskList`; if that task is already `completed`/`deleted`, done. If it's still open, do NOT default it to `completed` — confirm independently that item's commit is actually on the branch before calling `TaskUpdate(status="completed")`. The confirmation command depends on `COMMIT_MODE` — only `each` carries a per-item attribution token; `grouped` folds several ids into one message; `all`/`stage` carry none at all (`stage` never commits — the diff stays staged, per its own contract). A lost `resolve-base-sha` sentinel degrades the confirmation to an unscoped search across the whole branch, which can false-confirm a never-implemented item against a prior run's commit on the same branch — the block below warns and treats any match with extra suspicion in that case; both reads and the mode dispatch happen inside it, not by hand:
-
-Run once, unedited, right after the gate block above: it confirms every `check:` id, read from `straggler-check-ids.txt` (written by the gate block), and prints one `MATCH`/`NO MATCH` line per id — use the lines for ids whose task is still open:
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
-[ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing; cannot confirm straggler commits"; exit 1; }
 IFS= read -r COMMIT_MODE < "${TMPDIR:-/tmp}/resolve-commit-mode-${CSID}" 2>/dev/null || COMMIT_MODE="each"
 IFS= read -r _BASE_SHA < "${TMPDIR:-/tmp}/resolve-base-sha-${CSID}" 2>/dev/null || _BASE_SHA=""
-[ -s "$IMPL_DIR/straggler-check-ids.txt" ] || { echo "n/a — the gate block printed no check: line"; exit 0; }
+[ -s "$IMPL_DIR/straggler-check-ids.txt" ] || { echo "n/a — no check: line above"; exit 0; }
 [ -n "$_BASE_SHA" ] || echo "⚠ resolve-base-sha sentinel missing — confirmation below is unscoped, verify the matched commit's date/author before trusting it"
-# every check: id from the gate block's file, never an item_id placeholder: one invariant run confirms them all
+# every check: id from the gate loop's file, never an item_id placeholder: one invariant run confirms them all
 case "$COMMIT_MODE" in each|grouped|all|stage) ;; *) echo "! BLOCKED — COMMIT_MODE is '$COMMIT_MODE', not each/grouped/all/stage"; exit 1 ;; esac
 while IFS= read -r _ITEM_ID || [ -n "$_ITEM_ID" ]; do
     case "$_ITEM_ID" in ''|*[!0-9]*) continue ;; esac
@@ -1225,18 +1100,10 @@ while IFS= read -r _ITEM_ID || [ -n "$_ITEM_ID" ]; do
             [ -n "$_HITS" ] && printf 'MATCH — item %s: %s\n' "$_ITEM_ID" "$_HITS" || echo "NO MATCH — item ${_ITEM_ID} has no [resolve No.${_ITEM_ID}] commit"
             ;;
         grouped)
-            # tokenize, exact-match — no boundary regex at all. Two prior attempts at this command were
-            # both wrong, in opposite directions: (1) --grep="items .*\b${_ITEM_ID}\b" never matches
-            # anything (\b is a GNU extension, does not compile under `git log -E`'s POSIX ERE); (2) a
-            # boundary-regex replacement against --oneline output is fail-open — --oneline prints only
-            # the commit subject, never the body where the item list lives, so it matches stray digits
-            # in the abbreviated sha or unrelated subject text and false-confirms items that never
-            # landed. --format=%B reads the full body (where "[resolve group] … items <ids>" actually
-            # is), isolates that one line per commit, splits it into whitespace-delimited tokens, and
-            # requires an EXACT token match — a group's own "PR #1" text can never satisfy grep -qx
-            # against a bare ${_ITEM_ID}, and "30" can never satisfy a check for "3". Verified against a
-            # live multi-commit repo (two group commits, ids "30 4" and "7 8"): every real id matched,
-            # "1" (present only inside "PR #1", not the items list) did not.
+            # tokenize + exact-match, no boundary regex: `\b` is GNU-only (never compiles under `git log -E` POSIX ERE);
+            # --oneline is fail-open (subject only, never the body holding the item list → stray sha/subject digits false-confirm).
+            # --format=%B reads the body's "[resolve group] … items <ids>" line; grep -qx exact token: "PR #1" never matches 1, "30" never 3
+            # (verified on a live repo: group commits "30 4" and "7 8" — every real id matched, "1" did not)
             git log --format=%B --grep="items" ${_BASE_SHA:+"$_BASE_SHA..HEAD"} \
                 | grep -E '^\[resolve group\]' | tr ' ' '\n' | grep -qx "${_ITEM_ID}" \
                 && echo "MATCH — item ${_ITEM_ID} found in a group commit" \
@@ -1248,6 +1115,12 @@ while IFS= read -r _ITEM_ID || [ -n "$_ITEM_ID" ]; do
     esac
 done < "$IMPL_DIR/straggler-check-ids.txt"
 ```
+
+- Bash printed `n/a` → no per-item tasks were created, proceed straight to the flip below.
+- `closed:` lines need nothing further; ALREADY_FIXED already completed its task from validated historical evidence.
+- `pending:` lines remain pending and visible in resolution.jsonl/final Open Concerns; never require an implementation commit, delete the task, or enter straggler implementation recovery for these UNVERIFIED obligations.
+- A `! skipping` line names a malformed row (empty task id) — investigate `item-tasks.tsv` directly via `TaskList`/`grep` for that item id before proceeding; never guess its status.
+- For every `check:` line: call `TaskList`; if that task is already `completed`/`deleted`, done. If it's still open, do NOT default it to `completed` — confirm independently that item's commit is actually on the branch before calling `TaskUpdate(status="completed")`. The block's confirmation half already printed one `MATCH`/`NO MATCH` line per `check:` id, read from `straggler-check-ids.txt` — use the lines for ids whose task is still open. The confirmation command depends on `COMMIT_MODE` — only `each` carries a per-item attribution token; `grouped` folds several ids into one message; `all`/`stage` carry none at all (`stage` never commits — the diff stays staged, per its own contract). A lost `resolve-base-sha` sentinel degrades the confirmation to an unscoped search across the whole branch, which can false-confirm a never-implemented item against a prior run's commit on the same branch — the block warns and treats any match with extra suspicion in that case; both reads and the mode dispatch happen inside it, not by hand.
 
 No confirming commit found → this item was never closed by any exit path; that's the exact defect this gate exists to catch — surface it via `AskUserQuestion` (dispose as `deleted` with a stated reason, or leave open and investigate) rather than guessing either status. Only once every printed id is accounted for, continue to Step 9. Batch every `TaskList`/`TaskUpdate` this gate needs into one response.
 
@@ -1263,21 +1136,14 @@ Implementation envelopes and commit ledgers must be persisted before this refres
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # boundary2: post-impl loop, pre-lint gate (compaction-contract.md §Lifecycle)
 IFS= read -r _PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || _PR_NUMBER="n/a"
-IFS= read -r _KEEP < "${TMPDIR:-/tmp}/resolve-keep-items-${CSID}" 2>/dev/null || _KEEP=""
 IFS= read -r _IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || _IMPL_DIR="n/a"
 IFS= read -r _PUSH_AUTH < "${TMPDIR:-/tmp}/resolve-push-auth-${CSID}" 2>/dev/null || _PUSH_AUTH="unset"
 IFS= read -r _POST_PR < "${TMPDIR:-/tmp}/resolve-post-pr-action-${CSID}" 2>/dev/null || _POST_PR="skip"
 IFS= read -r _PUSH_STATUS < "${TMPDIR:-/tmp}/resolve-push-status-${CSID}" 2>/dev/null || _PUSH_STATUS="none"
 _PRESERVE="pr=${_PR_NUMBER}, items-implemented, impl-dir=${_IMPL_DIR}, challenge-log=${_IMPL_DIR}/challenge-log.txt, item-tasks=${_IMPL_DIR}/item-tasks.tsv, push-auth=${_PUSH_AUTH} (Step 3d answer), post-pr=${_POST_PR}, push-status=${_PUSH_STATUS} (file resolve-push-status, Step 10 overwrites); next: lint/push/report"
-[ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:resolve" "lint-qa (after implementation loop)" "$_IMPL_DIR" "${_PRESERVE}; phase-reports=${_IMPL_DIR}/phase2-envelope-*.json, commits=${_IMPL_DIR}/phase2-commits.jsonl, c1-summaries=${_IMPL_DIR}/c1-item-summary.tsv" "resume: re-cat own agent-resolution.md and modes/lint-qa-gate.md; lint/QA gate (Step 9) → push per the recorded Step 3d answer, never re-ask (Step 10) → final report (Step 11)" -- calls_ahead=30 "drop=implementation summaries"  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" --keep-sentinel resolve-keep-items "oss:resolve" "lint-qa (after implementation loop)" "$_IMPL_DIR" "${_PRESERVE}; phase-reports=${_IMPL_DIR}/phase2-envelope-*.json, commits=${_IMPL_DIR}/phase2-commits.jsonl, c1-summaries=${_IMPL_DIR}/c1-item-summary.tsv" "resume: re-cat own agent-resolution.md and modes/lint-qa-gate.md; lint/QA gate (Step 9) → push per the recorded Step 3d answer, never re-ask (Step 10) → final report (Step 11)" -- calls_ahead=30 "drop=implementation summaries"  # timeout: 5000
 IFS= read -r _OSS_SHARED < "${TMPDIR:-/tmp}/resolve-oss-shared-${CSID}" 2>/dev/null || _OSS_SHARED=""
-[ -z "$_OSS_SHARED" ] && _OSS_SHARED="plugins/cc_oss/skills/_shared"
-_CC="$_OSS_SHARED/compaction-contract.md"; [ -f "$_CC" ] || _CC="plugins/cc_oss/skills/_shared/compaction-contract.md"
-sed -n '/^## Boundary step$/,/^## Acceptance criteria$/{/^## Acceptance criteria$/!p;}' "$_CC"
-_RS="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/bin/resolve_shared_path.py}"
-[ -n "$_RS" ] || _RS=$(ls plugins/cc_*/bin/resolve_shared_path.py 2>/dev/null | head -1)
-[ -f "$_RS" ] && _GD=$(python "$_RS" foundry bin 2>/dev/null) && [ -f "$_GD/compact_gate.py" ] && python "$_GD/compact_gate.py" || echo "compact-gate: continue (foundry gate unavailable)"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/compaction_boundary.py" "$_OSS_SHARED"
 IFS= read -r _OSS_RESOLVE < "${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}" 2>/dev/null || _OSS_RESOLVE=""  # reload (Check 41)
 cat "$_OSS_RESOLVE/modes/lint-qa-gate.md"  # timeout: 5000
 ```
@@ -1302,12 +1168,14 @@ echo "PUSH_AUTH=$PUSH_AUTH"
 IFS= read -r FORK_REMOTE < "${TMPDIR:-/tmp}/resolve-fork-remote-${CSID}" 2>/dev/null || FORK_REMOTE=""
 IFS= read -r HEAD_REF < "${TMPDIR:-/tmp}/resolve-head-ref-${CSID}" 2>/dev/null || HEAD_REF=""
 IFS= read -r BASE_REF < "${TMPDIR:-/tmp}/resolve-base-ref-${CSID}" 2>/dev/null || BASE_REF=""
+# renamed fork: remote URL needs headRepository.name; empty → upstream name
+IFS= read -r FORK_REPO < "${TMPDIR:-/tmp}/resolve-head-repo-name-${CSID}" 2>/dev/null || FORK_REPO=""
 # target may have moved since Step 9 (push question idles for hours); runs first so derive_fork_remote's exit stays the block's
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/check_base_fresh.py" --base-ref "$BASE_REF"  # timeout: 90000
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/derive_fork_remote.py" --fork-remote "$FORK_REMOTE" --head-ref "$HEAD_REF" --base-ref "$BASE_REF"  # timeout: 10000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/derive_fork_remote.py" --fork-remote "$FORK_REMOTE" --head-ref "$HEAD_REF" --base-ref "$BASE_REF" --fork-repo "$FORK_REPO"  # timeout: 10000
 ```
 
-The block exits non-zero (`⛔` — fork remote or head ref unresolved, push scope not computable) → never push and never ask about an unknown scope; record `not-attempted` (**Record the push outcome** below) and continue to Step 11. Otherwise note the printed `BASE_FRESH` for the push confirmation, then branch on the printed `PUSH_AUTH`:
+The block exits non-zero (`! BLOCKED` — fork remote or head ref unresolved, push scope not computable) → never push and never ask about an unknown scope; record `not-attempted` (**Record the push outcome** below) and continue to Step 11. Otherwise note the printed `BASE_FRESH` for the push confirmation, then branch on the printed `PUSH_AUTH`:
 
 - `skip` → the user explicitly chose "don't push" at Step 3d: print `` → Push skipped (Step 3d answer) — run `git push` manually when ready. ``, record `skipped-by-user`, and jump to Step 11; the post-PR answer still applies there. No question.
 - `push` → ask the **push confirmation** below — Q1 only; the post-PR action was already answered at Step 3d.
@@ -1354,7 +1222,7 @@ An authorized push still stops on its own failures — never retried in a loop, 
 
 - **Blocked by a push guard** (a hook rejects the call and asks for the `git-push` question: no `Approve` on record, the token expired, or HEAD moved since the answer) → print the guard's reason verbatim, do not retry, record `blocked-guard`, and write the push command it refused — copied character for character, no paraphrase — with the Write tool to `$IMPL_DIR/push-unblock.txt`, so the user can run it from their own shell or approve a new `git-push` question in a later run. Continue to Step 11.
 - **Blocked by a denied permission** (the harness permission prompt for `git push` was refused) → do not retry, record `blocked-permission`, and write the exact push command that was denied (`git push`) with the Write tool to `$IMPL_DIR/push-unblock.txt`. Continue to Step 11.
-- **Rejected as non-fast-forward** (the PR branch moved on the remote) → no force and no retry. Print `⛔ Push rejected (non-fast-forward) — the PR branch moved; merge the remote branch, then push manually.`, record `rejected-non-ff`, and continue to Step 11.
+- **Rejected as non-fast-forward** (the PR branch moved on the remote) → no force and no retry. Print `! BLOCKED — Push rejected (non-fast-forward) — the PR branch moved; merge the remote branch, then push manually.`, record `rejected-non-ff`, and continue to Step 11.
 - **No upstream or wrong tracking** (plain `git push` cannot resolve its destination) → the manual-push hand-off below; the agent never runs a second push.
 - **Push lands** → record `pushed` after the verification block below.
 
@@ -1365,20 +1233,25 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r FORK_REMOTE < "${TMPDIR:-/tmp}/resolve-fork-remote-${CSID}" 2>/dev/null || FORK_REMOTE=""
 IFS= read -r HEAD_REF < "${TMPDIR:-/tmp}/resolve-head-ref-${CSID}" 2>/dev/null || HEAD_REF=""
 # empty refspec → the handed-over command would push to the wrong ref
-[ -n "$FORK_REMOTE" ] && [ -n "$HEAD_REF" ] || { echo "⛔ Step 10 fallback: FORK_REMOTE/HEAD_REF unresolved — refusing explicit-refspec hand-off"; exit 1; }
+[ -n "$FORK_REMOTE" ] && [ -n "$HEAD_REF" ] || { echo "! BLOCKED — Step 10 fallback: FORK_REMOTE/HEAD_REF unresolved — refusing explicit-refspec hand-off"; exit 1; }
 printf 'git push %s HEAD:%s\n' "$FORK_REMOTE" "$HEAD_REF"  # timeout: 3000
 ```
 
 The block exits non-zero → record `not-attempted`. Otherwise print `→ Push needs your shell — no upstream tracking; run: <printed line>`, write the printed line — copied character for character — with the Write tool to `$IMPL_DIR/push-unblock.txt`, record `blocked-needs-manual-push`, and continue to Step 11.
 
-Verify push reached GitHub — confirm latest commit headlines match what was committed:
+Verify push reached GitHub — the PR head oid must equal local HEAD (headlines alone pass on matching subjects pushed to another ref); the last headlines are printed for the report:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || PR_NUMBER=""
-case "$PR_NUMBER" in ''|n/a|*[!0-9]*) echo "⛔ Step 10 PR number sentinel missing or invalid; cannot verify push"; exit 1 ;; esac
-gh pr view "$PR_NUMBER" --json headRefOid,commits --jq '.commits[-3:] | .[].messageHeadline' # timeout: 6000
+case "$PR_NUMBER" in ''|n/a|*[!0-9]*) echo "! BLOCKED — Step 10 PR number sentinel missing or invalid; cannot verify push"; exit 1 ;; esac
+gh pr view "$PR_NUMBER" --json headRefOid,commits --jq '.headRefOid, (.commits[-3:] | .[].messageHeadline)' > "${TMPDIR:-/tmp}/resolve-pr-head-${CSID}"  # timeout: 6000
+git rev-parse HEAD > "${TMPDIR:-/tmp}/resolve-local-head-${CSID}"  # timeout: 3000
+head -1 "${TMPDIR:-/tmp}/resolve-pr-head-${CSID}" | cmp -s - "${TMPDIR:-/tmp}/resolve-local-head-${CSID}" && echo "→ push verified: PR head equals local HEAD" || echo "⚠ push unverified: PR head differs from local HEAD (GitHub lag, or the push landed on another ref)"
+tail -n +2 "${TMPDIR:-/tmp}/resolve-pr-head-${CSID}"
 ```
+
+Unverified → re-run the block once (GitHub lags a few seconds); still unverified → record the outcome below as usual (git exit 0 stands) but name `PR head <oid> ≠ local HEAD` under the final report's Confidence Gaps, and never claim the PR carries the local commits.
 
 **Record the push outcome** — run **exactly one** block, the one matching what happened above; never edit a block's value (same trap as the Step 3d blocks). Step 11 reports this status, so a run that leaves Step 10 without recording one reports `none`.
 
@@ -1437,12 +1310,10 @@ echo not-attempted > "${TMPDIR:-/tmp}/resolve-push-status-${CSID}"  # timeout: 3
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # boundary3: pre-final-report write (compaction-contract.md §Lifecycle)
 IFS= read -r _PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || _PR_NUMBER="n/a"
-IFS= read -r _KEEP < "${TMPDIR:-/tmp}/resolve-keep-items-${CSID}" 2>/dev/null || _KEEP=""
 IFS= read -r _IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || _IMPL_DIR="n/a"
 IFS= read -r PUSH_STATUS < "${TMPDIR:-/tmp}/resolve-push-status-${CSID}" 2>/dev/null || PUSH_STATUS="none"
 _PRESERVE="pr=${_PR_NUMBER}, final-report=pending-write, impl-dir=${_IMPL_DIR}, challenge-log=${_IMPL_DIR}/challenge-log.txt, item-tasks=${_IMPL_DIR}/item-tasks.tsv, push-status=${PUSH_STATUS}, push-unblock=${_IMPL_DIR}/push-unblock.txt"
-[ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:resolve" "final-report (after push)" "$_IMPL_DIR" "${_PRESERVE}" "write final report → post-PR action gate"  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" --keep-sentinel resolve-keep-items "oss:resolve" "final-report (after push)" "$_IMPL_DIR" "${_PRESERVE}" "write final report → post-PR action gate"  # timeout: 5000
 echo "PUSH_STATUS=$PUSH_STATUS"
 case "$PUSH_STATUS" in blocked-guard|blocked-permission|blocked-needs-manual-push) echo "PUSH_UNBLOCK=$_IMPL_DIR/push-unblock.txt"; cat "$_IMPL_DIR/push-unblock.txt" 2>/dev/null || echo "⚠ push-unblock.txt missing" ;; esac
 IFS= read -r INTAKE_DEGRADED < "${TMPDIR:-/tmp}/resolve-intake-degraded-${CSID}" 2>/dev/null || INTAKE_DEGRADED=""
@@ -1487,7 +1358,7 @@ TaskUpdate(task_id=TASK_CLOSE, status="completed")
 - `Commit`: short SHA (7 chars); `—` when `COMMIT_MODE=stage`
 - For `location: discussion` rows append `· thread (no GH resolve)` to Status — no GitHub Resolve button exists for PR main-thread comments
 
-Include `### Challenge Log` section in report — source of truth is `$IMPL_DIR/challenge-log.txt` (Read it; one `key=value` record per line, written by `action-item-dispatch.md` Phase 1), never a recollection of verdicts from earlier in the conversation. File absent or empty (Step 8 skipped, skip-all, or `--no-challenge`) → omit the section; never treat the failed Read as an error. Columns: `#` | `Finding` | `Evidence` | `Resolution` — no `Suggestion` column: `Resolution` is the outcome and already names what was done with the suggestion, and `suggestion_why` stays in `challenge-log.txt`. Every cell must be self-contained — reader gets full context from that row alone, never by cross-referencing another row or recalling earlier conversation:
+Include `### Challenge Log` section in report — source of truth is `$IMPL_DIR/challenge-log.txt` (Read it; one `key=value` record per line, written by the shared append block in `dispatch-prelude.md`, called by C1 and Phase 1), never a recollection of verdicts from earlier in the conversation. File absent or empty (Step 8 skipped, skip-all, or `--no-challenge`) → omit the section; never treat the failed Read as an error. Columns: `#` | `Finding` | `Evidence` | `Resolution` — no `Suggestion` column: `Resolution` is the outcome and already names what was done with the suggestion, and `suggestion_why` stays in `challenge-log.txt`. Every cell must be self-contained — reader gets full context from that row alone, never by cross-referencing another row or recalling earlier conversation:
 
 - `Finding`: one-line gist of the reviewer's comment (from `finding` in `CHALLENGE_LOG`) — what was flagged, not just its id
 - `Evidence`: bracketed flag + reason on one line, e.g. `[VALID] — <evidence_why>` or `[REJECT] — <evidence_why>`. Reason never empty, never generic — state in a few words what the verdict was about. Never print a bare `VALID`/`REJECT`, bracketed or not, with no reason
@@ -1552,7 +1423,7 @@ rm -f .temp/state/skill-contract.md "${TMPDIR:-/tmp}/oss-resolve-active-${CSID}"
 
 <calibration>
 
-Non-calibratable — `disable-model-invocation: true` means skill dispatches to sub-agents rather than running model pass directly; calibrate cannot score model output for skill that produces none.
+Non-calibratable — multi-gate interactive workflow dispatching sub-agents, with no single scorable model output; `disable-model-invocation: true` only keeps the model from auto-invoking it.
 
 </calibration>
 
@@ -1567,11 +1438,11 @@ Non-calibratable — `disable-model-invocation: true` means skill dispatches to 
 - **`[question]` items** — answer inline in resolve report only; reclassify before implementing; never silently implement unanswered question.
 - **Push verification** — confirm via `gh pr view --json commits`; exit 0 from `git push` necessary but not sufficient (branch protection can silently reject).
 - **Merge-push sequencing + escape hatch** — not atomic; concurrent push → non-fast-forward rejection; Step 10 never retries it unattended — the user retries the push only (don't re-run full merge). Target-branch races are the other half: a target commit landing between Step 5 and the push leaves the PR behind and conflicting without any push error — caught by the Step 9.0 and Step 10 `check_base_fresh.py` checks, never by the push itself. `git merge --abort` = undo conflict state; `git push --force-with-lease` on explicit user request only.
-- **Impl agent health + effort**: C1 bridge implementation calls (C1 candidates: `medium` or `high` effort with a Codex-fit `change` — `code`·`test`·`docs`·`style`·`config`·`ci` — and one file) use `bridge:implement` on the default or explicit bridge route, one item from a clean worktree per call, passing the item's own effort; Git-derived changed paths must match the reply before per-item records. Explicit `--agent foundry:*` sends C1 candidates through Phase 1+2 with the selected specialist. Dirty or non-candidate bridge items use the change-to-specialist table. Effort is never `low`, minimum `medium`, typo/doc `medium`, multi-file/new-feature `xhigh`, default `high`. Effort also picks the Phase 2 tier: a `foundry:sw-engineer` group whose max effort is `high` or `medium` — no `xhigh` item — spawns with `model="sonnet"` (`CAP_SONNET` pool); `medium`-only groups are included on purpose, a deliberate widening of a `high`-only rule, since C1 fall-through work is smaller, never harder; any `xhigh` item keeps its opus frontmatter (`action-item-dispatch.md` §Spawn wave cap).
+- **Impl agent health + effort**: C1 bridge implementation calls (C1 candidates: `medium` or `high` effort with a Codex-fit `change` — `code`·`test`·`docs`·`style`·`config`·`ci` — and one file) use `bridge:implement` on the default or explicit bridge route, one item from a clean worktree per call, passing the item's own effort; Git-derived changed paths must match the reply before per-item records. Explicit `--agent foundry:*` sends C1 candidates through Phase 1+2 with the selected specialist. Dirty or non-candidate bridge items use the change-to-specialist table. Effort is never `low`, minimum `medium`, typo/doc `medium`, multi-file/new-feature `xhigh`, default `high`. Effort also picks the Phase 2 tier: a `foundry:sw-engineer` group whose max effort is `high` or `medium` — no `xhigh` item — spawns with `model="sonnet"` (`CAP_SONNET` pool); `medium`-only groups are included on purpose, a deliberate widening of a `high`-only rule, since C1 fall-through work is smaller, never harder; any `xhigh` item keeps its opus frontmatter (`dispatch-phase2.md` §Spawn wave cap).
 - **Two-phase challenge**: evidence = problem exists?; suggestion = fix quality?; evidence reject → skip; suggestion reject → self-resolved via `alternative` field; all in `CHALLENGE_LOG` + Step 11 report.
-- **COMMIT_MODE**: `each` (default); `all`; `stage` (⚠ branch restore skipped); `grouped` (falls back to `each` when labels skipped). Set via the commit-mode menu (Step 3d) — placement per the Step 3d slot table — skipped/discarded only when the bulk action = (d) skip-all. Distinct MENU from the bulk action (item scope vs commit strategy); item scope never implies commit mode; menus may share a call, never options.
-- **GROUP_STRATEGY**: `domain` (default) · `file` · `specialist` · `labels`. Set via the topic-group question (Step 3d), asked beside the commit-mode menu. Read only when `COMMIT_MODE=grouped`; `labels` are typed at Step 3d and persisted to `$IMPL_DIR/group-labels.tsv`, so no strategy adds a user round-trip at Step 8.
-- **DISPATCH_MODE**: `auto` (default) · `sequential` · `per-specialist` · `preview` (the "Custom" label). Set via the dispatch-granularity question (Step 3d), asked when pending or resolved/addressed items are available, beside the commit-mode or topic-group menu. Read by Phase 2 for sub-group splitting and wave width only — specialist routing, the file-ownership tiebreak and the import-coupling merge never change; `per-specialist` widens the per-spawn cap from 5 to 8 items, the one width guard a width answer may touch — widened, never removed. Distinct from `GROUP_STRATEGY=specialist`, which is a commit-grouping strategy on its own sentinel. `preview` defers the width to one extra gate at the Phase 1 → Phase 2 boundary, where the group count and table path ride in the question text and the saved group table is printed once as the last text of the reply message that issues the group question; that gate resolves it to one of the other three.
+- **COMMIT_MODE**: values, default `each`, `stage` restore caveat, `grouped`→`each` fallback and the distinct-menu rule — Step 3d commit-mode menu. Skipped/discarded only when bulk action = (d) skip-all.
+- **GROUP_STRATEGY**: values, default `domain`, typed labels → `$IMPL_DIR/group-labels.tsv` — Step 3d topic-group question. Read only when `COMMIT_MODE=grouped`; no strategy adds a user round-trip at Step 8.
+- **DISPATCH_MODE**: values, default `auto`, the 5→8 per-spawn widening and the never-widened correctness guards — Step 3d dispatch-granularity question. Read by Phase 2 for sub-group splitting and wave width only. Distinct from `GROUP_STRATEGY=specialist`, a commit-grouping strategy on its own sentinel. `preview` resolves at the Phase 1 → Phase 2 gate (`dispatch-phase2.md`) to one of the other three.
 - **AskUserQuestion usage**: the normal action-item path, after successful source resolution and without diagnostic or conflict recovery, takes at most 3 calls at Step 3d (10-18 pending: two checkbox pages + the commit-mode/topic-group/dispatch/push-intent follow-up; every other nonempty band takes 2, while zero pending with no closed items and a PR takes 1 push-intent call) plus 1 Step 10 push confirmation unless the push intent was an explicit "don't push" — plus 1 Step 10 drift question first when `BASE_FRESH=no`. Picking topic-group (d) without typing labels adds one Step 3d call for the topic-label question.
   - Every decision a later step needs and can see at Step 3d is asked there: commit mode, grouping strategy and typed labels, dispatch width, push intent, and the post-PR browser action. Between Step 3d and the Step 10 push confirmation, nothing is asked on this path.
   - Only `DISPATCH_MODE=preview` adds a call after Step 3d — the user elects it there by choosing Custom.
@@ -1586,7 +1457,6 @@ Non-calibratable — `disable-model-invocation: true` means skill dispatches to 
   - After push → maintainer reviews, clicks Merge; never approve/comment on PR.
   - Unanswered `[question]` → resolve report only; do NOT post to PR.
   - After merge → `Closes #N`/`Fixes #N` in body auto-closes linked issues; absent keywords → surface gap under `### Closing Keywords` note; don't edit PR body.
+- **Review contract cutover:** New REVIEW_V1\_\* reports require the version-one reader and UNVERIFIED/ALREADY_FIXED challenge consumer together. Run the existing find_review_report.py intake before report merging; unsupported/missing envelope blocks with upgrade/rerun recovery. Never strip the prefix to force legacy intake. Preserve review-validation.json open concerns and resolver unverified obligations in the final report with ID/owner/next_check/closure; they never become automatic source edits.
 
 </notes>
-
-**Review contract cutover:** New REVIEW_V1\_\* reports require the version-one reader and UNVERIFIED/ALREADY_FIXED challenge consumer together. Run the existing find_review_report.py intake before report merging; unsupported/missing envelope blocks with upgrade/rerun recovery. Never strip the prefix to force legacy intake. Preserve review-validation.json open concerns and resolver unverified obligations in the final report with ID/owner/next_check/closure; they never become automatic source edits.

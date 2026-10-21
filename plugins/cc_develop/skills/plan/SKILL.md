@@ -26,14 +26,12 @@ NOT for: code/tests (use develop mode); `.claude/` config (use `/foundry:manage`
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-_DEV_SHARED=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_shared_resolve.py" 2>/dev/null)  # timeout: 5000
-[ -z "$_DEV_SHARED" ] && _DEV_SHARED="plugins/cc_develop/skills/_shared"
-echo "$_DEV_SHARED" > "${TMPDIR:-/tmp}/dev-shared-${CSID}"  # cold resolve — every later block warm-reads this
-echo "$PWD/.temp/develop/agent-watch-$(date -u +%Y-%m-%dT%H-%M-%SZ)" > "${TMPDIR:-/tmp}/dev-agent-watch-dir-${CSID}"  # fresh per run — agent-resolution.md §Agent waits
-cat "$_DEV_SHARED/agent-resolution.md"
+echo "" > "${TMPDIR:-/tmp}/dev-agent-watch-dir-${CSID}"  # a prior run's dir must not outlive a failed --init; agent-resolution.md §Agent waits recreates it when empty
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_shared_resolve.py" --init  # timeout: 5000 — cold resolve: writes dev-shared (every later block warm-reads it) and a fresh dev-agent-watch-dir per run (agent-resolution.md §Agent waits)
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" agent-resolution.md
 ```
 
-Contains: foundry check + fallback table. If foundry not installed: substitute each `foundry:X` with `general-purpose` per table. Agents this skill uses: `foundry:sw-engineer`, `foundry:qa-specialist`, `foundry:challenger`.
+Contains: foundry check + fallback table. If foundry not installed: substitute each `foundry:X` with `general-purpose` per table. Agents this skill uses: `foundry:sw-engineer` (analysis and the merged sw-engineer + qa-specialist feasibility pass), `foundry:challenger`.
 
 **Checkpoint**: plan single-pass — `.plans/active/<slug>` file existence = implicit resume signal. No `.developments/` checkpoint needed; interrupted → re-run `/develop:plan` to regenerate (no code changes made).
 
@@ -41,14 +39,15 @@ Contains: foundry check + fallback table. If foundry not installed: substitute e
 
 ## Flag parsing
 
-Parse flags into shell variables (not prose) so downstream blocks see correct values. Persist to **per-invocation namespaced** temp dir for cross-block access (bash resets between calls). Namespace by PID — avoids collision on two concurrent `/develop:plan` invocations:
+Parse flags into shell variables (not prose) so downstream blocks see correct values. Persist to **per-invocation namespaced** temp dir for cross-block access (bash resets between calls). The dir name carries `$$` and the session token `CSID`; the `dev-plan-ns-current-${CSID}` sentinel is what later blocks read to find it, so two concurrent sessions never share a namespace:
 
 ```bash
 # timeout: 5000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 PLAN_NS="${TMPDIR:-/tmp}/dev-plan-$$-${CSID}"
-mkdir -p "$PLAN_NS"
+mkdir -m 700 -p "$PLAN_NS"
 echo "$PLAN_NS" > "${TMPDIR:-/tmp}/dev-plan-ns-current-${CSID}"  # downstream blocks read back namespace
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/extract-keep-flag.py" dev-plan "$ARGUMENTS"  # timeout: 5000 — owner-safe clear of a crashed run's stale contract before plan's first idle gate; plan takes no --keep
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_parse_args.py" --skill plan --write-files "$ARGUMENTS"
 # written to ${TMPDIR:-/tmp}/dev-plan-<flag>-${CSID} (legacy paths: SKILL_SPECS["plan"])
 cp "${TMPDIR:-/tmp}/dev-challenge-enabled-${CSID}"  "$PLAN_NS/challenge-enabled" 2>/dev/null || echo "true"  > "$PLAN_NS/challenge-enabled"
@@ -67,16 +66,10 @@ Downstream blocks recover namespace then read back, e.g. `IFS= read -r PLAN_NS <
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # resolves PLAN_NS itself — plan keeps its flags in a run-namespace dir, not TMPDIR sentinels
 CODEMAP_ENABLED=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_codemap_gate.py" plan) || exit 1
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" codemap-gates.md
 ```
 
 > loads: codemap-gates.md
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _DEV_SHARED=""  # timeout: 5000
-[ -z "$_DEV_SHARED" ] && _DEV_SHARED="plugins/cc_develop/skills/_shared"
-cat "$_DEV_SHARED/codemap-gates.md"
-```
 
 Follow Gate A and Gate B. Codemap validation handled by auto-detect block above.
 
@@ -84,31 +77,24 @@ Follow Gate A and Gate B. Codemap validation handled by auto-detect block above.
 
 Determine task type and affected surface.
 
-**Codemap target derivation** — goal names explicit target as `module.path` or `module.path::function` → pre-set `TARGET_MODULE`/`TARGET_FN` so `codemap-context.md` runs caller-impact queries (`rdeps`, `fn-rdeps`) instead of only `central` baseline. No explicit target → both empty → only `central` runs (correct: affected surface unknown until agent searches):
+**Codemap target derivation** — goal names explicit target as `module.path` or `module.path::function` → pre-set `TARGET_MODULE`/`TARGET_FN` so `codemap-context.md` runs caller-impact queries (`rdeps`, `fn-rdeps`) instead of only `central` baseline. No explicit target → both empty → only `central` runs (correct: affected surface unknown until agent searches). The same block then loads **structural context** — only when codemap enabled; value re-read from namespace:
 
 ```bash
 # timeout: 5000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r PLAN_NS < "${TMPDIR:-/tmp}/dev-plan-ns-current-${CSID}" 2>/dev/null || PLAN_NS=""
-eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/parse-skill-flags.py" --flags no-challenge,codemap,no-codemap --value-flags max-depth "$ARGUMENTS")"  # timeout: 5000 — CLEAN_ARGS only; a dotted flag value would otherwise outrank the goal's module
+[ -n "$PLAN_NS" ] || { echo "! BLOCKED — plan namespace sentinel missing; re-run Flag parsing"; exit 1; }
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/parse-skill-flags.py" --flags no-challenge,codemap,no-codemap --value-flags max-depth --keep-state dev-plan-args --inlined "$ARGUMENTS" >/dev/null  # timeout: 5000 — no eval; --inlined: Flag parsing's extract-keep-flag.py already cleared
+IFS= read -r CLEAN_ARGS < "${TMPDIR:-/tmp}/dev-plan-args-clean-args-${CSID}" 2>/dev/null || CLEAN_ARGS=""  # CLEAN_ARGS only; a dotted flag value would otherwise outrank the goal's module
+printf '%s\n' "$CLEAN_ARGS" | tr '\n' ' ' > "$PLAN_NS/clean-args"  # Step 2 slug source; tr keeps a multi-line goal readable by `read -r`
 eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/derive_codemap_target.py" "$CLEAN_ARGS")"  # timeout: 5000 — module.path or module.path::fn; both empty when goal names none
 export TARGET_MODULE TARGET_FN
 echo "$TARGET_MODULE" > "$PLAN_NS/target-module"   # persist — bash resets between calls
 echo "$TARGET_FN"     > "$PLAN_NS/target-fn"
-```
-
-**Structural context** — runs only when codemap enabled; value re-read from namespace (bash resets between calls):
-
-```bash
-# timeout: 5000
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r PLAN_NS < "${TMPDIR:-/tmp}/dev-plan-ns-current-${CSID}" 2>/dev/null || PLAN_NS=""
 IFS= read -r CODEMAP_ENABLED < "$PLAN_NS/codemap-enabled" 2>/dev/null || CODEMAP_ENABLED=false
 echo "CODEMAP_ENABLED=$CODEMAP_ENABLED"
 if [ "$CODEMAP_ENABLED" = "true" ]; then
-    IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _DEV_SHARED=""
-    [ -z "$_DEV_SHARED" ] && _DEV_SHARED="plugins/cc_develop/skills/_shared"
-    cat "$_DEV_SHARED/codemap-context.md"
+    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" codemap-context.md
 else
     echo "→ codemap off — skipping structural context"
 fi
@@ -116,20 +102,21 @@ fi
 
 Follow the codemap block per the value echoed. Nothing printed beyond the skip line → proceed.
 
-**Effort sizing (codemap-py)** — `CODEMAP_ENABLED=true` → derive blast-radius tier table from reverse dependencies so complexity estimate is structural, not guessed. Degrades silently when codemap-py absent — plan works unchanged, sizing falls back to agent's file-count heuristic. Run Extended scan (`--source=diff` when partial diff exists, e.g. re-planning after abandoned work; else per-target `rdeps` when `TARGET_MODULE` known):
+**Effort sizing (codemap-py)** — `CODEMAP_ENABLED=true` → derive blast-radius tier table from reverse dependencies so complexity estimate is structural, not guessed. Degrades silently when codemap-py absent — plan works unchanged, sizing falls back to agent's file-count heuristic. Run Extended scan (per-target `rdeps` when `TARGET_MODULE` known — the goal names the surface; else `--source=diff` when a partial diff exists, e.g. re-planning after abandoned work, since unrelated dirty `.py` files must not outrank an explicit target):
 
 ```bash
 # timeout: 15000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r PLAN_NS < "${TMPDIR:-/tmp}/dev-plan-ns-current-${CSID}" 2>/dev/null || PLAN_NS=""
+[ -n "$PLAN_NS" ] || { echo "! BLOCKED — plan namespace sentinel missing; re-run Flag parsing"; exit 1; }
 IFS= read -r CODEMAP_ENABLED < "$PLAN_NS/codemap-enabled" 2>/dev/null || CODEMAP_ENABLED=false
 IFS= read -r TARGET_MODULE < "$PLAN_NS/target-module" 2>/dev/null || TARGET_MODULE=""
 if [ "$CODEMAP_ENABLED" = "true" ] && command -v codemap-py >/dev/null 2>&1; then
-    if [ -n "$(git diff HEAD --name-only 2>/dev/null | grep '\.py$')" ]; then
-        python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/codemap_scan.py" --source=diff > "$PLAN_NS/sizing-rdeps" 2>/dev/null || true
-    elif [ -n "$TARGET_MODULE" ]; then
+    if [ -n "$TARGET_MODULE" ]; then
         codemap-py query --timeout 5 rdeps "$TARGET_MODULE" --top 10 --exclude-tests > "$PLAN_NS/sizing-rdeps" 2>/dev/null || true
         codemap-py query --timeout 5 coupled --top 10 >> "$PLAN_NS/sizing-rdeps" 2>/dev/null || true
+    elif [ -n "$(git diff HEAD --name-only 2>/dev/null | grep '\.py$')" ]; then
+        python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/codemap_scan.py" --source=diff > "$PLAN_NS/sizing-rdeps" 2>/dev/null || true
     fi
 fi
 ```
@@ -142,7 +129,7 @@ fi
 >
 > Fold highest tier across affected modules into complexity assessment below (HIGH tier or ≥3 affected modules → `large`), and pass tier table + coupled pairs to sw-engineer spawn as `## Structural blast radius` block so scope estimate accounts for downstream callers rather than file count alone.
 
-Spawn **foundry:sw-engineer** agent with full goal text from `$ARGUMENTS`. Agent should:
+Arm batch `scope` in the spawn response (`agent-resolution.md` §Agent waits — no polling, per-agent deadlines). Spawn **foundry:sw-engineer** agent with full goal text from `$ARGUMENTS`. Agent should:
 
 - Classify task as `feature`, `fix`, `refactor`, or `debug`
   - `debug`: root cause unknown — symptoms present, cause unclear, investigation needed before fix scoped; classified `debug` → recommend `/develop:debug` first
@@ -152,8 +139,11 @@ Spawn **foundry:sw-engineer** agent with full goal text from `$ARGUMENTS`. Agent
 # anti-loop guard  # timeout: 3000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r PLAN_NS < "${TMPDIR:-/tmp}/dev-plan-ns-current-${CSID}" 2>/dev/null || PLAN_NS=""
+[ -n "$PLAN_NS" ] || { echo "! BLOCKED — plan namespace sentinel missing; re-run Flag parsing"; exit 1; }
 IFS= read -r MAX_DEPTH < "$PLAN_NS/max-depth" 2>/dev/null || MAX_DEPTH=3
-DEPTH_FILE="${TMPDIR:-/tmp}/dev-plan-depth-checkpoint-${CSID}"
+IFS= read -r CLEAN_ARGS < "$PLAN_NS/clean-args" 2>/dev/null || CLEAN_ARGS=""
+GOAL_KEY=$(printf '%s' "$CLEAN_ARGS" | cksum | cut -d' ' -f1)  # per-goal cap — an unrelated goal in the same session starts at full depth
+DEPTH_FILE="${TMPDIR:-/tmp}/dev-plan-depth-checkpoint-${GOAL_KEY}-${CSID}"
 IFS= read -r CURRENT_DEPTH < "$DEPTH_FILE" 2>/dev/null || CURRENT_DEPTH="$MAX_DEPTH"
 if [ "$CURRENT_DEPTH" -le 0 ]; then
     echo "! depth limit ($MAX_DEPTH) reached — stopping plan→debug→plan loop"
@@ -161,11 +151,41 @@ if [ "$CURRENT_DEPTH" -le 0 ]; then
 else
     NEXT_DEPTH=$(( CURRENT_DEPTH - 1 ))
     echo "$NEXT_DEPTH" > "$DEPTH_FILE"
-    echo "→ invoking /develop:debug (depth remaining: $NEXT_DEPTH)"
+    echo "→ recommending /develop:debug (depth remaining: $NEXT_DEPTH)"
 fi
 ```
 
-At depth 0: stop, report current plan state, invoke `AskUserQuestion` — "Debug-cycle cap ($MAX_DEPTH) reached for this goal; root cause still unconfirmed. How to proceed?" · (a) **Write the plan anyway** — continue to Step 2 flagging "root cause unconfirmed" under Risks · (b) **Reset the cap for this goal** — clear the depth checkpoint and recommend `/develop:debug` once more · (c) **Abort**.
+`/develop:debug` is user-invocable only (`disable-model-invocation`): recommend it in the plan output and Final report for the user to run — never call it via `Skill()`.
+
+**Idle-gate contract** — every `AskUserQuestion` gate below that waits on a decision (depth cap, breaking change, Step 4 blockers, Step 5 final) first runs this block, so a `/compact` during the wait resumes losslessly (compaction-contract.md §Lifecycle). It prints `STATE=<path>`: before Step 2 that is the scope file — Write the Step 1 findings (classification, complexity, affected files, `breaking_changes`, `risks`) there with the Write tool before asking; from Step 2 on it is `PLAN_FILE`, already saved. Each such question's text ends with the hint line `` Long wait? `/compact` now — plan state saved at <STATE>, resume lossless. `` (`<STATE>` = the printed path) — in the question text, never as reply prose before the call. Every **Abort** at these gates runs the Step 5 contract-clear block before stopping.
+
+```bash
+# compaction boundary — before an idle AskUserQuestion gate
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r PLAN_NS < "${TMPDIR:-/tmp}/dev-plan-ns-current-${CSID}" 2>/dev/null || PLAN_NS=""
+[ -n "$PLAN_NS" ] || { echo "! BLOCKED — plan namespace sentinel missing; re-run Flag parsing"; exit 1; }
+IFS= read -r CLEAN_ARGS < "$PLAN_NS/clean-args" 2>/dev/null || CLEAN_ARGS=""
+IFS= read -r PLAN_FILE < "$PLAN_NS/plan-file" 2>/dev/null || PLAN_FILE=""  # empty before Step 2 — namespace is per invocation
+SCOPE_FILE=".temp/develop/plan-scope-${CSID}.md"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" "develop:plan" "idle gate" ".plans/active/" "goal=$CLEAN_ARGS; scope-findings=$SCOPE_FILE; plan-file=${PLAN_FILE:-not written yet}" "resume: re-read plan-file when written, else scope-findings; re-issue the pending AskUserQuestion (depth cap, breaking change, Step 4 blockers or Step 5 Proceed/Revise); Revise edits plan-file in place"  # timeout: 5000
+echo "STATE=${PLAN_FILE:-$SCOPE_FILE}"
+```
+
+At depth 0: stop, report current plan state, run the Idle-gate contract block, invoke `AskUserQuestion` — "Debug-cycle cap ($MAX_DEPTH) reached for this goal; root cause still unconfirmed. How to proceed?" + the `/compact` hint line · (a) **Write the plan anyway** — continue to Step 2 flagging "root cause unconfirmed" under Risks · (b) **Reset the cap for this goal** — run the reset block below, then recommend `/develop:debug` once more · (c) **Abort**.
+
+Reset block (option b only; rewrites this goal's checkpoint to full depth):
+
+```bash
+# timeout: 3000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r PLAN_NS < "${TMPDIR:-/tmp}/dev-plan-ns-current-${CSID}" 2>/dev/null || PLAN_NS=""
+[ -n "$PLAN_NS" ] || { echo "! BLOCKED — plan namespace sentinel missing; re-run Flag parsing"; exit 1; }
+IFS= read -r MAX_DEPTH < "$PLAN_NS/max-depth" 2>/dev/null || MAX_DEPTH=3
+IFS= read -r CLEAN_ARGS < "$PLAN_NS/clean-args" 2>/dev/null || CLEAN_ARGS=""
+GOAL_KEY=$(printf '%s' "$CLEAN_ARGS" | cksum | cut -d' ' -f1)
+echo "$MAX_DEPTH" > "${TMPDIR:-/tmp}/dev-plan-depth-checkpoint-${GOAL_KEY}-${CSID}"
+echo "→ depth cap reset to $MAX_DEPTH for this goal"
+```
 
 - Identify affected files and modules (search codebase — no guessing)
 - Assess complexity: small (1-3 files, self-contained), medium (4-8 files or 1-2 modules), large (cross-module, API changes, or 3+ modules). Effort-sizing block produced tier table → let structural reach override file count: any **HIGH** blast module (≥5 rdeps) or ≥3 affected modules → `large`, regardless of raw file count.
@@ -176,20 +196,23 @@ At depth 0: stop, report current plan state, invoke `AskUserQuestion` — "Debug
 
 Agent returns findings inline (no file handoff — output short).
 
-**Breaking change gate**: triggers only when `breaking_changes` non-empty — items in `risks` do NOT trigger it. Stop before writing plan. Call `AskUserQuestion` per breaking change (group only when logically one atomic change). State: what worked before, what breaks, why needed. Options: (a) **Accept breaking change** — proceed with plan as-is · (b) **Revise to non-breaking** — return to Step 1 with constraint to avoid this breaking change · (c) **Abort** — stop immediately. Proceed only on explicit (a). Prose question in response body does NOT count — `AskUserQuestion` mandatory per `communication.md`. User selects (b) or (c) → stop immediately, do not proceed to Step 2 or beyond.
+**Breaking change gate**: triggers only when `breaking_changes` non-empty — items in `risks` do NOT trigger it. Stop before writing plan. Run the Idle-gate contract block, then call `AskUserQuestion` per breaking change, the first question's text ending with the `/compact` hint line (group only when logically one atomic change). State: what worked before, what breaks, why needed. Options: (a) **Accept breaking change** — proceed with plan as-is · (b) **Revise to non-breaking** — return to Step 1 once with constraint to avoid this breaking change, then re-run this gate on the revised result (second pass offers only (a)/(c)) · (c) **Abort** — stop immediately. Proceed only on explicit (a). Prose question in response body does NOT count — `AskUserQuestion` mandatory per `communication.md`. User selects (c) → stop immediately, do not proceed to Step 2 or beyond.
 
 Breaking change criteria — change is breaking when it affects **public API** (exported from `__init__.py`, documented in README, or stable interface used by external consumers) and any of these apply: removed public API (function, class, method, or module), changed function signatures (parameter names, types, order, or defaults), changed config key names or schema, changed output format (return type, serialization structure, CLI output shape). Internal/private signature changes (functions prefixed `_`, classes not exported) do NOT count as breaking — list under `risks` instead.
 
 ## Step 2: Structured plan
 
-Derive filename slug from goal: first 4-5 meaningful words, lowercase, hyphen-separated (e.g. `"improve caching in data loader"` -> `plan_improve-caching-data-loader.md`). If `.plans/active/<slug>` already exists, append counter suffix (`-2`, `-3`, etc.) before writing — never silently overwrite. Store full path as `PLAN_FILE` — used in Steps 3 and Final output.
+Derive filename slug from goal: first 4-5 meaningful words, lowercase, hyphen-separated (e.g. `"improve caching in data loader"` -> `plan_improve-caching-data-loader.md`). If `.plans/active/<slug>` already exists, append counter suffix (`-2`, `-3`, etc.) before writing — never silently overwrite. Run this block once per plan: a Revise (breaking-gate (b), Step 4 blocker fix) edits the existing `PLAN_FILE` in place and does not re-run it — a second run would mint `plan_<slug>-2.md` and leave Step 3's reviewer reading the superseded plan. Store full path as `PLAN_FILE` — used in Steps 3 and Final output.
 
 ```bash
 # persist — bash resets between calls  # timeout: 3000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r PLAN_NS < "${TMPDIR:-/tmp}/dev-plan-ns-current-${CSID}" 2>/dev/null || PLAN_NS=""
+[ -n "$PLAN_NS" ] || { echo "! BLOCKED — plan namespace sentinel missing; re-run Flag parsing"; exit 1; }
+IFS= read -r CLEAN_ARGS < "$PLAN_NS/clean-args" 2>/dev/null || CLEAN_ARGS=""
 mkdir -p ".plans/active"
-SLUG=$(printf '%s\n' "$ARGUMENTS" | tr '[:upper:]' '[:lower:]' | grep -oE '[a-z0-9]+' | grep -vE '^(a|an|the|in|on|of|to|for|and|or|is|with|at|by|from)$' | head -5 | paste -sd- -)
+SLUG=$(printf '%s\n' "$CLEAN_ARGS" | tr '[:upper:]' '[:lower:]' | grep -oE '[a-z0-9]+' | grep -vE '^(a|an|the|in|on|of|to|for|and|or|is|with|at|by|from)$' | head -5 | paste -sd- -)
+[ -n "$SLUG" ] || SLUG="unnamed-$(date -u +%Y-%m-%dT%H-%M-%SZ)"  # stopword-only / non-ASCII goal would otherwise yield plan_.md
 PLAN_FILE=".plans/active/plan_${SLUG}.md"
 N=2
 while [ -e "$PLAN_FILE" ]; do
@@ -240,7 +263,7 @@ echo "$PLAN_FILE" > "$PLAN_NS/plan-file"
 
 ## Step 3: Agent feasibility review
 
-Spawn ONE `foundry:sw-engineer` feasibility agent covering both role perspectives in a single pass (merged spawn unit — two role-labelled verdicts, one file read, ~300 bytes JSON; two spawns would each pay ~120,851 tok fixed overhead for the same read):
+Arm batch `other` in the spawn response (`agent-resolution.md` §Agent waits). Spawn ONE `foundry:sw-engineer` feasibility agent covering both role perspectives in a single pass (merged spawn unit — two role-labelled verdicts, one file read, ~300 bytes JSON; two spawns would each pay ~120,851 tok fixed overhead for the same read):
 
 - **feature / fix / refactor**: one spawn, roles `sw-engineer` (implementation feasibility) + `qa-specialist` (testability, coverage feasibility)
 - **debug**: skip feasibility review — no implementation plan to review; proceed directly to Final output with debug recommendation
@@ -253,9 +276,23 @@ Agent receives only plan file path and both role checklists — no conversation 
 
 **Parse-failure handling**: agent responses may not be valid JSON (especially fallback `general-purpose` agents wrapping JSON in prose). Before processing:
 
-1. Attempt to extract the JSON array: prefer `echo "$RESPONSE" | jq -c '.' 2>/dev/null` for parseable input. For mixed prose+JSON, per-role recovery: `echo "$RESPONSE" | grep -oE '\{[^{}]*(\{[^{}]*\}[^{}]*)?\}' | jq -c '.' 2>/dev/null` — extracts each balanced JSON object (one nesting level; breaks on strings containing `{` or `}`); match each to its role via the `"a":"<ROLE>"` anchor. If `jq` not available or both jq attempts fail, fallback: `echo "$RESPONSE" | python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/extract_json_field.py" .` — recovers outermost balanced JSON from arbitrary prose+JSON text; pass specific field name (e.g. `ok`, `a`) instead of `.` to extract just that field.
+1. The reply is the agent's message in context, never a shell variable — no `echo` pipeline reaches it. Reply is exactly the JSON array → use it. Otherwise Write the reply verbatim with the Write tool to `.temp/develop/<plan-name>-feasibility.txt` (`<plan-name>` = `PLAN_FILE`'s file name without `.md`) and run the recovery block below: with `jq` it prints each balanced JSON object on its own line (one nesting level; breaks on strings containing `{` or `}`) — match each to its role via the `"a":"<ROLE>"` anchor; without `jq`, `extract_json_field.py` recovers only the last balanced object (one role).
 2. If extraction succeeds: use extracted objects (one per role)
 3. If extraction fails entirely for a role: log `⚠ non-JSON plan response — falling back to prose extraction`; treat that role as `{"a":"<ROLE>","ok":false,"blockers":["agent returned non-JSON response"],"q":[],"concerns":[]}` and enter resolution loop with re-query
+
+```bash
+# timeout: 5000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r PLAN_NS < "${TMPDIR:-/tmp}/dev-plan-ns-current-${CSID}" 2>/dev/null || PLAN_NS=""
+[ -n "$PLAN_NS" ] || { echo "! BLOCKED — plan namespace sentinel missing; re-run Flag parsing"; exit 1; }
+IFS= read -r PLAN_FILE < "$PLAN_NS/plan-file" 2>/dev/null || PLAN_FILE=""
+[ -n "$PLAN_FILE" ] || { echo "! BLOCKED — plan-file not persisted; re-run Step 2"; exit 1; }
+_PLAN_NAME="${PLAN_FILE##*/}"
+_REPLY=".temp/develop/${_PLAN_NAME%.md}-feasibility.txt"
+[ -s "$_REPLY" ] || { echo "! BLOCKED — feasibility reply not saved at $_REPLY; Write it there first"; exit 1; }
+if command -v jq >/dev/null 2>&1; then grep -oE '\{[^{}]*(\{[^{}]*\}[^{}]*)?\}' "$_REPLY" | jq -c '.' 2>/dev/null
+else python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/extract_json_field.py" . < "$_REPLY"; fi
+```
 
 Verdicts return inline (~300 bytes total — no file handoff). Collect both role results:
 
@@ -267,12 +304,13 @@ Verdicts return inline (~300 bytes total — no file handoff). Collect both role
 
 Loop body is model-driven (codebase search, agent re-query), so counter lives in a file, not a shell variable — bash resets between calls; an in-prose `ITER` would never be assigned.
 
-Initialize once, before entering the loop:
+Initialize before entering the loop, and again after any Revise that re-enters Step 3 (the 3-pass budget is per plan revision):
 
 ```bash
 # timeout: 3000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r PLAN_NS < "${TMPDIR:-/tmp}/dev-plan-ns-current-${CSID}" 2>/dev/null || PLAN_NS=""
+[ -n "$PLAN_NS" ] || { echo "! BLOCKED — plan namespace sentinel missing; re-run Flag parsing"; exit 1; }
 echo 0 > "$PLAN_NS/resolution-iter"
 ```
 
@@ -282,7 +320,8 @@ Then run this block at the top of **every** iteration, before doing any resoluti
 # timeout: 3000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r PLAN_NS < "${TMPDIR:-/tmp}/dev-plan-ns-current-${CSID}" 2>/dev/null || PLAN_NS=""
-IFS= read -r ITER < "$PLAN_NS/resolution-iter" 2>/dev/null || ITER=0
+[ -n "$PLAN_NS" ] || { echo "! BLOCKED — plan namespace sentinel missing; re-run Flag parsing"; exit 1; }
+IFS= read -r ITER < "$PLAN_NS/resolution-iter" 2>/dev/null || ITER=3  # unreadable counter = budget spent, never a fresh 0
 if [ "$ITER" -ge 3 ]; then
     echo "! Max feasibility iterations (3) reached — stop the loop and escalate remaining items to user"
 else
@@ -326,6 +365,7 @@ Do not escalate: items resolvable from codebase, items that are risks (not block
 # re-hydrate PLAN_FILE + CHALLENGE_ENABLED — bash resets between calls  # timeout: 3000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r PLAN_NS < "${TMPDIR:-/tmp}/dev-plan-ns-current-${CSID}" 2>/dev/null || PLAN_NS=""
+[ -n "$PLAN_NS" ] || { echo "! BLOCKED — plan namespace sentinel missing; re-run Flag parsing"; exit 1; }
 IFS= read -r PLAN_FILE < "$PLAN_NS/plan-file" 2>/dev/null || PLAN_FILE=""
 IFS= read -r CHALLENGE_ENABLED < "$PLAN_NS/challenge-enabled" 2>/dev/null || CHALLENGE_ENABLED=true
 [ -f "$PLAN_FILE" ] || { echo "plan: PLAN_FILE not found: $PLAN_FILE" >&2; exit 1; }
@@ -336,13 +376,13 @@ else
 fi
 ```
 
-Block printed the skip line → skip rest of Step 4, go to Step 5. Otherwise spawn `foundry:challenger` to adversarially review written plan before user commits:
+Block printed the skip line → skip rest of Step 4, go to Step 5. Otherwise spawn `foundry:challenger` to adversarially review written plan before user commits — arm batch `challenge` in the spawn response (`agent-resolution.md` §Agent waits); a timed-out challenger is never read as "no findings" (`AskUserQuestion` per §Agent waits):
 
 > "Read `<PLAN_FILE>`. Challenge plan across all 5 dimensions: Assumptions, Missing Cases, Security Risks, Architectural Concerns, Complexity Creep. Apply mandatory refutation step per your instructions."
 
 Parse result:
 
-- **Blockers found** → STOP. Update `<PLAN_FILE>` with blocker annotations first, then present findings as the final reply, after the last tool call (text before a tool call can arrive as an empty progress update). Don't print `/develop` handoff until user resolves each blocker or explicitly accepts risk.
+- **Blockers found** → STOP. Update `<PLAN_FILE>` with blocker annotations first, then present findings through `AskUserQuestion` — run the Idle-gate contract block right before it (findings summary as question text, `→ <PLAN_FILE>`, ending with the `/compact` hint line): (a) **Revise the plan** — edit `PLAN_FILE` in place for each blocker, re-run Step 3 · (b) **Accept risk and continue** — blockers recorded under Risks · (c) **Abort**. Don't print `/develop` handoff until user resolves each blocker or explicitly accepts risk.
 - **Concerns only** → append `### Challenger concerns` to `<PLAN_FILE>` as advisory; continue to Final output.
 - **No findings / all refuted** → proceed.
 
@@ -396,12 +436,18 @@ If unresolved items escalated, include each after brief and save them in `<PLAN_
   Recommendation: [recommended option] — [reason]
 ```
 
-Before invoking `AskUserQuestion`, print the saved brief and any unresolved items once as the last reply text before the question, as normal Markdown; omit the handoff line until the answer. The question text carries a short plain summary: classification, counts, headline and `→ <PLAN_FILE>`, at most 6 plain lines (target 600 characters, hard cap 1,500), no table, pipe layout or code fence. Options carry a label and a one-line description, no `preview`: (a) Proceed — print handoff line, continue · (b) Revise plan — return to Step 2 with user edits. Don't print handoff line until user selects (a).
+Before invoking `AskUserQuestion`, print the saved brief and any unresolved items once as the last reply text before the question, as normal Markdown; omit the handoff line until the answer. Run the Idle-gate contract block (Step 1) before the question. The question text carries a short plain summary: classification, counts, headline, `→ <PLAN_FILE>` and the `/compact` hint line last, at most 6 plain lines (target 600 characters, hard cap 1,500), no table, pipe layout or code fence. Options carry a label and a one-line description, no `preview`: (a) Proceed — print handoff line, continue · (b) Revise plan — return to Step 2 with user edits. Don't print handoff line until user selects (a).
+
+Skill complete — after the handoff line on (a), and on **Abort** at any gate — clear the contract; Revise keeps it, the next gate refreshes it:
+
+```bash
+rm -f .temp/state/skill-contract.md  # clear contract — skill complete (compaction-contract.md §Lifecycle)  # timeout: 5000
+```
 
 **Handoff contract**: plan file at `<PLAN_FILE>` consumable by downstream skills. Pass via `--plan <PLAN_FILE>` when invoking `/develop:feature`, `/develop:fix`, or `/develop:refactor`. `debug` classification: no downstream plan file — invoke `/develop:debug <goal>` directly; it hands off to `/develop:fix --diagnosis <path>` on completion, never back to `/develop:plan` — re-running `/develop:plan` afterwards is a user choice, only when the fix needs its own scoped plan. Skill receives `--plan <path>` → reads plan file at Step 1 and:
 
 - Extracts `Classification`, `Affected files`, `Risks`, `Suggested approach` — skips cold codebase exploration
-- Inherits agent feasibility verdicts and Codex corrections already applied
+- Inherits agent feasibility verdicts already applied
 - Uses `Suggested approach` as implementation roadmap
 
 No quality stack, no Codex pre-pass, no review loop. Exit after printing summary.
@@ -429,7 +475,6 @@ End plan document with:
 | Temptation | Reality |
 | -- | -- |
 | "The plan is obvious — no need for agent feasibility review" | Feasibility review catches domain-specific blockers (missing test infrastructure, incompatible library constraints, API changes) obvious only in hindsight. |
-| "Codex design review is optional for small tasks" | Small tasks regularly hide large dependencies. Codex catches architectural anti-patterns before they're baked into the plan. |
 | "I can scope this during implementation — no need to plan first" | Scope discovered mid-implementation inflates PRs, obscures intent. Plan mode exists to prevent exactly this. |
 
 </notes>

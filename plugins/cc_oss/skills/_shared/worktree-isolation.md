@@ -36,17 +36,17 @@ echo "$WT" > "${TMPDIR:-/tmp}/oss-<skill>-wt-${CSID}"   # final path, read by En
 
 ```bash
 # timeout: 30000
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/heal_git_artifacts.py" worktrees
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/heal_git_artifacts.py" worktrees --include-orphans
 ```
 
 > Exit 0 (nothing reclaimable) or exit 2 (environment error) → leftovers aren't the cause; print the `git worktree add` error, stop. Exit 1 but the `add` error names none of the listed paths or branches → leftovers aren't the cause; print the error, stop. Exit 1 and the error names a listed path or branch → Write the full list and the `add` error to `.temp/worktree-leftovers.md` first; print them once as the last reply text before invoking `AskUserQuestion`, as normal Markdown. The question text carries the leftover count, the `add` error headline and `→ .temp/worktree-leftovers.md`, at most 6 plain lines (target 600 characters, hard cap 1,500), no table, pipe layout or code fence. Both options carry a label and a one-line description, no `preview` — never offer removal of an unseen list: (a) **Stop** — keep everything, end the run · (b) **Remove them and retry** — run the block below in this turn, retry the create once. That retry fails too → print the error, stop; never loop back to the report. Removing a worktree deletes a directory tree, so never run the `--apply` form without that answer.
 
 ```bash
 # timeout: 30000
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/heal_git_artifacts.py" worktrees --apply
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/heal_git_artifacts.py" worktrees --include-orphans --apply
 ```
 
-> Candidates are only clean, registered-or-orphaned, ≥14-day-old `agent-*`/`oss-*` trees. Uncommitted work is reported and kept at any age; `dev-*` and hand-made names are never candidates. Lock healing (`oss:resolve` Step 8) is unconditional and unaffected.
+> Candidates are only clean, registered-or-orphaned, ≥14-day-old `agent-*`/`oss-*` trees. Both calls pass `--include-orphans`, so the approved list and the removal cover the same unregistered dirs; symlinks are never followed or removed. Uncommitted work is reported and kept at any age; `dev-*` and hand-made names are never candidates. Lock healing (`oss:resolve` Step 8) is unconditional and unaffected.
 
 4. `EnterWorktree(path=<final $WT from `${TMPDIR:-/tmp}/oss-<skill>-wt-${CSID}`>)` — the possibly disambiguated path, never the original slug — session CWD now the worktree.
 
@@ -66,7 +66,7 @@ Prefix `REPORT_DIR` with `$_ORIG_ROOT` (absolute). `$RUN_DIR` (`.temp/`) handoff
 
 `oss:resolve` mutates a PR branch and **pushes to the contributor fork** (its real deliverable is remote — reachable regardless of local worktree). Entering the session worktree **before** Step 4 `gh pr checkout` means the checkout, Phase-2 per-specialist `git worktree`s, cherry-pick merge-back, and push all happen off the isolated worktree; the caller's main tree + branch never change.
 
-Composition facts (verified against `resolve/modes/action-item-dispatch.md`):
+Composition facts (verified against `resolve/modes/dispatch-phase2.md`):
 
 - **Mutex path** derives from git-common-dir + branch. Worktrees share the common-dir, so the lock is identical inside the session worktree → a second concurrent resolve on the same PR branch is still blocked. No regression.
 - **Phase-2 specialist worktrees** register on the same common-dir (siblings, not nested) and pin to `phase2-base-sha` — the PR HEAD captured right before the first spawn wave, after C1's `each` commits — exactly as before; `resolve-base-sha` (the prelude fingerprint) stays the reset fence's anchor.

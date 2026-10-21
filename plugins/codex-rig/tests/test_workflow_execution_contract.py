@@ -7,6 +7,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from _skill_text import read_with_references
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 
@@ -42,7 +43,7 @@ def test_local_merge_approval_reaches_remediation_without_waiving_checks() -> No
     """Prevent routine integration commits from reopening consent or bypassing source checks."""
     native = (PLUGIN_ROOT / "shared/native-skill-contract.md").read_text(encoding="utf-8")
     assets = (PLUGIN_ROOT / "assets/AGENTS.md").read_text(encoding="utf-8")
-    skill = (PLUGIN_ROOT / "skills/code-remediate/SKILL.md").read_text(encoding="utf-8")
+    skill = read_with_references(PLUGIN_ROOT / "skills/code-remediate/SKILL.md", "existing-conflict.md")
     section = native.split("### Local merge approval", 1)[1].split("\n## ", 1)[0]
     for invariant in (
         "A task-owned local merge that the current authorized write task needs and that is non-destructive to "
@@ -87,7 +88,7 @@ def test_nested_review_exits_and_fallback_limits_reach_remediation() -> None:
     a serial parent-fallback report. Remediation needs a defined exit for the first and a visible residual limit for the
     second, otherwise it either reruns the review or certifies coverage it never received.
     """
-    skill = (PLUGIN_ROOT / "skills/code-remediate/SKILL.md").read_text(encoding="utf-8")
+    skill = read_with_references(PLUGIN_ROOT / "skills/code-remediate/SKILL.md", "missing-review-decision.md")
     handoff = (PLUGIN_ROOT / "shared/final-handoff-contract.md").read_text(encoding="utf-8")
     assert "A review that completes but cannot be admitted keeps its terminal status" in skill
     assert "Never rerun the review or repeat the fresh-review question for this unchanged target" in skill

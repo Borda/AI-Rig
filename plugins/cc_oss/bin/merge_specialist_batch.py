@@ -19,7 +19,7 @@ even when the two entries touch disjoint files — confirmed empirically,
 before it even attempts the merge). Once every entry in the plan has applied
 cleanly, one combined ``git reset --soft HEAD~<n>`` (``n`` = entries applied)
 collapses them into a single staged diff — the "stage first, commit-mode-
-specific commit later" contract that action-item-dispatch.md's post-loop
+specific commit later" contract that dispatch-phase3.md's post-loop
 COMMIT_MODE=grouped/all/stage sections already assume. A conflict mid-plan
 leaves every already-applied entry as a real, uncollapsed commit — never
 reset — so the repository state matches ``git cherry-pick``'s ordinary
@@ -44,13 +44,14 @@ Exit codes:
         on stdout, repo left in the conflicted cherry-pick state for the
         caller to resolve (mirrors Step 5 merge-conflict handling), then
         re-invoke with the remaining (unapplied) entries once resolved
-    2 — bad/missing required argument (argparse default), or a plan entry's
+    2 — bad/missing required argument (argparse default), a plan entry's
         ``sha`` fails ``_SHA_RE`` (argument-injection guard: JSON error on
-        stdout, nothing cherry-picked)
+        stdout, nothing cherry-picked), or the plan or centrality file
+        exceeds ``_MAX_INPUT_CHARS`` (JSON error on stdout)
 
 Security:
     ``--plan``/``--centrality-file`` are trusted to come from ``oss:resolve`` Step 8
-    (``skills/resolve/modes/action-item-dispatch.md``, the ``PLAN_FILE``/``CENTRALITY_FILE``
+    (``skills/resolve/modes/dispatch-phase3.md``, the ``PLAN_FILE``/``CENTRALITY_FILE``
     variables). Both are read-only JSON reads and are not validated here — a future caller passing
     externally-influenced paths must validate upstream. Contrast with each plan entry's ``sha``,
     which *is* validated: it reaches ``git cherry-pick`` argv and is checked against ``_SHA_RE``
@@ -87,6 +88,28 @@ class CommitMode(str, Enum):
 #: execute an arbitrary git-<name> from PATH). {7,64} covers both sha1 (7-40)
 #: and sha256 (up to 64) short/full forms.
 _SHA_RE = re.compile(r"^[0-9a-f]{7,64}$")
+#: Upper bound, in characters, on the ``--plan`` and ``--centrality-file`` JSON. A plan holds one short row per
+#: resolved item, so a larger file is a wrong path rather than a big run — and it is read whole into memory.
+_MAX_INPUT_CHARS = 10 * 1024 * 1024
+
+
+def _read_capped(path: str) -> str:
+    """Read one JSON input file as UTF-8 text, refusing it when it exceeds ``_MAX_INPUT_CHARS``.
+
+    Args:
+        path: ``--plan`` or ``--centrality-file`` value.
+
+    Returns:
+        The file's full text.
+
+    Raises:
+        ValueError: The file holds more than ``_MAX_INPUT_CHARS`` characters.
+    """
+    with open(path, encoding="utf-8") as handle:
+        text = handle.read(_MAX_INPUT_CHARS + 1)
+    if len(text) > _MAX_INPUT_CHARS:
+        raise ValueError(f"{path} exceeds {_MAX_INPUT_CHARS} characters")
+    return text
 
 
 @dataclass(frozen=True)
@@ -306,7 +329,7 @@ def main(argv: list[str] | None = None) -> int:
 
     Returns:
         Exit code: 0 — all entries applied; 1 — conflict, partial JSON on stdout;
-        2 — a plan entry's sha fails validation, JSON error on stdout.
+        2 — a plan entry's sha fails validation or an input file is over the size cap, JSON error on stdout.
 
     Examples:
         No doctest — requires live git; covered by pytest with monkeypatch.
@@ -334,10 +357,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     sys.stdout.reconfigure(encoding="utf-8", newline="\n")  # type: ignore[union-attr]
-    with open(args.plan, encoding="utf-8") as f:
-        raw_plan = f.read()
     try:
-        entries = parse_plan(raw_plan)
+        entries = parse_plan(_read_capped(args.plan))
     except ValueError as exc:
         print(json.dumps({"error": str(exc)}))
         return 2
@@ -347,8 +368,12 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if args.centrality_file:
-        with open(args.centrality_file, encoding="utf-8") as f:
-            centrality = {str(k): float(v) for k, v in json.load(f).items()}
+        try:
+            raw_centrality = _read_capped(args.centrality_file)
+        except ValueError as exc:
+            print(json.dumps({"error": str(exc)}))
+            return 2
+        centrality = {str(k): float(v) for k, v in json.loads(raw_centrality).items()}
         entries = order_plan(entries, centrality)
 
     result = run_plan(entries, CommitMode(args.commit_mode), base_sha=args.base_sha)

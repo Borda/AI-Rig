@@ -19,7 +19,7 @@ Spawn adversarial reviewer — use `foundry:sw-engineer` for reliable tool execu
 > **Agent waits** — SKILL.md §Agent wait discipline (batch `adversarial`); never `ScheduleWakeup`, `ListAgents` or a `Monitor` loop.
 
 ```text
-Agent(subagent_type="foundry:sw-engineer", prompt="Adversarial review of a release draft against the project codebase and docs. Working directory: <REPO_ROOT>. Your job is to REFUTE claims, not confirm them — treat every stated fact as wrong until you prove it correct.
+Agent(subagent_type="foundry:sw-engineer", name="adversarial-reviewer", description="Refute release draft claims", prompt="Adversarial review of a release draft against the project codebase and docs. Working directory: <REPO_ROOT>. Your job is to REFUTE claims, not confirm them — treat every stated fact as wrong until you prove it correct.
 
 Read the release draft at: <$ADVERSARIAL_DIR/draft-to-review.md>
 

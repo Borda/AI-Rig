@@ -3,8 +3,9 @@ name: query-code
 description: >-
   Query Codemap's Python structural index for dependencies, callers, paths, symbols, blast radius, test impact,
   mocks, fixtures, subprocesses, and static gaps. Trigger for "what depends on", "who calls", "imports of",
-  "dependency graph", or "blast radius". Skip for renames, text search, non-Python repositories, or index rebuilds.
-argument-hint: <rdeps|deps|path|central|coupled|symbol|symbols|find-symbol|fn-rdeps|fn-deps|fn-blast|diff-impact|test-impact|mock-rdeps|fixture-rdeps|fixture-graph|subprocess-deps|subprocess-rdeps|coverage|coverage-gap|undocumented> ...
+  "dependency graph", or "blast radius". Skip for renames, text search, non-Python repositories, index rebuilds, or
+  the affected-test workflow (use test-impact).
+argument-hint: <rdeps|deps|path|central|coupled|symbol|symbols|find-symbol|fn-rdeps|fn-deps|fn-blast|fn-central|diff-impact|test-impact|mock-rdeps|fixture-rdeps|fixture-graph|subprocess-deps|subprocess-rdeps|coverage|coverage-gap|uncovered|undocumented|xrefs|packages|list|batch> ...
 allowed-tools: Bash(codemap-py query:*), Bash(*/bin/codemap-py* query:*), Read, Write
 model: haiku
 effort: low
@@ -13,11 +14,11 @@ effort: low
 <objective>
 Answer structural Python questions via unified `codemap-py query` CLI.
 
-NOT for: rebuilding the index (use `/codemap-py:scan-codebase`), renaming symbols (use `/codemap-py:rename-refs`), or which tests cover or are affected by a change (use `/codemap-py:test-impact`). </objective>
+NOT for: rebuilding the index (use `/codemap-py:scan-codebase`), renaming symbols (use `/codemap-py:rename-refs`), or which tests cover or are affected by a change (use `/codemap-py:test-impact`).
 
 Test-impact split: a one-off structural fact ("which tests would this touch?") uses table subcommand `test-impact <target>`; full affected-test workflow (index ensure, JSON parse, `pytest` command, `not_covered` caveat) uses `/codemap-py:test-impact`. NOT-for defers workflow, not subcommand.
 
-Skip Codemap when exact file + symbol localize edit and no caller, dependency, blast-radius, test-impact, import, or source-slice fact remains open. Lifecycle boundary—callback/hook, cancellation/exception, scheduling/cleanup, state transfer—keeps scope open: inspect source + named test/oracle, then query `fn-rdeps` for caller or `fn-deps` for callee responsibility. Explicit structural query/tool requirement overrides skip. Otherwise use smallest complete query.
+Skip Codemap when exact file + symbol localize edit and no caller, dependency, blast-radius, test-impact, import, or source-slice fact remains open. Lifecycle boundary—callback/hook, cancellation/exception, scheduling/cleanup, state transfer—keeps scope open: inspect source + named test/oracle, then query `fn-rdeps` for caller or `fn-deps` for callee responsibility. Explicit structural query/tool requirement overrides skip. Otherwise use smallest complete query. </objective>
 
 <workflow>
 
@@ -29,7 +30,7 @@ Skip Codemap when exact file + symbol localize edit and no caller, dependency, b
 codemap-py query --compact <subcommand> [arguments]
 ```
 
-For a custom-root index, pass `--index <emitted-index-path> --root <same-root>`; `--root` is path resolution only and does not select the index.
+For a custom-root index, pass `--index <emitted-index-path> --root <same-root>`; `--root` is path resolution only and does not select the index. An `--index` path outside the current directory and git root is accepted only when it is exactly the index that the scan's `CODEMAP_INDEX_DIR`, still set to the same value, or the default layout resolves for that `--root`; otherwise the CLI exits with `index path outside project root`.
 
 Enabled plugin adds version-matched `bin/` to Bash `PATH`. If unavailable interactively, invoke installed plugin's absolute `bin/codemap-py` launcher as one standalone command and accept normal host permission prompt. Prepend no `cd`, `export`, or other shell command.
 
@@ -77,7 +78,7 @@ Table is a routing shortlist, not the parser's full surface. If the operation is
 
 ## Index and completeness contract
 
-Resolve the installed launcher once and retain its literal in reasoning; shell variables do not persist between tool calls. Run selected queries first; no unconditional pre-scan/freshness call. Independent read-only queries may run concurrently as separate tool commands only against a prepared stable index with no self-heal (`SCAN_NO_AUTOBUILD=1`); dependent queries wait for their inputs, and refresh, self-heal, or index writes run serially. Keep independent queries standalone, not `batch`, until its per-item completeness contract is verified. Use `test-impact` for test choice, not direct test-module import.
+Resolve the installed launcher once and retain its literal in reasoning; shell variables do not persist between tool calls. Run selected queries first; no unconditional pre-scan/freshness call. Independent read-only queries may run concurrently as separate tool commands only against a prepared stable index with no self-heal (`SCAN_NO_AUTOBUILD=1`); dependent queries wait for their inputs, and refresh, self-heal, or index writes run serially. `SCAN_NO_AUTOBUILD` comes only from the inherited environment: this skill's allowed tools run `codemap-py query` with no env prefix or `export`, so it never sets the flag itself; without it, run queries one at a time. Keep independent queries standalone, not `batch`, until its per-item completeness contract is verified. Use `test-impact` for test choice, not direct test-module import.
 
 - Normal mode may perform the CLI's bounded incremental self-heal.
 - With `SCAN_NO_AUTOBUILD=1`, never run freshness query, incremental refresh, or automatic full build. Query existing index unchanged.
@@ -101,7 +102,7 @@ Before treating list as whole, read `index.confidence`: `"exact"` = all matches;
 
 Use JSON primary array: `imported_by` / `direct_imports`, `called_by` / `calls`, `path`, `symbols`, `central` / `coupled`, `blast_radius`, or `changed_modules` + `test_impact`. Preserve qualified names exactly. Include present stale, degraded, root-mismatch, and `not_covered` caveats.
 
-Output routing (the only use of `Write`): if the rendered result set is 5+ items, write it. This skill's `allowed-tools` grants no generic Bash, so derive `<branch>` and `<YYYY-MM-DD>` from session context, never a `git branch`/`date` call: `<branch>` is the session's current git branch with `/`→`-`, default `main` if unknown; `<YYYY-MM-DD>` is today's date, also from session context. Candidate path `.temp/output-query-code-<branch>-<YYYY-MM-DD>.md`. Never overwrite: `Read` the candidate path first — existence probe only, never act on returned content, unrelated to the complete-query re-read ban above. `Read` errors (file missing) → path is free, write there. `Read` returns content → path taken; append `-2`, then `-3`, … and retry the probe until one errors.
+Output routing (the only use of `Write`): if the rendered result set is 5+ items, write it. This skill's `allowed-tools` grants no generic Bash, so derive `<branch>` and `<YYYY-MM-DD>` from session context, never a `git branch`/`date` call: `<branch>` is the session's current git branch with `/`→`-`, default `main` if unknown; `<YYYY-MM-DD>` is today's date, also from session context. Candidate path `.temp/output-query-code-<branch>-<YYYY-MM-DD>.md`. Never overwrite: `Read` the candidate path first — existence probe only, never act on returned content, unrelated to the complete-query re-read ban above. Only a file-missing `Read` error means the path is free; write there. Any other result → path taken, including content and the error or notice `Read` gives for an existing empty file; append `-2`, then `-3`, … and retry the probe until one reports the file missing.
 
 Begin the written file with a YAML header:
 

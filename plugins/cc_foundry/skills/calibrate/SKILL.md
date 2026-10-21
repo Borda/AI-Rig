@@ -11,7 +11,7 @@ allowed-tools: Read, Write, Bash, Agent, Glob, TaskCreate, TaskUpdate, TaskList,
 
 Validate agents and skills by measuring outputs against synthetic problems with defined ground truth. Primary signal: **calibration bias** — gap between self-reported confidence and actual recall. Well-calibrated agent reports 0.9 when it finds ~90% of issues. Miscalibrated: reports 0.9, finds 60%.
 
-Calibration data drives improvement loop: systematic gaps: instruction updates; persistent overconfidence: adjusted re-run thresholds in MEMORY.md.
+Calibration data drives improvement loop: systematic gaps: instruction updates; persistent overconfidence: overconfidence checks in the target's `<antipatterns-to-flag>`.
 
 NOT for: static routing overlap analysis (use /foundry:audit); manually reviewing skill output quality (use /develop:review (requires `develop` plugin)).
 
@@ -28,7 +28,7 @@ NOT for: static routing overlap analysis (use /foundry:audit); manually reviewin
   - `--ab-test` — also run `general-purpose` baseline and report delta metrics; requires benchmark (default `--fast` if no pace flag); mutually exclusive with `--apply`
   - `--apply` — apply proposals: with `--fast`/`--full`: run benchmark then immediately apply; without pace flag: skip benchmark, apply proposals from most recent past run; mutually exclusive with `--ab-test`
   - `--skip-gate` — suppress follow-up gate; for programmatic callers
-  - `--local` — resolve target agent/skill files from source tree (`plugins/*/`) instead of installed plugin cache; for plugin-dev workflows where local edits aren't yet installed; sets `LOCAL_MODE=true` in all pipeline spawns
+  - `--local` — read rules (`rules` target), mode files and the cross-plugin availability check from source tree (`plugins/*/`) instead of installed plugin cache; agent/skill targets come from source tree in both modes (`resolve_agent_file.py`); for plugin-dev workflows where local edits aren't yet installed; sets `LOCAL_MODE=true` in all pipeline spawns
 
   **Mutual exclusion validation** (check before any work):
 
@@ -67,8 +67,7 @@ NOT for: static routing overlap analysis (use /foundry:audit); manually reviewin
 - CALIBRATION_WARN: ±0.15 (bias beyond this → confidence decoupled from quality)
 - CALIBRATE_LOG: `.notes/logs/calibrations.jsonl` — append-only (Step 4); legacy `.claude/logs/calibrations.jsonl` is read-only, migrated once behind the `.notes/logs/.calibrations-legacy-migrated` marker
 - AB_ADVANTAGE_THRESHOLD: 0.10 (delta recall or F1 above this → meaningful advantage; below → marginal or none)
-- PHASE_TIMEOUT_MIN: 5 (per-phase budget — if spawned subagents haven't all returned, collect partial results and continue)
-- PIPELINE_TIMEOUT_MIN: 10 (per-pipeline deadline, armed in the spawn response as `600` in `agent-watch-*.tsv` — no extension: the orchestrator has no clock to grant one) # tighter than global 15-min cutoff from CLAUDE.md §6 — intentional for calibrate
+- PIPELINE_TIMEOUT_MIN: 10 (per-pipeline deadline, armed in the spawn response as `600` in `agent-watch-*.tsv` — no extension: the orchestrator has no clock to grant one)
 - PIPELINE_BATCH_SIZE: 5 when one mode category runs alone, 2 while two categories are in flight (max agent/skill pipeline subagents spawned concurrently within one mode — prevents agent count explosion on `all`; batch: spawn ≤ that many, wait for all results, then spawn next batch; halving keeps peak concurrency at 4 ≤ 5 when paired)
 - ROUTING_ACCURACY_THRESHOLD: 0.90 (below → agent descriptions need improvement) # keep in sync with modes/routing.md
 - ROUTING_HARD_THRESHOLD: 0.80 (below → high-overlap pair descriptions need disambiguation)
@@ -108,7 +107,7 @@ Domain tables per mode: see `modes/agents.md`, `modes/skills.md`, `modes/routing
 - "Analyse and report" — Steps 3–5 (benchmark mode)
 - "Apply findings" — Step 6 (apply mode only)
 
-**Task marking discipline**: create ALL category tasks as `pending` at the start (before any pipeline spawns). Mark a task `in_progress` only immediately before spawning its pipeline. Mark it `completed` immediately after collecting its results. Never mark more than one category task `in_progress` simultaneously — misrepresents execution state. On loop retry or scope change, create new task.
+**Task marking discipline**: create ALL category tasks as `pending` at the start (before any pipeline spawns). Mark a task `in_progress` only immediately before spawning its pipeline. Mark it `completed` immediately after collecting its results. Never mark more than the two in-flight categories' tasks `in_progress` simultaneously (Step 2 pairing) — misrepresents execution state. On loop retry or scope change, create new task.
 
 ## Step 1: Parse targets and create run directory
 
@@ -117,10 +116,9 @@ From `$ARGUMENTS`, determine:
 - **Strip flags first**: extract `--fast`, `--full`, `--ab-test`, `--apply`, `--skip-gate`, `--local`, `--keep` before scope resolution; validate mutual exclusion (error and stop on conflict). Strip all flags from ARGUMENTS before scope token resolution:
   ```bash
   export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-  python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/extract-keep-flag.py" calibrate-state "$ARGUMENTS" --out-file "${TMPDIR:-/tmp}/calibrate-state-${CSID}/keep-items"  # timeout: 5000 — parses --keep, clears stale contract, makes state dir
-  eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/parse-skill-flags.py" --flags fast,full,ab-test,apply,skip-gate,local "$ARGUMENTS")"  # timeout: 5000
-  LOCAL_MODE="$FLAG_LOCAL"
-  ARGUMENTS="$CLEAN_ARGS"
+  python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/parse-skill-flags.py" --flags fast,full,ab-test,apply,skip-gate,local --keep-state calibrate-state --out-file "${TMPDIR:-/tmp}/calibrate-state-${CSID}/keep-items" "$ARGUMENTS" >/dev/null  # timeout: 5000 — no eval; calibrate-state-<flag>-${CSID} sentinels, keep-items into the state dir it makes, clears stale contract
+  IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/calibrate-state-local-${CSID}" 2>/dev/null || LOCAL_MODE=false
+  IFS= read -r ARGUMENTS < "${TMPDIR:-/tmp}/calibrate-state-clean-args-${CSID}" 2>/dev/null || ARGUMENTS=""
   mkdir -p "${TMPDIR:-/tmp}/calibrate-state-${CSID}"
   echo "$LOCAL_MODE" > "${TMPDIR:-/tmp}/calibrate-state-${CSID}/local-mode"
   ```
@@ -130,7 +128,7 @@ From `$ARGUMENTS`, determine:
   - `skills` → `/audit` only (and other non-live-PR skills in `modes/skills.md`; `/oss:review` (requires `oss` plugin) excluded)
   - `routing` → routing accuracy test only
   - `communication` → handover + team protocol compliance only
-  - `rules` → rule adherence test (all rule files in `.claude/rules/`) only
+  - `rules` → rule adherence test (installed `~/.claude/rules/*.md` + project `.claude/rules/*.md`; `--local` → `plugins/*/rules/*.md` + project) only
   - `plugins` → all agents + calibratable skills from all `plugins/*/` directories
   - `<plugin-name>` matching `plugins/<name>/` directory → tier 2: all agents + calibratable skills in that plugin
   - Any other token → tier 3: single agent or skill name; search `plugins/*/agents/<name>.md`, `.claude/agents/<name>.md`, `plugins/*/skills/<name>/SKILL.md`, `.claude/skills/<name>/SKILL.md`; error if no match
@@ -151,7 +149,7 @@ Do not proceed to Step 2 — silent no-op produces no report and confuses caller
   - `--apply` without pace flag: pure apply mode: skip Steps 2–5, go to Step 6
   - `--apply` with `--fast`/`--full`: benchmark + auto-apply: run Steps 2–5 then continue to Step 6
 
-Benchmark will run (i.e. `--fast` or `--full` present, with or without `--apply`): generate timestamp `YYYY-MM-DDTHH-MM-SSZ` (UTC, e.g. `2026-03-03T13-44-48Z`) explicitly via Bash tool, persist for downstream steps (fresh-shell state loss between Bash() calls):
+Benchmark will run (every invocation except pure apply mode — `--apply` alone; no pace flag defaults to `--fast`): generate timestamp `YYYY-MM-DDTHH-MM-SSZ` (UTC, e.g. `2026-03-03T13-44-48Z`) explicitly via Bash tool, persist for downstream steps (fresh-shell state loss between Bash() calls):
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -175,7 +173,7 @@ All run dirs use this timestamp.
 **Large fan-out gate** — after target list resolves (and before any task creation or pipeline spawn), when `--skip-gate` not passed:
 
 - **Skip entirely** in pure-apply mode (`--apply` without a pace flag) — zero pipelines spawn in this mode (routes straight to Step 6), so no confirmation needed.
-- **Mode-category scopes** (`all`, `agents`, `skills`, `plugins`) — target list here is mode categories, not yet expanded to individual agent/skill files (expansion happens inside Step 2's mode files, per mode-file table below). An exact spawn count isn't knowable at this point — these scopes routinely expand to dozens of agent/skill pipelines. Gate **always fires** whenever a benchmark pace flag is set (`--fast` or `--full`), independent of any count.
+- **Mode-category scopes** (`all`, `agents`, `skills`, `plugins`) — target list here is mode categories, not yet expanded to individual agent/skill files (expansion happens inside Step 2's mode files, per mode-file table below). An exact spawn count isn't knowable at this point — these scopes routinely expand to dozens of agent/skill pipelines. Gate **always fires** whenever a benchmark will run (any invocation except pure apply mode, default `--fast` pace included), independent of any count.
 - **Tier-2 plugin scopes** (`<plugin-name>`) — one plugin's contents are countable here without entering Step 2, by the same globs the Step 2 dispatch table uses: `SPAWN_ESTIMATE = (files matching plugins/<name>/agents/*.md + files matching plugins/<name>/skills/*/SKILL.md) × (FULL_N if --full else FAST_N)`. The skill term is an upper bound — `modes/skills.md` excludes some — so the estimate over-counts, which fires the gate more often, never less; keep it that way rather than "correcting" it. Gate fires only when `SPAWN_ESTIMATE > SPAWN_GATE_THRESHOLD`.
 - **Tier-3 single-target scopes** (`<agent-name>`, `<skill-name>`) — target list is already a concrete file (or small union of files), so count is exact here: `SPAWN_ESTIMATE = <resolved-target-count> × (FULL_N if --full else FAST_N)`. Gate fires only when `SPAWN_ESTIMATE > SPAWN_GATE_THRESHOLD`.
 
@@ -191,27 +189,26 @@ Call `AskUserQuestion`:
 
 On Abort: stop immediately — no tasks created, no spawns. On Switch to --fast: replace pace flag with `--fast` (mode-category scopes still always-fire at `--fast`; tier-2 and tier-3 recompute `SPAWN_ESTIMATE`, and a recomputed estimate at or below `SPAWN_GATE_THRESHOLD` proceeds without re-asking), continue to task creation.
 
-Create tasks before proceeding:
+Create tasks before proceeding — the Task tracking list above, category tasks only for categories the target includes, all `pending`; do NOT mark any `in_progress` yet:
 
-- Benchmark only (no `--apply`): TaskCreate "Calibrate agents" (if target includes agents), TaskCreate "Calibrate skills" (if target includes skills), TaskCreate "Calibrate routing" (if target includes routing), TaskCreate "Calibrate communication" (if target includes communication), TaskCreate "Calibrate rules" (if target includes rules), TaskCreate "Analyse and report" — all created as `pending`; do NOT mark any `in_progress` yet
-- Benchmark + auto-apply (`--fast`/`--full` + `--apply`): TaskCreate "Calibrate agents" (if target includes agents), TaskCreate "Calibrate skills" (if target includes skills), TaskCreate "Calibrate routing" (if target includes routing), TaskCreate "Calibrate communication" (if target includes communication), TaskCreate "Calibrate rules" (if target includes rules), TaskCreate "Analyse and report", TaskCreate "Apply findings" — all created as `pending`; do NOT mark any `in_progress` yet
-- Pure apply mode (only `--apply`, no pace flag): TaskCreate "Apply findings" only
+- Benchmark (`--fast`/`--full`): the category tasks + TaskCreate "Analyse and report"; add "Apply findings" when `--apply` is also set
+- Pure apply mode (only `--apply`, no pace flag): "Apply findings" only
 
 ## Step 2: Spawn pipeline subagents
 
-> **Pre-flight**: mode files at `<plugin-cache>/foundry/<v>/skills/calibrate/modes/` — resolve via plugin cache scan below.
->
-> `/foundry:setup` does NOT symlink these (only `rules/*.md` and `TEAM_PROTOCOL.md`); if not found, re-install foundry plugin.
+> **Mode-file load** — run once per dispatched mode, `<MODE_FILE>` = that mode's file from the dispatch table below. Mode files ship in the plugin cache; `/foundry:setup` does NOT symlink them (only `rules/*.md` and `TEAM_PROTOCOL.md`).
 >
 > ```bash
 > export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 > IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/calibrate-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
-> CALIB_MODES_DIR=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_skill_subdir.py" calibrate modes $([ "$LOCAL_MODE" = "true" ] && echo --local))  # timeout: 5000
+> MODE_FILE='<MODE_FILE>'
+> case "$MODE_FILE" in *'<'*'>'*|"") echo "! BLOCKED — <MODE_FILE> not substituted (agents.md | skills.md | routing.md | communication.md | rules.md)"; exit 1;; esac
+> python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" calibrate modes "$MODE_FILE" $([ "$LOCAL_MODE" = "true" ] && echo --local)  # timeout: 5000
 > ```
 >
-> **Gate**: if the bash block above failed (non-zero exit or `$CALIB_MODES_DIR` empty) — stop immediately; do not proceed to pipeline spawns. Print: `! calibrate/modes/ directory not found — re-install foundry plugin then retry.`
+> **Gate**: block exits non-zero (`! BREAKING` / `! BLOCKED` line) — stop immediately; do not proceed to pipeline spawns. Print: `! calibrate/modes/ directory not found — re-install foundry plugin then retry.`
 
-For each target mode in resolved target list, read corresponding mode file, execute spawn instructions. **At most 2 mode categories in flight at once**, and only with `$PIPELINE_BATCH_SIZE` halved to **2** (floor of 5÷2) for as long as two run concurrently. Rationale: the constraint being protected is peak agent count and context, not ordering — two categories at batch 2 peak at 4 concurrent pipelines, below the 5 a single category reaches on its own, so resource ceiling is unchanged while wall-clock on `all` drops. Everything else stays serial: never issue a third category's spawns while two are running, never restore batch size 5 until one of the two has fully returned its results.
+For each target mode in resolved target list, load corresponding mode file (block above), execute spawn instructions. **At most 2 mode categories in flight at once**, and only with `$PIPELINE_BATCH_SIZE` halved to **2** (floor of 5÷2) for as long as two run concurrently. Rationale: the constraint being protected is peak agent count and context, not ordering — two categories at batch 2 peak at 4 concurrent pipelines, below the 5 a single category reaches on its own, so resource ceiling is unchanged while wall-clock on `all` drops. Everything else stays serial: never issue a third category's spawns while two are running, never restore batch size 5 until one of the two has fully returned its results.
 
 **Execution order for `all`**: agents → skills → routing → communication → rules, run as pairs in that order — (agents + skills), (routing + communication), then rules alone at batch 5. For each pair:
 
@@ -220,6 +217,7 @@ For each target mode in resolved target list, read corresponding mode file, exec
 3. Spawn pipelines for both modes with `$PIPELINE_BATCH_SIZE` = 2 (= 5 when a category runs alone — see constants), and in that same response arm the batch deadline (below)
 4. End the turn; collect every batch result from both modes via completion notifications + the deadline check before proceeding — never `ScheduleWakeup`, `ListAgents`, `Monitor`, a poll, or a "waiting" line
 5. Mark each mode's task `completed` in the response that consumes its last result
+6. Only then start the next pair — after the deadline check below has resolved every row of both modes (`done` or ⏱)
 
 **Batch deadline** (`_shared/agent-spawn-protocol.md` §Deadlines): every spawn response Writes `<RUN_DIR>/agent-watch-<mode>-<batch-number>.tsv` (`<RUN_DIR>` = `.reports/calibrate/<TIMESTAMP>`), one row per pipeline: `<target>\t<that target's result.jsonl path from its mode file>\t<600, or 900 when Codex active>`. On every completion notification run once, before reading any result:
 
@@ -231,15 +229,15 @@ RUN_DIR=".reports/calibrate/$_TIMESTAMP"
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/agent_watch.py" --state-dir "$RUN_DIR"  # timeout: 5000
 ```
 
-`done` → consume · notification arrived but row not `done` → that target is ⏱ `timed_out` now (Step 3 synthesizes its record) · rows open without a notification → end the turn. A ⏱ never answers or skips the Step 3 or Step 6 gates. 6. Only then start the next pair
+`done` → consume · notification arrived but row not `done` → that target is ⏱ `timed_out` now (Step 3 synthesizes its record) · rows open without a notification → end the turn. A ⏱ never answers or skips the Step 3 or Step 6 gates.
 
 | Target mode | Mode file | Task to mark in_progress |
 | -- | -- | -- |
-| agents | `$CALIB_MODES_DIR/agents.md` | "Calibrate agents" |
-| skills | `$CALIB_MODES_DIR/skills.md` | "Calibrate skills" |
-| routing | `$CALIB_MODES_DIR/routing.md` | "Calibrate routing" |
-| communication | `$CALIB_MODES_DIR/communication.md` | "Calibrate communication" |
-| rules | `$CALIB_MODES_DIR/rules.md` | "Calibrate rules" |
+| agents | `agents.md` | "Calibrate agents" |
+| skills | `skills.md` | "Calibrate skills" |
+| routing | `routing.md` | "Calibrate routing" |
+| communication | `communication.md` | "Calibrate communication" |
+| rules | `rules.md` | "Calibrate rules" |
 | plugins or `<plugin-name>` (tier 2) | expand to per-agent + per-skill pipelines: glob `plugins/<name>/agents/*.md` and calibratable `plugins/<name>/skills/*/SKILL.md`; spawn one pipeline per resolved target using appropriate mode file (agents.md for agents, skills.md for calibratable skills); task name "Calibrate <plugin-name>" | "Calibrate <plugin-name>" |
 | `<agent-name>` / `<skill-name>` (tier 3) | single-file pipeline: use agents.md or skills.md mode file with `<TARGET>` = resolved name; task name "Calibrate <name>" | "Calibrate <name>" |
 
@@ -261,32 +259,39 @@ else
     CODEMAP_AVAILABLE=$(find ~/.claude/plugins/cache -name "codemap-py" -type d 2>/dev/null | head -1)  # timeout: 5000
     DEVELOP_AVAILABLE=$(find ~/.claude/plugins/cache -name "develop" -type d 2>/dev/null | head -1)  # timeout: 5000
 fi
+# shell vars die at block end — print so exclusions below read values, not empty vars
+echo "OSS_AVAILABLE=$OSS_AVAILABLE"; echo "RESEARCH_AVAILABLE=$RESEARCH_AVAILABLE"; echo "CODEMAP_AVAILABLE=$CODEMAP_AVAILABLE"; echo "DEVELOP_AVAILABLE=$DEVELOP_AVAILABLE"
 ```
+
+Exclusions below key on the printed `NAME=value` lines — empty value after `=` means plugin absent.
 
 - **`agents` pipeline**: exclude `oss:cicd-steward` and `oss:shepherd` (requires `oss` plugin) if `$OSS_AVAILABLE` empty; exclude `research:data-steward` and `research:scientist` (requires `research` plugin) if `$RESEARCH_AVAILABLE` empty. Log: "oss/research plugin not installed — skipping <agent> calibration"
 - **`skills` pipeline**: exclude `/oss:review` (requires `oss` plugin) always (requires live GitHub PR — not calibratable with synthetic input; see `modes/skills.md`); exclude `/codemap-py:*` skills (requires `codemap` plugin) if `$CODEMAP_AVAILABLE` empty; exclude `/research:plan`, `/research:judge`, `/research:verify` (requires `research` plugin) if `$RESEARCH_AVAILABLE` empty; exclude `/develop:review` (requires `develop` plugin) if `$DEVELOP_AVAILABLE` empty. Log skip message per excluded skill.
 
-Fallback role descriptions for cross-plugin agents (if ever substituted with `general-purpose`): run `cat "$_FS/agent-resolution.md"` (`$_FS` resolved via cache-resolution block at start of Step 2; `$_FS` empty: skip — role descriptions unavailable), apply matching fallback description.
+Fallback role descriptions for cross-plugin agents (if ever substituted with `general-purpose`): load them, apply matching fallback description (file missing: skip — role descriptions unavailable):
 
-Each mode file defines `<TARGET>`, `<DOMAIN>`, any N overrides, extra instructions for pipeline subagent. Pipeline template lives at `$CALIB_MODES_DIR/../templates/pipeline-prompt.md`. **N override**: `communication` caps at fast=3 / full=5 (not global FULL_N=10) to prevent pipeline context overflow — run `cat "$CALIB_MODES_DIR/communication.md"` for details. **`rules` mode** spawns one `general-purpose` subagent per rule file (not standard pipeline template) — run `cat "$CALIB_MODES_DIR/rules.md"` for direct-spawn approach.
+```bash
+_FS=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_shared_path.py" foundry skills/_shared 2>/dev/null || echo "plugins/cc_foundry/skills/_shared")  # timeout: 5000
+cat "$_FS/agent-resolution.md"
+```
+
+Each mode file defines `<TARGET>`, `<DOMAIN>`, any N overrides, extra instructions for pipeline subagent. Pipeline template: `templates/pipeline-prompt.md`, loaded by the mode file. **N override**: `communication` caps at fast=3 / full=5 (not global FULL_N=10) to prevent pipeline context overflow — details in `communication.md`. **`rules` mode** spawns one `general-purpose` subagent per rule file (not standard pipeline template) — direct-spawn approach in `rules.md`.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _TIMESTAMP < "${TMPDIR:-/tmp}/calibrate-state-${CSID}/timestamp" 2>/dev/null || _TIMESTAMP=""
-IFS= read -r _KEEP < "${TMPDIR:-/tmp}/calibrate-state-${CSID}/keep-items" 2>/dev/null || _KEEP=""
 _RUN_DIR=".reports/calibrate/$_TIMESTAMP"
 _PRESERVE="run-dir=$_RUN_DIR, timestamp=$_TIMESTAMP"
-[ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/write_skill_contract.py" "foundry:calibrate" "collect+synthesize (after pipeline fan-out)" "$_RUN_DIR" "$_PRESERVE" "collect pipeline results → combined report → follow-up gate (Step 3) → log (Step 4) → signals (Step 5)"  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/write_skill_contract.py" --keep-file "${TMPDIR:-/tmp}/calibrate-state-${CSID}/keep-items" "foundry:calibrate" "collect+synthesize (after pipeline fan-out)" "$_RUN_DIR" "$_PRESERVE" "collect pipeline results → combined report → log (Step 4) → follow-up gate (Step 3) → signals (Step 5)"  # timeout: 5000
 ```
 
 ## Step 3: Collect results and print combined report
 
 **Completion handling** — pipeline spawns run in the background: issue the batch, end turn, resume on completion notifications and the Step 2 batch-deadline check; never a waiting tool (`ScheduleWakeup`, `ListAgents`, `Monitor`), a poll loop, a filler call, or a "waiting" line (`_FOUNDRY_SHARED/agent-spawn-protocol.md`). Each returns: read that target's compact JSON; absent: read `.reports/calibrate/<TIMESTAMP>/<TARGET>/result.jsonl` (written on every exit path per pipeline's graceful-exit protocol). Neither present: record `{"verdict":"timed_out"}`, mark target `⏱` in report; never omit a stalled target.
 
-**On timeout**: read `tail -100 <output_file>` for partial JSON; none: use: `{"target":"<TARGET>","verdict":"timed_out","mean_recall":null,"gaps":["pipeline timed out — re-run individually with /calibrate <target> fast"]}`. Timed-out targets appear in report with ⏱ prefix and null metrics.
+**On timeout**: no compact JSON and no `result.jsonl` → use: `{"target":"<TARGET>","verdict":"timed_out","mean_recall":null,"gaps":["pipeline timed out — re-run individually with /calibrate <target> fast"]}`. Timed-out targets appear in report with ⏱ prefix and null metrics.
 
-After all pipeline subagents complete or time out: mark "Analyse and report" in_progress. Parse compact JSON summary from each. (Category tasks — "Calibrate agents", "Calibrate skills", etc. — already marked `completed` inline during Step 2's sequential loop; don't re-mark them here.)
+After all pipeline subagents complete or time out: mark "Analyse and report" in_progress. Parse compact JSON summary from each. (Category tasks — "Calibrate agents", "Calibrate skills", etc. — already marked `completed` inline during Step 2's paired category loop; don't re-mark them here.)
 
 For any pipeline that returned without a compact JSON, use Glob (pattern `*/result.jsonl`, base `.reports/calibrate/<TIMESTAMP>/`) to check whether a result file was written. `result.jsonl` exists: parse it as compact JSON for that target. Neither compact JSON nor `result.jsonl` exists: synthesize: `{"target":"<TARGET>","verdict":"incomplete","mean_recall":null,"calibration_bias":null,"gaps":["pipeline returned no output — re-run: /calibrate <TARGET> --fast"]}`, mark that target with ⏱ in report table.
 
@@ -313,20 +318,13 @@ Build combined benchmark report, including the full proposals below, and Write i
 *ΔRecall/ΔSevAcc/ΔFmt: specialist − general (positive = specialist better). ΔTokens: token_ratio − 1.0 (negative = more focused). AB Verdict covers ΔRecall and ΔF1 only; use ΔSevAcc and ΔFmt as supplementary evidence for agents where ΔRecall ≈ 0.*
 ```
 
-**If target is `routing`**:
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/calibrate-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
-CALIB_MODES_DIR=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_skill_subdir.py" calibrate modes $([ "$LOCAL_MODE" = "true" ] && echo --local))  # timeout: 5000
-cat "$CALIB_MODES_DIR/routing.md"
-```
-
-Use "Report format" section loaded above instead of table above. Mark "Calibrate routing" completed.
+**If target is `routing`**: use the "Report format" section of `routing.md` instead of the table above (not in context: Step 2 Mode-file load block with `MODE_FILE='routing.md'`). Mark "Calibrate routing" completed.
 
 Flag targets where recall < 0.70 or |bias| > 0.15 with ⚠.
 
 After the table, add the full content of each `proposal.md` for targets where `proposed_changes > 0` (same placement).
+
+**Log before any branch**: run the Step 4 log block now, after the report Write and before the Follow-up gate or auto-apply — every benchmark run lands in `.notes/logs/calibrations.jsonl` whichever branch follows (option (a) and `--apply` both jump to Step 6). Step 4 does not run a second time.
 
 `--apply` **not** set: put the two genuine re-run commands below in the gate's question text and repeat them as plain copy-pasteable text in the final reply, then fire **Follow-up gate** (`--skip-gate` passed → no gate; report, proposals and commands open the final reply):
 
@@ -347,7 +345,7 @@ Targets with verdict `calibrated` and no proposed changes get single line: `✓ 
 
 ## Step 4: Append JSONL logs
 
-`.notes/logs/calibrations.jsonl` is append-only history: this run's per-target `result.jsonl` files are appended to it by `append_ledger.py --from`, never by reading the log and writing it back. One fixed block, two parts:
+Runs from Step 3, before its Follow-up gate or auto-apply branch (see "Log before any branch"); once per benchmark run. `.notes/logs/calibrations.jsonl` is append-only history: this run's per-target `result.jsonl` files are appended to it by `append_ledger.py --from`, never by reading the log and writing it back. One fixed block, two parts:
 
 - **One-time legacy migration**, guarded by the marker `.notes/logs/.calibrations-legacy-migrated`. Marker absent and the `.notes` log empty or missing → append the legacy `.claude/logs/calibrations.jsonl` once. Marker absent but the `.notes` log already holds lines → an earlier run's read-concat-write already merged legacy history, so only set the marker; copying again would duplicate it. `.claude/logs/calibrations.jsonl` is never written.
 - **This run's results** — every `.reports/calibrate/<TIMESTAMP>/*/result.jsonl`, appended in target order; a missing glob match is reported and skipped.
@@ -371,7 +369,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/append_ledger.py" .notes/l
 For each flagged target (recall < 0.70 or |bias| > 0.15):
 
 - **Recall < 0.70**: `→ Update <target> <antipatterns-to-flag> for: <gaps from result>` <!-- `<antipatterns-to-flag>` (not structural XML) — inline prose reference to agent-file section name -->
-- **Bias > 0.15**: `→ Raise effective re-run threshold for <target> in MEMORY.md (default 0.70 → ~<mean_confidence>)`
+- **Bias > 0.15**: `→ Add an overconfidence check to <target> <antipatterns-to-flag> (confidence ~<mean_confidence> vs recall <mean_recall>)`
 - **Bias < −0.15**: `→ <target> is conservative; threshold can stay at default`
 
 Proposals shown in Step 3 already surface actionable signals. Follow-up gate fires in Step 3 (unless `--skip-gate`). Mark "Analyse and report" completed. `--apply` was set: proceed to Step 6.
@@ -382,96 +380,20 @@ rm -f .temp/state/skill-contract.md  # clear contract — skill complete (compac
 
 ## Step 6: Apply proposals (apply mode)
 
-Mark "Apply findings" in_progress.
-
-**Determine run directory**:
-
-- Benchmark + auto-apply mode (`--fast`/`--full` + `--apply`): re-read TIMESTAMP from persisted state (fresh-shell state loss):
-
-  ```bash
-  export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-  IFS= read -r TIMESTAMP < "${TMPDIR:-/tmp}/calibrate-state-${CSID}/timestamp" 2>/dev/null || TIMESTAMP=""
-  [ -z "$TIMESTAMP" ] && { echo "! TIMESTAMP state lost — falling back to latest run dir"; TIMESTAMP=$(basename "$(find .reports/calibrate -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort -Vr | head -1)"); }  # safe: uses existing dir from find, not new $(date) timestamp — won't create phantom run dir
-  ```
-
-- Pure apply mode (only `--apply`, no pace flag): find most recent run:
-
-```bash
-LATEST=$(find .reports/calibrate -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort -Vr | head -1)
-TIMESTAMP=$(basename "$LATEST")
-[ -z "$TIMESTAMP" ] && { echo "! No prior calibration run found under .reports/calibrate/ — run /calibrate <targets> --fast first."; exit 1; }
-```
-
-For each target in target list, check whether `.reports/calibrate/<TIMESTAMP>/<target>/proposal.md` exists. Collect targets with proposal (`found`) and without (`missing`).
-
-**Partial-match behavior**: `--apply` with mixed found/missing targets continues with found targets — doesn't halt on missing. For each **missing** target: print warning, skip (don't stop entire run): `⚠ No prior run for <target> — skipping. Re-run with --fast --apply to benchmark+apply, or --fast to benchmark only. (If target was skipped because its plugin was unavailable, install the plugin first, then re-run.)` Continue to next target. Only if ALL targets missing: stop with `! No proposals found for any requested target` — nothing to apply. `--apply` without pace flag is intentional — see `<inputs>` definition; auto-triggering benchmark would contradict that contract.
-
-**Print run's report before applying**: for each found target, read and print `.reports/calibrate/<TIMESTAMP>/<target>/benchmark-report.md` verbatim so user sees benchmark basis before any file changes.
-
-**Spawn one `foundry:curator` subagent per found target (`.md` files — agents and skills). Issue ALL spawns in single response — no waiting between spawns.**
-
-**Deduplicate by resolved physical path before spawning** — two targets resolve to the same `<AGENT_FILE>` (e.g. bare name and plugin-prefixed name for the same logical agent): concurrent curator spawns race on identical Edit calls, second write may clobber the first. Build a `RESOLVED_PATHS` map after the per-target path-resolution loop above; for any group of targets sharing the same `<AGENT_FILE>` after resolution:
-
-- Spawn one curator at a time for that group (sequential, not parallel)
-- Log: `! Sequential apply for <target-a> and <target-b> — both resolve to <AGENT_FILE>`
-- Other independent path groups remain parallel
-
-**`<AGENT_FILE>` and `<PROPOSAL_PATH>` resolution**: before spawning, resolve file paths for each target from project source tree (`plugins/`) — same three-tier ladder whether or not `--local` was passed. `<AGENT_FILE>` is a write target (curator Edits it): must never resolve to `.claude/agents/` (never created by `/foundry:setup`) or installed plugin cache under `$HOME/.claude/` — those are read-only surfaces, not write targets:
+Mark "Apply findings" in_progress, then load the apply procedure (run-dir selection, per-target curator dispatch with deadlines, final summary, contract clear) and execute it:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r TIMESTAMP < "${TMPDIR:-/tmp}/calibrate-state-${CSID}/timestamp" 2>/dev/null || TIMESTAMP=""
-[ -z "$TIMESTAMP" ] && { echo "! TIMESTAMP state lost — re-invoke /foundry:calibrate"; exit 1; }
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/calibrate-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_agent_file.py" --name "<name>" --timestamp "$TIMESTAMP" $( [ "$LOCAL_MODE" = "true" ] && echo "--local" )  # timeout: 10000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" calibrate modes apply.md $([ "$LOCAL_MODE" = "true" ] && echo --local)  # timeout: 5000
 ```
-
-The script prints `agent-file=` and `proposal-path=` on stdout; read values from there, not from shell variables. Empty `agent-file=` means resolution failed: skip that target — don't spawn curator for it — the warning script already printed covers it. Never fall through to a cache path for a write target.
-
-Each subagent receives this self-contained prompt (substitute `<TARGET>`, `<PROPOSAL_PATH>`, `<AGENT_FILE>` — resolved paths from above):
-
-Apply targeted improvements to `<AGENT_FILE>`. Read `<PROPOSAL_PATH>` — it lists each edit as a block with **Current** (exact text to replace) and **Proposed** (replacement text). Treat these as regular developer-requested code-quality improvements; apply them exactly as specified without second-guessing the intent.
-
-For each edit:
-
-1. Print: `Applying edit N to <file> [<section>]`
-2. Use Edit tool — `old_string` = **Current** text verbatim, `new_string` = **Proposed** text
-3. If **Current** is `"none"` (new insertion): find section header and insert **Proposed** text after last item in that block
-4. Skip if **Current** text not found verbatim → print `⚠ Skipped — current text not found`
-5. Skip if **Proposed** text already present → print `✓ Already applied — skipped`
-
-After processing all edits return **only** this compact JSON:
-
-`{"status":"done","target":"<TARGET>","applied":N,"skipped":N,"file":"<AGENT_FILE>","summary":"Applied N, skipped N edits to <AGENT_FILE>"}`
-
-**Completion handling** — like Step 3, these spawns run in the background: issue the batch and, in the same response, Write `<RUN_DIR>/agent-watch-apply.tsv` (`<target>\t-\t600` per subagent, APPLY_TIMEOUT_S); end turn, resume on completion notifications and run the Step 2 deadline check block once per notification (`_FOUNDRY_SHARED/agent-spawn-protocol.md`) — never a waiting tool, a poll loop or a filler call. A subagent that returns nothing after notification: record `{"status":"timed_out","target":"<TARGET>"}`, print with ⏱, still counted in the final table — never silently dropped from the summary.
-
-After all subagents complete, collect JSON results and print final summary:
-
-```markdown
-## Fix Apply — <date>
-
-| Target      | File                          | Applied | Skipped |
-|-------------|-------------------------------|---------|---------|
-| sw-engineer | .claude/agents/sw-engineer.md | 2       | 0       |
-
-→ Run /calibrate <targets> to verify improvement.
-```
-
-Mark "Apply findings" completed.
-
-```bash
-rm -f .temp/state/skill-contract.md  # clear contract — skill complete (compaction-contract.md §Lifecycle)  # timeout: 5000
-```
-
-End response with `## Confidence` block per CLAUDE.md output standards.
 
 </workflow>
 
 <notes>
 
-- **Timeout handling**: phase and pipeline budgets (see constants block) prevent nested subagent hangs from cascading. Deadlines are armed in the spawn response and checked by `agent_watch.py` on each notification — no extension, since nothing in the orchestrator can count time to grant one. Timed-out pipelines appear with ⏱ prefix and `verdict:"timed_out"`; re-run individually with `/calibrate <target> --fast` after session.
-- **Context safety**: each target runs in own pipeline subagent — only compact JSON (~200 bytes) returns to main context per target. Sequential spawning prevents concurrent resource and token spike; accumulated context across all targets still compact.
+- **Timeout handling**: pipeline budgets (see constants block) prevent nested subagent hangs from cascading. Deadlines are armed in the spawn response and checked by `agent_watch.py` on each notification — no extension, since nothing in the orchestrator can count time to grant one. Timed-out pipelines appear with ⏱ prefix and `verdict:"timed_out"`; re-run individually with `/calibrate <target> --fast` after session.
+- **Context safety**: each target runs in own pipeline subagent — only compact JSON (~200 bytes) returns to main context per target. Batched spawning (`PIPELINE_BATCH_SIZE`; paired categories cap peak at 4 concurrent pipelines) prevents a resource and token spike; accumulated context across all targets still compact.
 - **Scorer delegation**: Phase 3a delegates scoring to per-problem `general-purpose` subagents. Each scorer reads response files from disk, returns ~200 bytes. Phase 3b runs Codex scorers sequentially via Bash (writes per-problem files). Phase 3c merges both into `scores.json`. Pipeline holds only compact JSONs regardless of N or A/B mode — no context budget concern.
 - **Nesting depth**: main → pipeline subagent → target/scorer agents (2 levels). Pipeline spawns target agents (Phase 2), Claude scorer agents (Phase 3a), Codex scoring Bash calls (Phase 3b) at same depth — no additional nesting.
 - `general-purpose` is built-in Claude Code agent type (no `.claude/agents/general-purpose.md` needed) — no custom system prompt, all tools available.
@@ -479,10 +401,10 @@ End response with `## Confidence` block per CLAUDE.md output standards.
 - **Dual evaluation and scorer agreement**: Phase 3a (Claude) and Phase 3b (Codex) score each response independently. Phase 3c merges with Claude as 51% tiebreaker. `scorer_agreement` measures fraction of issues where both scorers agreed — low agreement (< SCORER_AGREEMENT_WARN=0.70) flags ambiguous ground truth or scorer blind spots. Severity disputes (scorers disagree >1 tier) excluded from SevAcc aggregate.
 - **File-based Codex handoff**: Codex writes all output (problem JSON, score JSON) directly to run dir. Avoids bash stdout corruption when capturing large JSON from shell subprocesses. Pipeline reads from disk, never from stdout capture.
 - **Historical comparability**: `result.jsonl` includes `"scoring":"dual|single"` and `"source_mode":"dual|claude-only"`. Analyzing trends in `calibrations.jsonl`: filter by these fields — dual-scored results not directly comparable to single-scored baselines.
-- **Calibration bias is key signal**: positive bias (overconfident): raise agent's effective re-run threshold in MEMORY.md. Negative bias (underconfident): confidence conservative, no action needed. Near-zero: confidence trustworthy.
+- **Calibration bias is key signal**: positive bias (overconfident): add an overconfidence check to the agent's `<antipatterns-to-flag>`. Negative bias (underconfident): confidence conservative, no action needed. Near-zero: confidence trustworthy.
 - **Do NOT use real project files**: benchmark only against synthetic inputs — no sensitive data and real files have no ground truth.
 - **Skill benchmarks** run skill as subagent against synthetic config or code; scored identically to agent benchmarks.
-- **Improvement loop**: systematic gaps → `<antipatterns-to-flag>` | consistent low recall: consider model tier upgrade (sonnet tier → opus tier) | large calibration bias: document adjusted threshold in MEMORY.md | re-calibrate after instruction changes to quantify improvement.
+- **Improvement loop**: systematic gaps → `<antipatterns-to-flag>` | consistent low recall: consider model tier upgrade (sonnet tier → opus tier) | large calibration bias: add overconfidence check to `<antipatterns-to-flag>` | re-calibrate after instruction changes to quantify improvement.
 - **Report always**: every invocation surfaces report — benchmark runs print new results table; `--apply` without pace flag prints saved report from last run before applying, so user always sees basis for changes before files touched.
 - **`--apply` semantics**: `--fast --apply` / `--full --apply` = run fresh benchmark then auto-apply new proposals. `--apply` alone = apply proposals from most recent past run without re-running benchmark.
 - **Stale proposals**: `--apply` uses verbatim text matching (`old_string` = **Current** from proposal). Agent file edited between benchmark run and `--apply`: any change whose **Current** text no longer matches is skipped with warning — no silent clobbering of intermediate edits.
@@ -490,7 +412,7 @@ End response with `## Confidence` block per CLAUDE.md output standards.
 - **`routing`, `communication`, `rules` in `all`**: see `all` entry in `<inputs>` for authoritative definition — use explicit targets only when running single mode in isolation.
 - Follow-up chains:
   - Recall < 0.70 or borderline: pick "Apply proposals" from gate → `/calibrate <agent>` to verify improvement — stop, escalate to user if recall still < 0.70 after this cycle (max 1 apply cycle per run)
-  - Calibration bias > 0.15: add adjusted threshold to MEMORY.md, note in next audit
+  - Calibration bias > 0.15: add overconfidence check to the target's `<antipatterns-to-flag>`, note in next audit
   - Confidence-format change (per-gap deductions, foundry 0.64.6): benchmark prompt now asks for them — compare calibration bias across that boundary as a re-baseline, not a trend
   - Routing accuracy < 0.90 or hard accuracy < 0.80: update descriptions for confused pairs → `/calibrate routing` to verify improvement
   - Recommended cadence: run before and after any significant agent instruction change; run `/calibrate routing` after any agent description change; run `/calibrate communication` after any protocol or handoff change

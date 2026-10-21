@@ -60,6 +60,11 @@ def compute_proj_index(cwd: Path | None = None) -> tuple[str, Path]:
 
     Returns:
         Tuple of project name string and absolute index ``Path``.
+
+    Raises:
+        ValueError: When ``CODEMAP_INDEX_DIR`` is set but cannot be resolved (unknown ``~user``
+            or unreadable path). No directory allow-list applies: like the engine's own resolver
+            (``codemap_py.index_paths``) any resolvable directory is a valid override.
     """
     work_dir = cwd or Path.cwd()
     git_root: Path | None = None
@@ -81,7 +86,10 @@ def compute_proj_index(cwd: Path | None = None) -> tuple[str, Path]:
     proj = base.name
     custom_dir = os.environ.get("CODEMAP_INDEX_DIR")
     if custom_dir:
-        index_dir = Path(custom_dir).expanduser().resolve()
+        try:
+            index_dir = Path(custom_dir).expanduser().resolve()
+        except (OSError, RuntimeError) as exc:
+            raise ValueError(f"CODEMAP_INDEX_DIR cannot be resolved: {custom_dir!r}") from exc
     else:
         index_dir = base / ".cache" / "codemap"
     index = index_dir / f"{proj}.json"
@@ -96,7 +104,7 @@ def main(argv: list[str] | None = None) -> int:
 
     Returns:
         0 on success, 1 when ``--check`` is passed and the index is missing,
-        or 1 when ``CODEMAP_INDEX_DIR`` resolves outside allowed cache roots;
+        or 1 (with a ``!`` line on stdout) when ``CODEMAP_INDEX_DIR`` cannot be resolved;
         argparse exits 2 on bad arguments.
     """
     parser = argparse.ArgumentParser(

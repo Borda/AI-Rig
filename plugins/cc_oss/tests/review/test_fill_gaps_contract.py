@@ -29,6 +29,12 @@ _FULL_HEAD = "abcdef1234567890abcdef1234567890abcdef12"
 _PRIOR_HEAD = _FULL_HEAD[:12]
 _PRIOR_REPORT = ".reports/review/pr-8/run-001/review-report.md"
 _skip_no_bash = pytest.mark.skipif(_BASH is None, reason="bash unavailable")
+#: The allocation block now ends with the Step 2 prelude, which loads the handoff protocol and prompt templates from the
+#: two directories Step 0 persists; without them its final ``cat`` fails and the block's status is no longer 0.
+_PRELUDE_SENTINELS = {
+    "review-oss-shared": (_PLUGIN / "skills/_shared").as_posix(),
+    "review-skill-dir": (_PLUGIN / "skills/review").as_posix(),
+}
 
 
 def _block(path: Path, anchor: str) -> str:
@@ -229,7 +235,7 @@ def test_valid_selection_plans_then_allocates_a_new_run(prior: Path, tmp_path: P
         "open_concerns": ["V20", "V21"],
         "findings": ["f-V2"],
     }
-    allocation = _run(_block(_SKILL, "next_run_dir.py"), tmp_path, {})
+    allocation = _run(_block(_SKILL, "next_run_dir.py"), tmp_path, _PRELUDE_SENTINELS)
     assert allocation.returncode == 0, allocation.stdout + allocation.stderr
     new_run = Path(_sentinel(tmp_path, "oss-review-report-dir"))
     assert new_run == tmp_path / ".reports/review/pr-8/run-002"
@@ -248,7 +254,12 @@ def test_plain_review_allocation_ignores_a_reset_plan(tmp_path: Path) -> None:
     snap = tmp_path / "snap"
     snap.mkdir()
     (snap / "pr-meta.json").write_text(json.dumps({"headRefOid": _FULL_HEAD}), encoding="utf-8")
-    sentinels = {"oss-review-pr-tag": "8", "oss-review-snap-dir": snap.as_posix(), "oss-review-fill-head": ""}
+    sentinels = {
+        "oss-review-pr-tag": "8",
+        "oss-review-snap-dir": snap.as_posix(),
+        "oss-review-fill-head": "",
+        **_PRELUDE_SENTINELS,
+    }
     result = _run(_block(_SKILL, "next_run_dir.py"), tmp_path, sentinels)
     assert result.returncode == 0, result.stdout + result.stderr
     new_run = Path(_sentinel(tmp_path, "oss-review-report-dir"))
@@ -465,6 +476,20 @@ def _plan_is_a_list(run: Path) -> None:
     (run / fgs.PLAN_NAME).write_text("[]\n", encoding="utf-8", newline="\n")
 
 
+def _plan_points_prior_findings_elsewhere(run: Path) -> None:
+    """Redirect the plan's prior findings path to a file that is not a findings ledger."""
+    plan = json.loads((run / fgs.PLAN_NAME).read_text(encoding="utf-8"))
+    plan["prior_findings"] = str(run / "review-report.md")
+    (run / fgs.PLAN_NAME).write_text(json.dumps(plan), encoding="utf-8", newline="\n")
+
+
+def _plan_points_prior_validation_elsewhere(run: Path) -> None:
+    """Redirect the plan's prior validation path to a file that is not a validation sidecar."""
+    plan = json.loads((run / fgs.PLAN_NAME).read_text(encoding="utf-8"))
+    plan["prior_validation"] = str(run / "findings.jsonl")
+    (run / fgs.PLAN_NAME).write_text(json.dumps(plan), encoding="utf-8", newline="\n")
+
+
 def _new_assessments_not_a_list(run: Path) -> None:
     """Publish the new assessments as a mapping and add a non-object findings row."""
     data = json.loads((run / "review-validation.json").read_text(encoding="utf-8"))
@@ -477,6 +502,16 @@ def _new_assessments_not_a_list(run: Path) -> None:
     [
         pytest.param(_new_sidecar_is_a_list, "new review-validation.json is not a JSON object", id="sidecar-list"),
         pytest.param(_plan_is_a_list, "prior or new sidecar unreadable (TypeError", id="plan-list"),
+        pytest.param(
+            _plan_points_prior_findings_elsewhere,
+            "plan prior_findings must name findings.jsonl",
+            id="prior-findings-not-a-ledger",
+        ),
+        pytest.param(
+            _plan_points_prior_validation_elsewhere,
+            "plan prior_validation must name review-validation.json",
+            id="prior-validation-not-a-sidecar",
+        ),
         pytest.param(_new_assessments_not_a_list, "carried assessment 'Software engineer' altered", id="records-map"),
     ],
 )
@@ -491,6 +526,20 @@ def test_carry_check_reports_malformed_sidecars_without_raising(
     report = _publish_fill_run(prior, tmp_path)
     mutate(report.parent)
     assert expected in "\n".join(fgs.verify_carry(report))
+
+
+def test_minting_refuses_a_ledger_over_the_size_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A findings file larger than the cap is refused with a BLOCKED line instead of being read whole.
+
+    The cap is lowered for the test so the fixture stays a few bytes; the real limit is 10 MB.
+    """
+    ledger = tmp_path / "findings.jsonl"
+    ledger.write_text(json.dumps(_row("V1")) + "\n", encoding="utf-8", newline="\n")
+    monkeypatch.setattr(mfi, "_MAX_JSONL_BYTES", 8)
+    assert mfi.main([str(ledger)]) == 1
+    assert "over the 8-byte cap" in capsys.readouterr().err
 
 
 def test_minting_with_carry_from_keeps_carried_row_ids(prior: Path, tmp_path: Path) -> None:
@@ -1236,6 +1285,24 @@ def test_role_maps_to_its_spawn_unit(role: str, unit: str, file: str) -> None:
     """Free-text role names reach the dimension agent and output file that re-assesses them."""
     dimension = fgs.map_role(role)
     assert (dimension.unit, dimension.file) == (unit, file)
+
+
+@pytest.mark.parametrize(
+    ("role", "agent"),
+    [
+        pytest.param("Linked issue analysis", "foundry:sw-engineer", id="issue-root-cause-is-sw-engineer"),
+        pytest.param("Documentation reviewer", "foundry:linting-expert", id="docs-rides-linting-led-unit"),
+        pytest.param("Linting expert", "foundry:linting-expert", id="lint-leads-merged-unit"),
+    ],
+)
+def test_rerun_spawns_the_same_agent_as_the_full_review(role: str, agent: str) -> None:
+    """A fill-gaps rerun uses the agent the full review spawns for that unit, not a stale doc-scribe mapping.
+
+    The linked-issue agent produces root-cause hypotheses, which is sw-engineer work, and the merged docs+lint unit is
+    led by linting-expert; a rerun that spawned doc-scribe for either would re-assess the role with the wrong
+    specialist.
+    """
+    assert fgs.map_role(role).agent == agent
 
 
 def test_qa_unit_and_security_grading_share_one_pattern() -> None:

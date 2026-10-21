@@ -84,6 +84,31 @@ class TestBridgeStatus:
         assert check_bridge.bridge_available(tmp_path, tmp_path) is False
 
 
+class TestMarketplaceFromEnv:
+    """The marketplace override becomes a cache directory component, so only a plain name is accepted."""
+
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            pytest.param("my-fork", "my-fork", id="plain-name"),
+            pytest.param("Fork_2", "Fork_2", id="underscore-and-digits"),
+            pytest.param(None, "borda-ai-rig", id="unset"),
+            pytest.param("", "borda-ai-rig", id="empty"),
+            pytest.param("../../elsewhere", "borda-ai-rig", id="parent-traversal"),
+            pytest.param("a/b", "borda-ai-rig", id="path-separator"),
+            pytest.param("..", "borda-ai-rig", id="dot-dot"),
+            pytest.param("evil\n", "borda-ai-rig", id="trailing-newline"),
+        ],
+    )
+    def test_only_plain_names_are_used(self, raw: str | None, expected: str) -> None:
+        """A value that could leave the marketplace cache directory falls back to the default marketplace.
+
+        Scenario: ``AI_RIG_MARKETPLACE=../../elsewhere`` would make the cache probe look at an arbitrary directory and
+        report the bridge available; the default marketplace is used instead, as for an unset or empty value.
+        """
+        assert check_bridge._marketplace_from_env(raw) == expected
+
+
 class TestMain:
     """CLI output exposes both branchable and diagnostic forms."""
 

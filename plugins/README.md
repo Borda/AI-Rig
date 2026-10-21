@@ -34,7 +34,7 @@ More trust boundaries to know:
 
 - **Integrity at install time only**: `claude plugin install` fetches code from marketplace. Nothing verifies marketplace authenticity or pins hash. Marketplace compromised at install time → installed bin/ scripts run without prompts. Accepted threat model for personal dev tool; not appropriate for multi-tenant environments.
 - **Updates inherit prior consent**: plugin update ships new bin/\*.py code → runs without re-consent. `/foundry:setup` re-run syncs settings, not re-authorize.
-- **No auto-revocation on uninstall**: `/foundry:setup` merge additive — adds entries to `~/.claude/settings.json`, never removes. Uninstall does not remove plugin's allow entries. Manual cleanup required.
+- **No auto-revocation on uninstall**: setup adds shipped permissions and removes explicitly retired exact entries, including identical user-added entries. Uninstall does not remove the remaining plugin allow entries; manual cleanup is required.
 
 ### What is pre-approved (in `~/.claude/settings.json`)
 
@@ -43,16 +43,16 @@ All entries merged from `plugins/cc_foundry/.claude-plugin/permissions-allow.jso
 <details>
 <summary><strong>Show pre-approved entries</strong></summary>
 
-| Entry                     | What it covers                                                   | Why                                                                                     |
-| ------------------------- | ---------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `Bash(python:*)`          | Plugin bin/ Python scripts (`bin/*.py`) + `python -m *` tools    | Install = consent; per-invocation prompts are security theater for trusted plugin infra |
-| `Bash(eval:*)`            | `eval "$(python ...)"` patterns (arg parsing, health monitoring) | Required for shell variable injection from bin/ Python scripts                          |
-| `Bash(find:*)`            | Path resolution, run-dir discovery                               | Core skill infrastructure                                                               |
-| `Bash(node:*)`            | Node hook files shipped by Foundry, OSS, Develop, and Research   | Codemap-py's six Claude hooks are Python and use the Python execution boundary instead  |
-| `Bash(git *:*)` (various) | Read-only git operations                                         | Standard dev workflow                                                                   |
-| `Bash(gh *:*)` (various)  | GitHub CLI read operations                                       | OSS plugin workflows                                                                    |
+| Entry                     | What it covers                         | Why                                                                                     |
+| ------------------------- | -------------------------------------- | --------------------------------------------------------------------------------------- |
+| `Bash(python:*)`          | Broad Python execution stays by design | Plugin helpers and `python -m` recipes depend on it                                     |
+| `Bash(eval:*)`            | Broad shell evaluation stays by design | Existing state reload and flag-parsing recipes depend on it; eval migration is separate |
+| `Bash(git *:*)` (various) | Read-only git operations               | Standard dev workflow                                                                   |
+| `Bash(gh *:*)` (various)  | GitHub CLI read operations             | OSS plugin workflows                                                                    |
 
 </details>
+
+Ad-hoc `find`, `node`, `claude`, and `sed` commands outside shipped blueprint blocks prompt unless a scoped read-only rule covers them. Setup retires the four former broad entries, including identical rules added by hand; Codemap provides the equivalent manual merge in its README.
 
 ### What deliberately prompts
 

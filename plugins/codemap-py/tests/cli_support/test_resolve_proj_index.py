@@ -147,3 +147,24 @@ class TestMain:
         monkeypatch.chdir(work)
         main([])
         assert "\r" not in capsys.readouterr().out
+
+
+class TestUnresolvableIndexDir:
+    """An override directory that cannot be resolved is reported, not raised as a traceback."""
+
+    def test_main_reports_it_and_exits_1(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """``CODEMAP_INDEX_DIR`` naming an unknown ``~user`` exits 1 with a ``!`` line."""
+        (tmp_path / "proj").mkdir()
+        monkeypatch.chdir(tmp_path / "proj")
+        monkeypatch.setenv("CODEMAP_INDEX_DIR", "~no-such-user-codemap/cache")
+
+        def _no_home(self: Path) -> Path:
+            """Mimic ``Path.expanduser`` failing to find the user's home directory."""
+            raise RuntimeError("Could not determine home directory.")
+
+        monkeypatch.setattr(_mod.Path, "expanduser", _no_home)
+        rc = main([])
+        assert rc == 1
+        assert capsys.readouterr().out.startswith("! CODEMAP_INDEX_DIR cannot be resolved")

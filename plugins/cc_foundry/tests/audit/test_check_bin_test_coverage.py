@@ -58,6 +58,47 @@ class TestCheckScript:
         (plugin / "tests" / "test_thing.py").write_text("def test_x():\n    assert 1\n", encoding="utf-8")
         assert cbtc.check_script(script) is None
 
+    @pytest.mark.parametrize(
+        "reference",
+        [
+            "import thing",
+            "from thing import main",
+            'SCRIPT = "thing.py"',
+            'SCRIPT = "bin/thing.py"',
+            'module = load_script("thing")',
+        ],
+    )
+    def test_indirect_test_covers_script(self, tmp_path: Path, reference: str) -> None:
+        """A differently named, deeply nested test can cover a module by import or filename."""
+        plugin = _plugin(tmp_path)
+        script = plugin / "bin" / "thing.py"
+        script.write_text("x = 1\n", encoding="utf-8")
+        tests = plugin / "tests" / "unit" / "runtime"
+        tests.mkdir(parents=True)
+        (tests / "test_behavior.py").write_text(
+            reference + "\ndef test_behavior():\n    assert True\n", encoding="utf-8"
+        )
+        assert cbtc.check_script(script) is None
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            "import other_thing\ndef test_behavior():\n    assert True\n",
+            'SCRIPT = "other_thing.py"\ndef test_behavior():\n    assert True\n',
+            "import thing\ndef test_behavior():\n    pass\n",
+            "import thing\ndef helper():\n    assert True\n",
+        ],
+    )
+    def test_unrelated_or_stub_indirect_test_still_uncovered(self, tmp_path: Path, source: str) -> None:
+        """Substring matches and files without real tests cannot hide a coverage gap."""
+        plugin = _plugin(tmp_path)
+        script = plugin / "bin" / "thing.py"
+        script.write_text("x = 1\n", encoding="utf-8")
+        (plugin / "tests" / "test_behavior.py").write_text(source, encoding="utf-8")
+        finding = cbtc.check_script(script)
+        assert finding is not None
+        assert "R4-FAIL (no test file)" in finding
+
     def test_missing_test_file(self, tmp_path: Path) -> None:
         """No test file names both the script and the expected path."""
         plugin = _plugin(tmp_path)
@@ -186,6 +227,51 @@ class TestManifestCopies:
     def test_no_propagate_shared_file_returns_empty_set(self, tmp_path: Path) -> None:
         """A tree with no propagate_shared.py degrades to no exemptions, never a crash."""
         assert cbtc.manifest_copies(tmp_path) == set()
+
+    def test_audited_tree_code_is_never_executed(self, tmp_path: Path) -> None:
+        """Reading MANIFEST parses the audited tree's propagate_shared.py instead of running it.
+
+        The checker runs with the audited repository as cwd, so a propagate_shared.py there is untrusted input: this one
+        writes a marker file when imported, and the marker must stay absent while the literal MANIFEST is still read.
+        """
+        canonical = tmp_path / "plugins" / "p" / "bin" / "canon.py"
+        canonical.parent.mkdir(parents=True)
+        canonical.write_text("x = 1\n", encoding="utf-8")
+        marker = tmp_path / "executed"
+        entries = [{"canonical": "plugins/p/bin/canon.py", "copies": ["plugins/q/bin/copy.py"]}]
+        bin_dir = tmp_path / "plugins" / "cc_foundry" / "bin"
+        bin_dir.mkdir(parents=True)
+        (bin_dir / "propagate_shared.py").write_text(
+            f"from pathlib import Path\nPath({str(marker)!r}).write_text('ran')\nMANIFEST = {entries!r}\n",
+            encoding="utf-8",
+        )
+        assert cbtc.manifest_copies(tmp_path) == {"plugins/q/bin/copy.py"}
+        assert not marker.exists()
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            pytest.param("MANIFEST = [dict(canonical='a.py', copies=[])]\n", id="call-in-manifest-is-not-a-literal"),
+            pytest.param("MANIFEST = {'canonical': 'a.py'}\n", id="manifest-not-a-list"),
+            pytest.param("def broken(:\n", id="syntax-error"),
+            pytest.param("OTHER = []\n", id="no-manifest-assignment"),
+        ],
+    )
+    def test_unreadable_manifest_degrades_to_empty_set(self, tmp_path: Path, source: str) -> None:
+        """A propagate_shared.py without a literal MANIFEST list yields no exemptions rather than an error.
+
+        Anything the parser cannot read as data is treated as absent, so a hostile or malformed file can only remove
+        exemptions, never add them or crash the check.
+        """
+        self._write_source(tmp_path, source)
+        assert cbtc.manifest_copies(tmp_path) == set()
+
+    @staticmethod
+    def _write_source(root: Path, source: str) -> None:
+        """Write raw propagate_shared.py source at the path manifest_copies() expects."""
+        bin_dir = root / "plugins" / "cc_foundry" / "bin"
+        bin_dir.mkdir(parents=True, exist_ok=True)
+        (bin_dir / "propagate_shared.py").write_text(source, encoding="utf-8")
 
 
 class TestManifestCopiesForRepo:

@@ -20,7 +20,7 @@ Long workflows keep contract-level `## Workflow` with `### NN:` ordered subheade
 
 ## Terminal Presentation
 
-Prefer structured terminal updates: one short introductory sentence, then concise bullets for parallel facts, numbered steps for ordered actions, and compact tables for comparisons. Show concrete counts and evidence links; separate completion status, verification, open work and next owner/action. Keep detailed explanations in the linked full report. Preserve exact-output contracts and native question ownership.
+Prefer structured terminal updates: one short introductory sentence, then concise bullets for parallel facts, numbered steps for ordered actions, and compact tables for comparisons. Show concrete counts and evidence links; separate completion status, verification, open work and next owner/action. Keep detailed explanations in the linked full report. Preserve exact-output contracts and native question ownership. <!-- policy-sibling: source-repository plugins/cc_foundry/rules/communication.md (§Progress and Transparency) -->
 
 ## Acceptance and recovery
 
@@ -208,7 +208,7 @@ Codex GitHub writes remain prohibited; no approval record, network grant or hook
 
 ### Local merge approval
 
-<!-- policy-sibling: assets/AGENTS.md (commit rules), shared/commit-response-template.md (Merge Commit Proof), skills/code-remediate/SKILL.md (target integration, Existing merge or conflict recovery) -->
+<!-- policy-sibling: assets/AGENTS.md (commit rules), shared/commit-response-template.md (Merge Commit Proof), skills/code-remediate/SKILL.md (target integration), skills/code-remediate/references/existing-conflict.md (Existing merge or conflict recovery) -->
 
 A task-owned local merge that the current authorized write task needs and that is non-destructive to unrelated work proceeds without a question and without a grant check, including its local merge commit; so do a fast-forward and a cherry-pick that preserves existing work. Verify the task-owned branch, exact target, operation state and intended resolution; preserve unrelated changes and proceed automatically without a merge or commit confirmation. A merge is task-owned only when the current workflow run recorded starting it before `git merge`, with recorded pre-merge `HEAD` equal to current `HEAD` and recorded target equal to `MERGE_HEAD`; matching identities without that run record, such as a merge the user started, are not task-owned and need the missing decision. Review the entire merge index, including clean merged-in paths, then run relevant checks and the shared commit template's message, attribution and merge-specific verification.
 
@@ -405,7 +405,7 @@ A file that only grows — a `.jsonl` record or event log, a review-round or wor
 - Every instruction that adds to a ledger names its mechanism; "append" alone is not one.
 - A model-valued record is written to `<ledger>.rec` with the filesystem tool, then appended by the append action of the helper that owns the ledger's schema. That action validates the record, appends it, and deletes the `.rec`; a rejected record stays staged for repair and nothing is appended. Current owners: `shared/remediation_finalize.py append` for `closure-log.md` and `resolution-events.jsonl`, `shared/adversarial_loop.py --append` for `loop-rounds.jsonl`, and `shared/escalation_ledger.py --append` for `reasoning-cycles.jsonl`.
 - A new growing ledger gains an append action in the helper that owns its schema. Never append model-authored text with a raw shell redirect, and never add a second, generic append helper.
-- Values a helper already computed are appended by that helper directly, as `remediation_finalize.py` appends review resolutions.
+- Values a helper already computed are appended by that helper directly, as `remediation_finalize.py` appends review resolutions and `skills/optimize/campaign.py finish` appends one validated `experiments.jsonl` record from its arguments.
 - A ledger that also carries changing state splits into a small header, rewritten in place, and an append-only record log beside it; the owning helper assembles both for validation.
 - Corrections are new records, not edits: a later disposition or outcome is appended, and readers take the latest record per key.
 - Exempt, where rewriting is correct: single-value state and ledger headers, digest- or validator-bound rendered artifacts such as `final-handoff.json`, the artifact being refined, and frozen plans or selections.

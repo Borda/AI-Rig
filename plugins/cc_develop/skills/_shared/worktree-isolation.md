@@ -39,17 +39,17 @@ echo "$WT" > "${TMPDIR:-/tmp}/dev-<skill>-wt-${CSID}"   # final path, read by En
 
 ```bash
 # timeout: 30000
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/heal_git_artifacts.py" worktrees
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/heal_git_artifacts.py" worktrees --include-orphans
 ```
 
 > Exit 0 (nothing reclaimable) or exit 2 (environment error) → leftovers aren't the cause; print the `git worktree add` error, stop. Exit 1 but the `add` error names none of the listed paths or branches → leftovers aren't the cause; print the error, stop. Exit 1 and the error names a listed path or branch → Write the full list and the `add` error to `.temp/worktree-leftovers.md` first; print them once as the last reply text before invoking `AskUserQuestion`, as normal Markdown. The question text carries the leftover count, the `add` error headline and `→ .temp/worktree-leftovers.md`, at most 6 plain lines (target 600 characters, hard cap 1,500), no table, pipe layout or code fence. Both options carry a label and a one-line description, no `preview` — never offer removal of an unseen list: (a) **Stop** — keep everything, end the run · (b) **Remove them and retry** — run the block below in this turn, retry the create once. That retry fails too → print the error, stop; never loop back to the report. Removing a worktree deletes a directory tree, so never run the `--apply` form without that answer.
 
 ```bash
 # timeout: 30000
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/heal_git_artifacts.py" worktrees --apply
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/heal_git_artifacts.py" worktrees --include-orphans --apply
 ```
 
-> Candidates are only clean, registered-or-orphaned, ≥14-day-old `agent-*`/`oss-*` trees — subagent-isolation and oss-skill trees, not yours. **`dev-*` is never a candidate** — §Exit contracts those as deliverables you review and merge yourself. Uncommitted work is reported, kept at any age.
+> Candidates are only clean, registered-or-orphaned, ≥14-day-old `agent-*`/`oss-*` trees — subagent-isolation and oss-skill trees, not yours. Both calls pass `--include-orphans`, so the approved list and the removal cover the same unregistered dirs; symlinks are never followed or removed. **`dev-*` is never a candidate** — §Exit contracts those as deliverables you review and merge yourself. Uncommitted work is reported, kept at any age.
 
 3. `EnterWorktree(path=<final $WT from `${TMPDIR:-/tmp}/dev-<skill>-wt-${CSID}`>)` — the possibly disambiguated path, never the original slug — switches session CWD into the worktree. All later edits, tests, codemap scans land there.
 4. Warm-start codemap (optional, cheap) — copy main index in so first query is `current`, not cold scan:

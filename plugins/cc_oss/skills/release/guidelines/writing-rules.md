@@ -1,4 +1,4 @@
-<!-- policy-sibling: plugins/CLAUDE.md §GitHub Reference Scoping — `#N` and `@name` (canonical) -->
+<!-- policy-sibling: plugins/CLAUDE.md §GitHub Reference Scoping (canonical), plugins/cc_foundry/rules/git-commit.md, plugins/cc_foundry/rules/_full/git-commit.md, plugins/cc_oss/skills/_shared/shepherd-voice.md — same GH #/@ scoping policy restated for this consumer's context. -->
 
 Write for reader, not commit author.
 

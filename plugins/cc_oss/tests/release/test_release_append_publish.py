@@ -2498,3 +2498,45 @@ def test_promoted_artifact_user_edit_blocks_marker_and_journal_clear(
     assert publisher.journal_path(tmp_path, "main").exists()
     if not after_marker:
         assert (tmp_path / _MAIN_MARKER).read_text(encoding="utf-8") == "old\n"
+
+
+class TestIsOwnStage:
+    """_is_own_stage: only the directory ``begin`` created under ``.temp`` may be sealed, published or recovered."""
+
+    def test_directory_created_by_begin_is_accepted(self, tmp_path: Path) -> None:
+        """The staging directory returned by ``begin`` passes."""
+        stage = _start(tmp_path)
+        assert publisher._is_own_stage(tmp_path.resolve(), stage.resolve()) is True
+
+    @pytest.mark.parametrize("name", [pytest.param("scratch", id="foreign-name"), pytest.param("", id="temp-itself")])
+    def test_other_directory_under_temp_is_rejected(self, tmp_path: Path, name: str) -> None:
+        """A real directory in ``.temp`` without the staging prefix is refused.
+
+        Another tool's scratch directory sits directly under ``.temp``, so the parent check alone would accept it and
+        promote its ``candidate.json`` into live release files.
+        """
+        root = tmp_path.resolve()
+        other = root / ".temp" / name
+        other.mkdir(parents=True, exist_ok=True)
+        assert publisher._is_own_stage(root, other) is False
+
+    def test_symlink_with_staging_name_is_rejected(self, tmp_path: Path) -> None:
+        """A symlink named like a stage never counts, even when its target is a directory."""
+        root = tmp_path.resolve()
+        target = root / "elsewhere"
+        target.mkdir()
+        link = root / ".temp" / f"{publisher._STAGE_PREFIX}link"
+        link.parent.mkdir(exist_ok=True)
+        link.symlink_to(target, target_is_directory=True)
+        assert publisher._is_own_stage(root, link) is False
+
+    def test_directory_owned_by_another_user_is_rejected(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A staging-named directory whose owner is not the current user is refused.
+
+        The owner is simulated by changing the uid the process reports, since a test cannot chown to another account.
+        """
+        root = tmp_path.resolve()
+        stage = root / ".temp" / f"{publisher._STAGE_PREFIX}foreign"
+        stage.mkdir(parents=True)
+        monkeypatch.setattr(publisher.os, "getuid", lambda: -1, raising=False)
+        assert publisher._is_own_stage(root, stage) is False

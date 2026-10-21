@@ -80,6 +80,58 @@ def test_load_skips_unsafe_key_from_state_file(capsys: pytest.CaptureFixture[str
     assert "malicious" in captured.err
 
 
+@pytest.mark.parametrize(
+    "assignment",
+    [
+        pytest.param("A=x\nPATH=/evil", id="newline"),
+        pytest.param("A=x\rPATH=/evil", id="carriage-return"),
+        pytest.param("A=x\x00PATH=/evil", id="nul"),
+        pytest.param("A=x\x85PATH=/evil", id="next-line-char"),
+        pytest.param("A=x\N{LINE SEPARATOR}PATH=/evil", id="unicode-line-separator"),
+    ],
+)
+def test_set_rejects_value_with_line_break(assignment: str) -> None:
+    """A value that the line-oriented file would re-read as a second KEY=VALUE line is refused.
+
+    Without this, ``set ns "A=x<newline>PATH=/evil"`` stored a PATH line that ``load`` then emitted for the caller's
+    ``eval``; nothing may be written when the assignment is refused.
+    """
+    assert st.set_values("ns12", [assignment]) == 2
+    assert not st.state_path("ns12").exists()
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        pytest.param("PATH", id="path"),
+        pytest.param("IFS", id="ifs"),
+        pytest.param("BASH_ENV", id="bash-env"),
+        pytest.param("LD_PRELOAD", id="ld-preload"),
+        pytest.param("DYLD_INSERT_LIBRARIES", id="dyld-insert-libraries"),
+    ],
+)
+def test_set_rejects_reserved_key(key: str) -> None:
+    """Shell and loader variables cannot be stored, since ``eval`` of ``PATH='…'`` is code execution."""
+    assert st.set_values("ns13", [f"{key}=x"]) == 2
+    assert not st.state_path("ns13").exists()
+
+
+def test_reserved_key_lookalikes_accepted() -> None:
+    """Names that merely resemble a reserved variable stay usable, so the denylist does not over-block."""
+    assert st.set_values("ns14", ["PATHS=a", "MYPATH=b", "LDAP_URL=c", "ENVIRONMENT=d"]) == 0
+    assert set(st._read(st.state_path("ns14"))) == {"PATHS", "MYPATH", "LDAP_URL", "ENVIRONMENT"}
+
+
+def test_load_skips_reserved_key_from_state_file(capsys: pytest.CaptureFixture[str]) -> None:
+    """A reserved key that reached the file some other way (legacy file, hand edit) is skipped, not emitted."""
+    st.state_path("ns15").write_text("PATH=/evil\nGOOD=2\nLD_PRELOAD=/x.so\n", encoding="utf-8")
+    assert st.load_values("ns15") == 0
+    captured = capsys.readouterr()
+    assert captured.out == "GOOD='2'\n"
+    assert "PATH" in captured.err
+    assert "LD_PRELOAD" in captured.err
+
+
 def test_clear_removes_file() -> None:
     """Remove persisted state completely when clearing it."""
     st.set_values("ns6", ["A=1"])

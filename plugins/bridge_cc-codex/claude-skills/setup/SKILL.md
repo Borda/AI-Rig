@@ -2,7 +2,8 @@
 name: setup
 description: Configure, authenticate, repair, and verify the Claude Code to Codex Bridge; safe stages run by default and sensitive stages require separate approval.
 argument-hint: '[action=all|check|configure|authenticate|repair|verify-live] [target=peer|codex|claude] [scope=auto|user|project|local] [live=prompt|skip|required]'
-allowed-tools: Bash
+allowed-tools: Bash, Write, AskUserQuestion
+effort: medium
 ---
 
 # Set Up the Bridge
@@ -13,7 +14,7 @@ allowed-tools: Bash
 - Loaded Claude plugin, Claude trust, Claude authentication, and current session are external bootstrap prerequisites. Never replace or restart current invocation surface.
 - Reject a model-supplied workspace; use Claude's launch workspace — the working directory of the current Claude Code session, never a path named in conversation or task text.
 - Run `python --version` first; stop if unavailable or older than Python 3.10; report the interpreter found, or its absence, and the 3.10 minimum.
-- Parse only documented `key=value` grammar plus one-release compatibility forms `--live` and `--direction codex|claude`; reject ambiguous or unknown arguments.
+- Parse only documented `key=value` grammar plus one-release compatibility forms `--live` (= `action=verify-live live=required`) and `--direction codex|claude` (= `target=codex|claude`); reject ambiguous or unknown arguments.
 
 For one resolved target, invoke:
 
@@ -28,8 +29,9 @@ Deterministic planner performs credential-free inspection, returns setup result 
 For `check`, report the result and stop. For `all`, `configure`, or `repair`:
 
 1. If the planned `operations` list is empty, report nothing to configure and stop under `configure` or `repair`; under `all`, continue to the stages below without requesting approval.
-2. Carry every planned `operations` entry and the approval digest in the step-3 question (every option's `preview`) before mutation — never only as reply text before it, which can arrive as an empty progress update. Preview cap: ≤2000 chars and ≤12 lines per preview, every line counted (Claude Code withholds a longer preview and clips a taller one, no scroll). Over it: Write every `operations` entry and the digest to `.temp/bridge-setup/operations-<first 12 digest chars>.md` first, make every option's `preview` the operation count, the approval digest and `→ full operations: <path>`, and name that path in the step-3 question text — never ask approval for operations the user could not see.
-3. Obtain explicit approval for exactly that digest via the `AskUserQuestion` tool — never a plain-text question. State:
+
+2. Before mutation, Write every planned `operations` entry and the approval digest to `.temp/bridge-setup/operations-<first 12 digest chars>.md`, together with:
+
    - action and purpose;
    - exact native argv and resolved target/scope;
    - external capability;
@@ -38,28 +40,36 @@ For `check`, report the result and stop. For `all`, `configure`, or `repair`:
    - rollback evidence;
    - retry policy; and
    - safe denial outcome.
-4. After approval, rerun the identical command with `--approve "<approval_digest>"`.
 
-> Host-held HMAC makes digest tamper-evident but does not grant consent; explicit operator or host approval remains required. The digest is action-bound, expires, and is consumed by its first execution attempt. Never substitute `--approve` without its digest. Denial, changed or expired digest, replay, unsupported capability, failed probe, or failed native operation stops without retry.
+   Print that file once as the last reply text before the step-3 question. Never put operations or the digest in an option `preview`.
+
+3. Obtain explicit approval for exactly that digest via the `AskUserQuestion` tool — never a plain-text question. Question text: at most 6 plain lines (target 600 characters, hard cap 1,500), no table, pipe layout or code fence, carrying the action, operation count, full approval digest and `→ <operations file path>`. Reply text before a tool call can arrive as an empty progress update; the question text is always rendered, so it alone must identify what is approved — never ask approval for operations the user could not see. Options: a label plus a one-line effect each, no previews, recommended option second.
+
+4. After approval, give the operator the identical command plus `--approve "<approval_digest>"` to run in their own terminal, with `${CLAUDE_PLUGIN_ROOT}` expanded to its absolute path (it is unset there; read it with `echo "${CLAUDE_PLUGIN_ROOT}"`). Then re-plan with `--action check` to report the outcome.
+
+> Host-held HMAC makes digest tamper-evident but does not grant consent; explicit operator or host approval remains required. The digest is action-bound, expires, and is consumed by its first execution attempt; it lives 300 seconds. Never substitute `--approve` without its digest. Denial, changed or expired digest, replay, unsupported capability, failed probe, or failed native operation stops without retry.
+
+> Operator proof: `--approve` executes only when stdin and stderr are the operator's terminal; otherwise the helper exits 2 with `operator-terminal-required` before inspecting, locking or mutating anything. Never run `--approve` through model-controlled Bash, a pipe, or an allocated TTY; run only the planning command (no `--approve`) there. The digest the model planned is not operator approval.
 
 ## Authentication
 
-When authentication remains:
+When `action=all` or `action=authenticate` and authentication remains (`configure` and `repair` stop after their result, reporting `remaining`):
 
 1. Re-plan the provider-owned interactive login with identical host, workspace, target, scope, and live values but `--action authenticate`.
-2. Obtain separate approval for that action's digest via the `AskUserQuestion` tool and state exact `authentication_argv` may open a browser and use network and account state.
-3. Give operator identical authenticate command plus `--approve "<authentication_digest>"` to run in their own terminal.
+2. Obtain separate approval for that action's digest via the `AskUserQuestion` tool, with the same question-text contract as step 3 above: the question text names the full authentication digest and the exact `authentication_argv`, and states it may open a browser and use network and account state. No previews.
+3. Give operator identical authenticate command plus `--approve "<authentication_digest>"` to run in their own terminal, with the absolute plugin path as in step 4 above.
 
 > Sensitive phase: never run through model-controlled Bash or another captured tool stream. Bridge then launches only native login command with terminal inherited. Never accept, request, pipe, echo, inspect, or store a token, API key, browser code, device code, email, or raw login output. Process exit means `auth-flow-launched`; only a later redacted status probe may establish `host-authenticated`.
 
 ## Live verification
 
-When `live=prompt` or `live=required` and `remaining` still lists `live-verification`:
+When `action=all` or `action=verify-live`, `live=prompt` or `live=required`, and `remaining` still lists `live-verification`:
 
-1. Re-plan with identical host, workspace, target, and scope but `--action verify-live`.
-2. Obtain a third approval for that action's digest via the `AskUserQuestion` tool and one paid provider call.
-3. State network, installed-CLI-managed credential, quota/cost, workspace, and point-in-time semantics.
-4. Rerun that same verify-live command with `--approve "<live_digest>"`.
+1. Precondition: a fresh plan with identical host, workspace, target, scope, and live values but `--action all` must show an empty `operations` list and `remaining` listing neither `configuration` nor `authentication`. Otherwise the approved call would be refused (`configuration-needed` or `authentication-needed`, exit 2) after the user already paid attention to it: report the missing stage and stop. A configuration result classified `fresh-session-required` needs a fresh session first.
+2. Re-plan with identical host, workspace, target, and scope but `--action verify-live`. Exit 2 with `status=manual` and `classification=live-verification-requires-separate-approval` is this plan's normal result, not a failure; its `approval_digest` is the live digest.
+3. Obtain a third approval for that action's digest via the `AskUserQuestion` tool and one paid provider call, with the same question-text contract as step 3 above: the question text names the full live digest and the one paid call. No previews.
+4. State network, installed-CLI-managed credential, quota/cost, workspace, and point-in-time semantics in that question text, or, when they do not fit its 6 lines, in a file printed once as the last reply text before the question, which the question text names as `→ <path>`.
+5. Give the operator that same verify-live command plus `--approve "<live_digest>"` to run in their own terminal, with the absolute plugin path as in step 4 above.
 
 > Never invoke the lower-level live doctor outside this approval path. Successful live CLI result remains partial until the applicable `bridge_status` session/workspace evidence named under Completion boundary is also present. `live=skip` remains `inference-unverified`; never call it ready. Denial under `live=required` is non-ready.
 

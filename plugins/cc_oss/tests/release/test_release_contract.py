@@ -9,76 +9,83 @@ from pathlib import Path
 import pytest
 
 _skip_shell_unavailable = pytest.mark.skipif(
-    shutil.which("bash") is None or shutil.which("jq") is None,
-    reason="The shipped release command requires bash and jq.",
+    shutil.which("bash") is None,
+    reason="The shipped release command requires bash.",
 )
 
 
 @_skip_shell_unavailable
 @pytest.mark.integration
-@pytest.mark.parametrize("scenario", ["maintenance", "empty", "failure"])
-def test_release_gather_discovers_prs_by_candidate_commit(scenario: str) -> None:
-    """Keep maintenance-branch squash authors, all pages, and failed discovery distinguishable."""
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        pytest.param("maintenance", id="records-streamed-unchanged"),
+        pytest.param("failure", id="failed-batch-is-fail-closed"),
+        pytest.param("unresolved-range", id="empty-range-never-queries"),
+    ],
+)
+def test_release_gather_discovers_prs_by_candidate_commit(scenario: str, tmp_path: Path) -> None:
+    """Keep the shipped block wired to the batched helper: right arguments, resumable offset, fail-closed on error.
+
+    The helper itself is covered by ``test_gh_batch_query.py``. Here only the Python call is replaced by a shell
+    function, so the shipped bash (range reload, guard, error message) runs unchanged.
+    """
     skill = Path(__file__).resolve().parents[2] / "skills/release/SKILL.md"
     blocks = re.findall(r"```bash\n(.*?)```", skill.read_text(encoding="utf-8"), re.DOTALL)
-    snippet = next(block for block in blocks if "COMMIT_SHAS=" in block)
-    pages = [
-        [
-            {
-                "number": 17,
-                "title": "Maintenance fix",
-                "user": {"login": "squash-author"},
-                "base": {"ref": "stable/1.x"},
-                "merge_commit_sha": "candidate",
-                "merged_at": "2026-09-01",
-            }
-        ],
-        [
-            {
-                "number": 18,
-                "title": "Related fix",
-                "user": {"login": "second-author"},
-                "base": {"ref": "stable/1.x"},
-                "merge_commit_sha": "candidate",
-                "merged_at": "2026-09-02",
-            }
-        ],
-    ]
-    payload = json.dumps(pages if scenario == "maintenance" else [[]])
-    # Shell functions replace only Git/GitHub boundaries; the shipped loop and jq run unchanged.
+    snippet = next(block for block in blocks if "gh_batch_query.py" in block)
+    record = {
+        "commit": "candidate",
+        "pull_requests": [{"number": 17, "author": {"login": "squash-author"}, "base": "stable/1.x"}],
+    }
+    calls = tmp_path / "calls"
     boundaries = """
-git() { [ "$1" = rev-list ] && [ "$2" = candidate-range ] || return 91; printf '%s\n' candidate; }
-gh() {
-    [ "$*" = 'api --method GET --paginate --slurp repos/{owner}/{repo}/commits/candidate/pulls -f per_page=100' ] || return 92
-    [ "$1" = api ] || return 93
-    [ "$scenario" != failure ] || return 1
-    printf '%s' "$payload"
+python() {
+    printf '%s\\n' "$*" > "$calls"
+    [ "$scenario" != failure ] || return 2
+    printf '%s\\n' "$record"
 }
 RANGE=candidate-range
+[ "$scenario" != unresolved-range ] || RANGE=""
 """
     completed = subprocess.run(
         [
             shutil.which("bash"),
             "-c",
-            'scenario="$1"; payload="$2"\n' + boundaries + snippet,
+            'scenario="$1"; record="$2"; calls="$3"\n' + boundaries + snippet,
             "release-contract",
             scenario,
-            payload,
+            json.dumps(record),
+            str(calls),
         ],
         capture_output=True,
         text=True,
         check=False,
         timeout=10,
+        env={
+            "PATH": "/usr/bin:/bin",
+            "TMPDIR": str(tmp_path),
+            "CLAUDE_CODE_SESSION_ID": "contract",
+            "CLAUDE_PLUGIN_ROOT": "plug",
+        },
     )
+    if scenario == "unresolved-range":
+        assert completed.returncode != 0
+        assert "release range unresolved" in completed.stderr
+        assert not calls.exists()
+        return
+    argv = calls.read_text(encoding="utf-8").split()
+    assert argv[:-1] == [
+        "plug/bin/gh_batch_query.py",
+        "commit-prs",
+        "--range",
+        "candidate-range",
+        "--offset-file",
+    ]
+    assert Path(argv[-1]).name == "release-assoc-offset-contract"
     if scenario == "failure":
         assert completed.returncode != 0
-        assert "PR association coverage unavailable for candidate" in completed.stderr
+        assert "PR association coverage unavailable" in completed.stderr
         assert not completed.stdout
         return
     assert completed.returncode == 0, completed.stderr
-    gathered = json.loads(completed.stdout)
-    assert gathered["commit"] == "candidate"
-    assert [pr["author"]["login"] for pr in gathered["pull_requests"]] == (
-        ["squash-author", "second-author"] if scenario == "maintenance" else []
-    )
-    assert all(pr["base"] == "stable/1.x" for pr in gathered["pull_requests"])
+    assert json.loads(completed.stdout) == record

@@ -1,9 +1,9 @@
 """Tests for ``bin/locate_scan_query.py`` — three-tier scan-query resolver.
 
 Tiers:
-1. ``shutil.which("scan-query")`` on PATH
+1. ``shutil.which("scan-query")`` on PATH (absolute hits only)
 2. ``$CLAUDE_PLUGIN_ROOT/bin/scan-query``
-3. ``~/.claude/plugins/cache/*/codemap/*/bin/scan-query`` (newest semver)
+3. ``~/.claude/plugins/cache/borda-ai-rig/codemap-py/*/bin/scan-query`` (newest semver)
 
 Exits 0 with resolved path on stdout; exits 1 with stderr when not found.
 
@@ -68,9 +68,9 @@ class TestLocateScanQuery:
         assert result == exe
 
     def test_tier3_cache_glob(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Tier 3: resolves via ``~/.claude/plugins/cache/*/codemap/*/bin/scan-query``."""
+        """Tier 3: resolves via ``~/.claude/plugins/cache/borda-ai-rig/codemap-py/*/bin/scan-query``."""
         cache_exe = _make_executable(
-            tmp_path / ".claude" / "plugins" / "cache" / "borda-ai-rig" / "codemap" / "0.3.0" / "bin" / "scan-query"
+            tmp_path / ".claude" / "plugins" / "cache" / "borda-ai-rig" / "codemap-py" / "0.3.0" / "bin" / "scan-query"
         )
         monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", "")
         monkeypatch.setenv("HOME", str(tmp_path))
@@ -81,7 +81,7 @@ class TestLocateScanQuery:
 
     def test_tier3_picks_newest_semver(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Tier 3: highest semver wins when multiple cache versions present."""
-        base = tmp_path / ".claude" / "plugins" / "cache" / "borda-ai-rig" / "codemap"
+        base = tmp_path / ".claude" / "plugins" / "cache" / "borda-ai-rig" / "codemap-py"
         _make_executable(base / "0.1.0" / "bin" / "scan-query")
         _make_executable(base / "0.2.1" / "bin" / "scan-query")
         newest = _make_executable(base / "0.3.2" / "bin" / "scan-query")
@@ -100,6 +100,45 @@ class TestLocateScanQuery:
         monkeypatch.setattr(shutil, "which", _no_which)
         with pytest.raises(FileNotFoundError):
             locate_scan_query()
+
+    @pytest.mark.parametrize(
+        ("marketplace", "plugin"),
+        [
+            pytest.param("other-marketplace", "codemap-py", id="foreign-marketplace"),
+            pytest.param("borda-ai-rig", "codemap", id="legacy-plugin-name"),
+        ],
+    )
+    def test_tier3_ignores_unpinned_cache_dirs(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, marketplace: str, plugin: str
+    ) -> None:
+        """Tier 3 does not accept a ``scan-query`` from another marketplace or from the pre-rename ``codemap`` name.
+
+        Any marketplace able to ship a plugin directory with a matching name would otherwise supply an executable that
+        the caller then runs.
+        """
+        _make_executable(
+            tmp_path / ".claude" / "plugins" / "cache" / marketplace / plugin / "0.3.0" / "bin" / "scan-query"
+        )
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", "")
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
+        monkeypatch.setattr(shutil, "which", _no_which)
+        with pytest.raises(FileNotFoundError):
+            locate_scan_query()
+
+    def test_tier1_relative_path_hit_is_skipped(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A relative PATH hit (from a ``.`` or empty PATH entry) is skipped in favour of the pinned tiers.
+
+        Such a hit resolves against the working directory, which may be an untrusted checkout shipping its own ``scan-
+        query``; tier 2 must win instead.
+        """
+        exe = _make_executable(tmp_path / "bin" / "scan-query")
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path))
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
+        monkeypatch.setattr(shutil, "which", lambda cmd: "./scan-query")
+        result = locate_scan_query()
+        assert result == exe
 
     def test_tier1_wins_over_tier2(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Tier 1 (PATH) takes precedence over tier 2 (CLAUDE_PLUGIN_ROOT)."""

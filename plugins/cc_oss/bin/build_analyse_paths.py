@@ -1,11 +1,17 @@
 #!/usr/bin/env python
 """build_analyse_paths.py — derive the oss:analyse report path or GitHub cache path for a thread.
 
-Two modes:
+Three modes:
 
 ``--mode report`` (default)
     Build the thread report path from the repository slug, pin the fast-path sentinels, and record the mtime of an
-    existing report so Step 4 can run a type-aware drift check.
+    existing report so Step 4 can run a type-aware drift check. An existing report also gets the ``analyse-report-file``
+    sentinel: a confirmed fast-path hit ends in Step 7 without thread mode ever running to write it.
+
+``--mode report-file``
+    Build the same path, create its directory, pin the ``analyse-report-file`` sentinel the Step 6a hook gates on, and
+    print the path. Thread mode calls this before it writes the report, so the path it writes is the one ``report`` mode
+    probes. Unlike ``report`` mode it leaves the fast-path and drift sentinels alone.
 
 ``--mode cache``
     Build the ``.cache/gh`` file path for the thread, create the cache directory, and stop the run when a numeric
@@ -13,10 +19,14 @@ Two modes:
 
 Usage:
     python "${CLAUDE_PLUGIN_ROOT}/bin/build_analyse_paths.py" --clean-args "$CLEAN_ARGS" --today "$TODAY"
+    python "${CLAUDE_PLUGIN_ROOT}/bin/build_analyse_paths.py" --mode report-file \
+        --clean-args "$CLEAN_ARGS" --today "$TODAY"
     python "${CLAUDE_PLUGIN_ROOT}/bin/build_analyse_paths.py" --mode cache --clean-args "$CLEAN_ARGS" --today "$TODAY"
 
 Sentinels written to ``${TMPDIR:-/tmp}/<name>-${CSID}``:
-    report mode — analyse-drift, analyse-fast-path, analyse-fast-path-tentative, analyse-report-mtime
+    report mode — analyse-drift, analyse-fast-path, analyse-fast-path-tentative, analyse-report-mtime,
+                  analyse-report-file (only when the report already exists)
+    report-file mode — analyse-report-file
     cache mode  — analyse-cache-file
 
 Exit codes:
@@ -35,6 +45,14 @@ from enum import Enum
 from pathlib import Path
 from typing import Final
 
+#: Sibling import: bin/ is not a package. Putting it on the path resolves the private writer whether this file runs as
+#: a script, under the test conftest, or as a doctest module.
+_BIN_DIR = str(Path(__file__).resolve().parent)
+if _BIN_DIR not in sys.path:
+    sys.path.insert(0, _BIN_DIR)
+
+from _sentinel_io import write_private_text  # noqa: E402
+
 #: Project-relative directory where analyse caches fetched GitHub data as JSON files.
 _CACHE_DIR: Final = ".cache/gh"
 #: Report sub-directory used when ``--subdir`` is not given.
@@ -52,6 +70,7 @@ class Mode(str, Enum):
     """
 
     REPORT = "report"
+    REPORT_FILE = "report-file"
     CACHE = "cache"
 
 
@@ -103,7 +122,7 @@ def _write_sentinel(name: str, value: str) -> None:
     if _DRY_RUN:
         print(f"[dry-run] would write {name}={value}")
         return
-    _sentinel_path(name).write_text(f"{value}\n", encoding="utf-8", newline="\n")
+    write_private_text(_sentinel_path(name), f"{value}\n")
 
 
 def _gh_slug(timeout: int) -> str:
@@ -240,9 +259,14 @@ def build_cache_path(slug: str, clean_args: str, today: str) -> str:
     return f"{_CACHE_DIR}/{slug}-{safe_clean_args}-{today}.json"
 
 
+def _report_file(clean_args: str, today: str, subdir: str, timeout: int) -> str:
+    """Resolve the report path for the current repository — the one derivation every mode shares."""
+    return build_report_path(subdir, report_slug(_gh_slug(timeout)), clean_args, today)
+
+
 def _run_report(clean_args: str, today: str, subdir: str, timeout: int) -> int:
     """Derive the report path and pin the fast-path sentinels."""
-    report_file = build_report_path(subdir, report_slug(_gh_slug(timeout)), clean_args, today)
+    report_file = _report_file(clean_args, today, subdir, timeout)
     path = Path(report_file)
     tentative = path.is_file()
     # Drift is deferred to Step 4 — the thread type must be known before activity can be compared.
@@ -251,7 +275,19 @@ def _run_report(clean_args: str, today: str, subdir: str, timeout: int) -> int:
     _write_sentinel("analyse-fast-path", "false")
     _write_sentinel("analyse-fast-path-tentative", "true" if tentative else "false")
     _write_sentinel("analyse-report-mtime", str(report_mtime))
+    if tentative:
+        # A confirmed hit jumps to Step 7 without thread mode, the only other writer; the Stop hook needs the path.
+        _write_sentinel("analyse-report-file", report_file)
     print(f"[paths] report_file={report_file} fast_path_tentative={'true' if tentative else 'false'}")
+    return 0
+
+
+def _run_report_file(clean_args: str, today: str, subdir: str, timeout: int) -> int:
+    """Create the report directory and pin the path thread mode is about to write, before the report exists."""
+    report_file = _report_file(clean_args, today, subdir, timeout)
+    Path(report_file).parent.mkdir(parents=True, exist_ok=True)
+    _write_sentinel("analyse-report-file", report_file)
+    print(f"[analyse] report → {report_file}")
     return 0
 
 
@@ -304,8 +340,11 @@ def main(argv: list[str] | None = None) -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", newline="\n")  # type: ignore[union-attr]
 
-    if Mode(args.mode) is Mode.CACHE:
+    mode = Mode(args.mode)
+    if mode is Mode.CACHE:
         return _run_cache(args.clean_args, args.today, args.timeout)
+    if mode is Mode.REPORT_FILE:
+        return _run_report_file(args.clean_args, args.today, args.subdir, args.timeout)
     return _run_report(args.clean_args, args.today, args.subdir, args.timeout)
 
 

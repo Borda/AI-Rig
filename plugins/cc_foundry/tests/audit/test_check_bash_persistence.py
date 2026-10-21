@@ -179,39 +179,62 @@ class TestCheckFile:
         assert cbp.check_file(tmp_path / "missing.md") == []
 
 
-class TestTemplateBlock:
-    """Covers is_template_block() placeholder detection (suppression rule 3)."""
+class TestAssignedVarsShellForms:
+    """Covers assignment forms beyond line-start ``VAR=``: builtin targets, loop vars, inline assignments."""
 
     @pytest.mark.parametrize(
-        ("block", "assigned"),
+        ("line", "expected"),
         [
-            pytest.param("cp x .../ctx-${I}.md\n", frozenset({"RUN_ID"}), id="unassigned-loop-counter"),
-            pytest.param('grep "$SQ" rdeps <TARGET_MODULE>\n', frozenset({"SQ"}), id="angle-bracket-placeholder"),
+            pytest.param('IFS= read -r RUN_DIR < "$F" 2>/dev/null || RUN_DIR=""\n', {"RUN_DIR"}, id="sentinel-read"),
+            pytest.param("while IFS= read -r SRC DEST; do\n", {"SRC", "DEST"}, id="while-read-multiple-names"),
+            pytest.param("read -t 5 -a ITEMS\n", {"ITEMS"}, id="read-array-after-arg-flag"),
+            pytest.param("mapfile -t FILES < <(ls)\n", {"FILES"}, id="mapfile-strip-flag-no-arg"),
+            pytest.param("readarray -t LINES < list.txt\n", {"LINES"}, id="readarray"),
+            pytest.param("for PLUGIN in $LIST; do\n", {"PLUGIN"}, id="for-loop-var"),
+            pytest.param("A=1; B=2\n", {"A", "B"}, id="semicolon-joined"),
+            pytest.param('case "$K" in SINCE) SINCE=$V;; esac\n', {"SINCE"}, id="case-branch"),
+            pytest.param('[ -f "$S" ] && ROOT="$(cat "$S")"\n', {"ROOT"}, id="after-and-list"),
         ],
     )
-    def test_placeholder_block_flags_template(self, block: str, assigned: frozenset[str]) -> None:
-        """A block carrying a never-assigned token or an <identifier> placeholder is a template.
+    def test_shell_form_counts_as_assignment(self, line: str, expected: set[str]) -> None:
+        """Every builtin or inline form that sets a variable is reported as an assignment of it.
 
-        Covers a ``${I}`` loop-counter token no block assigns and an angle-bracket usage-example placeholder.
+        A sentinel read-back left undetected would make the variable look never-assigned, and a correct reload
+        invisible.
         """
-        assert cbp.is_template_block(block, assigned) is True
+        assert expected <= cbp.assigned_vars(line)
+
+
+class TestStripUnexpanded:
+    """Covers strip_unexpanded() removal of text the shell never expands."""
 
     @pytest.mark.parametrize(
-        ("block", "assigned"),
+        ("block", "dropped"),
         [
-            pytest.param("echo ${RUN_ID}\n", frozenset({"RUN_ID"}), id="all-tokens-assigned"),
-            pytest.param('echo "$ARGUMENTS"\n', frozenset(), id="known-env-var"),
-            pytest.param("# uses ${I}\necho done\n", frozenset(), id="placeholder-only-in-comment"),
-            pytest.param('sort < "$INFILE"\n', frozenset({"INFILE"}), id="redirection-from-file"),
-            pytest.param('diff <(sort "$A") "$B"\n', frozenset({"A", "B"}), id="process-substitution"),
+            pytest.param("jq --arg c x '.[$c] | $perms' \"$KEEP\"\n", "$perms", id="single-quoted-jq-program"),
+            pytest.param("jq '\n  .a | $cmd\n' \"$KEEP\"\n", "$cmd", id="multi-line-single-quote"),
+            pytest.param("echo $KEEP  # don't $GONE\n", "$GONE", id="trailing-comment-apostrophe"),
         ],
     )
-    def test_ordinary_block_is_not_template(self, block: str, assigned: frozenset[str]) -> None:
-        """Assigned refs, known env vars, comment-only tokens and real shell redirection do not mark a template.
+    def test_unexpanded_text_is_blanked(self, block: str, dropped: str) -> None:
+        """Single-quoted spans and comments vanish while the expanded reference beside them survives.
 
-        The redirection cases (`< file`, `<(`) must not be mistaken for an angle-bracket placeholder.
+        Line count is preserved so reference line indices stay aligned with the original block.
         """
-        assert cbp.is_template_block(block, assigned) is False
+        out = cbp.strip_unexpanded(block)
+        assert (dropped not in out, "$KEEP" in out, out.count("\n")) == (True, True, block.count("\n"))
+
+    @pytest.mark.parametrize(
+        "block",
+        [
+            pytest.param('echo "it\'s $KEEP"\n', id="apostrophe-inside-double-quotes"),
+            pytest.param('echo "${#ARR[@]}" $KEEP\n', id="hash-in-parameter-expansion"),
+            pytest.param("echo \\' $KEEP\n", id="escaped-apostrophe"),
+        ],
+    )
+    def test_quote_lookalike_does_not_open_span(self, block: str) -> None:
+        """An apostrophe inside double quotes, an escaped one, or ``#`` inside an expansion never hides what follows."""
+        assert "$KEEP" in cbp.strip_unexpanded(block)
 
 
 class TestReloadsBeforeRef:
@@ -225,6 +248,7 @@ class TestReloadsBeforeRef:
             pytest.param(
                 '. "${TMPDIR:-/tmp}/state-${CSID}"\necho "$VARX"\n', "VARX", True, id="dot-reload-quoted-path"
             ),
+            pytest.param('[ -f "$FLAGS" ] && . "$FLAGS"\necho "$VARX"\n', "VARX", True, id="dot-reload-after-and-list"),
             pytest.param('echo "$VARX"\neval "$(gen)"\n', "VARX", False, id="reload-after-reference"),
             pytest.param('echo "$VARX"\n', "VARX", False, id="no-reload"),
         ],
@@ -232,8 +256,8 @@ class TestReloadsBeforeRef:
     def test_reload_must_precede_reference(self, block: str, var: str, expected: bool) -> None:
         """Only an eval, source or dot-source placed before the reference re-derives the value.
 
-        A reload appearing after the reference does not rescue it, and a plain reference with no reload is not
-        suppressed.
+        A reload may follow ``&&`` on a guard line. A reload appearing after the reference does not rescue it, and a
+        plain reference with no reload is not suppressed.
         """
         assert cbp.reloads_before_ref(block, var) is expected
 
@@ -284,18 +308,67 @@ class TestSuppressionEndToEnd:
                 id="empty-var-defended",
             ),
             pytest.param(
-                "```bash\nRUN_ID=$(date -u +%s)\n```\n```bash\ngit log > state/${RUN_ID}/ctx-${I}.md\n```\n",
-                id="template-placeholder-block",
+                '```bash\nRUN_DIR_X=/a\necho "$RUN_DIR_X" > "$S"\n```\n'
+                '```bash\nexport CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"\n'
+                'IFS= read -r RUN_DIR_X < "${TMPDIR:-/tmp}/r-${CSID}" || RUN_DIR_X=""\nls "$RUN_DIR_X"\n```\n',
+                id="csid-preamble-with-sentinel-read",
+            ),
+            pytest.param(
+                "```bash\nDIRECT_MODE=false\n```\n"
+                '```bash\n[ -f "${TMPDIR:-/tmp}/flags" ] && . "${TMPDIR:-/tmp}/flags"\necho "$DIRECT_MODE"\n```\n',
+                id="dot-reload-after-and-list",
+            ),
+            pytest.param(
+                "```bash\ncmd=x\n```\n```bash\njq --arg x y '.[] | select(.c == $cmd)' f.json\n```\n",
+                id="single-quoted-jq-variable",
             ),
         ],
     )
     def test_false_positive_class_is_suppressed(self, tmp_path: Path, content: str) -> None:
         """Cross-block references that are not real state loss are not flagged.
 
-        Covers the three suppression classes (a state-file reload in the referencing block, a variable named only in a
-        comment, an empty-value-guarded reference) plus a block holding a never-assigned ``${I}`` placeholder.
+        Covers the suppression classes (a state-file reload in the referencing block, a variable named only in a
+        comment, an empty-value-guarded reference), a sentinel read-back beside the standard CSID preamble, a dot-source
+        guarded by ``&&``, and a jq program variable inside single quotes, which the shell never expands.
         """
         assert cbp.check_file(_skill(tmp_path, content)) == []
+
+    @pytest.mark.parametrize(
+        ("content", "lost"),
+        [
+            pytest.param(
+                "```bash\nRUN_ID=$(date -u +%s)\n```\n```bash\ngit log > state/${RUN_ID}/ctx-${I}.md\n```\n",
+                "RUN_ID",
+                id="never-assigned-placeholder-beside-lost-var",
+            ),
+            pytest.param(
+                '```bash\nPLUGIN_ROOT=/p\n```\n```bash\nexport CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"\n'
+                'node "$PLUGIN_ROOT/hooks/x.js"\n```\n',
+                "PLUGIN_ROOT",
+                id="csid-preamble-beside-lost-var",
+            ),
+            pytest.param(
+                "```bash\nPYTEST_CMD=pytest\n```\n"
+                '```bash\neval "$PYTEST_CMD --tb=short <test_file>::test_<bug> -v"\n```\n',
+                "PYTEST_CMD",
+                id="angle-placeholder-beside-lost-var",
+            ),
+            pytest.param(
+                "```bash\nPLUGIN_ROOT=/p\n```\n```bash\njq --arg c x '.[$cmd]' f > g\necho \"$PLUGIN_ROOT\"\n```\n",
+                "PLUGIN_ROOT",
+                id="jq-program-beside-lost-var",
+            ),
+        ],
+    )
+    def test_placeholder_does_not_hide_other_lost_vars(self, tmp_path: Path, content: str, lost: str) -> None:
+        """Exemption is per variable: a never-assigned token in a block never masks a real lost variable beside it.
+
+        Covers a ``${I}`` placeholder, the standard CSID preamble (``$PPID``/``$CLAUDE_CODE_SESSION_ID``), an
+        ``<identifier>`` placeholder and a single-quoted jq program, each of which used to exempt the whole block.
+        """
+        findings = cbp.check_file(_skill(tmp_path, content))
+        assert len(findings) == 1
+        assert f"${lost} " in findings[0]
 
     def test_real_bare_loss_still_flags(self, tmp_path: Path) -> None:
         """A bare cross-block ref with no re-derivation, guard, or placeholder still flags."""
@@ -325,6 +398,34 @@ class TestMain:
         """A scanned tree exits 0 when clean and 1 when a cross-block reference is found."""
         _skill(tmp_path, content)
         assert cbp.main(["--scan-dir", str(tmp_path)]) == expected
+
+    @pytest.mark.parametrize(
+        "relative",
+        [
+            pytest.param("myplugin/skills/myskill/modes/mode.md", id="mode-file"),
+            pytest.param("myplugin/skills/_shared/shared.md", id="shared-doc"),
+            pytest.param("myplugin/skills/myskill/templates/t.md", id="template"),
+            pytest.param("myplugin/agents/helper.md", id="agent-prompt"),
+            pytest.param("myplugin/claude-skills/advise/SKILL.md", id="claude-skill"),
+        ],
+    )
+    def test_scan_dir_reaches_files_beyond_the_skill_entry_point(self, tmp_path: Path, relative: str) -> None:
+        """A cross-block loss in a mode, shared doc, template, agent prompt or claude-skill is found by ``--scan-dir``.
+
+        Those files' bash blocks run as separate Bash calls exactly like ``SKILL.md``'s, but a scan limited to
+        ``*/skills/*/SKILL.md`` left every one of them unchecked.
+        """
+        target = tmp_path / relative
+        target.parent.mkdir(parents=True)
+        target.write_text("```bash\nFOO=1\n```\n```bash\necho $FOO\n```\n", encoding="utf-8")
+        assert cbp.main(["--scan-dir", str(tmp_path)]) == 1
+
+    def test_scan_dir_ignores_markdown_outside_skill_and_agent_trees(self, tmp_path: Path) -> None:
+        """A README with the same block shape is documentation, not an executed skill, so it is not scanned."""
+        target = tmp_path / "myplugin" / "docs" / "guide.md"
+        target.parent.mkdir(parents=True)
+        target.write_text("```bash\nFOO=1\n```\n```bash\necho $FOO\n```\n", encoding="utf-8")
+        assert cbp.main(["--scan-dir", str(tmp_path)]) == 0
 
     def test_explicit_file_arg(self, tmp_path: Path) -> None:
         """Explicit file path argument is checked."""

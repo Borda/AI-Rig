@@ -26,7 +26,7 @@ Path:       → .reports/audit/[report timestamp]/report.md
 
 ### Unscanned Plugins
 
-> Omit section entirely when the `unscanned-plugins` sentinel is empty (`--local`/`plugins` scope only — see SKILL.md Step 2 coverage reconciliation).
+> Omit section entirely when the `unscanned-plugins` sentinel is empty (written by SKILL.md Step 2 — `--local`/`plugins` coverage reconciliation or the default-scope coverage guard).
 
 ⚠ UNSCANNED: codemap-py — no files matched scope globs
 

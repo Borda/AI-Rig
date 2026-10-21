@@ -4,9 +4,9 @@
 
 ## Mode: rules
 
-> **Codex integration: disabled.** Problem generation and scoring Claude-only. Rule adherence tests Claude agent behavior with `.claude/rules/` loaded — Codex has no insight into Claude Code's rule-loading, path-scoping, or frontmatter parsing. Its problems and scores unreliable here.
+> **Codex integration: disabled.** Problem generation and scoring Claude-only. Rule adherence tests Claude agent behavior with installed rules loaded — Codex has no insight into Claude Code's rule-loading, path-scoping, or frontmatter parsing. Its problems and scores unreliable here.
 
-Rule adherence test: for each rule file in `.claude/rules/`, measures three dimensions — trigger fidelity (rule fires right time), directive adherence (rule followed when loaded), outcome correctness (following rule = expected result). Included in `all`. Use explicit `rules` target to isolate.
+Rule adherence test: for each resolved rule file (user-level `~/.claude/rules/*.md`, where `/foundry:setup` installs `foundry-*.md`, plus project `.claude/rules/*.md`; `--local` swaps the user tier for source `plugins/*/rules/*.md`), measures three dimensions — trigger fidelity (rule fires right time), directive adherence (rule followed when loaded), outcome correctness (following rule = expected result). Included in `all`. Use explicit `rules` target to isolate.
 
 ### Three scoring dimensions
 
@@ -42,24 +42,35 @@ Rule adherence test: for each rule file in `.claude/rules/`, measures three dime
 
 **Detect scope for each rule file**: check whether `paths:` frontmatter present and non-empty — set `IS_PATH_SCOPED=true` accordingly.
 
-```bash
-ls .claude/rules/*.md 2>/dev/null | sort
+Resolve rule files — `rules/*.md` globs are one level deep, so `_full/` detail files never enter; dedupe by resolved target because installed rules are symlinks:
 
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/calibrate-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
+RULE_GLOBS='~/.claude/rules/*.md .claude/rules/*.md'; [ "$LOCAL_MODE" = "true" ] && RULE_GLOBS='plugins/*/rules/*.md .claude/rules/*.md'
+python -c "import glob,os,sys;s=set();[s.add(r) or print(p) for g in sys.argv[1].split() for p in sorted(glob.glob(os.path.expanduser(g))) for r in [os.path.realpath(p)] if r not in s]" "$RULE_GLOBS" > "${TMPDIR:-/tmp}/calibrate-state-${CSID}/rule-files"  # timeout: 5000
+[ -s "${TMPDIR:-/tmp}/calibrate-state-${CSID}/rule-files" ] && cat "${TMPDIR:-/tmp}/calibrate-state-${CSID}/rule-files" || echo "! INCOMPLETE — no rule files resolved from: $RULE_GLOBS"
+```
+
+**Empty-set stop** — `! INCOMPLETE` printed: never report rules as calibrated or under-enforced. Target `rules` alone → hard stop, verdict `incomplete`, print the line, no spawns. Inside `all` → print `⚠ rules — no rule files resolved; adherence not measured`, mark "Calibrate rules" completed with verdict `incomplete`, continue other categories.
+
+Per rule file:
+
+```bash
 awk '/^---$/{c++; if(c==2)exit} c==1 && /^paths:/{found=1} END{print found+0}' <rule-file>
 ```
 
-Load rules pipeline template via `cat` (not Read tool — `Bash(cat:*)` grant version-proof):
+Load rules pipeline template via Bash (not Read tool — Bash grant is version-proof):
 
 ```bash
-CALIB_TPL=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_skill_subdir.py" calibrate templates 2>/dev/null || echo "plugins/cc_foundry/skills/calibrate/templates")  # timeout: 5000
-cat "$CALIB_TPL/rules-pipeline-prompt.md"  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" calibrate templates rules-pipeline-prompt.md --fallback-source  # timeout: 5000
 ```
 
 For each rule file, substitute `<RULE_BASENAME>`, `<RULE_CONTENT>`, `<TIMESTAMP>`, `<MODE>`, `<N>`, `<IS_PATH_SCOPED>` and spawn **single** `general-purpose` pipeline subagent.
 
 **Spawn in batches of `$PIPELINE_BATCH_SIZE` (5 when this category runs alone, 2 while two categories in flight — see constants)**: issue up to that many rule pipeline spawns per response, collect every result in the batch via completion notifications and the SKILL.md Step 2 batch deadline (never a waiting tool), spawn next batch. Rule files within a batch run concurrently; batches sequential.
 
-Run dir: `.reports/calibrate/<TIMESTAMP>/rules/<RULE_DIR>/` (where `RULE_DIR="${RULE_BASENAME%.md}"` — `.md` stripped to avoid permission-matcher conflicts)
+Run dir: `.reports/calibrate/<TIMESTAMP>/rules/<RULE_DIR>/` (where `RULE_DIR="${RULE_BASENAME%.md}"` — `.md` stripped to avoid permission-matcher conflicts; `--local` source rules prefix the plugin dir, `<plugin>-<name>`, since several plugins ship the same basename)
 
 Each pipeline subagent handles all five phases internally (problem generation → target runs → dedicated scorer subagents → aggregate → curator proposals) and returns ONLY compact JSON envelope.
 

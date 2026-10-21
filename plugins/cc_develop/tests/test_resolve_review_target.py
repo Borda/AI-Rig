@@ -4,7 +4,8 @@ Covers:
 * Explicit-path mode: a file target and a directory target both count as "has Python"
 * Diff mode: Python-file count, the non-Python early-stop line, and warning ordering
 * Dependency / container / tests-only warnings, including the diff-mode-only gate
-* Exit code stays 0 in every branch — the printed lines drive the workflow
+* Exit code: 0 for a reviewable Python target, 1 for a missing path or a target without Python (the caller stops on it)
+* ``--committed``: diff mode reads ``HEAD~1..HEAD`` so a fresh worktree is not reviewed as an empty diff
 """
 
 from __future__ import annotations
@@ -27,7 +28,7 @@ _NO_PYTHON_PREFIX = "! Diff contains non-Python files only."
 
 
 def _patch_diff(monkeypatch: pytest.MonkeyPatch, files: list[str]) -> None:
-    monkeypatch.setattr(_mod, "changed_files", lambda timeout=5: list(files))
+    monkeypatch.setattr(_mod, "changed_files", lambda timeout=5, committed=False: list(files))
 
 
 @pytest.mark.parametrize(
@@ -87,7 +88,7 @@ def test_diff_mode_without_python_prints_stop_line_then_warnings(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     _patch_diff(monkeypatch, ["pyproject.toml", "Dockerfile"])
-    assert main(["--", ""]) == 0
+    assert main(["--", ""]) == 1
     lines = [line for line in capsys.readouterr().out.splitlines() if line]
     assert lines[-3].startswith(_NO_PYTHON_PREFIX)
     assert lines[-2].startswith("⚠ dependency changes detected")
@@ -123,8 +124,8 @@ def test_leading_dash_target_does_not_break_parsing(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     _patch_diff(monkeypatch, [])
-    assert main(["--", "--weird-path"]) == 0
-    assert "Reviewing: --weird-path" in capsys.readouterr().out
+    assert main(["--", "--weird-path"]) == 1  # parsed as a path (not an option), which does not exist
+    assert "! Review target not found: --weird-path" in capsys.readouterr().out
 
 
 def test_changed_files_survives_missing_git(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -133,3 +134,53 @@ def test_changed_files_survives_missing_git(monkeypatch: pytest.MonkeyPatch) -> 
 
     monkeypatch.setattr(_mod.subprocess, "run", _boom)
     assert _mod.changed_files() == []
+
+
+def test_missing_path_stops_with_specific_message(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A nonexistent explicit path is its own stop, not the misleading non-Python message."""
+    _patch_diff(monkeypatch, [])
+    missing = tmp_path / "nope.py"
+    assert main(["--", str(missing)]) == 1
+    out = capsys.readouterr().out
+    assert f"! Review target not found: {missing}" in out
+    assert _NO_PYTHON_PREFIX not in out
+
+
+def test_existing_non_python_path_stops(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _patch_diff(monkeypatch, [])
+    notes = tmp_path / "notes.md"
+    notes.write_text("x", encoding="utf-8")
+    assert main(["--", str(notes)]) == 1
+    assert _NO_PYTHON_PREFIX in capsys.readouterr().out
+
+
+def test_committed_flag_reads_last_commit(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    seen: list[bool] = []
+
+    def _fake(timeout: int = 5, committed: bool = False) -> list[str]:
+        seen.append(committed)
+        return ["src/a.py"]
+
+    monkeypatch.setattr(_mod, "changed_files", _fake)
+    assert main(["--committed", "--", ""]) == 0
+    assert seen == [True]
+    assert "Reviewing: last commit (HEAD~1..HEAD) (1 Python files)" in capsys.readouterr().out
+
+
+def test_changed_files_committed_diffs_head_parent(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[list[str]] = []
+
+    class _Done:
+        stdout = "a.py\n"
+
+    def _run(cmd: list[str], **_kwargs: object) -> _Done:
+        calls.append(cmd)
+        return _Done()
+
+    monkeypatch.setattr(_mod.subprocess, "run", _run)
+    assert _mod.changed_files(committed=True) == ["a.py"]
+    assert calls == [["git", "diff", "--name-only", "HEAD~1", "HEAD"]]

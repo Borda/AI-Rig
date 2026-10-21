@@ -36,8 +36,6 @@ from typing import Any
 
 #: Index age in hours above which the smoke check flags the index as stale; default of ``--max-age-hours``.
 DEFAULT_MAX_AGE_HOURS = 24
-#: Fallback plugin directory used to locate ``bin/smoke_test_index.py`` when ``CLAUDE_PLUGIN_ROOT`` is unset.
-DEFAULT_PLUGIN_ROOT = "plugins/codemap"
 
 
 @dataclass(frozen=True)
@@ -132,10 +130,12 @@ def project_smoke_result(raw: str) -> SmokeResult:
             error="smoke_test_index.py emitted non-object JSON",
         )
     error_val = data.get("error")
+    age_hours = data.get("age_hours")
     return SmokeResult(
         ok=bool(data.get("ok")) if data.get("ok") is not None else None,
         stale=bool(data.get("stale")) if data.get("stale") is not None else None,
-        age_hours=data.get("age_hours"),
+        # Child output is untrusted: forward only a real number (bool is an int subclass), else "unavailable".
+        age_hours=float(age_hours) if isinstance(age_hours, (int, float)) and not isinstance(age_hours, bool) else None,
         error=_sanitize_error(error_val) if error_val is not None else None,
     )
 
@@ -184,60 +184,51 @@ def derive_exit_code(projected: SmokeResult) -> int:
     return 0 if projected.ok is True and projected.stale is False else 1
 
 
-def _expected_script_roots(plugin_root: Path) -> tuple[Path, ...]:
-    """Return the directory roots the resolved smoke script must stay within.
+def _own_plugin_root() -> Path:
+    """Return the resolved plugin root this script itself runs from (``bin/..``).
 
-    The script may legitimately live under ``~/.claude`` (installed plugin
-    cache) or under the in-repo ``plugins/codemap`` plugin root resolved from
-    ``$CLAUDE_PLUGIN_ROOT`` (local development). Any resolved script path
-    outside both roots is treated as untrusted (CWE-22).
-
-    Args:
-        plugin_root: The plugin root the script was resolved against.
+    The sole trust anchor for :func:`_resolve_smoke_script`: a caller-supplied
+    ``CLAUDE_PLUGIN_ROOT`` is honoured only when it names this very directory tree,
+    so neither the environment nor the working directory can pick the script that
+    gets executed.
 
     Returns:
-        Tuple of resolved base directories considered safe.
+        Resolved absolute path two levels above this file.
     """
-    return (
-        (Path(os.path.expanduser("~")) / ".claude").resolve(),
-        plugin_root.resolve(),
-    )
+    return Path(__file__).resolve().parent.parent
 
 
 def _resolve_smoke_script() -> Path:
-    """Return validated path to the upstream ``smoke_test_index.py`` script.
+    """Return validated path to the sibling ``smoke_test_index.py`` script.
 
-    Honors ``$CLAUDE_PLUGIN_ROOT`` (set by Claude Code at runtime) and falls
-    back to the in-repo ``plugins/codemap`` layout for local development.
-
-    The resolved script is validated before it can be forwarded to
-    ``subprocess.run``: the path must exist as a regular file and must
-    resolve within ``~/.claude`` or the plugin root. When ``$CLAUDE_PLUGIN_ROOT``
-    is set it must be a non-empty, absolute path.
+    The script is looked up under this file's own plugin root. ``$CLAUDE_PLUGIN_ROOT``
+    (set by Claude Code at runtime) is accepted only as a consistency check: when set it
+    must be non-empty, absolute and resolve to that same root (CWE-22, untrusted search
+    path) — an environment value cannot redirect execution to another tree.
 
     Returns:
         The validated, resolved ``Path`` to ``smoke_test_index.py``.
 
     Raises:
-        ValueError: If ``$CLAUDE_PLUGIN_ROOT`` is set but empty or non-absolute,
-            or if the resolved script lies outside the expected roots.
+        ValueError: If ``$CLAUDE_PLUGIN_ROOT`` is set but empty, non-absolute or not this
+            script's own plugin root, or if the resolved script lies outside that root.
         FileNotFoundError: If the resolved script is not an existing file.
     """
+    own_root = _own_plugin_root()
     env_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
     if env_root is not None:
         if not env_root.strip():
             raise ValueError("CLAUDE_PLUGIN_ROOT is set but empty")
         if not Path(env_root).is_absolute():
             raise ValueError(f"CLAUDE_PLUGIN_ROOT must be an absolute path: {env_root!r}")
-        plugin_root = Path(env_root)
-    else:
-        plugin_root = Path(DEFAULT_PLUGIN_ROOT)
+        if Path(env_root).resolve() != own_root:
+            raise ValueError(f"CLAUDE_PLUGIN_ROOT is not this script's own plugin root: {env_root!r}")
 
-    smoke_script = (plugin_root / "bin" / "smoke_test_index.py").resolve()
+    smoke_script = (own_root / "bin" / "smoke_test_index.py").resolve()
     if not smoke_script.is_file():
         raise FileNotFoundError(f"smoke_test_index.py not found at expected location: {smoke_script}")
-    if not any(smoke_script.is_relative_to(root) for root in _expected_script_roots(plugin_root)):
-        raise ValueError(f"resolved smoke script escapes expected roots: {smoke_script}")
+    if not smoke_script.is_relative_to(own_root):
+        raise ValueError(f"resolved smoke script escapes the plugin root: {smoke_script}")
     return smoke_script
 
 

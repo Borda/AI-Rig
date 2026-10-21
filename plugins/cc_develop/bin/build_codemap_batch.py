@@ -43,6 +43,7 @@ from pathlib import Path
 # Sibling import: resolved by Python's script-dir sys.path entry on direct execution,
 # and by plugins/cc_develop/conftest.py during pytest --doctest-modules collection.
 from codemap_scan import _git_diff_files, derive_modules_from_diff, is_valid_module
+from run_pytest_short import within_workspace  # same output-path fence as --log/--record-dir
 
 #: Most modules taken from the git diff when the caller passes no explicit --modules list.
 FALLBACK_LIMIT = 10
@@ -176,6 +177,9 @@ def main(argv: list[str] | None = None) -> int:
             return 1
     else:
         request = build_batch_request(modules)
+    if not within_workspace(args.out_json):
+        print(f"build_codemap_batch: output path outside the workspace and temp dir: {args.out_json}", file=sys.stderr)
+        return 1
     Path(args.out_json).write_text(json.dumps(request), encoding="utf-8")
     print(" ".join(modules))
     return 0

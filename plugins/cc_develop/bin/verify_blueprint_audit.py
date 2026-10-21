@@ -362,7 +362,8 @@ def _read_lines(handle: Iterator[str], max_lines: int, report: FileReport, rows:
             continue
         try:
             record = json.loads(text)
-        except ValueError:
+        except (ValueError, RecursionError):
+            # RecursionError is not a ValueError: a line nested past the interpreter limit is the same damage.
             report.buckets["truncated"] += 1
             continue
         if not isinstance(record, dict):

@@ -144,6 +144,29 @@ class TestRegistryEnforcement:
         assert check(tmp_path) == []
 
 
+class TestManifestRead:
+    """MANIFEST is read as data: ``--root`` may point at a tree this checker audits."""
+
+    def test_propagate_shared_is_never_imported(self, tmp_path: Path) -> None:
+        """A ``propagate_shared.py`` that writes a marker on import must not run while its literal is read.
+
+        The audited tree's file is untrusted input; the marker proves nothing executed, while the entries prove the
+        literal was still read.
+        """
+        marker = tmp_path / "ran"
+        (tmp_path / "propagate_shared.py").write_text(
+            f"from pathlib import Path\nPath({str(marker)!r}).write_text('ran')\n"
+            "MANIFEST = [{'canonical': 'a.py', 'copies': ['b.py']}]\n",
+            encoding="utf-8",
+        )
+        assert manifest_paths(tmp_path) == {"a.py", "b.py"}
+        assert not marker.exists()
+
+    def test_missing_propagate_shared_yields_no_exemptions(self, tmp_path: Path) -> None:
+        """No readable ``propagate_shared.py`` means an empty set, so every guard copy then needs its registry entry."""
+        assert manifest_paths(tmp_path) == set()
+
+
 class TestManifestCoverage:
     """Pins the two MANIFEST entries this work added."""
 
@@ -172,9 +195,14 @@ class TestAgentGuardContracts:
 
     @pytest.mark.parametrize("agent", _GUARD_AGENTS)
     def test_modules_derived_from_index(self, agent: str) -> None:
+        """Changed-file module names come from the shared script, which resolves them through the index.
+
+        The agent no longer re-derives them itself; the script's own tests pin the index-name behaviour
+        (``pkg/__init__.py`` resolves to ``pkg``).
+        """
         text = (_FOUNDRY / "agents" / agent).read_text(encoding="utf-8")
-        assert "resolve_centrality.py" in text
-        assert "--modules-only" in text
+        assert text.count("bin/codemap_changed_modules.py") == 1
+        assert "resolve_centrality.py" not in text
 
     def test_guard_preamble_identical_across_agents(self) -> None:
         """All six copies must stay one text; drift here is the whole finding."""

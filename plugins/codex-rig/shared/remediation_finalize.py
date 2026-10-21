@@ -710,10 +710,11 @@ def _admitted_review(review_run: Path, run: Path) -> dict[str, Any]:
         admitted = (run / "findings-input.txt").read_bytes()
     except OSError as error:
         raise DeriveError("resolution-findings-input-missing") from error
-    for name in ("result.json", "result.candidate.json"):
-        candidate = review_run / name
-        if candidate.is_file() and candidate.read_bytes() == admitted:
-            return json.loads(admitted)
+    # Only a promoted review is ever admitted; an unpromoted ``result.candidate.json`` must not receive verdicts,
+    # because the next review would read them back as prior resolutions for findings no completed review validated.
+    promoted = review_run / "result.json"
+    if promoted.is_file() and promoted.read_bytes() == admitted:
+        return json.loads(admitted)
     raise DeriveError("resolution-review-run-mismatch")
 
 

@@ -31,13 +31,17 @@ import sys
 import tempfile
 from pathlib import Path
 
-# skill -> (setup_worktree.py ``--sentinel`` value, run-dir sentinel basename)
-#: Per-skill worktree setup: the --sentinel value for setup_worktree.py and the run-dir sentinel name.
-_SKILLS: dict[str, tuple[str, str]] = {
-    "feature": ("", "dev-feature-team-dir"),
-    "fix": ("fix-team-check", "dev-fix-run-dir"),
-    "refactor": ("refactor-team-check", "dev-refactor-run-dir"),
+from dev_run_dir import write_atomic  # sibling bin/ script; atomic, link-safe sentinel writes
+
+#: Per-skill run-dir sentinel basename that later team-mode blocks read back.
+_RUN_DIR_SENTINELS: dict[str, str] = {
+    "feature": "dev-feature-team-dir",
+    "fix": "dev-fix-run-dir",
+    "refactor": "dev-refactor-run-dir",
 }
+
+#: Seconds setup_worktree.py may run; it only creates a directory, so a longer wait means a hung child.
+_SETUP_TIMEOUT_S = 30
 
 
 def _tmp_dir() -> Path:
@@ -50,19 +54,22 @@ def _csid() -> str:
     return os.environ.get("CSID") or os.environ.get("CLAUDE_CODE_SESSION_ID") or "shared"
 
 
-def _run_setup(bin_dir: Path, sentinel: str) -> str:
+def _run_setup(bin_dir: Path) -> str:
     """Run setup_worktree.py and return its stdout with trailing newlines stripped.
 
     stderr is inherited and the exit code is deliberately ignored — the shell original checked only whether a timestamp
     came back.
     """
     cmd = [sys.executable, str(bin_dir / "setup_worktree.py")]
-    if sentinel:
-        cmd += ["--sentinel", sentinel]
     try:
-        proc = subprocess.run(cmd, stdout=subprocess.PIPE, text=True, check=False)  # noqa: S603 - argv list, no shell
+        proc = subprocess.run(  # noqa: S603 - argv list, no shell
+            cmd, stdout=subprocess.PIPE, text=True, check=False, timeout=_SETUP_TIMEOUT_S
+        )
     except OSError as exc:
         print(f"dev_setup_worktree_wrap.py: cannot run setup_worktree.py: {exc}", file=sys.stderr)
+        return ""
+    except subprocess.TimeoutExpired:
+        print(f"dev_setup_worktree_wrap.py: setup_worktree.py exceeded {_SETUP_TIMEOUT_S}s", file=sys.stderr)
         return ""
     return proc.stdout.rstrip("\n")
 
@@ -70,17 +77,16 @@ def _run_setup(bin_dir: Path, sentinel: str) -> str:
 def main(argv: list[str]) -> int:
     """Set up a team-mode run directory shared by feature/fix/refactor."""
     skill = argv[1] if len(argv) > 1 else ""
-    entry = _SKILLS.get(skill)
-    if entry is None:
+    dir_file = _RUN_DIR_SENTINELS.get(skill)
+    if dir_file is None:
         print(
             f"dev_setup_worktree_wrap.py: unknown skill '{skill}' (expected feature|fix|refactor)",
             file=sys.stderr,
         )
         return 1
-    sentinel, dir_file = entry
 
     bin_dir = Path(__file__).resolve().parent
-    out = _run_setup(bin_dir, sentinel)
+    out = _run_setup(bin_dir)
 
     # `head -1` / `tail -1` over the stripped capture: a one-line result puts the same
     # value in both, and an empty one leaves both empty and trips the guard below.
@@ -99,7 +105,7 @@ def main(argv: list[str]) -> int:
         (tmp / f"{dir_file}-{csid}", run_dir),
     ):
         try:
-            path.write_text(value + "\n", encoding="utf-8")
+            write_atomic(path, value)
         except OSError as exc:
             print(f"dev_setup_worktree_wrap.py: cannot write {path}: {exc}", file=sys.stderr)
 

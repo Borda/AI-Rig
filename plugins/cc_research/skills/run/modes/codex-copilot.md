@@ -26,11 +26,7 @@ mkdir -p ".experiments/state/${RUN_ID}"  # timeout: 3000
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r RUN_ID < "${TMPDIR:-/tmp}/research-run-id-${CSID}" 2>/dev/null || RUN_ID=""
-_CODEX_STATE=".experiments/state/${RUN_ID}/codex-state"
-CODEX_ITER=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/read_state_field.py" "$_CODEX_STATE" codex_iter --default 0 2>/dev/null || echo 0)  # timeout: 5000
-CODEX_NOOP_STREAK=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/read_state_field.py" "$_CODEX_STATE" noop_streak --default 0 2>/dev/null || echo 0)  # timeout: 5000
-CODEX_DISABLED=false; [ "$CODEX_NOOP_STREAK" -ge 2 ] 2>/dev/null && CODEX_DISABLED=true
-echo "CODEX_ITER=$CODEX_ITER CODEX_NOOP_STREAK=$CODEX_NOOP_STREAK CODEX_DISABLED=$CODEX_DISABLED"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/codex_state.py" read --state ".experiments/state/${RUN_ID}/codex-state"  # timeout: 5000 — prints CODEX_ITER, CODEX_NOOP_STREAK, CODEX_DISABLED (true once the streak reaches 2); missing file reads 0/0
 ```
 
 Gate fail (`CODEX_DISABLED=true` or `CODEX_ITER >= MAX_CODEX_RUNS`): skip Phase 2c, continue to Phase 3.
@@ -43,22 +39,20 @@ Else print narration, update R5b before Agent call:
 
 TaskUpdate R5b subject: `R5b: Codex co-pilot — iter N/max_iterations running`, status: `in_progress`
 
-Codex runs second pass when active — builds on Claude's kept change or fresh attempt after revert/no-op. Codex commit evaluated by Phase 7 against `best_metric` (same rule as any iteration); "delta ≥ 0.1%" = delta against `best_metric`, not previous Claude iteration. Codex wins only if delta ≥ 0.1% AND guard passes.
+Codex runs a second pass in the same iteration, on the working tree Phase 2 left. Claude's edit is uncommitted and **undecided** here — Phases 3–7 have not run — so nothing is "kept" or "reverted" yet. Both passes form one change set: Phase 3 reconciles the changed paths of both against `scope_files` (a Codex path outside scope fails the combined scope check like any other), Phase 4 commits them as one experiment commit, and Phase 7 compares the single result against `best_metric`. "delta ≥ 0.1%" = delta against `best_metric`, not the previous Claude iteration. The combined change is kept only if delta ≥ 0.1% AND guard passes; one keep/revert decision covers both passes, so per-pass attribution comes from the diary entry, not from the delta.
 
-- Claude Phase 2 **kept**: Codex second pass on current state — builds on Claude's work.
-- Claude Phase 2 **reverted/no-op**: working tree restored; Codex fresh attempt on clean tree.
+- Claude Phase 2 **edited** the tree: Codex builds on that uncommitted work.
+- Claude Phase 2 **no-op** (no edit): Codex attempts a fresh change on the clean tree.
 
 Run Codex ideation:
 
 ```text
-Skill(skill="bridge:implement", args="Goal: <goal>. Run clarification: <clarification_prompt> when present. Current metric: <metric_key>=<current_value> (baseline: <baseline>, direction: <higher|lower>). Scope files: <scope_files>. Compute: <compute>. Colab hardware: <colab_hw> when active. Read .experiments/state/<run-id>/context-<i>.md. Starting state: Claude's change was [kept|reverted|no-op]. Propose and implement one atomic optimization most likely to improve the metric without breaking <guard_cmd>. Write full reasoning to .experiments/state/<run-id>/codex-ideation-<i>.md.")
+Skill(skill="bridge:implement", args="Goal: <goal>. Run clarification: <clarification_prompt> when present. Current metric: <metric_key>=<current_value> (baseline: <baseline>, direction: <higher|lower>). Scope files: <scope_files>. Compute: <compute>. Colab hardware: <colab_hw> when active. Read .experiments/state/<run-id>/context-<i>.md. Starting state: Claude's change is [present in the working tree, uncommitted and not yet evaluated | absent (Phase 2 was a no-op)]. Propose and implement one atomic optimization most likely to improve the metric without breaking <guard_cmd>. Write full reasoning to .experiments/state/<run-id>/codex-ideation-<i>.md.")
 ```
 
-- Claude **kept** + Codex proposes: proceed Phases 3–7 (commit, verify, guard, decide). Codex wins only if delta ≥ 0.1% AND guard passes.
-- Claude **kept** + Codex no-op: append `codex-no-op` record, continue — Claude's result stands.
-- Claude **reverted/no-op** + Codex proposes: proceed Phases 3–7.
-- Claude **reverted/no-op** + Codex no changes: append `status: codex-no-op` (`ideation_source: "codex"`), continue.
-- Set `"ideation_source": "codex"` in Phase 8 JSONL record for any Codex-proposed change.
+- Codex proposes a change: proceed Phases 3–7 on the combined change set (verify files, commit, metric, guard, decide). Diary entry (Phase 7a) names the paths each pass touched.
+- Codex makes no change: Claude's edit (or the Phase 3 no-op) stands alone; note `codex-no-op` in the diary entry and continue to Phase 3.
+- Set `"ideation_source": "codex"` in the Phase 8 JSONL record whenever Codex changed any path in the committed change set (the schema has no combined value); `"claude"` otherwise.
 
 After Codex completes (any outcome):
 
@@ -69,10 +63,7 @@ Codex produced **no code changes** (`codex-no-op`) — streak grows:
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r RUN_ID < "${TMPDIR:-/tmp}/research-run-id-${CSID}" 2>/dev/null || RUN_ID=""
-_CODEX_STATE=".experiments/state/${RUN_ID}/codex-state"
-_ITER=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/read_state_field.py" "$_CODEX_STATE" codex_iter --default 0 2>/dev/null || echo 0)  # timeout: 5000
-_STREAK=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/read_state_field.py" "$_CODEX_STATE" noop_streak --default 0 2>/dev/null || echo 0)  # timeout: 5000
-printf '{"codex_iter": %d, "noop_streak": %d}\n' "$((_ITER + 1))" "$((_STREAK + 1))" > "$_CODEX_STATE"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/codex_state.py" bump --state ".experiments/state/${RUN_ID}/codex-state" --outcome noop  # timeout: 5000 — re-reads the file, codex_iter + 1, noop_streak + 1; prints the new counters
 ```
 
 Codex **proposed a change** (kept, reverted, or still under evaluation) — streak resets:
@@ -80,13 +71,11 @@ Codex **proposed a change** (kept, reverted, or still under evaluation) — stre
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r RUN_ID < "${TMPDIR:-/tmp}/research-run-id-${CSID}" 2>/dev/null || RUN_ID=""
-_CODEX_STATE=".experiments/state/${RUN_ID}/codex-state"
-_ITER=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/read_state_field.py" "$_CODEX_STATE" codex_iter --default 0 2>/dev/null || echo 0)  # timeout: 5000
-printf '{"codex_iter": %d, "noop_streak": 0}\n' "$((_ITER + 1))" > "$_CODEX_STATE"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/codex_state.py" bump --state ".experiments/state/${RUN_ID}/codex-state" --outcome productive  # timeout: 5000 — re-reads the file, codex_iter + 1, noop_streak reset to 0; prints the new counters
 ```
 
 Streak reaching 2 is what disables Codex for the rest of the run — the gate check above derives that, so nothing else needs writing.
 
 TaskUpdate R5b subject: `R5b: Codex co-pilot — iter N done (<outcome>)`
 
-**Stuck escalation with `--codex`**: Phase 9 detects `STUCK_THRESHOLD` discards and `--codex` active → increase Codex effort — add to prompt: "Previous N attempts all reverted. Focus on fundamentally different approach (different file, different algorithm, different abstraction)."
+**Stuck escalation with `--codex`**: Phase 9 detects `STUCK_THRESHOLD` discards and `--codex` active → run the single stuck outcome of run `<constants>` step 3 (escalation iterations; any kept → continue, both discarded → stop). Codex boost applies inside those escalation iterations only, never replaces the stop — add to the Codex prompt: "Previous N attempts all reverted. Focus on fundamentally different approach (different file, different algorithm, different abstraction)."

@@ -260,7 +260,7 @@ SKILL_REQUIREMENTS: dict[str, dict[str, object]] = {
         },
     },
     "calibrate": {"files": {}},
-    "research": {"files": {}},
+    "research": {"files": {"research.md": [], "sources.md": []}},
     "profile": {
         "files": {
             "profile.json": [],
@@ -268,7 +268,8 @@ SKILL_REQUIREMENTS: dict[str, dict[str, object]] = {
         },
     },
     "code-review": {"files": {}},
-    "sync": {"files": {}},
+    # A refresh also writes state-after.json; check-only runs stop before it, so it stays reviewer-checked.
+    "sync": {"files": {"state-before.json": [], "proposed-actions.json": []}},
     "implement": {
         "files": {
             "development-notes.md": ["Scope", "Acceptance Criteria", "Evidence", "Specialist Policy", "Gates"],

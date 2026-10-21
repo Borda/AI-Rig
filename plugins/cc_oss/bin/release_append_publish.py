@@ -22,6 +22,7 @@ import hashlib
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -32,6 +33,27 @@ from release_append_marker import refuse_legacy, state_relative, unique_root_com
 
 #: Release artifact files, in order, that are published together with the changelog.
 ARTIFACTS = ("DRAFT.md", "SUMMARY.md", "MIGRATION.md")
+#: Name prefix of the staging directory ``begin`` creates; seal, publish and recovery refuse any other directory name.
+_STAGE_PREFIX = "release-append-stage-"
+
+
+def _is_own_stage(root: Path, stage: Path) -> bool:
+    """Tell whether ``stage`` is a real staging directory ``begin`` created under ``root/.temp`` for this user.
+
+    Any other directory under ``.temp`` (a symlink, another tool's scratch dir, a directory planted by another
+    account) would otherwise pass the parent check and have its ``candidate.json`` promoted into live release files.
+
+    Examples:
+        >>> _is_own_stage(Path("/repo"), Path("/repo/.temp/not-a-stage"))
+        False
+    """
+    if stage.parent != root / ".temp" or not stage.name.startswith(_STAGE_PREFIX):
+        return False
+    try:
+        info = stage.lstat()
+    except OSError:
+        return False
+    return stat.S_ISDIR(info.st_mode) and (not hasattr(os, "getuid") or info.st_uid == os.getuid())
 
 
 class SourceDriftError(ValueError):
@@ -359,7 +381,7 @@ def begin(
     _checked_path(root, changelog)
     paths = _expected_paths(branch_ref, changelog, extra_outputs)
     _checked_path(root, ".temp").mkdir(parents=True, exist_ok=True)
-    stage = Path(tempfile.mkdtemp(prefix="release-append-stage-", dir=root / ".temp"))
+    stage = Path(tempfile.mkdtemp(prefix=_STAGE_PREFIX, dir=root / ".temp"))
     originals: dict[str, str | None] = {}
     for relative in paths:
         source = _checked_path(root, relative)
@@ -398,7 +420,7 @@ def seal(root: Path, branch: str, stage: Path) -> None:
     root = root.resolve()
     branch = _safe_branch(branch)
     stage = stage.resolve()
-    if stage.parent != root / ".temp":
+    if not _is_own_stage(root, stage):
         raise ValueError("append candidate cannot be sealed")
     metadata_path = stage / "candidate.json"
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
@@ -456,7 +478,7 @@ def _replace_candidate(root: Path, stage: Path, relative: str) -> None:
 def _promote(root: Path, branch: str, journal: dict[str, object], require_head: bool = False) -> None:
     """Finish a journaled promotion or rollback without replacing unknown live bytes."""
     stage = Path(str(journal["stage"]))
-    if stage.parent != root / ".temp":
+    if not _is_own_stage(root, stage):
         raise ValueError("candidate directory outside repository staging area")
     entries = journal["entries"]
     marker = state_relative(str(journal["branch_ref"]), "marker")
@@ -638,7 +660,7 @@ def publish(root: Path, branch: str, stage: Path) -> None:
     root = root.resolve()
     branch = _safe_branch(branch)
     stage = stage.resolve()
-    if stage.parent != root / ".temp":
+    if not _is_own_stage(root, stage):
         raise ValueError("candidate directory outside repository staging area")
     metadata = json.loads((stage / "candidate.json").read_text(encoding="utf-8"))
     changelog = metadata.get("changelog")

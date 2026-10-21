@@ -1,4 +1,4 @@
-# Shared Checks (all scopes) — 17, 4, 5, 9, 16, 15
+# Shared Checks (all scopes) — 12, 13, 14a–14f, 15, 16, 17, C32, 18, 25, 29, 26, 41, 44, 45
 
 ## Check 12 — File length (context budget risk)
 
@@ -53,9 +53,10 @@ Checks two failure modes: (1) empty blocks — `<tag></tag>` with only whitespac
 Scan all agent and skill files via deterministic bin/ script:
 
 ```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
 printf "=== Check 14a: Structural tag symmetry ===\n"
-{ find .claude/agents -maxdepth 1 -name '*.md' -type f -print0
-  find .claude/skills -mindepth 2 -maxdepth 2 -name SKILL.md -type f -print0; } 2>/dev/null |
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/list_audit_files.py" --paths-only -0 --entrypoints $( [ "$LOCAL_MODE" = true ] && echo --local ) |
   xargs -0 -r python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_tag_symmetry.py"  # timeout: 10000
 ```
 
@@ -73,9 +74,10 @@ Detects two failure modes: (1) unclosed fence — opening ```` ``` ```` or ```` 
 Scan all agent and skill files via deterministic bin/ script:
 
 ```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
 printf "=== Check 14b: Code fence symmetry ===\n"
-{ find .claude/agents -maxdepth 1 -name '*.md' -type f -print0
-  find .claude/skills -mindepth 2 -maxdepth 2 -name SKILL.md -type f -print0; } 2>/dev/null |
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/list_audit_files.py" --paths-only -0 --entrypoints $( [ "$LOCAL_MODE" = true ] && echo --local ) |
   xargs -0 -r python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_fence_symmetry.py"  # timeout: 10000
 ```
 
@@ -322,7 +324,7 @@ fix: use fully-qualified form, e.g. subagent_type="foundry:<name>"
 
 **Report only** — no auto-fix; correct prefix depends on which plugin owns agent.
 
-> **Related**: Check 28 (in `checks-skills.md`) covers cross-plugin fallback coverage — dispatched agent exists but no fallback when that plugin absent. Check 25 and Check 28 address different failure modes; run both.
+> **Related**: Check 28 (in `checks-skills-crossplugin.md`) covers cross-plugin fallback coverage — dispatched agent exists but no fallback when that plugin absent. Check 25 and Check 28 address different failure modes; run both.
 
 ## Check 29 — LLM context minimality (verbosity)
 
@@ -402,9 +404,10 @@ Via model reasoning: same skill referenced with both `/name` and bare `name` in 
 When file defines legend (any line matching `Legend:` followed by symbol/concept pairs), every body use of concept must match legend symbol exactly.
 
 ```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
 printf "=== Check 26c: Legend/key alignment ===\n"
-{ find .claude/agents -maxdepth 1 -name '*.md' -type f -print0
-  find .claude/skills -mindepth 2 -maxdepth 2 -name SKILL.md -type f -print0; } 2>/dev/null |
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/list_audit_files.py" --paths-only -0 --entrypoints $( [ "$LOCAL_MODE" = true ] && echo --local ) |
   xargs -0 -r grep -Hn 'Legend:\|^Key:' || true # timeout: 5000
 ```
 
@@ -465,7 +468,7 @@ Via model reasoning per file: identify nested bullet blocks where each top-level
 
 Exception: skip when attributes vary per item (non-uniform schema — prose correct).
 
-**41d — Legacy mixed/decimal phase-step numbering**: canonical sub-step convention (precedent: `oss:review`'s `Step 3a`–`3e`, `oss:audit`'s `Step 5b`, Check 44 below) is **number-primary, letter-secondary, no separator** — `1b`, `3a`, `41a`. A `### Phase`/`Step`/`Check`/`Mode`/`Section` header using a decimal or letter-primary variant instead (`1.5`, `A.5`, `5.b`) is a legacy/inconsistent form that predates or bypassed that convention — same intent, wrong register, and outside Check 44's scope (whose regex only matches literal `Check N<letter>`, not general workflow headers).
+**41d — Legacy mixed/decimal phase-step numbering**: canonical sub-step convention (precedent: `oss:review`'s `Step 3a`–`3e`, `foundry:audit`'s `Step 5b`, Check 44 below) is **number-primary, letter-secondary, no separator** — `1b`, `3a`, `41a`. A `### Phase`/`Step`/`Check`/`Mode`/`Section` header using a decimal or letter-primary variant instead (`1.5`, `A.5`, `5.b`) is a legacy/inconsistent form that predates or bypassed that convention — same intent, wrong register, and outside Check 44's scope (whose regex only matches literal `Check N<letter>`, not general workflow headers).
 
 ```bash
 printf "=== Check 41d: Legacy phase/step numbering ===\n"
@@ -535,7 +538,9 @@ printf "=== Check 45: Policy-sibling marker symmetry ===\n"
 OUT=""
 for f in $(grep -rl "<!-- policy-sibling:" .claude plugins --include="*.md" 2>/dev/null); do  # timeout: 10000
     siblings=$(grep -o '<!-- policy-sibling:[^—]*' "$f" | head -1 | sed 's/<!-- policy-sibling://')
+    proot=$(printf '%s' "$f" | sed -n 's#^\(plugins/[^/]*/\).*#\1#p')  # plugin-relative sibling paths resolve here
     for sib in $(printf '%s' "$siblings" | tr ',' '\n' | awk '{print $1}' | grep -E '/.*\.md$'); do
+        [ -f "$sib" ] || { [ -n "$proot" ] && [ -f "$proot$sib" ] && sib="$proot$sib"; }
         if [ ! -f "$sib" ]; then
             OUT="${OUT}⚠ 45-BROKEN: $f — policy-sibling lists missing file: $sib\n"
             continue
@@ -545,6 +550,8 @@ for f in $(grep -rl "<!-- policy-sibling:" .claude plugins --include="*.md" 2>/d
 done
 if [ -n "$OUT" ]; then printf "$OUT"; else printf "✓: Check 45 — no unsynced policy-sibling markers found\n"; fi
 ```
+
+A sibling path resolves from the repository root first, then from the marker file's own plugin root (`plugins/<p>/`): an installed plugin has no repository root, so shipped markers may name siblings plugin-relatively (`skills/assess/SKILL.md`) — only a path missing under both roots is `45-BROKEN`.
 
 Extraction anchors on the literal `<!-- policy-sibling:` prefix (not a bare grep for the word) so prose documenting the convention — like this file's own explanation above, or an example snippet — never self-matches; the sibling-token filter (`/.*\.md$`) additionally drops non-path fragments (placeholder text, trailing rationale words) surviving the comma split. No array syntax (`read -ra`, `mapfile`) — Claude Code's Bash tool runs under the user's login shell, `zsh` on macOS by default, and zsh's `read` doesn't support bash's `-a` flag; plain `for x in $(...)` word-splitting is portable to both.
 

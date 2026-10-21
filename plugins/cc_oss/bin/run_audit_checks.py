@@ -41,6 +41,10 @@ import sys
 from pathlib import Path
 from shutil import which
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import fetch_alert_context
+
 #: Matches lines that declare a package version (``__version__`` or ``version =``).
 _VERSION_RE: re.Pattern[str] = re.compile(r"__version__|^version\s*=", re.MULTILINE)
 #: Matches leftover release-blocking markers such as ``TODO ... release``, FIXME, HACK and XXX.
@@ -116,6 +120,38 @@ def _run(cmd: list[str], *, timeout: int = 10, text: bool = True) -> str:
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
+def _print_untrusted(label: str, lines: list[str]) -> None:
+    """Print repository-derived lines inside an untrusted-data fence, or nothing when ``lines`` is empty.
+
+    The matched lines are repository text that the release agent reads; fencing them keeps an instruction planted in a
+    source comment from reading as a directive. The fence comes from :func:`fetch_alert_context.untrusted_block`, which
+    neutralises any closing marker inside the text.
+
+    Examples:
+        >>> _print_untrusted("x", [])
+    """
+    if not lines:
+        return
+    block, _token = fetch_alert_context.untrusted_block(label, "\n".join(lines))
+    print(block)
+
+
+def _is_repo_file(path: Path, root: Path) -> bool:
+    """Tell whether a scanned path is a regular, non-symlink file whose real location stays inside ``root``.
+
+    ``rglob`` yields symlinks as ordinary matches, so a repository could point ``x.py`` at a file outside the checkout
+    and have its lines echoed into the audit output.
+
+    Examples:
+        >>> _is_repo_file(Path("does-not-exist.py"), Path(".").resolve())
+        True
+    """
+    try:
+        return not path.is_symlink() and path.resolve().is_relative_to(root)
+    except OSError:
+        return False
+
+
 def _grep_version_files() -> list[str]:
     """Scan source files for ``__version__`` / ``version =`` patterns.
 
@@ -134,12 +170,13 @@ def _grep_version_files() -> list[str]:
         True
     """
     results: list[str] = []
+    root = Path(".").resolve()
     for glob in ("*.py", "*.toml", "*.cfg", "*.json"):
         paths = sorted(itertools.islice(Path(".").rglob(glob), _MAX_SCAN_FILES))
         if len(paths) == _MAX_SCAN_FILES:
             print(SCAN_TRUNCATED_SIGNAL, file=sys.stderr)
         for path in paths:
-            if ".git" in path.parts:
+            if ".git" in path.parts or not _is_repo_file(path, root):
                 continue
             try:
                 if path.stat().st_size > _MAX_SCAN_FILE_SIZE:
@@ -171,11 +208,12 @@ def _grep_code_signals() -> list[str]:
         True
     """
     results: list[str] = []
+    root = Path(".").resolve()
     paths = sorted(itertools.islice(Path(".").rglob("*.py"), _MAX_SCAN_FILES))
     if len(paths) == _MAX_SCAN_FILES:
         print(SCAN_TRUNCATED_SIGNAL, file=sys.stderr)
     for path in paths:
-        if ".git" in path.parts or "tests" in path.parts:
+        if ".git" in path.parts or "tests" in path.parts or not _is_repo_file(path, root):
             continue
         try:
             if path.stat().st_size > _MAX_SCAN_FILE_SIZE:
@@ -226,7 +264,8 @@ def _derive_range(git: str, range_arg: str) -> tuple[str, int]:
         # Allowlist: only accept SemVer-style tags or 7-40 hex short SHAs.
         # Anything else (option-style ``--foo``, ref expressions ``HEAD~``,
         # arbitrary text) is rejected outright (A03:2021).
-        if not last_tag or not _TAG_OR_SHA_RE.match(last_tag):
+        # fullmatch: ``$`` under ``match`` also accepts a trailing newline after the tag
+        if not last_tag or not _TAG_OR_SHA_RE.fullmatch(last_tag):
             print(
                 f"run_audit_checks: invalid tag (must be SemVer or 7-40 hex SHA): {last_tag!r}",
                 file=sys.stderr,
@@ -250,7 +289,7 @@ def _derive_range(git: str, range_arg: str) -> tuple[str, int]:
             endpoints = []
 
         def _endpoint_ok(ep: str) -> bool:
-            return ep == "HEAD" or bool(_TAG_OR_SHA_RE.match(ep))
+            return ep == "HEAD" or bool(_TAG_OR_SHA_RE.fullmatch(ep))
 
         if len(endpoints) != 2 or not all(_endpoint_ok(ep) for ep in endpoints):
             print(
@@ -344,8 +383,7 @@ def _check_docs_alignment(git: str, range_arg: str) -> None:
 def _check_version_consistency(tag: str) -> None:
     """Print version-string matches across source files and the target version."""
     print("--- check: version-consistency ---")
-    for match_line in _grep_version_files():
-        print(match_line)
+    _print_untrusted("repo source lines (version declarations)", _grep_version_files())
     if tag:
         print(f"## target version: {tag}")
 
@@ -407,8 +445,7 @@ def _check_code_signals(git: str, range_arg: str) -> None:
     """Print release-blocking code signals and the dependency CVE scan, split by release-range scope."""
     print("--- check: code-signals ---")
     print("## release-blocking TODOs / FIXME / HACK / XXX (outside tests):")
-    for match_line in _grep_code_signals():
-        print(match_line)
+    _print_untrusted("repo source lines (code signals)", _grep_code_signals())
     print("## dependency CVE scan:")
     pip_audit = which("pip-audit")
     if pip_audit:

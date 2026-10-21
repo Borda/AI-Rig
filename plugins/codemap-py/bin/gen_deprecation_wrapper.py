@@ -61,6 +61,9 @@ class SymbolType(str, Enum):
 # Import inference
 # ---------------------------------------------------------------------------
 
+#: Longest attribute chain accepted as a decorator argument (``pkg.mod.Klass.method`` is four segments).
+_MAX_ATTRIBUTE_DEPTH = 6
+
 #: Maps a ``deprecate`` decorator name to the ``from deprecate import ...`` line the generated wrapper needs.
 _IMPORT_MAP = {
     "deprecated_class": "from deprecate import deprecated_class",
@@ -149,11 +152,15 @@ def _check_identifier(value: str, flag: str, *, allow_dotted: bool = False) -> N
     Raises:
         ValueError: *value* is not a bare ASCII identifier (or, when
             *allow_dotted*, not a bare identifier or a single dotted pair), any
-            segment is a Python keyword, or any segment contains a non-ASCII
-            character.
+            segment is a Python keyword or a dunder name (``__import__``,
+            ``__class__``), or any segment contains a non-ASCII character.
 
     Examples:
         >>> _check_identifier("old_fn", "--old-name")
+        >>> _check_identifier("__import__", "--old-name")
+        Traceback (most recent call last):
+            ...
+        ValueError: --old-name must not be a dunder name: '__import__'
         >>> _check_identifier("bad name", "--old-name")
         Traceback (most recent call last):
             ...
@@ -183,6 +190,21 @@ def _check_identifier(value: str, flag: str, *, allow_dotted: bool = False) -> N
         if allow_dotted:
             raise ValueError(f"{flag} must be a bare ASCII identifier or a single 'Class.method' pair: {value!r}")
         raise ValueError(f"{flag} must be a bare ASCII identifier: {value!r}")
+    if any(_is_dunder(segment) for segment in segments):
+        raise ValueError(f"{flag} must not be a dunder name: {value!r}")
+
+
+def _is_dunder(name: str) -> bool:
+    """Return whether *name* is a double-underscore special name such as ``__import__``.
+
+    A generated ``def __import__(...)`` would shadow the interpreter hook of the same name in the module that imports
+    the wrapper, and an attribute such as ``__class__`` reaches interpreter internals.
+
+    Examples:
+        >>> _is_dunder("__import__"), _is_dunder("__private"), _is_dunder("old_fn")
+        (True, False, False)
+    """
+    return name.startswith("__") and name.endswith("__")
 
 
 def _reject_unsafe(value: str, field_name: str) -> None:
@@ -227,14 +249,18 @@ def _is_safe_arg_node(node: ast.expr) -> bool:
     bottoms out in a bare name (``Class.method``, ``pkg.mod.Klass``). Anything
     else — a call, a comprehension, a binary operation, unpacking (``*args``),
     ... — can run arbitrary code the moment :func:`gen_wrapper_from_decorator`'s
-    output is imported.
+    output is imported. An attribute chain is accepted only when it is rooted in
+    a name (never a constant such as ``"x".__class__``), is at most
+    :data:`_MAX_ATTRIBUTE_DEPTH` segments long, and has no dunder segment, since
+    attribute access runs descriptors at import time.
 
     Args:
         node: an argument or keyword-argument value from a parsed ``ast.Call``.
 
     Returns:
-        ``True`` if *node* is an :class:`ast.Constant`, :class:`ast.Name`, or an
-        :class:`ast.Attribute` chain rooted in one of those; ``False`` otherwise.
+        ``True`` if *node* is an :class:`ast.Constant`, :class:`ast.Name`, or a
+        bounded, dunder-free :class:`ast.Attribute` chain rooted in a name;
+        ``False`` otherwise.
 
     Examples:
         >>> _is_safe_arg_node(ast.parse("bar", mode="eval").body)
@@ -243,12 +269,20 @@ def _is_safe_arg_node(node: ast.expr) -> bool:
         True
         >>> _is_safe_arg_node(ast.parse("__import__('os').system('id')", mode="eval").body)
         False
+        >>> _is_safe_arg_node(ast.parse("'x'.__class__", mode="eval").body)
+        False
+        >>> _is_safe_arg_node(ast.parse("MyClass.__subclasses__", mode="eval").body)
+        False
     """
-    if isinstance(node, (ast.Constant, ast.Name)):
-        return True
-    if isinstance(node, ast.Attribute):
-        return _is_safe_arg_node(node.value)
-    return False
+    depth = 0
+    while isinstance(node, ast.Attribute):
+        depth += 1
+        if depth > _MAX_ATTRIBUTE_DEPTH or _is_dunder(node.attr):
+            return False
+        node = node.value
+    if depth:
+        return isinstance(node, ast.Name)
+    return isinstance(node, (ast.Constant, ast.Name))
 
 
 def _decorator_func_name(decorator: str) -> str:

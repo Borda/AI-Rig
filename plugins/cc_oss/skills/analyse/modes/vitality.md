@@ -36,7 +36,7 @@ echo "$RUN_TS" > "${TMPDIR:-/tmp}/vitality-run-ts-${CSID}"
 
 > **Agent budget** — each spawn costs ~120,851 tok of fixed overhead (~73 tool-calls' worth) plus ~12.0 s/call, so work under ~73 calls is cheaper done inline: spawn nothing — work-displacement only; an isolation-motivated spawn (adversarial reviewer, distinct specialist role, model tier, worktree) runs regardless of size. Keep each agent near ~55 tool-calls; past ~60 they stall without returning an envelope, forcing reconstruction from disk. Every spawn prompt must require an envelope even on exhaustion — `partial: true` plus what was finished.
 
-> `Agent(subagent_type="oss:gh-scraper", prompt="GH_OWNER=$GH_OWNER GH_REPO=$GH_REPO DATA_FILE=$DATA_FILE")`
+> `Agent(subagent_type="oss:gh-scraper", name="gh-scraper", description="Fetch repo vitality data", prompt="DATA_FILE=$DATA_FILE GH_OWNER=$GH_OWNER GH_REPO=$GH_REPO")`
 
 In the spawn response write `<WATCH_DIR>/agent-watch-fetch.tsv` (`gh-scraper<TAB>$DATA_FILE<TAB>1800`, path expanded), end the turn, and resume on the completion notification (SKILL.md §Health monitoring — no polling). Verify `$DATA_FILE` exists and non-empty. The envelope's coverage fields come from `bin/assemble_vitality_data.py`, not the agent's judgement:
 
@@ -52,11 +52,11 @@ TaskUpdate "Step 1 Data Fetch" completed, riding with the next step's first call
 
 Spawn all 3 `oss:repo-warden` agents simultaneously in single response:
 
-> `Agent(subagent_type="oss:repo-warden", prompt="GH_OWNER=$GH_OWNER GH_REPO=$GH_REPO DATA_FILE=$DATA_FILE PARTIAL_FILE=$PARTIAL_A AXIS_GROUP=A")`
+> `Agent(subagent_type="oss:repo-warden", name="repo-warden-A", description="Score axes 1, 2, 5, 6", prompt="AXIS_GROUP=A PARTIAL_FILE=$PARTIAL_A GH_OWNER=$GH_OWNER GH_REPO=$GH_REPO DATA_FILE=$DATA_FILE")`
 >
-> `Agent(subagent_type="oss:repo-warden", prompt="GH_OWNER=$GH_OWNER GH_REPO=$GH_REPO DATA_FILE=$DATA_FILE PARTIAL_FILE=$PARTIAL_B AXIS_GROUP=B")`
+> `Agent(subagent_type="oss:repo-warden", name="repo-warden-B", description="Score axes 4, 7, 8", prompt="AXIS_GROUP=B PARTIAL_FILE=$PARTIAL_B GH_OWNER=$GH_OWNER GH_REPO=$GH_REPO DATA_FILE=$DATA_FILE")`
 >
-> `Agent(subagent_type="oss:repo-warden", prompt="GH_OWNER=$GH_OWNER GH_REPO=$GH_REPO DATA_FILE=$DATA_FILE PARTIAL_FILE=$PARTIAL_C AXIS_GROUP=C")`
+> `Agent(subagent_type="oss:repo-warden", name="repo-warden-C", description="Score axes 3, 9", prompt="AXIS_GROUP=C PARTIAL_FILE=$PARTIAL_C GH_OWNER=$GH_OWNER GH_REPO=$GH_REPO DATA_FILE=$DATA_FILE")`
 
 **Health monitoring** — SKILL.md §Health monitoring: in this spawn response write `<WATCH_DIR>/agent-watch-score.tsv` with one row per agent (`repo-warden-A<TAB>$PARTIAL_A<TAB>1800`, same for B and C, paths expanded). Never poll — no periodic `find`, no `ScheduleWakeup`, `ListAgents` or `Monitor` loop; run the SKILL.md watch block at each completion notification. `timed_out`, or a notification without its partial file → read the tail of any partial output; surface with ⏱ now.
 
@@ -72,7 +72,7 @@ Read all 3 partial files using Read tool. Merge into unified `$SCORES_FILE`:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-_OSS_SHARED=$(ls -d ~/.claude/plugins/cache/borda-ai-rig/oss/*/skills/_shared 2>/dev/null | sort -V | tail -1)  # timeout: 5000
+IFS= read -r _OSS_SHARED < "${TMPDIR:-/tmp}/analyse-oss-shared-${CSID}" 2>/dev/null || _OSS_SHARED=""
 [ -z "$_OSS_SHARED" ] && _OSS_SHARED="plugins/cc_oss/skills/_shared"
 SCORING_FILE="$_OSS_SHARED/vitality-scoring.md"
 echo "$SCORING_FILE" > "${TMPDIR:-/tmp}/vitality-scoring-file-${CSID}"  # persist (Check 41)
@@ -121,7 +121,7 @@ Resolve template path (installed cache first, source tree fallback):
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # reload _OSS_ANALYSE (Check 41; cold-resolved once by parent analyse/SKILL.md)
-IFS= read -r _OSS_ANALYSE < "${TMPDIR:-/tmp}/analyse-oss-analyse-${CSID}" 2>/dev/null || _OSS_ANALYSE="$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/resolve_shared_path.py" oss skills/analyse 2>/dev/null)"
+IFS= read -r _OSS_ANALYSE < "${TMPDIR:-/tmp}/analyse-oss-analyse-${CSID}" 2>/dev/null || _OSS_ANALYSE=""
 [ -z "$_OSS_ANALYSE" ] && _OSS_ANALYSE="plugins/cc_oss/skills/analyse"
 REPORT_TPL="$_OSS_ANALYSE/templates/vitality-report.md"
 ```
@@ -131,7 +131,7 @@ REPORT_TPL="$_OSS_ANALYSE/templates/vitality-report.md"
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # reload _OSS_ANALYSE (Check 41)
-IFS= read -r _OSS_ANALYSE < "${TMPDIR:-/tmp}/analyse-oss-analyse-${CSID}" 2>/dev/null || _OSS_ANALYSE="$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/resolve_shared_path.py" oss skills/analyse 2>/dev/null)"
+IFS= read -r _OSS_ANALYSE < "${TMPDIR:-/tmp}/analyse-oss-analyse-${CSID}" 2>/dev/null || _OSS_ANALYSE=""
 [ -z "$_OSS_ANALYSE" ] && _OSS_ANALYSE="plugins/cc_oss/skills/analyse"
 cat "$_OSS_ANALYSE/modes/codemap-signals.md"  # timeout: 5000
 ```
@@ -142,7 +142,7 @@ Run its **Detect** block (loaded above), then **Signal B** (open-PR conflict/dup
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 mkdir -p .reports/analyse/vitality  # timeout: 5000
 # reload _OSS_ANALYSE/REPORT_TPL (Check 41)
-IFS= read -r _OSS_ANALYSE < "${TMPDIR:-/tmp}/analyse-oss-analyse-${CSID}" 2>/dev/null || _OSS_ANALYSE="$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/resolve_shared_path.py" oss skills/analyse 2>/dev/null)"
+IFS= read -r _OSS_ANALYSE < "${TMPDIR:-/tmp}/analyse-oss-analyse-${CSID}" 2>/dev/null || _OSS_ANALYSE=""
 [ -z "$_OSS_ANALYSE" ] && _OSS_ANALYSE="plugins/cc_oss/skills/analyse"
 REPORT_TPL="$_OSS_ANALYSE/templates/vitality-report.md"
 cat "$REPORT_TPL"  # timeout: 5000
@@ -170,9 +170,14 @@ IFS= read -r QUICK_MODE < "${TMPDIR:-/tmp}/analyse-quick-mode-${CSID}" 2>/dev/nu
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # reload _OSS_ANALYSE (Check 41)
-IFS= read -r _OSS_ANALYSE < "${TMPDIR:-/tmp}/analyse-oss-analyse-${CSID}" 2>/dev/null || _OSS_ANALYSE="$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/resolve_shared_path.py" oss skills/analyse 2>/dev/null)"
+IFS= read -r _OSS_ANALYSE < "${TMPDIR:-/tmp}/analyse-oss-analyse-${CSID}" 2>/dev/null || _OSS_ANALYSE=""
 [ -z "$_OSS_ANALYSE" ] && _OSS_ANALYSE="plugins/cc_oss/skills/analyse"
-REVIEW_DIR=".reports/analyse/vitality/$(date +%Y-%m-%d)-review"
+# per-repo + per-run dir: a date-only dir let a same-day or other-repo run reuse stale iter verdicts/.done sentinels
+IFS= read -r GH_OWNER < "${TMPDIR:-/tmp}/vitality-gh-owner-${CSID}" 2>/dev/null || GH_OWNER=""
+IFS= read -r GH_REPO < "${TMPDIR:-/tmp}/vitality-gh-repo-${CSID}" 2>/dev/null || GH_REPO=""
+IFS= read -r RUN_TS < "${TMPDIR:-/tmp}/vitality-run-ts-${CSID}" 2>/dev/null || RUN_TS=""
+[ -n "$GH_OWNER" ] && [ -n "$GH_REPO" ] && [ -n "$RUN_TS" ] || { echo "! BLOCKED — vitality owner/repo/run-ts sentinels missing; cannot key REVIEW_DIR (rerun Step 1)"; exit 1; }
+REVIEW_DIR=".reports/analyse/vitality/${GH_OWNER}-${GH_REPO}/${RUN_TS}-review"
 REWORK_ITER=0
 REWORK_MAX=2
 CODEX_STATUS=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/check_bridge.py" --status 2>/dev/null || echo "absent")  # timeout: 5000
@@ -189,7 +194,7 @@ Execute its steps (Step 5), then:
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # reload _OSS_ANALYSE (Check 41)
-IFS= read -r _OSS_ANALYSE < "${TMPDIR:-/tmp}/analyse-oss-analyse-${CSID}" 2>/dev/null || _OSS_ANALYSE="$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/resolve_shared_path.py" oss skills/analyse 2>/dev/null)"
+IFS= read -r _OSS_ANALYSE < "${TMPDIR:-/tmp}/analyse-oss-analyse-${CSID}" 2>/dev/null || _OSS_ANALYSE=""
 [ -z "$_OSS_ANALYSE" ] && _OSS_ANALYSE="plugins/cc_oss/skills/analyse"
 cat "$_OSS_ANALYSE/modes/vitality-adversarial-rework.md"  # timeout: 5000
 ```

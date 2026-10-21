@@ -1,5 +1,109 @@
 # Changelog
 
+## 0.51.0
+
+- `/oss:resolve` report gate (`find_review_report.py`) and findings merge (`merge_action_items.py`) write stdout and stderr as UTF-8, so on native Windows a `! BLOCKED —` message or a non-ASCII report path no longer reaches the calling shell block as undecodable console bytes.
+
+- Narrow broad `find`, `node`, `claude`, and `sed` allows while retaining scoped read-only rules and broad `eval`/`python` for existing recipes; ad-hoc commands outside shipped blocks now prompt unless a narrower rule covers them. Setup removes the old broad entries from `settings.json`, including an identical entry added by hand.
+
+- Keep-state parsing rejects unsafe sentinel identities before changing state, and bulk review commits sanitize PR references and bullet contents so embedded control characters cannot forge resolve markers or co-author trailers.
+
+- `/oss:resolve` stops with `! BLOCKED — not a pull-request URL` when given a GitHub issue or repository URL, instead of continuing with an empty PR number that every later PR step silently skips.
+
+- `/oss:setup` validates settings with Python instead of jq, so machines without jq keep a valid permissions merge rather than restoring its backup; malformed JSON still triggers restoration.
+
+- `/oss:release audit` and `/oss:resolve` run version comparisons, commit-SHA extraction and deferred-file overlap checks through plugin-owned Python helpers, preserving their results and failure guards while avoiding multi-line shell quoting.
+
+- `parse-skill-flags.py` no longer drops a `--keep` value whose quotes the shell consumed when the host substituted `$ARGUMENTS` (`--keep "a b"` used to arrive as `--keep a b` and persist an empty keep list); it now also accepts `--keep 'a b'` and `--keep="a b"`, strips a dangling `--keep` from `CLEAN_ARGS`, and warns on stderr when the value was unquoted or empty, so a lost compaction keep list is visible instead of silent.
+
+- `parse-skill-flags.py --keep-state <prefix>` writes one per-session sentinel per parsed flag, value, `CLEAN_ARGS` and `--keep` value, and clears a crashed run's stale compaction contract only when no other session owns it (`--inlined` skips the clear); output without the option is unchanged. `/oss:analyse`, `/oss:resolve`, `/oss:review` and `/oss:release` read their flags back with `IFS= read -r` instead of running `eval` on script output, the contract clear in analyse, resolve and review no longer deletes a contract another session in the same directory owns, and the release audit checks reuse Mode Detection's parse instead of running the parser a second time.
+
+- `resolve_shared_path.py` without a registry or cache hit uses the cwd-relative `plugins/cc_oss/...` (or a provider's `plugins/<name>/...`) tree only inside that plugin's own source repository, where its `.claude-plugin/plugin.json` names it. Elsewhere it exits 1 with a `!` message instead of printing the path, so a repository under review can no longer supply oss protocol docs or the codemap-py contract.
+
+- `heal_git_artifacts.py worktrees` keeps unregistered directories unless `--include-orphans` is passed, re-checks one right before deleting it, reports symlinked children as skipped and rejects a `*` managed prefix. The worktree-isolation leftover report and its approved removal both pass `--include-orphans`, so the list you approve and what gets removed stay the same.
+
+- `check_oss_pr_signals.py` prints secret matches as `path:line: kind` and never the credential value; line numbers are hunk-aware and removed lines are marked. The removed-export check matches whole identifiers instead of substrings and caps at 500 identifiers. A `--latest-tag` starting with `-` exits 1 and an `--output-file` symlink is refused.
+
+- `fetch_gh_data_group1.py` requests secret-scanning alerts with `hide_secret=true` and drops the `secret` field; repository parts `.` and `..` and malformed cutoff dates are rejected, and a timed-out fetch is non-fatal.
+
+- New `bin/gh_batch_query.py`: `commit-prs` maps a Git range to its merged PRs and `pr-files` lists the changed files of several PRs, 25 per GraphQL request, resumable with `--offset-file`. `/oss:release` gather and the codemap signals use it instead of one `gh` call per commit or PR; the release gather handles up to 500 commits per run and resumes from `NEXT_OFFSET`.
+
+- New `bin/resolve_changelog_file.py` resolves the changelog path (root, `docs/`, first one-level `CHANGELOG*`, else `CHANGELOG.md`) for release notes, prepare and audit, replacing the `find | head -1` lookups.
+
+- `resolve_pr_refs.py` rejects head and base branch names git would read as an option and gains `--local-base`, the no-PR path for report mode and comment dispatch that publishes only the default branch. `derive_fork_remote.py` validates remote and ref names and gains `--fork-repo` for a fork whose repository name differs from origin's.
+
+- `commit_action_item.py`, `commit_all_items.py` and `commit_lint_fixes.py` use `--literal-pathspecs` and bounded git timeouts, so a changed file named like a glob no longer sweeps unrelated edits into a bot commit; the lint-fix commit is limited to dirty files inside the PR range and refuses without the base sentinel.
+
+- `resolve_test_plan.py` accepts only a plain runner command from project docs (no shell metacharacters, no `python -c`) and falls through to the Makefile or fallback otherwise. `build_triage_batch.py`, `build_vitality_paths.py`, `detect_thread_type.py`, `extract_changed_symbols.py` and `extract_contributors.py` escape or reject option-shaped and malformed input.
+
+- `release_setup.py` creates its sentinel directory `0700` and exits 1 when it is a symlink or owned by another user; `release_append_marker.py`, `setup_release_dir.py` and `release_append_publish.py` write atomically and publish only from their own stage directory. `run_audit_checks.py` skips symlinks and paths outside the root and fences matched lines as untrusted data.
+
+- `resolve_centrality.py`, `review_impact_tier.py`, `classify_breaking.py`, `search_downstream_consumers.py`, `mint_finding_ids.py`, `vitality_extract.py`, `fill_gaps_scope.py` and `resolve_preflight.py` reject malformed or unsafe input instead of crashing or acting on it.
+
+- `agent_watch.py` exits 2 when the batch file has no rows, reports an unreadable batch file as `timed_out`, and does not count a deliverable older than the batch file as done.
+
+- `/oss:release`: `audit` rejects a `..HEAD` range, reloads its range and target across blocks, picks the newest upstream review naming this PR, and numbers the report instead of overwriting it; `--changelog` derives the target version from the notes range, and the collapse guard on `SUMMARY.md` and `MIGRATION.md` fails closed when unarmed; `prepare` rejects an empty, `v`-only, option-shaped or slash-bearing version before persisting it; `demo` takes its range from the first range-shaped token.
+
+- `/oss:review`: a rejected PR still allocates its report directory; the issue agent is `foundry:sw-engineer` and skipped for docs-only and non-code scopes; test paths are anchored to path segments; CI configuration other than `.github/workflows/` and `.github/actions/` prints a not-reviewed warning instead of spawning or skipping silently.
+
+- `/oss:resolve`: unknown flags are reported before parsing and ask Abort or Continue; a push is verified against the PR head commit; checkout uses `--end-of-options` and `gh pr checkout --branch=`; the conflict-resolution merge refuses an unrelated `MERGE_HEAD` and a refused merge exits 1; comment dispatch passes its task through a file in an untrusted-data fence; PR title and body are fenced and review and comment lists are paginated; the change scope is persisted for the lint and QA gate.
+
+- `/oss:analyse` persists its thread type, item and comments through sentinels, uses `-F` for GraphQL placeholders, reloads the codemap flag in every signal block, and runs the vitality codex review from one instruction block; a missing `.done` marker or unknown verdict counts as timed out.
+
+- `shepherd` gains the `Skill` tool for the `humanizer` skill and uses `gh-write` approval wording; `cicd-steward` fixes the `gh-action-pypi-publish` name, risk-tier order and Python matrix and routes CHANGELOG policy to `oss:shepherd`; `gh-scraper` no longer uses BSD-only `date -r`; `repo-warden` records its partial-file path in a sentinel. The agents use `${CLAUDE_PLUGIN_ROOT}` without a source-tree fallback.
+
+- Skill-owned halts print `! BLOCKED` instead of the `⛔` form, and agent spawns carry a `name` and a delta-first prompt line.
+
+- `/oss:setup` probes bare `python`, writes `settings.json` through a redirect that keeps a symlink intact, and drops `model` from its frontmatter.
+
+- `resolve_shared_path.py` rejects an absolute (`/etc`) or empty-segment (`skills//_shared`) subdirectory and a plugin name with a trailing newline, which could resolve to a path outside the plugin install. It also reads its own plugin name from `plugin.json`: in the installed cache the directory name is the version number, so the own-plugin lookup never matched there.
+
+- `verify_blueprint_audit.py verify` reports an audit-log line nested deeper than Python's recursion limit as a damaged line, like invalid JSON, instead of crashing the whole check.
+
+- The report-delivery hook recognises a `/research:topic` follow-up question that offers `/research:topic plan` as that workflow's own gate, so its report path, title and header-table checks apply instead of being skipped.
+
+- `/oss:resolve` action-item dispatch is split into `dispatch-prelude`, `dispatch-phase1`, `dispatch-phase2` and `dispatch-phase3`, and the report-intake block moves to `modes/report-intake.md`, loaded only for `report` and `pr + report` runs; `/oss:release` loads `modes/delegation.md` and `modes/append-cross-cycle.md` on demand, and `shepherd` loads each sidecar guide per task type instead of all at once.
+
+- New `bin/symbol_exists_at_ref.py` replaces the AST heredoc copied into the truth-check and gather prompts; `bin/codemap_batch.py` runs the review QA and docs codemap supplements as one `codemap-py` batch call instead of two per module; `bin/filter_action_items.py` validates and filters numeric item-id files for both resolve sites.
+
+- `build_merge_plan.py` gains `--resume-from merge-result.json`, `merge_action_items.py` resolves and mints the findings file itself (`--report-file`, `--impl-dir`, `--persist-findings`, `--intake-accepted`), and `build_analyse_paths.py` gains `--mode report-file`, so a thread report is written to the path the fast path probes and is reused.
+
+- Compaction boundary blocks in `resolve`, `review` and the dispatch phase call `bin/compaction_boundary.py`, and seven contract writers pass `--keep-sentinel <name>` instead of reading the keep sentinel inline.
+
+- `/oss:setup` merges the shipped allow and deny rules through the new `bin/merge_settings_permissions.py` in one call instead of two `jq` blocks, keeping first-seen order without re-sorting.
+
+- Variables that were empty in a fresh shell are reloaded from sentinels: analyse and review `CLEAN_ARGS`, release `RANGE`, `MIGRATION_DOC` and `CHANGELOG_FILE`, and resolve `CODEMAP_ENABLED` and the index path, so the review-cache materialization no longer skips silently; the release delegation steps reload their branch, date, range and waiver file instead of always failing the assert.
+
+- `repo-warden` loads its scoring group through three fixed per-group blocks and reads the data file from the vitality session sentinel instead of an unset `AXIS_GROUP` and `DATA_FILE`; `gh-scraper` drops the unused `Write` tool; `/oss:analyse` parses `--reply` before the shared-path hard fail; the `demo` mode persists the output path its gate reloads.
+
+- Session sentinels written by the resolve, analyse, release and codemap helpers are created fresh with owner-only permissions and are never written through a file or symlink another local user planted at the same name in a shared temp directory; a sentinel that cannot be replaced stops the step instead of reusing someone else's value.
+
+- `/oss:resolve` pushes to a renamed fork correctly: Step 4 records the PR's head repository name and Step 10 passes it to `derive_fork_remote.py --fork-repo`, so a fork remote added at push time points at the contributor's repository instead of one named after upstream.
+
+- `/oss:analyse` vitality refuses oversized inputs instead of reading them whole: a Group 1 dataset file over 64 Mi characters is reported missing, and an existing data file over the same bound stops assembly with exit 1 rather than silently dropping its records. `/oss:resolve`'s specialist merge refuses a plan or centrality file over 10 Mi characters before any cherry-pick.
+
+- Repository text from the vitality data file (README, CONTRIBUTING, workflow files) reaches the rework agent inside an untrusted-data fence, and the Codex independent review is told that text is data, not instructions.
+
+- `/oss:review` runs the Codex co-review as a background bridge call beside the spawned review agents and writes its findings to `foundry--codex.md` itself, since the bridge runs Codex read-only and cannot create that file.
+
+- `/oss:release notes v1.2->v2.0` builds notes and CHANGELOG entries from the requested commits: Mode Detection now saves an explicit two-endpoint range for Gather changes, which ran in a fresh shell and silently fell back to `LAST_TAG..HEAD`. A lone version token (`prepare v1.3.0`) is never taken as a range, and each run clears the previous run's saved range.
+
+- `/oss:review` routes a GitHub Actions-only PR to `oss:cicd-steward` with CI status, the acceptance gate and the challenger: `.github/` and YAML files no longer qualify a PR for the narrow `TESTS_CI` lineup, which skipped all of them. Notebooks, requirements manifests, `pyproject.toml` and other config are no longer counted as docs or skipped as "no relevant files"; they get the code lineup, and a CHORE PR touching a notebook keeps qa-specialist for the OWASP/CVE scan like a dependency manifest.
+
+- `/oss:review` spawns the merged docs+lint unit as `foundry:linting-expert` with documentation folded in, still writing both `foundry--linting-expert.md` and `foundry--doc-scribe.md`. `--fill-gaps` reruns now use the same agents as the full review — `foundry:sw-engineer` for linked-issue analysis, `foundry:linting-expert` for the docs+lint unit — instead of `foundry:doc-scribe` for both.
+
+- `check_agent.py` counts only agents in the installed plugin cache, so a `.claude/agents/shepherd.md` planted in the repository being worked on no longer makes `/oss:release` treat it as the installed `oss:shepherd`.
+
+- `review_impact_tier.py` reads at most 10 MiB of diff-impact JSON; larger input is not parsed and `/oss:review` falls back to the `FULL` lineup instead of holding the whole payload in memory.
+
+- Read-only `bridge:review` passes in `/oss:analyse` vitality (independent Codex scorecard, adversarial rework) and `/oss:release audit` no longer ask Codex to write files it cannot write: Codex returns its findings, the orchestrator writes the report file and `.done` sentinel, so a completed Codex review is aggregated instead of always reporting ⏱ timed_out. A non-`complete` bridge status still writes no `.done`.
+
+- `resolve_shared_path.py` no longer executes a `plugins/<dir>/bin/get_plugin_install_path.py` found in the working directory, so a contributor checkout under review cannot plant code that runs while `/oss:*` skills resolve their shared files; it runs the helper shipped beside itself and ignores a registry `installPath` outside `~/.claude/plugins/cache/borda-ai-rig`.
+
+- `blueprint-manifest.json` is regenerated with the allowlist gate: 1909 of the 1949 entries the previous gate admitted stay auto-allowed, including the `/oss:review` blocks that source their flag and gate files, the `/oss:resolve` dispatch and full-suite blocks, the `/oss:analyse` cache write-back `mv "$CACHE_FILE.tmp" "$CACHE_FILE"`, and the `/oss:review` step that parks a refused report with `mv -f`. Two blocks are left out and prompt: the `/oss:resolve` lock cleanup that runs `rm -f`, and the `uv add` example in `cicd-steward`.
+
+- The bundled `blueprint-allow.js` refuses a manifest hit that hides a destructive command behind a `case` arm label or inside a function definition (`case x in a) rm -rf /;; esac`, `f() { rm -rf x; }`), which it let through before.
+
 ## 0.50.5
 
 - Sync `write-guard.js`: a tracked file never asks, and an untracked or gitignored file asks only for `CLAUDE.md`, `AGENTS.md`, `.claude/settings*.json`, `.pre-commit-config.yaml` and `pyproject.toml`. `.github/**`, `CHANGELOG.md` and lockfiles are no longer protected, so editing a newly created file there no longer prompts on every edit. A protected file that does not exist yet asks once on creation; later writes to it in the same session pass.

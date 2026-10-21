@@ -268,6 +268,196 @@ class TestBuildChildEnvironment:
 
         assert "OPENAI_API_KEY" not in result
 
+    @pytest.mark.parametrize(
+        ("host", "expected"),
+        [
+            pytest.param("codex", {"OPENAI_API_KEY": "k", "CODEX_HOME": "/c"}, id="codex-gets-openai-only"),
+            pytest.param(
+                "claude", {"ANTHROPIC_API_KEY": "a", "CLAUDE_CONFIG_DIR": "/d"}, id="claude-gets-anthropic-only"
+            ),
+        ],
+    )
+    def test_host_receives_only_its_own_provider_keys(self, host: str, expected: dict[str, str]) -> None:
+        """A named child host receives its own vendor's credentials and never the other vendor's.
+
+        A model-directed command inside a Codex child could otherwise read the Anthropic token, and a Claude child the
+        OpenAI key, though neither child authenticates with them.
+        """
+        source = {"OPENAI_API_KEY": "k", "CODEX_HOME": "/c", "ANTHROPIC_API_KEY": "a", "CLAUDE_CONFIG_DIR": "/d"}
+
+        result = bridge_call.build_child_environment(source, platform="linux", host=host)
+
+        assert result == expected
+
+
+def test_spawned_codex_child_does_not_receive_anthropic_credentials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The host name in the child command selects the provider key set at spawn time.
+
+    The spawn seam is where the narrowing must hold: a Codex child launched with the session's Anthropic token in its
+    environment could hand it to a model-directed shell command.
+    """
+    environments: list[dict[str, str]] = []
+
+    class _Process:
+        """Provide the completed child API needed by the spawn environment check."""
+
+        returncode = 0
+
+        def communicate(self, timeout: float) -> tuple[str, str]:
+            """Return empty streams for the spawn environment check."""
+            return "", ""
+
+    def _fake_popen(command: list[str], **kwargs: object) -> _Process:
+        """Record child launch kwargs and return the protocol-compatible process."""
+        environments.append(kwargs["env"])
+        return _Process()
+
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-key")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "anthropic-key")
+    monkeypatch.setattr(bridge_call, "_resolved_command", lambda command: command)
+    monkeypatch.setattr(bridge_call.subprocess, "Popen", _fake_popen)
+
+    bridge_call._run_child(["codex", "exec"], tmp_path, timeout=1.0)
+
+    assert environments[0]["OPENAI_API_KEY"] == "openai-key"
+    assert "ANTHROPIC_API_KEY" not in environments[0]
+
+
+def test_background_supervisor_argv_omits_task_text(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The detached supervisor's command line carries no task text.
+
+    Other local users can read any process's argv; the task, which may quote repository content, stays in the job record
+    the launcher writes first.
+    """
+    commands: list[list[str]] = []
+    monkeypatch.setattr(
+        bridge_call.subprocess, "Popen", lambda command, **kwargs: commands.append(command) or SimpleNamespace(pid=1)
+    )
+    request = _request(tmp_path, verb="implement", background=True, task="Secret-bearing task text.")
+
+    bridge_call.start_background(request)
+
+    assert "--task" not in commands[0]
+    assert "Secret-bearing task text." not in commands[0]
+
+
+def test_supervisor_without_task_flag_loads_task_from_job_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A supervisor launched without --task runs the task its launcher stored in the job record.
+
+    This is the launch path start_background now uses; failing to load the stored task would leave every background job
+    erroring with "one of --task or --task-file is required".
+    """
+    monkeypatch.setattr(bridge_call.subprocess, "Popen", lambda command, **kwargs: SimpleNamespace(pid=1))
+    started = bridge_call.start_background(
+        _request(tmp_path, verb="implement", background=True, task="Stored task text.")
+    )
+    seen: list[str] = []
+
+    def _fake_run_request(request: bridge_call.Request, **kwargs: object) -> dict[str, Any]:
+        """Capture the task the supervisor resolved and return a finished envelope."""
+        seen.append(request.task)
+        return _finished_envelope()
+
+    monkeypatch.setattr(bridge_call, "run_request", _fake_run_request)
+
+    exit_code = bridge_call.main(
+        ["implement", "--job-id", started["job_id"], "--supervisor", "--workspace", str(tmp_path.resolve())]
+    )
+
+    assert exit_code == 0
+    assert seen == ["Stored task text."]
+
+
+def test_job_record_and_artifact_directories_are_private(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Job records and their directories are readable only by the current user.
+
+    The record holds the full task text and later the result; a umask-default record on a shared host exposes both.
+    """
+    monkeypatch.setattr(bridge_call.subprocess, "Popen", lambda command, **kwargs: SimpleNamespace(pid=1))
+
+    started = bridge_call.start_background(_request(tmp_path, verb="implement", background=True))
+
+    record = tmp_path.resolve() / ".temp" / "bridge" / "jobs" / f"{started['job_id']}.json"
+    if os.name == "nt":
+        assert record.is_file()
+    else:
+        assert stat.S_IMODE(record.stat().st_mode) == 0o600
+        assert stat.S_IMODE(record.parent.stat().st_mode) == 0o700
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(shutil.which("git") is None, reason="requires git on PATH")
+def test_workspace_state_does_not_run_repository_fsmonitor_hook(tmp_path: Path) -> None:
+    """The supervisor's git status never runs a core.fsmonitor command planted in the repository config.
+
+    A write-capable child can edit .git/config; without the override, the supervisor would execute that command outside
+    the child's sandbox when it snapshots the workspace.
+    """
+    marker = tmp_path / "fsmonitor-ran"
+    hook = tmp_path / "hook.sh"
+    hook.write_text(f'#!/bin/sh\ntouch "{marker.as_posix()}"\nexit 1\n', encoding="utf-8", newline="\n")
+    hook.chmod(0o755)
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "config", "core.fsmonitor", hook.as_posix()], check=True)
+
+    bridge_call._workspace_state(tmp_path)
+
+    assert not marker.exists()
+
+
+@pytest.mark.parametrize(
+    ("flag", "value"),
+    [
+        pytest.param("--model", "-c", id="model-option-shaped"),
+        pytest.param("--session-id", "--last", id="session-id-option-shaped"),
+        pytest.param("--run-id", "run id with spaces", id="run-id-free-text"),
+    ],
+)
+def test_caller_identifiers_reject_option_and_free_text_values(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], flag: str, value: str
+) -> None:
+    """Model, session and run identifiers are refused unless they look like identifiers.
+
+    A value starting with a dash would be parsed as a child CLI option, and free text reaches the child prompt and logs.
+    """
+    exit_code = bridge_call.main(["implement", "--task", "Do it.", f"{flag}={value}", "--workspace", str(tmp_path)])
+    response = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 2
+    assert response["error"].startswith(f"{flag} must match")
+
+
+def test_task_file_over_budget_is_refused_before_full_read(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """A task file larger than the transport budget is refused from a bounded read.
+
+    Reading the whole file first would let a huge file or an endless device exhaust memory before the budget check.
+    """
+    task_file = tmp_path / "task.txt"
+    task_file.write_bytes(b"x" * (bridge_call.MAX_TASK_UTF8_BYTES + 1))
+
+    exit_code = bridge_call.main(["advise", "--task-file", str(task_file), "--workspace", str(tmp_path)])
+    response = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 2
+    assert response["error"] == "task exceeds Bridge's encoded transport budget"
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="requires FIFO creation capability")
+def test_task_file_refuses_a_fifo_without_blocking(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """A FIFO passed as --task-file is refused at once instead of waiting for a writer."""
+    fifo = tmp_path / "task.fifo"
+    os.mkfifo(fifo)
+
+    exit_code = bridge_call.main(["advise", "--task-file", str(fifo), "--workspace", str(tmp_path)])
+    response = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 2
+    assert response["error"] == "--task-file must be a regular file"
+
 
 def test_fresh_review_and_resume_argv_preserve_routing_contract(tmp_path: Path) -> None:
     """Prevent subtle Codex argv drift that changes sandbox, review, or resume behavior."""
@@ -791,6 +981,7 @@ class TestGithubReadGuards:
             return subprocess.CompletedProcess(argv, 0, " 200 000 \n", "")
 
         monkeypatch.setattr(bridge_call.subprocess, "run", run)
+        monkeypatch.setattr(bridge_call, "_resolve_executable", lambda name: name)
         home, workspace = tmp_path / "home", tmp_path / "ws"
 
         result = bridge_call._sandbox_probe(["-c", "x=1"], workspace, ["curl", "u"], codex_home=home, timeout=7.0)
@@ -972,6 +1163,32 @@ def test_health_hard_link_preserves_result_without_writing_its_target(
     assert result["status"] == "complete"
     assert "health telemetry warning" in result["findings"][-1]
     assert outside.read_text(encoding="utf-8") == "unchanged\n"
+
+
+@pytest.mark.skipif(not hasattr(os, "symlink"), reason="requires symlink creation capability")
+def test_diagnose_health_summary_ignores_a_symlinked_health_log(tmp_path: Path) -> None:
+    """Keep diagnosis from folding another file's records into the workspace health summary through a planted link."""
+    paths = bridge_call.BridgePaths(tmp_path)
+    paths.prepare()
+    outside = tmp_path.parent / f"{tmp_path.name}-diagnose-health-target.jsonl"
+    outside.write_text(json.dumps({"status": "blocked", "ts": 1.0, "cost": 2.5}) + "\n", encoding="utf-8")
+    (paths.root / "health.jsonl").symlink_to(outside)
+
+    summary = bridge_diagnose._health_summary(tmp_path)
+
+    assert summary == {"fault_counts": {}, "latest_fault": {}, "cost_rollup": {}}
+
+
+def test_diagnose_health_summary_reads_a_regular_health_log(tmp_path: Path) -> None:
+    """Keep the regular workspace health log summarized after the no-follow descriptor checks."""
+    paths = bridge_call.BridgePaths(tmp_path)
+    paths.prepare()
+    record = {"status": "blocked", "ts": 1.0, "cost": 2.5, "direction": "d", "verb": "v", "model": "m"}
+    (paths.root / "health.jsonl").write_bytes(json.dumps(record).encode() + b"\n\xff\n")
+
+    summary = bridge_diagnose._health_summary(tmp_path)
+
+    assert summary == {"fault_counts": {"blocked": 1}, "latest_fault": {"blocked": 1.0}, "cost_rollup": {"d/v/m": 2.5}}
 
 
 def test_regular_health_member_appends_after_descriptor_validation(
@@ -1494,7 +1711,12 @@ def test_output_limit_incident_records_real_partial_write(tmp_path: Path, monkey
     """Report edits from a real overflowing child without automatically replaying its write task."""
     subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
     emitter = "from pathlib import Path\nimport sys\np = Path('landed.txt')\np.write_text(p.read_text() + 'once' if p.exists() else 'once')\nsys.stdout.buffer.write(b'X' * 400000)\nsys.stdout.flush()\n"
-    monkeypatch.setattr(bridge_call, "_resolved_command", lambda command: [sys.executable, "-c", emitter])
+    resolve_command = bridge_call._resolved_command
+    monkeypatch.setattr(
+        bridge_call,
+        "_resolved_command",
+        lambda command: [sys.executable, "-c", emitter] if command[0] == "codex" else resolve_command(command),
+    )
     result = bridge_call.run_request(_request(tmp_path, verb="implement"))
     incident = json.loads((tmp_path / result["incident"]).read_text())
     assert result["status"] == "blocked"
@@ -1738,7 +1960,7 @@ def test_output_overflow_detected_while_draining_a_completed_leader_is_terminal(
     )
     monkeypatch.setattr(bridge_call, "_terminate_process_group", lambda process: terminated.append(True))
 
-    outcome = bridge_call._run_child(["fake-peer"], tmp_path, timeout=1.0)
+    outcome = bridge_call._run_child([sys.executable], tmp_path, timeout=1.0)
 
     assert outcome.output_limited is True
     assert outcome.error == f"child output exceeded {bridge_call.MAX_CHILD_OUTPUT_BYTES} byte capture limit"
@@ -1808,6 +2030,7 @@ def test_undrained_peer_blocks_without_retry(tmp_path: Path, monkeypatch: pytest
 
     monkeypatch.setattr(bridge_call.subprocess, "Popen", Process)
     monkeypatch.setattr(bridge_call.os, "killpg", missing_group, raising=False)
+    monkeypatch.setattr(bridge_call, "_resolve_executable", lambda name: name)
     monkeypatch.setattr(bridge_call.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=1))
     try:
         result = bridge_call.run_request(_request(tmp_path, timeout_seconds=0.05), _job_path=job_path)
@@ -2322,6 +2545,10 @@ def test_simulated_windows_stalled_probe_uses_tasklist_and_never_signals(
         json.dumps({"job_id": job_id, "status": "running", "pid": 4242}), encoding="utf-8"
     )
     probes: list[list[str]] = []
+    tasklist = tmp_path / "tasklist.EXE"
+    tasklist.touch()
+    monkeypatch.setenv("PATH", str(tmp_path))
+    monkeypatch.setenv("PATHEXT", ".EXE")
 
     def _fake_tasklist(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         """Return tasklist's no-process response for the Windows probe."""
@@ -2334,7 +2561,7 @@ def test_simulated_windows_stalled_probe_uses_tasklist_and_never_signals(
 
     assert bridge_call.job_status(tmp_path, job_id)["status"] == "stalled"
     assert probes
-    assert probes[0][0] == "tasklist"
+    assert probes[0][0] == str(tasklist)
 
 
 def test_cancelling_a_stalled_job_keeps_the_terminal_stalled_signal(tmp_path: Path) -> None:
@@ -2443,6 +2670,145 @@ def test_corrupt_cancel_marker_is_ignored_instead_of_killing_the_supervisor(tmp_
     (paths.jobs / f"{job_id}.cancel.json").write_text(json.dumps({"job_id": "someone-else"}), encoding="utf-8")
 
     assert bridge_call._job_cancel_requested(job_path) is False
+
+
+@pytest.mark.skipif(
+    not DIRECTORY_SYMLINKS_SUPPORTED or not hasattr(os, "O_NOFOLLOW"), reason="needs symlinks and O_NOFOLLOW"
+)
+def test_cancel_marker_swapped_for_a_symlink_is_not_followed(tmp_path: Path) -> None:
+    """A cancellation marker replaced by a link after the leaf check is refused at open, never read through.
+
+    The containment check inspects the leaf with lstat first; a name swapped between that check and the read must not
+    let a link elsewhere decide whether the supervisor kills its child.
+    """
+    paths = bridge_call.BridgePaths(tmp_path)
+    paths.prepare()
+    job_id = "abababab-abab-4bab-8bab-abababababab"
+    elsewhere = tmp_path / "elsewhere.json"
+    elsewhere.write_text(json.dumps({"job_id": job_id}), encoding="utf-8")
+    (paths.jobs / f"{job_id}.cancel.json").symlink_to(elsewhere)
+
+    assert bridge_call._job_cancel_requested(paths.jobs / f"{job_id}.json") is False
+
+
+class TestProtectedPathGate:
+    """A write-capable run names protected workspace paths the peer changed, whether or not it reported them."""
+
+    @pytest.mark.parametrize(
+        ("written", "expected"),
+        [
+            pytest.param(
+                {".claude/settings.json": '{"hooks": {}}', ".mcp.json": "{}"},
+                ".claude, .claude/settings.json, .mcp.json",
+                id="claude-settings-and-mcp-servers",
+            ),
+            pytest.param({".git/hooks/pre-commit": "#!/bin/sh\n"}, ".git/hooks/pre-commit", id="git-hook"),
+        ],
+    )
+    def test_changed_protected_paths_are_named(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, written: dict[str, str], expected: str
+    ) -> None:
+        """A planted host setting or Git hook is reported even though the peer listed no file it touched.
+
+        Those files run code in a later host session or Git command; only the child's own report would otherwise reveal
+        them, and a hostile child would not report them.
+        """
+        (tmp_path / ".git" / "hooks").mkdir(parents=True)
+
+        def _planting_child(command: list[str], workspace: Path, timeout: float) -> bridge_call.ChildOutcome:
+            """Write the protected files, then report a clean result with no touched files."""
+            for relative, text in written.items():
+                (workspace / relative).parent.mkdir(parents=True, exist_ok=True)
+                (workspace / relative).write_text(text, encoding="utf-8")
+            return _outcome(core=_core())
+
+        monkeypatch.setattr(bridge_call, "_run_child", _planting_child)
+
+        envelope = bridge_call.run_request(_request(tmp_path, verb="implement"))
+
+        assert envelope["findings"] == [
+            f"Protected workspace path changed during this write-capable peer run: {expected}. Review it before any "
+            "host session or Git command trusts this workspace."
+        ]
+
+    def test_ordinary_edits_add_no_finding(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Source edits outside the protected set leave findings exactly as the peer reported them."""
+
+        def _editing_child(command: list[str], workspace: Path, timeout: float) -> bridge_call.ChildOutcome:
+            """Edit one ordinary source file."""
+            (workspace / "module.py").write_text("x = 1\n", encoding="utf-8")
+            return _outcome(core=_core())
+
+        monkeypatch.setattr(bridge_call, "_run_child", _editing_child)
+
+        envelope = bridge_call.run_request(_request(tmp_path, verb="implement"))
+
+        assert envelope["findings"] == []
+
+
+def test_job_record_over_the_size_bound_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A job record larger than its bound is refused from a bounded read instead of being loaded whole."""
+    paths = bridge_call.BridgePaths(tmp_path)
+    paths.prepare()
+    job_id = "cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd"
+    bridge_call._write_json(paths.jobs / f"{job_id}.json", {"job_id": job_id, "status": "queued", "pad": "x" * 256})
+    monkeypatch.setattr(bridge_call, "MAX_JOB_RECORD_BYTES", 64)
+
+    with pytest.raises(ValueError, match="exceeds its size bound"):
+        bridge_call._read_job(tmp_path, job_id)
+
+
+class TestSupervisorAlive:
+    """A recorded supervisor PID counts as alive only while it still names the same process."""
+
+    @pytest.mark.parametrize(
+        ("identity", "age_seconds", "alive"),
+        [
+            pytest.param((1000, 3600.0), 3590.0, True, id="same-process"),
+            pytest.param((0, 3600.0), 3590.0, False, id="pid-reused-by-another-user"),
+            pytest.param((1000, 10.0), 3590.0, False, id="pid-reused-by-a-younger-process"),
+            pytest.param(None, 3590.0, True, id="ps-unavailable-keeps-existence-verdict"),
+        ],
+    )
+    def test_identity_decides_a_posix_pid(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        identity: tuple[int, float] | None,
+        age_seconds: float,
+        alive: bool,
+    ) -> None:
+        """Owner and elapsed run time from ps tell the supervisor from a later process that reused its PID.
+
+        Only a positive mismatch counts as dead, so a host without a usable ps keeps the plain existence probe.
+        """
+        monkeypatch.setattr(bridge_call.os, "name", "posix")
+        monkeypatch.setattr(bridge_call.os, "getuid", lambda: 1000, raising=False)
+        monkeypatch.setattr(bridge_call, "_process_exists", lambda pid: True)
+        monkeypatch.setattr(bridge_call, "_posix_process_identity", lambda pid: identity)
+
+        assert bridge_call._supervisor_alive(4242, time.time() - age_seconds) is alive
+
+    def test_record_without_a_start_timestamp_skips_ps(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Records written before the timestamp existed keep the existence probe and never run ps."""
+        monkeypatch.setattr(bridge_call.os, "name", "posix")
+        monkeypatch.setattr(bridge_call, "_process_exists", lambda pid: True)
+        monkeypatch.setattr(bridge_call, "_posix_process_identity", lambda pid: pytest.fail("ps probed"))
+
+        assert bridge_call._supervisor_alive(4242, None) is True
+
+    def test_reused_pid_reports_the_job_stalled(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A running record whose PID now belongs to another user's process is reported stalled, ending the poll."""
+        paths = bridge_call.BridgePaths(tmp_path)
+        paths.prepare()
+        job_id = "efefefef-efef-4fef-8fef-efefefefefef"
+        record = {"job_id": job_id, "status": "running", "pid": 4242, "pid_started_ts": time.time() - 60}
+        bridge_call._write_json(paths.jobs / f"{job_id}.json", record)
+        monkeypatch.setattr(bridge_call.os, "name", "posix")
+        monkeypatch.setattr(bridge_call.os, "getuid", lambda: 1000, raising=False)
+        monkeypatch.setattr(bridge_call, "_process_exists", lambda pid: True)
+        monkeypatch.setattr(bridge_call, "_posix_process_identity", lambda pid: (0, 7200.0))
+
+        assert bridge_call.job_status(tmp_path, job_id)["status"] == "stalled"
 
 
 def test_write_verb_effort_failure_is_reported_without_a_second_attempt(
@@ -2573,6 +2939,7 @@ def test_static_diagnosis_binds_itself_to_one_complete_installed_payload(
 ) -> None:
     """Prevent sync from accepting a doctor detached from its manifests, setup core, or schemas."""
     baseline = bridge_diagnose._load_baseline()
+    monkeypatch.setattr(bridge_call, "_resolve_executable", lambda name: name)
 
     def _fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         """Return the baseline flags for the selected host executable."""
@@ -2746,6 +3113,7 @@ def test_implement_tool_is_listed_and_dispatches(tmp_path: Path, monkeypatch: py
     A prior regression could drop bridge_implement from the tool list while retiring bridge_delegate, which would remove
     the only write-capable path from Codex to Claude.
     """
+    (tmp_path / ".git").mkdir()  # project marker: implement refuses a folder without one
     captured = _capturing_run_request(monkeypatch)
     listed = {tool["name"] for tool in bridge_mcp.tool_definitions()}
 
@@ -2932,7 +3300,7 @@ def test_windows_batch_shim_uses_a_stricter_resolved_command_budget(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, executable: str, rejects: bool
 ) -> None:
     """Prevent a safe CreateProcess argv from exceeding Cmd.exe through an npm batch shim."""
-    monkeypatch.setattr(bridge_call.shutil, "which", lambda name: executable)
+    monkeypatch.setattr(bridge_call, "_resolve_executable", lambda name: executable)
     request = _request(tmp_path, task="a" * 7_800)
 
     if rejects:
@@ -3141,6 +3509,7 @@ def test_mcp_implement_runs_real_supervisor_with_claude_write_permissions(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Prevent implement from using read-only Claude flags or bypassing the real bridge envelope path."""
+    (tmp_path / ".git").mkdir()  # project marker: implement refuses a folder without one
     commands: list[list[str]] = []
     marker = tmp_path / "implemented-marker.txt"
     peer_detail = "The fake provider's private implementation detail belongs only in the transcript."
@@ -3343,7 +3712,7 @@ def test_cli_reads_a_task_containing_shell_metacharacters_from_a_file(
     """
     hostile = 'Fix `rm -rf /` in "quoted" text; $(whoami) && echo done\n'
     task_file = tmp_path / "brief.md"
-    task_file.write_text(hostile, encoding="utf-8")
+    task_file.write_text(hostile, encoding="utf-8", newline="\n")
     namespace = argparse.Namespace(
         verb="advise",
         task=None,
@@ -3423,7 +3792,7 @@ def test_child_receives_incremented_trusted_depth(tmp_path: Path, monkeypatch: p
     monkeypatch.setenv("BRIDGE_TEST_UNRELATED_SECRET", "must-not-propagate")
     monkeypatch.setattr(bridge_call.subprocess, "Popen", _fake_popen)
 
-    bridge_call._run_child(["fake-peer"], tmp_path, timeout=1.0)
+    bridge_call._run_child([sys.executable], tmp_path, timeout=1.0)
 
     assert environments == [{**bridge_call.build_child_environment(), bridge_call.DEPTH_ENVIRONMENT_VARIABLE: "3"}]
     assert "BRIDGE_TEST_UNRELATED_SECRET" not in environments[0]
@@ -3514,7 +3883,7 @@ def test_simulated_windows_child_launch_uses_a_new_process_group_without_posix_s
     monkeypatch.setattr(bridge_call.subprocess, "CREATE_NEW_PROCESS_GROUP", 2468, raising=False)
     monkeypatch.setattr(bridge_call.subprocess, "Popen", _fake_popen)
 
-    outcome = bridge_call._run_child(["fake-peer"], tmp_path, timeout=1.0)
+    outcome = bridge_call._run_child([sys.executable], tmp_path, timeout=1.0)
 
     assert outcome.returncode == 0
     assert launches[0]["creationflags"] == 2468
@@ -3657,6 +4026,18 @@ class _ReapedLeader:
         return self.returncode
 
 
+class _LeaderReapedDuringGrace:
+    """Provide a group leader still running when termination starts and reaped by the first grace wait."""
+
+    pid = 4242
+    returncode: int | None = None
+
+    def wait(self, timeout: float) -> int:
+        """Reap the leader on the first wait, as SIGTERM followed by a prompt exit does."""
+        self.returncode = 0
+        return self.returncode
+
+
 def _simulate_group_probe(
     monkeypatch: pytest.MonkeyPatch, grace_seconds: float, probe_error: type[OSError] | None
 ) -> list[tuple[int, int]]:
@@ -3679,17 +4060,30 @@ def _simulate_group_probe(
 def test_cleanup_grace_ends_once_the_process_group_is_gone(monkeypatch: pytest.MonkeyPatch) -> None:
     """Skip the rest of the cleanup grace when SIGTERM has already emptied the child's process group.
 
-    A tree that exits promptly must not make every termination wait out the full grace; the force-kill still follows so
-    the outcome matches the full-wait path.
+    A tree that exits promptly must not make every termination wait out the full grace. No force-kill follows: the group
+    is empty and its leader reaped, so its id may already belong to an unrelated process group.
     """
     signals = _simulate_group_probe(monkeypatch, grace_seconds=10.0, probe_error=ProcessLookupError)
 
     started = time.monotonic()
-    bridge_call._terminate_process_group(_ReapedLeader())
+    bridge_call._terminate_process_group(_LeaderReapedDuringGrace())
     elapsed = time.monotonic() - started
 
     assert elapsed < 5.0
-    assert signals == [(4242, bridge_call.signal.SIGTERM), (4242, 0), (4242, 9)]
+    assert signals == [(4242, bridge_call.signal.SIGTERM), (4242, 0)]
+
+
+def test_termination_never_signals_a_reaped_leader_whose_group_is_gone(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Send no group signal when the leader is already reaped and its process group already empty.
+
+    A late output-limit cleanup can reach termination after the child exited and drained. The group id is then free for
+    reuse, so even SIGTERM could hit an unrelated process group; only the signal-0 existence probe may run.
+    """
+    signals = _simulate_group_probe(monkeypatch, grace_seconds=10.0, probe_error=ProcessLookupError)
+
+    bridge_call._terminate_process_group(_ReapedLeader())
+
+    assert signals == [(4242, 0)]
 
 
 @pytest.mark.parametrize(
@@ -3717,6 +4111,7 @@ def test_cleanup_grace_is_fully_waited_while_the_process_group_has_a_member(
 
 @pytest.mark.parametrize("tree_status", [0, 1])
 def test_simulated_windows_termination_uses_tree_kill_before_the_leader_can_exit(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     tree_status: int,
 ) -> None:
@@ -3724,6 +4119,10 @@ def test_simulated_windows_termination_uses_tree_kill_before_the_leader_can_exit
     sent: list[int] = []
     killed: list[bool] = []
     tree_kills: list[list[str]] = []
+    taskkill = tmp_path / "taskkill.EXE"
+    taskkill.touch()
+    monkeypatch.setenv("PATH", str(tmp_path))
+    monkeypatch.setenv("PATHEXT", ".EXE")
     monkeypatch.setattr(bridge_call.os, "name", "nt")
     monkeypatch.setattr(
         bridge_call.subprocess,
@@ -3751,7 +4150,7 @@ def test_simulated_windows_termination_uses_tree_kill_before_the_leader_can_exit
     process = _Process()
     bridge_call._terminate_process_group(process)
 
-    assert tree_kills == [["taskkill", "/PID", "42", "/T", "/F"]]
+    assert tree_kills == [[str(taskkill), "/PID", "42", "/T", "/F"]]
     assert killed == ([True] if tree_status else [])
     assert sent == []
     assert process.returncode == 1

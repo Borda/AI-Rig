@@ -60,7 +60,7 @@ def test_check27_optional_foundry_gate(tmp_path: Path, case: str, flagged_line: 
     skill = tmp_path / skill_path
     skill.parent.mkdir(parents=True)
     skill.write_text(gate + "\n", encoding="utf-8")
-    checks = (plugin / "skills" / "audit" / "templates" / "checks-skills.md").read_text(encoding="utf-8")
+    checks = (plugin / "skills" / "audit" / "templates" / "checks-skills-crossplugin.md").read_text(encoding="utf-8")
     check27 = checks.split("## Check 27 —", 1)[1].split("\n## ", 1)[0]
     step2 = check27.split("**Step 2 — Sibling reach-in**:", 1)[1].split("**Step 3", 1)[0]
     command = re.findall(r"```bash\n(.*?)\n```", step2, re.DOTALL)

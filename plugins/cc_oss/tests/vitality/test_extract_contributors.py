@@ -184,6 +184,23 @@ def test_repo_flag_inserts_git_c(monkeypatch: pytest.MonkeyPatch) -> None:
     assert recorded[0][1:3] == ["-C", "/repo/x"]
 
 
+def test_git_log_timeout_exits_2(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    """A ``git log`` slower than the bound exits 2 with a message, the same code as a failed log.
+
+    The bound sits under the release call site's Bash timeout, so a slow range is reported by the script itself rather
+    than killed by the harness with no explanation.
+    """
+
+    def _slow(*_a: Any, **kwargs: Any) -> Any:
+        """Time out the way ``subprocess.run`` does when ``timeout`` elapses."""
+        raise ec.subprocess.TimeoutExpired(cmd="git", timeout=kwargs["timeout"])
+
+    monkeypatch.setattr(ec, "which", lambda _: "/fake/git")
+    monkeypatch.setattr(ec.subprocess, "run", _slow)
+    assert ec.main(["--range", "v1..v2"]) == 2
+    assert f"timed out after {ec._GIT_LOG_TIMEOUT} s" in capsys.readouterr().err
+
+
 def test_git_missing_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     """Return None for git → FileNotFoundError raised."""
     monkeypatch.setattr(ec, "which", lambda _: None)

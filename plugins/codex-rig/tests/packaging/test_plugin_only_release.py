@@ -1437,13 +1437,22 @@ class TestParallelExecutionDocumentation:
             pytest.param(PLUGIN_ROOT / "skills" / "code-review" / "SKILL.md", True, id="code-review-skill"),
             pytest.param(PLUGIN_ROOT / "skills" / "implement" / "SKILL.md", True, id="implement-skill"),
             pytest.param(PLUGIN_ROOT / "skills" / "manage" / "SKILL.md", True, id="manage-skill"),
+            pytest.param(PLUGIN_ROOT / "shared" / "portable-parallel-read.md", False, id="portable-parallel-read"),
         ],
     )
     def test_committed_document_avoids_private_plan_references(
         self, path: Path, requires_canonical_anchor: bool
     ) -> None:
-        """Keep each published parallel-execution document free of private plan links."""
+        """Keep each published parallel-execution document free of private plan links.
+
+        A skill's trigger-loaded reference files are part of its published instructions, so they are checked together
+        with its SKILL.md.
+        """
         text = path.read_text(encoding="utf-8")
+        if path.name == "SKILL.md":
+            text += "".join(
+                ref.read_text(encoding="utf-8") for ref in sorted((path.parent / "references").glob("*.md"))
+            )
 
         assert ".plans/" not in text, path
         assert "plan_multi-agent-parallelization" not in text, path

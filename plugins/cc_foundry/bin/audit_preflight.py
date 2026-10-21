@@ -31,7 +31,8 @@ Usage:
 
 Exit codes:
     0   pre-flight complete
-    1   mutually exclusive flags, no .claude/ directory, or templates unresolvable
+    1   mutually exclusive flags, no .claude/ directory, templates unresolvable, or the state
+        directory cannot be secured (unsafe session token, symlink, owned by another user)
 """
 
 from __future__ import annotations
@@ -40,6 +41,7 @@ import argparse
 import os
 import re
 import shutil
+import stat
 import sys
 import tempfile
 import time
@@ -67,13 +69,32 @@ FLAGS: dict[str, str] = {
 #: Names of the boolean audit state flags, in the order they are printed as ``key=value`` pairs.
 STATE_KEYS = ("local-mode", "adversarial", "efficiency", "upgrade", "skip-gate", "fast")
 
+#: Characters a session token may use; it becomes part of a directory name under TMPDIR, so no separator or ``..``.
+_TOKEN_RE = re.compile(r"[A-Za-z0-9_-]+")
+
 
 def _temp_base() -> Path:
     return Path(os.environ.get("TMPDIR") or tempfile.gettempdir())
 
 
 def _session_token() -> str:
-    return os.environ.get("CSID") or os.environ.get("CLAUDE_CODE_SESSION_ID") or "shared"
+    token = os.environ.get("CSID") or os.environ.get("CLAUDE_CODE_SESSION_ID") or "shared"
+    if not _TOKEN_RE.fullmatch(token):
+        raise ValueError(f"unsafe session token {token!r}: CSID must match [A-Za-z0-9_-]+")
+    return token
+
+
+def _private_dir(path: Path) -> Path:
+    """Create ``path`` for this user only, refusing a symlink or a directory another user owns.
+
+    ``TMPDIR`` falls back to a shared ``/tmp`` where another user can pre-create the predictable state directory;
+    writing into it would leak ``keep-items`` and ``audit-tpl`` or follow a planted link.
+    """
+    path.mkdir(parents=True, exist_ok=True, mode=0o700)
+    info = path.lstat()
+    if stat.S_ISLNK(info.st_mode) or (hasattr(os, "getuid") and info.st_uid != os.getuid()):
+        raise PermissionError(f"{path} is a symlink or owned by another user; remove it and rerun")
+    return path
 
 
 def parse_arguments(raw: str) -> tuple[dict[str, bool], str, str]:
@@ -114,8 +135,7 @@ def probe_tool(name: str, *, state_dir: Path) -> bool:
 
 def write_state(values: dict[str, str]) -> Path:
     """Write the session sentinels the later audit steps read back."""
-    state_dir = _temp_base() / f"audit-state-{_session_token()}"
-    state_dir.mkdir(parents=True, exist_ok=True)
+    state_dir = _private_dir(_temp_base() / f"audit-state-{_session_token()}")
     for name, value in values.items():
         (state_dir / name).write_text(f"{value}\n", encoding="utf-8", newline="\n")
     return state_dir
@@ -152,13 +172,17 @@ def main() -> int:
         return 1
 
     Path(".temp/state/skill-contract.md").unlink(missing_ok=True)
-    write_state(
-        {
-            "local-mode": str(state["local-mode"]).lower(),
-            "audit-tpl": str(templates),
-            "keep-items": keep_items,
-        }
-    )
+    try:
+        write_state(
+            {
+                "local-mode": str(state["local-mode"]).lower(),
+                "audit-tpl": str(templates),
+                "keep-items": keep_items,
+            }
+        )
+    except (OSError, ValueError) as exc:
+        print(f"! BLOCKED — cannot prepare audit state: {exc}")
+        return 1
 
     print(" ".join(f"{key}={str(state[key]).lower()}" for key in STATE_KEYS))
     print("tools: " + " ".join(f"{name}={'yes' if ok else 'no'}" for name, ok in tools.items()))

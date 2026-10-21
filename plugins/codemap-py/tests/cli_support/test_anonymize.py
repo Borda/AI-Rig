@@ -32,6 +32,29 @@ _SALT = b"x" * 32
 _BIN = Path(anonymize.__file__)
 
 
+def test_cli_exports_utf8_under_a_non_utf8_locale(tmp_path: Path) -> None:
+    """UTF-8 logs and the success arrow survive a legacy console and locale without a failed export status."""
+    source = tmp_path / "cli.jsonl"
+    source.write_text('{"note":"café 漢字","module":"private.module"}\n', encoding="utf-8", newline="\n")
+    output = tmp_path / "export" / "cli-anon.jsonl"
+    env = {**os.environ, "PYTHONIOENCODING": "cp1252", "PYTHONUTF8": "0", "PYTHONCOERCECLOCALE": "0", "LC_ALL": "C"}
+    result = subprocess.run(
+        [sys.executable, str(_BIN), "--input", str(source), "--output", str(output), "--salt", str(tmp_path / ".salt")],
+        env=env,
+        capture_output=True,
+        check=False,
+        timeout=15,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "1 records →" in result.stdout.decode("utf-8")
+    exported = output.read_bytes()
+    assert b"\r\n" not in exported
+    record = json.loads(exported.decode("utf-8"))
+    assert record["note"] == "café 漢字"
+    assert record["module"].startswith("sym_")
+
+
 def test_directory_input_preserves_runtime_topology_and_excludes_salt(tmp_path: Path) -> None:
     """Directory exports retain runtime subtrees without exporting the local reversal salt."""
     logs = tmp_path / "logs"
@@ -504,7 +527,100 @@ def test_load_salt_defers_to_existing_salt(tmp_path: Path) -> None:
     """An existing salt is read as-is (never overwritten), so its value stays stable across calls."""
     salt_file = tmp_path / ".salt"
     salt_file.write_text("ab" * 32)
+    salt_file.chmod(0o600)
     assert anonymize._load_salt(salt_file) == bytes.fromhex("ab" * 32)
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        pytest.param("", id="empty"),
+        pytest.param("ab", id="one-byte"),
+        pytest.param("ab" * 16, id="sixteen-bytes"),
+        pytest.param("ab" * 33, id="thirty-three-bytes"),
+        pytest.param("zz" * 32, id="not-hex"),
+    ],
+)
+def test_load_salt_rejects_a_stored_salt_that_is_not_32_hex_bytes(tmp_path: Path, content: str) -> None:
+    """A planted or truncated salt must fail loudly, not silently weaken every pseudonym.
+
+    ``bytes.fromhex("")`` accepts an empty salt, which would leave pseudonyms a plain unsalted digest; malformed hex
+    used to crash with a bare ``ValueError`` traceback.
+    """
+    salt_file = tmp_path / ".salt"
+    salt_file.write_text(content)
+    salt_file.chmod(0o600)
+    with pytest.raises(ValueError, match="salt file"):
+        anonymize._load_salt(salt_file)
+
+
+@_skip_windows_posix
+def test_load_salt_rejects_a_group_readable_salt(tmp_path: Path) -> None:
+    """A salt readable beyond its owner lets another local user reverse every pseudonym."""
+    salt_file = tmp_path / ".salt"
+    salt_file.write_text("ab" * 32)
+    salt_file.chmod(0o640)
+    with pytest.raises(ValueError, match="mode 0600"):
+        anonymize._load_salt(salt_file)
+
+
+@_skip_windows_posix
+def test_load_salt_refuses_to_follow_a_symlinked_salt(tmp_path: Path) -> None:
+    """A salt path that is a symlink could be repointed at attacker-chosen content."""
+    target = tmp_path / "elsewhere"
+    target.write_text("ab" * 32)
+    target.chmod(0o600)
+    link = tmp_path / ".salt"
+    link.symlink_to(target)
+    with pytest.raises(ValueError, match="symlink"):
+        anonymize._load_salt(link)
+
+
+@_skip_windows_posix
+def test_directory_input_skips_symlinked_jsonl(tmp_path: Path) -> None:
+    """A symlink inside the input tree is not followed, so a log outside the tree is never exported.
+
+    A shard symlinked to a ``.jsonl`` elsewhere (another project's log, a file the user never selected) would be read
+    and anonymized into the export; the regular shard beside it still exports.
+    """
+    outside = tmp_path / "outside.jsonl"
+    outside.write_text('{"session":"leaked-session"}\n')
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    (logs / "tools_real.jsonl").write_text('{"session":"real-session"}\n')
+    (logs / "tools_link.jsonl").symlink_to(outside)
+    output = tmp_path / "export"
+
+    assert anonymize.main(["--input", str(logs), "--out-dir", str(output), "--salt", str(logs / ".salt")]) == 0
+    assert len(list(output.rglob("*.jsonl"))) == 1
+
+
+@_skip_windows_posix
+def test_process_refuses_to_write_through_a_symlinked_output(tmp_path: Path) -> None:
+    """An export path that is a planted symlink is refused and its target keeps its content."""
+    src = tmp_path / "tools_x.jsonl"
+    src.write_text('{"session": "s"}\n')
+    victim = tmp_path / "victim.txt"
+    victim.write_text("keep")
+    link = tmp_path / "out-anon.jsonl"
+    link.symlink_to(victim)
+
+    with pytest.raises(OSError, match="symbolic link"):  # ELOOP from O_NOFOLLOW on Linux and macOS
+        anonymize.process(src, link, _SALT)
+    assert victim.read_text() == "keep"
+
+
+def test_main_reports_a_malformed_salt_without_a_traceback(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """A bad salt file is a clean exit 1 with the file named, not an uncaught ValueError."""
+    src = tmp_path / "tools_x.jsonl"
+    src.write_text('{"session": "s"}\n')
+    salt_file = tmp_path / "keep" / ".salt"
+    salt_file.parent.mkdir()
+    salt_file.write_text("ab")
+    salt_file.chmod(0o600)
+    rc = anonymize.main(["--input", str(src), "--out-dir", str(tmp_path / "out"), "--salt", str(salt_file)])
+    assert rc == 1
+    assert str(salt_file) in capsys.readouterr().err
 
 
 def test_load_salt_works_without_posix_fchmod(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -33,7 +33,7 @@ def _text(relative: str) -> str:
             id="review-collection-runtime-approval",
         ),
         pytest.param(
-            "skills/code-review/SKILL.md",
+            "skills/code-review/references/collection-failure.md",
             "ask for canonical PR URL and repository identity",
             id="review-pr-not-found",
         ),
@@ -44,12 +44,12 @@ def _text(relative: str) -> str:
             id="review-independence-decision",
         ),
         pytest.param(
-            "skills/code-review/SKILL.md",
+            "skills/code-review/references/historical-routes.md",
             "ask only for a concrete missing independent-route decision",
             id="review-missing-independent-route-decision",
         ),
         pytest.param(
-            "skills/code-review/SKILL.md",
+            "skills/code-review/references/validation-recovery.md",
             "Only a genuinely missing decision about expanded scope or a sensitive/protected effect warrants a question",
             id="review-protected-repair-decision",
         ),

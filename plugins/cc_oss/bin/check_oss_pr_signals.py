@@ -6,8 +6,9 @@ document summarising findings:
 
 1. **Dependency changes** — diff against ``pyproject.toml`` / ``requirements*.txt``
    (license-compatibility surface).
-2. **Possible secrets** — grep added ``.py`` lines for password/secret/api_key/
-   token/private_key/auth_token assignments with values 8+ chars long.
+2. **Possible secrets** — grep ``.py`` diff lines for password/secret/api_key/
+   token/private_key/auth_token assignments with values 8+ chars long. Findings
+   carry location + kind only (``path:line: password``), never the matched value.
 3. **API stability — removed exports** — exports removed from
    ``src/**/__init__.py``; flagged as ``DEPRECATION_NEEDED`` when the symbol
    was present in the latest release tag, else ``UNRELEASED_REMOVAL``. No tag
@@ -20,8 +21,8 @@ Usage:
                             [--diff-file <path>] [--output-file <path>] \\
                             [--timeout <seconds>]
 
-Default ``--timeout`` is 30 s — matches the longest subprocess inside the
-loop (``git show`` per removed export). When ``--latest-tag`` is omitted the
+Default ``--timeout`` is 30 s — the per-subprocess cap (``gh pr diff`` slices and
+the single ``git show`` of the release tag). When ``--latest-tag`` is omitted the
 script resolves it via ``git describe --tags --abbrev=0``; empty result is
 treated as "no release tag".
 
@@ -33,7 +34,8 @@ path falls back to the ``gh`` subprocess path unchanged.
 
 Exit codes:
     0 — JSON written (empty/missing data is non-fatal)
-    1 — bad argv (missing --clean-args) or invalid CLEAN_ARGS value
+    1 — bad argv (missing --clean-args), invalid CLEAN_ARGS value, option-shaped
+        --latest-tag, or --output-file that is a symlink
     2 — gh/git binary not on PATH
 """
 
@@ -60,13 +62,24 @@ _MAX_DIFF_FILE_SIZE = 10 * 1024 * 1024  # 10 MB guard against runaway reads — 
 #: `key=value`/`key: value` (8+ char value), plus shape-only patterns (AWS access key, PEM header,
 #: JWT) that carry no key= prefix. Applied only to the .py-filtered diff slice (see collect_signals'
 #: py_diff) — a secret in .env/YAML/.pem is out of this scan's scope; see _grep_secrets docstring.
+#: Named groups label the hit so the output can omit the matched value.
 _SECRET_RE = re.compile(
-    r"(?:(?:password|secret|api_key|token|private_key|auth_token)\s*[=:]\s*['\"]?[A-Za-z0-9+/._\-]{8,}['\"]?"
-    r"|AKIA[0-9A-Z]{16}"
-    r"|-----BEGIN [A-Z ]*PRIVATE KEY-----"
-    r"|eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)",
+    r"(?:(?P<key>password|secret|api_key|token|private_key|auth_token)\s*[=:]\s*['\"]?[A-Za-z0-9+/._\-]{8,}['\"]?"
+    r"|(?P<aws>AKIA[0-9A-Z]{16})"
+    r"|(?P<pem>-----BEGIN [A-Z ]*PRIVATE KEY-----)"
+    r"|(?P<jwt>eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+))",
     re.IGNORECASE,
 )
+
+#: Kind label per shape-only alternative of ``_SECRET_RE`` (the ``key=value`` branch labels itself).
+_SECRET_KINDS = {"aws": "aws-access-key", "pem": "private-key-header", "jwt": "jwt"}
+
+#: Unified-diff hunk header — group 1 is the first new-side line number of the hunk.
+_HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)")
+
+#: Upper bound on removed identifiers checked against the release tag; keeps the JSON bounded for a
+#: PR that removes thousands of tokens from ``__init__.py`` files.
+_MAX_EXPORTS_CHECKED = 500
 
 #: Identifier extractor — picks up Python symbol names from removed diff lines.
 _IDENT_RE = re.compile(r"\b[A-Za-z_]\w*\b")
@@ -78,7 +91,8 @@ class OssSignals:
 
     Attributes:
         deps_diff: Raw ``gh pr diff`` output for dependency files (str).
-        secret_matches: Lines from ``.py`` diff matching the secrets regex.
+        secret_matches: ``path:line: kind`` locations of ``.py`` diff lines matching the secrets regex
+            (matched value is never included).
         removed_exports: Symbol names removed from ``src/**/__init__.py``.
         deprecation_findings: Per-symbol verdict for removed exports.
         latest_tag: Tag used for the deprecation check (``""`` if unresolved).
@@ -217,7 +231,7 @@ def _resolve_latest_tag(git: str, timeout: int) -> str:
 
 
 def _grep_secrets(diff_text: str) -> list[str]:
-    """Return lines from ``diff_text`` matching the secret regex.
+    """Locate diff lines matching the secret regex, without echoing the credential.
 
     Scope limit: the caller feeds this only the ``.py``-filtered diff slice, so a secret landing in
     ``.env``, CI YAML, Terraform, or a ``.pem``/``.key`` file is never scanned — this check covers
@@ -227,22 +241,49 @@ def _grep_secrets(diff_text: str) -> list[str]:
         diff_text: Concatenated ``gh pr diff`` output for ``.py`` files.
 
     Returns:
-        List of matching lines (preserves order, deduplicated).
+        ``path:line: kind`` entries (preserves order, deduplicated). ``kind`` is the matched key name
+        (``password``, ``token``, ...) or a shape label (``aws-access-key``, ``private-key-header``,
+        ``jwt``); the line number is the new-side line and is omitted when no hunk header precedes the
+        line. A removed line is marked ``(removed)`` instead of numbered.
 
     Examples:
         >>> _grep_secrets("+password = 'hunter22hunter'\\n+x = 1\\n")
-        ["+password = 'hunter22hunter'"]
+        ['<unknown>: password']
         >>> _grep_secrets("+x = 1\\n")
         []
-        >>> _grep_secrets("+API_KEY=abcdef12345")
-        ['+API_KEY=abcdef12345']
+        >>> d = "diff --git a/a.py b/a.py\\n@@ -1,2 +1,3 @@\\n x = 1\\n+API_KEY=abcdef12345\\n"
+        >>> _grep_secrets(d)
+        ['a.py:2: api_key']
     """
     seen: set[str] = set()
     out: list[str] = []
+    path = ""
+    lineno: int | None = None
     for line in diff_text.splitlines():
-        if _SECRET_RE.search(line) and line not in seen:
-            seen.add(line)
-            out.append(line)
+        if line.startswith("diff --git "):
+            path = line.rpartition(" b/")[2] if " b/" in line else ""
+            lineno = None
+            continue
+        hunk = _HUNK_RE.match(line)
+        if hunk:
+            lineno = int(hunk.group(1))
+            continue
+        if line.startswith(("+++", "---")):
+            continue
+        m = _SECRET_RE.search(line)
+        if m:
+            removed = line.startswith("-")
+            where = path or "<unknown>"
+            if removed:
+                where += " (removed)"
+            elif lineno is not None:
+                where += f":{lineno}"
+            entry = f"{where}: {m.group('key').lower() if m.group('key') else _SECRET_KINDS[m.lastgroup or '']}"
+            if entry not in seen:
+                seen.add(entry)
+                out.append(entry)
+        if lineno is not None and not line.startswith("-"):
+            lineno += 1
     return out
 
 
@@ -299,17 +340,20 @@ def _check_deprecations(
     if not removed_exports:
         return []
     findings: list[str] = []
-    for export in removed_exports:
-        prior = _run(
-            [git, "show", f"{latest_tag}", "--", ":(glob)src/**/__init__.py"],
-            timeout=timeout,
-        )
+    # Constant output per tag: run git once and tokenise once, not per removed identifier.
+    show = _run([git, "show", "--end-of-options", latest_tag, "--", ":(glob)src/**/__init__.py"], timeout=timeout)
+    prior = set(_IDENT_RE.findall(show))
+    for export in removed_exports[:_MAX_EXPORTS_CHECKED]:
         if export in prior:
             findings.append(f"DEPRECATION_NEEDED: {export} (present in {latest_tag} — was released)")
         else:
             findings.append(
                 f"UNRELEASED_REMOVAL: {export} (absent from {latest_tag} — clean removal OK, no deprecation needed)"
             )
+    if len(removed_exports) > _MAX_EXPORTS_CHECKED:
+        findings.append(
+            f"EXPORT_CAP: {len(removed_exports)} removed identifiers; only first {_MAX_EXPORTS_CHECKED} checked"
+        )
     return findings
 
 
@@ -446,6 +490,12 @@ def main(argv: list[str] | None = None) -> int:
             f"check_oss_pr_signals: --clean-args must be a numeric PR number, got {args.clean_args!r}",
             file=sys.stderr,
         )
+        return 1
+    if args.latest_tag.startswith("-"):
+        print(f"check_oss_pr_signals: --latest-tag must not start with '-', got {args.latest_tag!r}", file=sys.stderr)
+        return 1
+    if args.output_file and Path(args.output_file).is_symlink():
+        print(f"check_oss_pr_signals: --output-file must not be a symlink, got {args.output_file!r}", file=sys.stderr)
         return 1
 
     try:

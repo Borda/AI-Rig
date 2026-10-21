@@ -19,7 +19,7 @@ Use `foundry:curator`, not `foundry:sw-engineer`, for `.claude/` edits (agents, 
 ## After Any Change
 
 1. **Cross-references** — name or capability changes → update every file mentioning it
-2. **Auto-memory MEMORY.md** — keep agents/skills roster in sync with disk (not under `.claude/`; path injected at session start — derive with `~/.claude/projects/$(git rev-parse --show-toplevel 2>/dev/null | tr '/' '-' | tr '.' '-')/memory/MEMORY.md`)
+2. **Auto-memory MEMORY.md** — keep agents/skills roster in sync with disk (not under `.claude/`; path injected at session start — fallback `$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_memory_dir.py")/MEMORY.md`)
 3. **`README.md`** — verify agent/skill tables, Status Line, Config Sync sections
 4. **`settings.json` permissions** — new `gh`, `bash`, or `WebFetch` call → add matching allow rule before marking done; scan diff for new CLI invocations
 5. **`</workflow>` tags** — mode sections sit inside block; closing tag after last mode, before `<notes>`

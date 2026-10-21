@@ -81,13 +81,70 @@ _RECURSIVE_TOOLS = frozenset({"Grep", "Glob"})
 #: Tools whose records may carry a producer-observed ``search_scope``; Bash gained it for standalone grep/rg commands.
 _SCOPED_TOOLS = _RECURSIVE_TOOLS | {"Bash"}
 #: Shell-search shapes that may walk a tree; command spelling cannot establish operand scope.
-#: ``grep``/``egrep``/``fgrep`` need an explicit
-#: recursive flag; ``rg`` recurses by default. Flags are matched as whole tokens so
-#: ``-rn``/``-rin`` combinations count and ``--recursive`` spelled out counts too.
-_RECURSIVE_SHELL_RE = re.compile(
-    r"(?:^|[\s;&|(])(?:rg|ripgrep)\s"
-    r"|(?:^|[\s;&|(])[ef]?grep\s+(?:[^\n;&|]*?\s+)?(?:-[A-Za-z]*[rR][A-Za-z]*|--(?:recursive|dereference-recursive|include(?:=\S*)?))(?=\s|$)"
-)
+#: ``rg`` recurses by default; ``grep``/``egrep``/``fgrep`` need an explicit recursive flag, matched as a whole token
+#: so ``-rn``/``-rin`` combinations count and ``--recursive`` spelled out counts too (see :func:`_is_recursive_shell`).
+_RG_COMMAND_RE = re.compile(r"(?:^|[\s;&|(])(?:rg|ripgrep)\s")
+#: Characters that end one simple shell command; a flag only counts toward the ``grep`` word in its own command.
+_COMMAND_SEPARATOR_RE = re.compile(r"[\n;&|]")
+_GREP_WORDS = frozenset({"grep", "egrep", "fgrep"})
+_RECURSIVE_GREP_LONG_FLAGS = frozenset({"--recursive", "--dereference-recursive", "--include"})
+#: C0 controls, DEL and C1 controls; ESC and CSI/OSC introducers among them let log text drive the terminal.
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
+
+def _is_recursive_grep_flag(token: str) -> bool:
+    """Return whether one whitespace-delimited word asks ``grep`` to walk a tree.
+
+    Examples:
+        >>> flags = ("-r", "-rn", "-inR", "--recursive", "--include=*.py", "-n", "--", "-")
+        >>> [_is_recursive_grep_flag(t) for t in flags]
+        [True, True, True, True, True, False, False, False]
+    """
+    if token in _RECURSIVE_GREP_LONG_FLAGS or token.startswith("--include="):
+        return True
+    letters = token[1:]
+    return (
+        token.startswith("-")
+        and not token.startswith("--")
+        and letters.isascii()
+        and letters.isalpha()
+        and ("r" in letters or "R" in letters)
+    )
+
+
+def _is_recursive_shell(command: str) -> bool:
+    """Return whether a Bash command line contains a recursive-looking ``rg``/``grep`` search.
+
+    One linear pass over whitespace-delimited words instead of a single regular expression: the former
+    lazy-quantifier pattern backtracked quadratically on repeated ``grep`` words (about 2 s at 40 KB of log text).
+    A ``grep`` word followed by a recursive flag in the same simple command (no ``;``, ``&``, ``|`` or newline between)
+    counts; the word may follow an opening parenthesis, as in ``$(grep -r x)``.
+
+    Args:
+        command: Bash command text recorded for a tool call.
+
+    Returns:
+        ``True`` for a recursive-looking search, else ``False``.
+
+    Examples:
+        >>> _is_recursive_shell("grep -rn 'x' src")
+        True
+        >>> _is_recursive_shell("echo $(grep -n x f | head); ls -r")
+        False
+        >>> _is_recursive_shell("cd d; rg -n x")
+        True
+        >>> _is_recursive_shell("grep " * 20000)
+        False
+    """
+    if _RG_COMMAND_RE.search(command):
+        return True
+    for segment in _COMMAND_SEPARATOR_RE.split(command):
+        grep_seen = False
+        for token in segment.split():
+            if grep_seen and _is_recursive_grep_flag(token):
+                return True
+            grep_seen = grep_seen or token.rpartition("(")[2] in _GREP_WORDS
+    return False
 
 
 @dataclass(frozen=True)
@@ -453,7 +510,7 @@ def classify_overlap(module: str, tool: str, target: str, search_path: str = "",
         return OverlapKind.UNKNOWN
     if targets_own_file(module, target):
         return OverlapKind.SOURCE_READ
-    if tool == "Bash" and _RECURSIVE_SHELL_RE.search(target):
+    if tool == "Bash" and _is_recursive_shell(target):
         return OverlapKind.UNKNOWN
     return OverlapKind.SOURCE_READ
 
@@ -868,6 +925,21 @@ def _resolve_inputs(args: argparse.Namespace) -> tuple[list[dict], list[dict], d
     return cli, tools, {}
 
 
+def _printable(value: object) -> str:
+    """Return ``value`` as text with control characters replaced by ``?`` for terminal output.
+
+    Session ids, skill names and record labels come from log files that tool commands can influence; printed raw,
+    an escape sequence in one of them would reach the terminal. JSON output is already escaped by ``json.dumps``.
+
+    Examples:
+        >>> _printable("sess\\x1b]0;x\\x07-1")
+        'sess?]0;x?-1'
+        >>> _printable(None)
+        'None'
+    """
+    return _CONTROL_CHARS_RE.sub("?", str(value))
+
+
 def render_text(summary: Summary) -> str:
     """Render a human-readable avoidance summary.
 
@@ -898,20 +970,20 @@ def render_text(summary: Summary) -> str:
         lines.append("  no tool events eligible — nothing to score.")
     if summary.record_counts:
         lines.append("  record counts:")
-        lines.extend(f"    {name}: {count}" for name, count in sorted(summary.record_counts.items()))
+        lines.extend(f"    {_printable(name)}: {count}" for name, count in sorted(summary.record_counts.items()))
     if summary.per_session:
         lines.append("  per session:")
         for session, count in sorted(summary.per_session.items(), key=lambda kv: (-kv[1], kv[0])):
-            lines.append(f"    {session or '<none>'}: {count}")
+            lines.append(f"    {_printable(session or '<none>')}: {count}")
     if summary.per_skill:
         lines.append("  per skill:")
         for skill, count in sorted(summary.per_skill.items(), key=lambda kv: (-kv[1], kv[0])):
-            lines.append(f"    {skill}: {count}")
+            lines.append(f"    {_printable(skill)}: {count}")
     if summary.per_runtime:
         lines.append("  per runtime:")
         for runtime, metric in sorted(summary.per_runtime.items()):
             lines.append(
-                f"    {runtime}: {metric['avoidance_count']}/{metric['total_tool_events']} "
+                f"    {_printable(runtime)}: {metric['avoidance_count']}/{metric['total_tool_events']} "
                 f"(rate {float(metric['rate']):.1%}; structural {metric['structural_search_count']}; "
                 f"unknown {metric['unknown_count']}; modules {metric['modules']})"
             )

@@ -26,8 +26,8 @@ _skip_no_bash = pytest.mark.skipif(_BASH is None, reason="resolve blocks are Bas
 _SPAWN_SITES = [
     pytest.param("modes/pr-intelligence.md", "agent-watch-intel.tsv", id="intel"),
     pytest.param("modes/conflict-resolution.md", "agent-watch-conflict.tsv", id="conflict"),
-    pytest.param("modes/action-item-dispatch.md", "agent-watch-challenge.tsv", id="challenge"),
-    pytest.param("modes/action-item-dispatch.md", "agent-watch-impl.tsv", id="impl"),
+    pytest.param("modes/dispatch-phase1.md", "agent-watch-challenge.tsv", id="challenge"),
+    pytest.param("modes/dispatch-phase2.md", "agent-watch-impl.tsv", id="impl"),
     pytest.param("modes/lint-qa-gate.md", "agent-watch-qa.tsv", id="qa"),
 ]
 
@@ -123,7 +123,7 @@ class TestTaskBudget:
                 "the same response as the Step 7b join's first tool call, so it is never a bookkeeping-only turn",
                 id="per-item-creates",
             ),
-            pytest.param("modes/action-item-dispatch.md", "never a response of task calls alone", id="step-8-updates"),
+            pytest.param("modes/dispatch-prelude.md", "never a response of task calls alone", id="step-8-updates"),
             pytest.param("modes/conflict-resolution.md", "riding with the next real tool call", id="conflict-creates"),
             pytest.param(
                 "modes/conflict-resolution.md",

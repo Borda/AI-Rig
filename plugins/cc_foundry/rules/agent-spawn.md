@@ -73,7 +73,7 @@ Separate from the per-spawn threshold in `claude-config.md` §Agent/Skill Spawn 
 
 | Tier | Ceiling | Covers |
 | -- | -- | -- |
-| `haiku` | 20 | Cheap/fast mechanical passes (`foundry:humanizer`, `oss:gh-scraper`, `oss:repo-warden`) |
+| `haiku` | 20 | Cheap/fast mechanical passes (`oss:gh-scraper`, `oss:repo-warden`) |
 | `sonnet` | 8 | Most execution-tier agents (`foundry:qa-specialist`, `doc-scribe`, `linting-expert`, `web-explorer`, `creator`, `oss:cicd-steward`, `oss:shepherd`, `research:data-steward`) |
 | `opus` | 5 | Reasoning-tier agents (`foundry:challenger`, `curator`, `sw-engineer`, `perf-optimizer`, `solution-architect`, `research:scientist`) |
 

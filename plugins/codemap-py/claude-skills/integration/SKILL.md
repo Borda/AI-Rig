@@ -8,7 +8,7 @@ description: |
   rebuild (use `/codemap-py:scan-codebase`).
 argument-hint: audit [--runtime {claude,codex,both}] [--json] [--since YYYY-MM-DD] | plan [--runtime ...] [--consumers <csv>] [--source {local-candidate,release}] [--out <artifact>] | apply --plan <artifact> --approve <sha256> | sync --source {local-candidate,release} --plan <artifact> --approve <sha256> [--runtime ...] | demo [--runtime ...]
 effort: medium
-allowed-tools: Bash, AskUserQuestion
+allowed-tools: Bash, Read, AskUserQuestion
 model: sonnet
 ---
 
@@ -60,44 +60,66 @@ NOT for: structural queries (use `/codemap-py:query-code`); standalone index reb
 
 ## Step 1: Resolve mode
 
-Parse `$ARGUMENTS` case-insensitively: empty or starts `audit` → audit; `plan` → plan; `apply` → apply; `sync` → sync; `demo` → demo. Otherwise ask `AskUserQuestion`: "Unrecognized command `$ARGUMENTS`. Which of the five modes did you mean?" Options: (a) `audit`, (b) `plan`, (c) `apply`, (d) `sync`, (e) `demo`. Wait for reply.
+Parse `$ARGUMENTS` case-insensitively: empty or starts `audit` → audit; `plan` → plan; `apply` → apply; `sync` → sync; `demo` → demo. Otherwise print `! Unknown mode '<first token>'. Modes: audit, plan, apply, sync, demo — re-invoke with one of them.` and stop. Never AskUserQuestion here: five modes exceed the four-option cap.
 
 ## Step 2: Run the mode
 
 > Launcher pinned to `$CLAUDE_PLUGIN_ROOT` — provider binary identity is the audited subject here, and the Codex counterpart has no PATH entry; a bare-name PATH shadow would audit the wrong binary.
 
+Each block below runs as written. Optional flags are appended only when the user asked for them; a value the block needs arrives through a variable whose unsubstituted `<placeholder>` aborts the block.
+
 ```bash
-"${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/codemap-py" integrate audit [--runtime <r>] [--json] [--since YYYY-MM-DD]  # timeout: 15000
+"${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/codemap-py" integrate audit  # timeout: 15000
 ```
+
+Optional: `--runtime <r>`, `--json`, `--since YYYY-MM-DD`.
 
 **`audit`** — bounded read-only inspection: provider/consumer versions, observed provider content identity, managed blocks, active consumer guidance reachability/content, index identity, runtime-scoped logs, usage, findings. Reports `pass`, `warn`, or `fail`; never invokes `plan`, `apply`, `sync`, `index`, query self-heal, native plugin-manager mutation, or global-instruction installation. Missing/unreachable/outdated active guidance reports as `consumer_query_guidance_missing`, `consumer_query_guidance_unreachable`, or `consumer_query_guidance_drift`, treated as source maintenance, not proof of active wiring. Same-version content mismatch = high-severity drift; native listing without session provenance = `session_catalog: unobservable`. Codex supplies runtime-scoped CLI/tool shards but no skill-start hook; host hooks expose no token usage. Report these evidence limits; never claim live fresh-session activation or token savings. `--json` emits schema 2 (`codemap-py.integration.v2`); `--since` filters telemetry by date. Default text; JSON for downstream reasoning.
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/codemap-py" integrate plan [--runtime <r>] [--consumers <csv>] [--source <s>] [--out <artifact>]  # timeout: 15000
+"${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/codemap-py" integrate plan  # timeout: 15000
 ```
+
+Optional: `--runtime <r>`, `--consumers <csv>`, `--source <s>`, `--out <artifact>`.
 
 **`plan`** — writes report artifact only. Relay CLI stdout artifact path, op count, and plan SHA-256 verbatim; never paraphrase hash.
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/codemap-py" integrate apply --plan <artifact> --approve <sha256>  # timeout: 30000
+# timeout: 30000
+PLAN="<plan artifact path>"
+PLAN_SHA="<approved plan SHA-256>"
+case "$PLAN" in *'<'*'>'*|"") echo "! BLOCKED — substitute PLAN with the plan artifact path"; exit 1 ;; esac
+case "$PLAN_SHA" in *'<'*'>'*|"") echo "! BLOCKED — substitute PLAN_SHA with the SHA-256 the user approved"; exit 1 ;; esac
+"${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/codemap-py" integrate apply --plan "$PLAN" --approve "$PLAN_SHA"
 ```
 
 **`apply`** — requires `--plan` + `--approve <sha256>` matching shown plan. Before execution, Read the saved plan artifact and print its full operation list and summary + SHA-256 once as the last reply text before calling `AskUserQuestion`; never in an option preview. The question text carries a plain summary (separate fields with actual newlines): "Apply this plan?\\nTargets: <consumers>; operations: <count>\\nPlan SHA-256: <sha256>\\n→ <artifact>", at most 6 plain lines (target 600 characters, hard cap 1,500), no table, pipe layout, or code fence. Preserve the exact hash and name the plan artifact path. Options carry labels and one-line descriptions, no previews: (a) Approve — run `apply` with exact SHA-256, (b) Cancel — leave the plan unapplied; preserve order and keep the recommended option second. Never construct/pass `--approve` without explicit confirmation. Maintainer/source-checkout operation; immutable-release users normally use `audit`, `sync`, `demo`. `apply` never runs reported native reinstall commands; `sync` never rewrites consumer source.
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/codemap-py" integrate sync --source <s> --plan <artifact> --approve <sha256> [--runtime <r>]  # timeout: 60000
+# timeout: 60000
+SOURCE="<local-candidate or release>"
+PLAN="<plan artifact path>"
+PLAN_SHA="<approved plan SHA-256>"
+case "$SOURCE" in local-candidate|release) ;; *) echo "! BLOCKED — SOURCE must be local-candidate or release"; exit 1 ;; esac
+case "$PLAN" in *'<'*'>'*|"") echo "! BLOCKED — substitute PLAN with the plan artifact path"; exit 1 ;; esac
+case "$PLAN_SHA" in *'<'*'>'*|"") echo "! BLOCKED — substitute PLAN_SHA with the SHA-256 the user approved"; exit 1 ;; esac
+"${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/codemap-py" integrate sync --source "$SOURCE" --plan "$PLAN" --approve "$PLAN_SHA"
 ```
+
+Optional: `--runtime <r>`.
 
 **`sync`** — same gate as `apply`: Read the saved plan artifact, print its full operation list and summary + SHA-256 once as the last reply text before `AskUserQuestion`, and carry targets, operation count, exact SHA-256, and plan artifact path in question text before passing `--approve`. At most 6 plain lines (target 600 characters, hard cap 1,500), no table, pipe layout, or code fence; options carry labels and one-line descriptions, no previews, in the same order as `apply`, with the recommended option second. Also requires `--source {local-candidate,release}`. After successful Claude-consumer or `codemap-py` install/reinstall, say: "Run `/reload-plugins` (or start a fresh session) before relying on the updated plugin — this session's tool list was resolved before the update." If `--runtime` included `codex` and synced `codex-rig`/`codemap-py`, add: "Start a new Codex session before relying on the updated plugin there too."
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/codemap-py" integrate demo [--runtime <r>]  # timeout: 20000
+"${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/codemap-py" integrate demo  # timeout: 20000
 ```
+
+Optional: `--runtime <r>`.
 
 **`demo`** — runs `audit` + one representative structural smoke query; records protocol/version/evidence. Disposable unless user separately approves mutation. Never claims a plain-vs-structural comparison, token savings, or current-session activation. Print returned report path.
 
 ## Step 3: Report
 
-Report exit meaning: `0` success; `1` runtime/filesystem failure or partial-sync journal (see table); `2` bad syntax or approval. For `apply` or `sync` exit `1`, report journal state (`planned → approved → applying:<t> → verified:<t> → complete`, or `rollback-started → rollback-succeeded|rollback-failed → recovery-required`). For `recovery-required`, relay only engine-reported bounded manual recovery commands; invent none.
+Report exit meaning per mode (see table): `0` success (`audit`: pass or warn); `1` for `audit`/`demo` = a `fail` verdict — report the findings, not a crash; `1` for `apply` = drift or filesystem failure, for `sync` = partial failure or journal state; `2` bad syntax or approval. For `apply` or `sync` exit `1`, report journal state (`planned → approved → applying:<t> → verified:<t> → complete`, or `rollback-started → rollback-succeeded|rollback-failed → recovery-required`). For `recovery-required`, relay only engine-reported bounded manual recovery commands; invent none.
 
 </workflow>

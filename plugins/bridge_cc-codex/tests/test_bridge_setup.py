@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -151,7 +152,10 @@ def _install_native_boundary(
         return _completed(command, stderr="unsupported mocked command", returncode=2)
 
     monkeypatch.setattr(setup.subprocess, "run", _fake_run)
-    monkeypatch.setattr(setup.shutil, "which", lambda executable: executable)
+    monkeypatch.setattr(setup, "_resolve_executable", lambda executable: executable)
+    monkeypatch.setattr(setup, "_resolved_command", lambda command: command)
+    # Tests play the operator at a terminal; the refusal test below overrides this.
+    monkeypatch.setattr(setup, "_operator_terminal", lambda: True)
     return calls
 
 
@@ -299,6 +303,35 @@ def test_peer_target_resolution_is_explicit_for_both_loaded_hosts(
     assert result["direction"] == direction
 
 
+@pytest.mark.parametrize(
+    ("action", "refused"),
+    [pytest.param("all", True, id="plan-refused"), pytest.param("check", False, id="read-only-check-allowed")],
+)
+def test_home_workspace_is_refused_except_for_the_read_only_check(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    action: str,
+    refused: bool,
+) -> None:
+    """Setup refuses the folders the MCP server refuses, so a plan never binds approvals or live probes to the home.
+
+    The live probe writes Bridge artifacts into the workspace; ``check`` writes nothing and stays available.
+    """
+    setup = _setup_module()
+    _redirect_user_state(setup, monkeypatch, tmp_path / "user-state")
+    calls = _install_native_boundary(setup, monkeypatch)
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(importlib.import_module("bridge_mcp"), "_user_home", lambda: home.resolve())
+
+    exit_code = setup.main(["--current-host", "codex", "--workspace", str(home), "--action", action])
+    result = json.loads(capsys.readouterr().out)
+
+    assert (result["classification"] == "workspace-refused") is refused
+    assert (exit_code == 2 and result["status"] == "blocked" and calls == []) is refused
+
+
 def test_capability_matrix_contains_only_the_version_gated_native_operations() -> None:
     """Prevent guessed login, plugin-enable, or scope commands from becoming executable setup paths."""
     setup = _setup_module()
@@ -340,6 +373,38 @@ def test_apply_rejects_missing_or_wrong_approval_before_any_native_subprocess(
     result = _invoke(setup, capsys, tmp_path, *extra)
 
     assert result["status"] == "denied"
+    assert result["state_changed"] is False
+    assert result["provider_call"] is False
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        pytest.param([], id="configure"),
+        pytest.param(["--action", "authenticate"], id="authenticate"),
+        pytest.param(["--action", "verify-live"], id="verify-live"),
+    ],
+)
+def test_valid_digest_is_refused_without_the_operator_terminal_before_any_native_subprocess(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], extra: list[str]
+) -> None:
+    """A digest the model itself planned cannot execute from piped streams, whatever the action.
+
+    The plan is real and signed, so the only missing element is operator proof: an agent that replays its own digest
+    through a captured shell must be stopped before inspection, locking, approval consumption or mutation.
+    """
+    setup = _setup_module()
+    _redirect_user_state(setup, monkeypatch, tmp_path / "user-state")
+    calls = _install_native_boundary(setup, monkeypatch)
+    plan = _invoke(setup, capsys, tmp_path, *extra)
+    calls.clear()
+    monkeypatch.setattr(setup, "_operator_terminal", lambda: False)
+
+    result = _invoke(setup, capsys, tmp_path, *extra, "--approve", str(plan["approval_digest"]))
+
+    assert result["status"] == "denied"
+    assert result["classification"] == "operator-terminal-required"
     assert result["state_changed"] is False
     assert result["provider_call"] is False
     assert calls == []
@@ -529,6 +594,63 @@ def test_concurrent_mutation_lock_stops_before_native_configuration(
     assert not any(command[:3] == ["claude", "plugin", "install"] for command, _ in calls)
 
 
+def test_abandoned_mutation_lock_from_a_crashed_setup_no_longer_blocks_forever(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Let an approved setup proceed once a crashed process's unreleased lock has gone stale."""
+    setup = _setup_module()
+    user_root = tmp_path / "user-state"
+    _redirect_user_state(setup, monkeypatch, user_root)
+    calls = _install_native_boundary(setup, monkeypatch)
+    plan = _invoke(setup, capsys, tmp_path)
+    lock = user_root / "bridge-setup" / "locks" / "claude-user.lock"
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.write_text("active\n", encoding="utf-8", newline="\n")
+    abandoned_at = time.time() - setup.MUTATION_LOCK_STALE_SECONDS - 60
+    os.utime(lock, (abandoned_at, abandoned_at))
+    calls.clear()
+
+    result = _invoke(setup, capsys, tmp_path, "--approve", str(plan["approval_digest"]))
+
+    assert result.get("classification") != "mutation-locked-or-repeat-fault"
+    assert any(command[:3] == ["claude", "plugin", "install"] for command, _ in calls)
+    assert not lock.exists()
+    assert not list(lock.parent.glob("*.stale"))
+
+
+def test_oversized_setup_journal_reads_its_newest_records_instead_of_failing_forever(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep approvals and mutations usable after the append-only journal outgrows the read bound."""
+    setup = _setup_module()
+    monkeypatch.setattr(setup, "MAX_STATE_RECORD_BYTES", 4096)
+    journal = tmp_path / "claude-user.jsonl"
+    old = [{"approval_fingerprint": f"old-{index}", "timestamp": index} for index in range(200)]
+    new = [{"approval_fingerprint": "newest", "timestamp": 10_000}]
+    journal.write_text("".join(json.dumps(record) + "\n" for record in old + new), encoding="utf-8", newline="\n")
+    assert journal.stat().st_size > setup.MAX_STATE_RECORD_BYTES
+
+    records = setup._read_records(journal)
+
+    assert records is not None
+    assert records[-1] == new[0]
+    assert {"approval_fingerprint": "old-0", "timestamp": 0} not in records
+    assert setup._consume_approval_once(journal, "newest") == "replayed"
+    assert setup._consume_approval_once(journal, "fresh") == "consumed"
+
+
+def test_oversized_setup_journal_without_a_record_boundary_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep a tampered journal whose tail holds no complete record from reading as empty state."""
+    setup = _setup_module()
+    monkeypatch.setattr(setup, "MAX_STATE_RECORD_BYTES", 64)
+    journal = tmp_path / "claude-user.jsonl"
+    journal.write_text("x" * 200, encoding="utf-8", newline="\n")
+
+    assert setup._read_records(journal) is None
+
+
 @pytest.mark.parametrize("sensitive_option", ["--token", "--access-token", "--device-code"])
 def test_cli_rejects_sensitive_values_without_echo_or_subprocess(
     tmp_path: Path,
@@ -584,7 +706,7 @@ def test_missing_cli_fails_closed_without_guessing_an_install_command(
         """Hide Claude while leaving Codex discoverable on the fake PATH."""
         return None if executable == "claude" else executable
 
-    monkeypatch.setattr(setup.shutil, "which", _missing_claude)
+    monkeypatch.setattr(setup, "_resolve_executable", _missing_claude)
     result = _invoke(setup, capsys, tmp_path)
 
     assert result["status"] == "blocked"
@@ -1271,6 +1393,7 @@ def test_codex_not_logged_in_status_is_never_treated_as_authenticated(
     """
     setup = _setup_module()
     monkeypatch.setattr(setup.subprocess, "run", lambda argv, **kwargs: _completed(list(argv), "Not logged in\n"))
+    monkeypatch.setattr(setup, "_resolved_command", lambda command: command)
 
     supported, authenticated = setup._authenticated("codex")
 

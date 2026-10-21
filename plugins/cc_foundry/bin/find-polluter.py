@@ -10,8 +10,9 @@ Usage:
 
 Exit codes:
     0 — polluter found and reported
-    1 — validation failure (missing arg, test passes when isolated, no
-        candidates, or pytest unavailable)
+    1 — validation failure (missing arg, option-shaped id or directory, test
+        passes when isolated, no candidates, pytest unavailable) or a pytest
+        run that exceeded its timeout
     2 — bad/missing required argument (argparse default)
 """
 
@@ -40,15 +41,19 @@ FAILURE_RE = re.compile(r"FAILED|ERROR")
 #: the value into shell-like contexts (e.g. ``--ignore=`` patterns, plugin hooks),
 #: so we reject hostile collection-only output up-front (A03:2021).
 _UNSAFE_NODE_ID_CHARS = frozenset(";&|$`()\n\r\t<>\\\"' \x00")
+#: Leading characters pytest does not read as a path: ``-`` starts an option (``-pmodule`` imports a module from the
+#: working directory) and ``@`` expands an args-from-file, recursively. A node ID or directory never starts with either.
+_OPTION_LEAD = ("-", "@")
 
 
 def _is_safe_node_id(node_id: str) -> bool:
-    """Return True when ``node_id`` contains no shell metacharacters.
+    """Return True when ``node_id`` is a plain path-shaped pytest node ID.
 
     pytest node IDs look like ``tests/test_foo.py::TestClass::test_method[param-id]``.
     Anything containing ``;``, ``&``, ``|``, ``$``, backtick, ``(``, ``)``, newline,
     carriage return, tab, redirection, quote, space, or NUL characters is rejected
-    as hostile pytest collection output.
+    as hostile pytest collection output, and so is an ID starting with ``-`` or ``@``
+    because pytest would read it as an option or an args-from-file.
 
     Args:
         node_id: candidate pytest node identifier.
@@ -65,10 +70,14 @@ def _is_safe_node_id(node_id: str) -> bool:
         False
         >>> _is_safe_node_id("tests/$(whoami).py::test_bar")
         False
+        >>> _is_safe_node_id("-pplugin::test_bar")
+        False
+        >>> _is_safe_node_id("@args.txt::test_bar")
+        False
         >>> _is_safe_node_id("")
         False
     """
-    if not node_id:
+    if not node_id or node_id.startswith(_OPTION_LEAD):
         return False
     return not any(ch in _UNSAFE_NODE_ID_CHARS for ch in node_id)
 
@@ -311,8 +320,8 @@ class ValidatedArgs:
 def _validate_and_resolve(args: argparse.Namespace) -> ValidatedArgs | None:
     """Check the parsed arguments and locate pytest, or explain why the run cannot start.
 
-    Returns ``None`` after printing the reason — a missing failing-test ID, a node ID carrying shell metacharacters, a
-    ``test_dir`` escaping the project root, or no pytest on PATH.
+    Returns ``None`` after printing the reason — a missing failing-test ID, a node ID carrying shell metacharacters or
+    shaped like an option, a ``test_dir`` shaped like an option or escaping the project root, or no pytest on PATH.
     """
     failing_test = args.failing_test
     test_dir = args.test_dir
@@ -324,7 +333,14 @@ def _validate_and_resolve(args: argparse.Namespace) -> ValidatedArgs | None:
         return None
 
     if not _is_safe_node_id(failing_test):
-        print(f"✗ failing test node ID rejected (shell metacharacters): {failing_test!r}", file=sys.stderr)
+        print(
+            f"✗ failing test node ID rejected (shell metacharacters or leading '-'/'@'): {failing_test!r}",
+            file=sys.stderr,
+        )
+        return None
+
+    if test_dir.startswith(_OPTION_LEAD):
+        print(f"✗ test_dir rejected (leading '-'/'@' is read by pytest as an option): {test_dir!r}", file=sys.stderr)
         return None
 
     # Reject test_dir values that escape the project root (path traversal).
@@ -352,7 +368,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     Returns:
         ``0`` when a polluter is found or ``1`` on validation failure, including a missing argument, an isolated pass,
-        no candidates, or a missing pytest executable. Argparse exits ``2`` for malformed arguments.
+        no candidates, a missing pytest executable, or a pytest run that exceeded its timeout. Argparse exits ``2`` for
+        malformed arguments.
 
     No doctest is provided because behavior depends on subprocesses and arguments; pytest covers the command.
     """
@@ -371,7 +388,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         help=f"Directory to search for candidate tests (default: {DEFAULT_TEST_DIR}).",
     )
     args = parser.parse_args(list(argv) if argv is not None else None)
+    try:
+        return _run(args)
+    except subprocess.TimeoutExpired as exc:
+        print(
+            f"✗ pytest run exceeded its {exc.timeout:g}s timeout — narrow test-dir or fix the hanging test",
+            file=sys.stderr,
+        )
+        return 1
 
+
+def _run(args: argparse.Namespace) -> int:
+    """Validate ``args``, then isolate, collect and binary-search; return the process status of :func:`main`."""
     validated = _validate_and_resolve(args)
     if validated is None:
         return 1

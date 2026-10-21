@@ -126,14 +126,16 @@ def compute_overlap(train_csv: Path, test_csv: Path, column: str = "patient_id")
         if not path.exists():
             raise FileNotFoundError(f"{label} CSV not found: {path}")
 
-    train_df = pd.read_csv(train_csv)
-    test_df = pd.read_csv(test_csv)
+    for label, path in (("train", train_csv), ("test", test_csv)):
+        header = list(pd.read_csv(path, nrows=0).columns)
+        if column not in header:
+            raise KeyError(f"{label} CSV missing required column '{column}': {sorted(header)}")
 
-    for label, df in (("train", train_df), ("test", test_df)):
-        if column not in df.columns:
-            raise KeyError(f"{label} CSV missing required column '{column}': {sorted(df.columns)}")
-
-    return len(set(train_df[column]) & set(test_df[column]))
+    # Load only the identifier column: a split CSV is often a full feature table, and reading every column of it just
+    # to intersect one would hold the whole dataset in memory.
+    train_ids = set(pd.read_csv(train_csv, usecols=[column])[column])
+    test_ids = set(pd.read_csv(test_csv, usecols=[column])[column])
+    return len(train_ids & test_ids)
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:

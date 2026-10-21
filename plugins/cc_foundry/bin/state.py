@@ -20,8 +20,12 @@ Values are stored under ``<tmp>/claude-state-<namespace>-<csid>.env`` (``<tmp>``
 = ``$TMPDIR`` or the platform temp dir — never a hardcoded ``/tmp``, which does
 not exist on native Windows Python). Both halves of an emitted line are
 constrained so ``eval`` is injection-safe: KEY must match
-``^[A-Za-z_][A-Za-z0-9_]*$`` (rejected by ``set``, skipped by ``load``) and
-VALUE is single-quote-quoted with embedded quotes escaped.
+``^[A-Za-z_][A-Za-z0-9_]*$`` and must not be a variable the shell or loader reads to
+change command lookup or load code (``PATH``, ``IFS``, ``BASH_ENV``, ``LD_*`` …) —
+rejected by ``set``, skipped by ``load`` — and VALUE is single-quote-quoted with
+embedded quotes escaped. ``set`` also rejects a VALUE holding a line break or NUL, since
+the state file is line-oriented and such a value would be re-read as a second
+``KEY=VALUE`` line that ``load`` then emits.
 
 Usage:
     state.py set <namespace> KEY=VALUE [KEY=VALUE ...]   # merge (create/update)
@@ -47,6 +51,49 @@ _NS_SAFE = re.compile(r"[^A-Za-z0-9._-]")
 #: separate shell statement (CWE-78).  Restricted to shell identifiers on both the
 #: write path (``set_values``) and the emit path (``load_values``).
 _KEY_SAFE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+#: Characters ``str.splitlines`` treats as a line boundary, plus NUL.  A value carrying one
+#: would be read back as a second ``KEY=VALUE`` line, so ``set_values`` refuses it.
+_LINE_BREAKS = re.compile(r"[\r\n\x00\x0b\x0c\x1c-\x1e\x85\N{LINE SEPARATOR}\N{PARAGRAPH SEPARATOR}]")
+#: Variables the shell reads to change command lookup or word splitting, or that make a
+#: child process load other code.  An ``eval`` of ``PATH='…'`` or ``IFS=','`` turns a
+#: state value into code execution, so they are never accepted as keys.
+_KEY_DENIED_NAMES = frozenset(
+    {
+        "BASHOPTS",
+        "BASH_ENV",
+        "CDPATH",
+        "FPATH",
+        "GLOBIGNORE",
+        "IFS",
+        "NODE_OPTIONS",
+        "PATH",
+        "PROMPT_COMMAND",
+        "PS4",
+        "PYTHONPATH",
+        "PYTHONSTARTUP",
+        "SHELLOPTS",
+    }
+)
+#: Dynamic-loader variable families (``LD_PRELOAD``, ``DYLD_INSERT_LIBRARIES`` …) denied by prefix.
+_KEY_DENIED_PREFIXES = ("DYLD_", "LD_")
+
+
+def _key_denied(key: str) -> bool:
+    """Report whether a key names a variable that must never be restored through ``eval``.
+
+    Args:
+        key: A shell identifier that already passed ``_KEY_SAFE``.
+
+    Returns:
+        True for shell/loader variables such as ``PATH``, ``IFS``, ``BASH_ENV`` and ``LD_PRELOAD``.
+
+    Examples:
+        >>> _key_denied("PATH"), _key_denied("LD_PRELOAD"), _key_denied("RUN_DIR")
+        (True, True, False)
+        >>> _key_denied("PATHS"), _key_denied("LDAP_URL")
+        (False, False)
+    """
+    return key in _KEY_DENIED_NAMES or key.startswith(_KEY_DENIED_PREFIXES)
 
 
 def _csid() -> str:
@@ -104,6 +151,41 @@ def _read(path: Path) -> dict[str, str]:
     return values
 
 
+def _assignment_problem(item: str) -> str | None:
+    """Describe why a ``KEY=VALUE`` argument cannot be stored, or return None when it can.
+
+    Args:
+        item: One command-line assignment.
+
+    Returns:
+        A stderr-ready message for a malformed assignment, empty or unsafe or reserved key, or a
+        value carrying a line break or NUL; None when the assignment is acceptable.
+
+    Examples:
+        >>> _assignment_problem("RUN_DIR=.reports/x") is None
+        True
+        >>> _assignment_problem("NOEQUALS")
+        "malformed assignment (want KEY=VALUE): 'NOEQUALS'"
+        >>> _assignment_problem("PATH=/evil")
+        "reserved key 'PATH' in 'PATH=/evil' — shell and loader variables cannot be restored through eval"
+        >>> _assignment_problem("A=x\\nB=1")
+        "value of 'A' contains a line break or NUL"
+    """
+    if "=" not in item:
+        return f"malformed assignment (want KEY=VALUE): {item!r}"
+    key, _, val = item.partition("=")
+    key = key.strip()
+    if not key:
+        return f"empty key in {item!r}"
+    if not _KEY_SAFE.fullmatch(key):
+        return f"unsafe key {key!r} in {item!r} — must match [A-Za-z_][A-Za-z0-9_]*"
+    if _key_denied(key):
+        return f"reserved key {key!r} in {item!r} — shell and loader variables cannot be restored through eval"
+    if _LINE_BREAKS.search(val):
+        return f"value of {key!r} contains a line break or NUL"
+    return None
+
+
 def set_values(namespace: str, assignments: list[str]) -> int:
     """Merge KEY=VALUE assignments into a namespace's state file.
 
@@ -113,23 +195,18 @@ def set_values(namespace: str, assignments: list[str]) -> int:
             KEY must be a shell identifier — ``^[A-Za-z_][A-Za-z0-9_]*$``.
 
     Returns:
-        0 on success, 2 if any assignment is malformed or carries an unsafe key.
+        0 on success, 2 if any assignment is malformed, carries an unsafe or reserved key, or holds
+        a value with a line break or NUL.
     """
     path = state_path(namespace)
     values = _read(path)
     for item in assignments:
-        if "=" not in item:
-            sys.stderr.write(f"state.py: malformed assignment (want KEY=VALUE): {item!r}\n")
+        problem = _assignment_problem(item)
+        if problem is not None:
+            sys.stderr.write(f"state.py: {problem}\n")
             return 2
         key, _, val = item.partition("=")
-        key = key.strip()
-        if not key:
-            sys.stderr.write(f"state.py: empty key in {item!r}\n")
-            return 2
-        if not _KEY_SAFE.fullmatch(key):
-            sys.stderr.write(f"state.py: unsafe key {key!r} in {item!r} — must match [A-Za-z_][A-Za-z0-9_]*\n")
-            return 2
-        values[key] = val
+        values[key.strip()] = val
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("".join(f"{k}={v}\n" for k, v in values.items()), encoding="utf-8")
     return 0
@@ -142,7 +219,8 @@ def load_values(namespace: str) -> int:
     injection-safe. The state file is not trusted to have been written by this
     module — any key failing ``^[A-Za-z_][A-Za-z0-9_]*$`` (legacy file, concurrent
     writer, hand edit) is skipped with a stderr warning rather than emitted, since
-    KEY precedes the quoting that protects VALUE.
+    KEY precedes the quoting that protects VALUE. Keys naming shell or loader
+    variables (``PATH``, ``IFS``, ``BASH_ENV``, ``LD_*`` …) are skipped the same way.
 
     Args:
         namespace: Namespace to load.
@@ -153,6 +231,9 @@ def load_values(namespace: str) -> int:
     for key, val in _read(state_path(namespace)).items():
         if not _KEY_SAFE.fullmatch(key):
             sys.stderr.write(f"state.py: skipping unsafe key {key!r} from state file\n")
+            continue
+        if _key_denied(key):
+            sys.stderr.write(f"state.py: skipping reserved key {key!r} from state file\n")
             continue
         escaped = val.replace("'", "'\\''")
         print(f"{key}='{escaped}'")

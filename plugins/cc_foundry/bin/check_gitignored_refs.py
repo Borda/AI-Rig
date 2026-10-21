@@ -7,7 +7,9 @@ Purpose:
 Scope:
     Scan explicit tracked text files for concrete paths under watched private
     directories such as ``.plans/`` and ``docs/specs/``. Templates, globs,
-    variables, nonexistent examples, and reviewed same-line waivers pass.
+    variables, nonexistent examples, and reviewed same-line waivers pass. Files
+    larger than ``MAX_FILE_BYTES`` and targets resolving outside the checkout
+    are skipped: neither can be a private document of this repository.
 Usage:
     ``python3 plugins/cc_foundry/bin/check_gitignored_refs.py <files...>``. The
     repository pre-commit configuration supplies changed text files.
@@ -66,10 +68,22 @@ from pathlib import Path
 #: conventions — extend this tuple to widen the check.
 WATCHED_DIRS = (r"\.plans", r"docs[\\/]specs")
 
+#: Longest directory prefix a token may carry before its watched directory. Unbounded repetition makes the scan
+#: quadratic on a long ``a/a/a/...`` line (12 s at 32000 segments); a path deeper than this keeps its last segments.
+MAX_PREFIX_SEGMENTS = 32
+
+_PREFIX_RE = r"(?:[\w.-]+[\\/]){0," + str(MAX_PREFIX_SEGMENTS) + "}"
+
 #: Matches a literal repo path into a watched directory. Placeholder characters
 #: (``<>{}$*``) are absent from the classes, so a templated path truncates and
 #: then fails the existing-file test instead of matching.
-TOKEN_RE = re.compile(r"(?<![\w.-])(?:[\w.-]+[\\/])*(?:" + "|".join(WATCHED_DIRS) + r")[\\/][\w./\\-]*\w")
+TOKEN_RE = re.compile(r"(?<![\w.-])" + _PREFIX_RE + r"(?:" + "|".join(WATCHED_DIRS) + r")[\\/][\w./\\-]*\w")
+
+#: Tracked documents citing private evidence are small; a larger file is generated or binary-like content.
+MAX_FILE_BYTES = 16 * 1024 * 1024
+
+#: Upper bound for one git call; a hung git fails closed through ``subprocess.TimeoutExpired``.
+GIT_TIMEOUT_SECONDS = 30
 
 #: Same-line escape hatch for deliberate, reviewed references.
 WAIVER_MARKER = "gitignored-ref-ok"
@@ -85,6 +99,7 @@ def repo_root() -> Path:
         check=True,
         capture_output=True,
         text=True,
+        timeout=GIT_TIMEOUT_SECONDS,
     ).stdout.strip()
     return Path(output)
 
@@ -100,12 +115,14 @@ def resolve_existing_file(token: str, root: Path, source_dir: Path) -> Path | No
     """Return the existing regular file a token resolves to, if any.
 
     Tries the token relative to the repository root first (the dominant way these references are written), then relative
-    to the referencing file's own directory.
+    to the referencing file's own directory. A file outside the checkout (reached through ``..`` or a symlink) is never
+    this repository's private document, and ``git check-ignore`` rejects it with status 128, so it does not qualify.
     """
     portable_token = token.replace("\\", "/")
+    resolved_root = root.resolve()
     for base in (root, source_dir):
         candidate = base / portable_token
-        if candidate.is_file():
+        if candidate.is_file() and candidate.resolve().is_relative_to(resolved_root):
             return candidate
     return None
 
@@ -117,6 +134,7 @@ def is_ignored(path: Path, root: Path) -> bool:
         check=False,
         capture_output=True,
         cwd=root,
+        timeout=GIT_TIMEOUT_SECONDS,
     )
     if result.returncode == 0:
         return True
@@ -128,6 +146,8 @@ def is_ignored(path: Path, root: Path) -> bool:
 def scan_file(source: Path, root: Path) -> list[str]:
     """Return violation messages for one tracked text file."""
     try:
+        if source.stat().st_size > MAX_FILE_BYTES:
+            return []
         text = source.read_text(encoding="utf-8")
     except (UnicodeDecodeError, OSError):
         return []

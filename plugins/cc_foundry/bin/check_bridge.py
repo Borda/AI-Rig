@@ -24,15 +24,36 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
 #: Name of the plugin whose installed and enabled state this detector reports.
 TARGET_PLUGIN = "bridge"
+#: Marketplace used when ``AI_RIG_MARKETPLACE`` is unset or not a plain name.
+_DEFAULT_MARKETPLACE = "borda-ai-rig"
+#: Characters a marketplace name may use; it becomes a cache directory component, so no separator or ``..``.
+_MARKETPLACE_RE = re.compile(r"[A-Za-z0-9_-]+")
+
+
+def _marketplace_from_env(raw: str | None) -> str:
+    """Return the marketplace named by ``raw``, or the default when it is unset or not a plain name.
+
+    Examples:
+        >>> _marketplace_from_env("my-fork")
+        'my-fork'
+        >>> _marketplace_from_env(None)
+        'borda-ai-rig'
+        >>> _marketplace_from_env("../../elsewhere")
+        'borda-ai-rig'
+    """
+    return raw if raw and _MARKETPLACE_RE.fullmatch(raw) else _DEFAULT_MARKETPLACE
+
+
 #: Marketplace the bridge is installed from. Overridable so a fork published under
 #: another marketplace name can use this detector unmodified — the selector and the
 #: cache layout both key off it, and neither is discoverable from the plugin alone.
-MARKETPLACE = os.environ.get("AI_RIG_MARKETPLACE") or "borda-ai-rig"
+MARKETPLACE = _marketplace_from_env(os.environ.get("AI_RIG_MARKETPLACE"))
 #: Plugin and marketplace joined as name@marketplace, the key used in Claude's plugin registry and settings.
 TARGET_SELECTOR = f"{TARGET_PLUGIN}@{MARKETPLACE}"
 #: Status printed when the plugin is installed and not disabled.

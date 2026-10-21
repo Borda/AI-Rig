@@ -12,6 +12,7 @@ from types import ModuleType
 from typing import Any
 
 import pytest
+from _skill_text import read_with_references
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 CODE_REVIEW_SKILL = PLUGIN_ROOT / "skills" / "code-review" / "SKILL.md"
@@ -1119,7 +1120,7 @@ def test_skill_routing_example_passes_the_installed_validator(tmp_path: Path) ->
 
 def test_skill_and_result_template_require_schema_three_role_and_sol_provenance() -> None:
     """Keep the producer contract aligned with installed-card and explicit-selection validation."""
-    skill = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(CODE_REVIEW_SKILL, "historical-routes.md", "batched-review.md")
     template = json.loads((PLUGIN_ROOT / "skills" / "code-review" / "result-template.json").read_text())
 
     assert "`specialist-manifest.json` uses schema version 3" in skill
@@ -1398,7 +1399,7 @@ class TestReviewRuntimeConsumer:
 
 def test_skill_requires_shared_runtime_gate_and_truthful_execution_labels() -> None:
     """Keep the producer from treating planned fan-out as runtime parallelism."""
-    skill = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(CODE_REVIEW_SKILL, "historical-routes.md", "batched-review.md")
 
     assert "`<run-directory>/execution-plan.json`" in skill
     assert "`<run-directory>/execution-manifest.json`" in skill

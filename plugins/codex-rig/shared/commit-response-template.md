@@ -1,5 +1,7 @@
 # Commit Response Template
 
+<!-- policy-sibling: skills/code-remediate/references/existing-conflict.md (Existing merge or conflict recovery) -->
+
 Use when user asks to commit or for commit summary, and for task-scoped local commits approved by the user's answer or a local Git approval grant.
 
 ## Required Commit Message Shape

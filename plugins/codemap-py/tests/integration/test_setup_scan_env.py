@@ -73,11 +73,12 @@ def _run_setup(
     Returns:
         Captured ``CompletedProcess`` with text-mode stdout/stderr.
     """
-    e = {**os.environ, **(env or {})}
     # Force the script's CSID = os.environ.get("CSID") or "shared" fallback regardless of
     # the host shell — a real Claude Code session (like the one running this suite) never
-    # sets CSID itself, only CLAUDE_CODE_SESSION_ID (which the script does not read).
-    e.pop("CSID", None)
+    # sets CSID itself, only CLAUDE_CODE_SESSION_ID (which the script does not read). A test
+    # that needs a CSID passes it through ``env``, which is applied after the pop.
+    e = {k: v for k, v in os.environ.items() if k != "CSID"}
+    e.update(env or {})
     return subprocess.run(
         [*launcher, *args],
         capture_output=True,
@@ -391,7 +392,7 @@ class TestIncrementalSentinel:
     def test_sentinel_absent_for_prefixed_lookalike_flag(
         self, launcher: list[str], fake_repo: Path, isolated_tmpdir: Path
     ) -> None:
-        """Ignore an option that only resembles the incremental flag."""
+        """Reject an option that only resembles the incremental flag (exit 5) instead of enabling it."""
         r = _run_setup(
             launcher,
             "--arguments",
@@ -399,8 +400,157 @@ class TestIncrementalSentinel:
             env={"CLAUDE_PLUGIN_ROOT": str(PLUGIN_ROOT), "TMPDIR": str(isolated_tmpdir)},
             cwd=str(fake_repo),
         )
-        assert r.returncode == 0, r.stderr
+        assert r.returncode == 5, r.stderr
+        assert "! Unknown flag(s): --incremental-foo" in r.stderr
         assert "No prior index" not in r.stderr
+
+
+# ---------------------------------------------------------------------------
+# Untrusted environment — plugin root, session suffix, planted files
+# ---------------------------------------------------------------------------
+
+
+def _executable_scan_index(plugin_root: Path) -> Path:
+    """Create an executable ``bin/scan-index`` under ``plugin_root`` and return its path."""
+    scan_index = plugin_root / "bin" / "scan-index"
+    scan_index.parent.mkdir(parents=True)
+    scan_index.write_text("#!/bin/sh\nexit 0\n")
+    scan_index.chmod(0o755)
+    return scan_index
+
+
+@_skip_posix_entrypoints_unavailable
+class TestUntrustedPluginRoot:
+    """``SCAN_BIN`` comes from this install, never from the environment or the working directory."""
+
+    def test_foreign_plugin_root_is_rejected(
+        self, launcher: list[str], fake_repo: Path, isolated_tmpdir: Path, tmp_path: Path
+    ) -> None:
+        """A ``CLAUDE_PLUGIN_ROOT`` naming another directory exits 1 even when it ships an executable ``scan-index``.
+
+        The old check only asked whether ``<root>/bin/scan-index`` was executable, so a hostile directory with such a
+        file was accepted and its path was written into the state file the caller sources.
+        """
+        evil = tmp_path / "evil-plugin"
+        _executable_scan_index(evil)
+        r = _run_setup(
+            launcher,
+            "--arguments",
+            "",
+            env={"CLAUDE_PLUGIN_ROOT": str(evil), "TMPDIR": str(isolated_tmpdir)},
+            cwd=str(fake_repo),
+        )
+        assert r.returncode == 1
+        assert "not this script's plugin root" in r.stderr
+        assert r.stdout.strip() == ""
+        assert list(isolated_tmpdir.iterdir()) == []
+
+    def test_unset_plugin_root_ignores_working_directory_plugin(
+        self, launcher: list[str], fake_repo: Path, isolated_tmpdir: Path
+    ) -> None:
+        """An empty ``CLAUDE_PLUGIN_ROOT`` resolves to this install, not to ``plugins/codemap-py`` under the cwd.
+
+        The former default was cwd-relative, so running inside an untrusted checkout that carried an executable
+        ``plugins/codemap-py/bin/scan-index`` put that checkout's path into ``SCAN_BIN``.
+        """
+        planted = _executable_scan_index(fake_repo / "plugins" / "codemap-py")
+        r = _run_setup(
+            launcher,
+            "--arguments",
+            "",
+            env={"CLAUDE_PLUGIN_ROOT": "", "TMPDIR": str(isolated_tmpdir)},
+            cwd=str(fake_repo),
+        )
+        assert r.returncode == 0, r.stderr
+        scan_bin = _read_state(Path(r.stdout.strip()))["SCAN_BIN"]
+        assert Path(scan_bin) == (PLUGIN_ROOT / "bin" / "scan-index").resolve()
+        assert Path(scan_bin) != planted
+
+
+@_skip_posix_entrypoints_unavailable
+class TestSessionSuffix:
+    """The ``CSID`` suffix names files inside the temp dir and nothing else."""
+
+    @pytest.mark.parametrize("bad_csid", ["../escaped", "a/b", "..", "x y"])
+    def test_unsafe_csid_falls_back_to_shared(
+        self, launcher: list[str], fake_repo: Path, isolated_tmpdir: Path, bad_csid: str
+    ) -> None:
+        """A ``CSID`` that is not a plain filename component is replaced by ``shared`` with a stderr warning.
+
+        Left verbatim, ``../escaped`` or a value with a separator would move the sentinel writes out of ``TMPDIR``.
+        """
+        r = _run_setup(
+            launcher,
+            "--arguments",
+            "",
+            env={"CLAUDE_PLUGIN_ROOT": str(PLUGIN_ROOT), "TMPDIR": str(isolated_tmpdir), "CSID": bad_csid},
+            cwd=str(fake_repo),
+        )
+        assert r.returncode == 0, r.stderr
+        assert "CSID is not a plain filename component" in r.stderr
+        assert (isolated_tmpdir / "codemap-proj-slug-shared").is_file()
+
+    def test_plain_csid_is_used_as_suffix(self, launcher: list[str], fake_repo: Path, isolated_tmpdir: Path) -> None:
+        """A UUID-shaped ``CSID`` is kept as the terminal suffix of the handoff files."""
+        r = _run_setup(
+            launcher,
+            "--arguments",
+            "",
+            env={"CLAUDE_PLUGIN_ROOT": str(PLUGIN_ROOT), "TMPDIR": str(isolated_tmpdir), "CSID": "8f3a-1c.x_9"},
+            cwd=str(fake_repo),
+        )
+        assert r.returncode == 0, r.stderr
+        assert (isolated_tmpdir / "codemap-proj-slug-8f3a-1c.x_9").is_file()
+
+
+@_skip_posix_entrypoints_unavailable
+class TestPlantedFiles:
+    """Files planted at the predictable sentinel names fail the run loudly instead of being followed."""
+
+    def test_directory_at_handoff_name_exits_write_failed(
+        self, launcher: list[str], fake_repo: Path, isolated_tmpdir: Path
+    ) -> None:
+        """A directory at a handoff filename makes the rename fail: exit 4, no traceback, no temp-file residue.
+
+        The rename refusal used to surface as an uncaught ``OSError``; a caller that ignored the exit status could then
+        read whatever the planting party left behind.
+        """
+        (isolated_tmpdir / "codemap-proj-slug-shared").mkdir()
+        r = _run_setup(
+            launcher,
+            "--arguments",
+            "",
+            env={"CLAUDE_PLUGIN_ROOT": str(PLUGIN_ROOT), "TMPDIR": str(isolated_tmpdir)},
+            cwd=str(fake_repo),
+        )
+        assert r.returncode == 4
+        assert "cannot write state" in r.stderr
+        assert "Traceback" not in r.stderr
+        assert r.stdout.strip() == ""
+        assert not [p for p in isolated_tmpdir.iterdir() if p.name.startswith(".codemap-setup-tmp.")]
+
+    @pytest.mark.skipif(not hasattr(os, "O_NOFOLLOW"), reason="platform has no O_NOFOLLOW")
+    def test_symlink_at_incremental_sentinel_is_not_followed(
+        self, launcher: list[str], fake_repo: Path, isolated_tmpdir: Path, tmp_path: Path
+    ) -> None:
+        """A symlink planted at the incremental sentinel name is refused rather than created through.
+
+        ``Path.touch`` follows a final-component symlink and creates its target; the dangling target here would
+        therefore have appeared. The run must instead exit 4 and leave the target absent.
+        """
+        env = {"CLAUDE_PLUGIN_ROOT": str(PLUGIN_ROOT), "TMPDIR": str(isolated_tmpdir)}
+        first = _run_setup(launcher, "--arguments", "--incremental", env=env, cwd=str(fake_repo))
+        assert first.returncode == 0, first.stderr
+        sentinel = (
+            isolated_tmpdir / f"codemap-incremental-noop-{_read_state(Path(first.stdout.strip()))['PROJ_SLUG']}-shared"
+        )
+        sentinel.unlink()
+        victim = tmp_path / "victim-created-through-link"
+        sentinel.symlink_to(victim)
+
+        second = _run_setup(launcher, "--arguments", "--incremental", env=env, cwd=str(fake_repo))
+        assert second.returncode == 4
+        assert not victim.exists()
 
 
 # ---------------------------------------------------------------------------

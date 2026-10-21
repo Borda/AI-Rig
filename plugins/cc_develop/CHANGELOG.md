@@ -1,5 +1,129 @@
 # Changelog
 
+## 0.42.0
+
+- Narrow broad `find`, `node`, `claude`, and `sed` allows while retaining scoped read-only rules and broad `eval`/`python` for existing recipes; ad-hoc commands outside shipped blocks now prompt unless a narrower rule covers them. Setup removes the old broad entries from `settings.json`, including an identical entry added by hand.
+
+- Shared keep-state and codemap helpers reject unsafe sentinel slugs or session IDs before changing state, while codemap keeps its documented `shared` session fallback.
+
+- `/develop:feature` keeps its TDD cycle count and 30-minute wall clock across Step 4 → Step 3 returns, so the 5-cycle cap now trips across review returns instead of silently resetting; each new run still starts from zero. `/develop:refactor` keeps one wall clock per run the same way (its cycle count still resets per Step 4 pass, as documented), and its Step 4 loop states a single increment site, so a change-test pair no longer counts twice.
+
+- `/develop:refactor` writes its characterization-gate exit to its own `dev-refactor-gate-exit` sentinel instead of the `dev-gate-exit` sentinel `/develop:debug` also writes, declares `<module_name>`, `<target_module>` and `<test_file>` as substitution tokens (unsubstituted, `eval` parsed them as shell redirects), and no longer trips the mixed-goal split question on "add type annotations/hints" goals.
+
+- `/develop:feature` runs the pre-change baseline suite once, at the pre-loop gate, instead of a second identical run in TDD step 1; no longer claims solo Step 4 spawns `foundry:qa-specialist` (edge-case tests come from team mode Wave 2 or the quality stack's Progressive Review); and the "no test suite" Branch Safety Guard branch now keys on the full-suite run exiting 5, not on a missing `$TEST_CMD` that the gate already blocks.
+
+- `/develop:setup` validates the merged `~/.claude/settings.json` with `python -m json.tool` instead of `jq`: on a machine without `jq` (native Windows) the validation used to exit 127 and restore the backup over a good merge. Setup and the README now say to re-run `/develop:setup` after foundry's rules are delivered or removed, so the `develop-quality-gates.md` link switches between the delta and full form.
+
+- `parse-skill-flags.py` no longer drops a `--keep` value whose quotes the shell consumed when the host substituted `$ARGUMENTS` (`--keep "a b"` used to arrive as `--keep a b` and persist an empty keep list); it now also accepts `--keep 'a b'` and `--keep="a b"`, strips a dangling `--keep` from `CLEAN_ARGS`, and warns on stderr when the value was unquoted or empty, so a lost compaction keep list is visible instead of silent.
+
+- `/develop:debug`, `/develop:feature`, `/develop:plan` and the shared `--plan` pre-flight read parsed flags from per-session `parse-skill-flags.py --keep-state` sentinels instead of running `eval` on script output, leaving the compaction contract alone (`--inlined`). `parse-skill-flags.py` gains `--keep-state`, `--out-file` and `--inlined` (synced from oss).
+
+- `dev_load_shared.py` applies the same source-repository gate on its cold path: with no usable `dev-shared` sentinel and no installed develop plugin, a working directory without develop's own manifest gets one `! BREAKING` line and exit 1, `--optional` included, instead of the planted document's text.
+
+- `resolve_shared_path.py` without a registry or cache hit uses a cwd-relative `plugins/<dir>/...` tree only inside that plugin's own source repository (its `.claude-plugin/plugin.json` names it); elsewhere it exits 1 with a `!` message, so a repository under analysis can no longer supply the codemap-py contract or the foundry compaction gate path.
+
+- `dev_shared_resolve.py` without an installed develop plugin prints the cwd-relative `plugins/cc_develop/skills/_shared` only when the working directory is the develop source repository (its `plugins/cc_develop/.claude-plugin/plugin.json` names `develop`). In any other repository it exits 1 with a `!` message and `--init` writes no sentinel, so a repository under analysis can no longer supply the protocol docs a develop skill loads.
+
+- `heal_git_artifacts.py worktrees` keeps unregistered directories unless `--include-orphans` is passed, re-checks one right before deleting it, reports symlinked children as skipped and rejects a `*` managed prefix. The worktree-isolation leftover report and its approved removal both pass `--include-orphans`, so the list you approve and what gets removed stay the same.
+
+- `/develop:plan`, `review`, `fix`, `refactor`, `debug` and `feature` load their shared protocol docs through the new `bin/dev_load_shared.py`: one command per load instead of a sentinel read, a fallback and a cat. An empty or stale shared-dir sentinel now re-resolves the install instead of failing on a dead path.
+
+- `/develop:review` challenger brief now uses the consolidator's severity map (Blockers → critical/high, Concerns → medium, Nitpicks → low), so challenger findings rank the same as the other reviewers'.
+
+- `/develop:feature`, `/develop:fix`, `/develop:debug` and `/develop:refactor` keep a quoted `--keep` spec intact, read the cleaned arguments for slug, issue and Codemap-target detection, and write the negated-flag sentinels under a variable-named file too (for example `challenge-enabled`), keeping the flag-named file as an alias.
+
+- Sentinel writes in the bin helpers are atomic (temp file, then replace), so a symlink planted at a predictable sentinel name in a shared temp dir is replaced, never followed; the plan namespace stays confined to `dev-plan-*` under the temp dir.
+
+- Sentinel writers in the bin helpers refuse a sentinel another user already owns (the write fails with an error instead of reusing a planted value; the codemap currency status is skipped), every directory they create is mode 0700, and the codemap gate rejects a plan namespace that is a symlink, a regular file or another user's directory. `extract-keep-flag.py` gains the same owner refusal and 0700 state directory. Sentinel names and paths are unchanged, so existing skill reads keep working.
+
+- `/develop:fix` and `/develop:debug` gate on the real pytest exit code: only exit 1 prints `GATE OK`, exit 4, 5, 127 or any other code prints `GATE ERROR`, and an empty runner command is refused instead of being misread as a reproduced bug. `bin/dev_run_repro.py` now runs the reproduction.
+
+- `/develop:fix` runs the final gate once when the project's test command is not plain pytest, since the quality stack only runs pytest; a NOT-for or non-Python abort now points to direct editing or the native toolchain, not `/develop:feature`.
+
+- `/develop:feature` and `/develop:refactor` `--team` runs now execute the Step 5 quality stack and the final gate before the Final Report, and never report the suite green earlier; the feature challenger decision is two-state and the impossible pre-implementation QA challenge is gone.
+
+- `--team` modes drop the liveness probe and the `*-team-check` sentinel; teammates are watched through armed `agent_watch.py` deadlines (1800 s), and spawn prompts carry `name` and `description` slots with a delta-first first line. `bin/setup_worktree.py` no longer accepts or creates a health sentinel.
+
+- `/develop:feature` team `sw-engineer` may create new `tests/` files for its own red-green tests; existing test files stay QA-owned.
+
+- `/develop:review --worktree` now reviews the last commit: the resolver gains `--committed` (`HEAD~1..HEAD`), because a fresh worktree starts clean at `HEAD`. `resolve_review_target.py` exits 1 for a missing path or a target with no Python file, caps its Python scan at 200k entries, and the review skill stops on that exit.
+
+- `/develop:review` consolidator records new or strengthened claims as null-disposition candidates with an open concern and lists them in the new envelope field `new_claims`; `Edit` is dropped from the review tools.
+
+- `/develop:plan` keeps `CLEAN_ARGS` in the plan namespace for the slug, keys the depth checkpoint on the goal, lets Revise edit the plan in place, and routes blockers through `AskUserQuestion`; the breaking-change gate revises once and then re-gates.
+
+- `ci-log-extract` fetches, strips and falls back in one self-contained fence and reloads the digits-only run ID; batch mode ships its run fence with an owner stamp so a stale `BATCH_ID` from an aborted run is discarded.
+
+- Issue bodies are fenced as untrusted data, an invalid `dev-upstream` repo override exits 1, `issue_fetch --repo` is validated as `[HOST/]OWNER/REPO`, option-shaped pytest targets are rejected, `--log`, `--record-dir` and the codemap batch output are confined to the working directory or temp dir, plan-mode `--pytest-cmd` is checked against the runner allowlist, and `extract_json_field` caps input at 1M characters.
+
+- `dev_shared_resolve.py` announces its working-directory fallback on stderr; `sync_rules.py` rejects a plugin name outside `[a-z0-9][a-z0-9-]*`; the codemap currency sentinel is written atomically.
+
+- The codemap gate, issue fetch and worktree setup wrappers time out (60, 120 and 30 s) and fail closed; new shared-sentinel and wrapper tests cover them.
+
+- `/develop:setup` probes the bare `python` command only, with no `python3` or `py -3` fallback, since every later step runs bare `python`.
+
+- The shared agent-resolution fallback tiers for `qa-specialist` and `linting-expert` are `sonnet`, matching their frontmatter.
+
+- The quality stack uses `uv run` only when the project has a `uv.lock` and `poetry run` only with a `poetry.lock`, so a project without them no longer fails on a missing runner. It runs ruff through the project's pinned pre-commit hooks when the config pins it, avoiding version drift against CI, and saves the loading plugin's shared directory to a sentinel so later steps stop with `BLOCKED` instead of reading an empty path.
+
+- `resolve_shared_path.py` rejects an absolute (`/etc`) or empty-segment (`skills//_shared`) subdirectory and a plugin name with a trailing newline, which could resolve to a path outside the plugin install. It also reads its own plugin name from `plugin.json`: in the installed cache the directory name is the version number, so the own-plugin lookup never matched there.
+
+- `extract-keep-flag.py` no longer clears a compaction contract that another session owns or that an inlined `--keep` already wrote, so a parallel session's resume state survives. It also validates the slug and session ID and writes its sentinels atomically.
+
+- `verify_blueprint_audit.py verify` reports an audit-log line nested deeper than Python's recursion limit as a damaged line, like invalid JSON, instead of crashing the whole check.
+
+- The report-delivery hook recognises a `/research:topic` follow-up question that offers `/research:topic plan` as that workflow's own gate, so its report path, title and header-table checks apply instead of being skipped.
+
+- `/develop:review` moves each dimension brief and the Security augmentation into its own `templates/brief-*.md` file; the parent passes only the directory and each child reads only its own brief, and `batch-mode.md` moves its bisect section to `_shared/batch-bisect.md`, loaded on the failure path only.
+
+- Skills load `worktree-isolation.md`, `codemap-context.md` and `ci-log-extract.md` only when worktree mode, codemap or a CI run ID applies, and `fix` and `refactor` no longer load `preflight-helpers.md` twice.
+
+- New `bin/dev_batch_gate.py` prints the batch-mode verdict for `feature` and `refactor`; `dev_run_dir.py --persist <skill>` writes the run-dir sentinel atomically; `dev_shared_resolve.py --init` writes the shared-dir and agent-watch sentinels in one call; `dev_test_targets.py --skill {feature,fix,refactor}` reads the runner and run-dir sentinels, and an empty runner exits 1.
+
+- Compaction boundary blocks in `fix` and `review` call `bin/compaction_boundary.py`, and six contract writers pass `--keep-sentinel dev-<skill>-keep-items` instead of reading the keep sentinel inline.
+
+- `/develop:setup` merges the shipped allow and deny rules through `merge_settings_permissions.py` in one atomic write, so allow can no longer land without deny and the deny-rollback branch is gone.
+
+- `/develop:debug` aborts with `! BLOCKED` when the symptom-mode test path is left unsubstituted or empty, and its timeout handling relies on armed `agent_watch.py` deadlines instead of a sentinel and `find -newer` probe.
+
+- Test-run policy, substitution-token and issue-ID parsing rules are stated once per skill and cross-referenced; `plan` no longer mentions Codex corrections or a Codex design review it never runs.
+
+- `/develop:debug` derives its file-name slug once after mode selection, so the Step 1-3 analysis, blocker and hypothesis files and the Step 4 diagnosis share one name; issue mode stops with `! BLOCKED` instead of fetching an issue from raw, flag-carrying arguments; the compaction contract keeps the test path; team mode persists its run-dir timestamp; the lead cross-checks competing hypotheses inline, and the Step 1 `sw-engineer` writes its analysis file as a watched deliverable.
+
+- `/develop:fix --team` prompts read `~/.claude/TEAM_PROTOCOL.md` (the `${HOME}` form never expanded inside a prompt; same fix in the feature team prompts and the shared spawn template), no longer send teammates to the lead-facing spawn template, and the health check stops instead of inventing a fresh run-dir timestamp when its sentinel is lost.
+
+- `/develop:feature` and `/develop:refactor` stage checkpoint lines and accepted-risk records in `checkpoint.md.rec` and append them with `append_ledger.py`, like `/develop:fix`, so the resume offer has step lines to read.
+
+- `/develop:plan` saves a prose-wrapped feasibility reply to `.temp/develop/` and recovers the role verdicts from that file, replacing the unrunnable `echo "$RESPONSE"` pipeline.
+
+- `/develop:plan` now writes a compaction contract before each gate that waits on you (debug-cycle cap, breaking change, challenger blockers, final Proceed/Revise) and ends those questions with a `/compact` hint naming where the scope findings or plan are saved, so compacting during a long wait resumes without losing the goal or plan path; a crashed run's stale contract is cleared at start and the contract is removed when the plan ends. The effort-sizing and challenger blocks now stop with `! BLOCKED` on a lost namespace sentinel instead of reading paths at the filesystem root, and the plan namespace directory is created private (mode 700), so other users on a shared temp dir cannot read or plant plan state in it.
+
+- `--team` in `/develop:feature`, `/develop:fix`, `/develop:refactor` and `/develop:debug` checks for `~/.claude/TEAM_PROTOCOL.md` before creating a run directory and stops with one shared `! BLOCKED` line naming `/foundry:setup` when it is missing — feature no longer offers to silently continue solo, and the other three no longer spawn teammates told to read a missing file. Team spawn blocks also stop when the run timestamp or run-dir sentinel is lost, instead of building empty output paths.
+
+- `/develop:debug` drops the partial-install check for `/develop:fix`, which ships in the same plugin and so could never be missing.
+
+- `/develop:review` loads `codex-prepass.md` with `cat` like every other shared doc, and prints the report date and the Codex-output path from shipped blocks instead of assigning them in prose.
+
+- `dev_parse_args.py` spec mode rejects a variable name that is not a shell identifier, since its `VAR=value` output is `eval`'d; `read_sentinel` ignores a sentinel owned by another user, so a value planted in a shared temp dir never reaches a command.
+
+- `/develop:review` detects a PR number after flag parsing: `dev_parse_args.py` classifies the flag-stripped target into the new `dev-review-pr-number` sentinel, so `42 --full` now offers `/oss:review 42`, a quote or newline in the arguments no longer breaks the gate block, `/oss:review` receives only the bare number, and a missing clean-args sentinel reviews the diff instead of the raw argument text.
+
+- `/develop:review` checks for the oss plugin through Claude Code's install record instead of globbing the plugin cache, so an orphaned oss version left in the cache no longer offers a `/oss:review` that cannot run.
+
+- `/develop:review` ships its own severity checklist (`templates/review-checklist.md`) instead of reading the oss plugin's, so review agents and the consolidator apply severity anchors without oss installed; PR/issue-linkage patterns a local diff cannot satisfy are left out.
+
+- `/develop:fix` Part A reports a candidate test that could not run (pytest exit other than 0 or 1, such as a rejected runner) as `! GATE ERROR` instead of letting it pass for "Outcome A: fails already".
+
+- `review_impact_tier.py` reads at most 10 MiB of diff-impact JSON; larger input is not parsed and `/develop:review` falls back to the `FULL` lineup instead of holding the whole payload in memory.
+
+- The quality stack (`foundry--quality-stack.md`) halts on a failing doctest in the separate doctest pass (`GENUINE FAILURE`) and on any other non-zero pytest exit except 5 (`CONFIG ERROR`), instead of recording the exit code and reporting `not-merged` while the run continued.
+
+- `resolve_shared_path.py` no longer executes a `plugins/<dir>/bin/get_plugin_install_path.py` found in the working directory; it runs the helper shipped beside itself, and ignores a registry `installPath` outside `~/.claude/plugins/cache/borda-ai-rig`.
+
+- `blueprint-manifest.json` is regenerated with the allowlist gate: 906 of the 936 entries the previous gate admitted stay auto-allowed, including the quality-stack `eval "$RUNNER …"` fences and the `eval "$PYTEST_CMD …"` and `eval "$TEST_CMD"` gates. Only single lines lifted out of those blocks drop out, because their runner variable or `case` context lives elsewhere in the block; the whole blocks still match.
+
+- The bundled `blueprint-allow.js` refuses a manifest hit that hides a destructive command behind a `case` arm label or inside a function definition (`case x in a) rm -rf /;; esac`, `f() { rm -rf x; }`), which it let through before.
+
 ## 0.41.1
 
 - Sync `write-guard.js`: a tracked file never asks, and an untracked or gitignored file asks only for `CLAUDE.md`, `AGENTS.md`, `.claude/settings*.json`, `.pre-commit-config.yaml` and `pyproject.toml`. `.github/**`, `CHANGELOG.md` and lockfiles are no longer protected, so editing a newly created file there no longer prompts on every edit. A protected file that does not exist yet asks once on creation; later writes to it in the same session pass.

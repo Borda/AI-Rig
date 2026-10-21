@@ -131,7 +131,7 @@ CLAUDE_SKILL_CONTRACTS = {
         "Never auto-retry after timeout",
         "`verdict`, `findings`, `files_touched`, `remaining`, and `blockers`",
         "`transcript_path`",
-        "do not edit task-named paths",
+        "Do not edit task-named paths",
         "Never wait on a detached job with a loop",
         "`run_in_background: true`",
         "re-read every `files_touched` path",

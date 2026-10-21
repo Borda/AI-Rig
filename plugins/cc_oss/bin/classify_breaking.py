@@ -227,7 +227,7 @@ def main(argv: list[str] | None = None) -> int:
     raw = sys.stdin.read()
     try:
         batch_output = json.loads(raw)
-    except (json.JSONDecodeError, ValueError):
+    except (json.JSONDecodeError, ValueError, RecursionError):  # deeply nested input recurses past the limit
         print(json.dumps({"error": "stdin is not valid JSON"}))
         return 2
     print(json.dumps(classify(batch_output)))

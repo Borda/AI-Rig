@@ -36,7 +36,7 @@ PLUGINS_DIR = REPO_ROOT / "plugins"
 ALLOWED_ISOLATED_SPAWNS: frozenset[tuple[str, str]] = frozenset(
     {
         # Phase 2 specialists commit in their own worktrees; Phase 3 cherry-picks the commits onto the PR branch.
-        ("plugins/cc_oss/skills/resolve/modes/action-item-dispatch.md", "<specialist>"),
+        ("plugins/cc_oss/skills/resolve/modes/dispatch-phase2.md", "<specialist>"),
         # Parallel bin/ extraction clusters may share a source file and revert with `git checkout`; the orchestrator
         # transplants each worktree diff with `git apply`.
         ("plugins/cc_foundry/skills/distill/modes/executables.md", "foundry:sw-engineer"),
@@ -177,6 +177,7 @@ READ_ONLY_INVESTIGATOR_SITES = (
     pytest.param("plugins/cc_develop/skills/_shared/preflight-helpers.md", 1, id="team-spawn-template"),
     pytest.param("plugins/cc_develop/skills/fix/modes/team-mode.md", 2, id="fix-team-hypotheses-a-b"),
     pytest.param("plugins/cc_develop/skills/debug/SKILL.md", 1, id="debug-team-hypotheses"),
+    pytest.param("plugins/cc_oss/skills/review/SKILL.md", 1, id="oss-review-issue-hypotheses"),
 )
 
 _INVESTIGATOR_LINE = re.compile(r"sw-engineer.*hypothes|hypothes.*sw-engineer", re.IGNORECASE)

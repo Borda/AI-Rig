@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import shlex
 import shutil
 import subprocess
@@ -21,17 +20,27 @@ TRIMMED_ALLOWS = {
     "Bash(git tag:*)",
 }
 
+RETIRED_SHELL_ALLOWS = {"Bash(find:*)", "Bash(node:*)", "Bash(claude:*)", "Bash(sed:*)"}
+
 
 def test_shipped_permissions_omit_broad_api_branch_and_tag_allows() -> None:
     """New installs must not auto-allow writes through the four broad rules."""
     allow = json.loads((PLUGIN / ".claude-plugin/permissions-allow.json").read_text(encoding="utf-8"))
-    assert not TRIMMED_ALLOWS.intersection(allow)
+    assert not (TRIMMED_ALLOWS | RETIRED_SHELL_ALLOWS).intersection(allow)
+    assert {"Bash(eval:*)", "Bash(python:*)", "Bash(node --check:*)", "Bash(claude plugin list)"} <= set(allow)
     assert "Bash(gh api search/*)" in allow
     assert "Bash(git status:*)" in allow
 
 
+def _shipped_merge_args(skill: str) -> list[str]:
+    """Return the arguments of setup's merge call, with ``$PLUGIN_ROOT`` pointing at this plugin."""
+    lines = [line for line in skill.splitlines() if 'merge_settings_permissions.py" ' in line]
+    assert len(lines) == 1, "setup must carry exactly one merge_settings_permissions.py call"
+    call = lines[0].split('merge_settings_permissions.py" ', 1)[1].split(" || {", 1)[0]
+    return shlex.split(call.replace("$PLUGIN_ROOT", PLUGIN.as_posix()))
+
+
 @pytest.mark.integration
-@pytest.mark.skipif(shutil.which("jq") is None, reason="jq is required to execute the shipped merge filters")
 @pytest.mark.parametrize(
     "settings",
     [
@@ -39,7 +48,11 @@ def test_shipped_permissions_omit_broad_api_branch_and_tag_allows() -> None:
         pytest.param(
             {
                 "permissions": {
-                    "allow": [*sorted(TRIMMED_ALLOWS), "Bash(gh api repos/*:*)", "Read(private/**)"],
+                    "allow": [
+                        *sorted(TRIMMED_ALLOWS | RETIRED_SHELL_ALLOWS),
+                        "Bash(gh api repos/*:*)",
+                        "Read(private/**)",
+                    ],
                     "deny": ["Bash(gh pr merge:*)", "Bash(git branch -D:*)", "Write(private/**)"],
                 },
                 "theme": "dark",
@@ -48,33 +61,42 @@ def test_shipped_permissions_omit_broad_api_branch_and_tag_allows() -> None:
         ),
     ],
 )
-def test_shipped_merges_preserve_existing_rules_and_are_idempotent(settings: dict[str, object]) -> None:
-    """Execute the actual jq filters without deleting existing broad allows or stale denies."""
+def test_shipped_merges_preserve_existing_rules_and_are_idempotent(
+    settings: dict[str, object], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Execute setup's real merge call while retiring shell grants and preserving shared allows and stale denies."""
     skill = (PLUGIN / "skills/setup/SKILL.md").read_text(encoding="utf-8")
-    result = settings
-    for _ in range(2):
-        previous = result
-        for variable, kind in [("perms", "allow"), ("deny", "deny")]:
-            match = re.search(rf"jq (--slurpfile {variable} [^\n]*) \\\n\s*'([^']+)'", skill)
-            assert match is not None, f"Missing shipped {kind} merge filter"
-            merged = subprocess.run(
-                ["jq", *shlex.split(match[1].replace("$PLUGIN_ROOT", str(PLUGIN))), match[2]],
-                input=json.dumps(result),
-                text=True,
-                capture_output=True,
-                check=True,
-            )
-            result = json.loads(merged.stdout)
-        if _ == 1:
-            assert result == previous
+    args = _shipped_merge_args(skill)
+    # The script refuses any settings file outside ~/.claude, so the sandbox home carries the target.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    config = tmp_path / ".claude/settings.json"
+    config.parent.mkdir()
+    config.write_text(json.dumps(settings), encoding="utf-8")
+
+    def merge() -> dict[str, object]:
+        subprocess.run(
+            [sys.executable, str(PLUGIN / "bin/merge_settings_permissions.py"), *args],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return json.loads(config.read_text(encoding="utf-8"))
+
+    first = merge()
+    result = merge()
+    assert result == first
 
     original_permissions = settings.get("permissions", {})
     for kind in ["allow", "deny"]:
         shipped = json.loads((PLUGIN / f".claude-plugin/permissions-{kind}.json").read_text(encoding="utf-8"))
-        expected = set(original_permissions.get(kind, [])) | set(shipped)
-        if kind == "allow":
-            expected.discard("Bash(gh api repos/*:*)")
-        assert result["permissions"][kind] == sorted(expected)
+        # User order kept (obsolete rule dropped), shipped rules appended once each in shipped-file order.
+        kept = [
+            rule
+            for rule in original_permissions.get(kind, [])
+            if kind != "allow" or rule not in RETIRED_SHELL_ALLOWS | {"Bash(gh api repos/*:*)"}
+        ]
+        assert result["permissions"][kind] == list(dict.fromkeys(kept + shipped))
     assert {key: value for key, value in result.items() if key != "permissions"} == {
         key: value for key, value in settings.items() if key != "permissions"
     }

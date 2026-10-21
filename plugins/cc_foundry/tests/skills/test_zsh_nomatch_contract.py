@@ -19,7 +19,7 @@ import pytest
 from _hook_env import _bash_runs_posix_script
 
 _PLUGINS = Path(__file__).resolve().parents[3]
-_CHECKS_SKILLS = _PLUGINS / "cc_foundry" / "skills" / "audit" / "templates" / "checks-skills.md"
+_CHECKS_SKILLS_BASH = _PLUGINS / "cc_foundry" / "skills" / "audit" / "templates" / "checks-skills-bash.md"
 # Claude-loaded plugin markdown; Codex Rig ships no bash blocks run through the Claude Bash tool.
 _SHIPPED_DIRS = ("skills", "agents", "rules")
 _FENCE_OPEN = re.compile(r"^\s*(`{3,})(?:bash|sh|shell|zsh)\s*$")
@@ -103,7 +103,7 @@ def test_no_command_mixes_an_optional_glob_with_other_operands() -> None:
 
 def _check_23c_block() -> str:
     """Return the bash block of the audit's Sub-check 23c."""
-    text = _CHECKS_SKILLS.read_text(encoding="utf-8")
+    text = _CHECKS_SKILLS_BASH.read_text(encoding="utf-8")
     section = text.split("### Sub-check 23c", 1)[1]
     return section.split("```bash\n", 1)[1].split("\n```", 1)[0]
 

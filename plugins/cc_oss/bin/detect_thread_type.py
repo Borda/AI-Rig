@@ -37,7 +37,16 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from enum import Enum
+from pathlib import Path
 from shutil import which
+
+#: Sibling import: bin/ is not a package. Putting it on the path resolves the private writer whether this file runs as
+#: a script, under the test conftest, or as a doctest module.
+_BIN_DIR = str(Path(__file__).resolve().parent)
+if _BIN_DIR not in sys.path:
+    sys.path.insert(0, _BIN_DIR)
+
+from _sentinel_io import write_private_text  # noqa: E402
 
 
 class ThreadType(str, Enum):
@@ -53,10 +62,12 @@ class ThreadType(str, Enum):
     UNKNOWN = "unknown"
 
 
-#: Match the number at the end of a GitHub thread URL:
+#: One owner or repo path segment of a GitHub URL: ASCII name characters only, never ``.`` or ``..``.
+_NAME_SEGMENT = r"(?!\.{1,2}/)[A-Za-z0-9_.-]+"
+#: Match owner, repo and number of a GitHub thread URL:
 #: https://github.com/<owner>/<repo>/(issues|pull|discussions)/<N>
 _URL_NUMBER_RE = re.compile(
-    r"https?://github\.com/[^/]+/[^/]+/(?:issues|pull|discussions)/(\d+)",
+    rf"https?://github\.com/({_NAME_SEGMENT})/({_NAME_SEGMENT})/(?:issues|pull|discussions)/([0-9]+)",
 )
 
 #: GraphQL query fetching a discussion's title and update time, used to probe whether a number is a discussion.
@@ -99,10 +110,35 @@ def parse_number(raw: str) -> str | None:
         True
     """
     stripped = raw.strip().lstrip("#")
-    if stripped.isdigit():
+    if stripped.isascii() and stripped.isdigit():
         return stripped
     match = _URL_NUMBER_RE.search(raw.strip())
-    return match.group(1) if match else None
+    return match.group(3) if match else None
+
+
+def parse_repo(raw: str) -> str | None:
+    """Extract ``owner/repo`` from a GitHub thread URL so the probe targets the URL's repository.
+
+    Without it a URL for another repository would be probed against the current checkout's repository, and the
+    number could resolve to an unrelated thread there.
+
+    Args:
+        raw: Argument string from the CLI (or shell).
+
+    Returns:
+        ``owner/repo`` for a recognised thread URL; ``None`` for a bare number, where ``gh`` resolves the repository
+        from the working directory.
+
+    Examples:
+        >>> parse_repo("https://github.com/o/r/issues/7")
+        'o/r'
+        >>> parse_repo("123") is None
+        True
+        >>> parse_repo("https://github.com/../r/issues/7") is None
+        True
+    """
+    match = _URL_NUMBER_RE.search(raw.strip())
+    return f"{match.group(1)}/{match.group(2)}" if match else None
 
 
 def parse_iso_to_epoch(iso: str) -> int | None:
@@ -186,24 +222,26 @@ def _resolve(cmd: str) -> str:
     return p
 
 
-def _gh_issue_lookup(gh: str, number: str, timeout: int) -> dict | None:
+def _gh_issue_lookup(gh: str, number: str, timeout: int, repo: str | None = None) -> dict | None:
     """Fetch the issues-API record for ``number`` (covers issues and PRs).
 
     Returns the parsed JSON on success, ``None`` on not-found / failure.
-    Uses ``{owner}/{repo}`` placeholders so gh resolves the repo from the
+    Without ``repo`` it uses ``{owner}/{repo}`` placeholders so gh resolves the repo from the
     current working directory's git context.
 
     Args:
         gh: Absolute path to the ``gh`` binary.
         number: Plain decimal-digit string.
         timeout: Subprocess timeout in seconds.
+        repo: ``owner/repo`` taken from a thread URL; ``None`` to use the working directory's repository.
 
     Returns:
         Parsed JSON object on success; ``None`` otherwise.
     """
+    target = repo or "{owner}/{repo}"  # gh expands the placeholders from the working directory
     try:
         result = subprocess.run(  # noqa: S603
-            [gh, "api", f"repos/{{owner}}/{{repo}}/issues/{number}"],
+            [gh, "api", f"repos/{target}/issues/{number}"],
             capture_output=True,
             text=True,
             check=False,
@@ -219,17 +257,19 @@ def _gh_issue_lookup(gh: str, number: str, timeout: int) -> dict | None:
         return None
 
 
-def _gh_discussion_lookup(gh: str, number: str, timeout: int) -> dict | None:
+def _gh_discussion_lookup(gh: str, number: str, timeout: int, repo: str | None = None) -> dict | None:
     """Fetch a discussion record via GraphQL.
 
     Args:
         gh: Absolute path to the ``gh`` binary.
         number: Plain decimal-digit string.
         timeout: Subprocess timeout in seconds.
+        repo: ``owner/repo`` taken from a thread URL; ``None`` to use the working directory's repository.
 
     Returns:
         Dict with ``title`` and ``updatedAt`` on success; ``None`` otherwise.
     """
+    owner, _, name = (repo or "{owner}/{repo}").partition("/")
     try:
         result = subprocess.run(  # noqa: S603
             [
@@ -239,9 +279,9 @@ def _gh_discussion_lookup(gh: str, number: str, timeout: int) -> dict | None:
                 "-f",
                 f"query={_DISCUSSION_QUERY}",
                 "-f",
-                "owner={owner}",
+                f"owner={owner}",
                 "-f",
-                "repo={repo}",
+                f"repo={name}",
                 "-F",
                 f"number={number}",
             ],
@@ -264,7 +304,9 @@ def _gh_discussion_lookup(gh: str, number: str, timeout: int) -> dict | None:
     return discussion
 
 
-def detect(number: str, report_mtime: int | None, gh: str, timeout: int) -> tuple[ThreadType, str, bool]:
+def detect(
+    number: str, report_mtime: int | None, gh: str, timeout: int, repo: str | None = None
+) -> tuple[ThreadType, str, bool]:
     """Detect the thread type and the drift flag.
 
     Probes the issues API first (covers both issues and PRs); falls back
@@ -275,18 +317,19 @@ def detect(number: str, report_mtime: int | None, gh: str, timeout: int) -> tupl
         report_mtime: Epoch seconds of the cached report's mtime, or ``None``.
         gh: Absolute path to the ``gh`` binary.
         timeout: Subprocess timeout in seconds for every gh invocation.
+        repo: ``owner/repo`` from a thread URL; ``None`` probes the working directory's repository.
 
     Returns:
         ``(type, updated_at, drift)`` tuple where ``type`` is a ``ThreadType``
         member and ``updated_at`` is the ISO 8601 timestamp (empty string for
         ``ThreadType.UNKNOWN``).
     """
-    item = _gh_issue_lookup(gh, number, timeout)
+    item = _gh_issue_lookup(gh, number, timeout, repo)
     if item is not None:
         type_ = ThreadType.PR if item.get("pull_request") else ThreadType.ISSUE
         updated_at = item.get("updated_at", "") or ""
         return type_, updated_at, compute_drift(updated_at, report_mtime)
-    disc = _gh_discussion_lookup(gh, number, timeout)
+    disc = _gh_discussion_lookup(gh, number, timeout, repo)
     if disc is not None:
         updated_at = disc.get("updatedAt", "") or ""
         return ThreadType.DISCUSSION, updated_at, compute_drift(updated_at, report_mtime)
@@ -310,8 +353,7 @@ def _emit(type_: ThreadType, updated_at: str, drift: bool) -> None:
     tmpdir = os.environ.get("TMPDIR") or tempfile.gettempdir()
     drift_str = "true" if drift else "false"
     for key, val in (("type", type_.value), ("updated-at", updated_at), ("drift", drift_str)):
-        with open(f"{tmpdir}/oss-detect-{key}-{csid}", "w") as fh:
-            fh.write(val)
+        write_private_text(Path(tmpdir) / f"oss-detect-{key}-{csid}", val)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -363,7 +405,7 @@ def main(argv: list[str] | None = None) -> int:
         _emit(ThreadType.UNKNOWN, "", False)
         return 0
 
-    type_, updated_at, drift = detect(number, args.report_mtime, gh, args.timeout)
+    type_, updated_at, drift = detect(number, args.report_mtime, gh, args.timeout, parse_repo(args.number))
     _emit(type_, updated_at, drift)
     return 0
 

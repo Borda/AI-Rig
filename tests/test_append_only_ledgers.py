@@ -58,19 +58,19 @@ _ALLOWED: dict[tuple[str, str], str] = {
         "then write the whole map in one Write tool call",
     ): "not a ledger append — one Write of a fresh map file; 'append' names a rejected alternative",
     (
-        "cc_oss/skills/resolve/modes/action-item-dispatch.md",
+        "cc_oss/skills/resolve/modes/dispatch-prelude.md",
         "persist its raw public JSON object verbatim via the Write tool",
     ): "not a ledger append — Write persists a reply file; the append is a jq block",
     (
-        "cc_oss/skills/resolve/modes/action-item-dispatch.md",
+        "cc_oss/skills/resolve/modes/dispatch-phase1.md",
         "challenge-verdicts-<domain>-retry-<id>.json` with the Write tool as",
     ): "not a ledger append — Write persists a verdict file; the append is a jq block",
     (
-        "cc_oss/skills/resolve/modes/action-item-dispatch.md",
+        "cc_oss/skills/resolve/modes/dispatch-phase1.md",
         "persist its raw JSON reply verbatim via the Write tool",
     ): "not a ledger append — Write persists a verdict file; the append is a jq block",
     (
-        "cc_oss/skills/resolve/modes/action-item-dispatch.md",
+        "cc_oss/skills/resolve/modes/dispatch-phase1.md",
         "persist that reply via the Write tool to a **separate** file",
     ): "not a ledger append — Write persists a retry file; the append is a jq block",
 }

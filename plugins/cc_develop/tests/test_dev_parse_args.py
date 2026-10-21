@@ -2,11 +2,25 @@
 
 from __future__ import annotations
 
+import tempfile
 from pathlib import Path
 
 import dev_parse_args
 import pytest
 from dev_parse_args import SKILL_SPECS, FlagSpec, SpecType, extract_flags, main, parse_specs, run, write_skill_files
+
+
+def _symlinks_supported() -> bool:
+    """Probe whether this host lets the process create symlinks (native Windows often does not)."""
+    with tempfile.TemporaryDirectory() as probe:
+        try:
+            (Path(probe) / "link").symlink_to(Path(probe))
+        except OSError:
+            return False
+    return True
+
+
+_skip_no_symlinks = pytest.mark.skipif(not _symlinks_supported(), reason="symlink creation unavailable on this host")
 
 # ---------------------------------------------------------------------------
 # parse_specs
@@ -67,10 +81,18 @@ class TestParseSpecs:
         [
             pytest.param(["--unknown", "foo", "BAR", "baz"], id="unknown-keyword"),
             pytest.param(["--bool", "team"], id="insufficient-tokens"),
+            pytest.param(["--bool", "team", "X;touch pwned", "false"], id="var-command-separator"),
+            pytest.param(["--str", "repo", "$(id)", ""], id="var-command-substitution"),
+            pytest.param(["--int", "max-depth", "1DEPTH", "3"], id="var-leading-digit"),
+            pytest.param(["--codemap", "CODEMAP RAW", "auto"], id="codemap-var-with-space"),
         ],
     )
     def test_malformed_spec_exits(self, tokens: list[str]):
-        """An unknown spec keyword, or too few tokens after a keyword, calls sys.exit(1)."""
+        """An unknown spec keyword, too few tokens, or a VAR that is not a shell identifier calls sys.exit(1).
+
+        Spec-driven output is ``VAR=value`` lines a caller feeds to ``eval``; the VAR name is emitted unquoted, so a
+        name carrying shell syntax would execute instead of assigning.
+        """
         with pytest.raises(SystemExit) as exc:
             parse_specs(tokens)
         assert exc.value.code == 1
@@ -240,6 +262,8 @@ class TestValueFlags:
                 "--plan --team fix auth.py",
                 id="followed-by-flag-uses-default",
             ),
+            pytest.param("keep", "KEEP_ITEMS", 'src/x.py --keep "a b"', "a b", "src/x.py", id="quoted-phrase"),
+            pytest.param("keep", "KEEP_ITEMS", "src/x.py --keep='a b' go", "a b", "src/x.py go", id="eq-single-quoted"),
         ],
     )
     def test_str_flag_extraction(self, flag: str, var: str, arguments: str, expected_value: str, expected_clean: str):
@@ -436,11 +460,111 @@ class TestWriteSkillFiles:
         write_skill_files(skill, arguments, tmp_dir=tmp_path)
         assert (tmp_path / f"dev-{skill}-no-batch-shared").read_text() == expected
 
+    @pytest.mark.parametrize("skill", ["feature", "fix", "debug", "refactor", "review"])
+    def test_keep_text_never_reaches_clean_args_or_toggles_flags(self, skill: str, tmp_path: Path):
+        """A quoted ``--keep`` phrase is cut out whole, so it neither leaks into the clean args nor flips a flag.
+
+        ``review src/x.py --keep "a --team b"`` must leave only the target in the clean args; before the keep spec
+        existed, the quoted text stayed in them and the target then failed as a non-Python path.
+        """
+        values = write_skill_files(skill, 'src/x.py --keep "use --team b"', tmp_dir=tmp_path)
+        assert (tmp_path / f"dev-{skill}-clean-args-shared").read_text() == "src/x.py\n"
+        assert values.get("TEAM_MODE", "false") == "false"
+
+    def test_neg_bool_value_is_also_written_under_its_variable_name(self, tmp_path: Path):
+        """A ``--no-challenge`` file holds the enabled value, so it is mirrored under ``challenge-enabled``."""
+        write_skill_files("review", "--no-challenge src/x.py", tmp_dir=tmp_path)
+        assert (tmp_path / "dev-review-no-challenge-shared").read_text() == "false\n"
+        assert (tmp_path / "dev-review-challenge-enabled-shared").read_text() == "false\n"
+
+    @_skip_no_symlinks
+    def test_sentinel_write_replaces_a_planted_symlink_instead_of_following_it(self, tmp_path: Path):
+        """A symlink pre-created at a sentinel name is replaced; the file it pointed at is left untouched."""
+        victim = tmp_path / "victim.txt"
+        victim.write_text("keep me\n")
+        link = tmp_path / "dev-feature-team-shared"
+        link.symlink_to(victim)
+        write_skill_files("feature", "--team go", tmp_dir=tmp_path)
+        assert victim.read_text() == "keep me\n"
+        assert not link.is_symlink()
+        assert link.read_text() == "true\n"
+
     @pytest.mark.parametrize("skill", ["fix", "debug", "review", "plan"])
     def test_no_batch_not_registered_outside_feature_and_refactor(self, skill: str):
         """Batch mode is scoped to feature Step 3 / refactor Step 4 only — no other skill registers it."""
         flags = {spec.flag for spec, _legacy in SKILL_SPECS[skill]}
         assert "no-batch" not in flags
+
+
+# ---------------------------------------------------------------------------
+# review PR-number classification (dev-review-pr-number sentinel)
+# ---------------------------------------------------------------------------
+
+
+class TestReviewPrNumberSentinel:
+    """``/develop:review`` reads its PR#/filename gate from a sentinel classified on the parsed arguments."""
+
+    @pytest.fixture(autouse=True)
+    def _force_shared_csid(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Remove session-id env vars so ``_csid()`` degrades deterministically to ``"shared"``."""
+        monkeypatch.delenv("CSID", raising=False)
+        monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+
+    @pytest.mark.parametrize(
+        ("arguments", "expected"),
+        [
+            pytest.param("42", "42\n", id="bare-number"),
+            pytest.param("#42", "42\n", id="hash-prefix-dropped"),
+            pytest.param("42 --full", "42\n", id="flag-after-number"),
+            pytest.param("--no-challenge 42 --codemap", "42\n", id="flags-around-number"),
+            pytest.param('42 --keep "a --team b"', "42\n", id="keep-phrase-stripped"),
+            pytest.param("42.py", "\n", id="numeric-filename"),
+            pytest.param("src/x.py", "\n", id="local-path"),
+            pytest.param("42 src", "\n", id="number-plus-path"),
+            pytest.param("", "\n", id="no-target-reviews-diff"),
+        ],
+    )
+    def test_classifies_flag_stripped_target(
+        self, arguments: str, expected: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Only a lone ``#``-optional digit run is a PR number; flags around it no longer hide it.
+
+        The shell gate this replaces tested the raw argument text, so ``42 --full`` reviewed a nonexistent path and a
+        quote in the text broke the block. Run in an empty directory so no file named like the target exists.
+        """
+        monkeypatch.chdir(tmp_path)
+        write_skill_files("review", arguments, tmp_dir=tmp_path / "sentinels")
+        assert (tmp_path / "sentinels" / "dev-review-pr-number-shared").read_text() == expected
+
+    @pytest.mark.parametrize("name", ["42", "#42"])
+    def test_existing_path_named_like_a_number_stays_local(
+        self, name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """A file or directory literally named ``42`` (or ``#42``) is reviewed as a path, never sent to oss:review.
+
+        Mirrors the old ``[ ! -e "$TOKEN" ]`` half of the gate: the existence check runs on the exact typed token.
+        """
+        (tmp_path / name).mkdir()
+        monkeypatch.chdir(tmp_path)
+        write_skill_files("review", name, tmp_dir=tmp_path / "sentinels")
+        assert (tmp_path / "sentinels" / "dev-review-pr-number-shared").read_text() == "\n"
+
+    def test_empty_value_overwrites_a_stale_number(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        """A local-target run clears the PR number an earlier run in the same session left behind.
+
+        Without the overwrite, the gate would keep offering ``/oss:review`` for a path review.
+        """
+        monkeypatch.chdir(tmp_path)
+        sentinels = tmp_path / "sentinels"
+        write_skill_files("review", "42", tmp_dir=sentinels)
+        write_skill_files("review", "src/x.py", tmp_dir=sentinels)
+        assert (sentinels / "dev-review-pr-number-shared").read_text() == "\n"
+
+    @pytest.mark.parametrize("skill", ["feature", "fix", "debug", "refactor", "plan"])
+    def test_other_skills_write_no_pr_number(self, skill: str, tmp_path: Path):
+        """Only review owns the PR#/filename gate; other skills treat a number as an issue or a goal."""
+        write_skill_files(skill, "42", tmp_dir=tmp_path)
+        assert not any("pr-number" in path.name for path in tmp_path.iterdir())
 
 
 # ---------------------------------------------------------------------------

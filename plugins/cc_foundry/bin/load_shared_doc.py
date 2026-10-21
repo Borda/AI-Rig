@@ -23,8 +23,14 @@ Failure behaviour: a ``! BREAKING`` line on stdout and exit 1 — where the inli
 form leaked a raw ``cat: No such file or directory`` to stderr with the same
 non-zero exit.
 
+``--optional`` is for a doc whose absence the caller already tolerates (the Codex
+pre-pass: the step is skipped when its instructions are not installed). A missing
+plugin, directory or file then prints one ``⚠ WARNING: … — skipping`` line on stdout
+and exits 0 with no doc output, the warn-and-skip the inline ``[ -f ] || printf``
+guard it replaces gave. Argument errors still exit 2: they are caller bugs.
+
 Usage:
-    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_shared_doc.py" <plugin> <subdir> <file.md>
+    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_shared_doc.py" [--optional] <plugin> <subdir> <file.md>
 
 Arguments:
     plugin  Plugin short-name (e.g. ``foundry``, ``oss``) — no ``cc_`` prefix.
@@ -32,8 +38,8 @@ Arguments:
     file    File name inside that subdirectory (plain name; no path separators).
 
 Exit codes:
-    0  Success — file content written to stdout
-    1  Subdirectory or file not found
+    0  Success — file content written to stdout (or, with ``--optional``, a doc was missing and a warning printed)
+    1  Subdirectory or file not found (never with ``--optional``)
     2  Argument error
 """
 
@@ -80,6 +86,8 @@ def _build_parser() -> argparse.ArgumentParser:
     Examples:
         >>> _build_parser().parse_args(["foundry", "skills/_shared", "file-handoff-protocol.md"]).plugin
         'foundry'
+        >>> _build_parser().parse_args(["--optional", "foundry", "skills/_shared", "x.md"]).optional
+        True
     """
     parser = argparse.ArgumentParser(
         prog="load_shared_doc",
@@ -88,6 +96,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("plugin", help="Plugin short-name (e.g. foundry, oss).")
     parser.add_argument("subdir", help="Subdir under the plugin install (e.g. skills/_shared).")
     parser.add_argument("file", help="File name inside that subdirectory (plain name).")
+    parser.add_argument(
+        "--optional",
+        action="store_true",
+        help="Missing plugin, subdir or file prints one warning line and exits 0 instead of failing.",
+    )
     return parser
 
 
@@ -98,7 +111,7 @@ def main(argv: list[str] | None = None) -> int:
         argv: Optional argv override (defaults to ``sys.argv[1:]``).
 
     Returns:
-        Process exit code (0 success, 1 not found, 2 argument error).
+        Process exit code (0 success or optional skip, 1 not found, 2 argument error).
     """
     args = _build_parser().parse_args(argv)
 
@@ -112,11 +125,17 @@ def main(argv: list[str] | None = None) -> int:
 
     resolved = locate(args.plugin, args.subdir)
     if resolved is None:
+        if args.optional:
+            print(f"⚠ WARNING: {args.plugin}/{args.subdir} not found — skipping {args.file}")
+            return 0
         print(f"! BREAKING: {args.plugin}/{args.subdir} not found — re-install the {args.plugin} plugin")
         return 1
 
     target = resolved / args.file
     if not target.is_file():
+        if args.optional:
+            print(f"⚠ WARNING: {args.file} not found at {target.parent.as_posix()} — skipping")
+            return 0
         print(f"! BREAKING: {args.file} not found in {target.parent.as_posix()} — re-install the {args.plugin} plugin")
         return 1
 

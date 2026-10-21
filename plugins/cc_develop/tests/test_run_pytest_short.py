@@ -169,6 +169,66 @@ def test_combined_stdout_stderr_captured(monkeypatch: pytest.MonkeyPatch) -> Non
     assert call.get("text") is True
 
 
+@pytest.mark.parametrize(
+    "target",
+    [
+        pytest.param("-p", id="plugin-flag"),
+        pytest.param("--rootdir=/etc", id="rootdir-option"),
+        pytest.param("-c", id="config-flag"),
+        pytest.param("--basetemp=x::y", id="option-with-node-id"),
+    ],
+)
+def test_rejects_option_shaped_target(
+    target: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A target starting with ``-`` exits 1 before pytest starts, even though it resolves under the working directory.
+
+    ``Path("-p")`` resolves to ``<cwd>/-p``, so the containment check alone passed it straight into pytest's argv.
+    """
+    recorded = _patch_subprocess(monkeypatch, returncode=0, stdout="")
+    with pytest.raises(SystemExit) as exc:
+        run_pytest_short.main(["pytest", "tests/test_a.py", target])
+    assert (exc.value.code, recorded) == (1, [])
+    assert "option-shaped target" in capsys.readouterr().err
+
+
+def test_rejects_log_outside_project_and_temp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``--log`` outside both the working directory and ``$TMPDIR`` exits 1; nothing is created or run."""
+    project, scratch, elsewhere = tmp_path / "project", tmp_path / "scratch", tmp_path / "elsewhere"
+    project.mkdir()
+    scratch.mkdir()
+    monkeypatch.chdir(project)
+    monkeypatch.setenv("TMPDIR", str(scratch))
+    recorded = _patch_subprocess(monkeypatch, returncode=0, stdout="x")
+
+    assert run_pytest_short.main(["pytest", "--log", str(elsewhere / "run.log")]) == 1
+    assert (recorded, elsewhere.exists()) == ([], False)
+    assert "rejected --log" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "where",
+    [
+        pytest.param("project/.developments/run.log", id="under-cwd"),
+        pytest.param("scratch/run.log", id="under-tmpdir"),
+    ],
+)
+def test_log_inside_project_or_temp_is_written(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, where: str) -> None:
+    """The two places the skills write — the project's ``.developments/`` run dir and ``$TMPDIR`` — stay allowed."""
+    project, scratch = tmp_path / "project", tmp_path / "scratch"
+    project.mkdir()
+    scratch.mkdir()
+    monkeypatch.chdir(project)
+    monkeypatch.setenv("TMPDIR", str(scratch))
+    _patch_subprocess(monkeypatch, returncode=0, stdout="line-1")
+    log = tmp_path / where
+
+    assert run_pytest_short.main(["pytest", "--log", str(log)]) == 0
+    assert log.read_text(encoding="utf-8") == "line-1"
+
+
 def test_rejects_target_outside_cwd(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

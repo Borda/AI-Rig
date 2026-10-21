@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
+from _skill_text import read_with_references
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 SHARED_CONTRACT = PLUGIN_ROOT / "shared" / "native-skill-contract.md"
@@ -100,7 +101,7 @@ def test_user_questions_expose_answers_without_weakening_authorization() -> None
     assert "[Codex User Questions](codex-user-questions.md)" in contract
     assert "codex-user-questions-details.md" in question_guide.read_text(encoding="utf-8")
     questions = SHARED_CONTRACT.with_name("codex-user-questions-details.md").read_text(encoding="utf-8")
-    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(CODE_REMEDIATE_SKILL, "existing-conflict.md")
 
     assert "`Approve local merge` / `Deny local merge`" in questions
     assert "all feasible choices" in questions

@@ -3,7 +3,7 @@
 ```markdown
 ---
 name / description / argument-hint / disable-model-invocation (conditional — see Content rules) / allowed-tools (frontmatter)
-# TRIGGER/SKIP guidance belongs in description: field; do NOT add when_to_use: (deprecated field)
+# TRIGGER/SKIP guidance belongs in description: field; optional when_to_use: adds context only (never repeats TRIGGER/SKIP; shares description's 1,536-char cap)
 ---
 <objective> — 2-3 sentences from description
 <inputs> — $ARGUMENTS documentation

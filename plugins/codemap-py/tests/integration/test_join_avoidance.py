@@ -14,6 +14,7 @@ conftest.py puts bin/ on sys.path, so the module imports directly.
 from __future__ import annotations
 
 import json
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -182,6 +183,54 @@ def test_structural_search_count_is_subset_of_avoidance_count() -> None:
     ]
     assert payload["per_runtime"]["unattributed"]["structural_search_count"] == 1
     assert "structural searches among them: 1" in ja.render_text(summary)
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        pytest.param("grep -rn 'x' src", ja.OverlapKind.UNKNOWN, id="grep-recursive-flag"),
+        pytest.param("egrep --recursive x src", ja.OverlapKind.UNKNOWN, id="egrep-long-flag"),
+        pytest.param("echo $(grep -inR x src)", ja.OverlapKind.UNKNOWN, id="grep-in-substitution"),
+        pytest.param("cd d && rg -n x", ja.OverlapKind.UNKNOWN, id="rg-after-and"),
+        pytest.param("grep -n x file.py | head", ja.OverlapKind.SOURCE_READ, id="grep-without-recursive-flag"),
+        pytest.param("grep -n x f; ls -r", ja.OverlapKind.SOURCE_READ, id="flag-after-separator-is-another-command"),
+        pytest.param("cat f | sort -r", ja.OverlapKind.SOURCE_READ, id="no-grep-word"),
+    ],
+)
+def test_bash_recursive_search_classification(command: str, expected: ja.OverlapKind) -> None:
+    """A recursive-looking grep or rg is unknown scope; a flag only counts inside its own simple command.
+
+    The tokenizer that replaced the single regular expression must agree with it on ordinary command lines: ``-r``
+    belongs to a ``grep`` only when no ``;``, ``&``, ``|`` or newline separates them.
+    """
+    assert ja.classify_overlap("pkg.mod", "Bash", command) == expected
+
+
+def test_bash_recursive_search_classification_is_linear() -> None:
+    """Repeated ``grep`` words classify in milliseconds, not the quadratic seconds of the former regex.
+
+    The former pattern took about 2 s on 40 KB of ``grep `` repetitions and grows with the square of the length; 100 KB
+    would have taken over ten seconds, so a one-second bound separates the two without a timing-sensitive threshold.
+    """
+    started = time.perf_counter()
+    kind = ja.classify_overlap("pkg.mod", "Bash", "grep " * 20000)
+    assert kind == ja.OverlapKind.SOURCE_READ
+    assert time.perf_counter() - started < 1.0
+
+
+def test_render_text_strips_terminal_control_characters() -> None:
+    """Session ids carrying escape sequences are printed with the control characters replaced.
+
+    Log text is partly influenced by tool commands, so a session id such as ``ESC ] 0 ; title BEL`` printed raw would
+    retitle or script the reader's terminal. The JSON rendering escapes it already; the text report must not leak it.
+    """
+    session = "s\x1b]0;pwn\x07-1"
+    answers = ja.parse_cli_records([_cli("pkg.mod", 0) | {"session": session}])
+    events = ja.parse_tool_records([_tool("src/pkg/mod.py", 1, tool="Read") | {"session": session}])
+    text = ja.render_text(ja.summarize(answers, events))
+    assert "\x1b" not in text
+    assert "\x07" not in text
+    assert "s?]0;pwn?-1" in text
 
 
 def _ts(offset_min: float) -> str:

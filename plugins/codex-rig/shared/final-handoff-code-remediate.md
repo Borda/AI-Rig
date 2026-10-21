@@ -4,7 +4,7 @@ Apply [Review limitations and additional review](quality-gates.md#review-limitat
 
 Before every status or final answer, reconcile the requested remediation with its retained selection, closure ledger, gates and canonical result.
 
-- A completed nested review, prepared branch receipt or passing tests proves no finding was fixed.
+- A completed nested review, prepared branch receipt or passing tests alone does not prove any finding was fixed.
 - If implementation has not begun, say `Remediation remains incomplete; zero implemented`, name the first unmet checkpoint, confirmed open findings and next owner/action.
 - Distinguish evidence-only closure, rejection, user-authorized deferral and actual code changes.
 - A no-change completion needs evidence-backed dispositions for every required finding and the normal remediation closing gates; open confirmed findings cannot become rejected or resolved because checkout failed.

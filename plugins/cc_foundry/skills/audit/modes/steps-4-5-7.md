@@ -2,21 +2,23 @@
 
 ## Step 4: System-wide checks
 
-> **Full implementation instructions** are split across 5 scope files in `$AUDIT_TPL/` (resolved in Pre-flight). Read only the file(s) for the active scope at the start of this step — do not read all 5 files unless running a full sweep.
+> **Full implementation instructions** are split across scope files in `$AUDIT_TPL/` (resolved in Pre-flight). Read only the file(s) for the active scope at the start of this step — do not read every file unless running a full sweep. `checks-skills.md` is a hub: its checks live in the skill-check groups listed below the scope table — read the hub plus only the groups the scope dispatches.
 >
 > | Scope | File(s) to read |
 > | -- | -- |
 > | `setup` | `checks-setup.md` (Checks 1–11, 39) + `checks-install.md` (I1–I3) + `checks-security.md` (Check 37) |
 > | `plugin` | `checks-setup.md` (Checks 7, 8 only) |
-> | `plugins` | `checks-setup.md` (7, 8) + `checks-agents.md` + `checks-skills.md` + `checks-shared.md` (14a, 14b, 15, 17, 12, 13, 25, 26, 29, 41, 45) + checks 32, 32d, 33, 38, 40 + `checks-install.md` (R1–R5 — LOCAL_MODE) + `checks-security.md` (35, 36, 37) |
+> | `plugins` | `checks-setup.md` (7, 8) + `checks-agents.md` + `checks-skills.md` + every skill-check group + `checks-shared.md` (14a, 14b, 15, 17, 12, 13, 25, 26, 29, 41, 45) + checks 32, 32d, 33, 38, 40 + `checks-install.md` (R1–R5 — LOCAL_MODE) + `checks-security.md` (35, 36, 37) |
 > | `plugins <name>` | same as `plugins` — scoped to one plugin directory |
-> | `agents` | `checks-agents.md` (19, 20) + `checks-shared.md` (run only: 14a, 14b, 15, 17, 12, 13, 25, 26, 29, 41, 45) + `checks-skills.md` (22, 40 only) + `checks-security.md` (35, 36) |
-> | `skills` | `checks-skills.md` (22–24, 27, 28, 30, 31, 32, 33, 38, 40) + `checks-shared.md` (run only: 14a, 14b, 15, 17, 12, 13, 25, 26, 29, 41, 45) + `checks-security.md` (35–37) |
-> | `rules` | `checks-shared.md` (run only: 18, 12, 13, 29, 41, 45) + `checks-skills.md` (32c only) |
+> | `agents` | `checks-agents.md` (19, 20, 46) + `checks-shared.md` (run only: 14a, 14b, 15, 17, 12, 13, 25, 26, 29, 41, 45) + `checks-skills.md` + `checks-skills-gaps.md` (22, 40 only) + `checks-security.md` (35, 36) |
+> | `skills` | `checks-skills.md` + groups gaps, bash, contract, crossplugin, deadfiles, duplication (22–24, 27, 28, 30, 31, 32, 33, 38, 40) + `checks-shared.md` (run only: 14a, 14b, 15, 17, 12, 13, 25, 26, 29, 41, 45) + `checks-security.md` (35–37) |
+> | `rules` | `checks-shared.md` (run only: 18, 12, 13, 29, 41, 45) + `checks-skills.md` + `checks-skills-deadfiles.md` (32c only) |
 > | `communication` | `checks-shared.md` (run only: 15, 16, 12, 13, 29, 45) |
-> | No scope (full) | all 5 files |
+> | No scope (full) | every file above, incl. every skill-check group |
+>
+> **Skill-check groups** (read with hub `checks-skills.md`; check IDs per group: its §Check groups): `checks-skills-gaps.md` · `checks-skills-bash.md` · `checks-skills-contract.md` · `checks-skills-crossplugin.md` · `checks-skills-deadfiles.md` (`rules` runs 32c only) · `checks-skills-duplication.md` · `checks-skills-sweep.md` (loaded by `plugins` and full sweeps only; no scope list dispatches its checks — 42 and 43 are driver-run in Step 1b).
 
-**Delegation for full-sweep runs**: for full-sweep (no scope), spawn dedicated `foundry:curator` per scope group, passing template file path and RUN_DIR: agents-checks (reads `checks-agents.md` + relevant `checks-shared.md`), skills-checks (reads `checks-skills.md` + relevant `checks-shared.md`), shared-checks (reads `checks-shared.md`), setup-checks (reads `checks-setup.md` + `checks-install.md`), security-checks (reads `checks-security.md` — security findings land in separate Security Findings section of report). Each writes findings to `<RUN_DIR>/system-checks-<scope>.md`, returns only JSON envelope. Orchestrator does NOT read template files — passes path to spawned agent only.
+**Delegation for full-sweep runs**: for full-sweep (no scope), spawn dedicated `foundry:curator` per scope group, passing template file path and RUN_DIR: agents-checks (reads `checks-agents.md` + relevant `checks-shared.md`), skills-checks (reads `checks-skills.md` + every skill-check group + relevant `checks-shared.md`), shared-checks (reads `checks-shared.md`), setup-checks (reads `checks-setup.md` + `checks-install.md`), security-checks (reads `checks-security.md` — security findings land in separate Security Findings section of report). Each writes findings to `<RUN_DIR>/system-checks-<scope>.md`, returns only JSON envelope. Orchestrator does NOT read template files — passes path to spawned agent only.
 
 Run checks below. Native tools first (Glob, Grep, Read); Bash only for pipeline ops native tools can't do.
 
@@ -57,10 +59,9 @@ Don't leave overlap findings as vague "potential duplication." Audit must state 
 <!-- loads: checks-security.md -->
 
 ```bash
-IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-AUDIT_TPL=$(cat "${TMPDIR:-/tmp}/audit-state-${CSID}/audit-tpl" 2>/dev/null || python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_skill_subdir.py" audit templates $( [ "$LOCAL_MODE" = true ] && echo "--local" ))
-cat "$AUDIT_TPL/checks-index.md" "$AUDIT_TPL/checks-security.md"
+IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
+for _F in checks-index.md checks-security.md; do python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" audit templates "$_F" $( [ "$LOCAL_MODE" = true ] && echo "--local" ); done  # timeout: 5000
 ```
 
 Full check index (Checks 1–41, I1–I3, R1–R5 with severity, scope, notes) and security checks (35–37) loaded above.
@@ -70,7 +71,7 @@ Full check index (Checks 1–41, I1–I3, R1–R5 with severity, scope, notes) a
 > Replace `<RUN_DIR>` with the actual run-directory path (sentinel `${TMPDIR:-/tmp}/audit-state-${CSID}/run-dir`) before dispatching — the spawned agent gets a fresh shell and cannot expand orchestrator variables.
 
 ```text
-Agent(subagent_type="foundry:web-explorer", prompt="Fetch current Claude Code docs (https://code.claude.com/docs/en/). If that URL returns 404 or redirects, navigate from https://code.claude.com homepage to find the documentation section. If docs are entirely unavailable, return {\"status\":\"unavailable\",\"findings\":0}. Check: hook event names + type field vs documented schema (deprecated decision:/reason: fields); agent frontmatter fields + model values; skill frontmatter fields; new features passing genuine-value filter → Upgrade Proposals table (max 5, classify config or capability). Write full findings to <RUN_DIR>/docs-freshness.md using the Write tool. End your full findings file with a `## Confidence` block per quality-gates.md format (Score, Gaps, Refinements). Return ONLY: {\"status\":\"done\",\"file\":\"<RUN_DIR>/docs-freshness.md\",\"findings\":N,\"deprecated\":N,\"new_features\":N,\"confidence\":0.N,\"summary\":\"N findings, N deprecated, N new features\"}")
+Agent(subagent_type="foundry:web-explorer", name="docs-freshness", description="Claude Code docs drift check", prompt="Fetch current Claude Code docs (https://code.claude.com/docs/en/). If that URL returns 404 or redirects, navigate from https://code.claude.com homepage to find the documentation section. If docs are entirely unavailable, return {\"status\":\"unavailable\",\"findings\":0}. Check: hook event names + type field vs documented schema (deprecated decision:/reason: fields); agent frontmatter fields + model values; skill frontmatter fields; new features passing genuine-value filter → Upgrade Proposals table (max 5, classify config or capability). Write full findings to <RUN_DIR>/docs-freshness.md using the Write tool. End your full findings file with a `## Confidence` block per quality-gates.md format (Score, Gaps, Refinements). Return ONLY: {\"status\":\"done\",\"file\":\"<RUN_DIR>/docs-freshness.md\",\"findings\":N,\"deprecated\":N,\"new_features\":N,\"confidence\":0.N,\"summary\":\"N findings, N deprecated, N new features\"}")
 ```
 
 <!-- URLs fetched live by web-explorer at runtime; graceful degradation: if any 404, instruct navigation from code.claude.com homepage. -->
@@ -86,12 +87,11 @@ After checks complete: collect `⚠` lines, write full details to `$RUN_DIR/syst
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _RUN_DIR < "${TMPDIR:-/tmp}/audit-state-${CSID}/run-dir" 2>/dev/null || _RUN_DIR=""
-IFS= read -r _KEEP < "${TMPDIR:-/tmp}/audit-state-${CSID}/keep-items" 2>/dev/null || _KEEP=""
+[ -n "$_RUN_DIR" ] || { echo "! BLOCKED — audit run-dir sentinel missing; re-run /foundry:audit"; exit 1; }
 _PRESERVE="run-dir=$_RUN_DIR, static-findings=${TMPDIR:-/tmp}/audit-state-${CSID}/static-findings.jsonl, finding-files=$_RUN_DIR/*.md"
-[ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/write_skill_contract.py" "foundry:audit" "aggregate (after parallel curator+system-checks fan-out)" "$_RUN_DIR" "$_PRESERVE" "consolidate findings → aggregate.md + summary.jsonl → Step 7 report"  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/write_skill_contract.py" --keep-file "${TMPDIR:-/tmp}/audit-state-${CSID}/keep-items" "foundry:audit" "aggregate (after parallel curator+system-checks fan-out)" "$_RUN_DIR" "$_PRESERVE" "consolidate findings → aggregate.md + summary.jsonl → Step 7 report"  # timeout: 5000
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
-AUDIT_TPL=$(cat "${TMPDIR:-/tmp}/audit-state-${CSID}/audit-tpl" 2>/dev/null || python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_skill_subdir.py" audit templates $( [ "$LOCAL_MODE" = true ] && echo "--local" ))
+IFS= read -r AUDIT_TPL < "${TMPDIR:-/tmp}/audit-state-${CSID}/audit-tpl" 2>/dev/null || AUDIT_TPL=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_skill_subdir.py" audit templates $( [ "$LOCAL_MODE" = true ] && echo "--local" ))
 IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/audit-state-${CSID}/run-dir" 2>/dev/null || RUN_DIR=""
 printf "RUN_DIR=%s\nSTATIC_FINDINGS_PATH=%s\nSEVERITY_TABLE_PATH=%s\n" "$RUN_DIR" "${TMPDIR:-/tmp}/audit-state-${CSID}/static-findings.jsonl" "$(dirname "$AUDIT_TPL")/severity-table.md"
 ```
@@ -104,11 +104,11 @@ Main context receives only that one-liner. Orchestrator MUST NOT read `aggregate
 
 ## Step 5b: Low-confidence remediation
 
-Parse confidence scores from each file's `## Confidence` block in `<RUN_DIR>/<slug>.md` output files (use Glob + Read — batch envelopes carry aggregate confidence, not per-file scores; individual file reports are the authoritative source). For each slug where `Score` < **0.80**, run three parallel passes:
+Parse confidence scores from each file's `## Confidence` block in `<RUN_DIR>/<slug>.md` output files (use Glob + Read — batch envelopes carry aggregate confidence, not per-file scores; individual file reports are the authoritative source). For each slug where `Score` < **0.80**, run three passes in two waves: A first; B and C in parallel once A's `<slug>-rerun.md` exists, since both read it. Slugs still run in parallel with each other.
 
 **Fan-out ceiling**: when MORE THAN 8 slugs score \<0.80, do NOT run per-slug passes (4 spawns × N is unbounded) — instead spawn ONE consolidated **foundry:curator** re-run covering all low-confidence slugs (batched prompt listing every slug + its `Gaps:` block, one combined `<RUN_DIR>/lowconf-batch-rerun.md`) plus one Codex pass over same batch when available; run pass B (docs check) only for slugs whose gaps explicitly cite schema/docs uncertainty. Systematically low confidence signals a rubric or curator problem, not N independent file problems — remediate once, not N×4 times.
 
-**Health monitoring** (CLAUDE.md §6): SKILL.md Step 3 deadline protocol — in the spawn response Write `$RUN_DIR/agent-watch-lowconf.tsv` (one row per pass, its output file, `600`); on each notification run the Step 3 `agent_watch.py` block once. Notification without output → mark `timed_out` now, surface with ⏱ in final report; never a waiting tool.
+**Health monitoring** (CLAUDE.md §6): SKILL.md Step 3 deadline protocol — in each wave's spawn response Write that wave's watch file — `$RUN_DIR/agent-watch-lowconf-a.tsv`, then `$RUN_DIR/agent-watch-lowconf-b.tsv` (one row per spawned pass, its output file, `600`; C is a `Skill()` call, no row); on each notification run the Step 3 `agent_watch.py` block once. Notification without output → mark `timed_out` now, surface with ⏱ in final report; never a waiting tool.
 
 **A — Double-reasoning pass** (curator re-run with gaps called out):
 
@@ -131,7 +131,9 @@ CODEX_STATUS=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_bridg
 
 If `CODEX_AVAILABLE=true`, resolve every placeholder in the following review brief, then pass that entire rendered brief to `Skill(skill="bridge:review", args="...")`:
 
-> "Adversarial review of low-confidence findings for `<original-source-file>`. Prior foundry:curator pass scored confidence=<N> — gaps: `<Gaps>`. Challenge each finding: real? severity correct? missed issues? Read source file + prior report `<RUN_DIR>/<slug>-rerun.md`. Write to `<RUN_DIR>/codex-recheck-<slug>.md`. End your full findings file with a `## Confidence` block per quality-gates.md format (Score, Gaps, Refinements). Return ONLY: `{\"status\":\"done\",\"file\":\"<path>\",\"findings\":N,\"confidence\":0.N}`"
+> "Adversarial review of low-confidence findings for `<original-source-file>`. Prior foundry:curator pass scored confidence=<N> — gaps: `<Gaps>`. Challenge each finding: real? severity correct? missed issues? Read source file + prior report `<RUN_DIR>/<slug>-rerun.md`. Return findings ending with a `## Confidence` block per quality-gates.md format (Score, Gaps, Refinements)."
+
+`bridge:review` runs read-only and writes no file: the orchestrator Writes the returned review text verbatim to `<RUN_DIR>/codex-recheck-<slug>.md` with the Write tool; a non-`done` bridge status → write that status line there instead, so the mini-consolidator sees the gap.
 
 If `CODEX_AVAILABLE=false`: log `[Step 5b] bridge@borda-ai-rig is ${CODEX_STATUS} — adversarial pass skipped.` Include note in final report `## Confidence` section.
 
@@ -155,10 +157,9 @@ Returns to SKILL.md Step 6 (cross-validate critical findings) after Step 5b comp
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _RUN_DIR < "${TMPDIR:-/tmp}/audit-state-${CSID}/run-dir" 2>/dev/null || _RUN_DIR=""
-IFS= read -r _KEEP < "${TMPDIR:-/tmp}/audit-state-${CSID}/keep-items" 2>/dev/null || _KEEP=""
+[ -n "$_RUN_DIR" ] || { echo "! BLOCKED — audit run-dir sentinel missing; re-run /foundry:audit"; exit 1; }
 _PRESERVE="run-dir=$_RUN_DIR, aggregate=$_RUN_DIR/aggregate.md, summary=$_RUN_DIR/summary.jsonl"
-[ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/write_skill_contract.py" "foundry:audit" "report (after aggregate complete)" "$_RUN_DIR" "$_PRESERVE" "emit report → follow-up gate → optional fix mode (Steps 8-10) → Step 11"  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/write_skill_contract.py" --keep-file "${TMPDIR:-/tmp}/audit-state-${CSID}/keep-items" "foundry:audit" "report (after aggregate complete)" "$_RUN_DIR" "$_PRESERVE" "emit report → follow-up gate → optional fix mode (Steps 8-10) → Step 11"  # timeout: 5000
 ```
 
 Before emitting, read current `$RUN_DIR/summary.jsonl` (Step 5b may have appended net-new promoted findings), recompute severity totals. Build the full report (omit Upgrade Proposals if none passed genuine-value filter), Write it to `$RUN_DIR/audit-report.md`, and deliver it once in the final reply after the answer, after the last tool call, below Step 11b's header table — never before the question, never in an option or Bash/tool stdout. The first question's text carries only the `Audit Report` headline, exact `Total: N`, severity counts and `→ $RUN_DIR/summary.jsonl`, plus `→ $RUN_DIR/audit-report.md`. Keep the question text to at most 6 plain lines (target 600 characters, hard cap 1,500), with no table, no pipe layout and no code fence. Options have no `preview`. `--skip-gate` (no question): the full findings report still goes into the turn's final reply after its last tool call, below Step 11b's header table — the `Stop` hook enforces delivery.

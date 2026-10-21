@@ -56,9 +56,9 @@ Write `<run-directory>/audit-ledger.md` with these sections:
 - `Prompt Efficiency`: instruction cost, loaded context, obligation preservation, and value-guard evidence.
 - `Recommendations`: ranked fixes.
 
-### Explore workflow outcomes before checking conformance
+### 03b: Explore workflow outcomes before checking conformance
 
-For a workflow-bearing target, follow its actual entrypoint through helpers, state changes, handoffs, the next ordinary user action. Read the relevant callers and consumers even when unchanged. Start from the user's intended outcome; existing instructions, accepted design decisions, green tests are evidence to question, not proof that the contract is sufficient. Keep the exploration bounded to reachable behavior, explicitly record excluded paths. For a static target with no workflow, record why this check is not applicable.
+For a workflow-bearing target, follow its actual entrypoint through helpers, state changes, handoffs, the next ordinary user action. Read the relevant callers and consumers even when unchanged. Start from the user's intended outcome; treat existing instructions, accepted design decisions, green tests as evidence to question. Keep the exploration bounded to reachable behavior, explicitly record excluded paths. For a static target with no workflow, record why this check is not applicable.
 
 Write `<run-directory>/workflow-exploration.md` with `Transitions`, `Counterexamples`, `Coverage` sections, including an explicit reason in each section when no workflow applies. Keep the map, focused probes and reconciliations in these existing sections; no additional graph or report format is required.
 
@@ -90,11 +90,11 @@ Repeat with the next material uncertainty from the updated map. Do not use a fix
 
 #### Final reconciliation
 
-Before gates and again before classifying the final findings, reconcile every mapped flow and material dependency with `Coverage`: inspected with evidence, unresolved with owner/next check, excluded with scope reason, or inapplicable with evidence. Split partially inspected flows so a local passing check cannot imply full coverage. Tie findings to affected outcomes and reconcile contradictions between local detail and system behavior. Reopen affected claims when later gates reveal source drift or new evidence. Finish when the authorized scope is accounted for and each conclusion is supported or explicitly bounded by a gap; a completed assessment can retain gaps, but cannot certify untested workflows as safe.
+Before gates and again before classifying the final findings, reconcile every mapped flow and material dependency with `Coverage`: inspected with evidence, unresolved with owner/next check, excluded with scope reason, or inapplicable with evidence. Split partially inspected flows so a local passing check cannot imply full coverage. Tie findings to affected outcomes and reconcile contradictions between local detail and system behavior. Reopen affected claims when later gates reveal source drift or new evidence. Finish when the authorized scope is accounted for and each conclusion is supported or explicitly bounded by a gap; a completed assessment can retain gaps.
 
-Report tested transitions separately from untested coverage. A passing inventory, schema validator, command, or existing regression suite cannot close an untested end-to-end claim. Generalize demonstrated mechanisms into recommendations; keep incident-specific names and benchmark answers out of shipped instructions.
+Report tested transitions separately from untested coverage. A passing inventory, schema validator, command, or existing regression suite is not proof the contract is sufficient: it cannot close an untested end-to-end claim or certify an untested workflow as safe. Generalize demonstrated mechanisms into recommendations; keep incident-specific names and benchmark answers out of shipped instructions.
 
-### Instruction composition and productivity regressions
+### 03c: Instruction composition and productivity regressions
 
 Review effective instruction composition, not only each file separately: user overrides, global managed and unmanaged blocks, project siblings, installed skill names, role cards, runtime defaults, and historical evidence consumed by launchers. Distinguish source readiness from active installation. Use `scripts/install_global_agents.py --check --source <installed-package>/assets/AGENTS.md --codex-home <home>` for read-only global-state diagnosis during explicit setup/audit; never add a per-task setup gate or automatically delete custom instructions.
 
@@ -154,12 +154,10 @@ Codex Rig artifact skills declare:
 - `Calibration Hooks`
 - `Output Contract`
 
-Codex Rig configured roles or agents declare:
+Codex Rig roles or agents declare, by layout (owning contracts: [Quality Gates](../../shared/quality-gates.md) for source agents, `roles/README.md` for packaged role cards):
 
-- `## Scope` or clear role boundary text
-- `## Evidence Standard`
-- `## Boundaries`
-- `## Output Contract` or explicit output format
+- Source-layout agents: `## Scope` or clear role boundary text, `## Evidence Standard`, `## Boundaries`, `## Output Contract` or explicit output format.
+- Packaged `roles/<role-id>/ROLE.md`: `## Trigger and skip boundaries`, `## Evidence ownership`, `## Execution constraints`, `## Handover contract`, `## Confidence contract`.
 
 ### 10: Review role-roster consistency when a role-card target is supplied
 
@@ -197,7 +195,7 @@ Use shared lifecycle/authoritative help. Write `AUDIT_METADATA`, validate `audit
 Required checks:
 
 - `review`: inventory, contract ledger, workflow-exploration map and transitions, focused counterexamples, evidence-triggered context rechecks and final coverage reconciliation (or explicit inapplicability), prompt-efficiency evidence, reference scan, overlap decisions, `git diff --check`.
-- `calibration`: run owning project's declared calibration command when audited workflow behavior changes; for Codex Rig source, use `runtime/calibration/run.py --layout plugin`.
+- `calibration`: audit is read-only and changes no workflow behavior, so run owning project's declared calibration command only when evaluating a candidate that changes audited behavior (step 04 Value Guards); otherwise list it under `Recommendations` for the fix owner. For Codex Rig source, use `runtime/calibration/run.py --layout plugin`.
 
 Conditional checks:
 

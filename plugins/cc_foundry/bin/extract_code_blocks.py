@@ -189,6 +189,8 @@ _CODE_SIGNAL = re.compile(
 _PROSE_END = re.compile(r"[.,?!]\s*$")
 #: Matches an opening backtick or tilde fence, capturing the fence and its language tag.
 _FENCE_OPEN = re.compile(r"^(`{3,}|~{3,})([\w.+\-]*)")
+#: One blockquote marker: up to three spaces of indent, ``>``, and one optional following space.
+_QUOTE_MARKER = re.compile(r"^ {0,3}> ?")
 
 #: Guard against pathological inputs that would exhaust heap memory when read
 #: in one shot. 10 MB is well above any realistic Markdown / agent file.
@@ -324,12 +326,57 @@ def classify_block(lang_marker: str, content: str) -> bool:
     return code_density >= 0.25 or (code_hits >= 2 and prose_density < 0.4)
 
 
+def _quote_depth(line: str) -> tuple[int, str]:
+    """Count leading blockquote markers and return the depth with the remaining text.
+
+    Examples:
+        >>> _quote_depth("> ```bash")
+        (1, '```bash')
+        >>> _quote_depth("> > x")
+        (2, 'x')
+        >>> _quote_depth("```bash")
+        (0, '```bash')
+    """
+    depth = 0
+    match = _QUOTE_MARKER.match(line)
+    while match is not None:
+        depth += 1
+        line = line[match.end() :]
+        match = _QUOTE_MARKER.match(line)
+    return depth, line
+
+
+def _strip_quote(line: str, depth: int) -> str | None:
+    """Strip exactly ``depth`` blockquote markers, or return None when the line carries fewer.
+
+    Examples:
+        >>> _strip_quote("> echo hi", 1)
+        'echo hi'
+        >>> _strip_quote(">", 1)
+        ''
+        >>> _strip_quote("plain", 1) is None
+        True
+    """
+    for _ in range(depth):
+        match = _QUOTE_MARKER.match(line)
+        if match is None:
+            return None
+        line = line[match.end() :]
+    return line
+
+
 def parse_blocks(text: str, filepath: str) -> list[CodeBlock]:
     """Extract all fenced code blocks from Markdown text.
 
     Handles 3+ backtick or tilde fences. Closing fence must use the same
     character as the opening fence with equal or greater repetition count.
     Empty blocks (whitespace-only content) are skipped.
+
+    Fences inside a blockquote (``> ```bash``) are extracted too: the opener's
+    quote depth is stripped from every content and closing line. A line that
+    loses the quote prefix ends the blockquote, and the block is skipped like
+    any unclosed fence. A ``>`` inside a plain (unquoted) fence is content and
+    is never stripped. Line numbers always refer to the original file lines.
 
     Args:
         text: Full file content.
@@ -363,12 +410,18 @@ def parse_blocks(text: str, filepath: str) -> list[CodeBlock]:
         'python'
         >>> blocks2[1].lang_detected
         'bash'
+        >>> quoted = parse_blocks("> ```bash\\n> echo hi\\n> ```\\n", "f.md")
+        >>> (quoted[0].content, quoted[0].line_start, quoted[0].line_end)
+        ('echo hi', 1, 3)
+        >>> parse_blocks("```text\\n> kept\\n```\\n", "f.md")[0].content
+        '> kept'
     """
     blocks: list[CodeBlock] = []
     lines = text.splitlines()
     i = 0
     while i < len(lines):
-        m = _FENCE_OPEN.match(lines[i])
+        depth, opener = _quote_depth(lines[i])
+        m = _FENCE_OPEN.match(opener)
         if m:
             fence_char = m.group(1)[0]
             fence_len = len(m.group(1))
@@ -379,7 +432,10 @@ def parse_blocks(text: str, filepath: str) -> list[CodeBlock]:
             content_lines: list[str] = []
             closed = False
             while i < len(lines):
-                if close_pattern.match(lines[i]):
+                body = _strip_quote(lines[i], depth) if depth else lines[i]
+                if body is None:
+                    break  # blockquote ended before the fence closed — rescan this line as normal text
+                if close_pattern.match(body):
                     close_line = i + 1  # 1-based
                     content = "\n".join(content_lines)
                     if content.strip():
@@ -399,7 +455,7 @@ def parse_blocks(text: str, filepath: str) -> list[CodeBlock]:
                     i += 1
                     closed = True
                     break
-                content_lines.append(lines[i])
+                content_lines.append(body)
                 i += 1
             if not closed:
                 pass  # unclosed fence — skip without advancing further

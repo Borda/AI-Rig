@@ -40,6 +40,14 @@ from enum import Enum
 from pathlib import Path
 from typing import Final
 
+#: Sibling import: bin/ is not a package. Putting it on the path resolves the private writer whether this file runs as
+#: a script, under the test conftest, or as a doctest module.
+_BIN_DIR = str(Path(__file__).resolve().parent)
+if _BIN_DIR not in sys.path:
+    sys.path.insert(0, _BIN_DIR)
+
+from _sentinel_io import write_private_text  # noqa: E402
+
 #: Matches a bare ``owner/repo`` slug.
 _REPO_SLUG_RE: Final = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 #: Matches an argument that starts with an ``http://`` or ``https://`` scheme.
@@ -132,7 +140,7 @@ def _write_sentinel(name: str, value: str) -> None:
     if _DRY_RUN:
         print(f"[dry-run] would write {name}={value}")
         return
-    _sentinel_path(name).write_text(f"{value}\n", encoding="utf-8", newline="\n")
+    write_private_text(_sentinel_path(name), f"{value}\n")
 
 
 def _run(cmd: list[str], timeout: int) -> str:

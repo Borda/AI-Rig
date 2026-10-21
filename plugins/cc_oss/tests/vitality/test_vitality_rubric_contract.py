@@ -155,6 +155,24 @@ def test_rework_never_changes_extractor_values() -> None:
     assert "{axis_N_section_from_vitality_scoring_md}" not in text
 
 
+def test_rework_prompt_fences_raw_data_as_untrusted() -> None:
+    """Fence the DATA_FILE records a rework agent receives, so repository text cannot steer it.
+
+    The records carry README, CONTRIBUTING and workflow text written by whoever controls the analysed repository;
+    inlined bare, an instruction inside them reads like part of the rework brief.
+    """
+    # Act
+    text = (_PLUGIN / "skills" / "analyse" / "modes" / "vitality-adversarial-rework.md").read_text(encoding="utf-8")
+    fenced = re.search(
+        r"<!-- untrusted:\{TOKEN\} [^\n]*-->\n\{axis_specific_data_from_DATA_FILE\}\n<!-- end untrusted:\{TOKEN\} -->",
+        text,
+    )
+
+    # Assert
+    assert fenced is not None
+    assert "end&#8288;untrusted" in text
+
+
 @pytest.mark.parametrize("name", ["group-c", "repo-warden"])
 @pytest.mark.parametrize("token", ["app/", "__typename", *sorted(vx._KNOWN_BOTS)])
 def test_bot_rule_matches_the_extractor(name: str, token: str) -> None:

@@ -1,17 +1,17 @@
 ---
 name: manage
-description: 'Create, update, or delete agents, skills, and rules; update or delete hooks (hook creation not yet implemented — edit `hooks/<name>.js` directly). Full cross-reference propagation. Trivial edits (typos, small fixes ≤10 words) applied inline without agent; `.md` content-edits delegated to foundry:curator; code file edits (`.js`, `.py`, `.ts`) delegated to foundry:sw-engineer; large cross-ref fan-outs (> 3 files) also delegate. The parent orchestrates MEMORY.md, README, audit, calibration, and the final report. Also manages settings.json permissions atomically with permissions-guide.md. NOT for: validation/quality audit of existing agents/skills (use /foundry:audit); implementing application source code changes outside `.claude/` (use develop:feature or develop:fix — requires `develop` plugin).'
+description: 'Create, update, or delete agents, skills, and rules; update or delete hooks (hook creation not yet implemented — edit `hooks/<name>.js` directly). Full cross-reference propagation. Trivial edits (typos, small fixes ≤10 words) applied inline without agent; `.md` content-edits delegated to foundry:curator; `.py` and hook `.js` (under `hooks/`) edits delegated to foundry:sw-engineer, other code files (`.ts`, non-hook `.js`, `.sh`) edited inline and flagged as having no owning agent; large cross-ref fan-outs (> 3 files) also delegate. The parent orchestrates MEMORY.md, README, audit, calibration, and the final report. Also manages settings.json permissions atomically with permissions-guide.md. NOT for: validation/quality audit of existing agents/skills (use /foundry:audit); implementing application source code changes outside `.claude/` (use develop:feature or develop:fix — requires `develop` plugin).'
 argument-hint: create <agent|skill|rule> <name> "desc" | update <name> [new-name|"change"|spec.md] | delete <name> | add perm <rule> "desc" "use-case" | remove perm <rule>
 effort: medium
 disable-model-invocation: true
-allowed-tools: Read, Write, Edit, Bash, Grep, Glob, Agent, TaskList, TaskCreate, TaskUpdate, AskUserQuestion, Skill
+allowed-tools: Read, Write, Edit, Bash, Grep, Glob, Agent, TaskList, TaskCreate, TaskUpdate, AskUserQuestion
 ---
 
 > **Note:** `disable-model-invocation: true` — `/manage` user-invoked only, no `Skill()` chaining from orchestrators. When suggesting `/manage` as follow-up, invoking skill must present as user-run command, not auto step.
 
 <objective>
 
-Manage lifecycle of agents, skills, rules, hooks in `.claude/`. Handles creation with rich domain content, atomic renames with cross-ref propagation, content editing (trivial edits inline; `.md` files → foundry:curator; code files `*.js`/`*.py`/`*.ts` → foundry:sw-engineer; rule edits inline), clean deletion with broken-ref cleanup. Keeps MEMORY.md inventory in sync with disk.
+Manage lifecycle of agents, skills, rules, hooks in `.claude/`. Handles creation with rich domain content, atomic renames with cross-ref propagation, content editing (routed by file type — Step 4), clean deletion with broken-ref cleanup. Keeps MEMORY.md inventory in sync with disk.
 
 </objective>
 
@@ -23,8 +23,8 @@ Manage lifecycle of agents, skills, rules, hooks in `.claude/`. Handles creation
   - `create skill <name> "description"` — create new skill with workflow scaffold
   - `create rule <name> "description"` — create new rule file with frontmatter and sections
   - `update <name> <new-name>` — rename; type auto-detected from disk
-  - `update <name> "change description"` — content-edit; trivial → inline, `.md` → foundry:curator, code → foundry:sw-engineer, rule → inline
-  - `update <name> <spec-file.md>` — content-edit from spec file; trivial → inline, `.md` → foundry:curator, code → foundry:sw-engineer, rule → inline
+  - `update <name> "change description"` — content-edit (routing: Step 4)
+  - `update <name> <spec-file.md>` — content-edit from spec file (routing: Step 4)
   - `delete <name>` — delete; type auto-detected from disk (agents, skills, rules, hooks); asks user if ambiguous
   - `add perm <rule> "description" "use case"` — add permission to settings.json allow list and permissions-guide.md
   - `remove perm <rule>` — remove permission from settings.json allow list and permissions-guide.md
@@ -48,8 +48,8 @@ Manage lifecycle of agents, skills, rules, hooks in `.claude/`. Handles creation
 **Update second-argument discrimination**:
 
 - Two bare kebab-case args (second arg no spaces, no `.md` extension) → **rename mode**, confirmed interactively before any write (Step 1 rename confirmation gate) — an unquoted change directive such as `update my-agent add-error-handling` has this exact shape and would otherwise delete `my-agent`
-- One name + quoted string → **content-edit mode** (trivial → inline; `.md`: foundry:curator; code `*.js`/`*.py`/`*.ts`: foundry:sw-engineer; rule: inline)
-- One name + path ending in `.md` → **content-edit mode** (trivial → inline; `.md`: foundry:curator; code `*.js`/`*.py`/`*.ts`: foundry:sw-engineer; rule: inline)
+- One name + quoted string → **content-edit mode** (routing: Step 4)
+- One name + path ending in `.md` → **content-edit mode** (routing: Step 4)
 
 **Examples:**
 
@@ -71,7 +71,7 @@ Manage lifecycle of agents, skills, rules, hooks in `.claude/`. Handles creation
 
 - HOOKS_DIR: `.claude/hooks`
 
-- AVAILABLE_COLORS: indigo, lime, magenta, teal, violet
+- AVAILABLE_COLORS: red, blue, green, yellow, purple, orange, pink, cyan
 
 - AGENT_WATCH_DIR: `.temp/manage` · deadlines: `web-explorer` 300 s · `sw-engineer` 900 s
 
@@ -83,7 +83,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/agent_watch.py" --state-di
 
 `done` → continue · notification arrived but row not `done` (deliverable empty/missing, or idle without its envelope) → ⏱ `timed_out` now: surface it in the Step 10 report; a web-explorer ⏱ means default frontmatter fields (the existing missing-schema fallback). A ⏱ never answers, skips or defaults any question or gate below.
 
-Colors in use are read from live Grep in Step 3 (authoritative) — no static used-color list to maintain. AVAILABLE_COLORS is the candidate pool for a new agent; pick first entry not already in Step-3 set.
+Colors in use are read from live Grep in Step 3 (authoritative) — no static used-color list to maintain. AVAILABLE_COLORS is the candidate pool for a new agent (the valid agent `color:` values); pick first entry not already in Step-3 set. All eight in use → reuse the least-used color and note the reuse in Step 10.
 
 </constants>
 
@@ -99,10 +99,9 @@ Extract operation, type, name, optional arguments from `$ARGUMENTS`.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/parse-skill-flags.py" --flags skip-audit "$ARGUMENTS")"  # timeout: 5000
-SKIP_AUDIT="$FLAG_SKIP_AUDIT"
-ARGUMENTS="$CLEAN_ARGS"
-echo "$SKIP_AUDIT" > "${TMPDIR:-/tmp}/manage-skip-audit-${CSID}"  # persist (Check 41)
+# --keep-state: no eval, persists manage-skip-audit-${CSID} (Check 43) + clean-args; --inlined: manage keeps no compaction contract, so it clears none
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/parse-skill-flags.py" --flags skip-audit --keep-state manage --inlined "$ARGUMENTS" >/dev/null  # timeout: 5000
+IFS= read -r ARGUMENTS < "${TMPDIR:-/tmp}/manage-clean-args-${CSID}" 2>/dev/null || ARGUMENTS=""
 echo "${TMPDIR:-/tmp}/manage-skip-audit-${CSID}" > "${TMPDIR:-/tmp}/manage-skip-audit-path-${CSID}"
 ```
 
@@ -120,7 +119,7 @@ echo "${TMPDIR:-/tmp}/manage-skip-audit-${CSID}" > "${TMPDIR:-/tmp}/manage-skip-
 **Type auto-detection** (for `update` and `delete`): first verify post-install context exists:
 
 ```bash
-[ -d .claude/agents ] || { printf "! .claude/agents not found — run /foundry:setup first or confirm working directory is project root\n"; exit 1; }  # timeout: 3000
+[ -d .claude ] || { printf "! .claude/ not found — confirm working directory is project root\n"; exit 1; }  # timeout: 3000
 ```
 
 Then run all four Glob checks in parallel:
@@ -146,7 +145,7 @@ For `create`, check only relevant type's path.
 jq -e --arg rule '<rule>' '.permissions.allow | index($rule) != null' .claude/settings.json >/dev/null 2>&1  # timeout: 5000
 ```
 
-**Update second-argument discrimination** — apply after type resolved. Set shell variable `MODE` from parsed operation; consumed by delete confirmation gate above, edit-complexity classifier below, and per-mode workflow branches in Step 4. Recognised values: `create`, `rename`, `content-edit`, `delete`, `add-perm`, `remove-perm`.
+**Update second-argument discrimination** — apply after type resolved. Set `MODE` from parsed operation — a model-context value, not a shell variable (shell state does not persist across Bash calls); consumed by delete confirmation gate above, edit-complexity classifier below, and per-mode workflow branches in Step 4. Recognised values: `create`, `rename`, `content-edit`, `delete`, `add-perm`, `remove-perm`.
 
 | Argument shape | `MODE` |
 | -- | -- |
@@ -158,17 +157,11 @@ jq -e --arg rule '<rule>' '.permissions.allow | index($rule) != null' .claude/se
 | `add perm <rule> "..." "..."` | `add-perm` |
 | `remove perm <rule>` | `remove-perm` |
 
-Assign `MODE` in shell before edit-complexity classification below so `[[ "$MODE" == "content-edit" ]]` guard fires correctly:
-
-```bash
-# MODE="content-edit"   # or "rename" / "create" / "delete" / "add-perm" / "remove-perm"
-```
-
 Validation fails: report error, stop.
 
 **Edit complexity classification** (content-edit mode only):
 
-Classify `$DIRECTIVE` as **trivial** when ALL conditions hold:
+Classify `$DIRECTIVE` as **trivial** (`EDIT_TRIVIAL=true`; otherwise `false` — model-context value, like `MODE`) when ALL conditions hold:
 
 | Condition | Required |
 | -- | -- |
@@ -207,422 +200,21 @@ Extract names inline from Glob results — strip `.claude/agents/` prefix and `.
 
 ## Step 4: Execute operation
 
-> **Verification gate — every write-before-delete sequence below** (Update Agent, Update Skill, Update Rule): the `rm` is authorized **only** by a successful verify read. Verification fails — file missing, content truncated, frontmatter absent, or the Read itself errors — **STOP**: do not run the `rm`, leave the old file in place, print `! Rename aborted — <new-path> failed verification; <old-path> left untouched`, and hand back to the user. Deleting the source after an unverified write is unrecoverable; an orphaned new file is not.
+Load the mode file for `MODE` (`<MODE_FILE>` from the table), then execute the `### Mode:` section matching the resolved entity type — each file holds every type variant of its mode. Then continue per the Step 1 skip rules.
 
-### Mode: Create Agent
-
-1. Fetch latest Claude Code agent frontmatter schema:
-
-   - Resolve schema cache path (24h TTL — schema changes rarely; saves one web-explorer spawn per create):
-     ```bash
-     mkdir -p .cache/manage  # timeout: 3000
-     MANAGE_SCHEMA_FILE=".cache/manage/agent-schema.md"
-     if [ -n "$(find "$MANAGE_SCHEMA_FILE" -mmin -1440 2>/dev/null)" ]; then MANAGE_SCHEMA_CACHED=true; else MANAGE_SCHEMA_CACHED=false; fi
-     echo "Schema file: $MANAGE_SCHEMA_FILE (cached: $MANAGE_SCHEMA_CACHED)"  # timeout: 3000
-     ```
-   - **`MANAGE_SCHEMA_CACHED=true`**: skip spawn and deadline below; Read `$MANAGE_SCHEMA_FILE` (limit=60) for field list, continue at extraction bullet.
-   - Spawn **foundry:web-explorer** to fetch `https://code.claude.com/docs/en/sub-agents` with instruction: "Write your full findings (schema fields, new fields, deprecated fields) to `<MANAGE_SCHEMA_FILE>` (substitute resolved path from bash block above) using the Write tool. Return ONLY a compact JSON envelope on your final line — nothing else after it: `{\"status\":\"done\",\"file\":\"<MANAGE_SCHEMA_FILE>\",\"fields\":N,\"new\":N,\"deprecated\":N,\"confidence\":0.N,\"summary\":\"N fields, N new, N deprecated\"}`"
-
-   Deadline (§Deadlines, constants): in this spawn response Write `.temp/manage/agent-watch-manage.tsv` = `web-explorer\t<MANAGE_SCHEMA_FILE>\t300`.
-
-   - Read returned summary; extract: valid frontmatter fields (`name`, `description`, `tools`, `disallowedTools`, `model`, `permissionMode`, `maxTurns`, `effort`, `initialPrompt`, `skills`, `mcpServers`, `hooks`, `memory`, `background`, `isolation`, `color`), current model shorthands, new fields
-   - Note new fields worth including. Adjust template to reflect current schema. New field broadly useful for agent's role (e.g. `maxTurns` for long-running agents): include with sensible default and inline comment.
-
-2. Pick first unused color from AVAILABLE_COLORS pool (compare against Step 3 colors)
-
-3. Choose model based on role complexity:
-
-   - `opus` — high-stakes design/config and complex implementation roles (foundry:solution-architect, foundry:curator, foundry:sw-engineer, research:scientist, foundry:perf-optimizer)
-   - `sonnet` — focused execution roles (research:data-steward (requires `research` plugin), foundry:web-explorer, foundry:doc-scribe, foundry:creator, foundry:qa-specialist, oss:cicd-steward, oss:shepherd)
-   - `haiku` — mechanical high-frequency work ONLY, with every judgement-free step scripted (e.g. foundry:humanizer prose pass; oss:gh-scraper and oss:repo-warden, whose fetch, assembly and metric extraction run as `bin/` scripts); NOT for analysis/auditing roles that require substantive reasoning
-   - Aliases only, never a pinned model ID. `opusplan` as subagent frontmatter runs `sonnet` (subagents never enter plan mode) — use `opus` or `sonnet` explicitly.
-
-4. Resolve template path (cascade primary → project-local → cache scan; only the cache scan runs if neither cheaper path exists, since each candidate must satisfy `-d` before being assigned):
-
-```bash
-MANAGE_TPL=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_skill_subdir.py" manage templates) || { printf "! BREAKING: manage templates not found — run /foundry:setup first\n"; exit 1; }  # timeout: 5000
-```
-
-5. Spawn **foundry:sw-engineer** subagent to scaffold and write agent file. `foundry:curator` is the wrong delegate here — its NOT-for explicitly excludes creating or scaffolding agents/skills; curator only reviews and edits existing config. `foundry:sw-engineer` owns scaffolding (treat agent `.md` as a config artifact whose authoring is a software task — frontmatter schema, tool selection, structural completeness).
-
-> Before passing schema file path to sw-engineer: verify file exists on disk using Read tool (limit=1). Schema file path from JSON envelope doesn't exist: proceed with default frontmatter fields (name, description, model, color) — note omission in Step 10 report.
-
-```markdown
-Run `cat "<MANAGE_TPL>/agent-scaffold.md"` via the Bash tool (substitute resolved path from bash block above — do not pass literal `$MANAGE_TPL` to the agent).
-Also read the schema file at the path returned in the step 1 JSON to incorporate any new frontmatter fields (skip if schema file not found — use default frontmatter fields: name, description, model, color).
-Scaffold `.claude/agents/<name>.md` with:
-- Frontmatter: name=<name>, description=<description>, model=<model>, color=<color>; add any broadly-useful new fields from the schema
-- Body: rich domain-specific content for the role described by the description, following all content rules and tool selection guidelines in the scaffold template
-Write the file using the Write tool.
-Return ONLY: {"status":"done","file":".claude/agents/<name>.md","lines":N,"confidence":0.N}
-```
-
-Deadline (§Deadlines, constants): in this spawn response Write `.temp/manage/agent-watch-manage.tsv` = `sw-engineer-agent\t-\t900` (envelope-only).
-
-Spawn passes no `isolation` (`agents/sw-engineer.md` §Worktree isolation), so the scaffolded file lands in the caller's tree and later steps Glob it in place.
-
-### Mode: Create Skill
-
-1. Fetch latest Claude Code skill frontmatter schema:
-
-   - Resolve skill schema cache path (24h TTL — same rationale as Create Agent step 1):
-     ```bash
-     mkdir -p .cache/manage  # timeout: 3000
-     MANAGE_SKILL_SCHEMA_FILE=".cache/manage/skill-schema.md"
-     if [ -n "$(find "$MANAGE_SKILL_SCHEMA_FILE" -mmin -1440 2>/dev/null)" ]; then MANAGE_SKILL_SCHEMA_CACHED=true; else MANAGE_SKILL_SCHEMA_CACHED=false; fi
-     echo "Skill schema file: $MANAGE_SKILL_SCHEMA_FILE (cached: $MANAGE_SKILL_SCHEMA_CACHED)"  # timeout: 3000
-     ```
-   - **`MANAGE_SKILL_SCHEMA_CACHED=true`**: skip spawn and deadline below; Read `$MANAGE_SKILL_SCHEMA_FILE` (limit=60) for field list, continue at extraction bullet.
-   - Spawn **foundry:web-explorer** to fetch `https://code.claude.com/docs/en/skills` with instruction: "Write your full findings (schema fields, new fields, deprecated fields) to `<MANAGE_SKILL_SCHEMA_FILE>` (substitute resolved path from bash block above) using the Write tool. Return ONLY a compact JSON envelope on your final line — nothing else after it: `{\"status\":\"done\",\"file\":\"<MANAGE_SKILL_SCHEMA_FILE>\",\"fields\":N,\"new\":N,\"deprecated\":N,\"confidence\":0.N,\"summary\":\"N fields, N new, N deprecated\"}`"
-
-   Deadline (§Deadlines, constants): in this spawn response Write `.temp/manage/agent-watch-manage.tsv` = `web-explorer-skill\t<MANAGE_SKILL_SCHEMA_FILE>\t300`.
-
-   - Read returned summary; extract: valid frontmatter fields (`name`, `description`, `argument-hint`,`disable-model-invocation`, `user-invocable`, `allowed-tools`, `model`, `effort`, `shell`, `paths`, `context`, `agent`, `hooks`), new fields
-   - Note new fields worth including. Adjust template to reflect current schema. Include `model` or `context: fork` only when skill's purpose clearly benefits.
-
-2. **Re-resolve `MANAGE_TPL` at the start of each skill invocation**; don't assume it's set from a prior step. Most `/foundry:manage create skill ...` invocations enter Create Skill mode directly without going through Create Agent first, so the variable will be unset. Run resolution block from Create Agent step 4 above (cascade primary → project-local → cache scan with `-d` guards) before reading any template path.
-
-3. Resolve `$_FOUNDRY_SHARED` before spawning — sub-agents do not inherit shell variables:
-
-```bash
-_FOUNDRY_SHARED=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_shared_path.py" foundry skills/_shared 2>/dev/null || echo "plugins/cc_foundry/skills/_shared")  # timeout: 5000
-echo "Shared dir: $_FOUNDRY_SHARED"
-```
-
-Spawn **foundry:sw-engineer** subagent to create directory and scaffold the skill file (`foundry:curator` NOT-for excludes scaffolding new agents/skills — see Create Agent rationale above):
-
-```markdown
-Run: `mkdir -p .claude/skills/<name>` using the Bash tool.
-Run `cat "<MANAGE_TPL>/skill-scaffold.md"` via the Bash tool (substitute resolved path from bash block above — do not pass literal `$MANAGE_TPL` to the agent).
-Also read the schema file at the path returned in the step 1 JSON to incorporate any new frontmatter fields.
-Run `cat "<_FOUNDRY_SHARED>/bin-authoring-guide.md"` (Bash tool; substitute resolved `$_FOUNDRY_SHARED`, echoed as `"Shared dir: <path>"`) and follow it — before any fenced code block in the new SKILL.md: extraction gate (verdict MEDIUM/HIGH → bin/ script instead), §Prose over Code check, §Script Output Routing for multi-value bin/ scripts.
-Scaffold `.claude/skills/<name>/SKILL.md` with:
-- Frontmatter: name=<name>, description=<description>; add other fields per schema and scaffold guidance
-- Body: rich workflow scaffold derived from the description, following all content rules in the scaffold template
-Write using the Write tool.
-Return ONLY: {"status":"done","file":".claude/skills/<name>/SKILL.md","lines":N,"confidence":0.N}
-```
-
-Deadline (§Deadlines, constants): in this spawn response Write `.temp/manage/agent-watch-manage.tsv` = `sw-engineer-skill\t-\t900` (envelope-only).
-
-### Mode: Update Agent (rename)
-
-Atomic rename — write new file before deleting old:
-
-1. Read `.claude/agents/<old-name>.md` using the Read tool.
-
-2. Write new file to `.claude/agents/<new-name>.md` using the Write tool (copy content of old file with `name:` line updated to `<new-name>`).
-
-3. Verify new file exists and is valid: `Read(file_path=".claude/agents/<new-name>.md", limit=5)` — **verification gate applies**: fails → STOP, do not run the `rm` below.
-
-```bash
-rm .claude/agents/<old-name>.md # timeout: 5000
-```
-
-### Mode: Update Skill (rename)
-
-Atomic rename — create new directory before removing old:
-
-1. Create new directory:
-
-   ```bash
-   mkdir -p .claude/skills/<new-name>  # timeout: 5000
-   ```
-
-2. Read old SKILL.md, update `name:` line in frontmatter, Write to new location.
-
-   > After updating `name:` in frontmatter: also scan new SKILL.md body for TRIGGER conditions, NOT-for lines, and example invocations still referencing old skill name — update those inline with Edit tool before proceeding to Step 5.
-
-3. Verify new file exists: `Read(file_path=".claude/skills/<new-name>/SKILL.md", limit=5)` — **verification gate applies**: fails → STOP, do not run the `rm -r` below (it removes a whole directory).
-
-   ```bash
-   rm -r .claude/skills/<old-name>  # timeout: 5000
-   ```
-
-### Mode: Delete Agent
-
-```bash
-rm .claude/agents/<name>.md # timeout: 5000
-```
-
-### Mode: Delete Skill
-
-```bash
-rm -r .claude/skills/<name>  # timeout: 5000
-```
-
-### Mode: Update Agent/Skill (content-edit)
-
-Before executing type-specific content-edit mode, determine approach:
-
-**File-type → agent routing:**
-
-| File extension | Agent |
+| `MODE` | Mode file |
 | -- | -- |
-| `.md` (agents, skills, SKILL.md) | `foundry:curator` |
-| `.js`, `.py`, `.ts`, `.sh` (code) | `foundry:sw-engineer` |
-| Rule `.md` (under `rules/`) | inline Edit — no agent |
-
-**If `EDIT_TRIVIAL=true`** (classified in Step 1):
-
-1. Read file using Read tool
-2. Apply directive directly using Edit tool — no agent spawn
-3. Proceed to Step 8; skip Steps 5–7 unless name or description changed in edit
-
-**If `EDIT_TRIVIAL=false`**: proceed to type-specific mode below for full agent-delegated edit.
-
-### Mode: Content-Edit Agent
-
-1. Determine change directive:
-   - Quoted description → use as-is
-   - Spec file path → Read spec file; use content as directive
-2. Resolve `_FS_VAL` (concrete path) before constructing spawn prompt — sub-agents do not inherit shell variables, so the prompt must contain a literal path, not a `$VAR` reference:
+| `create` | `create.md` |
+| `rename` | `rename.md` |
+| `content-edit` | `content-edit.md` |
+| `delete` | `delete.md` |
+| `add-perm`, `remove-perm` | `perm.md` |
 
 ```bash
-_FS_VAL=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_shared_path.py" foundry skills/_shared 2>/dev/null || echo "plugins/cc_foundry/skills/_shared")  # timeout: 5000
-echo "Shared dir for curator prompt: $_FS_VAL"
+MODE_FILE='<MODE_FILE>'
+case "$MODE_FILE" in *'<'*'>'*|"") echo "! BLOCKED — <MODE_FILE> not substituted (create.md | rename.md | content-edit.md | delete.md | perm.md)"; exit 1;; esac
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" manage modes "$MODE_FILE" --fallback-source  # timeout: 5000
 ```
-
-3. Spawn **foundry:curator** subagent — substitute `<_FS_VAL>` with the path from above when emitting the prompt:
-
-```markdown
-Read `.claude/agents/<name>.md`.
-Apply this change: <directive>
-Rules:
-- Preserve frontmatter fields (name, description, tools, model, color) unless the change explicitly targets them
-- Preserve XML tags (<role>, <workflow>, <notes>) — targeted edits only; do not rewrite unchanged sections
-- If the change modifies the agent's purpose: update the description: frontmatter field
-- Fenced code block added → run `cat "<_FS_VAL>/bin-authoring-guide.md"` (Bash tool), apply extraction gate (verdict MEDIUM/HIGH → bin/ script instead), §Prose over Code check, §Script Output Routing for multi-value bin/ scripts (all in guide just loaded)
-- After editing: verify XML tag balance, step numbering, cross-ref validity
-Write all changes using the Edit tool.
-Return ONLY: {"status":"done","file":".claude/agents/<name>.md","edits":N,"description_changed":true|false,"confidence":0.N}
-```
-
-Use `description_changed` from returned JSON to decide whether Steps 5–7 need cross-ref propagation.
-
-### Mode: Content-Edit Skill
-
-1. Determine change directive (same as Content-Edit Agent).
-2. Resolve `_FS_VAL` (concrete path) before constructing the spawn prompt:
-
-```bash
-_FS_VAL=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_shared_path.py" foundry skills/_shared 2>/dev/null || echo "plugins/cc_foundry/skills/_shared")  # timeout: 5000
-echo "Shared dir for curator prompt: $_FS_VAL"
-```
-
-3. Spawn **foundry:curator** subagent — substitute `<_FS_VAL>` with the path from above:
-
-```markdown
-Read `.claude/skills/<name>/SKILL.md`.
-Apply this change: <directive>
-Rules:
-- Preserve frontmatter fields (name, description, argument-hint, disable-model-invocation, allowed-tools)
-- Preserve XML tags (<objective>, <inputs>, <workflow>, <notes>) — targeted edits only; do not rewrite unchanged sections
-- If the change modifies the skill's purpose: update the description: frontmatter field
-- Fenced code block added → run `cat "<_FS_VAL>/bin-authoring-guide.md"` (Bash tool), apply extraction gate (verdict MEDIUM/HIGH → bin/ script instead), §Prose over Code check, §Script Output Routing for multi-value bin/ scripts (all in guide just loaded)
-- After editing: verify XML tag balance, step numbering, workflow gate completeness
-Write all changes using the Edit tool.
-Return ONLY: {"status":"done","file":".claude/skills/<name>/SKILL.md","edits":N,"description_changed":true|false,"confidence":0.N}
-```
-
-Use `description_changed` from returned JSON to decide whether Steps 5–7 need cross-ref propagation.
-
-### Mode: Content-Edit Rule
-
-1. Read `.claude/rules/<name>.md` using the Read tool.
-2. Determine change directive (same as Content-Edit Agent).
-3. Apply changes directly using the Edit tool:
-   - Preserve YAML frontmatter (description, paths) unless change explicitly targets them
-   - Rule files are free-form markdown with `##` sections — no XML tags
-   - Targeted edits — do not rewrite unchanged sections
-   - Adding new section: match heading level and style of existing sections
-   - If change modifies rule's scope: also update `description:` and `paths:` frontmatter fields
-   - After editing: verify YAML frontmatter valid, no broken internal references
-
-### Mode: Create Rule
-
-No schema fetch needed — rule files simpler than agents/skills (only frontmatter + free-form markdown sections).
-
-**Rule scope guidance**: empty `paths:` = global rule (applies everywhere); populated `paths:` = scoped (e.g., `paths: ["src/**/*.py"]` for Python-only rules). Default to global unless rule is clearly language/directory-specific.
-
-Write `.claude/rules/<name>.md` with this structure:
-
-```markdown
----
-description: <one-line description from user>
-paths:
-  - '<glob pattern matching the rule's scope>'
----
-
-## <First Section Title>
-
-[Real domain-specific rules derived from the description — not generic boilerplate. 20-60 lines total.]
-```
-
-Content rules:
-
-- Generate real domain content from description (e.g., for "torch-patterns": actual PyTorch patterns, not generic "write clean code")
-- Use `##` sections for major topics, bullets for individual rules
-- Include code examples only when they carry domain-specific patterns
-- Match tone and density of existing rules files (terse, imperative, no padding)
-
-### Mode: Update Rule (rename)
-
-Atomic update — write new file before deleting old:
-
-1. Read `.claude/rules/<old-name>.md` using the Read tool.
-2. Rule files have no `name:` frontmatter field — filename IS identifier. Write new file at `.claude/rules/<new-name>.md` with identical content.
-3. Verify new file exists: `Read(file_path=".claude/rules/<new-name>.md", limit=5)` — **verification gate applies**: fails → STOP, do not run the `rm` below.
-
-```bash
-rm .claude/rules/<old-name>.md  # timeout: 5000
-```
-
-### Mode: Delete Rule
-
-```bash
-rm .claude/rules/<name>.md # timeout: 5000
-```
-
-### Mode: Content-Edit Hook
-
-Hook files are JavaScript — delegate to **foundry:sw-engineer** (not foundry:curator):
-
-1. Determine change directive (same as Content-Edit Agent).
-2. Spawn **foundry:sw-engineer** subagent:
-
-```markdown
-Read `.claude/hooks/<name>.js`.
-Apply the hook authoring standards from the `<hook-authoring>` section in your agent definition — file-header structure, exit code semantics, stdin pattern, and anti-patterns.
-Apply this change: <directive>
-Rules:
-- Preserve the file header block (PURPOSE, HOW IT WORKS, EXIT CODES) unless the change explicitly modifies that logic
-- Preserve CommonJS require() style; do not convert to ESM
-- stdin must use event-based accumulation (process.stdin.on("data"/"end")); never readFileSync("/dev/stdin")
-- All subprocess calls must use execFileSync or spawnSync (args array — no execSync with shell strings)
-- Wrap all logic in try/catch; the catch destination depends on hook class (per `references/sw-engineer/hook-authoring.md` §Implementation pattern): PreToolUse gatekeeper that can emit `deny` → `process.exit(2)` (an erroring gate must block — exiting 0 is a security bypass); allow-only PreToolUse hook, or a logging hook (PostToolUse/SubagentStop) → `process.exit(0)`. Classify from the source, not from intent: any code path that can emit `deny` makes it a gatekeeper.
-- After editing: verify exit codes match documented cases, no shell injection surface added
-Write all changes using the Edit tool.
-Return ONLY: {"status":"done","file":".claude/hooks/<name>.js","edits":N,"confidence":0.N}
-```
-
-### Mode: Delete Hook
-
-```bash
-rm .claude/hooks/<name>.js  # timeout: 5000
-```
-
-After deleting the hook file, also remove its entry from `.claude/settings.json` so Claude Code does not invoke a missing script. Identify the hook's matcher pattern (the entry's `matcher` field, or `command` substring containing the deleted filename) and run jq to strip every block referencing it. Substitute `<name>` with the deleted hook's basename (no `.js` suffix):
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-# timeout: 5000
-HOOK_NAME="<name>"        # e.g. "rtk-rewrite" — no .js suffix
-echo "$HOOK_NAME" > "${TMPDIR:-/tmp}/manage-hook-name-${CSID}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/remove_hook_from_registry.py" \
-    --json-file .claude/settings.json \
-    --hook-name "$HOOK_NAME" \
-    --match path
-```
-
-Verify the entry is gone:
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r HOOK_NAME < "${TMPDIR:-/tmp}/manage-hook-name-${CSID}" 2>/dev/null || HOOK_NAME=""
-jq --arg hook "$HOOK_NAME" '[.. | objects | select(.command? // "" | test($hook + "\\.js"))] | length' .claude/settings.json  # timeout: 5000
-# Expected output: 0
-```
-
-**Also update plugin `hooks.json` registry** — if the deleted hook was registered in the foundry plugin's own `hooks.json`, `/foundry:setup` would re-add it to `settings.json` on the next sync, resurrecting a broken reference. Strip the matching entry from the plugin registry too:
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-# timeout: 5000
-IFS= read -r HOOK_NAME < "${TMPDIR:-/tmp}/manage-hook-name-${CSID}" 2>/dev/null || HOOK_NAME=""
-PLUGIN_HOOKS_JSON="${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/hooks/hooks.json"
-if [ -f "$PLUGIN_HOOKS_JSON" ]; then
-    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/remove_hook_from_registry.py" \
-        --json-file "$PLUGIN_HOOKS_JSON" \
-        --hook-name "$HOOK_NAME" \
-        --match basename
-    jq --arg hook "$HOOK_NAME" '[.. | objects | select(.command? // "" | test($hook + "\\.js"))] | length' "$PLUGIN_HOOKS_JSON"  # expected: 0
-else
-    printf "  (no plugin hooks.json at %s — skipping registry cleanup)\n" "$PLUGIN_HOOKS_JSON"
-fi
-```
-
-### Mode: Add Permission
-
-Adds rule to both `settings.json` and `permissions-guide.md` atomically.
-
-1. Determine guide category from rule prefix:
-
-   - `WebSearch` → `## Web`
-   - `WebFetch(domain:...)` → `## WebFetch — allowed domains`
-   - `WebFetch` (bare, no domain) → `## WebFetch — allowed domains`
-   - `Agent(subagent_type:*)` → `## Shell utilities` (agent dispatch rules)
-   - `mcp__*` → `## Shell utilities` (MCP tool rules)
-   - `Bash(gh ...)` → `## GitHub CLI — read-only`
-   - `Bash(git log:*)`, `Bash(git show:*)`, `Bash(git diff:*)`, `Bash(git rev-*:*)`, `Bash(git ls-*:*)`, `Bash(git -C:*)`, `Bash(git branch:*)`, `Bash(git tag:*)`, `Bash(git status:*)`, `Bash(git describe:*)`, `Bash(git shortlog:*)` → `## Git — read-only`
-   - `Bash(git add:*)`, `Bash(git checkout:*)`, `Bash(git stash:*)`, `Bash(git restore:*)`, `Bash(git clean:*)`, `Bash(git apply:*)` → `## Git — local write`
-   - `Bash(pytest:*)`, `Bash(python ...)`, `Bash(ruff:*)`, `Bash(mypy:*)`, `Bash(pip ...)` → `## Python toolchain`
-   - `Bash(brew ...)`, `Bash(codex:*)` → `## macOS / ecosystem`
-   - All other `Bash(...)` → `## Shell utilities`
-
-2. Update `settings.json` — atomic jq edit via shared helper:
-
-   ```bash
-   # timeout: 15000
-   python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/jq_write.py" .claude/settings.json '.permissions.allow += [$rule]' --arg rule "<rule>"
-   ```
-
-3. Also append to plugin's `permissions-allow.json` so `/foundry:setup` syncs it to `~/.claude/settings.json` on reinstall:
-
-   ```bash
-   # timeout: 5000
-   PERM_FILE="${CLAUDE_PLUGIN_ROOT}/.claude-plugin/permissions-allow.json"
-   if [ -f "$PERM_FILE" ]; then
-       python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/jq_write.py" "$PERM_FILE" '. += [$rule] | unique' --arg rule "<rule>"
-   fi
-   ```
-
-4. Update `permissions-guide.md` — append new row to end of correct section (before its trailing `---` separator). New row format:
-
-   ```markdown
-   | `<rule>` | <description> | <use case> |
-   ```
-
-   Use Edit tool to insert row: find last table row in target section and insert after it.
-
-5. Verify both files updated:
-
-   ```bash
-   # timeout: 5000
-   python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/verify_perm.py" "<rule>" .claude/settings.json .claude/permissions-guide.md present
-   # Exits 0 if both consistent; prints "settings: OK|MISSING" + "guide: OK|MISSING"
-   ```
-
-### Mode: Remove Permission
-
-Removes rule from both `settings.json` and `permissions-guide.md` atomically.
-
-1. Update `settings.json` — atomic jq edit via shared helper:
-
-   ```bash
-   # timeout: 15000
-   python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/jq_write.py" .claude/settings.json 'del(.permissions.allow[] | select(. == $rule))' --arg rule "<rule>"
-   ```
-
-2. Update `permissions-guide.md` — use Edit tool to remove table row containing `` `<rule>` ``.
-
-3. Verify both files clean:
-
-   ```bash
-   # timeout: 5000
-   python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/verify_perm.py" "<rule>" .claude/settings.json .claude/permissions-guide.md absent
-   # Exits 0 if both consistent; prints "settings: OK|STILL_PRESENT" + "guide: OK|STILL_PRESENT"
-   ```
 
 ## Step 5: Propagate cross-references
 
@@ -661,8 +253,7 @@ Return ONLY: {"status":"done","files_updated":N}
 
 ```bash
 # loads: rename-validation.md
-MANAGE_MODES=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_skill_subdir.py" manage modes 2>/dev/null || echo "plugins/cc_foundry/skills/manage/modes")  # timeout: 5000
-cat "$MANAGE_MODES/rename-validation.md"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" manage modes rename-validation.md --fallback-source  # timeout: 5000
 ```
 
 Execute the mode loaded above.
@@ -672,8 +263,7 @@ Execute the mode loaded above.
 MEMORY.md is Claude Code's auto-memory file — **not** stored under `.claude/`. Injected into conversation context at session start. Absolute path appears near top of system prompt (e.g. `~/.claude/projects/.../memory/MEMORY.md`). Use that absolute path with Edit tool. System prompt parsing fails or path absent: fall back to:
 
 ```bash
-# Claude Code auto-memory: / and . → - for path slugs
-MEMORY_FALLBACK=~/.claude/projects/$(pwd | sed 's|[/.]|-|g' | sed 's/^-//')/memory/MEMORY.md
+MEMORY_FALLBACK="$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_memory_dir.py" "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" 2>/dev/null)/MEMORY.md"
 [ -f "$MEMORY_FALLBACK" ] && echo "Fallback MEMORY.md: $MEMORY_FALLBACK" || echo "MEMORY.md not found at fallback path — skip roster update"  # timeout: 5000
 ```
 
@@ -728,12 +318,12 @@ For **create** and **update (rename)**: verify tool efficiency — cross-check a
 
 ## Step 9: Audit and calibrate
 
-Invoke `Skill(skill="foundry:audit", args="--skip-gate")` to validate created/modified files without triggering interactive follow-up gate (requires `foundry` plugin). **Skip if invoked with `--skip-audit` or if current `manage` operation runs inside audit-initiated fix session** — outer audit covers it.
+`/foundry:audit` and `/foundry:calibrate` are `disable-model-invocation: true` — this skill cannot invoke them. Validation runs through the direct `foundry:curator` spawn below; both skills are printed as user-run commands. **Skip the curator spawn and the printed audit command if invoked with `--skip-audit` or if current `manage` operation runs inside audit-initiated fix session** — outer audit covers it.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _SKIP_FILE < "${TMPDIR:-/tmp}/manage-skip-audit-path-${CSID}" 2>/dev/null || _SKIP_FILE="${TMPDIR:-/tmp}/manage-skip-audit-${CSID}"
-IFS= read -r SKIP_AUDIT < "$_SKIP_FILE" 2>/dev/null || SKIP_AUDIT="false"  # reload (Check 41)
+IFS= read -r SKIP_AUDIT < "$_SKIP_FILE" 2>/dev/null || SKIP_AUDIT="false"  # reload (Check 43)
 [[ "$SKIP_AUDIT" == "true" ]] && { echo "[--skip-audit] skipping Step 9 audit"; }
 ```
 
@@ -743,11 +333,11 @@ For targeted check of only affected file, spawn **foundry:curator** directly:
 - For `update`: audit renamed file, verify no stale references remain
 - For `delete`: audit remaining files for broken references to deleted name
 
-Include audit findings in final report. Don't proceed to sync if any `critical` findings remain.
+Include audit findings in final report. Don't proceed to sync if any `critical` findings remain. Then print as a REQUIRED user-run step: `/foundry:audit --skip-gate` (requires `foundry` plugin) — full-sweep validation without the interactive follow-up gate.
 
-**Calibration** — invoke `Skill(skill="foundry:calibrate", args="<name>")` after audit passes (requires `foundry` plugin). **Mandatory only when the edit changes the routing surface** — an agent/skill `description:` field, or a `TRIGGER`/`SKIP`/`NOT-for` line. For pure body/prose edits leaving routing surface untouched (workflow steps, examples, `<notes>`, wording polish), calibration is **optional** — suggest it, don't force it. Routing accuracy is unaffected by non-routing edits, so the 10–30 min run rarely pays off; skipping keeps small polishes cheap.
+**Calibration** — after audit passes, print `/foundry:calibrate <name>` as a user-run command (requires `foundry` plugin), never run it here. **Mandatory only when the edit changes the routing surface** — an agent/skill `description:` field, or a `TRIGGER`/`SKIP`/`NOT-for` line. For pure body/prose edits leaving routing surface untouched (workflow steps, examples, `<notes>`, wording polish), calibration is **optional** — suggest it, don't force it. Routing accuracy is unaffected by non-routing edits, so the 10–30 min run rarely pays off; skipping keeps small polishes cheap.
 
-Then, **only when routing surface changed**, invoke `Skill(skill="foundry:calibrate", args="routing --fast")` to confirm overall routing accuracy unaffected (requires `foundry` plugin). Skip this for pure body/prose edits.
+Then, **only when routing surface changed**, also print `/foundry:calibrate routing --fast` as a user-run command to confirm overall routing accuracy unaffected (requires `foundry` plugin). Skip this for pure body/prose edits.
 
 Skip calibration entirely for: trivial edits, renames, deletes, rule operations, perm operations.
 
@@ -759,8 +349,8 @@ Skip calibration entirely for: trivial edits, renames, deletes, rule operations,
 - **Rename Occurrence Validation** (rename mode only): three buckets — **Fixed** (N genuine references updated, list files) · **False positives** (N skipped, list file + one-line reason each) · **User-resolved** (N ambiguous, list file + user decision); if any genuine references could not be cleanly resolved, flag explicitly as requiring manual review
 - **Current Roster**: agents (N) and skills (N) with comma-separated names (n/a for perm operations)
 - **Audit Result**: audit findings (pass / issues found) (n/a for perm operations)
-- **Calibration Result**: recall score and routing accuracy from Step 9 (n/a for trivial edits, renames, deletes, perms, and pure body/prose edits that left the routing surface untouched — note calibration was suggested-but-skipped in that case)
-- **Follow-up**: perm ops → confirm both `settings.json` and `permissions-guide.md` updated; run `/foundry:setup` to sync `~/.claude/`
+- **Calibration Result**: suggested command(s) printed in Step 9, not run here (n/a for trivial edits, renames, deletes, perms, and pure body/prose edits that left the routing surface untouched — note calibration was suggested-but-skipped in that case)
+- **Follow-up**: perm ops → confirm both `settings.json` and `permissions-guide.md` updated; project `.claude/settings.json` applies at once, the plugin's `permissions-allow.json` source edit reaches `~/.claude/` only after plugin update/reinstall followed by `/foundry:setup`
 
 End response with `## Confidence` block per CLAUDE.md output standards.
 
@@ -775,7 +365,7 @@ AskUserQuestion: "Run foundry:challenger to adversarially review the changes jus
 On **(b)**: spawn `foundry:challenger` — background like every spawn; in the same response Write `.temp/manage/agent-watch-manage.tsv` = `challenger\t.temp/manage-challenger-<YYYY-MM-DD>.md\t900`, end the turn, and on its notification run the `<constants>` deadline check block once (⏱ `timed_out` → report it in place of the findings):
 
 ```text
-Agent(subagent_type="foundry:challenger", prompt="Adversarially review the changes just made to <list modified file paths>. Challenge: correctness of design decisions, completeness, potential regressions, and whether the stated goal was achieved. Read-only. Write full findings to .temp/manage-challenger-<YYYY-MM-DD>.md using the Write tool. Return ONLY: {\"status\":\"done\",\"file\":\".temp/manage-challenger-<YYYY-MM-DD>.md\",\"findings\":N,\"confidence\":0.N}")
+Agent(subagent_type="foundry:challenger", name="challenge-manage-edits", description="Challenge manage edits", prompt="Adversarially review the changes just made to <list modified file paths>. Challenge: correctness of design decisions, completeness, potential regressions, and whether the stated goal was achieved. Read-only. Write full findings to .temp/manage-challenger-<YYYY-MM-DD>.md using the Write tool. Return ONLY: {\"status\":\"done\",\"file\":\".temp/manage-challenger-<YYYY-MM-DD>.md\",\"findings\":N,\"confidence\":0.N}")
 ```
 
 Print challenger's `findings` count and confidence; note any HIGH findings warranting a follow-up `/manage update` pass. On **(a)**: print `→ Done.`, stop.
@@ -787,15 +377,15 @@ Print challenger's `findings` count and confidence; note any HIGH findings warra
 <notes>
 
 - **Atomic updates**: write-before-delete prevents data loss on interruption; perm ops must update both `settings.json` and `permissions-guide.md`
-- **settings.json format**: jq with atomic tmp-file pattern (`jq ... > .tmp && mv .tmp dest`) — avoids fragile sed/awk on JSON; indent=2 via `jq --indent 2` when formatting required
+- **settings.json format**: atomic jq edit via `bin/jq_write.py` (`perm.md`) — avoids fragile sed/awk on JSON
 - **README.md tables**: agent/skill tables in project `README.md`; rules table in `.claude/README.md` — keep row format consistent with existing rows
 - **No auto-edit for agent/skill/rule operations**: skill doesn't mutate settings.json for non-perm operations
-- **Color pool**: AVAILABLE_COLORS lists unused colors; exhausted: reuse with note
-- **Inline bash / extraction gate + prose compression**: before writing any fenced bash block directly into a `.md` file (agent, skill, rule) via Edit/Write, apply two checks from `bin-authoring-guide.md`: (1) extraction gate — verdict MEDIUM or HIGH: write a `bin/` script instead; verdict LOW: inline is acceptable; (2) Prose over Code — `tokens(block) > tokens(equivalent prose/table/schema)` at identical precision: write prose/table instead. Exempt: examples, templates, exact-syntax blocks. Same rules enforced in spawn prompts to foundry:curator and foundry:sw-engineer (see Content-Edit Agent/Skill modes). This note applies to orchestrator-level inline edits.
-- **Cycle detection**: sub-tasks spawned by manage (foundry:sw-engineer, foundry:curator, foundry:doc-scribe) must not invoke manage again. Circular dispatch — manage→sw-engineer→curator→manage — causes infinite loops. A sub-task needs manage capabilities: surface the need back to orchestrator; never chain manage from inside a manage-spawned sub-agent.
+- **Color pool**: AVAILABLE_COLORS is the candidate pool (in-use colors read live in Step 3); all in use → reuse the least-used color with a note
+- **Inline bash / extraction gate + prose compression**: before writing any fenced bash block directly into a `.md` file (agent, skill, rule) via Edit/Write, apply two checks from `bin-authoring-guide.md`: (1) extraction gate — verdict MEDIUM or HIGH: write a `bin/` script instead; verdict LOW: inline is acceptable; (2) Prose over Code — `tokens(block) > tokens(equivalent prose/table/schema)` at identical precision: write prose/table instead. Exempt: examples, templates, exact-syntax blocks. Same rules enforced in spawn prompts to foundry:curator and foundry:sw-engineer (see `content-edit.md`). This note applies to orchestrator-level inline edits.
+- **Cycle detection**: sub-tasks spawned by manage (foundry:sw-engineer, foundry:curator) must not invoke manage again. Circular dispatch — manage→sw-engineer→curator→manage — causes infinite loops. A sub-task needs manage capabilities: surface the need back to orchestrator; never chain manage from inside a manage-spawned sub-agent.
 - Follow-up chains:
-  - create or non-trivial update of agent/skill → `Skill(skill="foundry:audit", args="--skip-gate")` → `Skill(skill="foundry:calibrate", args="<name>")` (mandatory) → `Skill(skill="foundry:calibrate", args="routing --fast")`
-  - trivial update or rename or delete → `Skill(skill="foundry:audit", args="--skip-gate")` → `Skill(skill="foundry:calibrate", args="routing --fast")` (if description changed)
-  - add/remove perm → confirm both files updated; run `/foundry:setup`
+  - create or non-trivial update of agent/skill → print user-run `/foundry:audit --skip-gate` → `/foundry:calibrate <name>` (mandatory when routing surface changed) → `/foundry:calibrate routing --fast`
+  - trivial update or rename or delete → print user-run `/foundry:audit --skip-gate` → `/foundry:calibrate routing --fast` (if description changed)
+  - add/remove perm → confirm both files updated; plugin source `permissions-allow.json` edit reaches `~/.claude/` after plugin update/reinstall plus `/foundry:setup`
 
 </notes>

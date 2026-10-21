@@ -64,7 +64,10 @@ def test_one_query_per_module_in_shipped_preloop(
     # Exercise the Windows default codec on every host, without changing the real shell or cache helper.
     monkeypatch.setattr(io, "text_encoding", lambda encoding, stacklevel=2: encoding or "cp1252")
     plugin = Path(__file__).resolve().parents[1]
-    source = (plugin / "skills/resolve/modes/action-item-dispatch.md").read_text(encoding="utf-8")
+    source = "\n".join(
+        (plugin / f"skills/resolve/modes/dispatch-{p}.md").read_text(encoding="utf-8")
+        for p in ("prelude", "phase1", "phase2", "phase3")
+    )
     block = next(
         block for block in re.findall(r"```bash\n(.*?)```", source, re.DOTALL) if 'BLAST_RADIUS_CONTEXT=""' in block
     )

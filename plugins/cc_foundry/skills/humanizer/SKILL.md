@@ -1,9 +1,9 @@
 ---
 name: humanizer
-description: 'Strip AI-writing tells from prose destined for humans — docs, PR/commit bodies, reports, release notes, blog posts, Slack/email drafts. Removes LLM-vocabulary clichés (delve, boasts, testament, underscore, robust, tapestry...), banned constructions (not just X but Y, rule-of-three triads, "-ing" superficial-analysis clauses, vague-attribution weasel words), and formatting tells (title-case headings, mechanical bolding, em-dash overuse, curly quotes, bare-bullet inline-header lists). TRIGGER when: user asks to humanize/polish/de-AI a piece of text or file; before finalizing a substantial human-facing prose artifact drafted as part of the current task (docs, PR/commit body, report, blog post, release notes, external message) — self-review pass, best-effort model-initiated, not a guaranteed intercept. SKIP when: output is a terse conversational chat reply, code, JSON/YAML/config, a machine-parsed agent envelope ("Return ONLY:"), or the target is an ultra-caveman-tier handover file (`.temp/`, inter-agent prose per `plugins/CLAUDE.md` compression tiers).'
+description: 'Strip AI-writing tells from prose destined for humans — docs, PR/commit bodies, reports, release notes, blog posts, Slack/email drafts. Removes LLM-vocabulary clichés (delve, boasts, testament, underscore, robust, tapestry...), banned constructions (not just X but Y, rule-of-three triads, "-ing" superficial-analysis clauses, vague-attribution weasel words), and formatting tells (title-case headings, mechanical bolding, em-dash overuse, curly quotes, bare-bullet inline-header lists). TRIGGER when: user asks to humanize/polish/de-AI a piece of text or file; before finalizing a substantial human-facing prose artifact drafted as part of the current task (docs, PR/commit body, report, blog post, release notes, external message) — self-review pass, best-effort model-initiated, not a guaranteed intercept. SKIP when: output is a terse conversational chat reply, code, JSON/YAML/config, a machine-parsed agent envelope ("Return ONLY:"), a `.reports/` file or any file opening with a `---` YAML metadata block (report format needs the block and bold labels intact), or the target is an ultra-caveman-tier handover file (`.temp/`, inter-agent prose per `plugins/CLAUDE.md` compression tiers).'
 argument-hint: '[text or file path to humanize] | check <file>'
-allowed-tools: Read, Edit, Grep, Glob
-model: haiku
+allowed-tools: Read, Edit
+effort: medium
 ---
 
 <objective>
@@ -26,7 +26,7 @@ Detect and remove statistical AI-writing fingerprints from human-facing prose be
 
 - Inline text: work on it directly, no file I/O.
 - File path: `Read` the file.
-- **Destination guard** (before any edit): target must be human-facing prose. JSON/YAML/config, code, a machine-parsed agent envelope (`Return ONLY:`), or an ultra-caveman handover file under `.temp/` → emit `**! BLOCKED — humanizer does not apply to <destination type>**` and make no edit. `check` mode reports without editing, so it is unaffected.
+- **Destination guard** (before any edit): target must be human-facing prose. JSON/YAML/config, code, a machine-parsed agent envelope (`Return ONLY:`), a `.reports/` file or any file whose first line is a `---` YAML metadata block (report format requires that block and bold labels such as Confidence — stripping them breaks downstream parsing), or an ultra-caveman handover file under `.temp/` → emit `**! BLOCKED — humanizer does not apply to <destination type>**` and make no edit. `check` mode reports without editing, so it is unaffected.
 - No argument: treat the draft already composed earlier this turn as the target.
 
 ## 2. Scan against the checklist

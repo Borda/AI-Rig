@@ -573,3 +573,133 @@ def test_medium_req_sections_match_taxonomy() -> None:
     }
     expected = {mfi.section_slug(headers[name]) for name in names} | {"critical"}
     assert expected == set(mai.REQ_MEDIUM_SECTIONS)
+
+
+def _report_args(tmp_path: Path, report: Path, *extra: str) -> list[str]:
+    """Return the ``--report-file`` command line resolve's Step 3a/3c blocks use."""
+    return [
+        "--items",
+        str(tmp_path / "impl" / "action-items.jsonl"),
+        "--report-file",
+        str(report),
+        "--impl-dir",
+        str(tmp_path / "impl"),
+        "--persist-findings",
+        str(tmp_path / "findings-sentinel"),
+        *extra,
+    ]
+
+
+def test_report_file_takes_the_findings_beside_the_report(tmp_path: Path) -> None:
+    """The findings file beside the consumed report is merged and its path is persisted for the later links step.
+
+    This is the review's own ``findings.jsonl``; resolve must not touch the parsed-copy fallback when it exists, and the
+    persisted line is what Step 3c's second block reads back.
+    """
+    findings = _findings_file(tmp_path, [_finding()])
+    (tmp_path / "impl").mkdir()
+
+    code = mai.main(_report_args(tmp_path, findings.with_name("review-report.md")))
+
+    assert code == 0
+    assert (tmp_path / "findings-sentinel").read_text(encoding="utf-8") == f"{findings.as_posix()}\n"
+    assert [item["finding_id"] for item in mai.read_jsonl(tmp_path / "impl" / "action-items.jsonl")] == [
+        mfi.mint([_finding()])[0]["id"]
+    ]
+
+
+def test_report_file_mints_the_parsed_copy_when_the_report_has_no_findings_file(tmp_path: Path) -> None:
+    """An older report without ``findings.jsonl`` falls back to the copy resolve parsed, minting its ids in place.
+
+    The parsed copy carries no ids when the orchestrator writes it, so the merge would have nothing stable to key on;
+    the item must also lose any verifier verdict, because no verifier backed a file resolve wrote itself.
+    """
+    report = tmp_path / "review" / "review-report.md"
+    report.parent.mkdir()
+    (tmp_path / "impl").mkdir()
+    parsed = _write_jsonl(tmp_path / "impl" / "report-findings.jsonl", [_finding()])
+
+    code = mai.main(_report_args(tmp_path, report))
+
+    assert code == 0
+    assert (tmp_path / "findings-sentinel").read_text(encoding="utf-8") == f"{parsed.as_posix()}\n"
+    assert mai.read_jsonl(parsed)[0]["id"] == mfi.mint([_finding()])[0]["id"]
+    assert "verify_verdict" not in mai.read_jsonl(tmp_path / "impl" / "action-items.jsonl")[0]
+
+
+def test_report_file_without_any_findings_blocks_with_the_pinned_line(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """No findings beside the report and no parsed copy stops with the line telling the orchestrator what to write."""
+    (tmp_path / "impl").mkdir()
+
+    code = mai.main(_report_args(tmp_path, tmp_path / "review" / "review-report.md"))
+
+    assert code == 1
+    expected = (tmp_path / "impl" / "report-findings.jsonl").as_posix()
+    assert capsys.readouterr().out.strip() == (
+        f"! BLOCKED — no findings.jsonl beside the report; write {expected} from the parsed report first"
+    )
+    assert not (tmp_path / "findings-sentinel").exists()
+
+
+def test_report_file_stops_when_minting_the_parsed_copy_fails(tmp_path: Path) -> None:
+    """A parsed record the minter refuses stops the merge before any item is written or path persisted."""
+    (tmp_path / "impl").mkdir()
+    _write_jsonl(tmp_path / "impl" / "report-findings.jsonl", [{"title": "no section or severity"}])
+
+    code = mai.main(_report_args(tmp_path, tmp_path / "review" / "review-report.md"))
+
+    assert code == 1
+    assert not (tmp_path / "impl" / "action-items.jsonl").exists()
+    assert not (tmp_path / "findings-sentinel").exists()
+
+
+@pytest.mark.parametrize(
+    ("accepted", "same"),
+    [
+        pytest.param("report", True, id="same-path"),
+        pytest.param("relative", True, id="relative-spelling-of-the-same-file"),
+        pytest.param("other", False, id="another-existing-file"),
+        pytest.param("absent", False, id="accepted-file-gone"),
+        pytest.param("", False, id="nothing-accepted"),
+    ],
+)
+def test_intake_accepted_matches_the_report_by_file_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, accepted: str, same: bool
+) -> None:
+    """Gap triage's accepted report admits degraded merging only when it is the very file being consumed.
+
+    The sentinel may hold a relative spelling while the report path arrives absolute, so this is ``test -ef``, not
+    string equality; an empty, stale or different file never admits a degraded publication.
+    """
+    report = tmp_path / "review-report.md"
+    report.write_text("x", encoding="utf-8")
+    (tmp_path / "other.md").write_text("y", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    spelled = {
+        "report": str(report),
+        "relative": "review-report.md",
+        "other": str(tmp_path / "other.md"),
+        "absent": str(tmp_path / "gone.md"),
+        "": "",
+    }[accepted]
+
+    assert mai._same_file(spelled, report) is same
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        pytest.param(["--findings", "f.jsonl"], id="with-findings"),
+        pytest.param([], id="without-impl-dir"),
+    ],
+)
+def test_report_file_flag_combinations_are_refused(tmp_path: Path, extra: list[str]) -> None:
+    """``--report-file`` replaces ``--findings`` and needs ``--impl-dir``; anything else is an argument error."""
+    argv = ["--items", str(tmp_path / "items.jsonl"), "--report-file", str(tmp_path / "r.md"), *extra]
+
+    with pytest.raises(SystemExit) as raised:
+        mai.main(argv)
+
+    assert raised.value.code == 2

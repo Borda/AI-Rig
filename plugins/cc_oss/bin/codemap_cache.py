@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """codemap_cache.py — shared review→resolve codemap pre-flight cache.
 
-consumers: resolve/SKILL.md, resolve/modes/action-item-dispatch.md, _shared/codemap-context.md
+consumers: resolve/SKILL.md, resolve/modes/dispatch-prelude.md, _shared/codemap-context.md
 
 Materializes the per-module structural-context artifacts that let ``oss:resolve``
 reuse the pre-flight ``codemap-py query`` answers ``develop:review``/``oss:review``

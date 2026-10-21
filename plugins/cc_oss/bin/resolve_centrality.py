@@ -38,7 +38,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
+
+#: Module names safe to hand to an unquoted shell word-split loop (``for m in $(... --modules-only)``): no whitespace,
+#: glob or shell metacharacters, and no leading ``-`` that a downstream CLI would read as an option. A name outside this
+#: shape comes from an unusual repo path and is dropped rather than risk splitting, globbing or option injection.
+_SAFE_MODULE_NAME_RE = re.compile(r"[\w.][\w.-]*")
+#: Upper bound on the ``codemap-py query central`` payload read from stdin, in characters.
+_MAX_STDIN_CHARS = 64 * 1024 * 1024
 
 
 def match_module(file: str, paths: list[tuple[str, str]]) -> str | None:
@@ -80,6 +88,14 @@ def match_module(file: str, paths: list[tuple[str, str]]) -> str | None:
     return best_name
 
 
+def _rdep_count(module: dict[str, object]) -> int:
+    """Read ``rdep_count`` as an int; a missing or malformed value counts as 0 (ordered last)."""
+    try:
+        return int(module.get("rdep_count") or 0)  # type: ignore[call-overload]
+    except (TypeError, ValueError):
+        return 0
+
+
 def build_maps(central: dict[str, object], files: list[str]) -> dict[str, object]:
     """Build the centrality map and the file→module resolution from a central payload.
 
@@ -96,9 +112,12 @@ def build_maps(central: dict[str, object], files: list[str]) -> dict[str, object
         >>> payload = {"central": [{"name": "pkg.auth", "rdep_count": 9, "path": "src/pkg/auth.py"}]}
         >>> build_maps(payload, ["src/pkg/auth.py", "docs/x.md"])
         {'centrality': {'pkg.auth': 9}, 'file_module': {'src/pkg/auth.py': 'pkg.auth', 'docs/x.md': ''}}
+        >>> build_maps({"central": [{"rdep_count": 3}, "junk", {"name": "pkg.a", "rdep_count": None}]}, [])
+        {'centrality': {'pkg.a': 0}, 'file_module': {}}
     """
-    modules = central.get("central", []) or []
-    centrality = {str(m["name"]): int(m.get("rdep_count", 0)) for m in modules}
+    raw = central.get("central") if isinstance(central, dict) else None
+    modules = [m for m in raw if isinstance(m, dict) and "name" in m] if isinstance(raw, list) else []
+    centrality = {str(m["name"]): _rdep_count(m) for m in modules}
     paths = [(str(m["name"]), str(m.get("path", ""))) for m in modules if m.get("path")]
     file_module = {f: (match_module(f, paths) or "") for f in files}
     return {"centrality": centrality, "file_module": file_module}
@@ -113,18 +132,22 @@ def ordered_modules(maps: dict[str, object]) -> list[str]:
     Returns:
         Canonical module names for the files that resolved to one. A file the index
         does not know (new file, non-Python) contributes nothing rather than a
-        guessed name — querying a name the index never had is a guaranteed error.
+        guessed name — querying a name the index never had is a guaranteed error. A name that is not shell-word-safe
+        (whitespace, glob or shell metacharacters, leading ``-``) is dropped for the same reason: callers split this
+        output with an unquoted ``$(...)``.
 
     Examples:
         >>> ordered_modules({"file_module": {"a.py": "pkg.a", "b.py": "", "c.py": "pkg.a"}})
         ['pkg.a']
         >>> ordered_modules({"file_module": {"z.py": "pkg.z", "a.py": "pkg.a"}})
         ['pkg.z', 'pkg.a']
+        >>> ordered_modules({"file_module": {"a.py": "my pkg", "b.py": "*", "c.py": "-x", "d.py": "ok-pkg.d"}})
+        ['ok-pkg.d']
     """
     seen: dict[str, None] = {}
     file_module = maps.get("file_module", {})
     for name in file_module.values() if isinstance(file_module, dict) else []:
-        if name:
+        if name and _SAFE_MODULE_NAME_RE.fullmatch(str(name)):
             seen.setdefault(str(name), None)
     return list(seen)
 
@@ -136,7 +159,7 @@ def main(argv: list[str] | None = None) -> int:
         argv: Optional argument list (defaults to ``sys.argv[1:]``).
 
     Returns:
-        Exit code 0 on success; 1 when stdin is not valid central JSON.
+        Exit code 0 on success; 1 when stdin is not a valid central JSON object or exceeds the size cap.
 
     Examples:
         No doctest — reads stdin; covered by pytest with monkeypatch/capsys.
@@ -151,9 +174,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     sys.stdout.reconfigure(encoding="utf-8", newline="\n")  # type: ignore[union-attr]
+    payload = sys.stdin.read(_MAX_STDIN_CHARS + 1)
     try:
-        central = json.load(sys.stdin)
+        central = json.loads(payload) if len(payload) <= _MAX_STDIN_CHARS else None
     except (json.JSONDecodeError, ValueError):
+        return 1
+    if not isinstance(central, dict):
         return 1
 
     files = [f for f in args.files.split(",") if f]

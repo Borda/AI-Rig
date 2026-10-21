@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import runpy
 import subprocess
 import sys
@@ -97,21 +98,45 @@ def test_check_and_noninteractive_grant_never_write(consent_home: Path) -> None:
     assert (consent_home / "config.toml").read_bytes() == original
 
 
-@pytest.mark.integration
-def test_explicit_approval_grants_without_terminal_and_reuses_consent(consent_home: Path) -> None:
-    """Let unattended setup explicitly grant once and prove the next dispatch check recognizes it."""
-    config = consent_home / "config.toml"
-    original = tomllib.loads(config.read_text(encoding="utf-8"))
-    block = (PLUGIN / "rules/claude-transfer-policy.txt").read_text(encoding="utf-8").strip()
-    result = subprocess.run(
+TOKEN_ENV = "BRIDGE_OPERATOR_TOKEN"  # noqa: S105 - variable name, not a secret
+
+
+def _mint_token(monkeypatch: pytest.MonkeyPatch) -> str:
+    """Mint a one-time token the way an operator does, from a terminal, and return what it printed."""
+    output = Terminal()
+    with monkeypatch.context() as patch:
+        patch.setattr(sys, "stdout", output)
+        patch.setattr(sys, "stdin", Terminal())
+        assert runpy.run_path(str(SCRIPT))["main"](["issue-token"]) == 0
+    return output.getvalue().splitlines()[1]
+
+
+def _piped_grant(token: str | None) -> subprocess.CompletedProcess[str]:
+    """Run ``grant --approve`` with closed stdin, as a model-run shell would, optionally carrying a token."""
+    env = {key: value for key, value in os.environ.items() if key != TOKEN_ENV}
+    if token is not None:
+        env[TOKEN_ENV] = token
+    return subprocess.run(
         [sys.executable, str(SCRIPT), "grant", "--approve"],
         stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
         check=False,
+        env=env,
     )
+
+
+@pytest.mark.integration
+def test_operator_token_grants_without_terminal_and_reuses_consent(
+    consent_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Let unattended setup grant once with an operator-minted token and prove the next dispatch check recognizes it."""
+    config = consent_home / "config.toml"
+    original = tomllib.loads(config.read_text(encoding="utf-8"))
+    block = (PLUGIN / "rules/claude-transfer-policy.txt").read_text(encoding="utf-8").strip()
+    result = _piped_grant(_mint_token(monkeypatch))
     assert result.returncode == 0, result.stderr
-    assert "Explicit approval supplied by --approve" in result.stdout
+    assert "Explicit approval supplied by --approve with a one-time operator token" in result.stdout
     assert block in result.stdout
     assert "Type Approve" not in result.stdout
     expected = {
@@ -137,6 +162,87 @@ def test_explicit_approval_grants_without_terminal_and_reuses_consent(consent_ho
         "configured_reviewer": "auto_review",
         "session_effective": "unverified",
     }
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("supplied", "refusal"),
+    [
+        pytest.param(None, "operator terminal", id="no-token"),
+        pytest.param("not-the-minted-token", "does not match", id="wrong-token"),
+    ],
+)
+def test_piped_grant_approve_without_valid_operator_proof_never_writes(
+    consent_home: Path, monkeypatch: pytest.MonkeyPatch, supplied: str | None, refusal: str
+) -> None:
+    """A model-run shell has no terminal and cannot mint a token, so --approve alone must not record consent.
+
+    An outstanding token exists in the wrong-token case, proving a guess does not consume or satisfy it.
+    """
+    _mint_token(monkeypatch)
+    original = (consent_home / "config.toml").read_bytes()
+    result = _piped_grant(supplied)
+    assert result.returncode == 2
+    assert refusal in result.stderr
+    assert (consent_home / "config.toml").read_bytes() == original
+
+
+@pytest.mark.integration
+def test_operator_token_is_single_use(consent_home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A token that already authorized one grant cannot authorize a second after revocation."""
+    token = _mint_token(monkeypatch)
+    assert _piped_grant(token).returncode == 0
+    assert not (consent_home / ".bridge-consent-operator-token").exists()
+    with monkeypatch.context() as patch:
+        patch.setattr(sys, "stdout", Terminal())
+        patch.setattr(sys, "stdin", Terminal("Approve\n"))
+        assert runpy.run_path(str(SCRIPT))["main"](["revoke"]) == 0
+    revoked = (consent_home / "config.toml").read_bytes()
+    replay = _piped_grant(token)
+    assert replay.returncode == 2
+    assert "token" in replay.stderr
+    assert (consent_home / "config.toml").read_bytes() == revoked
+
+
+@pytest.mark.integration
+def test_expired_operator_token_is_refused(consent_home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A token older than its lifetime is refused even when it is the minted value."""
+    token = _mint_token(monkeypatch)
+    record = consent_home / ".bridge-consent-operator-token"
+    stored = json.loads(record.read_text(encoding="utf-8"))
+    record.write_text(json.dumps({**stored, "expires_at": 1}), encoding="utf-8")
+    original = (consent_home / "config.toml").read_bytes()
+    result = _piped_grant(token)
+    assert result.returncode == 2
+    assert "expired" in result.stderr
+    assert (consent_home / "config.toml").read_bytes() == original
+
+
+@pytest.mark.integration
+def test_issue_token_refuses_a_piped_caller(consent_home: Path) -> None:
+    """Only a terminal may mint a token; a model-run shell with closed stdin cannot approve itself."""
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "issue-token"],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 2
+    assert "operator terminal" in result.stderr
+    assert not (consent_home / ".bridge-consent-operator-token").exists()
+
+
+def test_approve_in_the_operator_terminal_skips_the_typed_question(
+    consent_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The flag typed by an operator at a terminal is itself the confirmation, so no second question is asked."""
+    output = Terminal()
+    monkeypatch.setattr(sys, "stdout", output)
+    monkeypatch.setattr(sys, "stdin", Terminal(""))
+    assert runpy.run_path(str(SCRIPT))["main"](["grant", "--approve"]) == 0
+    assert "in the operator terminal" in output.getvalue()
+    assert "Type Approve" not in output.getvalue()
 
 
 @pytest.mark.integration
@@ -187,6 +293,48 @@ def test_real_config_shapes_preserve_other_values(
         **before,
         "auto_review": {**before.get("auto_review", {}), "extra_policy": after["auto_review"]["extra_policy"]},
     }
+
+
+def test_statement_split_keeps_brackets_inside_strings_and_comments_out_of_table_detection() -> None:
+    """Split tricky multi-line TOML into the same statements the per-line parser boundary produced."""
+    namespace = runpy.run_path(str(SCRIPT))
+    text = (
+        'notes = """\n[auto_review]\nextra_policy = "fake"\n"""" \n'
+        'paths = [ # ] [\n  \'a]\', "b\\"]",\n  [1, 2],\n]\n'
+        "raw = '''\n]'''\n"
+        "[auto_review]\n"
+        'extra_policy = "old"\n'
+    )
+
+    chunks = namespace["_statements"](text)
+
+    assert chunks == [
+        'notes = """\n[auto_review]\nextra_policy = "fake"\n"""" \n',
+        'paths = [ # ] [\n  \'a]\', "b\\"]",\n  [1, 2],\n]\n',
+        "raw = '''\n]'''\n",
+        "[auto_review]\n",
+        'extra_policy = "old"\n',
+    ]
+
+
+def test_long_multiline_array_is_parsed_once_per_statement(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep a large config from stalling consent with one TOML parse per accumulated line."""
+    namespace = runpy.run_path(str(SCRIPT))
+    parse = namespace["_parse"]
+    parsed: list[int] = []
+
+    def _counting_parse(text: str) -> dict[str, object]:
+        """Count each parser invocation while keeping real TOML validation."""
+        parsed.append(len(text))
+        return parse(text)
+
+    monkeypatch.setitem(namespace["_statements"].__globals__, "_parse", _counting_parse)
+    text = "[auto_review]\n[other]\nbig = [\n" + "  1,\n" * 5000 + "]\n"
+
+    chunks = namespace["_statements"](text)
+
+    assert len(chunks) == 3
+    assert len(parsed) == 3
 
 
 @pytest.mark.parametrize("mutation", ["edited", "duplicate", "unknown-version"])

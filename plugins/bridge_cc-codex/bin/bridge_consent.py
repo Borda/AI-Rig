@@ -2,26 +2,32 @@
 
 Purpose: Give Bridge setup a durable, reviewer-visible consent boundary without treating plugin installation as
 authorization. Scope: Read or change only the versioned Bridge block in the user's auto_review.extra_policy; preserve
-all other configuration. Usage: Run check from a skill; grant or revoke asks for operator-terminal confirmation. An
-explicitly authorized grant --approve records consent without a terminal or further question; the caller owns approval
-provenance. Outputs: Check emits sanitized JSON; mutations show only the selected path and shipped policy, never user
-configuration or credentials. Failure: Invalid TOML, unsupported placement, unsafe files, changed input, missing
-required terminal or declined confirmation exits nonzero without a policy update. Used by: Codex Bridge setup, dispatch
-skills, package tests, and operators. The terminal check is an interaction requirement, not proof against another
-process controlled by the same user. Stored policy is not evidence that an active or managed host loaded it; this helper
-never changes reviewer selection, sandbox permissions, authentication or plugin installation, and never invokes a
-provider.
+all other configuration. Usage: Run check from a skill; grant or revoke asks for operator-terminal confirmation. ``grant
+--approve`` skips the typed question but still needs operator proof: the operator terminal itself, or a one-time token
+that ``issue-token`` printed to that terminal and the caller passes as ``BRIDGE_OPERATOR_TOKEN``. With neither it exits
+without a policy update. Outputs: Check emits sanitized JSON; mutations show only the selected path and shipped policy,
+never user configuration or credentials; ``issue-token`` prints the token to the terminal only. Failure: Invalid TOML,
+unsupported placement, unsafe files, changed input, missing operator proof or declined confirmation exits nonzero
+without a policy update. Used by: Codex Bridge setup, dispatch skills, package tests, and operators. The terminal check
+is an interaction requirement, not proof against another process controlled by the same user. The token file keeps only
+a hash and expiry in the Codex home, and a token is consumed by the grant that uses it. Stored policy is not evidence
+that an active or managed host loaded it; this helper never changes reviewer selection, sandbox permissions,
+authentication or plugin installation, and never invokes a provider.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
+import hmac
 import json
 import os
 import re
+import secrets
 import stat
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 try:
@@ -39,6 +45,63 @@ POLICY_PATH = Path(__file__).resolve().parents[1] / "rules" / "claude-transfer-p
 MARKER = "<!-- bridge:claude-transfer-consent:"
 #: Maximum native configuration size accepted without retaining raw contents in diagnostics.
 MAX_CONFIG_BYTES = 2 * 1024 * 1024
+#: Environment variable that carries the operator-minted one-time token into a non-terminal ``grant --approve``.
+TOKEN_ENV = "BRIDGE_OPERATOR_TOKEN"  # noqa: S105 - variable name, not a secret
+#: File in the Codex home that holds the hash and expiry of the one outstanding token.
+TOKEN_FILE = ".bridge-consent-operator-token"  # noqa: S105 - file name, not a secret
+#: Seconds an issued token stays valid.
+TOKEN_TTL_SECONDS = 300
+
+
+def _operator_terminal() -> bool:
+    """Report whether stdin and stdout are the operator's terminal rather than pipes a model could drive."""
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def _issue_token(home: Path) -> str:
+    """Mint a one-time token and keep only its hash and expiry, owner-only, in the Codex home."""
+    path = home / TOKEN_FILE
+    try:
+        _metadata(path)
+    except FileNotFoundError:
+        pass
+    token = secrets.token_urlsafe(24)
+    record = {
+        "sha256": hashlib.sha256(token.encode("utf-8")).hexdigest(),
+        "expires_at": int(time.time()) + TOKEN_TTL_SECONDS,
+    }
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
+        stream.write(json.dumps(record) + "\n")
+    return token
+
+
+def _verify_token(home: Path, token: str) -> None:
+    """Raise ``ValueError`` unless ``token`` matches the unexpired outstanding record."""
+    path = home / TOKEN_FILE
+    try:
+        _metadata(path)
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise ValueError(
+            "operator token not issued or already used; run issue-token in the operator terminal"
+        ) from None
+    expires_at = record.get("expires_at") if isinstance(record, dict) else None
+    digest = record.get("sha256") if isinstance(record, dict) else None
+    if type(expires_at) is not int or not isinstance(digest, str):
+        raise ValueError("operator token record is malformed; run issue-token again")
+    if expires_at < int(time.time()):
+        raise ValueError("operator token expired; run issue-token again")
+    if not hmac.compare_digest(hashlib.sha256(token.encode("utf-8")).hexdigest(), digest):
+        raise ValueError("operator token does not match; run issue-token again")
+
+
+def _burn_token(home: Path) -> None:
+    """Consume the outstanding token; a concurrent grant that already did so makes this one fail."""
+    try:
+        (home / TOKEN_FILE).unlink()
+    except FileNotFoundError:
+        raise ValueError("operator token was already used; run issue-token again") from None
 
 
 def _parse(text: str) -> dict[str, object]:
@@ -68,13 +131,71 @@ def _present(extra: str, block: str) -> bool:
     return True
 
 
-def _replace_extra(text: str, policy: str) -> str:
-    """Replace a normal table assignment while preserving unrelated TOML bytes and values."""
-    before = _parse(text)
+#: One run of consecutive quote characters of a single kind, matched in place to size TOML string delimiters.
+_QUOTE_RUN = re.compile(r"\"+|'+")
+
+
+def _scan_line(line: str, multiline: str | None, depth: int) -> tuple[str | None, int]:
+    """Carry an open multi-line string delimiter and bracket depth across one line of valid TOML.
+
+    Quotes, escapes and comments are tracked only so that brackets inside strings or comments never count. A run of
+    three or more quotes inside a multi-line string closes it; TOML allows up to two extra quotes as content there.
+
+    Examples:
+        >>> _scan_line('big = [ # "]"\\n', None, 0)
+        (None, 1)
+        >>> _scan_line('text = \"\"\"open [\\n', None, 0)
+        ('\"\"\"', 0)
+        >>> _scan_line('still open\"\"\"\"\\n', '\"\"\"', 0)
+        (None, 0)
+    """
+    index = 0
+    while index < len(line):
+        char = line[index]
+        if multiline is not None:
+            if multiline == '"""' and char == "\\":
+                index += 2
+            elif char == multiline[0]:
+                run = _QUOTE_RUN.match(line, index).end() - index  # type: ignore[union-attr]
+                index += run
+                multiline = None if run >= 3 else multiline
+            else:
+                index += 1
+        elif char == "#":
+            break
+        elif char in "\"'":
+            run = _QUOTE_RUN.match(line, index).end() - index  # type: ignore[union-attr]
+            if run >= 3:
+                multiline, index = char * 3, index + 3
+            elif run == 2:
+                index += 2
+            else:
+                index += 1
+                while index < len(line) and line[index] != char:
+                    index += 2 if char == '"' and line[index] == "\\" else 1
+                index += 1
+        else:
+            depth += (char in "[{") - (char in "]}")
+            index += 1
+    return multiline, depth
+
+
+def _statements(text: str) -> list[str]:
+    """Split valid TOML text into its top-level statements, each with its exact original bytes.
+
+    The parser is asked only at lines where the scanner sees no open multi-line string or bracket, so each statement is
+    parsed about once; re-parsing a growing prefix after every line made a long multi-line array or string quadratic. A
+    candidate the parser rejects keeps accumulating as before, and text left over at the end still fails closed.
+    """
     chunks: list[str] = []
     pending = ""
+    multiline: str | None = None
+    depth = 0
     for line in text.splitlines(keepends=True):
         pending += line
+        multiline, depth = _scan_line(line, multiline, depth)
+        if multiline is not None or depth > 0:
+            continue
         try:
             _parse(pending)
         except ValueError:
@@ -83,6 +204,13 @@ def _replace_extra(text: str, policy: str) -> str:
         pending = ""
     if pending:
         raise ValueError("unsupported TOML statement placement")
+    return chunks
+
+
+def _replace_extra(text: str, policy: str) -> str:
+    """Replace a normal table assignment while preserving unrelated TOML bytes and values."""
+    before = _parse(text)
+    chunks = _statements(text)
     in_review = False
     table_index = None
     assignment_index = None
@@ -201,11 +329,14 @@ def _write(path: Path, content: str, original: bytes, identity: os.stat_result |
 def main(argv: list[str] | None = None) -> int:
     """Check consent or apply a grant or revocation with explicit approval."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("check", "grant", "revoke"))
+    parser.add_argument("action", choices=("check", "grant", "revoke", "issue-token"))
     parser.add_argument(
         "--approve",
         action="store_true",
-        help="approve persistent Claude repository-context transfer and ordinary inference consent without prompting (grant only)",
+        help=(
+            "approve persistent Claude repository-context transfer and ordinary inference consent without the typed "
+            f"question (grant only); needs the operator terminal or a one-time {TOKEN_ENV} from issue-token"
+        ),
     )
     args = parser.parse_args(argv)
     if args.approve and args.action != "grant":
@@ -221,6 +352,17 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"consent": "absent", "configured_reviewer": None, "session_effective": "unverified"}))
             return 0
         home_identity = _metadata(home, directory=True)
+        if args.action == "issue-token":
+            if not _operator_terminal():
+                raise ValueError(
+                    "issue-token requires the operator terminal; run it yourself, outside model-controlled tools"
+                )
+            token = _issue_token(home)
+            print(f"One-time operator token, valid {TOKEN_TTL_SECONDS // 60} minutes, consumed by one grant:\n{token}")
+            print(
+                f"Export it as {TOKEN_ENV} for a single `bridge_consent.py grant --approve` run; it grants nothing by itself."
+            )
+            return 0
         path = home / "config.toml"
         original, identity = _read(path)
         text = original.decode("utf-8")
@@ -245,8 +387,15 @@ def main(argv: list[str] | None = None) -> int:
         if present == (args.action == "grant"):
             print("Consent already configured." if present else "Consent already absent.")
             return 0
-        if not args.approve and (not sys.stdin.isatty() or not sys.stdout.isatty()):
-            raise ValueError("interactive grant and revoke require the operator terminal; piped input is not approval")
+        terminal = _operator_terminal()
+        token = os.environ.get(TOKEN_ENV, "") if args.approve else ""
+        if token:
+            _verify_token(home, token)
+        elif not terminal:
+            raise ValueError(
+                "grant and revoke require the operator terminal; piped input is not approval. "
+                f"Non-interactive grant --approve needs a one-time {TOKEN_ENV} minted by issue-token in that terminal"
+            )
         # Only this exact marked text is added or removed; surrounding user policy survives.
         if args.action == "grant":
             updated = extra + ("\n\n" if extra else "") + block
@@ -263,12 +412,17 @@ def main(argv: list[str] | None = None) -> int:
             "\nThis applies to later authorized tasks in native-confirmed project folders until revoked. It includes ordinary inference quota/cost through your existing Claude configuration; no credential is requested, displayed or changed by this helper. No provider call runs now.\nA fresh Codex session may be needed; project or managed policy can override user defaults. Revoke removes only this block and does not cancel running calls."
         )
         if args.approve:
-            print("Explicit approval supplied by --approve.")
+            print(
+                "Explicit approval supplied by --approve"
+                + (" with a one-time operator token." if token else " in the operator terminal.")
+            )
         else:
             print("Type Approve to apply this exact change, or anything else to leave configuration unchanged:")
             if input() != "Approve":
                 print("Consent unchanged.")
                 return 2
+        if token:
+            _burn_token(home)
         _write(path, replacement, original, identity, home_identity)
         print(
             "Consent configured; active-session effectiveness unverified."

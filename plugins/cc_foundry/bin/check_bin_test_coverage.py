@@ -5,7 +5,9 @@ Replaces the inline Check R4 shell block, which shelled out to a ``python -c``
 AST heredoc for the stub detection. For each ``plugins/*/bin/*.py`` (skipping
 ``_``-prefixed private helpers) the matching ``plugins/<plugin>/tests/test_<name>.py``
 must exist, be non-empty, declare at least one ``test_`` function, and have at
-least one such function whose body is more than ``pass`` or ``...``.
+least one such function whose body is more than ``pass`` or ``...``. Differently
+named test files anywhere under the plugin's tests tree also count when they
+reference the script filename, import its module, or load its quoted stem.
 
 A script that is a MANIFEST **copy** (``propagate_shared.py``) of an already-tested
 canonical is exempt: ``propagate_shared.py --apply`` plus pre-commit guarantee it stays
@@ -28,7 +30,7 @@ from __future__ import annotations
 
 import argparse
 import ast
-import importlib.util
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -106,12 +108,29 @@ def _find_nested_test(test_file: Path) -> Path | None:
     return matches[0] if matches else None
 
 
-def check_script(script: Path) -> str | None:
+def indirect_test_sources(tests_dir: Path) -> str:
+    """Read real test modules in deterministic order for a cheap plugin-local reference scan."""
+    sources = []
+    for test_file in sorted(tests_dir.rglob("test_*.py")):
+        source = test_file.read_text(encoding="utf-8")
+        if test_functions(source)[1]:
+            sources.append(source)
+    return "\n".join(sources)
+
+
+def check_script(script: Path, indirect_sources: str | None = None) -> str | None:
     """Return a finding line for one script, or None when it is covered."""
     test_file = expected_test(script)
     if not test_file.is_file():
         nested = _find_nested_test(test_file)
         if nested is None:
+            sources = indirect_test_sources(test_file.parent) if indirect_sources is None else indirect_sources
+            filename = re.escape(script.name)
+            module = re.escape(script.stem.replace("-", "_"))
+            stem = re.escape(script.stem)
+            reference = rf"(?<![\w.-]){filename}(?![\w.-])|\b(?:import|from)\s+{module}\b|['\"]{stem}['\"]"
+            if re.search(reference, sources):
+                return None
             return f"R4-FAIL (no test file): {script.as_posix()} → expected {test_file.as_posix()}"
         test_file = nested
     source = test_file.read_text(encoding="utf-8")
@@ -136,14 +155,68 @@ def repo_root() -> Path:
     return Path(output).resolve()
 
 
+def read_manifest(manifest_file: Path) -> list[dict[str, object]] | None:
+    """Read the ``MANIFEST`` literal from a ``propagate_shared.py`` as data, never by importing it.
+
+    The file sits in the tree being audited, so importing it would run that tree's code under
+    this checker. ``MANIFEST`` is a plain literal, so ``ast.literal_eval`` reads it with nothing
+    executed.
+
+    Args:
+        manifest_file: Path of the ``propagate_shared.py`` to read.
+
+    Returns:
+        The entries that carry a string ``canonical`` and a list ``copies``; ``None`` when the file is
+        missing, does not parse, or holds no literal ``MANIFEST`` list.
+
+    Examples:
+        >>> import tempfile
+        >>> with tempfile.TemporaryDirectory() as directory:
+        ...     source = Path(directory) / "propagate_shared.py"
+        ...     _ = source.write_text("MANIFEST = [{'canonical': 'a.py', 'copies': ['b.py']}]\\n", encoding="utf-8")
+        ...     read_manifest(source)
+        [{'canonical': 'a.py', 'copies': ['b.py']}]
+        >>> read_manifest(Path("/nonexistent/propagate_shared.py")) is None
+        True
+    """
+    try:
+        tree = ast.parse(manifest_file.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError, ValueError, RecursionError):
+        return None
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            names = [target.id for target in node.targets if isinstance(target, ast.Name)]
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            names = [node.target.id]
+        else:
+            continue
+        if "MANIFEST" not in names or node.value is None:
+            continue
+        try:
+            manifest = ast.literal_eval(node.value)
+        except (ValueError, TypeError, RecursionError):
+            return None
+        if not isinstance(manifest, list):
+            return None
+        return [
+            entry
+            for entry in manifest
+            if isinstance(entry, dict)
+            and isinstance(entry.get("canonical"), str)
+            and isinstance(entry.get("copies"), list)
+        ]
+    return None
+
+
 def manifest_copies(root: Path) -> set[str]:
     """Repo-relative paths that are byte-identical copies of a tested canonical.
 
     Canonicals are deliberately excluded from this set — an untested canonical must still fail
     R4. Only copies (guaranteed byte-identical to their canonical by ``propagate_shared.py
-    --apply`` + pre-commit) are safe to skip. Both the MANIFEST module and every canonical's
+    --apply`` + pre-commit) are safe to skip. Both the MANIFEST file and every canonical's
     existence check resolve against ``root``, never the process cwd, so this agrees with the
-    same-basis comparison the R4 loop performs when matching a scanned script's path.
+    same-basis comparison the R4 loop performs when matching a scanned script's path. The
+    MANIFEST file is parsed, never imported: it belongs to the audited tree.
 
     Args:
         root: Repository root; ``propagate_shared.py`` is expected at
@@ -151,18 +224,11 @@ def manifest_copies(root: Path) -> set[str]:
 
     Returns:
         Repo-relative POSIX path strings safe to skip in the R4 loop; empty when
-        ``propagate_shared.py`` is missing or fails to load.
+        ``propagate_shared.py`` is missing or holds no literal ``MANIFEST`` (see :func:`read_manifest`).
     """
-    manifest_file = root / "plugins" / "cc_foundry" / "bin" / "propagate_shared.py"
-    if not manifest_file.is_file():
-        return set()
-    spec = importlib.util.spec_from_file_location("_propagate_shared", manifest_file)
-    if spec is None or spec.loader is None:
-        return set()
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    entries = read_manifest(root / "plugins" / "cc_foundry" / "bin" / "propagate_shared.py")
     copies: set[str] = set()
-    for entry in module.MANIFEST:
+    for entry in entries or []:
         canonical = root / str(entry["canonical"])
         if not canonical.is_file():
             continue  # canonical missing/moved — do not skip its copies; let them fail R4
@@ -208,12 +274,16 @@ def main() -> int:
     root, copies = _manifest_copies_for_repo()
     findings: list[str] = []
     deferred = 0
+    indirect_sources: dict[Path, str] = {}
     for script in bin_scripts(Path(args.scan_dir)):
         rel = _relative_to_root(script, root)
         if rel is not None and rel in copies:
             deferred += 1
             continue
-        finding = check_script(script)
+        tests_dir = script.parent.parent / "tests"
+        if tests_dir not in indirect_sources:
+            indirect_sources[tests_dir] = indirect_test_sources(tests_dir)
+        finding = check_script(script, indirect_sources[tests_dir])
         if finding:
             findings.append(finding)
 

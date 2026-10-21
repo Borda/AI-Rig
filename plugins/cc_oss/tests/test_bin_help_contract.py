@@ -43,7 +43,9 @@ _COVERED_BY_DEDICATED_TEST = {
 #: exit-1) — cannot use the standard "pytest.raises(SystemExit)" shape.
 _RETURNS_INSTEAD_OF_RAISING = {"fetch_gh_data_group2", "detect_thread_type"}
 
-_ALL_SCRIPTS = sorted(p.stem.replace("-", "_") for p in _BIN_DIR.glob("*.py"))
+#: Underscore modules (``_sentinel_io.py``) are private helpers imported by sibling scripts, with no command line —
+#: the same exclusion ``check_orphaned_bin.py`` applies.
+_ALL_SCRIPTS = sorted(p.stem.replace("-", "_") for p in _BIN_DIR.glob("*.py") if not p.name.startswith("_"))
 
 _STANDARD_HELP_SCRIPTS = [
     name for name in _ALL_SCRIPTS if name not in _COVERED_BY_DEDICATED_TEST and name not in _RETURNS_INSTEAD_OF_RAISING

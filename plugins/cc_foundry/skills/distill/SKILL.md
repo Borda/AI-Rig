@@ -24,7 +24,7 @@ NOT for single-file edits or quality checks — use `/foundry:audit` for config 
   - `external <source> [--eager]` — analyse external plugin, skill, or agentic resource, produce structured adoption proposal. `<source>` is URL, file path, or local directory. `--eager`: lower adoption bar — recommend partial adoption even for single useful components.
   - `executables [--eager] [<run-dir-or-report-path>]` — perform bin/ extraction from `/foundry:audit --efficiency` Check 33 candidates. Auto-detects latest run dir under `.reports/audit/`; pass optional path to target specific run dir or report file. Runs inline Check 33 scan when no report exists. Default gates on HIGH/MEDIUM verdict. `--eager`: also surface LOW verdict clusters as extraction candidates. Spawns `foundry:sw-engineer` per cluster. Skip to **Mode: Executables Extraction** below.
   - `[--eager] <recurring task description>` — use description as context when generating suggestions. `--eager`: lower frequency threshold from 3+ to 2+ occurrences; single high-effort occurrence also qualifies.
-  - `--project` — in `prune` and `memory` modes, show interactive project picker: enumerate all slugs under `~/.claude/projects/*/memory/` with MEMORY.md size in tokens, let user select which project(s) to operate on. Omit to operate across **all** projects automatically. No effect on other modes.
+  - `--project` — in `prune` and `memory` modes, show interactive project picker: enumerate all slugs under `~/.claude/projects/*/memory/` with MEMORY.md size in tokens, let user select which project(s) to operate on. Omit to operate on the **current project's** memory only (the working directory's memory dir, resolved by `resolve_memory_dir.py`) — other projects are never touched without the picker. No effect on other modes.
 
 </inputs>
 
@@ -40,25 +40,16 @@ NOT for single-file edits or quality checks — use `/foundry:audit` for config 
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/extract-keep-flag.py" distill-state "$ARGUMENTS" --out-file "${TMPDIR:-/tmp}/distill-state-${CSID}/keep-items"  # timeout: 5000 — parses --keep, clears stale contract, makes state dir
-eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/parse-skill-flags.py" --flags eager "$ARGUMENTS")"  # timeout: 5000
-EAGER="$FLAG_EAGER"
-ARGUMENTS="$CLEAN_ARGS"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/parse-skill-flags.py" --flags eager,project --keep-state distill-state --out-file "${TMPDIR:-/tmp}/distill-state-${CSID}/keep-items" "$ARGUMENTS" >/dev/null  # timeout: 5000 — no eval; distill-state-<flag>-${CSID} sentinels, keep-items into the state dir it makes, clears stale contract
+IFS= read -r EAGER < "${TMPDIR:-/tmp}/distill-state-eager-${CSID}" 2>/dev/null || EAGER=false
+IFS= read -r PROJECT_FLAG < "${TMPDIR:-/tmp}/distill-state-project-${CSID}" 2>/dev/null || PROJECT_FLAG=false
+IFS= read -r ARGUMENTS < "${TMPDIR:-/tmp}/distill-state-clean-args-${CSID}" 2>/dev/null || ARGUMENTS=""
 echo "EAGER=$EAGER"  # shell vars don't persist across Bash calls — read from stdout
-echo "ARGUMENTS_STRIPPED=$ARGUMENTS"
-```
-
-> **Note**: `EAGER` and stripped `ARGUMENTS` are set by this Bash block, but shell variable state does **not** persist across separate Bash() tool calls. After this block runs, read its stdout (`EAGER=true/false`, `ARGUMENTS_STRIPPED=...`), carry those values as model-context references for all subsequent mode dispatch and threshold decisions. Do not rely on `$EAGER` as a live shell variable in later steps — substitute the literal boolean value read from stdout.
-
-```bash
-eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/parse-skill-flags.py" --flags project "$ARGUMENTS")"  # timeout: 5000
-PROJECT_FLAG="$FLAG_PROJECT"
-ARGUMENTS="$CLEAN_ARGS"
 echo "PROJECT_FLAG=$PROJECT_FLAG"
 echo "ARGUMENTS_FINAL=$ARGUMENTS"
 ```
 
-> **Note**: `PROJECT_FLAG` does not persist across Bash calls. Read its value from stdout line `PROJECT_FLAG=true/false`, carry as model-context reference. When `true`, mode must run interactive picker before operating.
+> **Note**: `EAGER`, `PROJECT_FLAG` and stripped `ARGUMENTS` are set by this Bash block, but shell variable state does **not** persist across separate Bash() tool calls. After this block runs, read its stdout (`EAGER=true/false`, `PROJECT_FLAG=true/false`, `ARGUMENTS_FINAL=...`), carry those values as model-context references for all subsequent mode dispatch and threshold decisions. Do not rely on `$EAGER`/`$PROJECT_FLAG` as live shell variables in later steps — substitute the literal value read from stdout. `PROJECT_FLAG=true`: mode must run interactive picker before operating.
 
 <!-- ARCH.md beside this file diagrams the runs, gates and parallel fan-out. Documentation only, never loaded — update it in the same commit as any change to step order, gate placement, or agent fan-out. -->
 
@@ -68,7 +59,17 @@ Use Glob tool to enumerate agents and skills across all sources — project-loca
 
 - **Project-local**: pattern `agents/*.md`, path `.claude/`; pattern `skills/*/SKILL.md`, path `.claude/`
 - **Plugin source** (workspace): pattern `*/agents/*.md`, path `plugins/`; pattern `*/skills/*/SKILL.md`, path `plugins/`
-- **Installed plugin cache** (if accessible): resolve cache root — `PLUGIN_CACHE="${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}"` — then use Glob tool on `$PLUGIN_CACHE` for pattern `*/agents/*.md` and `*/skills/*/SKILL.md`
+- **Installed plugin cache**: resolve each installed plugin's current root with the block below — `${CLAUDE_PLUGIN_ROOT}` is foundry's own version dir, so globbing `*/agents/*.md` under it matches nothing, and globbing the whole cache double-counts orphaned versions
+
+```bash
+# timeout: 30000
+find "$HOME/.claude/plugins/cache" -mindepth 2 -maxdepth 2 -type d 2>/dev/null | while IFS= read -r p; do
+    m="${p%/*}"; m="${m##*/}"
+    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_plugin_root.py" --plugin-name "${p##*/}" --marketplace "$m" 2>/dev/null | sed "s|^|PLUGIN_ROOT: ${p##*/} |"
+done
+```
+
+Then use Glob tool on each printed root for pattern `agents/*.md` and `skills/*/SKILL.md`, tagging entries with that plugin name. No `PLUGIN_ROOT:` line printed → installed inventory unavailable: state it in the report and never read an empty inventory as "no such agent/skill exists".
 
 For each agent/skill found, extract: name, description, tools, purpose. Tag each entry with plugin namespace (e.g. `foundry:sw-engineer`, `oss:resolve`) — used in Step 3 gap analysis to prevent recommending duplicates of plugin-namespaced agents/skills.
 
@@ -117,10 +118,8 @@ With `--eager` (lower thresholds):
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r _KEEP < "${TMPDIR:-/tmp}/distill-state-${CSID}/keep-items" 2>/dev/null || _KEEP=""
 _PRESERVE="run-dir=n/a"
-[ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/write_skill_contract.py" "foundry:distill" "gap-analysis (after work-pattern scan)" "n/a" "$_PRESERVE" "gap analysis (Step 3) → duplication check (Step 4) → report (Step 5)"  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/write_skill_contract.py" --keep-file "${TMPDIR:-/tmp}/distill-state-${CSID}/keep-items" "foundry:distill" "gap-analysis (after work-pattern scan)" "n/a" "$_PRESERVE" "gap analysis (Step 3) → duplication check (Step 4) → report (Step 5)"  # timeout: 5000
 ```
 
 ## Step 3: Gap analysis
@@ -195,11 +194,10 @@ Anti-pattern checklist — reject candidate if any apply:
 rm -f .temp/state/skill-contract.md  # clear contract — skill complete (compaction-contract.md §Lifecycle)  # timeout: 5000
 ```
 
-## Mode: Memory Pruning — only when `$ARGUMENTS == "prune"`
+## Mode: Memory Pruning — only when first token is `prune`
 
 ```bash
-DISTILL_MODES=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_skill_subdir.py" distill modes 2>/dev/null || echo "plugins/cc_foundry/skills/distill/modes")  # timeout: 5000
-cat "$DISTILL_MODES/prune.md"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" distill modes prune.md --fallback-source  # timeout: 5000
 ```
 
 Execute the mode loaded above.
@@ -207,26 +205,23 @@ Execute the mode loaded above.
 ## Mode: Memory Distillation — only when first token is `memory`
 
 ```bash
-DISTILL_MODES=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_skill_subdir.py" distill modes 2>/dev/null || echo "plugins/cc_foundry/skills/distill/modes")  # timeout: 5000
-cat "$DISTILL_MODES/memory.md"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" distill modes memory.md --fallback-source  # timeout: 5000
 ```
 
 Execute the mode loaded above.
 
-## Mode: External Distillation — only when `$ARGUMENTS` begins with `external`
+## Mode: External Distillation — only when first token is `external`
 
 ```bash
-DISTILL_MODES=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_skill_subdir.py" distill modes 2>/dev/null || echo "plugins/cc_foundry/skills/distill/modes")  # timeout: 5000
-cat "$DISTILL_MODES/external.md"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" distill modes external.md --fallback-source  # timeout: 5000
 ```
 
 Execute the mode loaded above.
 
-## Mode: Executables Extraction — only when `$ARGUMENTS` begins with `executables`
+## Mode: Executables Extraction — only when first token is `executables`
 
 ```bash
-DISTILL_MODES=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_skill_subdir.py" distill modes 2>/dev/null || echo "plugins/cc_foundry/skills/distill/modes")  # timeout: 5000
-cat "$DISTILL_MODES/executables.md"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" distill modes executables.md --fallback-source  # timeout: 5000
 ```
 
 Execute the mode loaded above.
@@ -247,7 +242,7 @@ Execute the mode loaded above.
 
 - **Agent Teams signal tracking**: when reviewing patterns, also look for:
 
-  - Skills using `--team` or team-mode heuristics more/less than expected: flag over/under-use relative to decision matrix in `CLAUDE.md § Agent Teams`
+  - Skills using `--team` or team-mode heuristics more/less than expected: flag over/under-use relative to `CLAUDE.md` §Agent Teams (teams are user-invoked only) and the per-tier ceilings in `rules/agent-spawn.md` §Parallel Spawn Ceilings
   - Security findings in reviews for non-auth code: foundry:qa-specialist teammate scope too broad; narrow it
   - Model tier mismatches (e.g. heavy analysis assigned to `sonnet` teammates): flag for tier adjustment
 
@@ -260,8 +255,8 @@ Execute the mode loaded above.
 - Follow-up chains:
 
   - Suggestion accepted for new agent/skill: `/foundry:manage create` to scaffold and register it
-  - Suggestion to enhance existing: edit agent/skill directly, then `/foundry:setup`
-  - `memory` proposals applied: `/foundry:setup` to propagate; `/foundry:audit rules` to verify new rule files structurally sound
-  - `executables` extraction complete: `/foundry:setup` to propagate bin/ scripts; run `/foundry:audit --efficiency` to confirm `clusters == 0`
+  - Suggestion to enhance existing: edit agent/skill directly (project `.claude/` edits apply at once; plugin-source edits reach `~/.claude/` only via plugin update/reinstall, after which `/foundry:setup` re-merges plugin settings/rules)
+  - `memory` proposals applied: `/foundry:audit rules` to verify new rule files structurally sound
+  - `executables` extraction complete: plugin `bin/` scripts reach `~/.claude/` via plugin update/reinstall; run `/foundry:audit --efficiency` to confirm `clusters == 0`
 
 </notes>

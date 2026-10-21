@@ -19,12 +19,14 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
+import stat
 import subprocess
 import sys
 from collections import deque
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import IO, Any, TypedDict
 
 # Keep sibling imports valid when repository-wide doctest collection imports this
 # file without launching it as a script from its installed ``bin`` directory.
@@ -33,7 +35,16 @@ _BIN_DIRECTORY = str(Path(__file__).resolve().parent)
 if _BIN_DIRECTORY not in sys.path:
     sys.path.insert(0, _BIN_DIRECTORY)
 
-from bridge_call import DEFAULT_EFFORT, DEFAULT_MODEL, DEFAULT_TIMEOUTS, BridgePaths, Request, run_request  # noqa: E402
+from bridge_call import (  # noqa: E402
+    DEFAULT_EFFORT,
+    DEFAULT_MODEL,
+    DEFAULT_TIMEOUTS,
+    BridgePaths,
+    Request,
+    _is_link_or_reparse_point,
+    _resolved_command,
+    run_request,
+)
 
 
 class PayloadIdentity(TypedDict):
@@ -191,6 +202,36 @@ def _regular_payload_file(path: Path) -> bool:
 MAX_HEALTH_LINES = 5_000
 
 
+def _open_health_log(path: Path) -> IO[str] | None:
+    """Open the workspace health log for reading only when it is a regular single-link file, else ``None``.
+
+    The log's name is predictable, so the workspace can plant a symlink, hard link or FIFO there: following it would
+    fold another file's content into the summary, and a FIFO would stall the diagnosis. The leaf is checked with
+    ``lstat``, opened without following a final symlink where the platform has ``O_NOFOLLOW``, and the opened descriptor
+    must still be a regular file with one link, the same shape the bridge accepts when appending to it. Undecodable
+    bytes are replaced so a damaged line is skipped like any other unparsable record.
+    """
+    try:
+        metadata = path.lstat()
+    except OSError:
+        return None
+    if _is_link_or_reparse_point(metadata) or not stat.S_ISREG(metadata.st_mode):
+        return None
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError:
+        return None
+    try:
+        opened = os.fstat(descriptor)
+        if stat.S_ISREG(opened.st_mode) and opened.st_nlink == 1:
+            return os.fdopen(descriptor, encoding="utf-8", errors="replace")
+    except OSError:
+        pass
+    os.close(descriptor)
+    return None
+
+
 def _health_summary(workspace: Path) -> dict[str, Any]:
     """Summarize retained outcome counts, recent faults, and grouped reported cost.
 
@@ -201,9 +242,10 @@ def _health_summary(workspace: Path) -> dict[str, Any]:
     fault_counts: dict[str, int] = {}
     latest_fault: dict[str, float] = {}
     cost_rollup: dict[str, float] = {}
-    if not path.is_file():
+    stream = _open_health_log(path)
+    if stream is None:
         return {"fault_counts": fault_counts, "latest_fault": latest_fault, "cost_rollup": cost_rollup}
-    with path.open(encoding="utf-8") as stream:
+    with stream:
         lines = deque(stream, maxlen=MAX_HEALTH_LINES)
     for line in lines:
         try:
@@ -250,7 +292,7 @@ def _static_result(target: str, baseline: dict[str, list[str]]) -> StaticResult:
     command = [executable, "exec", "--help"] if target == "codex" else [executable, "--help"]
     try:
         result = subprocess.run(  # noqa: S603 - argv list, no shell
-            command,
+            _resolved_command(command),
             stdin=subprocess.DEVNULL,
             capture_output=True,
             encoding="utf-8",

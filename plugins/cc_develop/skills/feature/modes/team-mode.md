@@ -2,21 +2,25 @@
 
 # Feature — Team Mode Protocol
 
-Loaded only when `TEAM_MODE=true`. Runs Step 1 inline (teammates need scope context), then spawns parallel teammates for Steps 2-4. Exit after synthesis — do not continue to solo Steps 1-5.
+Loaded only when `TEAM_MODE=true`. Runs Step 1 inline (teammates need scope context), then spawns teammates for Steps 2-4 in two waves. After synthesis run only the closing blocks named at the end of this file, then exit — do not continue to solo Steps 1-4.
 
-Guard: `[ -f "${HOME}/.claude/TEAM_PROTOCOL.md" ] || echo "TEAM_PROTOCOL_ABSENT"` — output contains `TEAM_PROTOCOL_ABSENT` → invoke `AskUserQuestion` — question: "foundry plugin not installed (TEAM_PROTOCOL.md absent) — cannot run team mode. Continue solo instead?" · (a) Continue solo — fall back to Steps 1–5 solo workflow · (b) Abort — stop, run `/foundry:setup` first. On (b): stop. On (a): set `TEAM_MODE=false`, continue.
+Team-protocol guard, shared by every develop team mode — run first, before Step 1 or any run-dir: printed `! BLOCKED` → stop the skill and relay that line as the final reply; never fall back to solo, never spawn teammates told to read a missing file.
 
-Run Step 1 scope analysis inline (same as solo Step 1, including its Source Verification subsection) — teammates need orientation context. Then run feature/SKILL.md §Challenger gate against that analysis before any teammate spawn; three-state decision (`--no-challenge` / `--challenge` / default-substantial) applies unchanged. Blockers found → STOP; Write the blocker findings (one line each: claim · file:line · evidence) to `$DEV_DIR/blockers.md` first; print them once as the last reply text before invoking `AskUserQuestion`, as normal Markdown. The question text carries the blocker count, headline and `→ $DEV_DIR/blockers.md`, at most 6 plain lines (target 600 characters, hard cap 1,500), no table, pipe layout or code fence. Options carry a label and a one-line description, no `preview` — "Challenger raised N blocker(s) on the implementation approach. How to proceed?" · (a) **Revise scope** — return to Step 1 analysis with the blockers as input · (b) **Accept risk** — proceed to Wave 1 with each blocker documented in the Final Report Follow-up · (c) **Abort**. On Abort: stop. Never proceed to Wave 1 on prose alone. After Step 1, broadcast to teammates: `{feature: <desc>, scope: <modules>, API: <proposed signature>}`.
+```bash
+# timeout: 5000
+[ -f ~/.claude/TEAM_PROTOCOL.md ] || { echo "! BLOCKED — --team needs ~/.claude/TEAM_PROTOCOL.md, written by /foundry:setup (requires foundry plugin); run /foundry:setup, or re-run without --team"; exit 1; }
+echo "✓ TEAM_PROTOCOL.md present"
+```
+
+Run Step 1 scope analysis inline (same as solo Step 1, including its Source Verification subsection) — teammates need orientation context. Then run feature/SKILL.md §Challenger gate against that analysis before any teammate spawn; its two-state decision applies unchanged (`--no-challenge` skips; otherwise always run, `--challenge` is a no-op). Blockers found → STOP; Write the blocker findings (one line each: claim · file:line · evidence) to `$DEV_DIR/blockers.md` first; print them once as the last reply text before invoking `AskUserQuestion`, as normal Markdown. The question text carries the blocker count, headline and `→ $DEV_DIR/blockers.md`, at most 6 plain lines (target 600 characters, hard cap 1,500), no table, pipe layout or code fence. Options carry a label and a one-line description, no `preview` — "Challenger raised N blocker(s) on the implementation approach. How to proceed?" · (a) **Revise scope** — return to Step 1 analysis with the blockers as input · (b) **Accept risk** — proceed to Wave 1 with each blocker documented in the Final Report Follow-up · (c) **Abort**. On Abort: stop. Never proceed to Wave 1 on prose alone. After Step 1, broadcast to teammates: `{feature: <desc>, scope: <modules>, API: <proposed signature>}`.
 
 ```bash
 # timeout: 5000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _DEV_SHARED=""
-[ -z "$_DEV_SHARED" ] && _DEV_SHARED="plugins/cc_develop/skills/_shared"
-cat "$_DEV_SHARED/preflight-helpers.md"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" preflight-helpers.md
 ```
 
-§Team Spawn Template to get spawn prompt template. Replace `[ROLE_PHRASE]` with feature description, `[FILE_SLUG]` with `feature`.
+§Team Spawn Template to get spawn prompt template. Replace `[ROLE_PHRASE]` with feature description, `[FILE_SLUG]` with `feature`. Drop the template's `Your hypothesis: …` line — writer teammates investigate no root cause.
 
 Compute run directory:
 
@@ -30,6 +34,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_setup_worktree_wrap.py
 # timeout: 5000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r TS < "${TMPDIR:-/tmp}/dev-feature-team-ts-${CSID}" 2>/dev/null || TS=""        # re-derive — bash resets between calls
+[ -n "$TS" ] || { echo "! dev-feature-team-ts missing — cannot build teammate output paths; aborting team mode"; exit 1; }
 IFS= read -r TEAM_DIR < "${TMPDIR:-/tmp}/dev-feature-team-dir-${CSID}" 2>/dev/null || TEAM_DIR=""
 _SPAWN_TS="$TS"
 _SPAWN_TEAM_DIR="$TEAM_DIR"
@@ -41,7 +46,7 @@ Use `$_SPAWN_TS` (resolved to literal before prompt construction) inside spawn p
 
 Spawn teammates in **two serialized waves** — qa-specialist and doc-scribe cannot meaningfully audit/document an implementation that doesn't exist yet; parallel with sw-engineer produces tests against guessed APIs and docs of placeholder structure:
 
-- **Wave 1 — foundry:sw-engineer alone**: spawn Teammate 1 (sw-engineer) and wait for `Status: complete`.
+- **Wave 1 — foundry:sw-engineer alone**: spawn Teammate 1 (sw-engineer), end the turn, resume on its completion notification (`Status: complete`).
 - **Wave 2 — foundry:qa-specialist + foundry:doc-scribe in parallel**: after Wave 1 returns, spawn Teammates 2 and 3 together. Both receive actual implementation file path from Wave 1's output as input context (resolved via `.temp/develop/$_SPAWN_TS/feature-sw-engineer-$_SPAWN_TS.md`).
 
 <!-- loads: team-spawn-prompts.md -->
@@ -77,7 +82,7 @@ echo "✓ Wave 1 output verified: $WAVE1_FILE"
 grep -q '"demo_red_exit"[[:space:]]*:[[:space:]]*[1-9]' "$WAVE1_FILE" || { echo "! Wave 1 gate: demo_red_exit missing or zero — demo passed pre-implementation, or sw-engineer returned status: blocked. Aborting Wave 2."; exit 1; }
 ```
 
-**Coordination order**: QA challenges SW API design — lead routes challenge back to SW before implementation starts. SW shares implementation details with QA so tests stay accurate. Lead synthesizes outputs Step 5 onward as normal.
+**Coordination order**: QA is spawned only in Wave 2, so it never challenges SW's API design before implementation — the Challenger gate above covers the approach. QA receives SW's implementation file path from Wave 1's output so tests stay accurate.
 
 Health monitoring (CLAUDE.md §6): re-derive `$TS` at block start (bash resets between calls — read back from temp file the spawn block persisted):
 
@@ -85,10 +90,10 @@ Health monitoring (CLAUDE.md §6): re-derive `$TS` at block start (bash resets b
 # timeout: 5000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r TS < "${TMPDIR:-/tmp}/dev-feature-team-ts-${CSID}" 2>/dev/null || TS=""
-[ -n "$TS" ] || TS=$(date -u +%Y-%m-%dT%H-%M-%SZ)
+[ -n "$TS" ] || { echo "! dev-feature-team-ts missing — cannot locate team run dir; aborting team mode"; exit 1; }
 ```
 
-Every spawn is background: spawn, end the turn, resume on the harness completion notification — never a fixed-interval poll. Create sentinel `touch ${TMPDIR:-/tmp}/feature-team-check-${TS}-${CSID}`; on resume, at most one liveness probe per turn: `find .temp/develop/$TS -newer ${TMPDIR:-/tmp}/feature-team-check-${TS}-${CSID} -type f | wc -l` — new files = alive; zero = stalled. Hard cutoff: 15 min no file activity → timed out. Two consecutive zero-progress probes = timed out. On timeout: read `tail -100` of stalled file; surface with ⏱; never omit timed-out teammates.
+Every spawn is background: spawn, end the turn, resume on the harness completion notification — never a fixed-interval poll, never a liveness probe (`find -newer` or similar). Arm batch `team` in each spawn response (deliverables `.temp/develop/$TS/feature-<role>-$TS.md`; `agent-resolution.md` §Agent waits — no polling, per-agent deadlines, 1800 s) and run the §Agent waits check block (`agent_watch.py`) once per wake-up. On timeout (`timed_out` row, or a notification without its deliverable): read `tail -100` of the stalled file; surface with ⏱; never omit timed-out teammates.
 
 **Path verification** — after Wave 2 completes (all three teammates spawned), verify agents got correct paths — check expected output files exist. Re-read `$TS` from temp file (bash resets between calls — spawn block persisted it). Runs only once every teammate spawned; earlier would false-flag "missing" for Wave-2 agents not yet existing:
 
@@ -96,11 +101,17 @@ Every spawn is background: spawn, end the turn, resume on the harness completion
 # timeout: 5000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r TS < "${TMPDIR:-/tmp}/dev-feature-team-ts-${CSID}" 2>/dev/null || TS=""
-[ -n "$TS" ] || TS=$(date -u +%Y-%m-%dT%H-%M-%SZ)
+[ -n "$TS" ] || { echo "! dev-feature-team-ts missing — cannot verify teammate output paths; aborting team mode"; exit 1; }
 for agent in sw-engineer qa-specialist doc-scribe; do
     expected=".temp/develop/$TS/feature-${agent}-$TS.md"
     [ -f "$expected" ] && echo "✓ $agent wrote $expected" || echo "⚠ $agent missing expected output $expected"
 done
 ```
 
-After all teammates complete: read output files from `.temp/develop/$TS/`, synthesize, run quality stack, produce Final Report. Exit — do not continue to solo Steps 1-5.
+After all teammates complete: read output files from `.temp/develop/$TS/`, synthesize, then run only these solo blocks, in order:
+
+1. CHANGELOG entry — the lead inserts it under `Unreleased` with the Edit tool, as in Step 5 (doc-scribe wrote none).
+2. Step 5's `foundry--quality-stack.md` load block and the steps it lists (Branch Safety Guard, Quality Stack, Codex Pre-pass, Progressive Review Loop, Codex Mechanical Delegation) — the Progressive Review Loop is team mode's review; the Step 4 review loop does not run.
+3. Step 5's Final gate rerun block (full suite with `$TEST_CMD`) — the quality stack's wide run is its first full-suite run only when `$TEST_CMD` is that same pytest invocation (else run the block once); rerun after any later code change, max 3 gate iterations.
+
+Then the solo `## Final Report` section in full (plan drift check, report template, worktree exit, contract cleanup). Never report the suite green before block 3 passes. Exit after the Final Report — do not continue to solo Steps 1-4 or Step 5's doc-scribe spawn.

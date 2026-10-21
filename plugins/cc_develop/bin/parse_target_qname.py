@@ -31,6 +31,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from dev_run_dir import write_atomic  # sibling bin/ script; atomic, link-safe sentinel writes
+
 #: Same shape as the inline ``grep -oE`` it replaces: dotted module, ``::``, bare function name.
 _QNAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*::[A-Za-z_][A-Za-z0-9_]*")
 
@@ -112,7 +114,7 @@ def main(argv: list[str] | None = None) -> int:
     for name, value in payload.items():
         sentinel = tmp / f"dev-fix-{name}-{csid}"
         try:
-            sentinel.write_text(value + "\n", encoding="utf-8", newline="\n")
+            write_atomic(sentinel, value)
         except OSError as exc:
             print(f"parse_target_qname: cannot write {sentinel}: {exc}", file=sys.stderr)
             return 1

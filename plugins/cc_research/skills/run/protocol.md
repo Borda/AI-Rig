@@ -69,7 +69,6 @@ Entries missing the feasibility fields (retro output, older queue files) are tre
 - `feasible: false` entries skipped in execution; remain for audit
 - `confidence < 0.7` → end of queue, not removed
 - Move low-confidence: assign `priority` > max in queue; don't reorder lines (preserve JSONL append order for audit)
-- Solution-architect must **preserve hypothesis order** when annotating; no re-rank
 - `blocker` required when `feasible: false` — blank/null blocker on false entry = schema violation
 - `source: "architect"` and `source: "retro"` entries may omit `feasible`/`blocker`/`codebase_mapping`; absent fields treated as `feasible: true` by all consumers
 
@@ -90,7 +89,7 @@ One line per iteration, staged in `checkpoint.jsonl.rec` and appended by `append
 | Field | Type | Values |
 | -- | -- | -- |
 | `iteration` | `int` | 1-indexed; monotonically increasing |
-| `hypothesis_id` | `int` | 0-indexed position in `hypotheses.jsonl` |
+| `hypothesis_id` | `int` | 0-indexed line in `hypotheses.jsonl` (file order, tagged before filter/sort — never sorted queue position); stable because the file is never reordered and `--resume` reuses it |
 | `metric_before` | `float` | Metric value before applying hypothesis |
 | `metric_after` | `float` | Metric value after applying hypothesis |
 | `status` | `str` | `"passed"` or `"rolled_back"` |
@@ -151,7 +150,7 @@ Rules:
 | Field | Type | Description |
 | -- | -- | -- |
 | `axis` | `str` | Optimization axis (e.g., `"model architecture"`) |
-| `agent_type` | `str` | Specialist agent for implementation (e.g., `"perf-optimizer"`, `"researcher"`) |
+| `agent_type` | `str` | Specialist agent for implementation, plugin-prefixed (e.g., `"foundry:perf-optimizer"`, `"research:scientist"`) |
 | `change_scope` | `str` | Estimated blast radius: `"small"` (1–2 files), `"medium"` (3–5 files), `"large"` (6+ files or architectural) (primary Phase B sort key — small runs first) |
 
 Team entry missing any of 3 fields = schema violation (like missing `blocker` on infeasible entry).

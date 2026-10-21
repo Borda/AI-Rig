@@ -200,7 +200,7 @@ class Dimension:
 _DIMENSIONS: Final[tuple[tuple[re.Pattern[str], Dimension], ...]] = (
     (re.compile(r"codex|bridge", re.IGNORECASE), Dimension("codex", _BRIDGE_AGENT, "foundry--codex.md")),
     (re.compile(r"blind", re.IGNORECASE), Dimension("blind-solve", "general-purpose", "foundry--blind-solve.md")),
-    (re.compile(r"issue", re.IGNORECASE), Dimension("review-issue", "foundry:doc-scribe", "issue-<N>.md")),
+    (re.compile(r"issue", re.IGNORECASE), Dimension("review-issue", "foundry:sw-engineer", "issue-<N>.md")),
     (
         re.compile(r"challeng|adversar", re.IGNORECASE),
         Dimension("review-challenge", "foundry:challenger", "foundry--challenger.md"),
@@ -216,11 +216,11 @@ _DIMENSIONS: Final[tuple[tuple[re.Pattern[str], Dimension], ...]] = (
     ),
     (
         re.compile(r"lint", re.IGNORECASE),
-        Dimension("review-docs-lint", "foundry:doc-scribe", "foundry--linting-expert.md"),
+        Dimension("review-docs-lint", "foundry:linting-expert", "foundry--linting-expert.md"),
     ),
     (
         re.compile(r"\bdoc", re.IGNORECASE),
-        Dimension("review-docs-lint", "foundry:doc-scribe", "foundry--doc-scribe.md"),
+        Dimension("review-docs-lint", "foundry:linting-expert", "foundry--doc-scribe.md"),
     ),
     (
         re.compile(r"\bci\b|cicd|pipeline|steward|workflow", re.IGNORECASE),
@@ -1188,6 +1188,29 @@ def _requested_problems(plan: dict, current: dict, current_rows: list) -> list[s
     return problems
 
 
+def _prior_sidecar(plan: dict, key: str, name: str) -> Path:
+    """Return the prior-run sidecar path the plan names, refusing a path that is not that sidecar's own file name.
+
+    The plan JSON sits in a run directory and carries absolute paths to the prior run; trusting them blindly would let
+    an edited plan make the verifier read an arbitrary file as a review sidecar.
+
+    Raises:
+        ValueError: The path's file name is not ``name``.
+
+    Examples:
+        >>> _prior_sidecar({"p": "/runs/1/findings.jsonl"}, "p", "findings.jsonl").name
+        'findings.jsonl'
+        >>> _prior_sidecar({"p": "/etc/passwd"}, "p", "findings.jsonl")
+        Traceback (most recent call last):
+            ...
+        ValueError: plan p must name findings.jsonl, got 'passwd'
+    """
+    path = Path(plan[key])
+    if path.name != name:
+        raise ValueError(f"plan {key} must name {name}, got {path.name!r}")
+    return path
+
+
 def verify_carry(report: Path) -> list[str]:
     """Check a published fill-gaps run kept every carried prior record and every requested name.
 
@@ -1209,8 +1232,10 @@ def verify_carry(report: Path) -> list[str]:
     except (OSError, ValueError, RecursionError) as exc:
         return [f"{PLAN_NAME} beside the report unreadable ({type(exc).__name__}); not a fill-gaps run"]
     try:
-        prior = json.loads(Path(plan["prior_validation"]).read_text(encoding="utf-8"))
-        prior_rows = read_jsonl(Path(plan["prior_findings"]))
+        prior = json.loads(
+            _prior_sidecar(plan, "prior_validation", "review-validation.json").read_text(encoding="utf-8")
+        )
+        prior_rows = read_jsonl(_prior_sidecar(plan, "prior_findings", "findings.jsonl"))
         current = json.loads(report.with_name("review-validation.json").read_text(encoding="utf-8"))
         current_rows = read_jsonl(report.with_name("findings.jsonl"))
     except (OSError, ValueError, KeyError, TypeError, RecursionError) as exc:

@@ -90,7 +90,7 @@ REPLY  (step 8)  (--reply, or an existing-report/direct-path redirect)
 | AGENT LAUNCH: dimension agents | ≤`FANOUT_MAX` (3) ranked + qa-specialist pinned outside cap | scope preselection (FIX drops perf+arch only at codemap impact tier `LIGHT`; unknown impact = `FULL`), then relevance ranking; never zero on a code PR; `--full` = no cap, every survivor | before JOIN |
 | CROSS-VALIDATE | ≤3 | critical/blocking finding count (batched ≤2/verifier beyond 3) | CONSOLIDATE |
 
-The top fan is free — it rides an idle window AGENT LAUNCH already had. ECOSYSTEM + OSS CHECKS is issued on an AGENT LAUNCH wake-up rather than a dedicated turn, once `PR_BASE` is bound; neither lane waits on the other's output.
+The top fan is free — it rides an idle window AGENT LAUNCH already had. ECOSYSTEM + OSS CHECKS is issued on an AGENT LAUNCH wake-up rather than a dedicated turn, and reads only the PR snapshot; neither lane waits on the other's output.
 
 **The boundary.** CROSS-VALIDATE cannot join the top fan — its verifiers target the critical/blocking findings AGENT LAUNCH's agents produce, so it must wait for those findings to exist.
 
@@ -115,9 +115,9 @@ Normal PR-review path (`REPLY_MODE=false`, `DIRECT_PATH_MODE=false`) costs at mo
 
 | Mode | Schema |
 | -- | -- |
-| `DOCS_TYPING` (annotation-only `.py`, no logic) | PRE-FLIGHT skips file-scope/SCOPE classification; AGENT LAUNCH = doc-scribe only, challenger off; CONSOLIDATE = doc-scribe |
-| `TESTS_CI` (test files + CI config only) | same skip; AGENT LAUNCH = qa-specialist + linting-expert, challenger off; CONSOLIDATE = qa-specialist |
-| `CICD_ONLY` (no `.py`/`.md`/`.rst` changed) | AGENT LAUNCH narrows to cicd-steward + bridge + challenger (if enabled) |
+| `DOCS_TYPING` (`.md`/`.rst` docs and `.pyi` stubs only, no Python logic file; `.txt`/`.ipynb` stay CODE) | PRE-FLIGHT skips file-scope/SCOPE classification and codemap, but still runs CI STATUS and the ACCEPTANCE GATE; AGENT LAUNCH = doc-scribe only, challenger off; CONSOLIDATE = doc-scribe |
+| `TESTS_CI` (test files, `tox.ini`, `Makefile` only; `.github/` and YAML stay CODE → `CICD_ONLY` / full lineup) | same skips and runs; AGENT LAUNCH = qa-specialist + linting-expert, challenger off; CONSOLIDATE = qa-specialist |
+| `CICD_ONLY` (no `.py`/`.md`/`.rst` and no notebook/manifest/config changed) | AGENT LAUNCH narrows to cicd-steward + bridge + challenger (if enabled) |
 | `DOCS_ONLY` (no `.py` changed) | AGENT LAUNCH narrows to doc-scribe + bridge + challenger (if enabled); sw-engineer and the issue agent never spawn |
 | `DOCS_CICD` (no Python at all) | AGENT LAUNCH narrows to cicd-steward + doc-scribe + bridge + challenger (if enabled) |
 | `--fill-gaps` (targeted rerun of one prior run) | FILL-GAPS GATE runs, EXISTING REPORT GATE and ACCEPTANCE GATE Stage 1 skip; new run dir keeps the prior `head-sha.txt` string; AGENT LAUNCH = the plan's units exactly (no ranking, no cap, no pinned qa; zero when candidates-only); ECOSYSTEM + OSS CHECKS skip; CROSS-VALIDATE = named candidates + new claims only (a named CONFIRMED candidate missing its findings row skips it — row published, record carried); CONSOLIDATE merges carried prior records, then CARRY CHECK before PUBLICATION GATE |
@@ -129,7 +129,7 @@ All collapse to a shorter path with no special handling beyond what is described
 - **`--reply`** (`REPLY_MODE=true`) — WORKTREE EXIT skips the FOLLOW-UP GATE and CONFIDENCE BLOCK; jumps straight to REPLY's `oss:shepherd` spawn, Confidence block lives there instead.
 - **Direct-report path** (`DIRECT_PATH_MODE=true`, a `.md` report path instead of a PR#) — skips SETUP's PR-snapshot fetch through CONSOLIDATE entirely: either an `AskUserQuestion` redirect (no `--reply`) or straight to REPLY.
 - **Existing-report guard, option (a)** — reuses the prior report and stops before PRE-FLIGHT ever runs. Option (c) — redirects straight to REPLY, same skip as the direct-report path.
-- **Stage 1 REJECT** (ACCEPTANCE GATE) — skips AGENT LAUNCH through CONSOLIDATE entirely (no fan-out, no consolidator); the orchestrator writes the report itself and jumps to REPORT HEADER's print + the FOLLOW-UP GATE.
+- **Stage 1 REJECT** (ACCEPTANCE GATE) — skips AGENT LAUNCH through CONSOLIDATE entirely (no fan-out, no consolidator) but first runs the run-dir/report-dir allocation block, so the report lands under `.reports/review/pr-<N>/run-*/`; the orchestrator writes the report itself and jumps to REPORT HEADER's print + the FOLLOW-UP GATE.
 - **No Python, doc, or CI/CD files changed at all** — file-scope detection exits the skill in PRE-FLIGHT, before any fan-out.
 - **`--fill-gaps` with `--candidates` only** — AGENT LAUNCH spawns nothing; CROSS-VALIDATE re-checks the named candidates, then CONSOLIDATE merges.
 

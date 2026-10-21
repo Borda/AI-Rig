@@ -435,6 +435,15 @@ class TestReaderClassification:
         path.write_text(json.dumps(record) + "\n", encoding="utf-8")
         assert _report(path)["schema-invalid"] == 1
 
+    def test_a_line_nested_past_the_recursion_limit_is_torn_framing_not_raised(self, tmp_path: Path) -> None:
+        """``json.loads`` raises ``RecursionError`` (not ``ValueError``) on a deeply nested line.
+
+        A hostile or damaged audit log with one such line must cost only that line, not the whole verification run.
+        """
+        path = tmp_path / f"s-{'3' * 32}.jsonl"
+        path.write_text("[" * 200_000 + "\n", encoding="utf-8")
+        assert _report(path)["truncated"] == 1
+
 
 class TestTextReport:
     """The human-readable report, which carries every signal the exit code cannot."""

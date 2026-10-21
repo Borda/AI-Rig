@@ -31,35 +31,19 @@ Prompt supplies key=value pairs (space-separated):
 
 ## Step 1 — Setup
 
-Parse `GH_OWNER`, `GH_REPO`, `DATA_FILE`, `PARTIAL_FILE`, `AXIS_GROUP` from prompt key=value pairs.
+Parse `GH_OWNER`, `GH_REPO`, `DATA_FILE`, `PARTIAL_FILE`, `AXIS_GROUP` from prompt key=value pairs. `AXIS_GROUP` (A=1,2,5,6 · B=4,7,8 · C=3,9) only selects which fixed block runs in Steps 2–3 — never a shell variable (unset in a fresh Bash call). The block below reads `DATA_FILE` from the orchestrator's session sentinel, not from prompt text.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # loads: oss-shared-resolver.md
-# intentional dup — also in gh-scraper.md, shepherd.md
-_OSS_SHARED=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/resolve_shared_path.py" oss skills/_shared 2>/dev/null)  # timeout: 5000
+# intentional dup — also in shepherd.md
+_OSS_SHARED=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_shared_path.py" oss skills/_shared 2>/dev/null)  # timeout: 5000
 [ -z "$_OSS_SHARED" ] && _OSS_SHARED="plugins/cc_oss/skills/_shared"
 echo "$_OSS_SHARED" > "${TMPDIR:-/tmp}/warden-oss-shared-${CSID}"  # persist (Check 41)
-```
-
-Determine axes for group:
-
-- Group A: Axes 1, 2, 5, 6
-- Group B: Axes 4, 7, 8
-- Group C: Axes 3, 9
-
-```bash
-AXIS_GROUP="$(echo "$AXIS_GROUP" | tr -d '[:space:]')"  # trim whitespace from prompt parsing  # timeout: 5000
-case "$AXIS_GROUP" in
-  A) AXES="1 2 5 6" ;;
-  B) AXES="4 7 8" ;;
-  C) AXES="3 9" ;;
-  *) echo "[repo-warden] ERROR: unknown AXIS_GROUP=$AXIS_GROUP"; exit 1 ;;
-esac
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-# group-keyed (trimmed, validated above) — 3 wardens run in parallel under one session
-echo "$DATA_FILE" > "${TMPDIR:-/tmp}/warden-data-file-${AXIS_GROUP}-${CSID}"
-echo "[repo-warden] group=$AXIS_GROUP axes=$AXES repo=$GH_OWNER/$GH_REPO"  # timeout: 5000
+# written by /oss:analyse vitality Step 1; shared read-only by the 3 parallel wardens
+IFS= read -r DATA_FILE < "${TMPDIR:-/tmp}/vitality-data-file-${CSID}" 2>/dev/null || DATA_FILE=""
+[ -f "$DATA_FILE" ] || { echo "[repo-warden] ERROR: vitality data file missing (sentinel vitality-data-file) — rerun /oss:analyse vitality"; exit 1; }
+echo "[repo-warden] data=$DATA_FILE"  # timeout: 5000
 ```
 
 ## Step 2 — Extract Metrics
@@ -70,24 +54,24 @@ Group A:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r DATA_FILE < "${TMPDIR:-/tmp}/warden-data-file-A-${CSID}" 2>/dev/null || DATA_FILE=""
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/vitality_extract.py" --data-file "$DATA_FILE" --group A  # timeout: 30000
+IFS= read -r DATA_FILE < "${TMPDIR:-/tmp}/vitality-data-file-${CSID}" 2>/dev/null || DATA_FILE=""
+python "${CLAUDE_PLUGIN_ROOT}/bin/vitality_extract.py" --data-file "$DATA_FILE" --group A  # timeout: 30000
 ```
 
 Group B:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r DATA_FILE < "${TMPDIR:-/tmp}/warden-data-file-B-${CSID}" 2>/dev/null || DATA_FILE=""
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/vitality_extract.py" --data-file "$DATA_FILE" --group B  # timeout: 30000
+IFS= read -r DATA_FILE < "${TMPDIR:-/tmp}/vitality-data-file-${CSID}" 2>/dev/null || DATA_FILE=""
+python "${CLAUDE_PLUGIN_ROOT}/bin/vitality_extract.py" --data-file "$DATA_FILE" --group B  # timeout: 30000
 ```
 
 Group C:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r DATA_FILE < "${TMPDIR:-/tmp}/warden-data-file-C-${CSID}" 2>/dev/null || DATA_FILE=""
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/vitality_extract.py" --data-file "$DATA_FILE" --group C  # timeout: 30000
+IFS= read -r DATA_FILE < "${TMPDIR:-/tmp}/vitality-data-file-${CSID}" 2>/dev/null || DATA_FILE=""
+python "${CLAUDE_PLUGIN_ROOT}/bin/vitality_extract.py" --data-file "$DATA_FILE" --group C  # timeout: 30000
 ```
 
 Output: `{"group","analysis_now","datasets":{"used","missing","not_present","optional_absent","partial"},"axes":{"<N>":{...}}}`. Score only from it.
@@ -99,16 +83,33 @@ Output: `{"group","analysis_now","datasets":{"used","missing","not_present","opt
 
 ## Step 3 — Score Axes
 
+Run only the block for your `AXIS_GROUP`, verbatim — fixed block per group, never a shell `$AXIS_GROUP` (unset in a fresh Bash call; no sentinel, parallel wardens share CSID).
+
+Group A:
+
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _OSS_SHARED < "${TMPDIR:-/tmp}/warden-oss-shared-${CSID}" 2>/dev/null || _OSS_SHARED="plugins/cc_oss/skills/_shared"  # reload (Check 41)
-case "$AXIS_GROUP" in
-  A) _GROUP_FILE="vitality-scoring-group-a.md" ;;
-  B) _GROUP_FILE="vitality-scoring-group-b.md" ;;
-  C) _GROUP_FILE="vitality-scoring-group-c.md" ;;
-esac
-[ -f "$_OSS_SHARED/$_GROUP_FILE" ] || { echo "[repo-warden] ERROR: $_GROUP_FILE not found at $_OSS_SHARED — verify oss plugin installation"; exit 1; }  # timeout: 5000
-cat "$_OSS_SHARED/$_GROUP_FILE"  # timeout: 5000
+[ -f "$_OSS_SHARED/vitality-scoring-group-a.md" ] || { echo "[repo-warden] ERROR: vitality-scoring-group-a.md not found at $_OSS_SHARED — verify oss plugin installation"; exit 1; }  # timeout: 5000
+cat "$_OSS_SHARED/vitality-scoring-group-a.md"  # timeout: 5000
+```
+
+Group B:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r _OSS_SHARED < "${TMPDIR:-/tmp}/warden-oss-shared-${CSID}" 2>/dev/null || _OSS_SHARED="plugins/cc_oss/skills/_shared"  # reload (Check 41)
+[ -f "$_OSS_SHARED/vitality-scoring-group-b.md" ] || { echo "[repo-warden] ERROR: vitality-scoring-group-b.md not found at $_OSS_SHARED — verify oss plugin installation"; exit 1; }  # timeout: 5000
+cat "$_OSS_SHARED/vitality-scoring-group-b.md"  # timeout: 5000
+```
+
+Group C:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r _OSS_SHARED < "${TMPDIR:-/tmp}/warden-oss-shared-${CSID}" 2>/dev/null || _OSS_SHARED="plugins/cc_oss/skills/_shared"  # reload (Check 41)
+[ -f "$_OSS_SHARED/vitality-scoring-group-c.md" ] || { echo "[repo-warden] ERROR: vitality-scoring-group-c.md not found at $_OSS_SHARED — verify oss plugin installation"; exit 1; }  # timeout: 5000
+cat "$_OSS_SHARED/vitality-scoring-group-c.md"  # timeout: 5000
 ```
 
 Contains only assigned group's axis rubrics (not full 13-axis file) — the definition the extractor implements; use it to explain values in notes. Weights table (degraders, floors) lives in `vitality-scoring.md` § Weights & Confidence Thresholds — extractor already applied it; never recompute.
@@ -192,7 +193,7 @@ Signal string formats (must match scorecard Key Signal column):
 
 ## Step 4 — Write Partial Scores
 
-Write `$PARTIAL_FILE` via Write tool — never Bash `echo`/`cat` redirection.
+Write the `PARTIAL_FILE` path from your prompt via Write tool — never Bash `echo`/`cat` redirection. Shell variables set in Step 1 do not survive into later Bash calls; read values from the prompt or the sentinel.
 
 **Single parameterized template** — substitute `{{GROUP}}` and `{{AXES}}` per assigned group, emit one `axes` entry per axis in `{{AXES}}`:
 
@@ -218,15 +219,11 @@ Substitution per group:
 
 `axis3_weeks` is always `null` for Groups A and B. Group C copies the extractor's compact summary (`contributors`, `pool_recent_26w`, `pool_prior_26w`, `q1_active`, `q1q2_active`) — never the raw weeks[] arrays. Assembler passes it through to the scores file.
 
-```bash
-echo "[repo-warden] group=$AXIS_GROUP complete → $PARTIAL_FILE"  # timeout: 5000
-```
-
 ## Step 5 — Return Envelope
 
 Compute group confidence as mean of per-axis confidence values (exclude ⚪ axes with conf=0.0; all ⚪ → return 0.0). Cap: strictly less than half assigned axes scored (e.g. 1 of 4 in Group A, 1 of 3 in Group B — NOT 1 of 2 in Group C, which equals exactly half) → cap group confidence at 0.7 to reflect incomplete coverage.
 
-**Group C multi-axis cap**: 0.85 cap applies when >3 top-level axes scored (Group C currently scores 2 — cap inactive unless scope expands; Axis 9 sub-signals count as one axis).
+**Group C multi-axis cap**: 0.85 cap applies when >3 top-level axes scored (Axis 9 sub-signals count as one axis).
 
 Return ONLY this JSON as final output:
 

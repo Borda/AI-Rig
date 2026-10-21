@@ -359,7 +359,7 @@ function isWorkflowFollowUp(toolInput, skill) {
       "oss:analyse": ["/develop:fix", "draft reply", "/oss:analyse", "/oss:review"],
       "develop:review": ["walk through findings"],
       "foundry:profile": ["drill into slowest session", "re-run with different window"],
-      "research:topic": ["/research:plan"],
+      "research:topic": ["/research:topic plan", "/research:plan"],
     };
     return labels.some((label) => (prefixes[skill] || []).some((prefix) => label.startsWith(prefix)));
   });

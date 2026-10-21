@@ -30,7 +30,7 @@ SYNC_SCRIPT = PLUGIN_ROOT / "scripts" / "sync_codex.py"
 def test_check_only_workflow_reaches_instruction_health_before_refresh_boundary() -> None:
     """A read-only sync check must diagnose composed instructions before its mandatory stop."""
     skill = (PLUGIN_ROOT / "skills" / "sync" / "SKILL.md").read_text(encoding="utf-8")
-    health = skill.index("### Global instruction health")
+    health = skill.index("### 02b: Global instruction health")
     boundary = skill.index("### 04: Stop after dry run")
     refresh = skill.index("### 05: Refresh through the Codex CLI")
 

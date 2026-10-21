@@ -41,29 +41,34 @@ if [ "$LOCAL_MODE" = "true" ]; then
   BARE=$(echo "<TARGET>" | sed 's|^/||')
   PLUGIN=$(echo "$BARE" | cut -d: -f1)
   NAME=$(echo "$BARE" | cut -d: -f2)
+  # claude-skills/ holds skills of plugins that ship no agents (bridge, codemap-py)
   if [[ "<TARGET>" == /* ]]; then
-    REL="skills/$NAME/SKILL.md"
+    RELS="skills/$NAME/SKILL.md claude-skills/$NAME/SKILL.md"
   else
-    REL="agents/$NAME.md"
+    RELS="agents/$NAME.md"
   fi
-  CANDIDATE="plugins/cc_$PLUGIN/$REL"
-  [ -f "$CANDIDATE" ] || CANDIDATE="plugins/$PLUGIN/$REL"
-  if [ ! -f "$CANDIDATE" ]; then
-    MATCHES=$(find plugins -mindepth 3 -maxdepth 4 -path "*/$REL" 2>/dev/null)
-    MATCH_COUNT=$(echo "$MATCHES" | grep -c .)
-    if [ "$MATCH_COUNT" -eq 1 ]; then
-      CANDIDATE="$MATCHES"
-    elif [ "$MATCH_COUNT" -gt 1 ]; then
-      CANDIDATE=$(echo "$MATCHES" | grep "/$PLUGIN[^/]*/" | head -1)
-    else
-      CANDIDATE=""
+  CANDIDATE=""
+  for REL in $RELS; do
+    CANDIDATE="plugins/cc_$PLUGIN/$REL"
+    [ -f "$CANDIDATE" ] || CANDIDATE="plugins/$PLUGIN/$REL"
+    if [ ! -f "$CANDIDATE" ]; then
+      MATCHES=$(find plugins -mindepth 3 -maxdepth 4 -path "*/$REL" 2>/dev/null)
+      MATCH_COUNT=$(echo "$MATCHES" | grep -c .)
+      if [ "$MATCH_COUNT" -eq 1 ]; then
+        CANDIDATE="$MATCHES"
+      elif [ "$MATCH_COUNT" -gt 1 ]; then
+        CANDIDATE=$(echo "$MATCHES" | grep "/$PLUGIN[^/]*/" | head -1)
+      else
+        CANDIDATE=""
+      fi
     fi
-  fi
+    [ -n "$CANDIDATE" ] && [ -f "$CANDIDATE" ] && break
+  done
   if [ -n "$CANDIDATE" ] && [ -f "$CANDIDATE" ]; then
     TARGET_FILE="$CANDIDATE"
     echo "local mode: using $TARGET_FILE"
   else
-    echo "! local mode: no source file resolved for '<TARGET>' (tried plugins/cc_$PLUGIN/$REL, plugins/$PLUGIN/$REL, plugins/*/$REL) — aborting, not silently falling back to installed cache"
+    echo "! local mode: no source file resolved for '<TARGET>' (tried $RELS under plugins/cc_$PLUGIN, plugins/$PLUGIN, plugins/*) — aborting, not silently falling back to installed cache"
   fi
 fi
 ```
@@ -85,7 +90,7 @@ Split `<N>` in-scope problems between two generators. Claude always owns 1 out-o
 
 **Step 1 — Codex generates N_CODEX in-scope problems** (runs first; requires `bridge@borda-ai-rig`):
 
-`bridge:advise`/`bridge:review` are read-only — they return their answer in the call's own envelope, they never write to the run dir despite the "Write JSON array to" instruction below. Capture the returned payload from the call result, then write it to the target file yourself.
+`bridge:advise`/`bridge:review` are read-only — they return their answer in the call's own envelope, never writing to the run dir. The public envelope omits `details`, so the payload must travel in `findings[]` (array of strings). Capture it from the call result, then write the target file yourself.
 
 Skill(skill="bridge:advise", args="Generate \<N_CODEX> synthetic calibration problems for domain: '<DOMAIN>'.
 
@@ -122,12 +127,11 @@ Rules:
 - 2-5 known issues per problem; extreme problems may have fewer (1-3) if issue inherently hard to detect
 - Issues must be unambiguous — domain expert would confirm them
 - Do NOT include any out-of-scope problem — in-scope only
-- Write ONLY valid JSON array (no prose, no markdown fences, no trailing commas)
-- `bridge_call.py` enforces a hard ~500-char cap on the returned `verdict` field — a response whose verdict exceeds it raises `ValueError` and the call fails outright (not a silent truncation). Request one problem per `bridge:advise` call rather than the full `N_CODEX` batch in one call, to stay under the cap. If a call still fails validation after a retry, drop that problem and proceed with fewer Codex problems — Phase 1b's `floor(<N_CODEX> * 0.5)` validity threshold already accounts for partial yield.
+- Return each problem as ONE entry of the envelope's `findings[]` array: a string holding one valid JSON object (no prose, no markdown fences, no trailing commas). `verdict` = one-line summary only
 
-Return the JSON array in your response — do not attempt to write it to a file yourself.")
+Do not attempt to write a file yourself.")
 
-Capture the JSON array from the call's return value and write it to `.reports/calibrate/<TIMESTAMP>/<TARGET>/problems-codex.json` yourself.
+Parse each `findings[]` string, assemble the objects into one JSON array, and write it to `.reports/calibrate/<TIMESTAMP>/<TARGET>/problems-codex.json` yourself. An unparsable entry is dropped; Phase 1b's `floor(<N_CODEX> * 0.5)` validity threshold accounts for partial yield.
 
 **Step 2 — Claude generates N_CLAUDE in-scope problems + 1 out-of-scope problem**:
 
@@ -181,8 +185,6 @@ Prompt for each subagent:
 >
 > End your response with a `## Confidence` block: **Score**: 0.NN (high >=0.9 / moderate 0.8-0.9 / low \<0.8) and **Gaps**: what limited thoroughness, each gap a bullet opening with its deduction `- (-0.NN) <gap>`, deductions summing to 1.0 - Score.
 >
-> You have approximately `<PHASE_TIMEOUT_MIN>` minutes. If time is running short, submit your partial findings — do not delay output waiting for full coverage.
->
 > Do not self-review or refine before answering — report your initial analysis directly.
 >
 > **Write your complete response** (including the Confidence block) to `.reports/calibrate/<TIMESTAMP>/<TARGET>/response-<problem_id>.md` using the Write tool. Then end your reply with exactly one line: `Wrote: <problem_id>`
@@ -191,9 +193,9 @@ Prompt for each subagent:
 
 **Completion handling** — never a poll loop or a waiting tool (`ScheduleWakeup`, `ListAgents`, `Monitor`); each subagent's result arrives as its `Agent()` result or completion notification (`_FOUNDRY_SHARED/agent-spawn-protocol.md`). Each subagent returns: check for `response-<problem_id>.md`; empty or missing: mark that problem `{"timed_out": true}` in scores.json, proceed. Never block indefinitely on single response.
 
-For **agent targets** when `LOCAL_MODE=true` and `TARGET_FILE` set: spawn `general-purpose` subagent with TARGET_FILE content prepended ("You are an agent described by the following instructions: <content of TARGET_FILE>") — tests source tree definition rather than installed plugin. When LOCAL_MODE=false or TARGET_FILE empty: spawn `Agent(subagent_type="<TARGET>")` normally.
+For **agent targets** when `LOCAL_MODE=true` and `TARGET_FILE` set: spawn `general-purpose` subagent with TARGET_FILE content prepended ("You are an agent described by the following instructions: <content of TARGET_FILE>") — tests source tree definition rather than installed plugin. Pass `model=` from `TARGET_FILE` frontmatter `model:` (omit when absent or `inherit`), so tier changes are measured at the tier the agent ships with. `Agent()` has no `effort`/`tools` parameter: frontmatter `effort`/`tools` go unapplied — add `"local mode: frontmatter effort/tools not applied"` to `gaps`. When LOCAL_MODE=false or TARGET_FILE empty: spawn `Agent(subagent_type="<TARGET>")` normally.
 
-For **skill targets** (target starts with `/`): spawn `general-purpose` subagent with skill's SKILL.md content prepended as context, running against synthetic input from problem. When `LOCAL_MODE=true` and `TARGET_FILE` set, read SKILL.md from `TARGET_FILE`; otherwise resolve: `.claude/skills/<NAME>/SKILL.md` → cache `~/.claude/plugins/cache/borda-ai-rig/<PLUGIN>/*/skills/<NAME>/SKILL.md` (latest mtime) → `plugins/<PLUGIN>/skills/<NAME>/SKILL.md`. Apply same write-and-acknowledge pattern.
+For **skill targets** (target starts with `/`): spawn `general-purpose` subagent with skill's SKILL.md content prepended as context, running against synthetic input from problem. When `LOCAL_MODE=true` and `TARGET_FILE` set, read SKILL.md from `TARGET_FILE` (frontmatter `model:` handled as for agent targets); otherwise resolve, trying `skills/<NAME>/SKILL.md` then `claude-skills/<NAME>/SKILL.md` at each tier: `.claude/` → cache `~/.claude/plugins/cache/borda-ai-rig/<PLUGIN>/*/` (latest mtime) → `plugins/<PLUGIN>/`. Apply same write-and-acknowledge pattern.
 
 ### Phase 2b — Run general-purpose baseline (skip if AB_MODE is false)
 
@@ -225,15 +227,15 @@ Each scorer receives this prompt (substitute `<PROBLEM_ID>`, `<GROUND_TRUTH_JSON
 >
 > **Measure response length**: count characters in target response and (if AB_MODE) general response. Token efficiency proxy — shorter = more focused.
 >
-> **Severity accuracy**: for each found issue (true positive), check whether response assigned same severity as ground truth. Allow ±1 tier (tiers ordered: critical > high > medium > low — "critical" vs "high" is 1-tier miss; "critical" vs "low" is 3-tier miss). Count exact-or-adjacent matches. `severity_accuracy = correct_severity / found_count` (N/A if found_count = 0). Orthogonal to recall — agent can find everything but mislabel severity.
+> **Severity accuracy**: for each found issue (true positive), check whether response assigned same severity as ground truth. Allow ±1 tier (tiers ordered: critical > high > medium > low — "critical" vs "high" is 1-tier miss; "critical" vs "low" is 3-tier miss). Count exact-or-adjacent matches. `severity_accuracy = correct_severity / found_count` (N/A if found_count = 0). Orthogonal to recall — agent can find everything but mislabel severity. Also record `severity_assigned`: per ground-truth issue in order, the severity label the response gave it (null if not found or unlabeled) — Phase 3c compares these across scorers.
 >
 > **Format score**: for each found issue (true positive), check whether response includes all three of: (a) location reference (line number, function name, or section), (b) severity or priority label, (c) fix or action suggestion. `format_score = fully_structured_count / found_count` (N/A if found_count = 0). Measures actionability of findings, not just detection.
 >
 > Compute: `recall = found / total` (skip if total=0), `precision = found / (found + fp + 1e-9)`, `f1 = 2·r·p / (r+p+1e-9)`.
 >
-> Write following JSON (no prose, no markdown fences) to `<RUN_DIR>/score-<PROBLEM_ID>-claude.json` using Write tool: `{"problem_id":"<PROBLEM_ID>","found":[true/false,...],"false_positives":N,"confidence":0.N,"recall":0.N,"precision":0.N,"f1":0.N,"severity_accuracy":0.N,"format_score":0.N,"target_chars":N,"scorer":"claude"}`
+> Write following JSON (no prose, no markdown fences) to `<RUN_DIR>/score-<PROBLEM_ID>-claude.json` using Write tool: `{"problem_id":"<PROBLEM_ID>","found":[true/false,...],"false_positives":N,"confidence":0.N,"recall":0.N,"precision":0.N,"f1":0.N,"severity_accuracy":0.N,"severity_assigned":["high",null,...],"format_score":0.N,"target_chars":N,"scorer":"claude"}`
 >
-> \[If AB_MODE is true, also include before closing `}`: `,"recall_general":0.N,"precision_general":0.N,"f1_general":0.N,"confidence_general":0.N,"severity_accuracy_general":0.N,"format_score_general":0.N,"general_chars":N`\]
+> \[If AB_MODE is true, also include before closing `}`: `,"recall_general":0.N,"precision_general":0.N,"f1_general":0.N,"confidence_general":0.N,"severity_accuracy_general":0.N,"severity_assigned_general":["high",null,...],"format_score_general":0.N,"general_chars":N`\]
 >
 > Then return ONLY one line: `Scored: <PROBLEM_ID>`
 
@@ -243,7 +245,7 @@ Each scorer receives this prompt (substitute `<PROBLEM_ID>`, `<GROUND_TRUTH_JSON
 
 For each problem, call the read-only Codex bridge skill. Run **sequentially** (not parallel — scoring writes shared result files).
 
-`bridge:review` is read-only — it returns its answer in the call envelope, it never writes the output file itself despite the "Output file:" instruction below. Also note: `bridge_call.py` enforces a hard ~500-char cap on the returned `verdict` field — a scoring response that exceeds it fails validation (`ValueError`) rather than returning truncated JSON; if the call fails, retry once, then fall back to Claude's score alone for that problem (`scorer_mode: "single"`, per Phase 3c below) rather than looping.
+`bridge:review` is read-only — it returns its answer in the call envelope, never writing a file. The public envelope omits `details`, so the score travels as one JSON-object string in `findings[0]`. Call fails or `findings[0]` unparsable: retry once, then fall back to Claude's score alone for that problem (`scorer_mode: "single"`, per Phase 3c below) rather than looping.
 
 Skill(skill="bridge:review", args="Score a calibration response against ground truth.
 
@@ -265,11 +267,11 @@ Format score: for found issues, check for all three of: location reference, seve
 
 Compute: recall=found/total (null if total=0), precision=found/(found+fp+1e-9), f1=2*r*p/(r+p+1e-9).
 
-Write ONLY this JSON (no prose, no markdown fences, no trailing commas) to file below: {"problem_id":"\<PROBLEM_ID>","found":[true/false,...],"false_positives":N,"confidence":0.N,"recall":0.N,"precision":0.N,"f1":0.N,"severity_accuracy":0.N,"format_score":0.N,"scorer":"codex"} [If AB_MODE is true, append before closing }: ,"recall_general":0.N,"confidence_general":0.N,"precision_general":0.N,"f1_general":0.N,"severity_accuracy_general":0.N,"format_score_general":0.N]
+Also record `severity_assigned`: per ground-truth issue in order, the severity label the response gave it (null if issue not found or response gave no label).
 
-Return the JSON object in your response — do not attempt to write it to a file yourself.")
+Return ONLY this JSON as the single string in `findings[0]` (no prose, no markdown fences, no trailing commas), and do not attempt to write a file yourself: {"problem_id":"\<PROBLEM_ID>","found":[true/false,...],"false_positives":N,"confidence":0.N,"recall":0.N,"precision":0.N,"f1":0.N,"severity_accuracy":0.N,"severity_assigned":["high",null,...],"format_score":0.N,"scorer":"codex"} \[If AB_MODE is true, append before closing }: ,"recall_general":0.N,"confidence_general":0.N,"precision_general":0.N,"f1_general":0.N,"severity_accuracy_general":0.N,"severity_assigned_general":["high",null,...],"format_score_general":0.N\]")
 
-Substitute `<PROBLEM_ID>` and `<GROUND_TRUTH_JSON>` per problem. Capture JSON from call's return value, write it to `.reports/calibrate/<TIMESTAMP>/<TARGET>/score-<PROBLEM_ID>-codex.json` yourself. Returned payload missing or unparsable after one retry: set `scorer_mode: "single"` for that problem — Phase 3c uses Claude's score only.
+Substitute `<PROBLEM_ID>` and `<GROUND_TRUTH_JSON>` per problem. Parse `findings[0]` from the call's return value, write it to `.reports/calibrate/<TIMESTAMP>/<TARGET>/score-<PROBLEM_ID>-codex.json` yourself. Returned payload missing or unparsable after one retry: set `scorer_mode: "single"` for that problem — Phase 3c uses Claude's score only.
 
 ### Phase 3c — Consensus merge
 
@@ -280,7 +282,7 @@ For each problem, read `score-<PROBLEM_ID>-claude.json` (Phase 3a output) and `s
 - `found[]` — per-issue boolean: both agree → use; disagree → Claude's value (51% tiebreak)
 - `false_positives` — Claude's count wins on disagreement
 - `recall`, `precision`, `f1` — recomputed from consensus `found[]` and consensus `false_positives`
-- `severity_accuracy`:
+- `severity_accuracy` — recomputed per consensus-found issue from both scorers' `severity_assigned[i]` (scorer lacking the field: use its own `severity_accuracy`, no dispute check):
   - Both agree → use
   - Disagree within 1 tier → use harsher (more conservative) severity
   - Disagree by >1 tier → mark that issue as `severity_disputed`; exclude from `severity_accuracy` aggregate
@@ -303,8 +305,8 @@ Compute aggregates (exclude out-of-scope problem from recall/F1/severity/format 
 
 - `mean_recall` = mean of `recall` values for in-scope, **non-extreme** problems only (trivial through high included; extreme excluded — reported separately as `extreme_recall`)
 - `extreme_recall` = mean of `recall` values for extreme problems only (null if none present); partial performance (0.4–0.7) informative, not alarming
-- `mean_confidence` = mean of all `confidence` values (extreme problems included — confidence calibration applies across all tiers)
-- `calibration_bias` = `mean_confidence − mean_recall` (uses non-extreme `mean_recall`; extreme problems don't affect verdict)
+- `mean_confidence` = mean of `confidence` over the same problems as `mean_recall` (in-scope, non-extreme) — mixing in extreme/scope problems whose recall is excluded biases `calibration_bias` toward overconfident
+- `calibration_bias` = `mean_confidence − mean_recall` (same problem set; extreme problems don't affect verdict)
 - `mean_f1` = mean of `f1` values for in-scope, non-extreme problems only
 - `scope_fp` = false_positives from out-of-scope problem (0 = correct discipline, >0 = scope failure)
 - `mean_severity_accuracy` = mean of `severity_accuracy` for in-scope problems with found_count > 0 (exclude `severity_disputed` issues from numerator and denominator; extreme problems included if found_count > 0)
@@ -400,7 +402,7 @@ When `LOCAL_MODE=true` and `TARGET_FILE` set: use `TARGET_FILE` directly.
 Otherwise resolve (first match wins):
 
 - Agent: `.claude/agents/<NAME>.md` → `~/.claude/plugins/cache/borda-ai-rig/<PLUGIN>/*/agents/<NAME>.md` (latest mtime) → `plugins/<PLUGIN>/agents/<NAME>.md`
-- Skill: `.claude/skills/<NAME>/SKILL.md` → `~/.claude/plugins/cache/borda-ai-rig/<PLUGIN>/*/skills/<NAME>/SKILL.md` (latest mtime) → `plugins/<PLUGIN>/skills/<NAME>/SKILL.md`
+- Skill: `.claude/skills/<NAME>/SKILL.md` → `~/.claude/plugins/cache/borda-ai-rig/<PLUGIN>/*/skills/<NAME>/SKILL.md` (latest mtime) → `plugins/<PLUGIN>/skills/<NAME>/SKILL.md`; at each tier also try `claude-skills/<NAME>/SKILL.md` in place of `skills/<NAME>/SKILL.md`
 
 (`<PLUGIN>` and `<NAME>` parsed from `<TARGET>` as in pre-flight: strip `/`, split on `:`)
 

@@ -593,6 +593,8 @@ def prior_resolutions(run_dir: Path) -> dict[str, Any]:
         if (match := RUN_DIRECTORY_PATTERN.fullmatch(sibling.name)) is not None
         and 0 < int(match.group(1)) < current
         and (sibling / RESOLUTION_LEDGER).is_file()
+        # An unpromoted run never completed review, so its verdicts cannot tell reviewers to skip a finding.
+        and (sibling / "result.json").is_file()
     ]
     if not earlier:
         return {"review_run": None, "ledger": None, "resolutions": [], "invalid_lines": 0}

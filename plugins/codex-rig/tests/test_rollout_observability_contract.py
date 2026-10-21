@@ -15,8 +15,21 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
+from _skill_text import read_with_references
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
+#: Skills that load part of their instructions from a trigger-loaded reference rather than SKILL.md.
+_MOVED_REFERENCES = {
+    "challenge-resolve": ("chunk-path.md",),
+    "code-review": (
+        "batched-review.md",
+        "collection-failure.md",
+        "historical-routes.md",
+        "report-recovery.md",
+        "validation-recovery.md",
+    ),
+    "code-remediate": ("existing-conflict.md", "missing-review-decision.md", "source-recovery.md"),
+}
 HEAD_ARTIFACTS = json.loads(Path(__file__).with_name("head_observable_artifacts.json").read_text(encoding="utf-8"))
 
 
@@ -38,7 +51,7 @@ def _load(name: str, relative: str) -> ModuleType:
 @pytest.mark.parametrize(("skill", "artifacts"), sorted(HEAD_ARTIFACTS.items()))
 def test_every_pre_rollout_artifact_is_still_named(skill: str, artifacts: list[str]) -> None:
     """Keep every run artifact a touched skill named before the rollout in its current contract."""
-    text = (PLUGIN_ROOT / "skills" / skill / "SKILL.md").read_text(encoding="utf-8")
+    text = read_with_references(PLUGIN_ROOT / "skills" / skill / "SKILL.md", *_MOVED_REFERENCES.get(skill, ()))
 
     assert [artifact for artifact in artifacts if artifact not in text] == []
 

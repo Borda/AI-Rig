@@ -22,6 +22,8 @@ import pytest
 
 _PLUGIN = Path(__file__).resolve().parents[2]
 _SKILL = _PLUGIN / "skills/resolve/SKILL.md"
+#: Report source resolution, Gap triage and Intake proceed live here; SKILL.md keeps the reject gate and a load stub.
+_INTAKE = _PLUGIN / "skills/resolve/modes/report-intake.md"
 _REPORT_INTELLIGENCE = _PLUGIN / "skills/resolve/modes/report-intelligence.md"
 _BASH = shutil.which("bash")
 #: The Bash tool runs the login shell, zsh on macOS; PR-scoped intake must behave the same under both.
@@ -261,12 +263,12 @@ def _project_factory(tmp_path: Path) -> Callable[..., _Project]:
 
 def _report_source() -> str:
     """Return the shipped Report source resolution block, the single intake triage."""
-    return _bash_block_after("### Report source resolution")
+    return _bash_block_after("### Report source resolution", _INTAKE)
 
 
 def _intake_proceed() -> str:
     """Return the shipped block run only when the user picks Proceed with valid parts."""
-    return _bash_block_after("**Intake proceed** — only on")
+    return _bash_block_after("**Intake proceed** — only on", _INTAKE)
 
 
 _REQUIRES_BASH = pytest.mark.skipif(_BASH is None, reason="resolve intake blocks run in Bash")
@@ -480,7 +482,7 @@ def test_report_source_saves_the_planner_rerun_verdict(project) -> None:
 
 def _triage_section() -> str:
     """Return the Gap triage prose, from its heading to the Intake proceed block."""
-    text = _SKILL.read_text(encoding="utf-8")
+    text = _INTAKE.read_text(encoding="utf-8")
     start = text.index("#### Gap triage")
     return text[start : text.index("**Intake proceed** — only on", start)]
 
@@ -516,6 +518,21 @@ def test_gap_triage_question_contract(marker: str) -> None:
     This checks the shipped instruction text, not live model adherence; the executable blocks are covered above.
     """
     assert marker in _triage_section()
+
+
+def test_skill_loads_the_intake_mode_instead_of_inlining_it() -> None:
+    """SKILL.md loads the intake mode through the sibling-mode ``cat`` idiom and no longer carries the triage itself.
+
+    The triage moved so runs that never reach an incomplete report skip ~100 lines; a stub that stopped loading it, or a
+    second copy left behind in SKILL.md, would silently fork the single intake contract.
+    """
+    skill = _SKILL.read_text(encoding="utf-8")
+    stub = skill[skill.index("### Report source resolution") : skill.index("### Create all workflow tasks upfront")]
+    assert "<!-- loads: report-intake.md -->" in stub
+    assert 'cat "$_OSS_RESOLVE/modes/report-intake.md"' in stub
+    assert "#### Gap triage" not in skill
+    assert "**Intake proceed** — only on" not in skill
+    assert "fill_gaps_scope.py" not in skill
 
 
 def test_reject_gate_routes_incomplete_reports_to_triage() -> None:

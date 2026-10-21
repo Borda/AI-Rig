@@ -12,6 +12,15 @@ from pathlib import Path
 import pytest
 
 _RESOLVE = Path(__file__).resolve().parents[2] / "skills/resolve"
+
+_DISPATCH_PARTS = ("prelude", "phase1", "phase2", "phase3")
+
+
+def _dispatch_text() -> str:
+    """Join Step 8's dispatch files in load order: prelude, Phase 1, Phase 2, Phase 3."""
+    return "\n".join((_RESOLVE / f"modes/dispatch-{part}.md").read_text(encoding="utf-8") for part in _DISPATCH_PARTS)
+
+
 _SHARED = _RESOLVE.parent / "_shared"
 _SELECTION = ("## Step 3d", "## Step 7b join")  # opens with "invoke `AskUserQuestion` tool directly"
 
@@ -25,9 +34,9 @@ _ASKS = [
         id="unsupported-flag-kept",
     ),
     pytest.param(
-        "SKILL.md",
+        "modes/report-intake.md",
         "### Report source resolution",
-        "### Create all workflow tasks upfront",
+        "**Intake proceed** — only on",
         "No readable review report for PR #<N>",
         id="report-missing-kept",
     ),
@@ -65,21 +74,21 @@ _ASKS = [
         id="post-pr-asked-at-step-10-without-intent",
     ),
     pytest.param(
-        "modes/action-item-dispatch.md",
+        "modes/dispatch-phase3.md",
         "**`GROUP_STRATEGY=labels` only**",
         "`auto` mapping",
         "Assign a topic label to each implemented item",
         id="labels-still-asked-at-step-8-when-lost",
     ),
     pytest.param(
-        "modes/action-item-dispatch.md",
+        "modes/dispatch-phase2.md",
         "**Group-preview gate",
         "Derive `<group_tag>`",
         '"Phase 2 groups are formed. How should they run?"',
         id="group-preview-kept",
     ),
     pytest.param(
-        "modes/action-item-dispatch.md",
+        "modes/dispatch-phase1.md",
         "**Challenge double-timeout gate**",
         "Drop block",
         "The challenge for <N> item(s) timed out twice",
@@ -196,7 +205,7 @@ def test_challenge_double_timeout_leaves_the_decision_to_the_user(option: str) -
 
     The baseline stopped the run on a missing verdict, so the decision was the user's; the gate keeps it the user's.
     """
-    dispatch = (_RESOLVE / "modes/action-item-dispatch.md").read_text(encoding="utf-8")
+    dispatch = _dispatch_text()
     gate = dispatch[dispatch.index("**Challenge double-timeout gate**") : dispatch.index("Drop block")]
     assert option in gate
     assert "ask **once** for all of them" in gate

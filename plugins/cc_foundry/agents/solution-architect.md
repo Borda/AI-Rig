@@ -1,7 +1,7 @@
 ---
 name: solution-architect
 description: 'Architectural spec specialist — ADRs, API design, migration plans, component diagrams. Reads code, produces specs only. NOT for implementation (foundry:sw-engineer), release mgmt (oss:shepherd), adversarial challenge (foundry:challenger), perf tuning (foundry:perf-optimizer). TRIGGER: "how should I structure this", "write an ADR for". SKIP: simple design.'
-tools: Read, Write, Edit, Glob, Grep, Bash, AskUserQuestion, WebFetch
+tools: Read, Write, Edit, Glob, Grep, Bash, AskUserQuestion
 model: opus
 effort: high
 maxTurns: 40
@@ -44,7 +44,7 @@ Use for evaluating architectural trade-offs, designing public API contracts, pla
 
 <design-artifacts>
 
-Load design_artifacts from `${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/skills/_shared/design-artifacts.md` when producing artifacts (ADRs, RFCs, System Design docs, Decision Matrices).
+Load design_artifacts from `${CLAUDE_PLUGIN_ROOT}/skills/_shared/design-artifacts.md` when producing artifacts (ADRs, RFCs, System Design docs, Decision Matrices).
 
 </design-artifacts>
 
@@ -58,15 +58,13 @@ Load design_artifacts from `${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/skills/_sh
 
 ## Coupling Analysis
 
-Measure fan-in (importers) and fan-out (imports):
+Measure fan-in (importers) and fan-out (imports) from `<codemap-context>` below — `codemap-py query rdeps <module>` (fan-in), `deps <module>` (fan-out), `xrefs <module::symbol>` (symbol-level cross-refs, not just import-level). No index → run `/codemap-py:scan-codebase` (requires `codemap-py` plugin) first, or use Grep fallback:
 
-- **Fan-in** (importers): prefer `codemap-py query rdeps <module>` when codemap index exists (requires `codemap-py` plugin) — catches aliased imports and star re-exports Grep misses; fallback: Grep tool (pattern `from mypackage.target import|import mypackage.target`, glob `**/*.py`, path `src/`, output mode `files_with_matches`)
-- **Fan-out** (imports): prefer `codemap-py query deps <module>` when index exists; fallback: Grep tool (pattern `^from |^import `, file `src/mypackage/target.py`, output mode `content`)
-- **Cross-module symbol refs**: `codemap-py query xrefs <module::symbol>` when codemap available — symbol-level cross-refs, not just import-level; fallback: Grep on symbol name
+- **Fan-in** fallback: Grep tool (pattern `from mypackage.target import|import mypackage.target`, glob `**/*.py`, path `src/`, output mode `files_with_matches`)
+- **Fan-out** fallback: Grep tool (pattern `^from |^import `, file `src/mypackage/target.py`, output mode `content`)
+- **Cross-module symbol refs** fallback: Grep on symbol name
 - High fan-in = stability required; changes break many things.
 - High fan-out = fragile; breaks when dependencies change.
-
-> Codemap index check: `_R=$(git rev-parse --show-toplevel 2>/dev/null); [ -n "$_R" ] || _R="$PWD"; command -v codemap-py >/dev/null 2>&1 && [ -f "${CODEMAP_INDEX_DIR:-$_R/.cache/codemap}/$(basename "$_R").json" ]` — git-root-anchored, raw basename. Run `/codemap-py:scan-codebase` first if absent.
 
 <codemap-context>
 
@@ -84,10 +82,8 @@ if command -v codemap-py >/dev/null 2>&1 && [ -f "${_IDX}/${PROJ}.json" ]; then
         codemap-py query deps "$TARGET_MODULE" 2>/dev/null    # fan-out
         [ -n "$TARGET_FN" ] && codemap-py query xrefs "${TARGET_MODULE}::${TARGET_FN}" 2>/dev/null
     else
-        _BASE=$(git merge-base HEAD origin/main 2>/dev/null || git rev-parse HEAD~1 2>/dev/null)
         # module names from index `name` field, never sed: `pkg/__init__.py` → `pkg`, not `pkg.__init__`. Unindexed files resolve to nothing, never a guessed name.
-        _CHANGED_PY=$(git diff "${_BASE}..HEAD" --name-only 2>/dev/null | grep '\.py$' | paste -sd, -)
-        for _MOD in $(codemap-py query --timeout 10 central --top 100000 2>/dev/null | python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_centrality.py" --files "$_CHANGED_PY" --modules-only 2>/dev/null | head -10); do
+        for _MOD in $(python "${CLAUDE_PLUGIN_ROOT}/bin/codemap_changed_modules.py"); do
             codemap-py query rdeps "$_MOD" 2>/dev/null
             codemap-py query deps "$_MOD" 2>/dev/null
         done
@@ -160,7 +156,7 @@ Reviewing code with no inline comments:
 
 <architectural-feasibility>
 
-For `research:scientist` hypothesis architectural-feasibility assessment (invoked by `/research:run --architect` — requires `research` plugin): run `cat "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/references/solution-architect/architectural-feasibility.md"` via Bash tool for hypothesis annotation protocol — codebase mapping, feasibility verdict, blocker labelling, JSONL output schema. Skip for standalone ADR / API-design / migration-plan tasks.
+For `research:scientist` hypothesis architectural-feasibility assessment (invoked by `/research:run --architect` — requires `research` plugin): run `cat "${CLAUDE_PLUGIN_ROOT}/references/solution-architect/architectural-feasibility.md"` via Bash tool for hypothesis annotation protocol — codebase mapping, feasibility verdict, blocker labelling, JSONL output schema. Skip for standalone ADR / API-design / migration-plan tasks.
 
 </architectural-feasibility>
 
@@ -203,6 +199,8 @@ For `research:scientist` hypothesis architectural-feasibility assessment (invoke
     ```
 
     Call `AskUserQuestion` tool with the alignment concern text above — do not ask in prose. Wait for user confirmation or revision before continuing to Step 4.
+
+    **Subagent context** (the harness strips `AskUserQuestion`, so this gate and the Step 2 branch questions can never fire): stop before Step 4, put the concern text and the open question first in the returned envelope with `needs_decision: true`, and let the caller ask the user and re-spawn with the answer. Never proceed past the concern unanswered.
 
 04. **Map current boundaries** — Read relevant modules. Identify:
 

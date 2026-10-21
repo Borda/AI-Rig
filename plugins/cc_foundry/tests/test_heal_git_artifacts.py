@@ -5,8 +5,9 @@ Covers:
   project's recurrent cross-OS defect guard: the Windows branch is simulated
   with a monkeypatched ``ctypes.windll`` rather than skipped)
 * Lock classification: dead holder, live holder, age override, malformed
-* Worktree tiering: protected / live / dirty / removable / orphan
-* Filesystem sweeps and CLI exit-code contract
+* Worktree tiering: protected / live / dirty / removable / orphan / symlink
+* Filesystem sweeps and CLI exit-code contract, including the ``--include-orphans``
+  opt-in and the rejected ``*`` managed prefix
 * Windows-portability invariants of the source itself
 """
 
@@ -33,6 +34,28 @@ _spec.loader.exec_module(_mod)  # type: ignore[union-attr]
 
 LockVerdict = _mod.LockVerdict
 WorktreeTier = _mod.WorktreeTier
+
+
+def _fake_repo_git(repo: Path, worktree_list: str):
+    """Build a ``_git`` stand-in: ``rev-parse`` names *repo*, ``worktree list`` prints *worktree_list*, rest empty."""
+
+    def _git(args, cwd=None):
+        """Answer the git calls a worktree sweep makes."""
+        if args[0] == "rev-parse":
+            return str(repo)
+        if args[:2] == ["worktree", "list"]:
+            return worktree_list
+        return ""
+
+    return _git
+
+
+def _aged_dir(path: Path, days: float = 60.0) -> Path:
+    """Create *path* and backdate its modification time by *days*."""
+    path.mkdir(parents=True)
+    past = time.time() - days * 86400
+    os.utime(path, (past, past))
+    return path
 
 
 class _FakeKernel32:
@@ -385,19 +408,55 @@ class TestCli:
     @pytest.mark.parametrize(
         ("extra_args", "rc", "output"),
         [
-            # Skill-private roots (fortify variants) have arbitrary child names.
-            pytest.param(["--managed-prefix", "*"], 1, "removable", id="wildcard-prefix-manages-every-child"),
-            pytest.param([], 0, "protected", id="unmanaged-name-untouched-without-wildcard"),
+            pytest.param(
+                ["--managed-prefix", "lr-", "--include-orphans"], 1, "removable", id="named-prefix-with-orphans"
+            ),
+            pytest.param(["--managed-prefix", "lr-"], 0, "--include-orphans", id="named-prefix-orphan-reported-only"),
+            pytest.param([], 0, "protected", id="unmanaged-name-untouched-by-default"),
         ],
     )
-    def test_wildcard_prefix_scopes_management(self, tmp_path, monkeypatch, capsys, extra_args, rc, output):
-        """A wildcard managed prefix manages every child of the root; without it an unmanaged name is left protected."""
+    def test_managed_prefix_scopes_management(self, tmp_path, monkeypatch, capsys, extra_args, rc, output):
+        """A named prefix manages matching children; an unregistered one is removable only with --include-orphans.
+
+        Skill-private roots (fortify variants) name every child with one prefix; without that prefix an unmanaged name
+        stays protected, and without the opt-in an orphan is reported but never counted as reclaimable.
+        """
         root = tmp_path / "variants"
-        (root / "lr-1e-4").mkdir(parents=True)
-        past = time.time() - 5 * 86400
-        os.utime(root / "lr-1e-4", (past, past))
-        monkeypatch.setattr(_mod, "_git", lambda args, cwd=None: str(tmp_path) if args[0] == "rev-parse" else "")
+        _aged_dir(root / "lr-1e-4", days=5)
+        monkeypatch.setattr(_mod, "_git", _fake_repo_git(tmp_path, f"worktree {tmp_path}"))
         assert _mod.main(["worktrees", "--root", str(root), *extra_args, "--min-age-days", "1"]) == rc
+        assert output in capsys.readouterr().out
+
+    @pytest.mark.parametrize("prefix", ["*", "agent-,*", "lr-*"])
+    def test_wildcard_prefix_rejected(self, tmp_path, monkeypatch, capsys, prefix):
+        """A ``*`` in --managed-prefix exits 2 before any sweep, so nothing is removed even under --apply.
+
+        The wildcard turned every child of the root into a removal candidate; skills now name the prefix they create.
+        """
+        root = tmp_path / "variants"
+        _aged_dir(root / "lr-1e-4", days=5)
+        monkeypatch.setattr(_mod, "_git", _fake_repo_git(tmp_path, f"worktree {tmp_path}"))
+        argv = ["worktrees", "--root", str(root), "--managed-prefix", prefix, "--include-orphans", "--apply"]
+        assert _mod.main(argv) == 2
+        assert "! SECURITY" in capsys.readouterr().err
+        assert (root / "lr-1e-4").is_dir()
+
+    @pytest.mark.parametrize(
+        ("extra_args", "kept", "output"),
+        [
+            pytest.param([], True, "pass --include-orphans", id="orphan-kept-by-default"),
+            pytest.param(["--include-orphans"], False, "removed", id="orphan-removed-with-opt-in"),
+        ],
+    )
+    def test_orphan_removal_is_opt_in(self, tmp_path, monkeypatch, capsys, extra_args, kept, output):
+        """``--apply`` alone keeps an unregistered managed directory; ``--include-orphans`` lets it be removed.
+
+        An unregistered directory has no git state to prove it abandoned, so deleting it is an explicit caller choice.
+        """
+        orphan = _aged_dir(tmp_path / ".claude" / "worktrees" / "agent-orphan")
+        monkeypatch.setattr(_mod, "_git", _fake_repo_git(tmp_path, f"worktree {tmp_path.resolve()}"))
+        assert _mod.main(["worktrees", "--apply", *extra_args]) == 0
+        assert orphan.is_dir() is kept
         assert output in capsys.readouterr().out
 
     def test_outside_git_repo_exits_2(self, monkeypatch, capsys):
@@ -408,8 +467,8 @@ class TestCli:
         """--root outside the repo is rejected before any sweep runs, and nothing is deleted.
 
         Reproduces ASEC10: --root pointed at an arbitrary directory, combined with
-        --managed-prefix '*' and --apply, would otherwise recursively rmtree every
-        sufficiently-aged child it finds there.
+        a matching --managed-prefix, --include-orphans and --apply, would otherwise
+        recursively rmtree every sufficiently-aged matching child it finds there.
         """
         outside = tmp_path_factory.mktemp("outside")
         (outside / "lr-1e-4").mkdir()
@@ -423,7 +482,8 @@ class TestCli:
                 "--root",
                 str(outside),
                 "--managed-prefix",
-                "*",
+                "lr-",
+                "--include-orphans",
                 "--min-age-days",
                 "1",
                 "--apply",
@@ -445,3 +505,199 @@ class TestCli:
         """Omitting the mode, or the --pattern a locks sweep needs, exits through argparse."""
         with pytest.raises(SystemExit):
             _mod.main(argv)
+
+
+def _symlinks_supported() -> bool:
+    """Probe whether this host lets the test process create symlinks."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            os.symlink(tmp, os.path.join(tmp, "probe"))
+        except (OSError, NotImplementedError):
+            return False
+    return True
+
+
+_skip_no_symlinks = pytest.mark.skipif(not _symlinks_supported(), reason="host cannot create symlinks")
+
+
+class TestDeletionGuards:
+    """Fail-closed behaviour of the destructive paths: lock globbing and worktree removal."""
+
+    @pytest.mark.parametrize(
+        "pattern",
+        [
+            pytest.param("../*.lock", id="parent-traversal"),
+            pytest.param("sub/*.lock", id="nested-separator"),
+            pytest.param("..", id="bare-parent"),
+            pytest.param("..\\*.lock", id="backslash-traversal"),
+        ],
+    )
+    def test_lock_pattern_with_path_components_exits_2(self, tmp_path, monkeypatch, capsys, pattern):
+        """A --pattern that can leave the git directory is refused and nothing outside is unlinked.
+
+        Path.glob honours ``..``, so an unvalidated pattern would let ``--apply`` unlink aged files one level above the
+        lock directory.
+        """
+        git_dir = tmp_path / "gitdir"
+        git_dir.mkdir()
+        outside = tmp_path / "victim.lock"
+        outside.write_text("424242 x", encoding="utf-8")
+        monkeypatch.setattr(_mod, "pid_alive", lambda pid: False)
+        monkeypatch.setattr(
+            _mod,
+            "_git",
+            lambda args, cwd=None: (
+                str(tmp_path) if args[0] == "rev-parse" and "--show-toplevel" in args else str(git_dir)
+            ),
+        )
+        assert _mod.main(["locks", "--pattern", pattern, "--apply"]) == 2
+        assert "! SECURITY" in capsys.readouterr().err
+        assert outside.exists(), "must fail closed — nothing unlinked"
+
+    @_skip_no_symlinks
+    def test_symlinked_lock_is_skipped(self, tmp_path):
+        """A symlink matching the lock glob is never inspected as a lock.
+
+        Lock files are plain files written by the skills; a symlink planted under the same name must not be read or
+        reclaimed.
+        """
+        target = tmp_path / "elsewhere"
+        target.write_text("424242 x", encoding="utf-8")
+        (tmp_path / "oss-resolve-link.lock").symlink_to(target)
+        assert _mod.sweep_locks(tmp_path, "oss-resolve-*.lock", 30, time.time()) == []
+
+    @_skip_no_symlinks
+    def test_symlinked_worktree_child_is_skipped(self, tmp_path, monkeypatch):
+        """A symlinked child of the worktree root is tiered SYMLINK, which is never reclaimable."""
+        root = tmp_path / "wt"
+        root.mkdir()
+        real = tmp_path / "real"
+        real.mkdir()
+        (root / "agent-link").symlink_to(real, target_is_directory=True)
+        monkeypatch.setattr(_mod, "_git", lambda args, cwd=None: "")
+        states = _mod.sweep_worktrees(tmp_path, root, 14, ("agent-",), time.time())
+        assert [(s.path.name, s.tier) for s in states] == [("agent-link", WorktreeTier.SYMLINK)]
+        assert WorktreeTier.SYMLINK not in _mod.RECLAIMABLE_WORKTREES
+
+    @_skip_no_symlinks
+    def test_symlinked_child_reported_and_untouched(self, tmp_path, monkeypatch, capsys):
+        """A symlinked child is reported as skipped; neither the link nor its target is removed.
+
+        A link planted under a managed name may point anywhere; following it into rmtree would delete its target.
+        """
+        target = _aged_dir(tmp_path / "elsewhere")
+        (target / "keep.txt").write_text("data", encoding="utf-8")
+        link = tmp_path / ".claude" / "worktrees" / "agent-link"
+        link.parent.mkdir(parents=True)
+        link.symlink_to(target, target_is_directory=True)
+        monkeypatch.setattr(_mod, "_git", _fake_repo_git(tmp_path, f"worktree {tmp_path.resolve()}"))
+        assert _mod.main(["worktrees", "--apply", "--include-orphans", "--min-age-days", "0"]) == 0
+        assert "symlink — agent-link" in capsys.readouterr().out
+        assert link.is_symlink()
+        assert (target / "keep.txt").is_file()
+
+    def test_unverifiable_registered_worktree_is_dirty(self, tmp_path, monkeypatch):
+        """A registered worktree whose git status cannot be read is DIRTY, not removable.
+
+        git failing and a clean tree both print nothing; treating that silence as clean would let a broken checkout
+        holding uncommitted work be removed.
+        """
+        root = tmp_path / ".claude" / "worktrees"
+        wt = root / "agent-broken"
+        wt.mkdir(parents=True)
+        past = time.time() - 60 * 86400
+        os.utime(wt, (past, past))
+        monkeypatch.setattr(
+            _mod,
+            "_git",
+            lambda args, cwd=None: f"worktree {tmp_path}\nworktree {wt.resolve()}" if args[0] == "worktree" else "",
+        )
+        states = _mod.sweep_worktrees(tmp_path, root, 14, ("agent-",), time.time())
+        assert states[0].tier is WorktreeTier.DIRTY
+
+    def test_declined_git_removal_never_falls_back_to_rmtree(self, tmp_path, monkeypatch):
+        """When git declines to remove a registered worktree, the directory stays on disk.
+
+        git refuses dirty, locked and submodule worktrees on purpose; deleting the directory by other means would defeat
+        that refusal.
+        """
+        wt = tmp_path / "agent-locked"
+        wt.mkdir()
+        (wt / "keep.txt").write_text("work", encoding="utf-8")
+        state = _mod.WorktreeState(path=wt, registered=True, dirty_files=0, age_days=99.0, tier=WorktreeTier.REMOVABLE)
+        monkeypatch.setattr(
+            _mod,
+            "_git",
+            lambda args, cwd=None: "" if args[0] == "worktree" else (".git" if args[0] == "rev-parse" else ""),
+        )
+        assert _mod._remove_worktree(state, tmp_path) is False
+        assert (wt / "keep.txt").exists()
+
+    def test_worktree_dirtied_after_sweep_is_not_removed(self, tmp_path, monkeypatch):
+        """A worktree that gained uncommitted files between sweep and removal is kept."""
+        wt = tmp_path / "agent-late"
+        wt.mkdir()
+        state = _mod.WorktreeState(path=wt, registered=True, dirty_files=0, age_days=99.0, tier=WorktreeTier.REMOVABLE)
+        monkeypatch.setattr(_mod, "_git", lambda args, cwd=None: " M late.py" if args[0] == "status" else "")
+        assert _mod._remove_worktree(state, tmp_path) is False
+        assert wt.exists()
+
+    @pytest.mark.parametrize(
+        ("touched", "removed"),
+        [
+            pytest.param(False, True, id="untouched-orphan-removed"),
+            pytest.param(True, False, id="orphan-touched-since-sweep-kept"),
+        ],
+    )
+    def test_orphan_rechecks_age_before_rmtree(self, tmp_path, monkeypatch, touched, removed):
+        """An unregistered directory modified after the sweep is no longer provably abandoned."""
+        orphan = tmp_path / "agent-orphan"
+        orphan.mkdir()
+        past = time.time() - 60 * 86400
+        os.utime(orphan, (past, past))
+        state = _mod.WorktreeState(
+            path=orphan, registered=False, dirty_files=0, age_days=60.0, tier=WorktreeTier.ORPHAN
+        )
+        if touched:
+            os.utime(orphan, None)
+        monkeypatch.setattr(_mod, "_git", _fake_repo_git(tmp_path, f"worktree {tmp_path.resolve()}"))
+        assert _mod._remove_worktree(state, tmp_path) is removed
+        assert orphan.exists() is not removed
+
+    @pytest.mark.parametrize(
+        "worktree_list",
+        [
+            pytest.param("worktree {main}\nworktree {orphan}", id="registered-since-sweep"),
+            pytest.param("", id="worktree-list-unavailable"),
+        ],
+    )
+    def test_orphan_rechecks_registration_before_rmtree(self, tmp_path, monkeypatch, worktree_list):
+        """An orphan is kept when git now lists it, or when git cannot list worktrees at all.
+
+        The sweep snapshot may be stale: a skill can register the directory between sweep and removal. An empty
+        listing means git failed (the main tree is always listed), so registration is unverifiable and nothing goes.
+        """
+        orphan = _aged_dir(tmp_path / "agent-orphan")
+        state = _mod.WorktreeState(path=orphan, registered=False, dirty_files=0, age_days=1.0, tier=WorktreeTier.ORPHAN)
+        listing = worktree_list.format(main=tmp_path.resolve(), orphan=orphan.resolve())
+        monkeypatch.setattr(_mod, "_git", _fake_repo_git(tmp_path, listing))
+        assert _mod._remove_worktree(state, tmp_path) is False
+        assert orphan.is_dir()
+
+    def test_orphan_with_own_dirty_git_is_kept(self, tmp_path, monkeypatch):
+        """An unregistered directory carrying its own ``.git`` with uncommitted entries is never removed.
+
+        Such a directory is a checkout git can still inspect; its uncommitted work outranks the orphan heuristic.
+        """
+        orphan = _aged_dir(tmp_path / "agent-clone")
+        (orphan / ".git").mkdir()
+        os.utime(orphan, (time.time() - 60 * 86400,) * 2)
+        state = _mod.WorktreeState(path=orphan, registered=False, dirty_files=0, age_days=1.0, tier=WorktreeTier.ORPHAN)
+        fake = _fake_repo_git(tmp_path, f"worktree {tmp_path.resolve()}")
+        monkeypatch.setattr(
+            _mod, "_git", lambda args, cwd=None: " M work.py" if args[0] == "status" else fake(args, cwd)
+        )
+        assert _mod._remove_worktree(state, tmp_path) is False
+        assert orphan.is_dir()

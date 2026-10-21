@@ -1,10 +1,9 @@
 ---
 name: session
-description: 'Session state that outlives a context reset — `dump` sweeps the live conversation and writes a compact handover doc (goal, decisions + why, lessons, standing instructions, files-touched table, outstanding items, next step), then prints `/clear`; the `session-restore.js` SessionStart hook re-injects it automatically. `park` stashes a diverging idea mid-session without derailing; `sweep` audits the conversation for unlanded work. TRIGGER when: user says "dump the session", "handover before clear", "save state before clearing", "carry this over", "I want to clear but keep the plan", "park this for later", "what did we defer", "anything unfinished before I close". SKIP: surviving auto-compact at 85% (that is the skill contract in `.temp/state/skill-contract.md` per `compaction.md`, written by the running skill); reviving a *finished* conversation (Claude Code native `/resume`).'
+description: 'Session state that outlives a context reset — `dump` sweeps the live conversation and writes a compact handover doc (goal, decisions + why, lessons, standing instructions, files-touched table, outstanding items, next step), then prints `/clear`; the `session-restore.js` SessionStart hook re-injects it automatically. `park` stashes a diverging idea mid-session without derailing; `sweep` audits the conversation for unlanded work. TRIGGER when: user says "dump the session", "handover before clear", "save state before clearing", "carry this over", "I want to clear but keep the plan", "park this for later", "what did we defer", "anything unfinished before I close". SKIP: surviving auto-compact (that is the skill contract in `.temp/state/skill-contract.md` per `compaction.md`, written by the running skill); reviving a *finished* conversation (Claude Code native `/resume`).'
 argument-hint: dump [name] | recall [name] | list | park <idea> | sweep | drop <item>
-allowed-tools: Read, Write, Edit, Glob, Grep, Bash, TaskList, AskUserQuestion
+allowed-tools: Read, Write, Edit, Glob, Bash, TaskList, AskUserQuestion
 effort: low
-model: sonnet
 ---
 
 <objective>
@@ -61,7 +60,7 @@ If `MODE` matches:
 - `sweep` → **Mode: sweep**
 - `drop` (alias: `archive`) → **Mode: drop**
 
-**Unsupported flag check** — after extracting mode token, scan `$ARGUMENTS` for remaining `--<token>` patterns. Found: invoke `AskUserQuestion` with question text `` ! Unknown flag(s): `--<token>`. Supported modes: dump, recall, list, park, sweep, drop. `` — (a) **Abort** (stop, re-invoke correctly) · (b) **Continue ignoring** (skip unknown flags, proceed with recognized mode).
+**Unsupported flag check** — after extracting mode token, scan the tokens after it for `--<token>` patterns — except in `park` and `drop`, whose whole remainder is free-text payload (an idea or item may itself contain `--`), never flags. Found: invoke `AskUserQuestion` with question text `` ! Unknown flag(s): `--<token>`. Supported modes: dump, recall, list, park, sweep, drop. `` — (a) **Abort** (stop, re-invoke correctly) · (b) **Continue ignoring** (skip unknown flags, proceed with recognized mode).
 
 Otherwise (empty, unrecognized, misspelled): use `AskUserQuestion`:
 
@@ -74,37 +73,33 @@ Otherwise (empty, unrecognized, misspelled): use `AskUserQuestion`:
 ### Substep 1a: Derive slug and timestamp
 
 ```bash
-git branch --show-current 2>/dev/null; date -u +%Y-%m-%dT%H:%M:%SZ; date -u +%Y-%m-%dT%H-%M-%SZ  # timeout: 5000
-```
-
-Three lines out: branch, ISO `created` stamp, filesystem-safe stamp. Slug: `<name>` from `$ARGUMENTS` when given (lowercase, non-alphanumerics → `-`); otherwise `<branch with / → ->-<filesystem-safe stamp>`. Empty branch (detached HEAD): `detached`. Reject a `name` containing `/` or `..` — re-ask via `AskUserQuestion` rather than writing outside store dir. `LATEST`, `PARKED`, `dropped` are reserved slugs; re-ask on those too.
-
-### Substep 1b: Sweep for unlanded work
-
-Run **Step 5 / Mode: sweep** internally, plus Read `.claude/state/session/PARKED.md` (skip silently if absent). Union becomes doc's `## Outstanding` section. Nothing found and no parked items: omit section.
-
-### Substep 1c: Gather file evidence
-
-```bash
-git diff --stat HEAD 2>/dev/null; echo "--- committed since session start ---"; git log --name-only --pretty=format:'%h %s' --since="8 hours ago" 2>/dev/null | head -60  # timeout: 5000
+git branch --show-current 2>/dev/null; date -u +%Y-%m-%dT%H:%M:%SZ; date -u +%Y-%m-%dT%H-%M-%SZ; echo "--- file evidence (Substep 1c) ---"; git diff --stat HEAD 2>/dev/null; echo "--- committed since session start ---"; git log --name-only --pretty=format:'%h %s' --since="8 hours ago" 2>/dev/null | head -60; echo "--- artifact dirs (Substep 1d) ---"; find .temp .reports .experiments .developments -maxdepth 2 -type d -mtime -1 2>/dev/null | head -20  # timeout: 5000
 ```
 
 > git parses the relative date itself — no BSD/GNU `date` flag split needed.
+
+This one call also gathers the Substep 1c file evidence and the Substep 1d artifact listing (read-only, independent of the slug). First three lines out: branch, ISO `created` stamp, filesystem-safe stamp. Slug: `<name>` from `$ARGUMENTS` when given (lowercase, non-alphanumerics → `-`); otherwise `<branch with / → ->-<filesystem-safe stamp>`. Empty branch (detached HEAD): `detached`. Reject a `name` containing `/` or `..` — re-ask via `AskUserQuestion` rather than writing outside store dir. `LATEST`, `PARKED`, `dropped` are reserved slugs; re-ask on those too.
+
+### Substep 1b: Sweep for unlanded work
+
+Run **Step 5 / Mode: sweep** detection only — collect its rows; skip its `unlanded.md` Write, its `AskUserQuestion` and any parking (the doc's `## Outstanding` carries the items) — plus Read `.claude/state/session/PARKED.md` (skip silently if absent). Union becomes doc's `## Outstanding` section. Nothing found and no parked items: omit section.
+
+### Substep 1c: Gather file evidence
+
+Evidence comes from the Substep 1a call: `git diff --stat HEAD`, then the commits since session start under the `--- committed since session start ---` marker.
 
 **Sourcing precedence for files table** — union of four sources, in this order:
 
 1. **Conversation history — authoritative.** Every `Edit`/`Write` of this session is visible to this skill; that's the touched-file list, and the only source that also knows *what* each change was (`Change`) and whether it landed (`State`).
 2. `git diff --stat HEAD` → `Ref` column (`+N/-M`). A file with no diff entry and no commit is `Ref: uncommitted-new`, or dropped when it was temp scratch.
 3. `git log --name-only --since=…` → files already committed this session, no longer appearing in `git diff HEAD`.
-4. `.claude/state/session-context.md` → `## Files Modified This Session` — **fallback only**. `task-log.js` writes that section from its PreCompact branch, firing at 85% auto-compact threshold; a session dumping before any compaction has no such section, or a stale one from a prior session. Read only when sources 1–3 come up empty.
+4. `.claude/state/session-context.md` → `## Files Modified This Session` — **fallback only**. `task-log.js` writes that section from its PreCompact branch, firing only when auto-compact triggers (`autoCompactThreshold`, 0.7 in foundry's guidance); a session dumping before any compaction has no such section, or a stale one from a prior session. Read only when sources 1–3 come up empty.
 
 **Column rules**: `Change` ≤6 words, what changed, never why (why belongs in `## Decisions`). `State` ∈ `done` / `wip` / `needs-test` / `reverted`. Cap 25 rows — over that, group by directory, state elided count explicitly, never silently truncate (`quality-gates.md`). Scratchpad and `.temp/` paths are never rows; belong in `## Artifacts`.
 
 ### Substep 1d: Gather artifacts and open tasks
 
-```bash
-find .temp .reports .experiments .developments -maxdepth 2 -type d -mtime -1 2>/dev/null | head -20  # timeout: 5000
-```
+Artifact dirs come from the Substep 1a call (`--- artifact dirs (Substep 1d) ---` marker).
 
 Call `TaskList` for tasks still `in_progress` or `pending` — they feed `## Next step` and `## Outstanding`, not a section of their own (task state survives on its own).
 
@@ -185,7 +180,7 @@ Next: clear the context. I cannot run it for you — Claude Code exposes no prog
 /clear
 ```
 
-The literal `/clear` is the **last line of the reply** — nothing after it, so it's one copy away.
+The literal `/clear` is the **last line of the reply** — nothing after it, so it's one copy away. This is the sole sanctioned `/clear` suggestion — `CLAUDE.md` §7 "Never suggest `/clear`" names `dump` as its one exception, because only the small handover doc is rebuilt. <!-- policy-sibling: plugins/cc_foundry/CLAUDE.src.md (§7 /clear exception), plugins/cc_foundry/skills/session/SKILL.md (Substep 1g) -->
 
 End with a `## Confidence` block per `quality-gates.md` — score on: files table backed by conversation evidence (not guessed), decisions captured with their reasons, sweep run before composing, next step concrete enough to act on cold.
 
@@ -213,10 +208,15 @@ End with a `## Confidence` block per `quality-gates.md` — score on: target res
 ### Substep 3a: Sweep expired handover docs (≥ 30 days)
 
 ```bash
-find .claude/state/session -maxdepth 1 -name '*.md' ! -name 'PARKED.md' -mtime +30 -delete 2>/dev/null; echo "sweep done"  # timeout: 5000
+# age from frontmatter `created`, never mtime — recall's consumed edit rewrites the file and resets mtime
+CUTOFF=$(date -u -v-30d +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '30 days ago' +%Y-%m-%dT%H:%M:%SZ)
+find .claude/state/session -maxdepth 1 -name '*.md' ! -name 'PARKED.md' 2>/dev/null | while IFS= read -r f; do
+    c=$(sed -n 's/^created: *//p' "$f" | head -1)
+    [ -n "$c" ] && [[ "$c" < "$CUTOFF" ]] && find "$f" -maxdepth 0 -delete && echo "expired: $f"
+done; echo "sweep done"  # timeout: 5000
 ```
 
-> `PARKED.md` excluded by name — parked items have no TTL, only `drop` removes them.
+> `PARKED.md` excluded by name — parked items have no TTL, only `drop` removes them. A doc without a `created` line is kept, never guessed old. ISO-8601 UTC stamps compare correctly as strings.
 
 ### Substep 3b: Collect and render
 
@@ -328,7 +328,7 @@ End with a `## Confidence` block per `quality-gates.md` — score on: match unam
 
 | Mechanism | Survives | Trigger | Store |
 | -- | -- | -- | -- |
-| Skill contract (`compaction.md`) | in-flight skill phase state | auto-compact at 85% | `.temp/state/skill-contract.md` |
+| Skill contract (`compaction.md`) | in-flight skill phase state | auto-compact | `.temp/state/skill-contract.md` |
 | Session handover (this skill) | plan, decisions, lessons, files table, open loops | explicit `dump` before `/clear` | `.claude/state/session/` |
 
 **Restore is best-effort, dump is not.** Hook injects only when pointer exists, doc unconsumed, and under 30 minutes old — a deliberately narrow window, so an old dump never ambushes an unrelated session. Everything outside it is reachable by `/foundry:session recall <slug>`, which has no age gate. The four cases landing there: dumped and walked away (>30 min); doc over ~8K chars (hook injects head plus a pointer); fresh terminal rather than a `/clear` (matcher is `clear`); wanting the same doc a second time (first restore set `consumed: true`).

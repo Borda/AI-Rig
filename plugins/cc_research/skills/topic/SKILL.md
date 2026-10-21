@@ -28,7 +28,7 @@ NOT for deep single-paper analysis or experiment design — use `research:scient
 <compaction>
 
 - Key boundary: end of Step 2 — SOTA literature gathered and written to AGENT_OUT; before Step 3 report synthesis.
-- Preserve: AGENT_OUT path (TMPDIR key), BRANCH (TMPDIR key), DATE (TMPDIR key), REPORT_OUT target path, topic string from ARGUMENTS.
+- Preserve: AGENT_OUT path (TMPDIR key), BRANCH (TMPDIR key), DATE (TMPDIR key), REPORT_OUT target path, flag-stripped topic string (`topic-clean-args` TMPDIR key).
 - Clear at Step 1 start (stale prior run) and at follow-up gate (terminal action).
 
 </compaction>
@@ -46,17 +46,14 @@ NOT for deep single-paper analysis or experiment design — use `research:scient
 ```bash
 # loads: compaction-contract.md
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-_RESEARCH_SHARED=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/resolve_shared.py" 2>/dev/null)  # timeout: 5000
-[ -z "$_RESEARCH_SHARED" ] && { echo "! Plugin path resolution failed — ensure research plugin installed and CLAUDE_PLUGIN_ROOT set, or invoke from project root."; exit 1; }
-echo "$_RESEARCH_SHARED" > "${TMPDIR:-/tmp}/research-shared-${CSID}"  # cold resolve — every later site reads this sentinel instead of re-running python
-cat "$_RESEARCH_SHARED/agent-resolution.md"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/resolve_shared.py" --persist research-shared --emit agent-resolution.md || exit 1  # timeout: 5000 — cold resolve; every later site reads the research-shared sentinel instead of re-running python
 ```
 
 **Task hygiene** — task tools may be deferred; load before first use: `ToolSearch(query="select:TaskList,TaskCreate,TaskUpdate,TaskGet", max_results=4)`. Call `TaskList` first and triage each task it returns: `completed` if work clearly done, `deleted` if orphaned, keep `in_progress` only if genuinely continuing. Never spend a turn on bookkeeping alone — every `TaskCreate`/`TaskUpdate` ships in the same response as the next substantive tool call; one exception, `TaskUpdate(completed)` immediately before a long output block (`rules/task-lifecycle.md`).
 
 **Task tracking**: per CLAUDE.md, create tasks (TaskCreate) for each major phase — paper collection, researcher analysis, report generation — all in the same response as the first real tool call. Mark in_progress/completed throughout. Every later `TaskUpdate` rides with the next real tool call — never a bookkeeping-only turn; the one standalone call is a `completed` right before a long report.
 
-- Always create **"Print report header"** as its own task (all paths — single-agent Step 3, `--team`, `plan`) — `in_progress` right after the report file is written (by the lead directly, or by a spawned consolidator's returned envelope); `completed` only once the delivery block (`---` header table + compact summary) is built from the saved report for the final reply after the answer. Prepare a plain summary for the Follow-up gate question text; the hook denies a gate call that lacks the report path, `Title`, or `Outcome`. The full header table is printed once after the answer, never before or inside the question.
+- Always create **"Print report header"** as its own task (all paths — single-agent Step 3, `--team`, `plan`) — `in_progress` right after the report file is written (by the lead directly, or by a spawned consolidator's returned envelope); `completed` only once the delivery block (`---` header table + compact summary) is built from the saved report for the final reply after the answer. Delivery rules: Step 3 and its hook note.
 - This task exists because a sibling skill (oss:review) had an incident: report written correctly but terminal print step silently skipped while the hard-enforced `AskUserQuestion` fired anyway — tracking the print as its own task makes it as trackable as the tool calls around it.
 - The shared `## Follow-up gate` below must not fire while this task is `pending`/`in_progress`.
 
@@ -68,41 +65,33 @@ Read current project before searching, extract constraints:
 - Task (classification, detection, generation, regression)?
 - Constraints (latency, memory, dataset size, compute budget)?
 
-**Case-insensitive flag/mode normalization** — normalize before parsing so `--PLAN`, `--Team`, `Plan`, etc. accepted. Each Bash tool call runs fresh shell, so lowercased copy does NOT persist across blocks — re-derive inline from `$ARGUMENTS` (harness-substituted every block) wherever dispatch check needs it, e.g. `echo "$ARGUMENTS" | tr '[:upper:]' '[:lower:]' | …`. Preserve original `$ARGUMENTS` only where literal substitution into prompts required (e.g. topic string). Scope: covers `--team` / mode dispatch only — `--keep` capture (via `extract-keep-flag.py`, which reads raw `$ARGUMENTS` with a lowercase-literal regex) stays case-sensitive; never route the lowered copy into keep-flag extraction.
+**Case-insensitive flag/mode normalization** — normalize before parsing so `--PLAN`, `--Team`, `Plan`, etc. accepted. Each Bash tool call runs fresh shell, so lowercased copy does NOT persist across blocks — re-derive inline from `$ARGUMENTS` (harness-substituted every block) wherever dispatch check needs it, e.g. `echo "$ARGUMENTS" | tr '[:upper:]' '[:lower:]' | …`. Preserve original `$ARGUMENTS` only where literal substitution into prompts required (e.g. topic string). Scope: covers `--team` / mode dispatch only — `--keep` capture (via `parse-skill-flags.py --keep-state topic`, which reads raw `$ARGUMENTS` with a lowercase-literal regex) stays case-sensitive; never route the lowered copy into the `--keep-state topic` pass.
 
 **Unsupported flag check** (runs BEFORE any mode dispatch to catch unknown flags in all modes): load and follow the protocol below. Supported flags for this skill: `--team`, `--keep`.
+
+One block loads the protocol, extracts `--keep`, runs a single flag parse, and prints `UNKNOWN_FLAGS`, `TEAM_MODE`, `FIRST_WORD` for the unsupported-flag check and the early dispatch below:
 
 ```bash
 # loads: unsupported-flag-protocol.md
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _RESEARCH_SHARED < "${TMPDIR:-/tmp}/research-shared-${CSID}" 2>/dev/null || _RESEARCH_SHARED=""  # warm read of the Agent Resolution cold resolve (Check 41)
 cat "$_RESEARCH_SHARED/unsupported-flag-protocol.md"
-```
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/extract-keep-flag.py" topic "$ARGUMENTS"  # timeout: 5000 — parses --keep, clears a stale contract, persists for Step 2
-```
-
-```bash
+# raw parse keeps the topic's case: topic-clean-args-${CSID} feeds Step 2 search topic, Grep pattern, report heading (raw $ARGUMENTS would carry --team/--keep into them); also topic-keep-items, clears a stale contract
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/parse-skill-flags.py" --flags team --keep-state topic "$ARGUMENTS" >/dev/null  # timeout: 5000
 _ARGS_LC=$(echo "$ARGUMENTS" | tr '[:upper:]' '[:lower:]')  # flag/mode dispatch only — never the topic-string source
-eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/parse-skill-flags.py" --flags team "$_ARGS_LC")"  # timeout: 5000
-# scan CLEAN_ARGS, not raw blob: --team and --keep "<items>" already consumed — a
-# flag-shaped word inside a --keep value no longer reports as unknown
+# lowered pass: own prefix so it never overwrites topic-clean-args; --inlined: the raw pass already cleared
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/parse-skill-flags.py" --flags team --keep-state topic-lc --inlined "$_ARGS_LC" >/dev/null  # timeout: 5000
+IFS= read -r CLEAN_ARGS < "${TMPDIR:-/tmp}/topic-lc-clean-args-${CSID}" 2>/dev/null || CLEAN_ARGS=""
+IFS= read -r TEAM_MODE < "${TMPDIR:-/tmp}/topic-lc-team-${CSID}" 2>/dev/null || TEAM_MODE=false  # anchored-token match — never fires on --team inside a --keep value
+# scan CLEAN_ARGS, not raw blob: --team and --keep "<items>" already consumed — flag-shaped word inside a --keep value not reported unknown
 UNKNOWN_FLAGS=$(echo "$CLEAN_ARGS" | tr '[:upper:]' '[:lower:]' | grep -oE -- '--[a-z][a-z0-9-]+' || true)  # timeout: 5000
-echo "UNKNOWN_FLAGS=$UNKNOWN_FLAGS"
-```
-
-**Early dispatch for `--team` and `plan` modes** — check BEFORE Steps 2-3. `plan` as the first non-flag word wins over `--team` (plan mode has no team variant — `modes/plan.md` implements no team path); when both are present, proceed to Plan Mode and print one warning line: `⚠ --team has no effect in plan mode — ignored`. `--team` with any other first word (not `plan`) → Team Mode, as before:
-
-```bash
-_ARGS_LC=$(echo "$ARGUMENTS" | tr '[:upper:]' '[:lower:]')  # flag/mode dispatch only — never the topic-string source
-eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/parse-skill-flags.py" --flags team "$_ARGS_LC")"  # timeout: 5000
-TEAM_MODE="$FLAG_TEAM"   # anchored-token match — no longer fires on --team inside a --keep value
 FIRST_WORD=$(echo "$CLEAN_ARGS" | tr '[:upper:]' '[:lower:]' | awk '{print $1}')  # timeout: 5000
+echo "UNKNOWN_FLAGS=$UNKNOWN_FLAGS"
 echo "TEAM_MODE=$TEAM_MODE FIRST_WORD=$FIRST_WORD"
 [ "$FIRST_WORD" = plan ] && [ "$TEAM_MODE" = true ] && echo "⚠ --team has no effect in plan mode — ignored"
 ```
+
+**Early dispatch for `--team` and `plan` modes** — check BEFORE Steps 2-3, using `TEAM_MODE`/`FIRST_WORD` printed above. `plan` as the first non-flag word wins over `--team` (plan mode has no team variant — `modes/plan.md` implements no team path); when both are present, proceed to Plan Mode and print one warning line: `⚠ --team has no effect in plan mode — ignored`. `--team` with any other first word (not `plan`) → Team Mode, as before.
 
 - `$FIRST_WORD` equals exactly `plan` → skip Steps 2-3; jump directly to **Plan Mode** section below (print the `⚠` line above first if `$TEAM_MODE` is also `true`).
 - Else `$TEAM_MODE` is `true` → skip Steps 2-3; jump directly to **Team Mode** section below.
@@ -115,7 +104,7 @@ Steps 2-3 execute only when neither `--team` nor `plan` mode is detected.
 
 ### 2a: SOTA literature search (issue with 2b simultaneously in one response)
 
-**One owner for the search — decide first, never both**: `foundry:web-explorer` available (check below) → AGENT owns entire SOTA search, writes `$AGENT_OUT`; orchestrator issues NO WebSearch/WebFetch of its own (a second inline pass re-fetches the same 5 papers and bills the full page text twice). Web-explorer unavailable → orchestrator conducts the search inline. Either way: find top 5 papers for `$ARGUMENTS`, produce comparison table (method, key idea, benchmark results, compute, code availability), recommend single best method given codebase constraints from Step 1.
+**One owner for the search — decide first, never both**: `foundry:web-explorer` available (check below) → AGENT owns entire SOTA search, writes `$AGENT_OUT`; orchestrator issues NO WebSearch/WebFetch of its own (a second inline pass re-fetches the same 5 papers and bills the full page text twice). Web-explorer unavailable → orchestrator conducts the search inline. Either way: find top 5 papers for `$TOPIC` (Step 1's flag-stripped topic, reloaded in the block below), produce comparison table (method, key idea, benchmark results, compute, code availability), recommend single best method given codebase constraints from Step 1.
 
 **Note**: never dispatch to `research:scientist` for broad SOTA surveys — scientist scoped to deep single-paper analysis with named paper anchor. Use `research:scientist` directly only when: (a) specific paper identified and needs deep analysis, (b) hypothesis generation for identified method, or (c) experiment design for concrete approach. Broad SOTA = web-explorer territory.
 
@@ -123,6 +112,9 @@ Pre-compute output paths before searching:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r TOPIC < "${TMPDIR:-/tmp}/topic-clean-args-${CSID}" 2>/dev/null || TOPIC=""
+[ -n "$TOPIC" ] || { echo "! BLOCKED — no topic after flag parsing; re-run /research:topic <topic>"; exit 1; }
+echo "TOPIC=$TOPIC"
 BRANCH=$(git branch --show-current 2>/dev/null | tr '/' '-' || echo 'main')  # timeout: 3000
 DATE=$(date +%Y-%m-%d)  # timeout: 3000
 mkdir -p .temp .reports/research  # timeout: 3000
@@ -137,13 +129,16 @@ echo "$AGENT_OUT" > "${TMPDIR:-/tmp}/topic-agent-out-${CSID}"
 echo "$REPORT_OUT" > "${TMPDIR:-/tmp}/topic-report-out-${CSID}"
 # Absolute path — hooks/enforce-topic-header.js reads this to gate the follow-up question
 echo "$PWD/$REPORT_OUT" > "${TMPDIR:-/tmp}/research-topic-report-file-${CSID}"
+echo "BRANCH=$BRANCH DATE=$DATE AGENT_OUT=$AGENT_OUT REPORT_OUT=$REPORT_OUT"
 ```
 
 Search targets (for whichever owner runs the search): arXiv, Papers With Code, Semantic Scholar, HuggingFace Hub. For each of top 5 papers: extract method, key idea, benchmark results, compute cost, code availability. The owner writes full findings (comparison table, paper analysis, recommendation, implementation plan, Confidence block) to `$AGENT_OUT`.
 
-> **Agent budget** — each spawn costs ~120,851 tok of fixed overhead (~73 tool-calls' worth) plus ~12.0 s/call, so work under ~73 calls is cheaper done inline: spawn nothing — work-displacement only; an isolation-motivated spawn (adversarial reviewer, distinct specialist role, model tier, worktree) runs regardless of size. Keep each agent near ~55 tool-calls; past ~60 they stall without returning an envelope, forcing reconstruction from disk. Every spawn prompt must require an envelope even on exhaustion — `partial: true` plus what was finished.
+<!-- policy-sibling: plugins/cc_research/skills/judge/SKILL.md, plugins/cc_research/skills/fortify/SKILL.md, plugins/cc_research/skills/verify/SKILL.md, plugins/cc_research/skills/plan/SKILL.md, plugins/cc_research/skills/retro/SKILL.md, plugins/cc_research/skills/topic/modes/plan.md, plugins/cc_research/skills/topic/modes/team.md — Agent-budget spawn-envelope rule restated in each; keep in sync (plugins/CLAUDE.md §Policy Duplication Marker). -->
 
-**Availability check** (`ls ~/.claude/plugins/cache/borda-ai-rig/foundry/*/agents/web-explorer.md 2>/dev/null`): present → spawn `Agent(subagent_type="foundry:web-explorer", prompt="...")` as the sole search owner per the rule above — its prompt frames the ask strictly within web-explorer's declared scope (sourcing, fetching, and distilling published claims from arXiv / Papers With Code / Semantic Scholar pages — explicitly NOT a paper deep-dive, hypothesis generation, or experiment design), and carries the search targets, per-paper extraction fields, and the `$AGENT_OUT` write (resolved literal path). Absent → conduct the search inline using WebSearch and WebFetch directly.
+> **Agent budget** — every spawn prompt must require an envelope even on exhaustion — `partial: true` plus what was finished.
+
+**Availability check** (`{ find ~/.claude/plugins/cache -maxdepth 5 -path "*/foundry/*/agents/web-explorer.md" 2>/dev/null; ls plugins/cc_foundry/agents/web-explorer.md 2>/dev/null; } | head -1` — the marketplace-agnostic probe of `agent-resolution.md`): non-empty → spawn `Agent(subagent_type="foundry:web-explorer", prompt="...")` as the sole search owner per the rule above — its prompt frames the ask strictly within web-explorer's declared scope (sourcing, fetching, and distilling published claims from arXiv / Papers With Code / Semantic Scholar pages — explicitly NOT a paper deep-dive, hypothesis generation, or experiment design), and carries the search targets, per-paper extraction fields, and the `$AGENT_OUT` write (resolved literal path). Absent → conduct the search inline using WebSearch and WebFetch directly.
 
 **Agent wait**: the spawn runs in the background — end the turn and resume on its completion notification, never a `sleep`, `ScheduleWakeup`, `ListAgents`, or `Monitor` loop. A notification without the expected output marks the agent ⏱ `timed_out` at once; surface it in the report (`agent-resolution.md` §Agent waits — no polling).
 
@@ -153,7 +148,7 @@ If the spawned agent's returned envelope indicates it declined or redirected the
 
 Use Grep tool to search codebase for existing related code:
 
-- Pattern: `$ARGUMENTS` (treat as literal string — if `$ARGUMENTS` contains regex metacharacters like `.`, `*`, `+`, `?`, `(`, `)`, `[`, `]`, `\`, escape them via `grep -F` semantics, OR escape each metachar with `\\` before passing to Grep tool)
+- Pattern: `$TOPIC` (treat as literal string — if `$TOPIC` contains regex metacharacters like `.`, `*`, `+`, `?`, `(`, `)`, `[`, `]`, `\`, escape them via `grep -F` semantics, OR escape each metachar with `\\` before passing to Grep tool)
 - Glob: `**/*.py`
 - Output mode: `files_with_matches`
 - Limit to 1000 results (per external-data.md — never cap at default 10)
@@ -164,10 +159,9 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _AGENT_OUT < "${TMPDIR:-/tmp}/topic-agent-out-${CSID}" 2>/dev/null || _AGENT_OUT=""
 IFS= read -r _BRANCH < "${TMPDIR:-/tmp}/topic-branch-${CSID}" 2>/dev/null || _BRANCH=""
 IFS= read -r _DATE < "${TMPDIR:-/tmp}/topic-date-${CSID}" 2>/dev/null || _DATE=""
-IFS= read -r _KEEP < "${TMPDIR:-/tmp}/topic-keep-items-${CSID}" 2>/dev/null || _KEEP=""
 IFS= read -r _REPORT_OUT < "${TMPDIR:-/tmp}/topic-report-out-${CSID}" 2>/dev/null || _REPORT_OUT=".reports/research/topic-${_BRANCH}-${_DATE}.md"
-_KEEP_APPEND=""; [ -n "$_KEEP" ] && _KEEP_APPEND="; user-keep: $_KEEP"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/write_skill_contract.py" "research:topic" "synthesis (after Step 2 literature gathered)" "n/a" "agent-out=${_AGENT_OUT}, report-out=${_REPORT_OUT}, branch=${_BRANCH}${_KEEP_APPEND}" "Step 3 synthesize agent findings into report → follow-up gate"  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/write_skill_contract.py" --keep-sentinel topic-keep-items "research:topic" "synthesis (after Step 2 literature gathered)" "n/a" "agent-out=${_AGENT_OUT}, report-out=${_REPORT_OUT}, branch=${_BRANCH}" "Step 3 synthesize agent findings into report → follow-up gate" -- calls_ahead=8 "drop=raw search transcripts and fetched pages"  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/compaction_boundary.py"  # timeout: 60000 — prints the Boundary step, then the foundry gate decision; follow it
 ```
 
 ## Step 3: Report
@@ -194,7 +188,7 @@ Next steps:  /research:topic plan → /develop:feature (requires `develop` plugi
 Path:        → .reports/research/topic-<branch>-<date>.md
 ---
 
-## Research: $ARGUMENTS
+## Research: [topic]
 
 ### SOTA Overview
 [Field summary]
@@ -251,6 +245,7 @@ if [ -z "$REPORT_OUT" ]; then
     echo "$REPORT_OUT" > "${TMPDIR:-/tmp}/topic-report-out-${CSID}"
     echo "$PWD/$REPORT_OUT" > "${TMPDIR:-/tmp}/research-topic-report-file-${CSID}"
 fi
+echo "REPORT_OUT=$REPORT_OUT"
 ```
 
 Write full report to `$REPORT_OUT` via Write tool (resolved by counter-suffix loop above) — **do not print full report to terminal**.
@@ -283,12 +278,12 @@ End response with `## Confidence` block per CLAUDE.md output standards.
 
 ```bash
 _TEAM_MODE="${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/skills/topic/modes/team.md"
-[ -f "$_TEAM_MODE" ] || { echo "! MISSING — modes/team.md not found at $_TEAM_MODE. Plugin may not be fully installed. Falling back to single-agent mode."; exit 1; }
-[ -f "$HOME/.claude/TEAM_PROTOCOL.md" ] || { echo "! MISSING — ~/.claude/TEAM_PROTOCOL.md not found. Run /foundry:setup (requires foundry plugin) to install. Falling back to single-agent mode."; exit 1; }
+[ -f "$_TEAM_MODE" ] || { echo "! MISSING — modes/team.md not found at $_TEAM_MODE. Plugin may not be fully installed. Continuing in single-agent mode (Steps 2-3)."; exit 1; }
+[ -f "$HOME/.claude/TEAM_PROTOCOL.md" ] || { echo "! MISSING — ~/.claude/TEAM_PROTOCOL.md not found. Run /foundry:setup (requires foundry plugin) to install. Continuing in single-agent mode (Steps 2-3)."; exit 1; }
 cat "$_TEAM_MODE"  # timeout: 5000
 ```
 
-Follow `modes/team.md` (loaded above) and execute its workflow.
+Check exits non-zero (a `! MISSING` line printed) → do not stop: run Steps 2-3 as single-agent mode, then the `## Follow-up gate`. Otherwise follow `modes/team.md` (loaded above) and execute its workflow.
 
 **Mandatory termination gate**: after `modes/team.md` returns (consolidation complete, report written, delivery block built per its own mandatory print step, "Print report header" task `completed`), continue to `## Follow-up gate` section below — do NOT exit early. `AskUserQuestion` call in `## Follow-up gate` is only authorized terminal action for team mode; reaching end of team workflow without invoking it is protocol violation.
 
@@ -310,7 +305,7 @@ Follow `modes/plan.md` (loaded above) and execute its workflow.
 
 ## Follow-up gate
 
-**Hard gate**: check "Print report header" task status before anything else here. Not `completed` → the delivery block has not been built yet — go back and do it now (Step 3 / team.md / plan.md, whichever path ran), then mark the task `completed`, before calling `AskUserQuestion` below. The question carries the plain summary; the prepared full header table opens the final reply after the answer, once. `hooks/enforce-topic-header.js` backs this gate structurally — the `AskUserQuestion` below is denied outright while the run's report file is absent or empty on disk.
+**Hard gate**: check "Print report header" task status before anything else here. Not `completed` → the delivery block has not been built yet — go back and do it now (Step 3 / team.md / plan.md, whichever path ran), then mark the task `completed`, before calling `AskUserQuestion` below. `hooks/enforce-topic-header.js` backs this gate structurally — the `AskUserQuestion` below is denied outright while the run's report file is absent or empty on disk.
 
 ```bash
 rm -f .temp/state/skill-contract.md  # clear contract — topic research complete (compaction-contract.md §Lifecycle)  # timeout: 5000
@@ -320,10 +315,11 @@ Call `AskUserQuestion` tool — do NOT write options as plain text first. Map op
 
 - header: `topic`
 - question: plain summary, at most 6 plain lines (target 600 characters, hard cap 1,500), no table, pipe layout, or code fence. Use actual newlines: "What next?", then `Title: <saved Title>`, `Outcome: <saved Outcome>`, `Confidence: <brief score and gaps>`, and `→ <report path>`, each on its own line — the run's report file: `$REPORT_OUT`, or `$PLAN_OUT` on the plan path. Preserve the saved `Title` and `Outcome`; shorten optional facts to fit.
-- (a) label: `/research:plan` — description: design a research program from these findings
-- (b) label: `/develop:feature` — description: implement based on findings (requires `develop` plugin)
+- (a) label: `/research:topic plan` — description: turn these findings into a phased implementation plan (type it yourself — user-invoked)
+- (b) label: `/develop:feature` — description: implement based on findings (requires `develop` plugin; type it yourself — user-invoked)
 - (c) label: `skip` — description: no action
 - Options carry their label and one-line description only, with no previews. Preserve their order; the recommended option stays second.
+- `/research:topic`, `/research:plan` and `/develop:feature` are user-invoked (`disable-model-invocation`), so no answer launches a skill: print the chosen command as plain text for the user to run, and nothing else. `/research:plan` is a different skill (writes an experiment `program.md` from a goal) — never offer it as the continuation of topic research; `/research:topic plan` is the only mode that reads this report.
 
 </workflow>
 
@@ -331,9 +327,8 @@ Call `AskUserQuestion` tool — do NOT write options as plain text first. Map op
 
 - Skill orchestrates — owns broad SOTA literature search end-to-end via `foundry:web-explorer`, delegates codebase mapping to `foundry:solution-architect` (plan mode). For direct hypothesis/experiment work on named paper, use `research:scientist` directly.
 - **Team Mode dependency**: `--team` requires `~/.claude/TEAM_PROTOCOL.md` to exist — each teammate spawn prompt includes `Read $HOME/.claude/TEAM_PROTOCOL.md and use AgentSpeak v2`; verify file present before launching team mode.
-- **Link integrity**: all URLs cited in research report must be fetched and verified before inclusion. Use WebFetch to confirm each URL exists and says what claimed.
 - Follow-up chains:
-  - Research recommends method → `/research:plan` for sequenced plan (auto-detects latest output), then `/develop:feature` (requires `develop` plugin) for TDD-first implementation
+  - Research recommends method → `/research:topic plan` for sequenced plan (auto-detects latest output), then `/develop:feature` (requires `develop` plugin) for TDD-first implementation
   - Research integrates into existing code → `/develop:refactor` (requires `develop` plugin) first to prepare module, then `/develop:feature` (requires `develop` plugin)
   - Research reveals security concerns with dependency → run `pip-audit` or `uv run pip-audit` for Common Vulnerabilities and Exposures (CVE) scan
   - Plan approved → create `.plans/active/todo_<method>.md` with phases as task groups; start with `/develop:feature <first task from Phase 1>` (requires `develop` plugin)

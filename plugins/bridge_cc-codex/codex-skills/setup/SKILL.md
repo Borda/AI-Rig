@@ -14,7 +14,7 @@ description: Configure, authenticate, repair, and verify the Codex to Claude Cod
 - Reject a model-controlled workspace override. The deterministic setup CLI uses its trusted host-selected workspace; installed MCP execution separately requires native user-confirmed binding and a current `binding_id`.
 - Resolve the active installed plugin root and substitute it for `PLUGIN_ROOT`. Setup helpers use the packaged launcher; on native Windows use `bin/python.cmd` with host-shell quoting. MCP startup still requires Python 3.10+ as `python` on the host's PATH; the helper launcher does not satisfy or change that separate prerequisite.
 - Parse only `action=all|check|configure|authenticate|repair|verify-live`, `target=peer|codex|claude`, `scope=auto|user|project|local`, `live=prompt|skip|required`, and the optional `--approve-claude-consent` flag, plus one-release compatibility forms `--live` and `--direction codex|claude`; reject ambiguous or unknown arguments.
-- Accept `--approve-claude-consent` only when explicitly supplied in the current user invocation with `action=all|configure|repair`. Reject it with `check`, `authenticate`, or `verify-live` before any setup operation. Consume this skill-only argument here; do not pass it to `bridge_setup.py` or infer it from generic setup approval.
+- Accept `--approve-claude-consent` only when explicitly supplied in the current user invocation with `action=all|configure|repair`. Reject it with `check`, `authenticate`, or `verify-live` before any setup operation. Consume this skill-only argument here; do not pass it to `bridge_setup.py` or infer it from generic setup approval. It may be accompanied by `--consent-token <token>`, the one-time token the operator minted in their own terminal (see Provider consent); reject the token without the flag and never echo it.
 
 For one resolved target, invoke:
 
@@ -40,13 +40,15 @@ For `check`, also run the read-only Provider consent check below, report both re
    - rollback evidence;
    - retry policy; and
    - safe denial outcome.
-3. After approval, rerun the identical command with `--approve "<approval_digest>"`.
+3. After approval, give the operator the identical command plus `--approve "<approval_digest>"` to run in their own terminal. Then re-plan with `--action check` to report the outcome.
 
-> Host-held HMAC makes digest tamper-evident but does not grant consent; explicit operator or host approval remains required. The digest is action-bound, expires, and is consumed by its first execution attempt. Never substitute `--approve` without its digest. Denial, changed or expired digest, replay, unsupported capability, failed probe, or failed operation stops without retry.
+> Host-held HMAC makes digest tamper-evident but does not grant consent; explicit operator or host approval remains required. The digest is action-bound, expires, and is consumed by its first execution attempt; it lives 300 seconds. Never substitute `--approve` without its digest. Denial, changed or expired digest, replay, unsupported capability, failed probe, or failed operation stops without retry.
+
+> Operator proof: `--approve` executes only when stdin and stderr are the operator's terminal; otherwise the helper exits 2 with `operator-terminal-required` before inspecting, locking or mutating anything. Never run `--approve` through a model-controlled shell, a pipe, or an allocated TTY; run only the planning command (no `--approve`) there. The digest the model planned is not operator approval.
 
 ## Provider consent
 
-Read and apply [Claude provider consent](../../rules/provider-consent.md). Check standing transfer consent during setup, including when no install/repair operation remains; `action=check` stays read-only. Installation does not approve transfer. For an absent grant, an explicit user-supplied `--approve-claude-consent` authorizes the packaged helper's `grant --approve` path without another consent question; otherwise use the operator-terminal approval described there. Follow either grant with a read-only recheck. Never synthesize consent, edit the policy directly, or use the flag to bypass a host denial. Report stored consent separately from active host effectiveness. This stage does not replace the current invocation surface or alter its permission mode.
+Read and apply [Claude provider consent](../../rules/provider-consent.md). Check standing transfer consent during setup, including when no install/repair operation remains; `action=check` stays read-only. Installation does not approve transfer. For an absent grant, an explicit user-supplied `--approve-claude-consent` authorizes the packaged helper's `grant --approve` path without another consent question, but only together with the user-supplied one-time `--consent-token <token>`, which the skill passes to the helper solely as `BRIDGE_OPERATOR_TOKEN`; without that token, `grant --approve` is refused outside the operator terminal; otherwise use the operator-terminal approval described there. Follow either grant with a read-only recheck. Never synthesize consent, edit the policy directly, or use the flag to bypass a host denial. Report stored consent separately from active host effectiveness. This stage does not replace the current invocation surface or alter its permission mode.
 
 ## Authentication and session evidence
 
@@ -64,10 +66,11 @@ Use `bridge_status` from loaded MCP inventory before claiming current session or
 
 When `live=prompt` or `live=required` reaches `inference-unverified`:
 
-1. Re-plan with identical host, workspace, target, and scope but `--action verify-live`.
-2. Obtain a third approval for that action's digest and one paid provider call.
-3. State network, installed-CLI-managed credential, quota/cost, workspace, and point-in-time semantics.
-4. Rerun that same verify-live command with `--approve "<live_digest>"`.
+1. Precondition: a fresh plan with identical host, workspace, target, scope, and live values but `--action all` must show an empty `operations` list and `remaining` listing neither `configuration` nor `authentication`. Otherwise the approved call would be refused (`configuration-needed` or `authentication-needed`, exit 2) after the user already paid attention to it: report the missing stage and stop. A configuration result classified `fresh-session-required` needs a fresh session first.
+2. Re-plan with identical host, workspace, target, and scope but `--action verify-live`. Exit 2 with `status=manual` and `classification=live-verification-requires-separate-approval` is this plan's normal result, not a failure; its `approval_digest` is the live digest.
+3. Obtain a third approval for that action's digest and one paid provider call.
+4. State network, installed-CLI-managed credential, quota/cost, workspace, and point-in-time semantics.
+5. Give the operator that same verify-live command plus `--approve "<live_digest>"` to run in their own terminal.
 
 > Never invoke the lower-level live doctor outside this approval path. Successful live CLI result remains partial until applicable loaded-session/workspace evidence also present. `live=skip` remains `inference-unverified`; never call it ready. Denial under `live=required` is non-ready.
 

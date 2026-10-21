@@ -32,7 +32,7 @@ Default `mode` to `full`. Resolve mode behavior and output paths only through `r
 
 ### 01: Create the run and normalize input
 
-Create `.reports/codex/kaggle/<timestamp>/` and keep active plan current. Record normalized inputs in `profile.md`.
+Run `create_run.py --skill kaggle` per `../../shared/helper-cli-contract.md` and keep active plan current. Create `profile.md` with the validator-required `Normalized Inputs`, `Grounded Facts`, `Model Decision`, `Verification`, and `Residual Limits` sections; record normalized inputs now.
 
 - Require filesystem-safe lowercase slug containing only letters, digits, and hyphens.
 - Reject conflicting or unsupported mode inputs.
@@ -44,14 +44,14 @@ Create `.reports/codex/kaggle/<timestamp>/` and keep active plan current. Record
 
 Prefer authenticated `kaggle` CLI over competition page for anything CLI can read. Competition pages are login-walled and often return partial content; CLI reads real file names, sizes, and actual sample submission.
 
-Apply full networked CLI approval and denial contract in `../../shared/native-skill-contract.md` to complete owning command for every `kaggle` invocation, including probes, help, listings, and downloads. The operation-specific brief is: `Action and purpose`: read competition metadata or download selected Kaggle data; `External capability`: Kaggle network read or download; `Credential behavior`: use configured Kaggle CLI credentials without reading, creating, or authenticating them; `Filesystem and worktree effects`: write evidence profile and, after validation, selected data under `.experiments/kaggle/`; `Retry policy and safe denial outcome`: stop turn on denial and use page or user-supplied evidence only when requested mode permits degraded grounding. The task authorizes requesting runtime permission, not bypassing it. Kaggle CLI installation and authentication remain user-owned; never install or authenticate from this workflow.
+Apply full networked CLI approval and denial contract in [Networked CLI Approval](../../shared/native-skill-contract.md#networked-cli-approval) and [Approval Brief](../../shared/native-skill-contract.md#approval-brief) to complete owning command for every `kaggle` invocation, including probes, help, listings, and downloads. The operation-specific brief is: `Action and purpose`: read competition metadata or download selected Kaggle data; `External capability`: Kaggle network read or download; `Credential behavior`: use configured Kaggle CLI credentials without reading, creating, or authenticating them; `Filesystem and worktree effects`: write evidence profile and, after validation, selected data under `.experiments/kaggle/`; `Retry policy and safe denial outcome`: stop turn on denial and use page or user-supplied evidence only when requested mode permits degraded grounding. The task authorizes requesting runtime permission, not bypassing it. Kaggle CLI installation and authentication remain user-owned; never install or authenticate from this workflow.
 
-**CLI probe.** `command -v kaggle`, then `kaggle competitions list -p 1` — succeeds only with valid credentials, and needs no rules acceptance, so it separates auth failure from rules failure. Record resulting state in `profile.md` as `ready`, `unauthorized`, or `absent`. Absence is never fatal: fall back to page and user-supplied facts, and record degraded grounding as residual limit.
+**CLI probe.** Run `kaggle --version` as an argv command and use its exit status (launch failure means absent; never a POSIX-only `command -v`), then `kaggle competitions list -p 1` — succeeds only with valid credentials, and needs no rules acceptance, so it separates auth failure from rules failure. Record resulting state in `profile.md` as `ready`, `unauthorized`, or `absent`. Absence is never fatal: fall back to page and user-supplied facts, and record degraded grounding as residual limit.
 
-- `absent` — do not install it. Ask the user to install and authenticate the Kaggle CLI, then rerun the workflow; use page or user-supplied evidence only when the requested mode can tolerate degraded grounding.
-- `unauthorized` — instruct user to create token at `https://www.kaggle.com/settings` (API → Create New Token), place it at `~/.kaggle/kaggle.json` with `chmod 600`, or export `KAGGLE_USERNAME`/`KAGGLE_KEY`. Never fabricate or request pasted token.
+- `absent` — do not install it. Continue with page or user-supplied evidence when the requested mode can tolerate degraded grounding, and ask the user to install and authenticate the Kaggle CLI as an optional next step for full grounding; otherwise ask for the missing facts under fail-fast rule 03.
+- `unauthorized` — instruct user to create token at `https://www.kaggle.com/settings` (API → Create New Token), place it at `~/.kaggle/kaggle.json` with `chmod 600` on POSIX or at `%USERPROFILE%\.kaggle\kaggle.json` readable only by the current user on native Windows, or export `KAGGLE_USERNAME`/`KAGGLE_KEY`. Never fabricate or request pasted token.
 
-**Credential secrecy — hard constraint.** The token value never enters this run's context, any artifact, or any delegated agent's prompt. Forbidden regardless of who asks: reading `~/.kaggle/kaggle.json` by any tool, `cat`/`head`/`grep`/`jq` on it, `kaggle config view`, `env | grep KAGGLE`, echoing `$KAGGLE_KEY`/`$KAGGLE_API_TOKEN`, quoting pasted token back, or writing any of it into notebook cell, `profile.md`, gate log, or result artifact. The `kaggle` binary reads credentials from environment on its own — workflow needs CLI to work, never secret's value. Verify auth by exit code alone (`kaggle competitions list -p 1 >/dev/null 2>&1`), never by inspecting file. A token pasted into chat is compromised: do not repeat it, and tell user to rotate it.
+**Credential secrecy — hard constraint.** The token value never enters this run's context, any artifact, or any delegated agent's prompt. Forbidden regardless of who asks: reading `~/.kaggle/kaggle.json` (`%USERPROFILE%\.kaggle\kaggle.json` on Windows) by any tool, `cat`/`head`/`grep`/`jq` on it, `kaggle config view`, `env | grep KAGGLE`, echoing `$KAGGLE_KEY`/`$KAGGLE_API_TOKEN`, quoting pasted token back, or writing any of it into notebook cell, `profile.md`, gate log, or result artifact. The `kaggle` binary reads credentials from environment on its own — workflow needs CLI to work, never secret's value. Verify auth by exit code alone (run `kaggle competitions list -p 1` as an argv command and discard its output through the runner, not a shell redirect), never by inspecting file. A token pasted into chat is compromised: do not repeat it, and tell user to rotate it.
 
 **CLI queries.** Competition slug is positional; `-v` means CSV output, not verbose. Read `kaggle competitions --help` or `kaggle datasets --help` for anything beyond these — flag surface shifts between CLI releases, so never invent one.
 
@@ -72,7 +72,7 @@ Inspect in parallel where available:
 - `resources/competitors/**/*.{ipynb,py}` for comparable preprocessing, model, augmentation, and submission patterns.
 - Local data dictionaries, sample submission files, schemas, and directory listings supplied by user.
 
-Write source-backed table in `profile.md`:
+Write source-backed table under `profile.md` `Grounded Facts`:
 
 | Fact | Value | Source |
 | -- | -- | -- |
@@ -100,7 +100,7 @@ Choose simplest justified model family:
 | time series | feature baseline plus XGBoost, or Lightning sequence model |
 | point cloud | verified MONAI/PyTorch3D-compatible path with Lightning |
 
-Use PyTorch Lightning whenever neural training loop is needed. Pure scikit-learn or XGBoost pipelines do not need Lightning. Record selected model, alternatives rejected, metric direction, and package/API evidence in `profile.md`. Verify current third-party APIs from installed package metadata or current primary documentation; do not rely on reference snippets when versions differ.
+Use PyTorch Lightning whenever neural training loop is needed. Pure scikit-learn or XGBoost pipelines do not need Lightning. Record selected model, alternatives rejected, metric direction, and package/API evidence under `profile.md` `Model Decision`. Verify current third-party APIs from installed package metadata or current primary documentation; do not rely on reference snippets when versions differ.
 
 ### 04: Resolve the composition
 
@@ -119,7 +119,7 @@ Do not distill helpers into package during notebook run. Offer package extractio
 
 ### 06: Verify the generated artifact
 
-Record verification in `profile.md` and gate logs.
+Record verification under `profile.md` `Verification` and in gate logs; record unresolved placeholders, degraded grounding, and skipped checks under `Residual Limits`.
 
 1. Confirm output exists, is non-empty, starts with `# %% [markdown]`, and contains only recognized cell markers.
 2. Confirm all sections required by selected mode are present and prohibited sections are absent.

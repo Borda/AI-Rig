@@ -19,7 +19,9 @@ per-user ``bridge-setup`` state root, rather than the workspace, so locking and 
 for the same target and scope. Those records contain no raw output, provider content, or secret-bearing command
 material. On POSIX the signing key and its state directory are owner-only (0600/0700); on Windows the equivalent
 boundary is the current user's LOCALAPPDATA ACL. The HMAC binds a plan to state but does not itself prove human consent:
-the host skill or terminal approval remains the authority for an action.
+executing an approved action therefore also requires the operator terminal (stdin and stderr are terminals, so a model-
+run command with piped streams is refused), and the host skill's approval question remains the authority for what is
+run. The terminal check is an interaction requirement, not proof against another process controlled by the same user.
 """
 
 from __future__ import annotations
@@ -32,7 +34,6 @@ import json
 import os
 import re
 import secrets
-import shutil
 import stat
 import subprocess
 import sys
@@ -41,6 +42,8 @@ from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePath
+
+from bridge_call import _resolve_executable, _resolved_command
 
 #: Marketplace identifier of the bridge plugin that host CLI commands install and look up.
 PLUGIN_ID = "bridge@borda-ai-rig"
@@ -55,9 +58,13 @@ CONFIGURE_TIMEOUT_SECONDS = 300
 # fault (network drop, interrupted install) cannot lock the operation forever.
 #: Seconds a recorded failed operation blocks identical retries before one fresh approved attempt is allowed.
 FAILED_OPERATION_TTL_SECONDS = 3600
+# A setup process killed while holding the mutation lock never releases it; a
+# lock this old outlives every bounded command sequence, so it is abandoned.
+#: Seconds after which an unreleased mutation lock is treated as left behind by a crashed setup process.
+MUTATION_LOCK_STALE_SECONDS = 3600
 #: Largest stdout or stderr slice, in bytes, kept from a host CLI command.
 MAX_CAPTURE_BYTES = 64 * 1024
-#: Largest setup state record, in bytes, that is read back or accepted.
+#: Largest setup state record, and journal tail, in bytes, that is read back or accepted.
 MAX_STATE_RECORD_BYTES = 8 * 1024 * 1024
 #: Seconds an issued approval stays valid before the configure step must be re-approved.
 APPROVAL_TTL_SECONDS = 300
@@ -92,6 +99,22 @@ CAPABILITY_MATRIX = {
 def _canonical_workspace(value: str) -> Path:
     """Resolve the host-selected workspace before binding an approval."""
     return Path(value).resolve()
+
+
+def _workspace_refusal(workspace: Path) -> str | None:
+    """Return why a workspace may not root setup approvals and live verification, or ``None`` when it may.
+
+    Setup binds every approval to the workspace and roots the live probe there, which writes Bridge artifacts into it.
+    The refusal set is the MCP server's own: a filesystem root, the user home or its ancestors, an agent configuration
+    home, or a credential or system configuration directory. It is imported rather than copied so both entry points
+    refuse the same folders.
+    """
+    bin_directory = str(Path(__file__).resolve().parent)
+    if bin_directory not in sys.path:
+        sys.path.insert(0, bin_directory)
+    from bridge_mcp import _workspace_refusal as mcp_workspace_refusal
+
+    return mcp_workspace_refusal(workspace)
 
 
 def _stable_fingerprint(value: object) -> str:
@@ -163,6 +186,11 @@ def _approval_time_is_valid(approval: dict[str, object], now: int) -> bool:
     )
 
 
+def _operator_terminal() -> bool:
+    """Report whether stdin and stderr are the operator's terminal rather than pipes a model could drive."""
+    return sys.stdin.isatty() and sys.stderr.isatty()
+
+
 def _contains_sensitive_option(argv: list[str]) -> bool:
     """Reject credential-like switches before argparse can echo their values."""
     return any(token == option or token.startswith(f"{option}=") for token in argv for option in SENSITIVE_OPTIONS)
@@ -179,7 +207,7 @@ def _capture(argv: list[str]) -> tuple[bool, str, str]:
     """Run one status probe with bounded capture and discard raw output after parsing."""
     try:
         result = subprocess.run(  # noqa: S603 - argv list, no shell
-            argv,
+            _resolved_command(argv),
             stdin=subprocess.DEVNULL,
             capture_output=True,
             encoding="utf-8",
@@ -253,7 +281,7 @@ def _authenticated(host: str) -> tuple[bool, bool]:
     """Probe host-owned login state without retaining the provider response."""
     try:
         result = subprocess.run(  # noqa: S603 - argv list, no shell
-            list(CAPABILITY_MATRIX[host]["authentication_status_argv"]),
+            _resolved_command(list(CAPABILITY_MATRIX[host]["authentication_status_argv"])),
             stdin=subprocess.DEVNULL,
             capture_output=True,
             encoding="utf-8",
@@ -362,7 +390,7 @@ def _inspect(current_host: str, target: str, scope: str) -> tuple[dict[str, obje
     # Presence is a prerequisite for this whole branch. Check all executables
     # before probing either one so a missing peer cannot leak into a partial
     # or misleading current-host inspection.
-    if any(shutil.which(host) is None for host in hosts):
+    if any(_resolve_executable(host) is None for host in hosts):
         return None, "missing-prerequisite"
     versions: dict[str, str] = {}
     for host in hosts:
@@ -527,7 +555,7 @@ def _run_configuration(operations: list[dict[str, object]]) -> bool:
         return False
     try:
         result = subprocess.run(  # noqa: S603 - argv list, no shell
-            argv,
+            _resolved_command(argv),
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -666,7 +694,14 @@ def _approval_key(create: bool) -> bytes | None:
 
 
 def _read_records(path: Path) -> deque[dict[str, object]] | None:
-    """Return a bounded regular-file journal tail, or ``None`` on unsafe state."""
+    """Return a bounded regular-file journal tail, or ``None`` on unsafe state.
+
+    Only the newest ``MAX_STATE_RECORD_BYTES`` are parsed. The journals are append-only and never rotated, so refusing a
+    larger file turned every later approval and mutation of that host setting into a permanent failure; the records that
+    still decide anything (failed operations within ``FAILED_OPERATION_TTL_SECONDS``, approvals within
+    ``APPROVAL_TTL_SECONDS``) are the newest ones. The partial record the cut lands in is skipped, never parsed, and a
+    tail holding no record boundary at all still fails closed.
+    """
     try:
         descriptor = _open_regular_record(path, os.O_RDONLY)
     except FileNotFoundError:
@@ -674,13 +709,19 @@ def _read_records(path: Path) -> deque[dict[str, object]] | None:
     except (OSError, ValueError):
         return None
     try:
-        if os.fstat(descriptor).st_size > MAX_STATE_RECORD_BYTES:
-            os.close(descriptor)
-            return None
-        with os.fdopen(descriptor, encoding="utf-8") as stream:
-            lines = deque(stream)
-    except OSError:
+        with os.fdopen(descriptor, "rb") as stream:
+            size = os.fstat(stream.fileno()).st_size
+            # Start one byte early so a cut landing exactly on a record boundary keeps that record.
+            if size > MAX_STATE_RECORD_BYTES:
+                stream.seek(size - MAX_STATE_RECORD_BYTES - 1)
+                if not stream.readline().endswith(b"\n"):
+                    return None
+            data = stream.read(MAX_STATE_RECORD_BYTES)
+        lines = data.decode("utf-8").split("\n")
+    except (OSError, UnicodeDecodeError):
         return None
+    if lines[-1] == "":
+        lines.pop()
     records: deque[dict[str, object]] = deque()
     for line in lines:
         try:
@@ -750,12 +791,59 @@ def _acquire_mutation_lock(
         lock, journal = _state_paths(target, scope)
         if _journal_has_failed_operation(journal, target, operation_fingerprint, state_fingerprint):
             return None
-        descriptor = _open_regular_record(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        try:
+            descriptor = _open_regular_record(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            if not _break_stale_mutation_lock(lock):
+                return None
+            descriptor = _open_regular_record(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
     except (OSError, ValueError):
         return None
+    holder = {
+        "target": target,
+        "operation_fingerprint": operation_fingerprint,
+        "pid": os.getpid(),
+        "timestamp": int(time.time()),
+    }
     with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
-        stream.write(json.dumps({"target": target, "operation_fingerprint": operation_fingerprint}) + "\n")
+        stream.write(json.dumps(holder) + "\n")
     return lock, journal
+
+
+def _break_stale_mutation_lock(lock: Path) -> bool:
+    """Remove a mutation lock abandoned by a setup process that never released it, and report whether to retry.
+
+    A setup process killed between acquiring and releasing the lock would otherwise block every later mutation of the
+    same host setting, with no cleanup command. A lock is abandoned once it is older than
+    ``MUTATION_LOCK_STALE_SECONDS``. It is renamed to a unique name before deletion and deleted only when the renamed
+    file is still the same stale inode, so a fresh lock that a concurrent process created in between is put back rather
+    than taken over. A lock that disappeared on its own was released, so acquisition is retried as well.
+    """
+    try:
+        metadata = lock.lstat()
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    if not stat.S_ISREG(metadata.st_mode) or time.time() - metadata.st_mtime < MUTATION_LOCK_STALE_SECONDS:
+        return False
+    abandoned = lock.with_name(f"{lock.name}.{secrets.token_hex(8)}.stale")
+    try:
+        os.rename(lock, abandoned)
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    try:
+        moved = abandoned.lstat()
+        if (moved.st_dev, moved.st_ino) == (metadata.st_dev, metadata.st_ino):
+            abandoned.unlink()
+            return True
+        os.link(abandoned, lock)
+        abandoned.unlink()
+    except OSError:
+        pass
+    return False
 
 
 def _release_mutation_lock(lock: Path) -> None:
@@ -854,7 +942,7 @@ def _verify_live(target: str, workspace: Path) -> bool:
     """Run the exact approved live doctor and retain only its boolean outcome."""
     try:
         result = subprocess.run(  # noqa: S603 - argv list, no shell
-            _live_operation_argv(target, workspace),
+            _resolved_command(_live_operation_argv(target, workspace)),
             stdin=subprocess.DEVNULL,
             capture_output=True,
             encoding="utf-8",
@@ -934,7 +1022,9 @@ class _MutationCompletion:
 def _launch_authentication(target: str) -> _MutationOutcome:
     """Start only the native provider login, with the operator's streams inherited and nothing captured."""
     try:
-        authentication_process = subprocess.run(list(CAPABILITY_MATRIX[target]["authentication_argv"]))  # noqa: S603 - argv list from fixed capability matrix, no shell
+        authentication_process = subprocess.run(  # noqa: S603 - fixed capability matrix, resolved executable, no shell.
+            _resolved_command(list(CAPABILITY_MATRIX[target]["authentication_argv"]))
+        )
     except OSError:
         authentication_process = None
     authentication_ok = authentication_process is not None and authentication_process.returncode == 0
@@ -1076,6 +1166,27 @@ def main(argv: list[str] | None = None) -> int:
     requested = _requested(args)
     action = requested["action"]
     target = _target(args.current_host, args.target)
+    refusal = None if action == "check" else _workspace_refusal(workspace)
+    if refusal is not None:
+        # check stays available: it is read-only and writes nothing into the workspace.
+        return _emit(
+            _Terminal(
+                _base_result(
+                    status="blocked",
+                    current_host=args.current_host,
+                    target=target,
+                    direction=None,
+                    requested=requested,
+                    scope=None,
+                    workspace=workspace,
+                    classification="workspace-refused",
+                    remaining=["project-workspace"],
+                    manual_next_action="Start the host session in a project folder, then run setup again.",
+                    limits=[f"Setup refuses a workspace that is {refusal}."],
+                ),
+                2,
+            )
+        )
     if target == args.current_host:
         return _emit(
             _Terminal(
@@ -1167,6 +1278,22 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
         approval_fingerprint = _stable_fingerprint(args.approve)
+        if action != "check" and not _operator_terminal():
+            return _emit(
+                _Terminal(
+                    resolved.result(
+                        status="denied",
+                        classification="operator-terminal-required",
+                        remaining=["operator-terminal-approval"],
+                        manual_next_action=(
+                            "Run this exact command with its approval digest in your own terminal; "
+                            "a command run by the model cannot supply operator proof."
+                        ),
+                        limits=["Nothing was inspected, locked, consumed or executed."],
+                    ),
+                    2,
+                )
+            )
     elif "--approve" in raw_argv:
         return _emit(_Terminal(_denied_result(args.current_host, target, requested, workspace), 2))
     if approved is not None and requested["action"] == "verify-live":

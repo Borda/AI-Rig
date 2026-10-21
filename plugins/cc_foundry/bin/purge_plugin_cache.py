@@ -32,19 +32,24 @@ Deletion is irreversible, so every candidate must clear ALL of these:
    Plugins absent from the registry have no live consumer, so all their versions
    including the newest are reclaimable — this is what frees a renamed plugin.
 
+The registry itself must be readable JSON with a ``plugins`` object. A missing or
+corrupt file would make every plugin look absent (guards 5 and 7 then protect
+nothing), so the run aborts instead of treating it as "nothing installed".
+
 Usage:
     python "${CLAUDE_PLUGIN_ROOT}/bin/purge_plugin_cache.py" [--cache-dir PATH] [--marketplace NAME]
         [--registry PATH] [--protect PATH ...] [--min-orphan-age-hours N] [--apply] [--expect-count N]
 
 Exit codes:
     0   success (report printed, or apply completed)
-    1   irrecoverable error (cache dir missing, ``--expect-count`` mismatch)
+    1   irrecoverable error (cache dir missing, registry unreadable, ``--expect-count`` mismatch)
     2   argument error (bad marketplace token, negative age)
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import shutil
 import sys
@@ -53,7 +58,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 #: Allowed shape of the marketplace name argument: letters, digits, underscore and hyphen only.
-_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+_TOKEN_RE = re.compile(r"[A-Za-z0-9_-]+")
 #: Milliseconds in one hour, for converting between orphan timestamps and hour thresholds.
 _MS_PER_HOUR = 3_600_000
 
@@ -366,6 +371,29 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def registry_error(registry: Path) -> str | None:
+    """Explain why the registry cannot vouch for installed plugins, or return ``None`` when it can.
+
+    Args:
+        registry: Path to ``installed_plugins.json``.
+
+    Returns:
+        A one-line reason when the file is missing, unreadable, not JSON, or lacks a ``plugins`` object; ``None`` when
+        it parses into the expected shape.
+
+    Examples:
+        >>> registry_error(Path("/__nonexistent__")) is not None
+        True
+    """
+    try:
+        data = json.loads(registry.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return f"cannot read plugin registry {registry}: {exc}"
+    if not isinstance(data, dict) or not isinstance(data.get("plugins"), dict):
+        return f"plugin registry {registry} has no 'plugins' object"
+    return None
+
+
 def _collect(args: argparse.Namespace) -> list[Candidate]:
     """Scan the cache and return every purge candidate."""
     version_dirs = iter_version_dirs(args.cache_dir, args.marketplace)
@@ -390,7 +418,7 @@ def main(argv: list[str] | None = None) -> int:
         Process exit code (see module docstring).
     """
     args = _build_parser().parse_args(argv)
-    if not _TOKEN_RE.match(args.marketplace):
+    if not _TOKEN_RE.fullmatch(args.marketplace):
         print(f"! marketplace {args.marketplace!r} contains disallowed characters", file=sys.stderr)
         return 2
     if args.min_orphan_age_hours < 0:
@@ -398,6 +426,10 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     if not args.cache_dir.is_dir():
         print(f"! cache dir not found: {args.cache_dir}", file=sys.stderr)
+        return 1
+    reason = registry_error(args.registry)
+    if reason is not None:
+        print(f"! {reason} — nothing deleted", file=sys.stderr)
         return 1
 
     candidates = _collect(args)

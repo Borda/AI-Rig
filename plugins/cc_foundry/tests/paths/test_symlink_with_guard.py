@@ -20,6 +20,7 @@ from pathlib import Path
 
 import pytest
 import symlink_with_guard
+from _hook_env import _bash_runs_posix_script
 from symlink_with_guard import cleanup, create_link, main, scan
 
 _MARKER = "borda-ai-rig/foundry/"
@@ -942,6 +943,8 @@ class TestSkillPhase4Block:
             "TMPDIR": str(tmp_path),
             "CLAUDE_CODE_SESSION_ID": "test-session",
         }
+        # Phase 2 marks a completed conflict scan; Phase 4 refuses to link without it
+        (tmp_path / "foundry-setup-scan-ok-test-session").write_text("true\n", encoding="utf-8")
 
         proc = subprocess.run(
             ["bash", "-c", _phase4_block()],
@@ -957,3 +960,27 @@ class TestSkillPhase4Block:
         assert created == ["foundry-another.md", "foundry-current.md"]
         assert (rules_dest / "foundry-current.md").readlink() == plugin / "rules" / "current.md"
         assert (home / ".claude" / "TEAM_PROTOCOL.md").is_symlink()
+
+    @pytest.mark.skipif(not _bash_runs_posix_script(), reason="bash cannot execute a POSIX script")
+    def test_block_refuses_without_completed_scan(self, env: tuple[Path, Path], tmp_path: Path) -> None:
+        """A missing Phase 2 scan marker blocks linking, so a failed scan never reads as zero conflicts."""
+        plugin, home = env
+        run_env = {
+            **os.environ,
+            "HOME": str(home),
+            "PLUGIN_ROOT": str(plugin),
+            "TMPDIR": str(tmp_path),
+            "CLAUDE_CODE_SESSION_ID": "test-session",
+        }
+
+        proc = subprocess.run(
+            ["bash", "-c", _phase4_block()],
+            env=run_env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert proc.returncode == 1
+        assert "BLOCKED" in proc.stdout
+        assert not (home / ".claude" / "TEAM_PROTOCOL.md").is_symlink()

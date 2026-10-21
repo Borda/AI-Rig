@@ -88,5 +88,5 @@ def test_baseline_prose_ask_still_happens(relative: str, section_start: str, sec
 def test_shared_doc_ask_is_still_loaded(doc: str, marker: str) -> None:
     """The skill still loads each shared doc that carries a question, and the doc still asks it."""
     skill = (_REFACTOR / "SKILL.md").read_text(encoding="utf-8")
-    assert f'cat "$_DEV_SHARED/{doc}"' in skill
+    assert f'bin/dev_load_shared.py" {doc}' in skill
     assert marker in (_SHARED / doc).read_text(encoding="utf-8")

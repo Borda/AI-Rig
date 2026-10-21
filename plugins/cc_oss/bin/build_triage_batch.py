@@ -23,8 +23,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
+
+#: Candidate cap matching the skill's 8-candidate extraction rule; bounds work on hostile thread text.
+_MAX_CANDIDATES = 8
+#: Longest identifier accepted; anything longer is not a real module or symbol name.
+_MAX_IDENT_LEN = 200
 
 
 def build_queries(identifiers: list[str]) -> list[dict[str, object]]:
@@ -48,16 +54,21 @@ def build_queries(identifiers: list[str]) -> list[dict[str, object]]:
         {'cmd': 'find-symbol', 'args': ['^MyClass$', '--limit', '1']}
         >>> build_queries(["  ", "x"])
         [{'cmd': 'find-symbol', 'args': ['^x$', '--limit', '1']}]
+        >>> build_queries(["--help", "x"])
+        [{'cmd': 'find-symbol', 'args': ['^x$', '--limit', '1']}]
     """
     queries: list[dict[str, object]] = []
     for raw in identifiers:
         ident = raw.strip()
-        if not ident:
+        # identifiers come from untrusted issue/PR text: skip oversized or option-like tokens, escape regex syntax
+        if not ident or len(ident) > _MAX_IDENT_LEN or ident.startswith("-"):
             continue
-        if "." in ident and ident.split(".")[0].isidentifier():
+        if "." in ident and all(part.isidentifier() for part in ident.split(".")):
             queries.append({"cmd": "rdeps", "args": [ident, "--exclude-tests"]})
         else:
-            queries.append({"cmd": "find-symbol", "args": [f"^{ident}$", "--limit", "1"]})
+            queries.append({"cmd": "find-symbol", "args": [f"^{re.escape(ident)}$", "--limit", "1"]})
+        if len(queries) >= _MAX_CANDIDATES:
+            break
     return queries
 
 

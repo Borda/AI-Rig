@@ -42,6 +42,7 @@ import argparse
 import os
 import re
 import shlex
+import stat
 import subprocess
 import sys
 import tempfile
@@ -113,10 +114,11 @@ def _validate_plugin_root(plugin_root: str) -> str:
 
 
 def _resolve_plugin_root() -> str:
-    """Read and validate ``CLAUDE_PLUGIN_ROOT``, falling back to the in-tree default.
+    """Read and validate ``CLAUDE_PLUGIN_ROOT``, falling back to this script's own plugin root.
 
-    The unset/empty default ``plugins/codemap-py`` is only valid when running from the
-    source tree where the path is relative-trusted; any explicitly set value must pass
+    The unset/empty default is :func:`_own_plugin_root`, never a working-directory-relative
+    ``plugins/codemap-py``: the latter would run whatever ``resolve_proj_index.py`` the current
+    directory (possibly an untrusted repository) ships. Any explicitly set value must pass
     :func:`_validate_plugin_root`.
 
     Returns:
@@ -128,12 +130,12 @@ def _resolve_plugin_root() -> str:
     Examples:
         >>> import os
         >>> _ = os.environ.pop("CLAUDE_PLUGIN_ROOT", None)
-        >>> _resolve_plugin_root()
-        'plugins/codemap-py'
+        >>> _resolve_plugin_root() == str(_own_plugin_root())
+        True
     """
     raw = os.environ.get("CLAUDE_PLUGIN_ROOT")
     if raw is None or raw == "":
-        return "plugins/codemap-py"
+        return str(_own_plugin_root())
     return _validate_plugin_root(raw)
 
 
@@ -142,8 +144,10 @@ def _resolve_csid() -> str:
 
     Caller exports ``CSID`` (bash ``export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"``);
     read fresh on every call (not cached at import time) so tests can monkeypatch
-    ``os.environ`` per-case. Degrades to ``"shared"`` only when the caller forgot the
-    export (accepted residual collision scope, WS3 lint flags the caller).
+    ``os.environ`` per-case. Degrades to ``"shared"`` when the caller forgot the
+    export (accepted residual collision scope, WS3 lint flags the caller) and when the
+    value is not a plain filename component: ``../..`` or a value with a separator would
+    move the sentinel write out of the temp dir, so it is replaced with a stderr warning.
 
     Returns:
         ``CSID`` env value, else ``CLAUDE_CODE_SESSION_ID``, else ``"shared"``.
@@ -153,16 +157,66 @@ def _resolve_csid() -> str:
         >>> _ = os.environ.pop("CSID", None); _ = os.environ.pop("CLAUDE_CODE_SESSION_ID", None)
         >>> _resolve_csid()
         'shared'
+        >>> os.environ["CSID"] = "8f3a-1c.x_9"
+        >>> _resolve_csid()
+        '8f3a-1c.x_9'
+        >>> _ = os.environ.pop("CSID")
     """
-    return os.environ.get("CSID") or os.environ.get("CLAUDE_CODE_SESSION_ID") or "shared"
+    raw = os.environ.get("CSID") or os.environ.get("CLAUDE_CODE_SESSION_ID") or "shared"
+    if _VALID_OUTPUT_PREFIX_RE.fullmatch(raw):
+        return raw
+    print(f"resolve_index_env: CSID is not a plain filename component — using 'shared': {raw!r}", file=sys.stderr)
+    return "shared"
+
+
+def _tmpdir_unsafe_reason(path: str) -> str | None:
+    """Return why ``path`` is unsafe as the base for predictable sentinel names, or ``None`` when it is safe.
+
+    Ownership alone is not enough. A directory this user owns but leaves group- or other-writable without the sticky bit
+    lets another user replace a sentinel between its write and its read, and a symlink anywhere on the path that another
+    user owns can be re-pointed at will. Links owned by this user or by root (``/var`` -> ``/private/var`` on macOS) are
+    trusted. POSIX only: Windows reports neither meaningful mode bits nor link owners, and guards its per-user temp
+    folder with the profile ACL.
+
+    Args:
+        path: Absolute candidate directory.
+
+    Returns:
+        A short reason, or ``None``.
+
+    Examples:
+        >>> import tempfile
+        >>> with tempfile.TemporaryDirectory() as d:  # mkdtemp creates 0700
+        ...     _tmpdir_unsafe_reason(d) is None
+        True
+    """
+    if os.name == "nt" or not hasattr(os, "getuid"):
+        return None
+    trusted_owners = {os.getuid(), 0}
+    candidate = Path(path)
+    try:
+        for component in (candidate, *candidate.parents):
+            info = component.lstat()
+            if stat.S_ISLNK(info.st_mode) and info.st_uid not in trusted_owners:
+                return f"symlink {component} is owned by another user"
+        info = candidate.stat()
+    except OSError as exc:
+        return f"cannot be inspected ({exc.strerror or exc})"
+    if not stat.S_ISDIR(info.st_mode):
+        return "not a directory"
+    if info.st_mode & (stat.S_IWGRP | stat.S_IWOTH) and not info.st_mode & stat.S_ISVTX:
+        return "group- or other-writable without the sticky bit"
+    return None
 
 
 def _resolve_tmpdir() -> str:
-    """Return a safe temp directory: ``TMPDIR`` only when absolute and owned by this user.
+    """Return a safe temp directory: ``TMPDIR`` only when absolute, owned by this user, and not replaceable by others.
 
-    An untrusted ``TMPDIR`` is a write-anywhere primitive; a directory owned by
-    another user can be a symlink-swap target. When ``TMPDIR`` fails either check, fall back
-    to :func:`tempfile.gettempdir`.
+    An untrusted ``TMPDIR`` is a write-anywhere primitive; a directory owned by another user, one others may write
+    into without the sticky bit, or a path through another user's symlink can be a swap target (see
+    :func:`_tmpdir_unsafe_reason`). A rejected value is reported on stderr and removed from this process's environment,
+    then :func:`tempfile.gettempdir` picks the platform default: left in place, ``gettempdir`` would read the very value
+    just rejected, and child processes would inherit it.
 
     Returns:
         Absolute path to a temp directory safe for this process to write into.
@@ -176,12 +230,21 @@ def _resolve_tmpdir() -> str:
         True
     """
     tmpdir = os.environ.get("TMPDIR")
-    if tmpdir and os.path.isabs(tmpdir):
+    if not tmpdir:
+        return tempfile.gettempdir()
+    reason = None if os.path.isabs(tmpdir) else "not an absolute path"
+    if reason is None and hasattr(os, "getuid"):
         try:
-            if not hasattr(os, "getuid") or Path(tmpdir).stat().st_uid == os.getuid():
-                return tmpdir
-        except OSError:
-            pass
+            if Path(tmpdir).stat().st_uid != os.getuid():
+                reason = "owned by another user"
+        except OSError as exc:
+            reason = f"cannot be inspected ({exc.strerror or exc})"
+    reason = reason or _tmpdir_unsafe_reason(tmpdir)
+    if reason is None:
+        return tmpdir
+    print(f"{_SCRIPT_NAME}: TMPDIR {reason} — ignoring: {tmpdir!r}", file=sys.stderr)
+    os.environ.pop("TMPDIR", None)
+    tempfile.tempdir = None  # a value cached while the rejected TMPDIR was set must not survive
     return tempfile.gettempdir()
 
 
@@ -306,15 +369,27 @@ def _write_sentinel_file(path: Path, content: str) -> None:
     created ``0o600`` regardless of umask (mirrors the pattern already used by
     ``anonymize.py``'s ``_load_salt``). ``O_EXCL`` is deliberately not used here — unlike a
     write-once salt file, this sentinel is legitimately overwritten on every resolver
-    invocation within the same session.
+    invocation within the same session. A file already at the path but owned by another
+    user (planted in a shared temp dir) is refused through the open descriptor, before
+    anything is truncated: its owner could rewrite it after the caller reads it back.
 
     Args:
         path: Destination file path.
         content: Text to write (caller supplies any trailing newline).
+
+    Raises:
+        OSError: When ``path`` is a symlink or an existing file owned by another user.
     """
     if path.is_symlink():
         raise OSError(f"refusing to write through symlink: {path}")
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        if hasattr(os, "getuid") and os.fstat(fd).st_uid != os.getuid():
+            raise OSError(f"refusing to write sentinel owned by another user: {path}")
+        os.ftruncate(fd, 0)
+    except BaseException:
+        os.close(fd)
+        raise
     with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
         if hasattr(os, "fchmod"):
             os.fchmod(fh.fileno(), 0o600)

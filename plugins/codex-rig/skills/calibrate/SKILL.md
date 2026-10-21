@@ -15,20 +15,18 @@ Run calibration for Codex workflow integrity and behavioral scoring.
 
 ```json
 {
-  "scope": "skills|agents|routing|all",
-  "pace": "fast|full",
-  "mode": "ab-test|apply",
   "require_live_routes": false,
-  "skip_gate": false,
-  "done_when": "recall and bias scores emitted; proposals written if mode=apply; gate skipped if skip_gate=true"
+  "done_when": "recall and bias scores emitted with measured recommendations; strict-live gate applied when require_live_routes=true"
 }
 ```
+
+The runner always scores the full packaged task set; it has no scope, pace, apply, or gate-skip selector.
 
 ## Workflow
 
 Installed plugin runs use `--layout plugin --root <consuming-project>`. The runner discovers package assets from its own file location under `runtime/calibration`, `skills`, `roles`, `shared`; `--root` controls only report output, Git context, read-only classification work. It must not fall back to source checkout or project `.codex`.
 
-Repository maintainers may use `--layout source --root <source-project>` to validate source `.codex` layout. Never mix source agents, sync manifests, or project registration checks into installed-plugin result.
+Legacy: `--layout source --root <source-project>` validates only a project that still keeps `.codex/agents`, `.codex/calibration`, and `.codex/skills/_shared`; without them every agent check fails `missing-agent-file`, so a package-only source tree uses `--layout plugin`. Never mix source agents, sync manifests, or project registration checks into installed-plugin result.
 
 ### 01: Load calibration task set from `../../runtime/calibration/tasks.json`
 
@@ -68,7 +66,7 @@ Use `--require-live-routes` only for strict-live gate. Default offline scoring r
 
 ### 10: Write the validated skill-level artifact when this skill wraps the runner
 
-Follow `../../shared/helper-cli-contract.md`/authoritative help. Gate intent: ruff lint/format calibration+skills, explicit no-typed-target reason, calibration tests, clean diff. Write `CALIBRATE_METADATA`, validate `calibrate`, promote only validated candidate.
+Follow `../../shared/helper-cli-contract.md`/authoritative help. Gate intent: ruff lint/format calibration+skills, explicit no-typed-target reason, calibration tests, clean diff. The validator's `calibrate` entry lists no required files, so runner evidence under `.reports/codex/calibration/<timestamp>/` is reviewer-checked: confirm it yourself before promotion. Write `CALIBRATE_METADATA`, validate `calibrate`, promote only validated candidate.
 
 ## Native Contract Checks
 
@@ -77,7 +75,7 @@ Verify configured native surface, not only runner internals.
 Skill checks:
 
 - configured skill file exists; frontmatter has unindented `---`, `name:`, `description:`; required sections exist; artifact path `.reports/codex/<skill>/`; examples include `status`, `checks_run`, `checks_failed`, `findings`, `confidence`, `artifact_path`; no external runner-only metadata/cache.
-- CLI checks find every local shebang Python/shell entry point in calibration, shared helpers, code-review, offline harness; each executable, fixed-help-roster registered, authoritative `--help`.
+- CLI checks find every shebang `*.py` entry point in calibration, shared helpers, `code-review`, and `challenge-resolve` (source layout adds shared and `.github` shell helpers and the offline harness); other skill-local executables are outside this roster; each executable, fixed-help-roster registered, authoritative `--help`.
 - every skill references `helper-cli-contract.md`, not complete local CLI invocations.
 - a source checkout compares the shipped `../../runtime/calibration/behavioral-cases.json` integer `schema_version` to that file in `HEAD`: same or exactly one commit-relative version step; a new family starts at 1. Installed plugin layout records an immutable-fixture skip; source layout with no `.codex/calibration/behavioral-cases.json` records a missing-source-fixture skip.
 
@@ -99,7 +97,7 @@ Role checks:
 - Behavioral metrics measure supplied observations only. `fixture-selftest` validates scoring; live Codex quality requires replacing/appending live-prompt observations.
 - Missing route coverage is `insufficient-evidence`, never acceptance; `require_live_routes=true` exits nonzero.
 - Compare thresholds with `gate_metrics_raw`, not rounded display.
-- Paid paired campaigns: `../../runtime/calibration/run_live_ab.py`; plans by default, executes only `--confirm-paid-run=chatgpt-subscription`, verified local ChatGPT subscription login, no API key env, no `CI`/`GITHUB_ACTIONS`. An executing campaign applies full networked CLI approval and denial contract in `../../shared/native-skill-contract.md` to complete owning command because it spawns `codex exec`. The operation-specific brief is: `Action and purpose`: run confirmed paid paired calibration; `External capability`: paid ChatGPT subscription execution through `codex exec`; `Credential behavior`: use verified local ChatGPT subscription login without reading API keys or credentials; `Filesystem and worktree effects`: write calibration artifacts only to selected run directory; `Retry policy and safe denial outcome`: stop turn on denial, retain sandboxed planning or offline scoring only. Planning and offline scoring remain sandboxed.
+- Paid paired campaigns: `../../runtime/calibration/run_live_ab.py`; plans by default, executes only `--confirm-paid-run=chatgpt-subscription`, verified local ChatGPT subscription login, no API key env, no `CI`/`GITHUB_ACTIONS`. An executing campaign applies full networked CLI approval and denial contract in [Networked CLI Approval](../../shared/native-skill-contract.md#networked-cli-approval) and [Approval Brief](../../shared/native-skill-contract.md#approval-brief) to complete owning command because it spawns `codex exec`. The operation-specific brief is: `Action and purpose`: run confirmed paid paired calibration; `External capability`: paid ChatGPT subscription execution through `codex exec`; `Credential behavior`: use verified local ChatGPT subscription login without reading API keys or credentials; `Filesystem and worktree effects`: write calibration artifacts only to selected run directory; `Retry policy and safe denial outcome`: stop turn on denial, retain sandboxed planning or offline scoring only. Planning and offline scoring remain sandboxed.
 - Each live task names canonical role. Plugin layout prepends exact packaged role card to both prompts; source layout preserves project-instruction plus source-agent prompt construction. Tool pairs can accept candidate passing executable gate when successfully invoked baseline fails; infrastructure timeout is never candidate win.
 - Archived GPT-5.6 paired evidence and `live-route-policy.json` keep their original Sol/Terra quality rule; that legacy campaign must not be used to validate GPT-6 routing. Define a new model-and-effort paired campaign before claiming GPT-6 quality or cost acceptance.
 - Never claim currency savings from `normalized-token-v1`; need dated authoritative model-specific price.

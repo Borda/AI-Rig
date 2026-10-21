@@ -14,6 +14,10 @@ import pytest
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 SKILL = "skills/code-remediate/SKILL.md"
 COMMIT_TEMPLATE = "shared/commit-response-template.md"
+#: Existing merge or conflict recovery moved out of SKILL.md; its questions are pinned in the reference.
+EXISTING_CONFLICT = "skills/code-remediate/references/existing-conflict.md"
+#: Collection failure recovery moved out of SKILL.md; its authorization question is pinned in the reference.
+SOURCE_RECOVERY = "skills/code-remediate/references/source-recovery.md"
 NATIVE = "shared/native-skill-contract.md"
 
 
@@ -27,7 +31,7 @@ def _text(relative: str) -> str:
     [
         pytest.param(SKILL, "ask only for the missing finding evidence or selection", id="02-missing-finding-evidence"),
         pytest.param(
-            SKILL,
+            SOURCE_RECOVERY,
             "ask one question with accepted answers; explain what approval and decline mean",
             id="02-collection-recovery-authorization",
         ),
@@ -42,14 +46,16 @@ def _text(relative: str) -> str:
             id="03-target-merge-resolution-intent",
         ),
         pytest.param(
-            SKILL,
+            EXISTING_CONFLICT,
             "`Authorize finishing this existing merge and the described local commit?`",
             id="03-existing-merge-recovery",
         ),
         pytest.param(
-            SKILL, "Ask only for the missing scope expansion through User Questions", id="03-repair-scope-expansion"
+            EXISTING_CONFLICT,
+            "Ask only for the missing scope expansion through User Questions",
+            id="03-repair-scope-expansion",
         ),
-        pytest.param(SKILL, "ask for that specific commit decision", id="03-partial-merge-commit"),
+        pytest.param(EXISTING_CONFLICT, "ask for that specific commit decision", id="03-partial-merge-commit"),
         pytest.param(
             SKILL,
             "stop before edits and open the scope menu once using the context/control ordering above",

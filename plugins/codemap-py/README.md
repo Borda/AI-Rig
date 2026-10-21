@@ -160,7 +160,7 @@ Most query results include an `index` block. Read it before treating a list as f
 
 Queries check freshness and may perform a bounded incremental self-heal unless `SCAN_NO_AUTOBUILD=1` disables query-time writes. A self-heal also stands down when a writer takes the index while the query is reading it — most often another query's own heal — and answers from the index it already loaded. A refresh that was already running when the query started is waited out by the read lease instead, after which the index is fresh and no heal is needed. An explicit scan is the predictable choice after a clone, a large change, a branch switch, or when a query reports stale/degraded coverage.
 
-The shared Claude context contract v4 reports partial pre-flight retrieval when any requested query fails, misses or lacks completeness metadata. Consumers retain per-child batch outcomes and reuse matching fresh answers without suppressing necessary source or test-quality inspection.
+The shared Claude context contract v5 gates its pre-flight on `codemap-py query` and `codemap-py index` and reports partial pre-flight retrieval when any requested query fails, misses or lacks completeness metadata. Consumers retain per-child batch outcomes and reuse matching fresh answers without suppressing necessary source or test-quality inspection.
 
 <a id="-honest-limits"></a>
 
@@ -498,6 +498,8 @@ The integration skill is a thin, source-owned adapter over `codemap-py integrate
 | `sync`  | `--source {local-candidate,release} --plan <artifact> --approve <sha256> [--runtime ...]`                   | Approved local runtime plugin state through the native runtime CLI.                        |
 | `demo`  | \[`--runtime {claude,codex,both}`\]                                                                         | Audit plus one structural smoke query; disposable evidence only.                           |
 
+An unrecognized mode prints the supported modes (`audit`, `plan`, `apply`, `sync`, `demo`) and stops; it does not open a menu. Exit codes are read per mode: for `audit` and `demo`, `1` is a fail verdict; for `apply`, drift or a filesystem failure; for `sync`, a partial result or an incomplete journal.
+
 `audit` has this contract:
 
 - Defaults to `both`; supports `--runtime claude|codex|both`, JSON schema 2 (`codemap-py.integration.v2`), and `--since YYYY-MM-DD`.
@@ -538,6 +540,7 @@ Scan behavior and routing:
 
 - The full scan walks Python files with `ast.parse`, records imports, symbols, calls, hashes, source-root metadata, and degraded-file reasons, then writes one JSON index.
 - Incremental mode compares stored Git blob hashes or non-Git content hashes.
+- `setup_scan_env.py` validates the arguments before any scan: an unknown flag or `--root` without a value stops with the message printed unchanged, while a quoted value such as `--root "a --b"` is accepted. A failure parsing the arguments stops the run instead of starting a default scan. The index path is derived from the scan root (`<root>/.cache/codemap`), or from the Git root when `--root` is absent or `.`.
 - Build duration varies with repository size and filesystem; the scanner reports indexed and degraded counts, so the README does not promise fixed timings.
 - Run a full scan after clone or a large structural change, and use incremental mode after smaller changes or when a currency gate requests it.
 
@@ -641,6 +644,8 @@ The `test-impact` skill has a deliberately narrow contract:
 
 - Accepts exactly one target, either a bare module or `module::symbol` (dotted `module.symbol` and bare names defined once are normalized to `module::symbol`; a module-name suffix or bare method name exits with candidates), plus `--no-mocks`.
 - Identifies structurally affected test files, preserves the index completeness and `not_covered` caveats, and emits a pytest command for the maintainer to review and run. `test-impact` and `diff-impact` quote paths for POSIX shells on POSIX hosts or PowerShell on native Windows; `test_files` remains the authoritative argv list for other shells or direct subprocess execution.
+- Tokenizes the arguments once: `--no-mocks` is an exact token in any position, the first non-flag token is the target, and an unknown or flag-shaped argument is rejected. With no target the skill asks for one.
+- A target that does not resolve prints the engine's candidates or suggestions without index-rebuild advice; rebuild advice is reserved for provider failures such as a missing, oversized or corrupt index. The report lists the test files, `via_call` and `via_mock` counts, the pytest command and the completeness signals exactly as the helper prints them, and index builds run with `--timeout 360`.
 - Does not execute tests, find every caller, or prove runtime behavior.
 - For more than one target, use separate invocations; the skill warns rather than silently combining them.
 
@@ -652,18 +657,21 @@ $codemap-py:test-impact mypackage.auth
 `rename-refs` has two explicit subcommands:
 
 ```text
-/codemap-py:rename-refs symbol <old-qname> <new-qname> [--dry-run] [--deprecate[=<decorator>]] [--since <version>] [--removed-in <version>] [--remove-if-no-callers]
+/codemap-py:rename-refs symbol <old-qname> <new-qname> [--dry-run] [--deprecate[=<decorator>] | --no-deprecate] [--since <version>] [--removed-in <version>] [--remove-if-no-callers]
 /codemap-py:rename-refs module <old-module> <new-module> [--dry-run]
 ```
 
 Rename behavior and safety gates:
 
-- The symbol route updates a one-to-one Python definition and statically visible references; the module route renames a file/module and import lines.
+- The symbol route updates a one-to-one Python definition and statically visible references; the module route renames a file/module and its import lines, indented ones inside functions, `try` or `if TYPE_CHECKING:` blocks included, plus attribute uses such as `mypackage.old.func()` after `import mypackage`. The blast report also prints the index's advisory search for references outside the static AST, such as hook-registered callers.
 - `--dry-run` previews without editing.
-- `--deprecate` is symbol-only and defaults to the project deprecation decorator; `--since` and `--removed-in` add the version window.
+- `--deprecate` is symbol-only and defaults to the project deprecation decorator; `--since` and `--removed-in` add the version window. Quote a decorator value with single quotes (`--deprecate='@deprecated_class(...)'`): the Claude skill pastes its arguments into a double-quoted shell word, so a double quote ends it. `--no-deprecate` declines the wrapper explicitly and does not conflict with `--remove-if-no-callers`.
+- Arguments are tokenized once and validated before any edit: unknown flags, flags missing a value, leftover tokens, references that are not dotted identifiers, and symbol-only flags on `module` are rejected, and `::` input to `module` gets its own message. A `fn-rdeps`, `rdeps` or `find-symbol` error stops the run before any edit; caller sets and the `--remove-if-no-callers` delete gate also require a whole-word search that finds no non-definition reference, in dry-run and apply alike.
+- Callers reached through `module::Class.method` are resolved by exact qualified name, and the module route derives its import root from the whole relative path, so `src/` layouts rename correctly and a path that does not match the indexed file stops.
 - `--remove-if-no-callers` is a hard safety gate: it is honored only when the caller graph is complete, zero callers are found, and the user confirms removal. A method or constructor whose zero-caller answer carries a `hint` is refused: instance calls, overrides, and subclass constructors are never resolved statically, so zero static callers is not evidence of none. Run the hint's search and delete manually if it finds no reference; a protocol (dunder) method's hint names no search, because Python calls it implicitly, and is never deleted on zero callers.
 - The workflow refuses ambiguous or one-to-many matches, stale or degraded coverage, path escapes, dynamic references, cross-repository callers, and caller sets above its edit cap; inspect source and tests for those cases.
-- A successful edit is followed by an explicit rescan and verification step.
+- Call edges alone miss most references to a class or callback, so the symbol route also edits non-call references — imports, base classes, `isinstance` targets, callback values, `__all__` strings and ancestor `__init__.py` re-exports — in every file that imports the symbol's module or an ancestor package (`rdeps`). A same-name symbol imported from another module is left alone.
+- A successful edit is followed by an explicit rescan and verification step. For a symbol, the verification counts every whole-word reference to the old name still in `*.py`/`*.pyi` files (a method: only the files that call, define or import it; a `--deprecate` alias stub is not counted). Any unedited reference reports `Rename incomplete` with its `file:line`; the success line always states the residual count, so a rename never reports success while leaving an `ImportError` behind.
 
 ```text
 /codemap-py:rename-refs symbol mypackage.auth::validate mypackage.auth::verify --dry-run
@@ -675,8 +683,9 @@ Rename behavior and safety gates:
 
 `debrief-coding` reads local JSONL telemetry and writes a diagnostic report; it does not build or query the index. Its collection and report contract is:
 
-- Flags: `--since YYYY-MM-DD`, `--session ID`, `--anonymize`, and `--output PATH` (default `.reports/codemap/debrief-<date>.md`).
+- Flags: `--since YYYY-MM-DD`, `--session ID`, `--anonymize`, and `--output PATH` (default `.reports/codemap/debrief-<date>.md`; an existing report is never overwritten, a `-2`, `-3` counter is appended).
 - Claude records CLI, skill, and tool layers under `.cache/codemap/logs/`; Codex hooks record runtime-scoped CLI and tool shards but have no skill-start hook, so skill telemetry and some cross-layer joins can be unavailable.
+- `debrief_stats.py` streams every shard under the log root the hooks wrote (Git top level, `CODEMAP_LOG_DIR` honoured), so a run from a subdirectory reads the same tree, and the report is written from its single JSON object rather than from hand-read shards. `--since` and `--session` filter before anonymization; `bench` records, empty-command CLI records and records without a version are excluded and counted; the newest version is the primary cohort and older cohorts are never pooled. It exits `1` when no telemetry exists and `3` when `anonymize.py` or `join_avoidance.py` runs past its 50-second cap.
 - Flat legacy records remain unattributed.
 - Reports include overall, per-runtime, and unattributed usage summaries, refresh provenance, timing, completeness, and repeated-search avoidance.
 - `token_measurement` is unavailable because host hooks provide no token usage. Debrief does not measure token savings or verify live fresh-session activation.
@@ -686,7 +695,7 @@ The report summarizes command, skill, and search/read activity, timing, result c
 
 Anonymization behavior:
 
-- `--anonymize` pseudonymizes qualified names with a project-local salt at `.cache/codemap/logs/.salt`, scrubs qualified names inside error and stderr text, hashes `not_covered` values, and writes export JSONL separately.
+- `--anonymize` pseudonymizes qualified names with a project-local salt at `.cache/codemap/logs/.salt`, scrubs qualified names inside error and stderr text, hashes `not_covered` values, and writes export JSONL separately into a run-scoped `.cache/codemap/export/<UTC stamp>/` directory, so earlier exports are never read. An existing salt must be a regular, owner-only file of exactly 32 hex bytes; a symlinked or loosely permissioned salt stops the export with exit 1.
 - Never share the salt with an anonymized export.
 - Anonymization protects names in the supported log fields; it is not a guarantee that arbitrary free text contains no identifying information.
 
@@ -794,17 +803,17 @@ Mode boundaries:
 
 The default index path is `.cache/codemap/<project>.json`, where `<project>` is the project-root basename. Set `CODEMAP_INDEX_DIR` to an absolute override directory to use `<override>/<project>.json`; separate colliding project names with separate override directories. `SCAN_NO_AUTOBUILD=1` keeps query and test-impact routes from creating or refreshing an index implicitly.
 
-`.claude-plugin/permissions-allow.json` lists the tool calls the skills expect to be pre-approved. `.claude-plugin/permissions-deny.json` is its counterpart — the operations that must stay denied no matter how broad the allow list becomes: destructive shell and git commands (`rm -rf`, `sudo`, `ssh`, `chmod 777`, force-push, `claude --dangerously-skip-permissions`). It no longer denies GitHub writes made through `gh`: foundry's gh write guard (`gh-write-guard.js`) lets each one run only after the user approves that exact command, and Claude Code still applies a settings deny rule after a hook allows a call, so a merged deny entry would defeat that approval. Without Foundry a gh write reaches the normal permission prompt, except through the two GitHub API calls this plugin's own allow list pre-approves (`Bash(gh api repos/*)`, `Bash(gh api graphql:*)`): a field POST or a GraphQL mutation made through them runs unprompted, a known gap kept so a codemap-only install reads GitHub without prompts. Neither file is merged into `~/.claude/settings.json` automatically. The sibling `cc_*` plugins each merge their own pair from their `/<plugin>:setup` skill; this plugin ships no setup skill, so the merge is manual. On upgrade, the allow command below removes only the obsolete `Bash(gh api repos/*:*)` entry, preserving all other allow entries. The deny merge is additive; stale gh write and local branch/tag deletion denies from earlier installs remain until you run `/foundry:setup` (requires `foundry` plugin). The merges are idempotent — `unique` keeps existing entries from duplicating:
+`.claude-plugin/permissions-allow.json` lists the tool calls the skills expect to be pre-approved. `.claude-plugin/permissions-deny.json` is its counterpart — the operations that must stay denied no matter how broad the allow list becomes: destructive shell and git commands (`rm -rf`, `sudo`, `ssh`, `chmod 777`, force-push, `claude --dangerously-skip-permissions`). It no longer denies GitHub writes made through `gh`: foundry's gh write guard (`gh-write-guard.js`) lets each one run only after the user approves that exact command, and Claude Code still applies a settings deny rule after a hook allows a call, so a merged deny entry would defeat that approval. Without Foundry a gh write reaches the normal permission prompt, except through the two GitHub API calls this plugin's own allow list pre-approves (`Bash(gh api repos/*)`, `Bash(gh api graphql:*)`): a field POST or a GraphQL mutation made through them runs unprompted, a known gap kept so a codemap-only install reads GitHub without prompts. Neither file is merged into `~/.claude/settings.json` automatically. The sibling `cc_*` plugins each merge their own pair from their `/<plugin>:setup` skill; this plugin ships no setup skill, so the merge is manual. On upgrade, the allow command below removes the obsolete `Bash(gh api repos/*:*)` entry and the broad `Bash(find:*)`, `Bash(node:*)`, `Bash(claude:*)`, and `Bash(sed:*)` entries, including identical user-added entries; other allow entries are preserved. Ad-hoc commands in those four families now prompt unless a narrower rule covers them. Broad `eval` and `python` allows remain for state reloads, flag parsing, plugin helpers, and `python -m` recipes. The deny merge is additive; stale gh write and local branch/tag deletion denies from earlier installs remain until you run `/foundry:setup` (requires `foundry` plugin). The merges are idempotent — the `reduce` dedupe keeps the first occurrence of each rule, so existing entries neither duplicate nor get re-sorted:
 
 ```bash
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}"
 [ -f ~/.claude/settings.json ] || printf '{}\n' > ~/.claude/settings.json
 cp ~/.claude/settings.json ~/.claude/settings.json.bak
 jq --slurpfile perms "$PLUGIN_ROOT/.claude-plugin/permissions-allow.json" \
-    '.permissions.allow = (((.permissions.allow // []) | map(select(. != "Bash(gh api repos/*:*)"))) + $perms[0] | unique)' \
+    '.permissions.allow = (((.permissions.allow // []) | map(select(. != "Bash(gh api repos/*:*)" and . != "Bash(claude:*)" and . != "Bash(find:*)" and . != "Bash(node:*)" and . != "Bash(sed:*)"))) + $perms[0] | reduce .[] as $x ([]; if index($x) == null then . + [$x] else . end))' \
     ~/.claude/settings.json > ~/.claude/settings.json.tmp && mv ~/.claude/settings.json.tmp ~/.claude/settings.json
 jq --slurpfile deny "$PLUGIN_ROOT/.claude-plugin/permissions-deny.json" \
-    '.permissions.deny = (((.permissions.deny // []) + $deny[0]) | unique)' \
+    '.permissions.deny = (((.permissions.deny // []) + $deny[0]) | reduce .[] as $x ([]; if index($x) == null then . + [$x] else . end))' \
     ~/.claude/settings.json > ~/.claude/settings.json.tmp && mv ~/.claude/settings.json.tmp ~/.claude/settings.json
 ```
 

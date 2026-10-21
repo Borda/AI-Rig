@@ -74,7 +74,7 @@ Every step is explicit and reviewable. The chain is not a guarantee of scientifi
 
 ## 📦 Install
 
-Prerequisites are Claude Code with plugin support and Python 3.10+ for setup. `/research:run` also requires Git and starts only from a clean worktree. Datasets, project dependencies, compute, credentials, and optional companion plugins remain user-managed.
+Prerequisites are Claude Code with plugin support, `jq` on PATH (setup, `run` and `fortify` use it, and each stops with `! MISSING` when it is absent), and Python 3.10+ available as the bare `python` command, which is the only interpreter setup probes. `/research:run` also requires Git and starts only from a clean worktree. Datasets, project dependencies, compute, credentials, and optional companion plugins remain user-managed.
 
 ```bash
 claude plugin marketplace add Borda/AI-Rig
@@ -193,7 +193,7 @@ Reviews a contract before a campaign. It checks required fields, scope adequacy,
 /research:judge path/to/program.md --skip-validation
 ```
 
-The review covers hypothesis clarity, measurement validity, control adequacy, experimental scope, strategy fit, protocol consistency, stopping criteria, reproducibility, falsifiability, Goodhart risk, baseline quality, and missing variance evidence. A dry run checks that the metric emits a numeric value and the guard exits successfully.
+The review covers hypothesis clarity, measurement validity, control adequacy, experimental scope, strategy fit, protocol consistency, stopping criteria, reproducibility, falsifiability, Goodhart risk, baseline quality, and missing variance evidence, in 16 checks. Check C13 flags a `scope_files` overlap with the metric or guard scripts as high severity. Check C9b validates `metric_repeats` and `min_delta_pct`, and adds a low advisory when a `perf` or `ml` strategy measures one sample per iteration; the advisory never becomes a Required Change, because repeated runs are a cost you opt into. A `{field}` token in the `## Config` block is flagged high, because `run` does not substitute it, and the dry run skips a command that contains one. A dry run checks that the metric emits a numeric value and the guard exits successfully; it is skipped with a medium finding on Colab compute.
 
 | Verdict          | Meaning                                                       |
 | ---------------- | ------------------------------------------------------------- |
@@ -246,11 +246,13 @@ Supported flags are `--resume`, `--team`, `--compute=local|colab|docker`, `--col
 
 The default execution is local. `--compute=docker` requires a reachable Docker daemon and routes metric/guard verification through the sandbox. `--colab` requires the `colab-mcp` runtime tool and a connected runtime; an optional hardware value is checked against the requested GPU. `--codex` requires `bridge@borda-ai-rig` installed and enabled plus a working `claude` CLI. Explicit integrations stop when unavailable rather than silently degrading.
 
-`--researcher` generates hypotheses with `research:scientist`; `--architect` adds architectural hypotheses from `foundry:solution-architect`; both can run together, and every oracle annotates its own hypotheses' feasibility (no separate annotation pass). `--hypothesis <path>` consumes a pre-built JSONL queue, and `--journal` requires one of the hypothesis flags and records every outcome. `--team` uses the team mode for parallel hypothesis exploration. `--keep "<items>"` preserves named context through compaction.
+`--researcher` generates hypotheses with `research:scientist`; `--architect` adds architectural hypotheses from `foundry:solution-architect`; both can run together, and every oracle annotates its own hypotheses' feasibility (no separate annotation pass). `--hypothesis <path>` consumes a pre-built JSONL queue without spawning an oracle: one entry is popped per iteration, progress is checkpointed, the file is never modified, and normal ideation resumes when the queue is exhausted. `--resume` continues only a run whose status is `running`, restores its saved flags, sandbox, Colab and clarification settings, reuses the existing hypothesis file, skips hypotheses already tried by id, and refuses a branch that no longer contains `best_commit`. Each iteration is checked by `bin/check_iteration_scope.py` after the agent returns: a change outside `scope_files` or to the metric or guard scripts is restored and recorded as `scope-violation`. `--journal` requires one of the hypothesis flags and records every outcome. `--team` uses the team mode for parallel hypothesis exploration; combined with `--hypothesis`, the supplied queue joins the team's axis hypotheses in the shared queue. `--keep "<items>"` preserves named context through compaction.
 
-Keep logic is metric-direction aware: an improved metric with a passing guard is kept, a regression is reverted, a guard failure may be reworked up to the configured limit, and a large low-value change can be discarded under the simplicity guard. Every revert is a `git revert`, preserving history rather than deleting evidence.
+Keep logic is metric-direction aware: an improved metric with a passing guard is kept, a regression is reverted, a guard failure may be reworked up to the configured limit, and a large low-value change can be discarded under the simplicity guard. Every revert is a `git revert`, preserving history rather than deleting evidence. The revert guard stops with `! BLOCKED` instead of skipping when `HEAD` is another iteration's experiment commit, so a mistyped iteration number in a commit subject can no longer keep a change the loop decided to revert.
 
-Run state lives under `.experiments/state/<run-id>/` with `state.json`, `experiments.jsonl`, diary, context, progress, scripts, and resume data. Hypothesis queues, checkpoints, and optional journals live under `.experiments/<run-id>/`. The final report is `.reports/research/run-<branch>-<date>.md`.
+By default each iteration's metric is measured once and any measured gain is kept, which is right for deterministic metrics such as coverage or line counts. For timing, throughput, or stochastic training metrics set `metric_repeats` (2–10) in `## Config`: the baseline and every iteration then run the metric that many times, each run under its own verify timeout, and a change is kept only when its mean gain beats `max(min_delta_pct, 2σ of the difference)` — the noise model `/research:fortify` uses for ablations. Metric cost scales with `metric_repeats`; the default stays 1, so existing campaigns behave as before.
+
+Run state lives under `.experiments/state/<run-id>/` with `state.json`, `experiments.jsonl`, diary, context, progress, scripts, and resume data. `state.json` records the parsed contract under `config` — metric and guard commands, `metric.direction`, scope, compute, strategy, iteration ceiling, `metric_repeats`, and `min_delta_pct` — which `/research:fortify` and `/research:retro` read; a text goal records its auto-detected commands and an inferred, printed direction. With `metric_repeats` > 1 the individual runs are kept in `metric-runs.jsonl`. Hypothesis queues, checkpoints, and optional journals live under `.experiments/<run-id>/`. The final report is `.reports/research/run-<branch>-<date>.md`.
 
 The run starts from a clean Git worktree and can create commits or reverts. Review scope files, commands, diffs, and the final report before accepting a campaign result.
 
@@ -292,7 +294,7 @@ Audits whether code matches a named paper; it does not judge whether the paper's
 /research:verify paper.pdf --dim F,H --no-codemap
 ```
 
-The five dimensions are formula (`F`), hyperparameter (`H`), evaluation (`E`), notation (`N`), and citation chain (`C`). Fidelity is `(MATCH + 0.5 * PARTIAL) / total_verified_claims`; unverifiable claims are excluded from the denominator and documented. `--strict` stops on HIGH-severity formula or evaluation mismatches. `--codemap` requires a usable index, while `--no-codemap` opts out; missing or stale structural context otherwise degrades the audit with an explicit gap.
+The five dimensions are formula (`F`), hyperparameter (`H`), evaluation (`E`), notation (`N`), and citation chain (`C`). The paper text is written to `paper.md` inside an untrusted-content fence by `bin/fence_untrusted.py`, and the scientist is told to treat it as data only. Fidelity is `(MATCH + 0.5 * PARTIAL) / total_verified_claims`; unverifiable claims are excluded from the denominator and documented. A paper with no checkable claims reports `NO VERIFIABLE CLAIMS` with a null fidelity. `--strict` stops on HIGH-severity formula or evaluation mismatches. `--codemap` requires a usable index, while `--no-codemap` opts out; missing or stale structural context otherwise degrades the audit with an explicit gap.
 
 Reports are written to `.reports/research/verify-<branch>-<date>.md`, with the detailed scientist audit retained under `.experiments/verify-<timestamp>/`.
 
@@ -317,7 +319,7 @@ Runs one-component-at-a-time ablations after a completed run and an `APPROVED` j
 /research:fortify <run-id> --venue NeurIPS
 ```
 
-Supported options are `--venue CVPR|NeurIPS|ICML|workshop`, `--max-ablations <N>`, `--skip-run`, and `--keep "<items>"`. `--skip-run` identifies candidates without executing ablations. `--compute` and `--colab` are not implemented for fortify; metric and guard commands run locally in each worktree.
+Supported options are `--venue CVPR|NeurIPS|ICML|workshop`, `--max-ablations <N>`, `--runs <N>`, `--skip-run`, and `--keep "<items>"`. `--skip-run` identifies candidates without executing ablations. `--runs <N>` (default 3, range 1–10) measures every variant N times in its worktree, so metric-command cost scales with N; `--runs 1` has no sigma and classifies against the noise floor alone. `--compute` and `--colab` are not implemented for fortify; metric and guard commands run locally in each worktree.
 
 | Class         | Metric loss after component removal |
 | ------------- | ----------------------------------- |
@@ -325,7 +327,7 @@ Supported options are `--venue CVPR|NeurIPS|ICML|workshop`, `--max-ablations <N>
 | `SIGNIFICANT` | 10–50% of the full metric           |
 | `MARGINAL`    | Less than 10% of the full metric    |
 
-The full variant is a sanity check and should reproduce the best metric within 2%; divergence is reported as possible nondeterminism or environment drift. The main worktree is never modified by ablation execution. Reports are written to `.reports/research/fortify-<branch>-<date>.md`.
+An ablation counts as an effect only beyond `max(noise floor, 2σ of the difference)` computed by `bin/fortify_metric_stats.py`; an effect inside that threshold is `BORDERLINE` (never `MARGINAL`) and is listed separately, with a prompt to add `--runs`. A removal that improves the metric by up to 5% is `NEUTRAL`, and beyond 5% is `Potentially Harmful`. The full variant runs first as a sanity check and must reproduce the source run's best metric within 2% (widened to 2σ of the full variant); otherwise fortify aborts as `diverged`, reported as possible nondeterminism or environment drift. `SANITY_DIVERGENCE_PCT` and `NOISE_FLOOR_PCT` (percent, defaults 2.0) override the two tolerances, and `FORTIFY_DIR_BASE` moves the artifact directory. The main worktree is never modified by ablation execution. Reports are written to `.reports/research/fortify-<branch>-<date>.md`.
 
 Illustrative report shape:
 
@@ -348,7 +350,7 @@ Reads a completed run's JSONL and diary without changing code or experiment stat
 /research:retro <run-id> --threshold 0.005 --alpha 0.01
 ```
 
-The report covers direction-aware significance, dead plateaus and churn, suspicious jumps above two standard deviations, strategy effectiveness, failure patterns, diminishing returns, and three to five next hypotheses compatible with `/research:run --hypothesis`. `--compare` requires matching program and metric. Reports are written to `.reports/research/retro-<branch>-<date>.md`.
+The report covers direction-aware significance, dead plateaus and churn, suspicious jumps above two standard deviations, strategy effectiveness, failure patterns, diminishing returns, and three to five next hypotheses compatible with `/research:run --hypothesis`. `--compare` requires matching program and metric and stops with `Cannot compare runs with different metrics` otherwise (a run started before `state.json` recorded its `config` has no metric command to compare, so retro only warns, and assumes `higher` when it has no recorded direction); both runs use the same truncation rule, and significance is computed over kept iterations only. Reports are written to `.reports/research/retro-<branch>-<date>.md`.
 
 Illustrative report shape:
 
@@ -427,14 +429,16 @@ compute: local
 ```
 ````
 
-| Field             | Values                               | Default  | Contract                                                     |
-| ----------------- | ------------------------------------ | -------- | ------------------------------------------------------------ |
-| `max_iterations`  | 1–50                                 | 20       | Hard ceiling; set deliberately before a campaign.            |
-| `agent_strategy`  | `auto`, `perf`, `code`, `ml`, `arch` | `auto`   | Auto infers from goal/metric keywords and warns on fallback. |
-| `scope_files`     | paths or globs                       | required | Bounds what ideation may inspect and modify.                 |
-| `compute`         | `local`, `colab`, `docker`           | `local`  | Routes metric and guard execution.                           |
-| `colab_hw`        | `H100`, `L4`, `T4`, `A100`           | none     | Hardware preference for Colab runs.                          |
-| `sandbox_network` | `none`, `bridge`                     | `none`   | Network isolation for Docker sandbox execution.              |
+| Field             | Values                               | Default  | Contract                                                            |
+| ----------------- | ------------------------------------ | -------- | ------------------------------------------------------------------- |
+| `max_iterations`  | 1–50                                 | 20       | Hard ceiling; set deliberately before a campaign.                   |
+| `agent_strategy`  | `auto`, `perf`, `code`, `ml`, `arch` | `auto`   | Auto infers from goal/metric keywords and warns on fallback.        |
+| `scope_files`     | paths or globs                       | required | Bounds what ideation may inspect and modify.                        |
+| `compute`         | `local`, `colab`, `docker`           | `local`  | Routes metric and guard execution.                                  |
+| `colab_hw`        | `H100`, `L4`, `T4`, `A100`           | none     | Hardware preference for Colab runs.                                 |
+| `sandbox_network` | `none`, `bridge`                     | `none`   | Network isolation for Docker sandbox execution.                     |
+| `metric_repeats`  | 1–10                                 | 1        | Metric runs per measurement; above 1, keep only gains beyond noise. |
+| `min_delta_pct`   | number ≥ 0                           | 0.1      | Smallest kept gain, percent of the best metric.                     |
 
 The metric command must emit a numeric value, and the guard must exit successfully for a kept iteration. A target is recommended because running only to the iteration ceiling can waste compute. Scope files, direction, baseline, controls, and stopping criteria should be reviewable before `/research:run`.
 
@@ -616,11 +620,11 @@ Generated files remain at the project root:
 .temp/state/                               short-lived cross-phase skill contracts
 ```
 
-`bin/verify_blueprint_audit.py` reads and prunes the auto-allow audit log described under Hooks. `bin/health_monitor_start.py` creates cross-platform health-monitor sentinel coordinates; current skills describe the monitoring sequence in workflow prose rather than exposing this helper as a standalone user command. That consolidation is possible future cleanup, not a current requirement.
+`bin/verify_blueprint_audit.py` reads and prunes the auto-allow audit log described under Hooks. `bin/resolve_shared.py` resolves the plugin's `skills/_shared` and, with `--persist` / `--emit`, writes the per-session sentinel and prints the requested docs in one call. Without an installed research plugin, it and `bin/load-agent-reference.py` read the cwd-relative `plugins/cc_research` tree only inside the research source repository (its `plugins/cc_research/.claude-plugin/plugin.json` names `research`); in any other repository `resolve_shared.py` exits 1 and `load-agent-reference.py` falls back to the installed cache or blocks. `bin/compaction_boundary.py` prints a skill's compaction Boundary step and the foundry gate decision (`continue` when foundry is absent). `bin/check_iteration_scope.py` is the Phase 3 scope check, `bin/fortify_metric_stats.py` computes fortify's repeated-run mean, sigma and classification, and `bin/fence_untrusted.py` wraps untrusted paper text for `verify`, following the `skills/_shared/untrusted-content.md` protocol `verify` loads. `bin/run_metric_stats.py` is `run`'s repeated-measurement cursor and its noise-aware keep decision when `metric_repeats` > 1. `bin/revert_iteration_commit.py` is the double-revert guard `run` calls from Phase 5 and Phase 7, refusing another iteration's experiment commit at `HEAD`, and `bin/codex_state.py` reads and bumps the `--codex` co-pilot counters. `bin/merge_settings_permissions.py` merges the plugin's shipped `permissions-allow.json` / `permissions-deny.json` into `~/.claude/settings.json` in one atomic write for `/research:setup`, and `write_skill_contract.py --keep-sentinel <name>` appends the session's `--keep` items to a compaction contract's `preserve:` line. `bin/health_monitor_start.py` creates cross-platform health-monitor sentinel coordinates; current skills describe the monitoring sequence in workflow prose rather than exposing this helper as a standalone user command. That consolidation is possible future cleanup, not a current requirement.
 
 The packaged bin inventory is:
 
-`append_ledger.py`, `check_output_within_root.py`, `codemap-flag.py`, `codemap_resolve.py`, `compute_effect_size.py`, `detect-complexity.py`, `docker_sandbox_run.py`, `extract-keep-flag.py`, `find_judge_verdict.py`, `find_run_id.py`, `fortify_next_variant.py`, `gate-on-sentinel.py`, `get_plugin_install_path.py`, `heal_git_artifacts.py`, `health_monitor_start.py`, `load-agent-reference.py`, `make_run_dir.py`, `parse-skill-flags.py`, `parse_kaggle_args.py`, `read_state_field.py`, `require-vars.py`, `resolve-anti-overwrite-path.py`, `resolve_shared.py`, `resolve_shared_path.py`, `retro_analyze.py`, `sync_rules.py`, `verify_patient_split.py`, and `write_skill_contract.py`.
+`agent_watch.py`, `append_ledger.py`, `check_iteration_scope.py`, `check_output_within_root.py`, `codemap-flag.py`, `codemap_resolve.py`, `codex_state.py`, `compaction_boundary.py`, `compute_effect_size.py`, `detect-complexity.py`, `docker_sandbox_run.py`, `extract-keep-flag.py`, `fence_untrusted.py`, `find_judge_verdict.py`, `find_run_id.py`, `fortify_metric_stats.py`, `fortify_next_variant.py`, `gate-on-sentinel.py`, `get_plugin_install_path.py`, `heal_git_artifacts.py`, `health_monitor_start.py`, `load-agent-reference.py`, `make_run_dir.py`, `merge_settings_permissions.py`, `parse-skill-flags.py`, `parse_kaggle_args.py`, `read_state_field.py`, `require-vars.py`, `resolve-anti-overwrite-path.py`, `resolve_shared.py`, `resolve_shared_path.py`, `retro_analyze.py`, `revert_iteration_commit.py`, `run_metric_stats.py`, `sync_rules.py`, `verify_patient_split.py`, and `write_skill_contract.py`, plus the private module `_sentinel_io.py`, which the sentinel writers import to create each `${TMPDIR}` sentinel fresh with mode 0600 instead of writing through a planted symlink.
 
 <a id="-current-boundaries"></a>
 

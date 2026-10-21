@@ -3,7 +3,6 @@ name: profile
 description: "Session clock-time AND token/cost analyzer. Reads the foundry plugin's timings.jsonl and invocations.jsonl logs (written by task-log.js) for wall-time, plus Claude Code transcripts (~/.claude/projects/**, main-loop + subagent files) for token usage and USD cost, and merges both into one per-session and per-skill report — local-tool vs subagent-spawn vs Skill vs AskUserQuestion idle vs main-loop reasoning residual time, and main-loop vs subagent spend by model tier. Useful for answering \"why did /oss:resolve run 30 minutes?\", \"what did this session cost?\", or \"which skill burns the most tokens?\". Pure log/transcript read — no instrumentation, no skill edits, no LLM calls. TRIGGER when: user asks where wall-clock time OR tokens/cost go during a skill/session, why a skill is slow or expensive, what dominates total runtime or spend, or wants a per-skill rollup over a recent window; phrases: \"where does time go\", \"why so slow\", \"what did this cost\", \"token spend\", \"why so expensive\", \"profile last session\", \"clock breakdown\", \"session timing\", \"which skill burns tokens\". SKIP: per-line Python perf (use foundry:perf-optimizer); known failure or hang (use /foundry:investigate); a real billing statement (prices are public list rates, not effective plan rates)."
 argument-hint: '[--since 24h|7d|30d] [--session-id ID] [--top-n N]'
 allowed-tools: Read, Write, Bash, TaskList, TaskCreate, TaskUpdate, AskUserQuestion
-model: sonnet
 effort: low
 ---
 
@@ -45,33 +44,19 @@ If $ARGUMENTS empty, default window is 24h.
 
 ## Step 1: Parse args + create run dir
 
+The first part of the Step 2 block below does this step (one Bash call with the clock-time analyzer): argument text is parsed in `bin/` and validated against closed patterns before use, then persisted as `KEY=VALUE` lines to `${TMPDIR:-/tmp}/foundry-profile-state-${CSID}`; Steps 2b–3 read it back key by key, never sourcing it (bash state doesn't persist across Bash calls, and `REPORT_DIR` carries a per-shell timestamp that can't be re-derived).
+
+## Step 2: Run analyzers — clock time, then tokens/cost
+
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-# timeout: 5000
-SINCE="24h"
-SESSION_ID=""
-TOP_N="5"
-next_is=""
-set -f  # disable globbing — a token like --top-n=* must never expand against cwd files
-for tok in $ARGUMENTS; do
-  case "$tok" in
-    --since=*)      SINCE="${tok#--since=}" ;;
-    --since)        next_is="since" ;;
-    --session-id=*) SESSION_ID="${tok#--session-id=}" ;;
-    --session-id)   next_is="session_id" ;;
-    --top-n=*)      TOP_N="${tok#--top-n=}" ;;
-    --top-n)        next_is="top_n" ;;
-    *)
-      case "$next_is" in
-        since)      SINCE="$tok" ;;
-        session_id) SESSION_ID="$tok" ;;
-        top_n)      TOP_N="$tok" ;;
-      esac
-      next_is=""
-      ;;
-  esac
-done
-set +f
+# timeout: 60000
+# --flags is mandatory for the helper; profile has no boolean flags. --keep-state: no eval; --inlined: profile keeps no compaction contract, so it clears none
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/parse-skill-flags.py" --flags noop --value-flags since,session-id,top-n --keep-state profile --inlined "$ARGUMENTS" >/dev/null
+IFS= read -r SINCE < "${TMPDIR:-/tmp}/profile-since-${CSID}" 2>/dev/null; SINCE="${SINCE:-24h}"
+IFS= read -r TOP_N < "${TMPDIR:-/tmp}/profile-top-n-${CSID}" 2>/dev/null; TOP_N="${TOP_N:-5}"
+IFS= read -r SESSION_ID < "${TMPDIR:-/tmp}/profile-session-id-${CSID}" 2>/dev/null || SESSION_ID=""
+[[ $SINCE =~ ^[0-9]+[smhd]$ && $TOP_N =~ ^[0-9]+$ && $SESSION_ID =~ ^[A-Za-z0-9._-]*$ ]] || { echo "! BLOCKED — invalid --since/--top-n/--session-id"; exit 1; }
 STAMP="$(date -u +%Y-%m-%dT%H-%M-%SZ)"
 REPORT_DIR=".reports/profile/$STAMP"
 mkdir -p "$REPORT_DIR"
@@ -81,59 +66,45 @@ mkdir -p "$REPORT_DIR"
   echo "SESSION_ID=$SESSION_ID"
   echo "TOP_N=$TOP_N"
 } | tee "${TMPDIR:-/tmp}/foundry-profile-state-${CSID}"
-```
-
-Values persisted to `${TMPDIR:-/tmp}/foundry-profile-state-${CSID}`; Steps 2–3 re-source it (bash state doesn't persist across Bash calls, and `REPORT_DIR` carries a per-shell timestamp that can't be re-derived).
-
-## Step 2: Run analyzers — clock time, then tokens/cost
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-# timeout: 60000
-. "${TMPDIR:-/tmp}/foundry-profile-state-${CSID}" 2>/dev/null   # reload REPORT_DIR/SINCE/SESSION_ID/TOP_N (fresh shell)
-OPT_SID=""
-[ -n "$SESSION_ID" ] && OPT_SID="--session-id $SESSION_ID"
+set --; [ -n "$SESSION_ID" ] && set -- --session-id "$SESSION_ID"
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/timing_analyzer.py" \
     --since "$SINCE" \
     --top-n "$TOP_N" \
     --output "$REPORT_DIR/report.md" \
-    $OPT_SID 2>"$REPORT_DIR/warnings.log"
-echo "time_exit=$?"
+    "$@" 2>"$REPORT_DIR/warnings.log"
+TIME_EXIT=$?
+echo "time_exit=$TIME_EXIT"
+[ "$TIME_EXIT" -lt 2 ] || echo "! BLOCKED — timing_analyzer exit $TIME_EXIT; see $REPORT_DIR/warnings.log"
 ```
 
-`OPT_SID` left unquoted so empty expands to nothing (no flag). Exit code 1: no sessions in window — surface that, stop; nothing in Step 2b can rescue a missing clock report, since `enforce-profile-header.js` keys on `report.md` specifically.
+`set --` array form passes `--session-id` and its value as separate arguments only when set (shell-portable; an unquoted `"--session-id $SESSION_ID"` string is one argument under zsh). Exit code 1: no sessions in window — surface that, stop; nothing in Step 2b can rescue a missing clock report, since `enforce-profile-header.js` keys on `report.md` specifically. Exit code 2 or higher: analyzer error (bad arguments, crash) — surface the `! BLOCKED` line with the tail of `warnings.log`, stop; do not run Step 2b.
 
 ## Step 2b: Run analyzer — tokens/cost (best-effort, appended)
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # timeout: 60000
-. "${TMPDIR:-/tmp}/foundry-profile-state-${CSID}" 2>/dev/null   # reload REPORT_DIR/SINCE/SESSION_ID/TOP_N (fresh shell)
-OPT_SID=""
-[ -n "$SESSION_ID" ] && OPT_SID="--session-id $SESSION_ID"
+while IFS== read -r K V; do case "$K" in REPORT_DIR) REPORT_DIR=$V;; SINCE) SINCE=$V;; SESSION_ID) SESSION_ID=$V;; TOP_N) TOP_N=$V;; esac; done < "${TMPDIR:-/tmp}/foundry-profile-state-${CSID}"
+set --; [ -n "$SESSION_ID" ] && set -- --session-id "$SESSION_ID"
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/cost_analyzer.py" \
     --since "$SINCE" \
     --top-n "$TOP_N" \
     --output "$REPORT_DIR/cost.md" \
-    $OPT_SID 2>>"$REPORT_DIR/warnings.log"
+    "$@" 2>>"$REPORT_DIR/warnings.log"
 COST_EXIT=$?
 if [ "$COST_EXIT" -eq 0 ] && [ -s "$REPORT_DIR/report.md" ]; then
   printf '\n' >> "$REPORT_DIR/report.md"
   cat "$REPORT_DIR/cost.md" >> "$REPORT_DIR/report.md"
 fi
 echo "cost_exit=$COST_EXIT"
+echo '{"status":"complete","since":"'"$SINCE"'","session_id":"'"$SESSION_ID"'","top_n":'"$TOP_N"'}' > "$REPORT_DIR/result.jsonl"
 ```
 
 Separate data source (transcripts under `~/.claude/projects/**`, not `timings.jsonl`), separate script, same `--since`/`--session-id`/`--top-n` scoping. `cost_exit=1` means no transcripts fell in window (or no match for `--session-id`) — not fatal: clock report still ships without a `## Tokens & cost` section. The two analyzers never share a report path write; only `report.md` is append-target, only after `cost_exit=0`, so a cost-side failure can't corrupt or block the clock report.
 
 ## Step 3: Mark run complete
 
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-# timeout: 5000
-. "${TMPDIR:-/tmp}/foundry-profile-state-${CSID}" 2>/dev/null   # reload REPORT_DIR/SINCE/SESSION_ID/TOP_N (fresh shell)
-echo '{"status":"complete","since":"'"$SINCE"'","session_id":"'"$SESSION_ID"'","top_n":'"$TOP_N"'}' > "$REPORT_DIR/result.jsonl"
-```
+The last line of the Step 2b block writes `$REPORT_DIR/result.jsonl` (`status: complete`, `since`, `session_id`, `top_n`) — it runs only after Step 2's stop branches passed, exactly as this step did.
 
 ## Step 4: Emit terminal output
 
@@ -149,7 +120,7 @@ Write(file_path=".temp/output-profile-<branch>-<YYYY-MM-DD>.md", content=<full r
 
 Where `<branch>` = `$(git branch --show-current 2>/dev/null | tr '/' '-' || echo 'main')`.
 
-Backed by `hooks/enforce-profile-header.js`: on `Stop` it keeps a turn going once per report when the final reply lacks the matching header table. While Step 1 state is live, Step 5's workflow follow-up requires a saved report and a short plain summary in the first question's text naming `$REPORT_DIR/report.md`, `Title` and `Outcome`; reply text and option fields do not supply that summary. The full header table is printed in the final reply after the answer, and `Stop` still requires it there. Missing/unreadable delivery evidence blocks that transition; apply the placement the deny reason names before retrying. Diagnostic/recovery questions remain available under their own question header, not `profile`.
+Backed by `hooks/enforce-profile-header.js`: on `Stop` it keeps a turn going once per report when the final reply lacks the matching header table. While Step 1 state is live, Step 5's workflow follow-up requires a saved report and a short plain summary in the first question's text naming `$REPORT_DIR/report.md`, `Title` and `Outcome`; reply text and option fields do not supply that summary. Missing/unreadable delivery evidence blocks that transition; apply the placement the deny reason names before retrying. Diagnostic/recovery questions remain available under their own question header, not `profile`.
 
 ## Step 5: Follow-up gate
 
@@ -160,7 +131,7 @@ Invoke `AskUserQuestion` (denied by `enforce-profile-header.js` until Step 2 has
 - (a) Drill into slowest session — re-run with `--session-id <id>`
 - (b) Re-run with different window (`--since 7d`, `--since 30d`)
 - (c) Skip — done
-- Every option: label plus a one-line action description, no `preview`. The Step 4 delivery block is printed once in the final reply after the answer, after the last tool call.
+- Every option: label plus a one-line action description, no `preview`.
 
 </workflow>
 

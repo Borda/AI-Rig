@@ -56,44 +56,7 @@ For each in-scope change, check the name appropriate to its category — final n
 - Establish absence through explicit source review of the relevant public surface; if it remains uncertain, keep the claim qualified.
 
 ```bash
-python - "$REF" "$SYMBOL" "$PUBLIC_PATH" <<'PY'
-import ast
-import subprocess
-import sys
-
-ref, symbol, path = sys.argv[1:]
-if not path.endswith(".py") or path.startswith("/") or ".." in path.split("/"):
-    sys.exit(2)
-source = subprocess.run(["git", "show", f"{ref}:{path}"], capture_output=True)
-if source.returncode:
-    print(source.stderr.decode("utf-8", errors="replace"), file=sys.stderr)
-    sys.exit(2)
-try:
-    tree = ast.parse(source.stdout)
-except (SyntaxError, UnicodeError) as error:
-    print(f"Cannot parse {ref}:{path}: {error}", file=sys.stderr)
-    sys.exit(2)
-declarations = tree.body
-named = any(isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.name == symbol for node in declarations)
-assigned = any(
-    isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == symbol for target in node.targets)
-    or isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.target.id == symbol
-    or isinstance(node, ast.Import) and any((alias.asname or alias.name.split(".", 1)[0]) == symbol for alias in node.names)
-    or isinstance(node, ast.ImportFrom) and any((alias.asname or alias.name) == symbol for alias in node.names)
-    for node in declarations
-)
-flag = any(
-    isinstance(node, ast.Expr)
-    and isinstance(node.value, ast.Call)
-    and isinstance(node.value.func, ast.Attribute)
-    and node.value.func.attr == "add_argument"
-    and any(isinstance(arg, ast.Constant) and arg.value == symbol for arg in node.value.args)
-    for node in declarations
-)
-if named or assigned or flag:
-    sys.exit(0)
-sys.exit(2)
-PY
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/symbol_exists_at_ref.py" "$REF" "$SYMBOL" "$PUBLIC_PATH"  # timeout: 5000
 ```
 
 Reload `$LAST_TAG` from `${TMPDIR:-/tmp}/release-setup-${CSID}/LAST_TAG` before the baseline probe (Check 41); `$LAST_TAG` is the published boundary, never `$RANGE`'s start in `--append` mode. If unresolved, keep the claim qualified, not baseline-verified. For TypeScript/JavaScript/Go/Rust, inspect a declaration at each ref in `git show <ref>:<path>`; do not count a raw `git grep -w` hit as definition evidence. For a manifest/config claim, use `git grep -nF '<name>' <ref> -- 'pyproject.toml' 'setup.cfg' '*.toml'` to locate candidates at both refs, then confirm the exact key/extra declaration and relevant section; a mention in a comment or value does not count. A command or parse failure is inconclusive, not absence.
@@ -124,7 +87,7 @@ Runs before Identify highlights — highlights and demo must never reference unv
 
 Every exclusion made against a baseline/HEAD check — `REMOVED:`, `NET-STATE-ADD:` here; `CROSS_CYCLE_MATCH:` (Gather changes) and `POST_MERGE_REMOVE:` (`release-draft-template.md`) elsewhere in this skill — is a claim that a real commit made it into range but did not survive into the release the reader sees. Dropping it silently loses that audit trail; it goes to a dedicated ledger instead, never `$GATHER_FILE` (subagent-owned, retried independently — an orchestrator-side append would mix writers and vanish on a gather retry).
 
-`$WAIVED_FILE` (`.temp/release-waived-$BRANCH-$DATE-<unique suffix>`) is created atomically once per invocation, alongside `$GATHER_FILE`, before Gather changes runs (`SKILL.md`'s Delegation strategy step 1 for `prepare`/`audit`; the `notes`/`demo` inline setup block otherwise). The sentinel identifies this invocation's ledger across fresh shells; later same-day runs get another file and preserve the earlier evidence. Every phase that appends a waived-changes line reloads it from that sentinel rather than redefining it:
+`$WAIVED_FILE` (`.temp/release-waived-$BRANCH-$DATE-<unique suffix>`) is created atomically once per invocation, alongside `$GATHER_FILE`, before Gather changes runs (`SKILL.md`'s Delegation strategy step 1, `modes/delegation.md`, for `prepare`/`audit`; the `notes`/`demo` inline setup block otherwise). The sentinel identifies this invocation's ledger across fresh shells; later same-day runs get another file and preserve the earlier evidence. Every phase that appends a waived-changes line reloads it from that sentinel rather than redefining it:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -149,12 +112,16 @@ CODEMAP_OK=$(codemap-py query list 2>/dev/null | wc -l)  # timeout: 5000
 
 When `CODEMAP_OK` non-zero:
 
-1. Extract changed public symbols (diff-derived, `__init__.py` surface):
+1. Extract changed public symbols (diff-derived, `__init__.py` surface) — fresh shell, so reload `RANGE` here; an empty range makes the extractor exit 0 with no output, which would read as "no changes":
    ```bash
+   export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+   IFS= read -r RANGE < "${TMPDIR:-/tmp}/release-range-${CSID}" 2>/dev/null || RANGE=""
+   [ -n "$RANGE" ] || { echo "! BLOCKED — release-range sentinel missing; Breaking classification not run (human Classify labels stand, report as unverified)"; exit 1; }
    CHANGED_SYMBOLS=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/extract_changed_symbols.py" "$RANGE")  # timeout: 15000
-   [ -z "$CHANGED_SYMBOLS" ] && echo "No changed public symbols — skipping Breaking classification"
+   [ -n "$CHANGED_SYMBOLS" ] || { echo "No changed public symbols — skipping Breaking classification"; exit 0; }
+   printf '%s\n' "$CHANGED_SYMBOLS"
    ```
-2. Resolve each bare name to a `module::symbol` qname (skip test modules) and build one `fn-rdeps --exclude-tests` batch query per resolved qname. Removed public name (no `find-symbol` match) → still add its `<pkg>::<name>` qname so `fn-rdeps` errors and the helper labels it Breaking-removed. Write the query array to `$QUERIES_FILE`:
+2. Resolve each printed bare name to a `module::symbol` qname (skip test modules) and build one `fn-rdeps --exclude-tests` batch query per resolved qname. Removed public name (no `find-symbol` match) → still add its `<pkg>::<name>` qname so `fn-rdeps` errors and the helper labels it Breaking-removed. Write the query array with the Write tool to `$QUERIES_FILE` = `.temp/release-breaking-queries-$BRANCH-$DATE.json` (`BRANCH`/`DATE` from `${TMPDIR:-/tmp}/release-setup-${CSID}/`):
    ```json
    [{"cmd": "fn-rdeps", "args": ["<module>::<symbol>", "--exclude-tests"]}]
    ```
@@ -163,10 +130,15 @@ When `CODEMAP_OK` non-zero:
    export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
    IFS= read -r BRANCH < "${TMPDIR:-/tmp}/release-setup-${CSID}/BRANCH" 2>/dev/null || BRANCH=""
    IFS= read -r DATE < "${TMPDIR:-/tmp}/release-setup-${CSID}/DATE" 2>/dev/null || DATE=""
+   QUERIES_FILE=".temp/release-breaking-queries-$BRANCH-$DATE.json"
    BREAKING_FILE=".temp/release-breaking-$BRANCH-$DATE.json"
+   [ -s "$QUERIES_FILE" ] || { echo "! BLOCKED — $QUERIES_FILE missing or empty; write the step-2 query array first"; exit 1; }
    mkdir -p .temp  # timeout: 5000
    codemap-py query batch "$QUERIES_FILE" 2>/dev/null \
      | python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/classify_breaking.py" > "$BREAKING_FILE"  # timeout: 15000
+   CLASSIFY_RC=$?
+   # rc 2 = batch output not JSON; never publish its error object as a classification
+   [ "$CLASSIFY_RC" -eq 0 ] || { echo "! classify_breaking.py rc=$CLASSIFY_RC — Breaking classification failed; human Classify labels stand, report as unverified"; exit 1; }
    echo "${BREAKING_FILE:-}" > "${TMPDIR:-/tmp}/release-breaking-file-${CSID}"
    ```
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import codemap_batch  # type: ignore[import-not-found]
 import codemap_cache  # type: ignore[import-not-found]
 import pytest
 
@@ -141,6 +142,10 @@ class TestPerModuleQueries:
             for sub, rest in _iter_calls(block)
             if any(token in ('"$mod"', '"$qn"') for token in rest)  # per-module/per-qname loop calls
         }
+        # The supplement families are issued through bin/codemap_batch.py: a family counts as emitted when the block
+        # builds it, and its queries are the helper's own table.
+        for family in re.findall(r'codemap_batch\.py" build (\w+) ', block):
+            emitted |= {cmd for cmd, *_ in codemap_batch.QUERY_FAMILIES[family]}
         assert emitted == set(codemap_cache.PER_MODULE_QUERIES)
 
 

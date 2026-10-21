@@ -38,12 +38,10 @@ NOT for:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-_DEV_SHARED=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_shared_resolve.py" 2>/dev/null)  # timeout: 5000
-[ -z "$_DEV_SHARED" ] && _DEV_SHARED="plugins/cc_develop/skills/_shared"
-echo "$_DEV_SHARED" > "${TMPDIR:-/tmp}/dev-shared-${CSID}"  # cold resolve — every later block warm-reads this
-echo "$PWD/.temp/develop/agent-watch-$(date -u +%Y-%m-%dT%H-%M-%SZ)" > "${TMPDIR:-/tmp}/dev-agent-watch-dir-${CSID}"  # fresh per run — agent-resolution.md §Agent waits
+echo "" > "${TMPDIR:-/tmp}/dev-agent-watch-dir-${CSID}"  # a prior run's dir must not outlive a failed --init; agent-resolution.md §Agent waits recreates it when empty
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_shared_resolve.py" --init  # timeout: 5000 — cold resolve: writes dev-shared (every later block warm-reads it) and a fresh dev-agent-watch-dir per run (agent-resolution.md §Agent waits)
 # loads: compaction-contract.md
-cat "$_DEV_SHARED/agent-resolution.md"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" agent-resolution.md
 ```
 
 Contains: foundry check + fallback table. If foundry not installed: substitute each `foundry:X` with `general-purpose` per table. Agents this skill uses: `foundry:sw-engineer`, `foundry:qa-specialist`, `foundry:doc-scribe`, `foundry:linting-expert`, `foundry:challenger`.
@@ -54,9 +52,7 @@ Contains: foundry check + fallback table. If foundry not installed: substitute e
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _DEV_SHARED=""  # timeout: 5000
-[ -z "$_DEV_SHARED" ] && _DEV_SHARED="plugins/cc_develop/skills/_shared"
-cat "$_DEV_SHARED/runner-detection.md"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" runner-detection.md  # timeout: 5000
 ```
 
 Sets `$TEST_CMD` (full suite) and `$PYTEST_CMD` (pytest flags). Run at skill start.
@@ -85,21 +81,12 @@ If `MULTI_LANG=true`: invoke `AskUserQuestion` — "Monorepo detected (Python + 
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _DEV_SHARED=""  # timeout: 5000
-[ -z "$_DEV_SHARED" ] && _DEV_SHARED="plugins/cc_develop/skills/_shared"
-cat "$_DEV_SHARED/preflight-helpers.md"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" preflight-helpers.md  # timeout: 5000
 ```
 
 Execute --plan path extraction; sets `$PLAN_FILE`.
 
-**Checkpoint init**: run block below to create `.developments/<TS>/`, capture path in `$DEV_DIR`. Write `checkpoint.md` inside `$DEV_DIR`. After each major step (1, 2, 3, 4, 5), append `step: N — completed` to `$DEV_DIR/checkpoint.md`. On skill start, check for existing `.developments/*/checkpoint.md` — found → offer to resume from last completed step.
-
-```bash
-# timeout: 5000
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-DEV_DIR=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_dir.py" 2>/dev/null)
-echo "$DEV_DIR" > "${TMPDIR:-/tmp}/dev-feature-dev-dir-${CSID}"
-```
+**Checkpoint init**: run block below to create `.developments/<TS>/`, capture path in `$DEV_DIR`. That block is merged into §Flag parsing. Write `checkpoint.md` inside `$DEV_DIR`. After each major step (1, 2, 3, 4, 5), stage `step: N — completed` as a record in `$DEV_DIR/checkpoint.md.rec` (Write tool) and append it with `append_ledger.py` (Growing Ledgers `.rec` staging) inside the next real Bash block, never as a call of its own. On skill start, check for existing `.developments/*/checkpoint.md` — found → offer to resume from last completed step.
 
 ## Flag parsing
 
@@ -107,13 +94,11 @@ Parse flags into actual shell variables (not prose) so downstream blocks see cor
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+DEV_DIR=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_dir.py" --persist feature)  # timeout: 5000 — also writes the dev-feature-dev-dir sentinel
+: > "${TMPDIR:-/tmp}/dev-feature-tdd-cycle-${CSID}"; : > "${TMPDIR:-/tmp}/dev-feature-tdd-start-${CSID}"  # fresh TDD caps per run; Step 3 init keeps them across Step 4→3 returns
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/extract-keep-flag.py" dev-feature "$ARGUMENTS"  # timeout: 5000 — parses --keep, clears stale contract
-```
-
-```bash
-# timeout: 10000
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_parse_args.py" \
-    --skill feature --write-files "$ARGUMENTS"
+    --skill feature --write-files "$ARGUMENTS"  # timeout: 10000
 ```
 
 Downstream blocks read back, e.g. `IFS= read -r TEAM_MODE < "${TMPDIR:-/tmp}/dev-team-mode-${CSID}" 2>/dev/null || TEAM_MODE=false`.
@@ -121,8 +106,9 @@ Downstream blocks read back, e.g. `IFS= read -r TEAM_MODE < "${TMPDIR:-/tmp}/dev
 ```bash
 # timeout: 6000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/parse-skill-flags.py" --flags worktree --value-flags issue "$ARGUMENTS")"  # timeout: 5000
-ISSUE_REF="$VALUE_ISSUE"
+# --keep-state: no eval; --inlined: Flag parsing already cleared
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/parse-skill-flags.py" --flags worktree --value-flags issue --keep-state dev-feature-args --inlined "$ARGUMENTS" >/dev/null  # timeout: 5000
+IFS= read -r ISSUE_REF < "${TMPDIR:-/tmp}/dev-feature-args-issue-${CSID}" 2>/dev/null || ISSUE_REF=""
 echo "$ISSUE_REF" > "${TMPDIR:-/tmp}/dev-issue-ref-${CSID}"
 if [ -n "$ISSUE_REF" ]; then
     IFS= read -r REPO_NAME < "${TMPDIR:-/tmp}/dev-upstream-${CSID}" 2>/dev/null || REPO_NAME=""
@@ -154,25 +140,10 @@ When `--worktree` set, offload the whole run into an isolated git worktree — *
 # timeout: 5000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r WORKTREE_ENABLED < "${TMPDIR:-/tmp}/dev-feature-worktree-${CSID}" 2>/dev/null; [ "$WORKTREE_ENABLED" = "true" ] || WORKTREE_ENABLED=false
+if [ "$WORKTREE_ENABLED" = "true" ]; then python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" worktree-isolation.md; fi
 ```
 
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _DEV_SHARED=""  # timeout: 5000
-[ -z "$_DEV_SHARED" ] && _DEV_SHARED="plugins/cc_develop/skills/_shared"
-cat "$_DEV_SHARED/worktree-isolation.md"
-```
-
-`WORKTREE_ENABLED=true` → follow §Enter (call `EnterWorktree`, warm-start codemap). Else skip — run in main tree. Remember the branch for §Exit at Final Report.
-
-**Batch mode flag** — default on, `--no-batch` opts out. Groups non-overlapping edits into fewer test runs; see `_shared/batch-mode.md` §Batch mode for the non-overlap predicate, per-edit snapshot/bisect design, and cap accounting:
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r BATCH_ENABLED < "${TMPDIR:-/tmp}/dev-feature-no-batch-${CSID}" 2>/dev/null; [ "$BATCH_ENABLED" = "false" ] || BATCH_ENABLED=true  # timeout: 5000
-```
-
-Re-read `BATCH_ENABLED` at the top of Step 3 (bash state does not persist across Bash() calls) — used only there.
+`WORKTREE_ENABLED=true` → follow §Enter (call `EnterWorktree`, warm-start codemap). Else skip — run in main tree (doc not loaded). Remember the branch for §Exit at Final Report.
 
 **Codemap auto-detection** — run after flag parsing; reads raw value, normalizes to `true`/`false`, writes normalized result so downstream blocks see post-normalization state:
 
@@ -181,16 +152,10 @@ Re-read `BATCH_ENABLED` at the top of Step 3 (bash state does not persist across
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 CODEMAP_ENABLED=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_codemap_gate.py" feature) || exit 1
 # codemap: integrated-via-shared
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" codemap-gates.md
 ```
 
 > loads: codemap-gates.md
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _DEV_SHARED=""  # timeout: 5000
-[ -z "$_DEV_SHARED" ] && _DEV_SHARED="plugins/cc_develop/skills/_shared"
-cat "$_DEV_SHARED/codemap-gates.md"
-```
 
 Follow Gate A and Gate B.
 
@@ -209,22 +174,19 @@ IFS= read -r TEAM_MODE < "${TMPDIR:-/tmp}/dev-team-mode-${CSID}" 2>/dev/null || 
 [ "$TEAM_MODE" = "true" ] && cat "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/skills/feature/modes/team-mode.md"
 ```
 
-`TEAM_MODE=true` → execute the loaded protocol now, then exit; do not continue to solo Steps 1-5. `TEAM_MODE=false` → nothing was loaded; skip to Step 1.
+`TEAM_MODE=true` → execute the loaded protocol now (it runs Step 5's quality stack and final gate, then the Final Report), then exit; do not continue to solo Steps 1-5. `TEAM_MODE=false` → nothing was loaded; skip to Step 1.
 
 ## Step 1: Understand purpose and scope
 
 Gather full context before writing any code:
 
-> **Argument type detection**: if `$ARGUMENTS` is positive integer (or prefixed with `#`, e.g. `#123`), treat as GitHub issue number and fetch with `gh issue view`. If text, treat as feature description.
->
 > **Issue ID parsing rule**: `$ARGUMENTS` with all supported flags stripped is treated as a GitHub issue number only when the *entire* remaining string is digits (optionally prefixed with `#`, e.g. `123` or `#123`) — matched via `^#?[0-9]+$` against the full flag-stripped argument, not a leading digit run. A goal like `500 error handling` correctly stays descriptive text, not issue `#500`, because the full stripped string isn't digits-only.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-# CLEAN_ARGS is the blob with every declared flag and its value removed — same strip as debug
-eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/parse-skill-flags.py" --flags no-challenge,challenge,team,worktree,batch,no-codemap,codemap,accept-no-plan --value-flags issue,repo,plan "$ARGUMENTS")"  # timeout: 5000
+IFS= read -r CLEAN_ARGS < "${TMPDIR:-/tmp}/dev-feature-clean-args-${CSID}" 2>/dev/null || CLEAN_ARGS=""  # every declared flag already stripped by Flag parsing (dev_parse_args owns the flag list); a raw "--repo o/r 42" would fail the digits-only check
 if [[ "$CLEAN_ARGS" =~ ^#?[0-9]+$ ]]; then
-  python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_issue_fetch_wrap.py" feature "$ARGUMENTS"  # timeout: 6000
+  python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_issue_fetch_wrap.py" feature "$CLEAN_ARGS"  # timeout: 6000
   ISSUE_FETCH_EXIT=$?
   [ "$ISSUE_FETCH_EXIT" -ne 0 ] && echo "⚠ issue_fetch.py failed (exit $ISSUE_FETCH_EXIT) — proceeding without issue context"
 fi
@@ -237,7 +199,7 @@ If free-text description provided: use Grep tool (pattern `<keyword>`, glob `**/
 ```bash
 # timeout: 5000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/parse-skill-flags.py" --flags worktree --value-flags plan,issue,repo "$ARGUMENTS")"  # timeout: 5000 — CLEAN_ARGS only; a flag value like `--plan x.md` would otherwise outrank the goal's module
+IFS= read -r CLEAN_ARGS < "${TMPDIR:-/tmp}/dev-feature-clean-args-${CSID}" 2>/dev/null || CLEAN_ARGS=""  # all declared flags stripped — a flag value like `--plan x.md` would otherwise outrank the goal's module
 eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/derive_codemap_target.py" "$CLEAN_ARGS")"  # timeout: 5000 — module.path or module.path::fn; both empty for net-new, so only central baseline runs
 export TARGET_MODULE TARGET_FN
 echo "$TARGET_MODULE" > ${TMPDIR:-/tmp}/dev-feature-target-module-${CSID}   # persist — reloaded by rdeps block (bash state lost between Bash() calls)
@@ -262,14 +224,13 @@ fi
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _DEV_SHARED=""  # timeout: 5000
-[ -z "$_DEV_SHARED" ] && _DEV_SHARED="plugins/cc_develop/skills/_shared"
-cat "$_DEV_SHARED/codemap-context.md"
+IFS= read -r CODEMAP_ENABLED < "${TMPDIR:-/tmp}/dev-feature-codemap-enabled-${CSID}" 2>/dev/null || CODEMAP_ENABLED="false"
+if [ "$CODEMAP_ENABLED" = "true" ]; then python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" codemap-context.md; fi  # timeout: 5000
 ```
 
-Follow the codemap block. Skip entirely if the flag is false.
+Follow the codemap block. Flag false → nothing loaded; skip entirely.
 
-Spawn **foundry:sw-engineer** agent to analyse codebase, produce:
+Arm batch `scope` in the spawn response (`agent-resolution.md` §Agent waits — no polling, per-agent deadlines). Spawn **foundry:sw-engineer** agent to analyse codebase, produce:
 
 - **Purpose**: what problem does feature solve, for which users?
 - **Scope**: which files and modules likely change (entry points, data models, tests)?
@@ -285,9 +246,7 @@ Carry the analysis summary in the Final Report. Write the full analysis to `$DEV
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _DEV_SHARED=""  # timeout: 5000
-[ -z "$_DEV_SHARED" ] && _DEV_SHARED="plugins/cc_develop/skills/_shared"
-cat "$_DEV_SHARED/plan-inline.md"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" plan-inline.md  # timeout: 5000
 ```
 
 §Inline Plan Generation Protocol. Apply using **feature** context from Skill contexts table. On proceed: set `PLAN_FILE=<path>`; continue to Step 2. On small complexity or `ACCEPT_NO_PLAN=true`: skip and continue to Step 2.
@@ -298,9 +257,7 @@ Plan-inline skipped because `--plan` was supplied or `ACCEPT_NO_PLAN=true`, **an
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _DEV_SHARED=""  # timeout: 5000
-[ -z "$_DEV_SHARED" ] && _DEV_SHARED="plugins/cc_develop/skills/_shared"
-cat "$_DEV_SHARED/premise-grounding.md"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" premise-grounding.md  # timeout: 5000
 ```
 
 §Premise Grounding Gate. Apply using **feature** context from Skill contexts table.
@@ -351,7 +308,7 @@ Skip if feature calls no external library APIs — no new framework features, no
 1. `--no-challenge` (`CHALLENGE_ENABLED=false`) → **skip gate entirely**.
 2. else → **always run**. `--challenge` (`CHALLENGE_FORCED`) is accepted for compatibility and changes nothing.
 
-Spawn `foundry:challenger` with scope analysis from Step 1 (purpose, scope, risks, approach):
+Arm batch `challenge` in the spawn response (`agent-resolution.md` §Agent waits). Spawn `foundry:challenger` with scope analysis from Step 1 (purpose, scope, risks, approach):
 
 > "Review implementation approach and scope identified in Step 1. Challenge across all 5 dimensions: Assumptions, Missing Cases, Security Risks, Architectural Concerns, Complexity Creep. Apply mandatory refutation step."
 
@@ -366,11 +323,9 @@ Parse result:
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _DEV_DIR < "${TMPDIR:-/tmp}/dev-feature-dev-dir-${CSID}" 2>/dev/null || _DEV_DIR=""
 IFS= read -r _PLAN_FILE < "${TMPDIR:-/tmp}/dev-plan-file-${CSID}" 2>/dev/null || _PLAN_FILE=""
-IFS= read -r _KEEP < "${TMPDIR:-/tmp}/dev-feature-keep-items-${CSID}" 2>/dev/null || _KEEP=""
 IFS= read -r _PYTEST_CMD < "${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}" 2>/dev/null || _PYTEST_CMD=""
 _PRESERVE="dev-dir=$_DEV_DIR, plan-file=${_PLAN_FILE:-none}, pytest-cmd=$_PYTEST_CMD"
-[ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" "develop:feature" "demo+edit (after scope analysis and plan)" "$_DEV_DIR" "$_PRESERVE" "write demo test (Step 2) → TDD loop (Step 3) → review (Step 4)"  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" --keep-sentinel dev-feature-keep-items "develop:feature" "demo+edit (after scope analysis and plan)" "$_DEV_DIR" "$_PRESERVE" "write demo test (Step 2) → TDD loop (Step 3) → review (Step 4)"  # timeout: 5000
 ```
 
 ## Step 2: Write a demo use-case
@@ -406,15 +361,19 @@ Both forms must:
 # Resolve MODULE_PATH before this block — e.g.:
 # MODULE_PATH=$(find src/ -name '*.py' | head -1)
 # DEMO_SCRIPT: examples/demo_<feature>.py for the Complex-feature form above; empty = doctest form
-# timeout: 30000
+# timeout: 600000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r PYTEST_CMD < "${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}" 2>/dev/null || PYTEST_CMD=""
 DEMO_SCRIPT=""
+set -o pipefail  # PIPESTATUS is bash-only, absent under zsh (Claude Code's Bash tool login shell on macOS)
 if [ -n "$DEMO_SCRIPT" ]; then
+    COLLECT_EXIT=5
     echo "5" > ${TMPDIR:-/tmp}/dev-feature-collect-exit-${CSID}
     echo "0" > ${TMPDIR:-/tmp}/dev-feature-gate-exit-${CSID}
     echo "$DEMO_SCRIPT" > ${TMPDIR:-/tmp}/dev-feature-demo-script-${CSID}
 else
-    set -o pipefail  # PIPESTATUS is bash-only, absent under zsh (Claude Code's Bash tool login shell on macOS)
+    [ -n "$PYTEST_CMD" ] && [ -n "$MODULE_PATH" ] || { echo "! BLOCKED — PYTEST_CMD or MODULE_PATH empty; re-run Project Detection and resolve MODULE_PATH"; exit 1; }
+    echo "$MODULE_PATH" > ${TMPDIR:-/tmp}/dev-feature-module-path-${CSID}  # later blocks reload it — bash state is lost between calls
     eval "$PYTEST_CMD --collect-only --doctest-modules \"\$MODULE_PATH\" -q" 2>&1 | tail -5; COLLECT_EXIT=$?
     if [ "$COLLECT_EXIT" -eq 5 ]; then
         echo "⚠ GATE FAIL: no demo tests collected — demo file missing or doctest malformed"
@@ -427,18 +386,11 @@ else
     echo "$COLLECT_EXIT"   > ${TMPDIR:-/tmp}/dev-feature-collect-exit-${CSID}
     : > ${TMPDIR:-/tmp}/dev-feature-demo-script-${CSID}
 fi
-```
-
-```bash
-# timeout: 600000
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r COLLECT_EXIT < "${TMPDIR:-/tmp}/dev-feature-collect-exit-${CSID}" 2>/dev/null || COLLECT_EXIT="1"
-IFS= read -r GATE_EXIT < "${TMPDIR:-/tmp}/dev-feature-gate-exit-${CSID}" 2>/dev/null || GATE_EXIT="1"
-IFS= read -r DEMO_SCRIPT < "${TMPDIR:-/tmp}/dev-feature-demo-script-${CSID}" 2>/dev/null || DEMO_SCRIPT=""
-# doctest form — MODULE_PATH resolved above; example-script form — DEMO_SCRIPT set, COLLECT_EXIT=5 by design
-set -o pipefail  # PIPESTATUS is bash-only, absent under zsh (Claude Code's Bash tool login shell on macOS)
+# run — doctest form needs COLLECT_EXIT=0; example-script form has DEMO_SCRIPT set, COLLECT_EXIT=5 by design
 if [ "${COLLECT_EXIT:-1}" -eq 0 ]; then
     eval "$PYTEST_CMD --doctest-modules \"\$MODULE_PATH\" -v" 2>&1 | tail -10; GATE_EXIT=$?
+    # 127 = runner missing, 4 = usage/bad node: neither is a red demo — fail closed, never fall to GATE OK
+    case "$GATE_EXIT" in 127|4) echo "! GATE ERROR: runner exit $GATE_EXIT (command not found / usage error) — not a red demo; fix PYTEST_CMD/MODULE_PATH"; echo "$GATE_EXIT" > ${TMPDIR:-/tmp}/dev-feature-gate-exit-${CSID}; exit 1;; esac
     if [ "${GATE_EXIT:-0}" -eq 0 ]; then
         echo "⚠ GATE FAIL: demo passed (exit 0) — feature may already exist; revisit Step 1"
     else
@@ -454,19 +406,13 @@ elif [ -n "$DEMO_SCRIPT" ]; then
     fi
     echo "$GATE_EXIT" > ${TMPDIR:-/tmp}/dev-feature-gate-exit-${CSID}
 fi
-```
-
-If `COLLECT_EXIT -ne 0` and `DEMO_SCRIPT` is empty (doctest form): stop — collection failed, gate skipped (GATE_EXIT=1). Example-script form (`DEMO_SCRIPT` set) skips collection by design — `COLLECT_EXIT=5` there is expected, not a failure. If `GATE_EXIT -eq 0`: invoke `AskUserQuestion` — never silently proceed past a gate failure with prose alone: "Demo passed against current code — feature may already exist. How to proceed?" · (a) **Stop** — revisit Step 1 scope (recommended; feature likely already implemented) · (b) **Continue anyway** — proceed with TDD loop (gate explicitly overridden). On Stop: exit; never advance to Step 3.
-
-```bash
-# timeout: 3000
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r COLLECT_EXIT < "${TMPDIR:-/tmp}/dev-feature-collect-exit-${CSID}" 2>/dev/null || COLLECT_EXIT="1"
 if [ "$COLLECT_EXIT" -ne 0 ] && [ "$COLLECT_EXIT" -ne 5 ]; then
     echo "! GATE FAIL: demo collection failed (exit $COLLECT_EXIT) — fix the import error or malformed doctest before Step 3"
     exit 1
 fi
 ```
+
+If `COLLECT_EXIT -ne 0` and `DEMO_SCRIPT` is empty (doctest form): stop — collection failed, gate skipped (GATE_EXIT=1). Example-script form (`DEMO_SCRIPT` set) skips collection by design — `COLLECT_EXIT=5` there is expected, not a failure. If `GATE_EXIT -eq 0`: invoke `AskUserQuestion` — never silently proceed past a gate failure with prose alone: "Demo passed against current code — feature may already exist. How to proceed?" · (a) **Stop** — revisit Step 1 scope (recommended; feature likely already implemented) · (b) **Continue anyway** — proceed with TDD loop (gate explicitly overridden). On Stop: exit; never advance to Step 3.
 
 ### Review: Validate the demo
 
@@ -481,11 +427,16 @@ If issue found: revise demo, re-run gate. Never proceed to Step 3 with flawed AP
 
 ## Step 3: TDD implementation loop
 
-**TDD test ownership**: lead (or foundry:sw-engineer if delegated) writes all red-green demo and TDD tests in Steps 2–3. foundry:qa-specialist must NOT write primary demo or red-green tests in any mode — qa-specialist adds edge-case, boundary, regression tests after implementation complete (Step 4). Rule applies in both solo and team mode.
+**Test-run policy** — inside the Step 3 TDD loop and the Step 4 review loop, tests run targeted only (`dev_test_targets.py`), never the full directory. The full suite runs at the final gate once the loops are clean, and again after any fix to a full-suite failure (§Final gate).
+
+**TDD test ownership**: lead (or foundry:sw-engineer if delegated) writes all red-green demo and TDD tests in Steps 2–3. foundry:qa-specialist must NOT write primary demo or red-green tests in any mode — qa-specialist adds edge-case, boundary, regression tests only after implementation is complete — team mode Wave 2, or the quality stack's Progressive Review when it flags test gaps; solo Step 4 spawns no qa-specialist. Rule applies in both solo and team mode.
 
 Drive implementation by making tests pass, one cycle at a time:
 
 ```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r PYTEST_CMD < "${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}" 2>/dev/null || PYTEST_CMD=""
+[ -n "$PYTEST_CMD" ] || { echo "! BLOCKED — PYTEST_CMD unresolved; re-run Project Detection"; exit 1; }
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/run_pytest_short.py" "$PYTEST_CMD" <target_test_dir>  # timeout: 600000
 GATE_EXIT=$?
 ```
@@ -496,51 +447,22 @@ GATE_EXIT=$?
 
 (Use Glob tool — `pattern: **/test_*.py` — to discover test directories if `<target_test_dir>` unknown; check `pyproject.toml` `[tool.pytest.ini_options] testpaths` first)
 
-**Safety break** (mirrors refactor's guard — the only other bounded loop in this plugin): initialize cycle counter + wall clock via temp files (bash state lost between Bash() calls):
+**Safety break** (mirrors refactor's guard — the only other bounded loop in this plugin): cycle counter + wall clock live in temp files (bash state lost between Bash() calls), initialized by the Batch mode gate block below.
 
-```bash
-# timeout: 3000
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-echo "0"           > ${TMPDIR:-/tmp}/dev-feature-tdd-cycle-${CSID}
-echo "$(date +%s)" > ${TMPDIR:-/tmp}/dev-feature-tdd-start-${CSID}
-```
-
-**Batch mode gate** — re-read `BATCH_ENABLED` (bash state does not persist across Bash() calls):
+**Batch mode gate** — default on, `--no-batch` opts out; groups non-overlapping edits into fewer test runs (`_shared/batch-mode.md` §Batch mode: non-overlap predicate, per-edit snapshot/bisect design, cap accounting); the same block initializes the Safety-break counters:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r BATCH_ENABLED < "${TMPDIR:-/tmp}/dev-feature-no-batch-${CSID}" 2>/dev/null; [ "$BATCH_ENABLED" = "false" ] || BATCH_ENABLED=true  # timeout: 5000
-if [ "$BATCH_ENABLED" = "true" ]; then
-    echo "feature" > "${TMPDIR:-/tmp}/dev-batch-skill-${CSID}"  # batch-mode.md's own fences read this back — never a literal <skill> placeholder
-    IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _DEV_SHARED=""
-    [ -z "$_DEV_SHARED" ] && _DEV_SHARED="plugins/cc_develop/skills/_shared"
-    cat "$_DEV_SHARED/batch-mode.md"
-fi
+if python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_batch_gate.py" feature; then python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" batch-mode.md; fi  # timeout: 5000 — batch mode on: writes dev-batch-skill, which batch-mode.md's own fences read back (never a literal <skill> placeholder); off: prints the verdict, loads nothing — gate exits 1, `if` keeps the call at 0 so the opt-out never renders as an error
+[ -s "${TMPDIR:-/tmp}/dev-feature-tdd-cycle-${CSID}" ] || echo "0"           > ${TMPDIR:-/tmp}/dev-feature-tdd-cycle-${CSID}  # once per run (Flag parsing truncates): Step 4→3 returns keep counting
+[ -s "${TMPDIR:-/tmp}/dev-feature-tdd-start-${CSID}" ] || echo "$(date +%s)" > ${TMPDIR:-/tmp}/dev-feature-tdd-start-${CSID}
 ```
 
-`BATCH_ENABLED=true` (default) → follow the loaded §Batch mode procedure (feature context) for this loop instead of running steps 1-7 below once per piece of functionality — group non-overlapping pieces into a batch, one run per batch, bisect on failure. Scope stays this loop only; the Step 4 review loop keeps its own unbatched `test-impact`-scoped re-runs. `BATCH_ENABLED=false` (`--no-batch`) → continue below unchanged.
+Gate prints `batch mode: on` (default) and loads batch-mode.md → follow the loaded §Batch mode procedure (feature context) for this loop instead of running steps 1-7 below once per piece of functionality — group non-overlapping pieces into a batch, one run per batch, bisect on failure. Scope stays this loop only; the Step 4 review loop keeps its own unbatched `test-impact`-scoped re-runs. Gate prints `batch mode: off` (`--no-batch`; the call still exits 0) → continue below unchanged.
 
 Start from Step 2 demo — already failing, becomes first target. For each piece of functionality (or, in batch mode, per non-overlapping batch member):
 
-1. **Run existing suite — confirm all pass** (baseline before adding anything) — **first cycle only**. Later cycles never re-run the whole directory: each cycle's step 6 verifies the tests its change touches, and the full suite does not run again inside this loop — it runs at the final gate once the loop is clean, and again after any fix to a full-suite failure (§Final gate):
-
-   ```bash
-   # timeout: 600000
-   export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-   IFS= read -r TDD_CYCLE < "${TMPDIR:-/tmp}/dev-feature-tdd-cycle-${CSID}" 2>/dev/null || TDD_CYCLE="0"
-   IFS= read -r PYTEST_CMD < "${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}" 2>/dev/null || PYTEST_CMD=""
-   set -o pipefail  # PIPESTATUS is bash-only, absent under zsh (Claude Code's Bash tool login shell on macOS)
-   if [ "$TDD_CYCLE" -eq 0 ]; then
-       # --ignore assumes new test is a discrete file; appended-to-existing-file case needs pytest node-ID deselection instead
-       eval "$PYTEST_CMD --tb=short <target_test_dir> -v --ignore=<new_test_file>" 2>&1 | tail -20
-       GATE_EXIT=$?
-   else
-       echo "→ baseline proven at cycle 0; this cycle verifies through step 6's targeted run"
-       GATE_EXIT=0
-   fi
-   ```
-
-   `<new_test_file>` is the test this cycle is about to add (first iteration: the Step 2 demo — no `--ignore` needed). Excluding it is the point when this run executes: it establishes the pre-change baseline, and the new red test must not count against it.
+1. **Existing suite baseline** — the pre-loop gate above already ran `<target_test_dir>` before any edit (the Step 2 demo is a doctest or script, outside that directory); never re-run it here. Every cycle: baseline proven at cycle 0 by that gate; this cycle verifies through step 6's targeted run (Test-run policy).
 
 2. **Target demo or write next focused test** — first iteration uses Step 2 demo directly; subsequent iterations add one new test per piece of new behaviour
 
@@ -555,28 +477,26 @@ Start from Step 2 demo — already failing, becomes first target. For each piece
    python examples/demo_<feature>.py 2>&1 | tail -5
    ```
 
-4. **Implement minimal code** (spawn **foundry:sw-engineer** agent for non-trivial logic):
+4. **Implement minimal code** (arm batch `other` in the spawn response — `agent-resolution.md` §Agent waits — then spawn **foundry:sw-engineer** agent for non-trivial logic):
 
    - Reuse or extend existing code identified in Step 1 — prefer subclassing or composing over parallel reimplementation
    - Match project's existing patterns (naming, error handling, type annotations)
 
 5. **Run demo/test — confirm it passes**
 
-6. **Run affected tests** — targeted only; never the full directory inside this loop. One call selects and runs: `codemap-py query test-impact` per changed module when available, path heuristics otherwise (name-matched tests plus tests importing the module); this cycle's new tests are selected as changed files:
+6. **Run affected tests** — targeted only (Test-run policy). One call selects and runs: `codemap-py query test-impact` per changed module when available, path heuristics otherwise (name-matched tests plus tests importing the module); this cycle's new tests are selected as changed files:
 
    ```bash
    # timeout: 600000
    export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-   IFS= read -r PYTEST_CMD < "${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}" 2>/dev/null || PYTEST_CMD=""
-   IFS= read -r DEV_DIR < "${TMPDIR:-/tmp}/dev-feature-dev-dir-${CSID}" 2>/dev/null || DEV_DIR=""
-   python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_test_targets.py" --pytest-cmd "$PYTEST_CMD" --run --record-dir "${DEV_DIR:-.developments}"
+   python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_test_targets.py" --skill feature --run
    ```
 
    The first output line is the selection JSON — surface any `codemap.partial`/`codemap.fell_back` count and every `not_covered` entry (`⚠ not_covered — some changed code has no mapped test`) as a coverage caveat; the selection and full log are recorded under `$DEV_DIR/test-targets.jsonl`. Empty selection (`note` set) → say nothing ran beyond step 5.
 
 7. Regressions appear → fix before moving on — never carry forward broken suite
 
-After each cycle, refresh compaction contract so a mid-loop compaction resumes TDD loop instead of restarting Step 2 demo, then read back cycle count/start, increment, and check caps — stop at `MAX_INNER_CYCLES=5` or 30-min wall cap; on trip: stop loop, report what passed/failed/remains, invoke `AskUserQuestion` — (a) continue N more cycles · (b) re-scope · (c) stop here. `BATCH_ENABLED=true` counts **edits processed**, not passes through the loop: `BATCH_SIZE` is the number of non-overlapping members the just-closed batch contained (1 when batch mode is off or no batch formed — cap accounting then matches today's per-edit behavior exactly):
+After each cycle, refresh compaction contract so a mid-loop compaction resumes TDD loop instead of restarting Step 2 demo, then read back cycle count/start, increment, and check caps — stop at `MAX_INNER_CYCLES=5` or 30-min wall cap; on trip: stop loop, report what passed/failed/remains, invoke `AskUserQuestion` — (a) continue N more cycles · (b) re-scope · (c) stop here. With batch mode on, the loop counts **edits processed**, not passes through the loop: `BATCH_SIZE` is the number of non-overlapping members the just-closed batch contained (1 when batch mode is off or no batch formed — cap accounting then matches today's per-edit behavior exactly):
 
 ```bash
 # boundary-1 (Step 1) says next=Step 2 demo; skip this and mid-Step-3 compaction restarts demo — idempotent but wastes spawns+tests. checkpoint.md lists completed steps for resume.
@@ -584,19 +504,14 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _DEV_DIR < "${TMPDIR:-/tmp}/dev-feature-dev-dir-${CSID}" 2>/dev/null || _DEV_DIR=""
 IFS= read -r _PYTEST_CMD < "${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}" 2>/dev/null || _PYTEST_CMD=""
 IFS= read -r _PLAN_FILE < "${TMPDIR:-/tmp}/dev-plan-file-${CSID}" 2>/dev/null || _PLAN_FILE=""
-IFS= read -r _KEEP < "${TMPDIR:-/tmp}/dev-feature-keep-items-${CSID}" 2>/dev/null || _KEEP=""
 # tracked mods AND untracked new files — new TDD files untracked until staged; git diff alone drops them
 _CHANGED=$( { git diff --name-only HEAD 2>/dev/null; git ls-files --others --exclude-standard 2>/dev/null; } | sort -u | tr '\n' ' ' | sed 's/ *$//')
 _PRESERVE="dev-dir=$_DEV_DIR, changed-files=$_CHANGED, pytest-cmd=$_PYTEST_CMD, plan-file=${_PLAN_FILE:-none}, checkpoint=$_DEV_DIR/checkpoint.md"
-[ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" "develop:feature" "TDD loop in progress (Step 3)" "$_DEV_DIR" "$_PRESERVE" "re-run suite to see current green state, then continue TDD for remaining behaviour — do NOT restart the Step 2 demo. checkpoint.md lists completed steps."  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" --keep-sentinel dev-feature-keep-items "develop:feature" "TDD loop in progress (Step 3)" "$_DEV_DIR" "$_PRESERVE" "re-run suite to see current green state, then continue TDD for remaining behaviour — do NOT restart the Step 2 demo. checkpoint.md lists completed steps."  # timeout: 5000
 IFS= read -r TDD_CYCLE < "${TMPDIR:-/tmp}/dev-feature-tdd-cycle-${CSID}" 2>/dev/null || TDD_CYCLE="0"
 IFS= read -r TDD_START < "${TMPDIR:-/tmp}/dev-feature-tdd-start-${CSID}" 2>/dev/null || TDD_START=$(date +%s)
-# BATCH_SIZE is written once by batch-mode.md when a batch closes, consumed here, then reset to
-# "1" in this same read-and-reset step (round-5 F5/F8) — an `rm -f`-based separate clear fence
-# relied on a later prose step running, which a MAX_INNER_CYCLES/wall-cap/abort exit skips,
-# leaving a stale non-1 value to double-count the next cycle; this reset can't be skipped, since
-# it happens in the same fence as the read that would otherwise be under-consumed.
+# BATCH_SIZE: written by batch-mode.md on batch close; read+reset to "1" in same fence — a separate
+# clear fence is skipped by a cap/abort exit, leaving a stale value to double-count the next cycle.
 IFS= read -r BATCH_SIZE < "${TMPDIR:-/tmp}/dev-feature-batch-size-${CSID}" 2>/dev/null || BATCH_SIZE=""
 TDD_CYCLE=$((TDD_CYCLE + ${BATCH_SIZE:-1}))
 echo "$TDD_CYCLE" > ${TMPDIR:-/tmp}/dev-feature-tdd-cycle-${CSID}
@@ -647,14 +562,12 @@ Use scan to prioritize which criteria below get deepest scrutiny.
 
 2. Every gap found → implement fix immediately — add missing tests, remove dead code, revert out-of-scope edits. Return to Step 3 for substantive implementation gap needing new TDD cycle.
 
-3. Re-run the tests this cycle's fixes touch to confirm nothing regressed — targeted only, same block as Step 3 item 6; the full suite never runs inside this loop — it runs at the final gate once the loop is clean, and again after any fix to a full-suite failure (§Final gate):
+3. Re-run the tests this cycle's fixes touch to confirm nothing regressed — targeted only, same block as Step 3 item 6 (Test-run policy):
 
    ```bash
    # timeout: 600000
    export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-   IFS= read -r PYTEST_CMD < "${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}" 2>/dev/null || PYTEST_CMD=""
-   IFS= read -r DEV_DIR < "${TMPDIR:-/tmp}/dev-feature-dev-dir-${CSID}" 2>/dev/null || DEV_DIR=""
-   python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_test_targets.py" --pytest-cmd "$PYTEST_CMD" --run --record-dir "${DEV_DIR:-.developments}"
+   python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_test_targets.py" --skill feature --run
    ```
 
    > **Objective convergence check**: findings in this cycle identical to previous cycle (same locations, same issues) → declare convergence, exit loop — further cycles won't resolve; surface to user.
@@ -669,7 +582,7 @@ When stopping with unresolved issues, use the **Incomplete Report Variant** from
 
 ## Step 5: Documentation
 
-Spawn **foundry:doc-scribe** agent to update docstrings and README only (doc-scribe NOT-for: CHANGELOG — route separately):
+Arm batch `other` in the spawn response (`agent-resolution.md` §Agent waits). Spawn **foundry:doc-scribe** agent to update docstrings and README only (doc-scribe NOT-for: CHANGELOG — route separately):
 
 - Add or update **docstrings** on new/modified functions and classes (Google style — Napoleon)
 - Update module-level docstring if feature adds significant capability
@@ -688,6 +601,9 @@ Agent must Read each affected source file before writing docstrings — never wr
 
 ```bash
 # timeout: 600000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r PYTEST_CMD < "${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}" 2>/dev/null || PYTEST_CMD=""
+[ -n "$PYTEST_CMD" ] || { echo "! BLOCKED — PYTEST_CMD unresolved; re-run Project Detection"; exit 1; }
 set -o pipefail  # PIPESTATUS is bash-only, absent under zsh (Claude Code's Bash tool login shell on macOS)
 eval "$PYTEST_CMD --doctest-modules <target_module> -v" 2>&1 | tail -20
 GATE_EXIT=$?
@@ -698,10 +614,11 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _DEV_SHARED=""
 [ -z "$_DEV_SHARED" ] && _DEV_SHARED="plugins/cc_develop/skills/_shared"
 _SHARED="$_DEV_SHARED"  # foundry--quality-stack.md loads its siblings from $_SHARED — this plugin's own _shared
-cat "$_DEV_SHARED/foundry--quality-stack.md"
+echo "$_SHARED" > "${TMPDIR:-/tmp}/qs-shared-dir-${CSID}"  # quality-stack fences reload it; missing = BLOCKED
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" foundry--quality-stack.md  # timeout: 5000
 ```
 
-Execute Branch Safety Guard, Quality Stack, Codex Pre-pass, Progressive Review Loop, and Codex Mechanical Delegation steps. `foundry--quality-stack.md` ships in this plugin's own `_shared` (propagated foundry canonical, source-plugin prefix), so it is always present — absence means a broken install, not a missing optional dependency. Its directory-wide pytest run is the final gate's first full-suite run; it runs again only after code changes (§Final gate rerun).
+Execute Branch Safety Guard, Quality Stack, Codex Pre-pass, Progressive Review Loop, and Codex Mechanical Delegation steps. `foundry--quality-stack.md` ships in this plugin's own `_shared` (propagated foundry canonical, source-plugin prefix), so it is always present — absence means a broken install, not a missing optional dependency. Its directory-wide pytest run counts as the final gate's first full-suite run only when `$TEST_CMD` is that same pytest invocation (`pytest`, `python -m pytest`, `uv run pytest`, `poetry run pytest`); a `tox -q` or `make test` repository never ran its own command in the stack, so run the block below once even when no code changed. It runs again after code changes (§Final gate rerun).
 
 **Final gate rerun — full suite with the repository's own command**, after any code change that follows the quality stack's wide run — a Progressive Review fix, or any fix to a full-suite failure (the stack halting on a genuine failure, or this block failing) — a fix can break something outside the targeted set, and the stack's own re-checks are scoped. A suite that may outlive the ~10 min foreground cap runs as a background Bash call (`run_in_background: true`): end the turn, its exit re-invokes you, no polling. Non-zero → fix (rerun the failing node ids while fixing — never the verification), then rerun this block in full. Max 3 gate iterations; at the cap stop, surface the remaining failures, and never report the suite green. A green full suite is the last test evidence before the Final Report:
 
@@ -713,7 +630,7 @@ IFS= read -r TEST_CMD < "${TMPDIR:-/tmp}/dev-test-cmd-${CSID}" 2>/dev/null || TE
 eval "$TEST_CMD"
 ```
 
-**Branch Safety Guard — no test suite**: no test suite found (pytest collects 0 tests or `$TEST_CMD` not set) → log `⚠ No test suite detected — Branch Safety Guard weakened`, require explicit user confirmation before proceeding past guard.
+**Branch Safety Guard — no test suite**: no test suite found (the full-suite run above exits 5 — pytest collected 0 tests; a missing `$TEST_CMD` is the `! BLOCKED` above, never this branch) → log `⚠ No test suite detected — Branch Safety Guard weakened`, require explicit user confirmation before proceeding past guard.
 
 ## Final Report
 

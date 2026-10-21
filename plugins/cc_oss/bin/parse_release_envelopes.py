@@ -29,6 +29,14 @@ import sys
 import tempfile
 from pathlib import Path
 
+#: Sibling import: bin/ is not a package. Putting it on the path resolves the private writer whether this file runs as
+#: a script, under the test conftest, or as a doctest module.
+_BIN_DIR = str(Path(__file__).resolve().parent)
+if _BIN_DIR not in sys.path:
+    sys.path.insert(0, _BIN_DIR)
+
+from _sentinel_io import write_private_text  # noqa: E402
+
 
 def _within_root(path: Path, root: Path) -> bool:
     """Return ``True`` when ``path`` resolves at or under ``root``.
@@ -120,7 +128,7 @@ def _write_sentinel(name: str, value: str) -> None:
     if _DRY_RUN:
         print(f"[dry-run] would write {name}={value}")
         return
-    _sentinel_path(name).write_text(f"{value}\n", encoding="utf-8", newline="\n")
+    write_private_text(_sentinel_path(name), f"{value}\n")
 
 
 def load_envelope(raw: str) -> dict | None:

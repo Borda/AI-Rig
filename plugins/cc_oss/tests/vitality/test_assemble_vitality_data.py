@@ -548,6 +548,48 @@ def test_missing_group1_dir_exits_1(tmp_path: Path, capsys: pytest.CaptureFixtur
     assert not data_file.exists()
 
 
+def test_oversized_group1_file_counts_as_failed_fetch(
+    tmp_path: Path, group1_dir: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Treat a Group 1 file over the size cap as a failed fetch: warn, list it missing, still assemble the rest.
+
+    The file holds repository-controlled data; reading it whole would let one repository exhaust memory, while aborting
+    the run would lose every other dataset.
+    """
+    # Arrange — cap above every other fixture file and the Group 2 canaries, below the one oversized dataset
+    monkeypatch.setattr(avd, "_MAX_INPUT_CHARS", 1000)
+    (group1_dir / "open_issues.json").write_text(json.dumps([{"number": n} for n in range(200)]), encoding="utf-8")
+    data_file = tmp_path / "raw.jsonl"
+
+    # Act
+    envelope = _run(data_file, group1_dir, capsys)
+
+    # Assert
+    assert ("open_issues" in envelope["missing_required"], "open_issues" in _records(data_file)) == (True, False)
+
+
+def test_oversized_data_file_exits_1_and_keeps_it(
+    tmp_path: Path, group1_dir: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Exit 1 and leave DATA_FILE untouched when the records already in it exceed the size cap.
+
+    Silently dropping them would score a README or CI history that Group 2 did fetch as absent.
+    """
+    # Arrange
+    monkeypatch.setattr(avd, "_MAX_INPUT_CHARS", 64)
+    data_file = tmp_path / "raw.jsonl"
+    oversized = json.dumps({"type": "readme_content", "data": "x" * 100}) + "\n"
+    data_file.write_text(oversized, encoding="utf-8")
+
+    # Act
+    rc = avd.main(["--data-file", str(data_file), "--group1-dir", str(group1_dir), "--repo", _REPO])
+
+    # Assert
+    assert rc == 1
+    assert "exceeds 64 characters" in capsys.readouterr().err
+    assert data_file.read_text(encoding="utf-8") == oversized
+
+
 @pytest.mark.parametrize("repo", ["no-slash", "o/r;rm"])
 def test_invalid_repo_is_rejected(tmp_path: Path, group1_dir: Path, repo: str) -> None:
     """Reject an owner/repo slug outside the allowed character set before writing anything."""

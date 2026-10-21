@@ -4,7 +4,6 @@ description: "Post-install setup for the oss plugin. Run once after installing o
 argument-hint: '[--approve]'
 allowed-tools: Bash, AskUserQuestion
 effort: low
-model: sonnet
 ---
 
 <objective>
@@ -47,15 +46,9 @@ Parse `$ARGUMENTS` for `--approve` (case-insensitive) → `APPROVE_ALL=true`, el
 ## Step 1: Python
 
 ```bash
-PYTHON_CMD=""
-for c in python python3; do
-    command -v "$c" >/dev/null 2>&1 && "$c" --version 2>/dev/null | grep -qE "Python 3\.(1[0-9]|[2-9][0-9])" && PYTHON_CMD="$c" && break
-done
-if [ -z "$PYTHON_CMD" ] && command -v py >/dev/null 2>&1 && py -3 --version 2>/dev/null | grep -qE "Python 3\.(1[0-9]|[2-9][0-9])"; then
-    PYTHON_CMD="py -3"
-fi
-[ -z "$PYTHON_CMD" ] && { printf "! Python 3.10+ not found — install it and re-run /oss:setup\n"; exit 1; }
-printf "  Python: %s\n" "$PYTHON_CMD"
+# later steps run bare `python` (plugin bin/python shim on PATH) — probe that exact command
+python --version 2>&1 | grep -qE "Python 3\.(1[0-9]|[2-9][0-9])" || { printf "! Python 3.10+ not found as 'python' — install it and re-run /oss:setup\n"; exit 1; }
+printf "  Python: %s\n" "$(python --version 2>&1)"
 ```
 
 ## Step 2: Dry run — see what would change
@@ -100,68 +93,30 @@ On **(b)**, re-run Step 3's command with `--approve` appended and report the res
 
 This plugin ships its own `permissions-allow.json` and `permissions-deny.json`. Claude Code doesn't read them from plugin manifest, so without this step they're inert files — allow entries never suppress a prompt, deny entries never block anything.
 
-Merge is idempotent: `unique` keeps existing entries from duplicating. Each plugin merges only its own pair; the allow merge removes the two exact retired allow rules and preserves every other entry.
+Merge is idempotent: existing entries never duplicate. Each plugin merges only its own pair; the allow merge removes the two exact retired allow rules and preserves every other entry.
 
-Create the file on first install, back it up before any write — a standalone install may reach this step with no `~/.claude/settings.json` at all:
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-SETUP_BAK_TS=$(date -u +%Y-%m-%dT%H-%M-%SZ)
-echo "$SETUP_BAK_TS" > "${TMPDIR:-/tmp}/oss-setup-bak-ts-${CSID}"
-[ -f ~/.claude/settings.json ] || printf '{}\n' > ~/.claude/settings.json  # created in-bash — no Write-tool prompt, headless-safe
-cp ~/.claude/settings.json "$HOME/.claude/settings.json.bak-${SETUP_BAK_TS}"  # timeout: 5000
-```
-
-Report: "Backed up ~/.claude/settings.json → ~/.claude/settings.json.bak-<timestamp>"
-
-Before merging, remove only two exact retired allow entries, each shipped by an earlier oss version:
+The merge removes only two exact retired allow entries, each shipped by an earlier oss version:
 
 - `Bash(gh api repos/*:*)` — nothing replaces it; the broad repository API allow entry is no longer shipped.
 - `Bash(uv pip install:*)` — nothing replaces it. It auto-approved every `uv pip install`, including the review overlay's support check and wheel fetch, which must each reach their own permission prompt, and project-environment installs or source builds the overlay forbids.
 
 Preserve every other user allow entry, all deny entries, and unrelated settings.
 
-Writes merged `permissions.allow` array:
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}"
-_jq_result=$(jq --slurpfile perms "$PLUGIN_ROOT/.claude-plugin/permissions-allow.json" \
-    '.permissions.allow = (((.permissions.allow // []) | map(select(. != "Bash(gh api repos/*:*)" and . != "Bash(uv pip install:*)"))) + $perms[0] | unique)' \
-    ~/.claude/settings.json)  # timeout: 5000
-[ $? -eq 0 ] && [ -n "$_jq_result" ] && printf '%s\n' "$_jq_result" > "${TMPDIR:-/tmp}/oss_setup_tmp.json-${CSID}" && mv "${TMPDIR:-/tmp}/oss_setup_tmp.json-${CSID}" ~/.claude/settings.json || { printf "! jq failed merging permissions.allow — settings.json unchanged\n"; exit 1; }
-```
-
-Report: "Added N new permissions.allow entries (M already present)." Also report which of the two retired allow rules were removed.
-
-Writes merged `permissions.deny` array:
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}"
-_jq_result=$(jq --slurpfile deny "$PLUGIN_ROOT/.claude-plugin/permissions-deny.json" \
-    '.permissions.deny = (((.permissions.deny // []) + $deny[0]) | unique)' \
-    ~/.claude/settings.json)  # timeout: 5000
-[ $? -eq 0 ] && [ -n "$_jq_result" ] && printf '%s\n' "$_jq_result" > "${TMPDIR:-/tmp}/oss_setup_tmp.json-${CSID}" && mv "${TMPDIR:-/tmp}/oss_setup_tmp.json-${CSID}" ~/.claude/settings.json || { printf "! jq failed merging permissions.deny — settings.json unchanged\n"; exit 1; }
-```
-
-Report: "Added N new permissions.deny entries (M already present)."
-
 Deny wins over allow in Claude Code, so merging both in either order yields the same effective policy.
 
-Validate what was written; settings.json that no longer parses is restored from the backup taken above:
+One block runs the whole step: create the file on first install (a standalone install may reach this step with no `~/.claude/settings.json` at all), back it up before any write, merge, then validate. `merge_settings_permissions.py` writes the merged `permissions.allow` and `permissions.deny` arrays in one atomic write, so allow never lands without deny; a missing or invalid shipped file aborts the block with settings unchanged. settings.json that no longer parses is restored from the backup taken at the top of the block:
 
 ```bash
-jq empty ~/.claude/settings.json  # timeout: 5000
+SETUP_BAK_TS=$(date -u +%Y-%m-%dT%H-%M-%SZ)
+[ -f ~/.claude/settings.json ] || printf '{}\n' > ~/.claude/settings.json  # created in-bash — no Write-tool prompt, headless-safe
+cp ~/.claude/settings.json "$HOME/.claude/settings.json.bak-${SETUP_BAK_TS}"  # timeout: 5000
+printf "Backed up ~/.claude/settings.json → ~/.claude/settings.json.bak-%s\n" "$SETUP_BAK_TS"
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/merge_settings_permissions.py" --allow "$PLUGIN_ROOT/.claude-plugin/permissions-allow.json" --drop-allow 'Bash(gh api repos/*:*)' --drop-allow 'Bash(uv pip install:*)' --drop-allow 'Bash(claude:*)' --drop-allow 'Bash(find:*)' --drop-allow 'Bash(node:*)' --drop-allow 'Bash(sed:*)' --deny "$PLUGIN_ROOT/.claude-plugin/permissions-deny.json" || { printf "! permissions merge failed — settings.json unchanged\n"; exit 1; }  # timeout: 5000
+python -m json.tool ~/.claude/settings.json > /dev/null || { cp "$HOME/.claude/settings.json.bak-${SETUP_BAK_TS}" ~/.claude/settings.json; printf "! settings.json no longer parses — restored from backup\n"; exit 1; }  # timeout: 5000 — Step 1 guarantees python; jq may be absent (native Windows), and its exit 127 would restore the backup over a good merge
 ```
 
-Zero exit → continue to Step 6. Non-zero exit → restore, report the failure, and stop:
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r SETUP_BAK_TS < "${TMPDIR:-/tmp}/oss-setup-bak-ts-${CSID}" 2>/dev/null || SETUP_BAK_TS=$(ls -t "$HOME/.claude/settings.json.bak-"* 2>/dev/null | head -1 | sed 's/.*\.bak-//')
-cp "$HOME/.claude/settings.json.bak-${SETUP_BAK_TS}" ~/.claude/settings.json  # timeout: 5000
-```
+Report the backup path the block printed. From the script's two output lines report "Added N new permissions.allow entries (M already present)." plus how many of the two retired allow rules were removed (`dropped`), and "Added N new permissions.deny entries (M already present)." Zero exit → continue to Step 6. Non-zero exit → the block already restored (validation failure) or left settings unchanged (merge failure); report the failure and stop.
 
 ## Step 6: Report
 

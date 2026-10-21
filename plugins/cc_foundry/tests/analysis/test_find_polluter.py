@@ -93,10 +93,17 @@ class TestIsSafeNodeId:
             "tests/test_foo.py::test_bar(call)",
             "tests/test_foo.py::test_bar&background",
             "tests/test_foo.py::test_bar$VAR",
+            "-pplugin::test_bar",
+            "--rootdir=/tmp::test_bar",
+            "@args.txt::test_bar",
         ],
     )
     def test_unsafe_ids_rejected(self, node_id: str) -> None:
-        """Node IDs containing shell metacharacters or empty string are rejected."""
+        """Node IDs containing shell metacharacters, option-shaped or args-from-file IDs, or empty string are rejected.
+
+        A leading ``-`` (``-pplugin`` imports a module from the working directory) or ``@`` (recursive args-from-file)
+        contains no metacharacter yet still changes what pytest does with the argument.
+        """
         assert find_polluter._is_safe_node_id(node_id) is False
 
 
@@ -342,6 +349,38 @@ class TestMain:
         assert rc == 1
         err = capsys.readouterr().err
         assert "rejected" in err.lower() or "metacharacter" in err.lower()
+
+    def test_option_shaped_failing_test_id_rejected(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """A failing-test ID reaching validation through ``--`` with a leading ``-`` is rejected; return code 1."""
+        rc = find_polluter.main(["--", "-pplugin::test_x"])
+        assert rc == 1
+        assert "rejected" in capsys.readouterr().err
+
+    @pytest.mark.parametrize("test_dir", ["-pplugin", "@args.txt"])
+    def test_option_shaped_test_dir_rejected(self, test_dir: str, capsys: pytest.CaptureFixture[str]) -> None:
+        """A ``test_dir`` pytest would read as an option or args-from-file is rejected before any pytest run.
+
+        Such a value resolves under the working directory, so the path-traversal check alone lets it through; a leading
+        ``-`` reaches validation only after the ``--`` separator, since argparse refuses it earlier.
+        """
+        rc = find_polluter.main(["--", "tests/test_x.py::test_ok", test_dir])
+        assert rc == 1
+        assert "test_dir rejected" in capsys.readouterr().err
+
+    def test_pytest_timeout_exits_1_without_traceback(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A pytest run exceeding its timeout ends with exit 1 and a one-line message instead of a traceback."""
+        monkeypatch.setattr(find_polluter, "_resolve_pytest_cmd", lambda: ["pytest"])
+
+        def _hang(argv: Sequence[str], **_kw: Any) -> _FakeResult:
+            """Simulate pytest outliving the subprocess timeout."""
+            raise find_polluter.subprocess.TimeoutExpired(argv, 300)
+
+        _patch_run(monkeypatch, _hang)
+        rc = find_polluter.main(["tests/test_a.py::test_slow"])
+        assert rc == 1
+        assert "exceeded its 300s timeout" in capsys.readouterr().err
 
     def test_path_traversal_test_dir_rejected_exits_1(self, capsys: pytest.CaptureFixture[str]) -> None:
         """test_dir escaping project root is rejected with security message and exit 1."""

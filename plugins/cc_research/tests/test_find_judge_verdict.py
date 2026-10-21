@@ -105,11 +105,13 @@ def test_relative_and_absolute_program_paths_match(env: Path) -> None:
     assert main(_args(work)) == 0
 
 
-def test_empty_state_program_does_not_block(env: Path) -> None:
+def test_empty_state_program_blocks(env: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """No program_file to cross-match → BLOCKED, else any program's newest APPROVED verdict would pass the gate."""
     work = env / "work"
     work.joinpath("prog.md").write_text("x", encoding="utf-8")
     (work / "reports" / "judge-main.md").write_text("Verdict: APPROVED\nProgram: prog.md\n", encoding="utf-8")
-    assert main(_args(work)) == 0
+    assert main(_args(work)) == 1
+    assert "source run records no program_file" in capsys.readouterr().out
 
 
 def test_newest_report_wins(env: Path) -> None:
@@ -120,6 +122,7 @@ def test_newest_report_wins(env: Path) -> None:
     work.joinpath("prog.md").write_text("x", encoding="utf-8")
     old.write_text("Verdict: REJECTED\nProgram: prog.md\n", encoding="utf-8")
     new.write_text("Verdict: APPROVED\nProgram: prog.md\n", encoding="utf-8")
+    _write_state(work, "r1", str(work / "prog.md"))
     os.utime(old, (1_000_000, 1_000_000))
     os.utime(new, (2_000_000, 2_000_000))
     assert newest_verdict_file(reports) == new

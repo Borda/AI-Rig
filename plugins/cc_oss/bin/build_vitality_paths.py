@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -38,6 +39,8 @@ _QUICK_AGENTS: Final = "  - oss:analyse (orchestrator, --quick: core scoring onl
 _FULL_AGENTS: Final = "  - oss:analyse (orchestrator)\n  - foundry:challenger (adversarial review)"
 #: Extra agent line appended to the full-run agent list when the Codex review agent is available.
 _CODEX_AGENT: Final = "  - bridge:review (independent repo review + adversarial review)"
+#: Characters outside the GitHub owner/repository name charset; replaced in report paths.
+_UNSAFE_NAME_RE: Final = re.compile(r"[^A-Za-z0-9._-]")
 
 
 def _sentinel_path(name: str) -> Path:
@@ -125,6 +128,9 @@ def build_report_path(owner: str, repo: str, timestamp: str) -> str:
         >>> build_report_path("owner", "repo", "2026-09-11T10-00-00Z")
         '.reports/analyse/vitality/output-analyse-vitality-owner-repo-2026-09-11T10-00-00Z.md'
     """
+    # owner/repo arrive from CLI args; any character outside GitHub's name charset (a "/" above all) would let the
+    # value steer the report path, so it is replaced before the path is formatted.
+    owner, repo = (_UNSAFE_NAME_RE.sub("-", value) for value in (owner, repo))
     return f".reports/analyse/vitality/output-analyse-vitality-{owner}-{repo}-{timestamp}.md"
 
 

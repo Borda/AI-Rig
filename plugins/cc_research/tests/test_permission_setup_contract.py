@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -20,11 +21,14 @@ _TRIMMED_ALLOWS = {
     "Bash(git tag:*)",
 }
 
+RETIRED_SHELL_ALLOWS = {"Bash(find:*)", "Bash(node:*)", "Bash(claude:*)", "Bash(sed:*)"}
+
 
 def test_standalone_allow_list_omits_broad_write_matches() -> None:
     """Fresh installs must not pre-approve API writes or local branch/tag deletion."""
     allow = json.loads((_PLUGIN / ".claude-plugin/permissions-allow.json").read_text(encoding="utf-8"))
-    assert _TRIMMED_ALLOWS.isdisjoint(allow)
+    assert (_TRIMMED_ALLOWS | RETIRED_SHELL_ALLOWS).isdisjoint(allow)
+    assert {"Bash(eval:*)", "Bash(python:*)", "Bash(node --check:*)", "Bash(find .temp*)"} <= set(allow)
     assert "Bash(gh api search/*)" in allow
 
 
@@ -60,10 +64,10 @@ def test_hook_payload_and_registrations_keep_only_research_modules() -> None:
 
 
 @pytest.mark.integration
-@pytest.mark.skipif(not _BASH or not shutil.which("jq"), reason="setup requires Bash and jq")
+@pytest.mark.skipif(not _BASH, reason="setup requires Bash")
 @pytest.mark.parametrize("existing_settings", [False, True])
 def test_setup_executes_additive_idempotent_merges(tmp_path: Path, existing_settings: bool) -> None:
-    """Real jq merges retain shared allows and user denies while removing only the obsolete allow."""
+    """The shipped merge call retains shared allows and user denies while retiring obsolete shell and API grants."""
     assert _BASH is not None
     user_allow = _TRIMMED_ALLOWS | {"Bash(custom-reader:*)"} if existing_settings else set()
     user_deny = (
@@ -73,7 +77,7 @@ def test_setup_executes_additive_idempotent_merges(tmp_path: Path, existing_sett
         {
             "theme": "dark",
             "permissions": {
-                "allow": sorted(user_allow | {"Bash(gh api repos/*:*)"}),
+                "allow": sorted(user_allow | {"Bash(gh api repos/*:*)"} | RETIRED_SHELL_ALLOWS),
                 "deny": sorted(user_deny),
             },
         }
@@ -87,32 +91,38 @@ def test_setup_executes_additive_idempotent_merges(tmp_path: Path, existing_sett
     env = {
         **os.environ,
         "HOME": tmp_path.as_posix(),
+        "USERPROFILE": str(tmp_path),
         "TMPDIR": tmp_path.as_posix(),
         "CLAUDE_PLUGIN_ROOT": _PLUGIN.as_posix(),
     }
     setup = (_PLUGIN / "skills/setup/SKILL.md").read_text(encoding="utf-8")
     blocks = re.findall(r"```bash\n(.*?)\n```", setup, re.DOTALL)
+    candidates = [block for block in blocks if "merge_settings_permissions.py" in block]
+    assert len(candidates) == 1
+    # The block's bare `python` may not be on PATH (or may be a different interpreter) under the test runner.
+    block = re.sub(r"^python ", f'"{Path(sys.executable).as_posix()}" ', candidates[0], count=1, flags=re.MULTILINE)
     for _ in range(2):
-        for kind, original in (("allow", user_allow), ("deny", user_deny)):
-            candidates = [block for block in blocks if f".permissions.{kind} =" in block]
-            assert len(candidates) == 1
-            # A bare name lets Windows select System32's WSL launcher ahead of the PATH shell.
-            result = subprocess.run(
-                [_BASH, "-c", candidates[0]],
-                env=env,
-                capture_output=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=30,
-            )
-            assert result.returncode == 0, (
-                f"{_BASH} exited {result.returncode}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
-            )
-            merged = json.loads(config.read_text(encoding="utf-8"))
+        # A bare name lets Windows select System32's WSL launcher ahead of the PATH shell.
+        result = subprocess.run(
+            [_BASH, "-c", block],
+            env=env,
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+        )
+        assert result.returncode == 0, (
+            f"{_BASH} exited {result.returncode}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+        )
+        merged = json.loads(config.read_text(encoding="utf-8"))
+        # User order kept (obsolete rule dropped), shipped rules appended once each in shipped-file order.
+        existing = {"allow": sorted(user_allow), "deny": sorted(user_deny)}
+        for kind in ("allow", "deny"):
             shipped = json.loads((_PLUGIN / f".claude-plugin/permissions-{kind}.json").read_text(encoding="utf-8"))
-            assert merged["permissions"][kind] == sorted(original | set(shipped))
-            if existing_settings:
-                assert merged["theme"] == "dark"
+            assert merged["permissions"][kind] == list(dict.fromkeys(existing[kind] + shipped))
+            assert f"permissions.{kind}: added" in result.stdout
+        if existing_settings:
+            assert merged["theme"] == "dark"
 
 
 def test_readme_and_setup_explain_the_upgrade_boundary() -> None:
@@ -124,3 +134,48 @@ def test_readme_and_setup_explain_the_upgrade_boundary() -> None:
     assert all(f"`{entry}`" in readme for entry in _TRIMMED_ALLOWS)
     assert "stale gh deny entries from older versions: run /foundry:setup" in setup
     assert "nothing replaces it" in setup
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not _BASH, reason="setup requires Bash")
+@pytest.mark.parametrize("corrupt_merge", [False, True])
+def test_setup_validates_without_jq_and_restores_parse_failure(tmp_path: Path, corrupt_merge: bool) -> None:
+    """Missing jq cannot undo a valid merge; genuinely invalid JSON restores the exact backup."""
+    assert _BASH is not None
+    config = tmp_path / ".claude/settings.json"
+    config.parent.mkdir()
+    original = '{"theme": "dark", "permissions": {"allow": [], "deny": []}}\n'
+    config.write_text(original, encoding="utf-8")
+    setup = (_PLUGIN / "skills/setup/SKILL.md").read_text(encoding="utf-8")
+    blocks = re.findall(r"```bash\n(.*?)\n```", setup, re.DOTALL)
+    backup = next(block for block in blocks if "SETUP_BAK_TS=$(date" in block)
+    merge = next(block for block in blocks if "merge_settings_permissions.py" in block)
+    # Replace the interpreter boundary, retaining the real shipped backup, merge and validation commands.
+    corruption = 'if [ "$1" != "-m" ]; then printf "{" > "$HOME/.claude/settings.json"; fi' if corrupt_merge else ":"
+    shell_functions = f"""python() {{ "{Path(sys.executable).as_posix()}" "$@" || return $?; {corruption}; }}
+jq() {{ printf 'unexpected jq invocation\\n' >&2; return 127; }}
+"""
+    result = subprocess.run(
+        [_BASH, "-c", shell_functions + backup + "\n" + merge],
+        env={
+            **os.environ,
+            "HOME": tmp_path.as_posix(),
+            "USERPROFILE": str(tmp_path),
+            "TMPDIR": tmp_path.as_posix(),
+            "CLAUDE_PLUGIN_ROOT": _PLUGIN.as_posix(),
+        },
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert "unexpected jq invocation" not in result.stderr
+    assert result.returncode == (1 if corrupt_merge else 0), (result.stdout, result.stderr)
+    if corrupt_merge:
+        assert config.read_text(encoding="utf-8") == original
+        assert "restored from" in result.stdout
+    else:
+        settings = json.loads(config.read_text(encoding="utf-8"))
+        assert settings["theme"] == "dark"
+        shipped = json.loads((_PLUGIN / ".claude-plugin/permissions-allow.json").read_text(encoding="utf-8"))
+        assert settings["permissions"]["allow"] == shipped
+        assert "restored from" not in result.stdout

@@ -223,7 +223,7 @@ Index of the schema tags above, one row per block. `SKILL.md` has no numbered st
 | Block | `SKILL.md` / mode file section |
 | -- | -- |
 | SETUP | Mode Detection, Shared setup |
-| GATHER | Gather changes |
+| GATHER | Gather changes, Delegation strategy (`modes/delegation.md`), `modes/append-cross-cycle.md` (cross-cycle detection, `--append` only) |
 | EXPLORE + VALIDATE DOCS | Explore codebase, Validate docs |
 | CLASSIFY | Classify each change, Truth check, Breaking-change classification |
 | VALIDATE MIGRATION DOCS | Validate migration docs |

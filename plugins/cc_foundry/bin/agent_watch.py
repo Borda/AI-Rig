@@ -16,14 +16,17 @@ Usage:
 
 Per agent: batch, name, deliverable, status, elapsed seconds since spawn, seconds left to the deadline.
 Statuses printed per agent:
-    done             — deliverable file exists and is non-empty
+    done             — deliverable file exists, is non-empty, and was written at or after the batch's spawn time
+                       (a same-path file left by an earlier run is not this batch's deliverable)
     pending          — no deliverable yet, deadline not reached
     awaiting-envelope — envelope-only agent, deadline not reached
-    timed_out        — no deliverable and the deadline has passed
+    timed_out        — no deliverable and the deadline has passed; also an unreadable batch file or malformed row
 
 Exit codes:
-    0 — report printed (including when no state file exists: an empty agent list)
+    0 — report printed with at least one agent row
     1 — the state directory does not exist
+    2 — no agent rows in the state directory (no batch file, or only empty ones): it is only ever run after a spawn,
+        so an empty watch means a lost or wrong run dir — reported, never read as "nothing outstanding"
 """
 
 from __future__ import annotations
@@ -37,6 +40,9 @@ from pathlib import Path
 
 #: Deliverable placeholder meaning the agent writes no file and is judged only by its returned envelope.
 _ENVELOPE_ONLY = "-"
+#: Seconds a deliverable may predate its batch file and still count: the batch file is written in the spawn response,
+#: possibly a moment after the spawn call itself; a stale file from an earlier run is minutes older.
+_SPAWN_SLACK_S = 5
 
 
 @dataclass(frozen=True)
@@ -51,13 +57,15 @@ class AgentVerdict:
     seconds_left: int
 
 
-def classify(deliverable: str, deadline_epoch: float, now: float) -> str:
+def classify(deliverable: str, deadline_epoch: float, now: float, spawned: float | None = None) -> str:
     """Decide an agent's status from its deliverable and deadline.
 
     Args:
         deliverable: Path of the agent's output file, or ``-`` for an envelope-only agent.
         deadline_epoch: Absolute deadline in epoch seconds.
         now: Current time in epoch seconds.
+        spawned: Batch spawn time in epoch seconds; when given, a deliverable last modified before it (minus a small
+            slack) is a leftover from an earlier run and does not count as done.
 
     Returns:
         ``done``, ``pending``, ``awaiting-envelope`` or ``timed_out``.
@@ -66,8 +74,10 @@ def classify(deliverable: str, deadline_epoch: float, now: float) -> str:
         >>> classify("-", 100.0, 50.0), classify("-", 100.0, 150.0)
         ('awaiting-envelope', 'timed_out')
     """
-    if deliverable != _ENVELOPE_ONLY and Path(deliverable).is_file() and Path(deliverable).stat().st_size > 0:
-        return "done"
+    if deliverable != _ENVELOPE_ONLY and Path(deliverable).is_file():
+        stat = Path(deliverable).stat()
+        if stat.st_size > 0 and (spawned is None or stat.st_mtime >= spawned - _SPAWN_SLACK_S):
+            return "done"
     if now >= deadline_epoch:
         return "timed_out"
     return "awaiting-envelope" if deliverable == _ENVELOPE_ONLY else "pending"
@@ -81,12 +91,17 @@ def read_batch(state_file: Path, now: float) -> list[AgentVerdict]:
         now: Current time in epoch seconds.
 
     Returns:
-        One verdict per well-formed row; a malformed row is reported as ``timed_out`` so it is never silently lost.
+        One verdict per well-formed row; a malformed row, or a batch file that cannot be read, is reported as
+        ``timed_out`` so it is never silently lost.
     """
     batch = state_file.stem.removeprefix("agent-watch-")
-    spawned = state_file.stat().st_mtime
+    try:
+        spawned = state_file.stat().st_mtime
+        text = state_file.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return [AgentVerdict(batch, f"{batch}?", "", "timed_out", 0, 0)]
     verdicts = []
-    for line in state_file.read_text(encoding="utf-8").splitlines():
+    for line in text.splitlines():
         if not line.strip():
             continue
         parts = line.split("\t")
@@ -97,7 +112,7 @@ def read_batch(state_file: Path, now: float) -> list[AgentVerdict]:
             continue
         name, deliverable, seconds = (part.strip() for part in parts)
         deadline = spawned + int(seconds)
-        status = classify(deliverable, deadline, now)
+        status = classify(deliverable, deadline, now, spawned)
         verdicts.append(
             AgentVerdict(batch, name, deliverable, status, max(0, int(now - spawned)), max(0, int(deadline - now)))
         )
@@ -142,7 +157,12 @@ def main(argv: list[str] | None = None) -> int:
     if not state_dir.is_dir():
         print(json.dumps({"error": f"state dir not found: {args.state_dir}"}))
         return 1
-    print(json.dumps(watch(state_dir, time.time())))
+    report = watch(state_dir, time.time())
+    if not report["agents"]:
+        report["error"] = f"no agent-watch rows in {args.state_dir} — batch file missing or run dir lost"
+        print(json.dumps(report))
+        return 2
+    print(json.dumps(report))
     return 0
 
 

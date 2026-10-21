@@ -1,8 +1,8 @@
 """Pin every user ask the research skills had at HEAD before the turn-budget pass, so no question is silently removed.
 
 The pass touched only task-tracking lines and agent-wait wording in these skills. Each row is the first ~90 characters
-(cut at a word boundary) of one HEAD line naming ``AskUserQuestion`` — the question's own text or its gate. A removed or
-reworded question deletes its marker and fails here; an intentional rewording updates the row together with the
+(cut at a word boundary) of one HEAD line naming ``AskUserQuestion`` — the question's own text or its gate. A removed
+or reworded question deletes its marker and fails here; an intentional rewording updates the row together with the
 question.
 
 fortify, judge and retro asked nothing at HEAD (their only mention is ``allowed-tools``), so they have no rows.
@@ -103,7 +103,8 @@ _ASKS = [
     ),
     pytest.param(
         "skills/verify/SKILL.md",
-        "Call `AskUserQuestion` tool after V6 output — do NOT write options as plain text. Before",
+        # V6 ask removed on purpose: neither option was an action verify can take, so `Next:` text replaces it
+        'No follow-up question after V6: neither "fix and re-run" nor `/develop:fix` is an action',
         id="verify-6",
     ),
     pytest.param(

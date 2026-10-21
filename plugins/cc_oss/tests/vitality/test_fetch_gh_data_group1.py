@@ -277,3 +277,50 @@ def test_closed_issue_limit_is_the_search_ceiling_the_assembler_caps_at() -> Non
 
     # Assert
     assert limit == avd.SEARCH_RESULT_CAP == 1000
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        pytest.param(["--repo", "./r"], id="repo-dot-owner"),
+        pytest.param(["--repo", "o/.."], id="repo-dotdot-name"),
+        pytest.param(["--repo", "o/r", "--cutoff-30d", "2024-01-01 repo:other/x"], id="cutoff-extra-qualifier"),
+        pytest.param(["--repo", "o/r", "--cutoff-3y", "yesterday"], id="cutoff-not-a-date"),
+        pytest.param(["--repo", "o/r", "--cutoff-90d", "2024-01-01T00:00:00Z\n"], id="cutoff-trailing-newline"),
+    ],
+)
+def test_path_and_search_injection_values_exit_1(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], argv: list[str]
+) -> None:
+    """A dot path segment or a cutoff that could extend the search query is refused before any gh call.
+
+    Both values are spliced into a ``gh`` argument: ``repos/<owner>/<repo>`` for the API path and ``closed:>=<cutoff>``
+    for the search, so a ``..`` segment or an embedded qualifier would reach a different repository.
+    """
+    rc = fgd.main([*argv, "--output-dir", str(tmp_path)])
+    assert rc == 1
+    assert "fetch_gh_data_group1:" in capsys.readouterr().err
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_timed_out_dataset_is_nonfatal_and_leaves_the_others(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """One hung gh call is recorded as failed while every other dataset is still written.
+
+    ``future.result()`` re-raised the timeout, so a single slow dataset used to abort the whole fan-out with a
+    traceback.
+    """
+
+    def _run(cmd: list[str], **_kwargs: object) -> _FakeCompleted:
+        if "repos/owner/repo/contents" in cmd:
+            raise fgd.subprocess.TimeoutExpired(cmd, 90)
+        return _FakeCompleted(returncode=0, stdout="[]")
+
+    monkeypatch.setattr(fgd.subprocess, "run", _run)
+    monkeypatch.setattr(fgd, "which", lambda _: "/fake/gh")
+    rc = fgd.main(["--repo", "owner/repo", "--output-dir", str(tmp_path)])
+    assert rc == 0
+    assert "root_contents timed out" in capsys.readouterr().err
+    assert (tmp_path / "root_contents.json").read_text() == ""
+    assert (tmp_path / "open_issues.json").read_text() == "[]"

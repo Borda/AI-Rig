@@ -99,7 +99,7 @@ Clean scoped run with no breaking findings and no fix pick costs exactly 1 `AskU
 
 ```
 ADVERSARIAL  (adversarial.md)  FAN 4   runs alongside PER-FILE AUDIT by default
-  ▣ curator challenger  (phase A)          batches of 2 — NOT-for gaps, contradictions
+  ▣ challenger  (phase A)                  batches of 2 — NOT-for gaps, contradictions
   ▣ curator unconstrained  (phase A-prime) batches of 2 — beyond-checklist judgment
   Codex bridge  (phase B)                  cross-file inconsistencies (no Agent() pool)
   ▣ qa-specialist  (phase D)               per plugin with bin/ — OWASP Top 10

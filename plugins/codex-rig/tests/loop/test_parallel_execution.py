@@ -1621,12 +1621,20 @@ class TestPortableReadConsumerRuntimeMatrix:
         join_clause: str,
         resource_clause: str,
     ) -> None:
-        """Keep each promoted consumer's documented boundary complete and fail closed."""
+        """Keep each promoted consumer's documented boundary complete and fail closed.
+
+        The contract spans the consumer's own Parallel Adoption section, which carries its consumer values, and the
+        shared ``portable-parallel-read.md`` fragment, which carries the invariant route text. The skill must point at
+        the fragment, so a consumer cannot lose the invariant half while this test still passes.
+        """
         text = (SKILLS_ROOT / skill / "SKILL.md").read_text(encoding="utf-8")
         assert '"execution": "optional auto|serial|parallel-read|parallel-write; default auto"' in text
         heading = "\n## Parallel Adoption (Portable read-only)\n"
         assert heading in text
-        section = text.split(heading, maxsplit=1)[1].split("\n## ", maxsplit=1)[0]
+        skill_section = text.split(heading, maxsplit=1)[1].split("\n## ", maxsplit=1)[0]
+        assert "read [portable-parallel-read.md](../../shared/portable-parallel-read.md)" in skill_section
+        fragment = (PLUGIN_ROOT / "shared" / "portable-parallel-read.md").read_text(encoding="utf-8")
+        section = skill_section + "\n" + fragment
 
         for subsection in (
             "### Safe parallel work",

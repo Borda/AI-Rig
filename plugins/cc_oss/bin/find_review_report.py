@@ -1344,8 +1344,11 @@ def main(argv: list[str] | None = None) -> int:
     """
     args = _parse_args(argv)
 
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8", newline="\n")  # type: ignore[union-attr]
+    # Both streams carry gate verdicts and report paths that shell consumers decode as UTF-8; a Windows
+    # console code page would otherwise encode "—" or a non-ASCII path as bytes no consumer can read.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", newline="\n")  # type: ignore[union-attr]
 
     pr_number = args.pr.strip()
     if args.report is None and (not pr_number or pr_number == "n/a"):

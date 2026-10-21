@@ -29,6 +29,8 @@ from shutil import which
 #: of the embedded query.  We accept dotted Python identifiers (e.g.
 #: ``foo.bar.Baz``), digits, hyphen, and underscore — nothing else.
 _QUERY_TOKEN_RE = re.compile(r"^[A-Za-z0-9_.\-]+$")
+#: Most symbols one run searches; each costs a rate-limited ``gh search code`` call.
+_MAX_SYMBOLS = 50
 #: Substrings rejected in a search query argument because they could alter operators or escape the query.
 _FORBIDDEN_QUERY_SUBSTRINGS: tuple[str, ...] = ("..", '"', ":", "`", "$", "(", ")", "<", ">", "\\")
 
@@ -199,8 +201,14 @@ def main(argv: list[str] | None = None) -> int:
             stripped = line.rstrip("\n")
             if stripped:
                 symbols.append(stripped)
+            if len(symbols) > _MAX_SYMBOLS:
+                break  # stop reading: the run is refused below, and an endless stream must not be drained first
     if not symbols:
         print("search_downstream_consumers: no symbols provided (argv or stdin)", file=sys.stderr)
+        return 1
+    if len(symbols) > _MAX_SYMBOLS:
+        # one rate-limited code-search call per symbol; truncating would silently skew the consumer list
+        print(f"search_downstream_consumers: more than {_MAX_SYMBOLS} symbols; narrow the change set", file=sys.stderr)
         return 1
 
     # Sanitize before they reach the gh search query.  Reject the whole

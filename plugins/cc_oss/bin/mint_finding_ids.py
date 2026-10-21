@@ -228,8 +228,20 @@ def _suffixed(root: str, reserved: set[str]) -> Iterator[str]:
             yield ident
 
 
+#: Largest findings ledger read whole into memory.
+_MAX_JSONL_BYTES: Final = 10 * 1024 * 1024
+
+
 def read_jsonl(path: Path) -> list[dict]:
-    """Read one JSON object per non-blank line."""
+    """Read one JSON object per non-blank line.
+
+    Raises:
+        ValueError: The file is larger than ``_MAX_JSONL_BYTES``; a findings ledger is a few hundred rows, and the file
+            is read whole.
+    """
+    size = path.stat().st_size
+    if size > _MAX_JSONL_BYTES:
+        raise ValueError(f"{path} is {size} bytes, over the {_MAX_JSONL_BYTES}-byte cap")
     lines = path.read_text(encoding="utf-8").splitlines()
     return [json.loads(line) for line in lines if line.strip()]
 

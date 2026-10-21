@@ -21,12 +21,20 @@ test -f "$MERGE_HEAD_FILE" && echo "MERGING" || echo "clean"
 **Case A — MERGING** (`MERGE_HEAD` present — prior `git merge` left markers): work with existing markers, but first check the target branch has not moved since that merge started:
 
 ```bash
+# fresh shell (Check 41): reload the base Step 4 persisted unless the caller bound it
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+[ -n "${BASE_REF:-}" ] || { IFS= read -r BASE_REF < "${TMPDIR:-/tmp}/resolve-base-ref-${CSID}" 2>/dev/null || BASE_REF=""; }
+[ -n "$BASE_REF" ] || { echo "! BLOCKED — Step 5: BASE_REF unresolved — cannot judge the in-progress merge"; exit 1; }
 git fetch origin "$BASE_REF" || echo "⚠ fetch origin/$BASE_REF failed — cannot tell whether the target moved"  # timeout: 6000
+# a merge of anything but the target branch is not this run's merge: committing it would land foreign changes under the PR
+git merge-base --is-ancestor MERGE_HEAD "origin/$BASE_REF" 2>/dev/null \
+    || { echo "! BLOCKED — The in-progress merge is not a merge of origin/$BASE_REF — abort it (git merge --abort) or finish it yourself, then re-run /oss:resolve"; exit 1; }  # timeout: 3000
 [ "$(git rev-parse MERGE_HEAD)" = "$(git rev-parse "origin/$BASE_REF" 2>/dev/null)" ] \
     || echo "⚠ origin/$BASE_REF moved since this merge started — finish it, then re-run /oss:resolve to merge the newer target"  # timeout: 3000
+git diff --name-only --diff-filter=U  # timeout: 3000
 ```
 
-Skip to Step 7a.
+The last line lists the conflicted files Step 7a needs. Skip to Step 7a.
 
 **Case B — not MERGING**:
 
@@ -38,18 +46,22 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 [ -n "${BASE_REF:-}" ] || { IFS= read -r BASE_REF < "${TMPDIR:-/tmp}/resolve-base-ref-${CSID}" 2>/dev/null || BASE_REF=""; }
 [ -n "${HEAD_REF:-}" ] || { IFS= read -r HEAD_REF < "${TMPDIR:-/tmp}/resolve-head-ref-${CSID}" 2>/dev/null || HEAD_REF=""; }
 [ -n "${FORK_REMOTE:-}" ] || { IFS= read -r FORK_REMOTE < "${TMPDIR:-/tmp}/resolve-fork-remote-${CSID}" 2>/dev/null || FORK_REMOTE=""; }
-[ -n "$BASE_REF" ] && [ -n "$HEAD_REF" ] || { echo "⛔ Step 5: BASE_REF/HEAD_REF unresolved — refusing to merge an unknown target"; exit 1; }
+[ -n "$BASE_REF" ] && [ -n "$HEAD_REF" ] || { echo "! BLOCKED — Step 5: BASE_REF/HEAD_REF unresolved — refusing to merge an unknown target"; exit 1; }
 # 1. update source branch (ff-only; non-ff = force-pushed, use local)
 git pull "${FORK_REMOTE:-origin}" "$HEAD_REF" --ff-only 2>/dev/null \
     || echo "⚠ PR branch not fast-forwardable — proceeding with local state"  # timeout: 6000
 # 2. update target branch — remote-tracking ref (required), then the local branch (ff-only, best effort)
-git fetch origin "$BASE_REF" || { echo "⛔ fetch origin/$BASE_REF failed — cannot guarantee base is current; check network/auth and retry"; exit 1; }  # timeout: 6000
+git fetch origin "$BASE_REF" || { echo "! BLOCKED — fetch origin/$BASE_REF failed — cannot guarantee base is current; check network/auth and retry"; exit 1; }  # timeout: 6000
 if git show-ref --verify --quiet "refs/heads/$BASE_REF"; then
     git fetch . "origin/$BASE_REF:$BASE_REF" 2>/dev/null \
         || echo "⚠ local $BASE_REF not updated (diverged, or checked out in another worktree) — merging origin/$BASE_REF, which is current"
 fi  # timeout: 3000
 # 3. merge — no-commit to inspect conflicts before finalizing
-git merge "origin/$BASE_REF" --no-commit --no-ff # timeout: 6000
+git merge "origin/$BASE_REF" --no-commit --no-ff; _MERGE_RC=$?  # timeout: 6000
+# rc!=0 with no MERGE_HEAD = merge refused (dirty tree, unrelated histories), not "no conflicts"; rc 0 with no MERGE_HEAD = already up to date
+if [ -f "$(git rev-parse --git-dir)/MERGE_HEAD" ]; then echo "MERGE_STATE=in-progress"
+elif [ "$_MERGE_RC" = 0 ]; then echo "MERGE_STATE=up-to-date"
+else echo "! BLOCKED — git merge origin/$BASE_REF refused (rc=$_MERGE_RC) and left no merge in progress — fix the cause printed above, then re-run"; exit 1; fi
 # 4. conflicted files, same call — merge exits 1 on conflict, this line still runs
 git diff --name-only --diff-filter=U  # timeout: 3000
 ```
@@ -85,15 +97,15 @@ Write the file→task map in one Write tool call to `$IMPL_DIR/conflict-tasks.ts
 
 > **Invariant**: all conflict tasks `completed` before C1 and Phase 2 (Phase 1's early wave runs first). Upfront creation keeps each conflict scoped, independently reversible.
 
-No conflicts → complete merge here:
+No conflicted files → `MERGE_STATE=in-progress`: complete the merge here; `MERGE_STATE=up-to-date`: nothing to commit, skip the commit:
 
 ```bash
 git commit --no-edit # timeout: 6000
 ```
 
-Report clean merge. Steps 6–7 and the Step 7b join become no-ops — return to Run 1 (await the `INTEL_AGENT` envelope, then Step 3c).
+Report clean merge (or already up to date). Steps 6–7 and the Step 7b join become no-ops — return to Run 1 (await the `INTEL_AGENT` envelope, then Step 3c).
 
-⛔ More than 20 conflicted files → abort and stop:
+! BLOCKED — More than 20 conflicted files → abort and stop:
 
 ```bash
 git merge --abort
@@ -118,7 +130,7 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # fresh shell (Check 41) — reload refs Step 4 persisted; bare $BASE_REF/$HEAD_REF are unbound in a new Bash call
 IFS= read -r BASE_REF < "${TMPDIR:-/tmp}/resolve-base-ref-${CSID}" 2>/dev/null || BASE_REF=""
 IFS= read -r HEAD_REF < "${TMPDIR:-/tmp}/resolve-head-ref-${CSID}" 2>/dev/null || HEAD_REF=""
-[ -n "$BASE_REF" ] && [ -n "$HEAD_REF" ] || { echo "⛔ Step 6: BASE_REF/HEAD_REF sentinels missing — cannot distill conflict context"; exit 1; }
+[ -n "$BASE_REF" ] && [ -n "$HEAD_REF" ] || { echo "! BLOCKED — Step 6: BASE_REF/HEAD_REF sentinels missing — cannot distill conflict context"; exit 1; }
 MERGE_BASE=$(git merge-base "origin/$BASE_REF" "$HEAD_REF") # timeout: 3000
 echo "## 6a: what HEAD_REF added"
 git log "$MERGE_BASE..$HEAD_REF" --oneline --no-merges
@@ -143,7 +155,7 @@ From the same call's `## 6b` sections. One-sentence summary: independent base ch
 Spawn `foundry:sw-engineer` (fill brackets from indicated steps):
 
 ```markdown
-Agent(subagent_type="foundry:sw-engineer", prompt="
+Agent(subagent_type="foundry:sw-engineer", name="conflict-resolver", description="Resolve merge conflicts", prompt="
 You are resolving merge conflicts in a checked-out PR branch.
 
 ## Conflicted files
@@ -176,7 +188,7 @@ Return ONLY a compact JSON envelope — no prose, no explanation:
 
 > **Health monitoring** — SKILL.md §Agent wait discipline: in the spawn response, write `$IMPL_DIR/agent-watch-conflict.tsv` with the row `conflict-resolver<TAB>$IMPL_DIR/conflict-envelope.json<TAB>900` (15-min deadline); on the completion notification persist the JSON envelope verbatim to that path with the Write tool before the watch check, so the row reads `done` — an envelope-only `-` row would stay open beside the other fan batches. Never `ScheduleWakeup`, `ListAgents` or a `Monitor` loop; no filler call, no "waiting" line, no sleep. At the Step 7b join run the watch check first: `timed_out`, or a notification that arrived without the JSON envelope → ⏱ `timed_out` now, surface partial results and stop before C1 and Phase 2 (SKILL.md Step 7b join) — never implement on an unmerged tree.
 
-> **Turn placement**: spawn this agent in the same response as Phase 1's early-wave challenge spawns (`action-item-dispatch.md`), then end the turn; with no early wave it is the response's only spawn. Never spawn it before the Step 3d picker. The two batches finish independently; each notification is handled as it lands.
+> **Turn placement**: spawn this agent in the same response as Phase 1's early-wave challenge spawns (`dispatch-phase1.md`), then end the turn; with no early wave it is the response's only spawn. Never spawn it before the Step 3d picker. The two batches finish independently; each notification is handled as it lands.
 
 ### 7b: Verify and complete merge
 
@@ -188,12 +200,12 @@ Verify no conflict markers remain and all resolved files staged:
 
 ```bash
 STILL_CONFLICTED=$(git diff --name-only --diff-filter=U 2>/dev/null)
-[ -z "$STILL_CONFLICTED" ] || { echo "⛔ Unmerged files remain — resolve before continuing: $STILL_CONFLICTED"; exit 1; }  # timeout: 3000
+[ -z "$STILL_CONFLICTED" ] || { echo "! BLOCKED — Unmerged files remain — resolve before continuing: $STILL_CONFLICTED"; exit 1; }  # timeout: 3000
 # residual conflict markers in staged content? (--cached = index, not worktree)
-git diff --cached --check 2>&1 | grep -qE 'conflict marker' && { echo "⛔ Conflict markers still present in staged files — re-inspect and re-stage"; exit 1; } || true  # timeout: 3000
+git diff --cached --check 2>&1 | grep -qE 'conflict marker' && { echo "! BLOCKED — Conflict markers still present in staged files — re-inspect and re-stage"; exit 1; } || true  # timeout: 3000
 # only conflicted files — avoid pulling in unrelated tracked changes
 RESOLVED_FILES=$(git diff --cached --name-only 2>/dev/null)
-[ -n "$RESOLVED_FILES" ] || { echo "⛔ No staged files found — sw-engineer may not have staged resolutions"; exit 1; }
+[ -n "$RESOLVED_FILES" ] || { echo "! BLOCKED — No staged files found — sw-engineer may not have staged resolutions"; exit 1; }
 ```
 
 Complete merge (editor-safe, produces proper 2-parent merge commit):

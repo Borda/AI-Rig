@@ -24,8 +24,11 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import os
 import re
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 #: Matches a Jupytext percent-format cell marker line (`# %%`).
@@ -51,6 +54,23 @@ def fix_text(text: str) -> tuple[str, int]:
     return "\n".join(lines), fixed
 
 
+def _write_atomic(path: Path, text: str) -> None:
+    """Replace ``path`` with ``text`` via a sibling temp file and ``os.replace``.
+
+    An interrupted write never leaves a truncated notebook behind. Newline translation and file mode match the
+    ``Path.write_text`` rewrite this replaces (``mkstemp`` creates 0600, so the original mode is copied over).
+    """
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        shutil.copymode(path, tmp_name)
+        os.replace(tmp_name, path)
+    except OSError:
+        Path(tmp_name).unlink(missing_ok=True)
+        raise
+
+
 def main(argv: list[str] | None = None) -> int:
     """Fix blank markdown cells so they stay truly empty in jupytext percent format."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -63,7 +83,18 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     total_fixed = 0
+    cwd = Path.cwd().resolve()
     for path in args.files:
+        # Only jupytext percent-format scripts, never through a symlink: an in-place rewrite of
+        # an arbitrary argv path would clobber whatever file the link points at.
+        if path.suffix != ".py" or path.is_symlink():
+            print(f"{path}: skipped — not a regular .py jupytext script", file=sys.stderr)
+            continue
+        # The only caller (kaggle) passes its own .experiments/kaggle/<name>.py output; a path that resolves outside
+        # the working tree (absolute, or `..` segments) is never a notebook this skill generated.
+        if not path.resolve().is_relative_to(cwd):
+            print(f"{path}: skipped — outside the working directory {cwd}", file=sys.stderr)
+            continue
         text = path.read_text(encoding="utf-8")
         new_text, fixed = fix_text(text)
         if not fixed:
@@ -72,7 +103,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.check:
             print(f"{path}: {fixed} bare '#' heading-spacer line(s) in markdown cells")
         else:
-            path.write_text(new_text, encoding="utf-8")
+            _write_atomic(path, new_text)
             print(f"{path}: cleared {fixed} bare '#' heading-spacer line(s)")
 
     if args.check and total_fixed:

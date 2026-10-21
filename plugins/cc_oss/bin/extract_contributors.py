@@ -16,7 +16,7 @@ Usage:
 Outputs: One sorted ``Name <email>`` line per deduplicated contributor is
 written to stdout. The normal exit code is zero, including an empty range.
 
-Failure: Exit 1 reports invalid arguments; exit 2 reports a failed Git log.
+Failure: Exit 1 reports invalid arguments; exit 2 reports a failed or timed-out Git log.
 Missing Git raises ``FileNotFoundError`` so a calling workflow cannot mistake
 an unavailable executable for an empty contributor list.
 
@@ -50,6 +50,9 @@ _LINE_RE = re.compile(r"^(?P<name>.*?)\s*<(?P<email>[^>]+)>\s*$")
 
 #: ``git log --format`` string emitting each commit's author followed by its Co-authored-by trailer values.
 _GIT_FORMAT = "%aN <%aE>%n%(trailers:key=Co-authored-by,valueonly)"
+#: Seconds allowed for ``git log``; kept under the 5 s Bash timeout of the release call site so a slow range ends as
+#: exit 2 with a message instead of being killed by the harness.
+_GIT_LOG_TIMEOUT = 4
 
 
 def is_bot(line: str) -> bool:
@@ -219,6 +222,11 @@ def main(argv: list[str] | None = None) -> int:
         print("extract_contributors: --range or --from required", file=sys.stderr)
         return 1
 
+    # git reads a leading "-" as an option (e.g. --output=PATH writes a file), never as a revision
+    if any(part.startswith("-") for part in (git_range, *git_range.split(".."))):
+        print(f"extract_contributors: refusing option-like range {git_range!r}", file=sys.stderr)
+        return 1
+
     git = which("git")
     if git is None:
         raise FileNotFoundError("executable not found on PATH: git")
@@ -228,7 +236,11 @@ def main(argv: list[str] | None = None) -> int:
         cmd += ["-C", repo]
     cmd += ["log", git_range, "--no-merges", f"--format={_GIT_FORMAT}"]
 
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)  # noqa: S603
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=_GIT_LOG_TIMEOUT)  # noqa: S603
+    except subprocess.TimeoutExpired:
+        print(f"extract_contributors: git log timed out after {_GIT_LOG_TIMEOUT} s", file=sys.stderr)
+        return 2
     if proc.returncode != 0:
         print(f"extract_contributors: git log failed: {proc.stderr.strip()}", file=sys.stderr)
         return 2

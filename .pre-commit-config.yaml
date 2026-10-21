@@ -374,6 +374,14 @@ repos:
         # runtime dirs are gitignored and excluded from the pattern by not matching.
         files: ^plugins/[^/]+/(agents|skills|rules|hooks)/.*\.(md|js)$|^plugins/[^/]+/\.claude-plugin/[^/]+\.json$|^\.claude/(agents|skills|rules)/.*\.md$|^\.claude/hooks/[^/]+\.js$|^\.claude/settings\.json$|^\.codex/(agents|skills|rules)/.*\.md$|^\.codex/hooks/[^/]+\.js$|^\.codex/settings\.json$
 
+      - id: test-path-separator-mixture
+        name: "🪟 test asserts mixing native and / paths"
+        language: system
+        # An assert holding both f"{tmp_path / 'x'}" (\ on Windows) and a "./pkg/x.py" literal passes on every
+        # POSIX runner and fails only on Windows CI; one consistent form per assertion keeps it portable.
+        entry: python3 scripts/check_test_path_separators.py
+        files: (^|/)tests/.*test_[^/]*\.py$
+
       - id: no-literal-tmp-in-hooks
         name: "🌡️ No literal /tmp/ in hook source"
         language: pygrep

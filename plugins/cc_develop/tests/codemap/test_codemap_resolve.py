@@ -22,6 +22,7 @@ import importlib.util
 import json
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from types import ModuleType
 
@@ -232,6 +233,43 @@ def test_strict_mode_names_the_current_plugin(capsys, monkeypatch):
     assert "Install codemap-py plugin" in capsys.readouterr().err
 
 
+def _symlinks_supported() -> bool:
+    """Probe whether this host lets the process create symlinks (native Windows often does not)."""
+    with tempfile.TemporaryDirectory() as probe:
+        try:
+            (Path(probe) / "link").symlink_to(Path(probe))
+        except OSError:
+            return False
+    return True
+
+
+@pytest.mark.skipif(not _symlinks_supported(), reason="symlink creation unavailable on this host")
+def test_currency_sentinel_replaces_a_planted_symlink_instead_of_following_it(tmp_path, monkeypatch):
+    """A symlink pre-created at the predictable sentinel name is displaced; the file it pointed at stays untouched.
+
+    ``CSID`` defaults to ``shared``, so the sentinel name is guessable in a shared temp dir. A plain ``write_text``
+    followed such a link and clobbered the victim's file with the status word.
+    """
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    monkeypatch.setenv("CSID", "sess")
+    victim = tmp_path / "victim.txt"
+    victim.write_text("precious\n")
+    sentinel = tmp_path / "codemap-currency-sess"
+    sentinel.symlink_to(victim)
+
+    resolver._write_currency("codemap-currency", "stale")
+
+    assert (victim.read_text(), sentinel.is_symlink(), sentinel.read_text()) == ("precious\n", False, "stale\n")
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["codemap-currency-sess", "victim.txt"]
+
+
+def test_currency_write_failure_never_raises(tmp_path, monkeypatch):
+    """An unwritable sentinel directory is swallowed: currency status is advisory and must not fail the gate."""
+    monkeypatch.setenv("TMPDIR", str(tmp_path / "missing"))
+
+    resolver._write_currency("codemap-currency", "current")
+
+
 def test_cli_writes_the_caller_supplied_sentinel(tmp_path, monkeypatch, capsys):
     """The prefix flag is what makes one byte-identical file serve two plugins."""
     monkeypatch.setenv("TMPDIR", str(tmp_path))
@@ -259,3 +297,41 @@ def test_dev_wrapper_supplies_the_develop_prefix(monkeypatch, tmp_path):
     assert gate.CURRENCY_PREFIX == "dev-codemap-currency"
     assert argv[argv.index("--currency-prefix") + 1] == "dev-codemap-currency"
     assert argv[0] == sys.executable
+
+
+@pytest.mark.parametrize("identity", ["prefix", "session"])
+@pytest.mark.parametrize("value", ["a..b", "../escape", "bad/name", "bad\nname"])
+def test_invalid_sentinel_identity_exits_before_writing(tmp_path, monkeypatch, capsys, identity, value):
+    """Reject invalid identity before stdout, temporary files, or sentinel replacement."""
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    monkeypatch.setenv("CSID", value if identity == "session" else "safe.session-1_2")
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+    prefix = value if identity == "prefix" else "safe.slug-1_2"
+    assert resolver.main(["off", "--currency-prefix", prefix]) == 2
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert len(output.err.splitlines()) == 1
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("csid", ["session.1_2-3", ""])
+def test_valid_sentinel_identity_and_shared_fallback(tmp_path, monkeypatch, capsys, csid):
+    """Allowed punctuation and the missing-session fallback still write the expected sentinel."""
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    monkeypatch.setenv("CSID", csid)
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+    assert resolver.main(["off", "--currency-prefix", "skill.1_2-3"]) == 0
+    assert capsys.readouterr().out == "false\n"
+    assert (tmp_path / f"skill.1_2-3-{csid or 'shared'}").read_text(encoding="utf-8") == "off\n"
+
+
+def test_empty_sentinel_prefix_is_rejected(tmp_path, monkeypatch, capsys):
+    """An explicitly empty prefix is invalid even with the shared-session fallback."""
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    monkeypatch.delenv("CSID", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+    assert resolver.main(["off", "--currency-prefix", ""]) == 2
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert len(output.err.splitlines()) == 1
+    assert list(tmp_path.iterdir()) == []

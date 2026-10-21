@@ -1,8 +1,11 @@
 #!/usr/bin/env python
 """check_agent.py — probe whether a plugin agent is installed.
 
-Checks the borda-ai-rig plugin cache and the project-local .claude/agents/
-directory. Prints "true" or "false" to stdout; always exits 0 on success.
+Checks the borda-ai-rig plugin cache only. A project-local ``.claude/agents/``
+file is repository-controlled, so it never counts as an installed plugin agent:
+a reviewed repository could otherwise plant ``shepherd.md`` and have its prompt
+treated as the plugin's own. Prints "true" or "false" to stdout; always exits 0
+on success.
 
 Usage:
     check_agent.py <plugin-name> <agent-name>
@@ -26,9 +29,9 @@ _SAFE_NAME: re.Pattern[str] = re.compile(r"^[a-zA-Z0-9_-]+$")
 def check_agent(plugin: str, agent: str, home: Path | None = None) -> bool:
     """Return True when the agent is installed; False otherwise.
 
-    Checks:
-    1. ``~/.claude/plugins/cache/borda-ai-rig/<plugin>/*/agents/<agent>.md``
-    2. ``./.claude/agents/<agent>.md`` (project-local fallback)
+    Checks only ``~/.claude/plugins/cache/borda-ai-rig/<plugin>/*/agents/<agent>.md``.
+    A project-local ``./.claude/agents/<agent>.md`` is ignored: the working tree
+    may be a repository under review, and its files are data, not installed agents.
 
     Args:
         plugin: Plugin name (e.g. ``"oss"``).
@@ -61,8 +64,6 @@ def check_agent(plugin: str, agent: str, home: Path | None = None) -> bool:
         for version_dir in cache_plugin_dir.iterdir():
             if (version_dir / "agents" / f"{agent}.md").exists():
                 return True
-    if (Path(".claude") / "agents" / f"{agent}.md").exists():
-        return True
     return False
 
 

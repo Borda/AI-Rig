@@ -41,6 +41,50 @@ def _fake_gh(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
     return recorded
 
 
+def test_symbol_count_above_cap_is_refused_before_any_search(
+    fake_gh: list[list[str]], capsys: pytest.CaptureFixture[str]
+) -> None:
+    """More symbols than the cap → exit 1 with no ``gh`` call.
+
+    Each symbol costs one rate-limited code-search call, and truncating the list would silently drop consumers from the
+    union, so the run is refused instead.
+    """
+    symbols = [f"Sym{i}" for i in range(sdc._MAX_SYMBOLS + 1)]
+    rc = sdc.main(["--package", "pkg", *symbols])
+    assert rc == 1
+    assert "more than" in capsys.readouterr().err
+    assert fake_gh == []
+
+
+def test_endless_stdin_stops_reading_at_the_cap(
+    monkeypatch: pytest.MonkeyPatch, fake_gh: list[list[str]], capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A stdin stream longer than the cap is cut off at cap + 1 lines instead of being drained."""
+    consumed: list[int] = []
+
+    class _Stream:
+        """Endless line source that records how many lines were taken."""
+
+        def __iter__(self) -> _Stream:
+            """Return the stream itself as its own iterator."""
+            return self
+
+        def __next__(self) -> str:
+            """Yield one more symbol line and count it."""
+            consumed.append(1)
+            return f"Sym{len(consumed)}\n"
+
+        def isatty(self) -> bool:
+            """Report a pipe, so the symbols are read from stdin."""
+            return False
+
+    monkeypatch.setattr(sdc.sys, "stdin", _Stream())
+    rc = sdc.main(["--package", "pkg"])
+    assert rc == 1
+    assert len(consumed) == sdc._MAX_SYMBOLS + 1
+    assert fake_gh == []
+
+
 def test_missing_package_exits_1(fake_gh: list[list[str]], capsys: pytest.CaptureFixture[str]) -> None:
     """No ``--package`` → exit 1, stderr message."""
     rc = sdc.main(["SomeSymbol"])

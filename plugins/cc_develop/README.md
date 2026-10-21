@@ -107,7 +107,7 @@ Then run `/develop:setup` once to link this plugin's rules into `~/.claude/rules
 
 ```bash
 claude plugin install foundry@borda-ai-rig   # named specialist agents
-claude plugin install oss@borda-ai-rig        # optional PR review and severity checklist integration
+claude plugin install oss@borda-ai-rig        # optional GitHub PR review (/oss:review <PR#>)
 claude plugin install research@borda-ai-rig
 ```
 
@@ -264,7 +264,7 @@ ______________________________________________________________________
 /develop:feature "add CSV export to the results API" --plan .plans/active/plan_add-csv-export-results-api.md
 ```
 
-**Team mode coordination**: Lead broadcasts Step 1 analysis. `foundry:qa-specialist` challenges API design before implementation. `foundry:sw-engineer` implements while `foundry:qa-specialist` writes TDD tests parallel. `foundry:doc-scribe` prepares docs structure concurrently.
+**Team mode coordination**: two serialized waves. Wave 1: `foundry:sw-engineer` implements the feature and must show the demo test failing before implementation; if it already passes, the run stops before Wave 2. Wave 2: `foundry:qa-specialist` (edge-case and regression tests) and `foundry:doc-scribe` (docs) run in parallel against the actual implementation from Wave 1, so neither tests guessed APIs nor documents placeholder structure.
 
 ______________________________________________________________________
 
@@ -452,6 +452,10 @@ Review output preserves its aggregate prose summary, verdict, confidence and det
 
 **Not for**: GitHub PR review — use `/oss:review <PR#>` (requires `oss` plugin); implementation work — use `/develop:feature` or `/develop:fix`.
 
+**PR numbers**: a bare PR number (`/develop:review 42` or `#42`, with or without flags beside it) is detected after flag parsing. With `oss` installed, the skill offers to run `/oss:review 42` instead; without it, it asks for a local path to review. A file or directory named like a number (`42.py`, or an existing `42`) is reviewed as a path.
+
+**Severity checklist**: review agents and the consolidator apply the severity anchors, consolidation rules and suppressions in `skills/review/templates/review-checklist.md`, shipped with `develop`; no other plugin is needed for them.
+
 **Scope**: Python source only. Non-Python files (YAML, Dockerfile, JSON, shell scripts) flagged in report header as "not reviewed" but presence noted — dependency/config changes can silently break reviewed Python code.
 
 **Invocation**:
@@ -464,15 +468,15 @@ Review output preserves its aggregate prose summary, verdict, confidence and det
 
 **Flags**:
 
-| Flag               | Description                                                                                                                                                                                    |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--no-challenge`   | Skip challenger adversarial gate                                                                                                                                                               |
-| `--challenge`      | Accepted for compatibility; no effect, since the challenger runs at every diff size unless `--no-challenge` is passed                                                                          |
-| `--codemap`        | Require Codemap and an index; stop when unavailable                                                                                                                                            |
-| `--no-codemap`     | Disable codemap even if available                                                                                                                                                              |
-| `--worktree`       | Run the review in an isolated git worktree (base: HEAD) so no agent can mutate main sources. Report is written to the **main tree**; reviews committed HEAD (uncommitted changes not visible). |
-| `--full`           | Run every spawn unit selected by classification instead of the default top-three-unit cap                                                                                                      |
-| `--keep "<items>"` | Append items to compaction contract preserve field — keeps key context if auto-compaction fires mid-skill                                                                                      |
+| Flag               | Description                                                                                                                                                                                                     |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--no-challenge`   | Skip challenger adversarial gate                                                                                                                                                                                |
+| `--challenge`      | Accepted for compatibility; no effect, since the challenger runs at every diff size unless `--no-challenge` is passed                                                                                           |
+| `--codemap`        | Require Codemap and an index; stop when unavailable                                                                                                                                                             |
+| `--no-codemap`     | Disable codemap even if available                                                                                                                                                                               |
+| `--worktree`       | Run the review in an isolated git worktree (base: HEAD) so no agent can mutate main sources. Report is written to the **main tree**; reviews the last commit (`HEAD~1..HEAD`; uncommitted changes not visible). |
+| `--full`           | Run every spawn unit selected by classification instead of the default top-three-unit cap                                                                                                                       |
+| `--keep "<items>"` | Append items to compaction contract preserve field — keeps key context if auto-compaction fires mid-skill                                                                                                       |
 
 **Workflow**:
 
@@ -525,6 +529,8 @@ ______________________________________________________________________
 
 **Purpose**: Deliver this plugin's `rules/*.md` into Claude's user-level rule namespace. Maintenance command, not part of any development workflow.
 
+Setup probes the bare `python` command only (no `python3` or `py -3` fallback), because every later step runs bare `python`.
+
 **When to use**: after installing develop on a new machine, or after upgrading it. `make sync-claude` runs it automatically for every installed managed plugin that ships a setup skill, so a normal sync needs no manual step.
 
 **Invocation**:
@@ -538,8 +544,13 @@ Each rule installs as a symlink at `~/.claude/rules/develop-<source-name>.md`. T
 
 - When a foundry-owned `foundry-quality-gates.md` is already delivered, it links `rules/quality-gates-delta.md` — this plugin's review-loop scope and output-routing sections only, with every shared obligation read from foundry's copy.
 - Otherwise it links the complete `rules/quality-gates.md`, so a standalone install loses no rule.
+- The form is chosen on each run: after `/foundry:setup` (requires `foundry` plugin) first delivers its rules, or after foundry is removed, re-run `/develop:setup` so the link switches form.
 
-A filename prefix does not change how Claude loads a rule or how its `paths:` frontmatter matches. The quality-gates rule requires the local `_full/adversarial-loop.md` procedure for independent review/fix cycles, including first-pass coverage, invariant and sibling-route closure checks, and separate carried/new finding weight.
+A filename prefix does not change how Claude loads a rule or how its `paths:` frontmatter matches (verified against Claude Code 2.1.220).
+
+Rules are symlinked, not copied: Claude loads rules at session start, so a symlink serves the installed version after every upgrade, while a copy would silently serve stale content forever. Setup delivers only this plugin's own rules — each plugin installs independently, and shipping a sibling's rules would break standalone installation and couple releases. The delta variant keeps that true: it only points at foundry's copy for the shared obligations rather than delivering it. Loading all four complete `quality-gates.md` copies at once cost 51,274 B of context on every turn.
+
+The quality-gates rule requires the local `_full/adversarial-loop.md` procedure for independent review/fix cycles, including first-pass coverage, invariant and sibling-route closure checks, and separate carried/new finding weight.
 
 Only links this plugin provably owns are replaced or removed: the existing target must resolve under the current plugin root or under the same install-cache lineage. A real file, a link into another marketplace, a source checkout, or a dotfiles tree is reported as a conflict and left alone unless you approve replacing it.
 
@@ -608,7 +619,7 @@ Forked repo, want to fix/implement issue reported on original upstream. Pass `--
 
 ### Complex or high-stakes work
 
-Add `--team` to any code-changing skill. Spawns parallel specialist agents exploring implementation space independently. Significantly higher token cost — reserve for multi-module changes, public API additions, auth/payment/data scope.
+Add `--team` to any code-changing skill. Spawns parallel specialist agents exploring implementation space independently. Significantly higher token cost — reserve for multi-module changes, public API additions, auth/payment/data scope. In `feature` and `refactor`, the team path still runs the Step 5 quality stack and the final gate before the Final Report, and never reports the suite green earlier. Every team mode (`feature`, `fix`, `refactor`, `debug`) needs `~/.claude/TEAM_PROTOCOL.md`, which `/foundry:setup` (requires `foundry` plugin) writes; without it the run stops with `! BLOCKED` before creating a run directory or spawning anyone — run `/foundry:setup`, or re-run without `--team` for the solo path.
 
 ```text
 /develop:feature "add streaming response support" --team
@@ -643,7 +654,7 @@ ______________________________________________________________________
 | Dependency            | Required    | Unlocks                                                                                                                                                                                      |
 | --------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `foundry` plugin      | recommended | Named specialist agents. Without it, agent-router falls back to `general-purpose` with role-description prompts; develop's own quality-stack files still load.                               |
-| `oss` plugin          | optional    | Severity checklist for local review when available; use `/oss:review <PR#>` for contributor-facing GitHub PR review (requires `oss`).                                                        |
+| `oss` plugin          | optional    | `/oss:review <PR#>` for contributor-facing GitHub PR review; `/develop:review <PR#>` offers it when oss is installed. Local review ships its own severity checklist and never needs `oss`.   |
 | `bridge@borda-ai-rig` | optional    | Read-only adversarial pre-pass and bounded mechanical follow-up when installed and enabled; skipped with an explicit status when absent or disabled.                                         |
 | `codemap-py`          | optional    | Structural context such as callers, imports, test impact, and blast radius. Auto mode uses an available index; absent/stale indexes follow the Codemap gate, and `--no-codemap` disables it. |
 | `gh` CLI              | optional    | Fetches issue bodies for numeric issue arguments and GitHub Actions logs for `/develop:debug --ci-run`; required only for those paths.                                                       |
@@ -805,43 +816,52 @@ Both files are merged into `~/.claude/settings.json` by `/develop:setup` (Step 5
 
 <a id="bin-helper-inventory"></a>
 
-## 🧰 Bin helper inventory (29 shipped deterministic helpers)
+## 🧰 Bin helper inventory (38 shipped deterministic helpers)
 
 These helpers are installed workflow support and maintainer surfaces, not additional slash-command skills. The skills own the development workflow; the helpers handle bounded flag parsing, Codemap context, test execution, worktree setup, path resolution, and state extraction.
 
-| Helper                       | Purpose                                                                                    |
-| ---------------------------- | ------------------------------------------------------------------------------------------ |
-| `agent_watch.py`             | Report each spawned agent's deliverable and deadline in one call.                          |
-| `append_ledger.py`           | Append staged `.rec` records (or `--from` files) to a growing ledger without rewriting it. |
-| `build_codemap_batch.py`     | Build one Codemap pre-flight batch for changed modules.                                    |
-| `codemap_resolve.py`         | Resolve Codemap auto, strict, or disabled mode.                                            |
-| `codemap_scan.py`            | Derive affected modules and emit structural Codemap queries.                               |
-| `derive_codemap_target.py`   | Derive TARGET_MODULE/TARGET_FN from a skill goal.                                          |
-| `dev_codemap_gate.py`        | Normalize and persist Codemap mode for all six workflows.                                  |
-| `dev_issue_fetch_wrap.py`    | Fetch and persist upstream issue context for development skills.                           |
-| `dev_parse_args.py`          | Parse development-skill arguments into shell-safe assignments.                             |
-| `dev_run_dir.py`             | Create a timestamped `.developments/` run directory and optional sentinel.                 |
-| `dev_setup_worktree_wrap.py` | Set up team-mode worktree run directories and state.                                       |
-| `dev_shared_resolve.py`      | Resolve develop's own shared directory portably.                                           |
-| `dev_test_targets.py`        | Select the tests a change touches; `--run` runs them in one call.                          |
-| `diagnosis_parse.py`         | Parse and validate a `--diagnosis` path from arguments.                                    |
-| `extract-keep-flag.py`       | Parse `--keep "<items>"` and clear a stale compaction contract.                            |
-| `extract_json_field.py`      | Recover a JSON object from text and print a selected field.                                |
-| `find-polluter.py`           | Binary-search test isolation contamination.                                                |
-| `get_plugin_install_path.py` | Resolve the active plugin path from Claude's registry.                                     |
-| `heal_git_artifacts.py`      | Reclaim stale skill locks and orphaned git worktrees.                                      |
-| `issue_fetch.py`             | Validate an issue argument and fetch it through `gh`.                                      |
-| `parse-skill-flags.py`       | Parse boolean and value skill flags into shell assignments.                                |
-| `plan_hash.py`               | Record a `--plan` file's hash and flag edits made during the build.                        |
-| `parse_target_qname.py`      | Split a `module::function` suspect out of a skill's arguments.                             |
-| `pytest_gate.py`             | Run an allow-listed pytest command with full output.                                       |
-| `resolve_review_target.py`   | Resolve a review target and its changed Python files.                                      |
-| `resolve_shared_path.py`     | Resolve the active `codemap-py` install for its shared contracts.                          |
-| `run_pytest_short.py`        | Run an allow-listed pytest command on one or more targets; show final lines.               |
-| `setup_worktree.py`          | Create a team-mode `.temp/develop/` run directory and optional sentinel.                   |
-| `sync_rules.py`              | Install namespaced rule symlinks into `~/.claude/rules/`.                                  |
-| `verify_blueprint_audit.py`  | Verify and prune the auto-allow audit log.                                                 |
-| `write_skill_contract.py`    | Write the compaction-boundary contract the PreCompact hook appends verbatim.               |
+| Helper                          | Purpose                                                                                                                                                                                                                                                                    |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `agent_watch.py`                | Report each spawned agent's deliverable and deadline in one call.                                                                                                                                                                                                          |
+| `append_ledger.py`              | Append staged `.rec` records (or `--from` files) to a growing ledger without rewriting it.                                                                                                                                                                                 |
+| `check_bridge.py`               | Report whether the Claude-Codex bridge plugin is installed and enabled (`true`/`false`, or `--status` for `available`, `disabled`, `absent`).                                                                                                                              |
+| `build_codemap_batch.py`        | Build one Codemap pre-flight batch for changed modules.                                                                                                                                                                                                                    |
+| `codemap_resolve.py`            | Resolve Codemap auto, strict, or disabled mode.                                                                                                                                                                                                                            |
+| `codemap_scan.py`               | Derive affected modules and emit structural Codemap queries.                                                                                                                                                                                                               |
+| `compaction_boundary.py`        | Print the compaction Boundary step from the plugin's contract, then run the optional foundry compaction gate.                                                                                                                                                              |
+| `derive_codemap_target.py`      | Derive TARGET_MODULE/TARGET_FN from a skill goal.                                                                                                                                                                                                                          |
+| `dev_batch_gate.py`             | Decide whether feature/refactor run in batch mode (`--no-batch` opts out); when on, record the calling skill in `dev-batch-skill`.                                                                                                                                         |
+| `dev_codemap_gate.py`           | Normalize and persist Codemap mode for all six workflows.                                                                                                                                                                                                                  |
+| `dev_issue_fetch_wrap.py`       | Fetch and persist upstream issue context for development skills.                                                                                                                                                                                                           |
+| `dev_load_shared.py`            | Print one `skills/_shared` document (warm `dev-shared` sentinel, else a fresh resolve); `--optional` turns a missing document into a skip warning. A cold resolve outside the develop source repository with no install exits 1.                                           |
+| `dev_parse_args.py`             | Parse development-skill arguments into shell-safe assignments.                                                                                                                                                                                                             |
+| `dev_run_dir.py`                | Create a timestamped `.developments/` run directory and optional sentinel; `--persist <skill>` also writes the skill's `dev-<skill>-dev-dir` sentinel.                                                                                                                     |
+| `dev_run_repro.py`              | Reproduce a bug with the allow-listed pytest runner (`--tb=long`, last 60 lines); only pytest exit 1 is reproduced, other non-zero is `! GATE ERROR`.                                                                                                                      |
+| `dev_setup_worktree_wrap.py`    | Set up team-mode worktree run directories and state.                                                                                                                                                                                                                       |
+| `dev_shared_resolve.py`         | Resolve develop's own shared directory portably; `--init` persists the `dev-shared` and a fresh `dev-agent-watch-dir` sentinel for the run. Without an install, the cwd `plugins/cc_develop` tree is used only inside the develop source repository; elsewhere it exits 1. |
+| `dev_test_targets.py`           | Select the tests a change touches; `--run` runs them in one call; `--skill <skill>` reads the pytest command and run directory from sentinels.                                                                                                                             |
+| `diagnosis_parse.py`            | Parse and validate a `--diagnosis` path from arguments.                                                                                                                                                                                                                    |
+| `extract-keep-flag.py`          | Parse `--keep "<items>"` and clear a stale compaction contract.                                                                                                                                                                                                            |
+| `extract_json_field.py`         | Recover a JSON object from text and print a selected field.                                                                                                                                                                                                                |
+| `find-polluter.py`              | Binary-search test isolation contamination.                                                                                                                                                                                                                                |
+| `get_plugin_install_path.py`    | Resolve the active plugin path from Claude's registry.                                                                                                                                                                                                                     |
+| `heal_git_artifacts.py`         | Reclaim stale skill locks and leftover git worktrees; unregistered dirs only with `--include-orphans`, symlinks never followed, `*` prefix rejected.                                                                                                                       |
+| `issue_fetch.py`                | Validate an issue argument and fetch it through `gh`.                                                                                                                                                                                                                      |
+| `merge_settings_permissions.py` | Merge the plugin's shipped allow and deny rules into `~/.claude/settings.json` in one atomic write (`/develop:setup`).                                                                                                                                                     |
+| `parse-skill-flags.py`          | Parse boolean and value skill flags into shell assignments; `--keep-state <prefix>` also writes per-session sentinels, so skills read values without `eval`.                                                                                                               |
+| `plan_hash.py`                  | Record a `--plan` file's hash and flag edits made during the build.                                                                                                                                                                                                        |
+| `parse_target_qname.py`         | Split a `module::function` suspect out of a skill's arguments.                                                                                                                                                                                                             |
+| `pytest_gate.py`                | Run an allow-listed pytest command with full output.                                                                                                                                                                                                                       |
+| `resolve_review_target.py`      | Resolve a review target and its changed Python files; `--committed` diffs `HEAD~1..HEAD`. Exits 1 on a missing path or a target with no Python file.                                                                                                                       |
+| `resolve_shared_path.py`        | Resolve the active `codemap-py` install for its shared contracts; the cwd source-tree fallback is used only inside that plugin's own source repository.                                                                                                                    |
+| `review_impact_tier.py`         | Read `codemap-py query diff-impact` JSON from stdin and print `FULL` or `LIGHT` with a reason; unknown impact always yields `FULL`.                                                                                                                                        |
+| `run_pytest_short.py`           | Run an allow-listed pytest command on one or more targets; show final lines.                                                                                                                                                                                               |
+| `setup_worktree.py`             | Create a team-mode `.temp/develop/` run directory; prints its timestamp and path.                                                                                                                                                                                          |
+| `sync_rules.py`                 | Install namespaced rule symlinks into `~/.claude/rules/`.                                                                                                                                                                                                                  |
+| `verify_blueprint_audit.py`     | Verify and prune the auto-allow audit log.                                                                                                                                                                                                                                 |
+| `write_skill_contract.py`       | Write the compaction-boundary contract the PreCompact hook appends verbatim.                                                                                                                                                                                               |
+
+`merge_settings_permissions.py` (a byte-identical copy propagated from foundry) merges the plugin's shipped `permissions-allow.json` / `permissions-deny.json` into `~/.claude/settings.json` in one atomic write for `/develop:setup`. `write_skill_contract.py --keep-sentinel dev-<skill>-keep-items` reads the user's `--keep` text from the session sentinel and appends it to the contract's `preserve:` line, and `compaction_boundary.py` (a byte-identical copy propagated from foundry) replaces the inline Boundary-step print and gate lines in the fix and review boundary blocks.
 
 #### Auto-allow audit log
 

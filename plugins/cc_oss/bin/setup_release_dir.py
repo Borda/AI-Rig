@@ -181,8 +181,16 @@ def _relink_and_backup(release_dir: Path, link_path: Path, resolved_target: Path
     release_dir.mkdir(parents=True, exist_ok=True)
 
     if link_path.is_symlink():
-        link_path.unlink()
-    link_path.symlink_to(resolved_target)
+        # swap atomically: unlink-then-create leaves a window with no link, and a crash in it loses the old one
+        pending = link_path.with_name(f".{link_path.name}.{os.getpid()}.new")
+        pending.unlink(missing_ok=True)
+        try:
+            pending.symlink_to(resolved_target)
+            os.replace(pending, link_path)
+        finally:
+            pending.unlink(missing_ok=True)
+    else:
+        link_path.symlink_to(resolved_target)
 
     for name in _ARTIFACTS:
         target = release_dir / name

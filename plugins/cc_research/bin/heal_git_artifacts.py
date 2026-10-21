@@ -34,29 +34,38 @@ Worktree handling is deliberately asymmetric: a worktree holding uncommitted
 work is *reported*, never removed, no matter how old it is, and worktrees whose
 name does not match a managed prefix are left alone entirely.
 
+**Orphans are opt-in.** An unregistered directory under ``--root`` (an *orphan*:
+``git worktree add`` interrupted, or registration pruned) has no git state to
+prove it abandoned — only its top-level mtime. It is reported but never counted
+as reclaimable or removed unless the caller passes ``--include-orphans``. Even
+then, immediately before ``rmtree`` the orphan is re-checked: still unregistered
+(and ``git worktree list`` answering at all), not modified since the sweep, not
+a symlink, and — when it carries its own ``.git`` — free of uncommitted entries.
+Symlinked children of ``--root`` are reported as skipped and never followed or
+removed.
+
 ``--root`` must resolve strictly under the git toplevel of the invoking working
 directory (the "repository" for this purpose — inside a linked worktree, that
 is the worktree's own toplevel, not the main tree). This bounds the argument
-itself against an absolute path pointing entirely outside the repo; it does
-not, on its own, bound what ``--managed-prefix '*'`` can still reach *inside*
-that boundary — an in-repo ``--root`` paired with the wildcard still removes
-every sufficiently-aged, unregistered child directory it finds there, since an
-unregistered directory's dirty-file check is skipped by design (there is no
-git state to check `git status` against). Safe use of the wildcard therefore
-still depends on ``--root`` pointing at a directory this tool alone populates
-(e.g. a skill-private variant dir), not on the containment check alone.
+itself against an absolute path pointing entirely outside the repo.
+``--managed-prefix`` takes literal name prefixes only; a ``*`` wildcard is
+rejected, so a caller sweeping a skill-private root names the prefix that skill
+creates (e.g. ``variant-``) rather than claiming every child.
 
 Usage:
-    heal_git_artifacts.py locks --pattern '<glob>' [--max-age-min N] [--apply] [--quiet]
-    heal_git_artifacts.py worktrees [--root DIR] [--min-age-days N] [--managed-prefix CSV] [--apply] [--quiet]
+    heal_git_artifacts.py locks --pattern '<bare file-name glob>' [--max-age-min N] [--apply] [--quiet]
+    heal_git_artifacts.py worktrees [--root DIR] [--min-age-days N] [--managed-prefix CSV] [--include-orphans]
+        [--apply] [--quiet]
 
 Both subcommands are **report-only by default**; ``--apply`` performs removal.
 
 Exit codes:
     0 — success (nothing reclaimable, or reclaimed when ``--apply`` given)
     1 — at least one artifact is reclaimable and ``--apply`` was not given
+        (an orphan counts only with ``--include-orphans``)
     2 — usage or environment error (not a git repository, bad arguments,
-        ``--root`` unresolvable or outside the repository)
+        ``--root`` unresolvable or outside the repository, ``--pattern``
+        not a bare file-name glob, ``--managed-prefix`` containing ``*``)
 """
 
 from __future__ import annotations
@@ -93,6 +102,10 @@ _WIN_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 #: Win32 ``ERROR_ACCESS_DENIED``. The process exists, we simply may not open it.
 _WIN_ERROR_ACCESS_DENIED = 5
 
+#: Dirty-entry count reported when git cannot say whether a registered worktree
+#: is clean. Any positive value keeps it out of the removable tier.
+_DIRTY_UNKNOWN = 1
+
 
 class LockVerdict(str, Enum):
     """Outcome of inspecting one lock file."""
@@ -112,13 +125,16 @@ class WorktreeTier(str, Enum):
     DIRTY = "dirty"
     REMOVABLE = "removable"
     ORPHAN = "orphan"
+    SYMLINK = "symlink"
 
 
 #: Verdicts whose lock may be reclaimed.
 RECLAIMABLE_LOCKS = frozenset({LockVerdict.STALE_DEAD, LockVerdict.STALE_AGED})
 
 #: Tiers whose worktree may be removed. ``ORPHAN`` is an unregistered directory
-#: that ``git worktree remove`` and ``git worktree prune`` both miss.
+#: that ``git worktree remove`` and ``git worktree prune`` both miss; the CLI
+#: treats it as reclaimable only under ``--include-orphans``. ``SYMLINK`` is
+#: never reclaimable.
 RECLAIMABLE_WORKTREES = frozenset({WorktreeTier.REMOVABLE, WorktreeTier.ORPHAN})
 
 
@@ -423,6 +439,29 @@ def _file_age_minutes(path: Path, now: float) -> float:
         return 0.0
 
 
+def _validate_lock_pattern(pattern: str) -> None:
+    """Reject a ``--pattern`` that could match outside the git common directory.
+
+    ``Path.glob`` honours ``..`` and separators, so ``../*.lock`` would sweep, and
+    under ``--apply`` unlink, files outside the lock directory.
+
+    Args:
+        pattern: Raw ``--pattern`` value.
+
+    Raises:
+        ValueError: When the pattern is empty, ``.``/``..``, or contains a path separator.
+
+    Examples:
+        >>> _validate_lock_pattern("oss-resolve-*.lock")
+        >>> _validate_lock_pattern("../*.lock")
+        Traceback (most recent call last):
+            ...
+        ValueError: --pattern must be a bare file-name glob, got: '../*.lock'
+    """
+    if not pattern or pattern in {".", ".."} or "/" in pattern or "\\" in pattern:
+        raise ValueError(f"--pattern must be a bare file-name glob, got: {pattern!r}")
+
+
 def sweep_locks(git_dir: Path, pattern: str, max_age_minutes: float, now: float) -> list[LockState]:
     """Inspect every lock in *git_dir* matching *pattern*.
 
@@ -433,19 +472,25 @@ def sweep_locks(git_dir: Path, pattern: str, max_age_minutes: float, now: float)
 
     Args:
         git_dir: Git common directory holding the locks.
-        pattern: Glob such as ``oss-resolve-*.lock``.
+        pattern: Bare file-name glob such as ``oss-resolve-*.lock``; symlinks
+            and matches resolving outside *git_dir* are skipped.
         max_age_minutes: Age at or beyond which a lock is reclaimable.
         now: Reference epoch seconds.
 
     Returns:
         One :class:`LockState` per matching file, sorted by path.
 
+    Raises:
+        ValueError: When *pattern* is not a bare file-name glob.
+
     Examples:
         No doctest — filesystem-dependent; covered by pytest with tmp_path.
     """
+    _validate_lock_pattern(pattern)
     states: list[LockState] = []
+    boundary = git_dir.resolve()
     for path in sorted(git_dir.glob(pattern)):
-        if not path.is_file():
+        if path.is_symlink() or not path.is_file() or path.parent.resolve() != boundary:
             continue
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
@@ -492,14 +537,22 @@ def _dirty_count(path: Path) -> int:
         path: Worktree directory.
 
     Returns:
-        Number of ``git status --porcelain`` lines; ``0`` when git cannot
-        report (an unregistered directory has no git view of its own).
+        Number of ``git status --porcelain`` lines. When git itself fails
+        (no output and ``git rev-parse --git-dir`` also fails) the tree is
+        unverifiable, so the result is ``_DIRTY_UNKNOWN`` and the worktree is
+        classified dirty rather than removable. Callers must not invoke this
+        for an unregistered directory without its own ``.git`` entry: git
+        would walk up and report the enclosing repository instead.
 
     Examples:
         No doctest — requires a git repository; covered by pytest.
     """
     out = _git(["status", "--porcelain"], cwd=path)
-    return len([line for line in out.splitlines() if line.strip()])
+    lines = [line for line in out.splitlines() if line.strip()]
+    if lines:
+        return len(lines)
+    # Empty output is ambiguous: a clean tree, or git failing. Fail closed.
+    return 0 if _git(["rev-parse", "--git-dir"], cwd=path) else _DIRTY_UNKNOWN
 
 
 def sweep_worktrees(
@@ -524,7 +577,8 @@ def sweep_worktrees(
         now: Reference epoch seconds.
 
     Returns:
-        One :class:`WorktreeState` per subdirectory, sorted by path.
+        One :class:`WorktreeState` per subdirectory or symlinked child, sorted
+        by path. A symlinked child is tiered ``SYMLINK`` without being followed.
 
     Examples:
         No doctest — filesystem-dependent; covered by pytest with tmp_path.
@@ -533,7 +587,15 @@ def sweep_worktrees(
         return []
     registered = _registered_worktrees(repo_root)
     states: list[WorktreeState] = []
-    for path in sorted(p for p in root.iterdir() if p.is_dir()):
+    for path in sorted(root.iterdir()):
+        # Never followed: rmtree cannot remove a link, and its target may lie outside root.
+        if path.is_symlink():
+            states.append(
+                WorktreeState(path=path, registered=False, dirty_files=0, age_days=0.0, tier=WorktreeTier.SYMLINK)
+            )
+            continue
+        if not path.is_dir():
+            continue
         try:
             resolved = path.resolve()
         except OSError:
@@ -543,7 +605,7 @@ def sweep_worktrees(
             age_days = max(0.0, (now - path.stat().st_mtime) / 86400.0)
         except OSError:
             age_days = 0.0
-        dirty = _dirty_count(path) if is_registered else 0
+        dirty = _dirty_count(path) if is_registered or _has_own_git(path) else 0
         tier = classify_worktree(
             path.name,
             is_main=registered.get(resolved, False),
@@ -559,6 +621,51 @@ def sweep_worktrees(
     return states
 
 
+def _has_own_git(path: Path) -> bool:
+    """Report whether *path* carries its own ``.git`` entry (file or directory, link not followed).
+
+    Examples:
+        >>> import tempfile
+        >>> with tempfile.TemporaryDirectory() as d:
+        ...     before = _has_own_git(Path(d))
+        ...     (Path(d) / ".git").mkdir()
+        ...     (before, _has_own_git(Path(d)))
+        (False, True)
+    """
+    return os.path.lexists(path / ".git")
+
+
+def _orphan_still_reclaimable(state: WorktreeState, repo_root: Path) -> bool:
+    """Re-check an ORPHAN immediately before ``rmtree``; any doubt keeps it.
+
+    The sweep snapshot may be stale. The orphan is kept when it became a
+    symlink, was modified since the sweep, is now registered, registration
+    cannot be read (an empty ``git worktree list`` — the main tree is always
+    listed when git works), or it carries its own ``.git`` with uncommitted
+    or unverifiable state.
+
+    Args:
+        state: Orphan selected by the sweep.
+        repo_root: Repository root, for the registration listing.
+
+    Returns:
+        ``True`` only when every check still holds.
+
+    Examples:
+        No doctest — git- and filesystem-dependent; covered by pytest with tmp_path.
+    """
+    if state.path.is_symlink() or _dir_age_days(state.path, time.time()) < state.age_days:
+        return False
+    registered = _registered_worktrees(repo_root)
+    try:
+        resolved = state.path.resolve()
+    except OSError:
+        return False
+    if not registered or resolved in registered:
+        return False
+    return not (_has_own_git(state.path) and _dirty_count(state.path) != 0)
+
+
 def _remove_worktree(state: WorktreeState, repo_root: Path) -> bool:
     """Remove one worktree, choosing the mechanism its tier requires.
 
@@ -567,19 +674,48 @@ def _remove_worktree(state: WorktreeState, repo_root: Path) -> bool:
         repo_root: Repository root, for the ``git worktree remove`` call.
 
     Returns:
-        ``True`` when the directory is gone afterwards.
+        ``True`` when the directory is gone afterwards. ``False`` when removal
+        was declined: a registered worktree git refuses to remove (dirty,
+        locked, submodules) or that fails the pre-removal recheck is left
+        untouched, never deleted by other means.
 
     Examples:
         No doctest — mutates the filesystem; covered by pytest with tmp_path.
     """
+    if not state.path.exists():
+        return True
     if state.tier is WorktreeTier.REMOVABLE:
+        # Recheck: the sweep snapshot may be stale, and an unverifiable tree counts as dirty.
+        if _dirty_count(state.path) != 0:
+            return False
+        # No rmtree fallback: git declines dirty, locked or submodule worktrees on purpose.
         _git(["worktree", "remove", str(state.path)], cwd=repo_root)
-    if state.path.exists():
-        # ORPHAN has no registration to remove; a REMOVABLE that git declined
-        # (e.g. a locked administrative entry) falls through to the same path.
-        shutil.rmtree(state.path, ignore_errors=True)
-        _git(["worktree", "prune"], cwd=repo_root)
+        return not state.path.exists()
+    # ORPHAN: no registration to remove, so rmtree — only after a fresh re-check.
+    if state.tier is not WorktreeTier.ORPHAN or not _orphan_still_reclaimable(state, repo_root):
+        return False
+    shutil.rmtree(state.path, ignore_errors=True)
+    _git(["worktree", "prune"], cwd=repo_root)
     return not state.path.exists()
+
+
+def _dir_age_days(path: Path, now: float) -> float:
+    """Return the age of *path* in days from its mtime, or ``0.0`` when unreadable.
+
+    Args:
+        path: Directory to stat.
+        now: Reference epoch seconds.
+
+    Returns:
+        Age in days; ``0.0`` (i.e. "fresh, do not reclaim") on stat failure.
+
+    Examples:
+        No doctest — filesystem-dependent; covered by pytest with tmp_path.
+    """
+    try:
+        return max(0.0, (now - path.stat().st_mtime) / 86400.0)
+    except OSError:
+        return 0.0
 
 
 def _emit(lines: list[str], quiet: bool) -> None:
@@ -612,7 +748,11 @@ def run_locks(args: argparse.Namespace, git_dir: Path, now: float) -> int:
     Examples:
         No doctest — filesystem-dependent; covered by pytest.
     """
-    states = sweep_locks(git_dir, args.pattern, args.max_age_min, now)
+    try:
+        states = sweep_locks(git_dir, args.pattern, args.max_age_min, now)
+    except ValueError as exc:
+        print(f"! SECURITY: {exc}", file=sys.stderr)
+        return 2
     reclaimable = [s for s in states if s.verdict in RECLAIMABLE_LOCKS]
     lines: list[str] = []
     for state in states:
@@ -637,13 +777,12 @@ def run_locks(args: argparse.Namespace, git_dir: Path, now: float) -> int:
 def _validate_worktree_root(root: Path, repo_root: Path) -> None:
     """Reject a ``--root`` that escapes the invoking repository (CWE-22 guard).
 
-    ``--managed-prefix '*'`` treats every child of ``root`` as tool-managed; without
-    this check, a broad ``--root`` combined with that wildcard lets ``--apply``
-    recursively ``shutil.rmtree`` every sufficiently-aged, clean-looking subdirectory
+    Without this check, a broad ``--root`` combined with a matching
+    ``--managed-prefix``, ``--include-orphans`` and ``--apply`` would recursively
+    ``shutil.rmtree`` every sufficiently-aged, clean-looking matching subdirectory
     under an arbitrary path. Bounds only the ``--root`` argument itself to the git
-    toplevel of the invoking working directory — it does not bound what the wildcard
-    can still reach *inside* that boundary (a separate, accepted residual risk; see
-    the module-level note above ``run_worktrees``).
+    toplevel of the invoking working directory; what is removed inside that
+    boundary is bounded by the literal managed prefixes and the orphan opt-in.
 
     Args:
         root: Raw ``--root`` value, not yet resolved.
@@ -683,12 +822,15 @@ def run_worktrees(args: argparse.Namespace, repo_root: Path, now: float) -> int:
         No doctest — filesystem-dependent; covered by pytest.
     """
     prefixes = tuple(p for p in (s.strip() for s in args.managed_prefix.split(",")) if p)
-    # "*" means every child is tool-managed — valid only for a skill-private
-    # root (e.g. fortify's variant dir) where nothing else can appear. The empty
-    # prefix matches any name via str.startswith. Never spelled as an empty
-    # value, so a mistyped argument cannot silently widen the blast radius.
-    if "*" in prefixes:
-        prefixes = ("",)
+    # Literal prefixes only: a "*" once claimed every child of the root, so a
+    # wrong --root or a stray directory became a removal candidate.
+    if any("*" in prefix for prefix in prefixes):
+        print(
+            f"! SECURITY: --managed-prefix takes literal name prefixes; '*' is not accepted, got: {args.managed_prefix!r}"
+            " — name the prefix the skill creates (e.g. variant-)",
+            file=sys.stderr,
+        )
+        return 2
     root = Path(args.root) if args.root else repo_root / ".claude" / "worktrees"
     try:
         _validate_worktree_root(root, repo_root)
@@ -696,7 +838,8 @@ def run_worktrees(args: argparse.Namespace, repo_root: Path, now: float) -> int:
         print(f"! SECURITY: {exc}", file=sys.stderr)
         return 2
     states = sweep_worktrees(repo_root, root, args.min_age_days, prefixes, now)
-    reclaimable = [s for s in states if s.tier in RECLAIMABLE_WORKTREES]
+    eligible = RECLAIMABLE_WORKTREES if args.include_orphans else RECLAIMABLE_WORKTREES - {WorktreeTier.ORPHAN}
+    reclaimable = [s for s in states if s.tier in eligible]
     lines: list[str] = []
     for state in states:
         if state.tier is WorktreeTier.DIRTY:
@@ -705,10 +848,17 @@ def run_worktrees(args: argparse.Namespace, repo_root: Path, now: float) -> int:
             )
         elif state.tier is WorktreeTier.PROTECTED:
             lines.append(f"· protected — {state.path.name} (unmanaged name; never auto-removed)")
+        elif state.tier is WorktreeTier.SYMLINK:
+            lines.append(f"· symlink — {state.path.name} (skipped; never followed or removed)")
+        elif state.tier is WorktreeTier.ORPHAN and not args.include_orphans:
+            lines.append(
+                f"· orphan — {state.path.name} (unregistered dir, {state.age_days:.0f} d) — kept; "
+                "pass --include-orphans to remove"
+            )
     for state in reclaimable:
         kind = "unregistered dir" if state.tier is WorktreeTier.ORPHAN else "clean worktree"
-        verb = "removed" if args.apply else "removable"
         ok = _remove_worktree(state, repo_root) if args.apply else True
+        verb = "removable" if not args.apply else "removed" if ok else "kept (removal declined)"
         mark = "⚠" if ok else "✗"
         lines.append(f"{mark} {verb} — {state.path.name} ({kind}, {state.age_days:.0f} d)")
     if not reclaimable:
@@ -760,7 +910,12 @@ def _build_parser() -> argparse.ArgumentParser:
     trees.add_argument(
         "--managed-prefix",
         default=",".join(DEFAULT_MANAGED_PREFIXES),
-        help=f"Comma-separated name prefixes eligible for removal, or '*' for every child — only safe with a skill-private --root (default: {','.join(DEFAULT_MANAGED_PREFIXES)}).",
+        help=f"Comma-separated literal name prefixes eligible for removal; '*' is rejected (default: {','.join(DEFAULT_MANAGED_PREFIXES)}).",
+    )
+    trees.add_argument(
+        "--include-orphans",
+        action="store_true",
+        help="Also treat unregistered directories with a managed prefix as reclaimable; without it they are only reported.",
     )
 
     for sp in (locks, trees):

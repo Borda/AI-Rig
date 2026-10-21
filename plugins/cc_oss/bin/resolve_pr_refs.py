@@ -10,15 +10,20 @@ read by the post-checkout assertion, the Step 10 push gate, and ``conflict-resol
 
 Usage:
     python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_pr_refs.py" --pr "<PR#>"
+    python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_pr_refs.py" --local-base
 
-Sentinels written to ``${TMPDIR:-/tmp}/<name>-${CSID}``:
-    resolve-head-ref, resolve-base-ref, resolve-is-cross-repo, resolve-head-repo-owner, resolve-saved-branch,
-    resolve-pr-head-oid, resolve-local-sha
+``--local-base`` is the no-PR path (report mode, comment dispatch): it publishes only the repository's default branch to
+``resolve-base-ref`` so Step 9 has a QA diff range, using the same origin/HEAD-then-``git remote show`` chain as the PR
+path.
+
+Sentinels written to ``${TMPDIR:-/tmp}/<name>-${CSID}``, each created fresh with mode 0600 (``_sentinel_io.py``):
+    resolve-head-ref, resolve-base-ref, resolve-is-cross-repo, resolve-head-repo-owner, resolve-head-repo-name,
+    resolve-saved-branch, resolve-pr-head-oid, resolve-local-sha
 
 Exit codes:
     0 — metadata resolved and persisted
-    1 — the default branch is undeterminable, the PR head ref is the default branch, or ``--pr``
-        starts with ``-`` (argv-injection guard)
+    1 — the default branch is undeterminable, the PR head ref is the default branch, the PR head or base ref is
+        not a valid branch name, or ``--pr`` starts with ``-`` (argv-injection guard)
 """
 
 from __future__ import annotations
@@ -33,10 +38,20 @@ import tempfile
 from pathlib import Path
 from typing import Final
 
+#: Sibling import: bin/ is not a package. Putting it on the path resolves the private writer whether this file runs as
+#: a script, under the test conftest, or as a doctest module.
+_BIN_DIR = str(Path(__file__).resolve().parent)
+if _BIN_DIR not in sys.path:
+    sys.path.insert(0, _BIN_DIR)
+
+from _sentinel_io import write_private_text  # noqa: E402
+
 #: Comma-separated JSON fields requested from ``gh pr view`` to resolve a PR's head and base refs.
-_PR_FIELDS: Final = "headRefName,baseRefName,isCrossRepository,headRefOid,headRepositoryOwner"
+_PR_FIELDS: Final = "headRefName,baseRefName,isCrossRepository,headRefOid,headRepositoryOwner,headRepository"
 #: Extracts the default branch name from the ``HEAD branch:`` line of ``git remote show`` output.
 _HEAD_BRANCH_RE: Final = re.compile(r"HEAD branch:\s*(\S+)")
+#: Printable characters ``git check-ref-format`` forbids anywhere in a ref name (control bytes are checked separately).
+_REF_FORBIDDEN_CHARS: Final = frozenset(" ~^:?*[\\")
 
 
 def _sentinel_path(name: str) -> Path:
@@ -87,7 +102,7 @@ def _write_sentinel(name: str, value: str) -> None:
     if _DRY_RUN:
         print(f"[dry-run] would write {name}={value}")
         return
-    _sentinel_path(name).write_text(f"{value}\n", encoding="utf-8", newline="\n")
+    write_private_text(_sentinel_path(name), f"{value}\n")
 
 
 def _run(cmd: list[str], timeout: int) -> str:
@@ -124,6 +139,37 @@ def parse_head_branch(remote_show: str) -> str:
     """
     match = _HEAD_BRANCH_RE.search(remote_show)
     return match.group(1) if match else ""
+
+
+def is_valid_branch_name(name: str) -> bool:
+    """Report whether ``name`` is a branch name git accepts and one that cannot be parsed as an option.
+
+    Follows ``git check-ref-format --branch``: the PR author controls the head and base ref names, and the later
+    steps pass them to ``git switch`` and ``gh pr checkout`` as bare arguments, so a name such as ``--detach`` would be
+    read as a flag. ``git check-ref-format --branch`` rejects such a name, yet ``refs/heads/--detach`` passes as a full
+    ref, so the hosting service is not guaranteed to refuse it.
+
+    Args:
+        name: Candidate branch name, as reported by ``gh pr view``.
+
+    Returns:
+        ``True`` when every ref-name rule holds and the name does not start with ``-``.
+
+    Examples:
+        >>> is_valid_branch_name("feature/x-1")
+        True
+        >>> is_valid_branch_name("--detach")
+        False
+        >>> is_valid_branch_name("a..b")
+        False
+        >>> is_valid_branch_name("")
+        False
+    """
+    if not name or name.startswith("-") or name.endswith(".") or ".." in name or "@{" in name:
+        return False
+    if any(ch in _REF_FORBIDDEN_CHARS or ord(ch) < 0x20 or ord(ch) == 0x7F for ch in name):
+        return False
+    return all(part and not part.startswith(".") and not part.endswith(".lock") for part in name.split("/"))
 
 
 def default_branch(timeout: int) -> str:
@@ -182,6 +228,30 @@ def head_repo_owner(meta: dict) -> str:
     return str(owner.get("login") or "")
 
 
+def head_repo_name(meta: dict) -> str:
+    """Read the head repository's name from PR metadata.
+
+    A fork may be renamed, so its name can differ from the upstream one; Step 10 passes it to
+    ``derive_fork_remote.py --fork-repo``, which validates it before it reaches a remote URL.
+
+    Args:
+        meta: Decoded ``gh pr view`` payload.
+
+    Returns:
+        The repository name, or an empty string when absent (the push then assumes the upstream name).
+
+    Examples:
+        >>> head_repo_name({"headRepository": {"id": "R_1", "name": "renamed-fork"}})
+        'renamed-fork'
+        >>> head_repo_name({"headRepository": None})
+        ''
+    """
+    repo = meta.get("headRepository")
+    if not isinstance(repo, dict):
+        return ""
+    return str(repo.get("name") or "")
+
+
 def _collect_ref_metadata(args: argparse.Namespace) -> dict[str, str] | None:
     """Resolve the default branch, the PR's head/base/fork metadata, and the current branch/sha.
 
@@ -189,9 +259,9 @@ def _collect_ref_metadata(args: argparse.Namespace) -> dict[str, str] | None:
         args: Parsed CLI namespace (``pr``, ``timeout``).
 
     Returns:
-        The 7-key sentinel-name-to-value mapping, or ``None`` when the default branch could not be
-        determined or the PR head ref equals the default branch — both cases already printed their
-        own failure message.
+        The 8-key sentinel-name-to-value mapping, or ``None`` when the default branch could not be
+        determined, the PR head or base ref is not a valid branch name, or the PR head ref equals the
+        default branch — every case already printed its own failure message.
     """
     base_default = default_branch(args.timeout)
     if not base_default:
@@ -203,6 +273,13 @@ def _collect_ref_metadata(args: argparse.Namespace) -> dict[str, str] | None:
     base_ref = str(meta.get("baseRefName") or "") or base_default
     cross_repo = "true" if meta.get("isCrossRepository") else "false"
     head_oid = str(meta.get("headRefOid") or "")
+    for label, ref in (("head", head_ref), ("base", base_ref)):
+        # empty head = failed PR fetch, which the later steps already handle; an invalid name never reaches a sentinel
+        if ref and not is_valid_branch_name(ref):
+            print(
+                f"⛔ PR {label} ref {ref!r} is not a valid git branch name — refusing to persist it for later git commands"
+            )
+            return None
     if head_ref == base_default:
         print(f"⛔ PR HEAD ref ({head_ref}) equals default branch — refusing to check out and commit on default branch")
         return None
@@ -214,10 +291,33 @@ def _collect_ref_metadata(args: argparse.Namespace) -> dict[str, str] | None:
         "resolve-base-ref": base_ref,
         "resolve-is-cross-repo": cross_repo,
         "resolve-head-repo-owner": head_repo_owner(meta),
+        "resolve-head-repo-name": head_repo_name(meta),
         "resolve-saved-branch": saved_branch,
         "resolve-pr-head-oid": head_oid,
         "resolve-local-sha": local_sha,
     }
+
+
+def publish_local_base(timeout: int) -> int:
+    """Publish the default branch as ``resolve-base-ref`` for runs that have no PR.
+
+    Report mode without a PR number and comment dispatch skip the PR path, so Step 9 would otherwise find no base. The
+    sentinel is emptied first: a failure must leave it empty rather than inherit a previous run's value.
+
+    Args:
+        timeout: Maximum wait in seconds per subprocess.
+
+    Returns:
+        0 when a valid default branch was published, 1 when it is undeterminable or not a valid branch name.
+    """
+    _write_sentinel("resolve-base-ref", "")
+    base = default_branch(timeout)
+    if not is_valid_branch_name(base):
+        print(f"⛔ Cannot determine a valid origin default branch for QA (got {base!r})")
+        return 1
+    _write_sentinel("resolve-base-ref", base)
+    print(f"→ resolve-base-ref={base}")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -236,6 +336,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--pr", default="", help="PR number or URL accepted by gh pr view.")
     parser.add_argument("--timeout", type=int, default=15, help="Max subprocess wait in seconds (default: 15).")
     parser.add_argument(
+        "--local-base",
+        action="store_true",
+        help="No-PR path: publish only the default branch as resolve-base-ref (report mode, comment dispatch).",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Compute and print, but write no sentinels — use for any run that is not a real skill step.",
@@ -249,6 +354,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", newline="\n")  # type: ignore[union-attr]
+
+    if args.local_base:
+        return publish_local_base(args.timeout)
 
     metadata = _collect_ref_metadata(args)
     if metadata is None:

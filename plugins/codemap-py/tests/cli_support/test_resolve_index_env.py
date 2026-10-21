@@ -234,6 +234,51 @@ def test_tmpdir_doctest_preserves_environment(
     assert tempfile.tempdir == previous_cache
 
 
+_posix_modes = pytest.mark.skipif(not hasattr(os, "getuid"), reason="POSIX mode bits and owners")
+
+
+class TestTmpdirSafety:
+    """A ``TMPDIR`` this user owns is still refused when other users could replace files in it."""
+
+    @_posix_modes
+    @pytest.mark.parametrize(
+        ("mode", "unsafe"),
+        [
+            pytest.param(0o700, False, id="private"),
+            pytest.param(0o755, False, id="readable-not-writable"),
+            pytest.param(0o777, True, id="world-writable"),
+            pytest.param(0o770, True, id="group-writable"),
+            pytest.param(0o1777, False, id="sticky-world-writable"),
+        ],
+    )
+    def test_mode_decides(self, tmp_path: Path, mode: int, unsafe: bool) -> None:
+        """Group/other write access without the sticky bit lets another user swap a sentinel; sticky dirs are fine."""
+        base = tmp_path / "base"
+        base.mkdir()
+        base.chmod(mode)
+
+        reason = _mod._tmpdir_unsafe_reason(str(base))
+
+        assert (reason is not None) is unsafe
+
+    @_posix_modes
+    def test_world_writable_tmpdir_is_rejected_and_not_reread(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A rejected TMPDIR leaves the environment, so the fallback never re-reads the value just refused."""
+        base = tmp_path / "shared"
+        base.mkdir()
+        base.chmod(0o777)
+        monkeypatch.setenv("TMPDIR", str(base))
+        monkeypatch.setattr(tempfile, "tempdir", None)
+
+        resolved = _mod._resolve_tmpdir()
+
+        assert resolved != str(base)
+        assert "TMPDIR" not in os.environ
+        assert "without the sticky bit" in capsys.readouterr().err
+
+
 class TestMainHappyPath:
     """Write temporary output files when resolution succeeds."""
 
@@ -445,3 +490,75 @@ class TestStaleSentinelClearedOnValidationFailure:
         assert rc == 3
         assert _read_resolve_file(tmp_path, "proj", prefix="codemap-stale") == ""
         assert _read_resolve_file(tmp_path, "index", prefix="codemap-stale") == ""
+
+
+class TestUnsetPluginRootUsesOwnRoot:
+    """An unset ``CLAUDE_PLUGIN_ROOT`` never lets the working directory pick the resolver that runs."""
+
+    def test_default_is_the_scripts_own_root(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The fallback is this script's own plugin root, not a cwd-relative ``plugins/codemap-py``."""
+        monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
+        assert _mod._resolve_plugin_root() == str(_mod._own_plugin_root())
+
+    def test_cwd_planted_resolver_is_not_executed(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A ``plugins/codemap-py/bin/resolve_proj_index.py`` shipped by the current directory stays unexecuted.
+
+        A repository under analysis can carry that path; with the old relative default the resolver ran it.
+        """
+        planted = tmp_path / "plugins" / "codemap-py" / "bin"
+        planted.mkdir(parents=True)
+        marker = tmp_path / "PWNED"
+        (planted / "resolve_proj_index.py").write_text(f"open({str(marker)!r}, 'w').write('x')\n", encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
+        _mod._run_resolver(_mod._resolve_plugin_root())
+        assert not marker.exists()
+
+
+@pytest.mark.skipif(not hasattr(os, "getuid"), reason="file ownership is a POSIX concept")
+class TestSentinelOwnership:
+    """A sentinel pre-planted by another user is refused instead of reused."""
+
+    def test_foreign_owned_sentinel_is_refused_and_left_intact(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An existing file whose owner differs from the caller is not truncated or written."""
+        sentinel = tmp_path / "codemap-resolve-index-x"
+        sentinel.write_text("planted\n", encoding="utf-8")
+        monkeypatch.setattr(_mod.os, "getuid", lambda: os.stat(sentinel).st_uid + 1)
+        with pytest.raises(OSError, match="owned by another user"):
+            _write_sentinel_file(sentinel, "value\n")
+        assert sentinel.read_text(encoding="utf-8") == "planted\n"
+
+    def test_own_sentinel_is_overwritten_in_place(self, tmp_path: Path) -> None:
+        """The legitimate rewrite within one session still replaces the previous content."""
+        sentinel = tmp_path / "codemap-resolve-index-x"
+        _write_sentinel_file(sentinel, "first value that is long\n")
+        _write_sentinel_file(sentinel, "short\n")
+        assert sentinel.read_text(encoding="utf-8") == "short\n"
+
+
+class TestSessionSuffix:
+    """The ``CSID`` suffix of the written sentinel names stays a plain filename component."""
+
+    @pytest.mark.parametrize("bad_csid", ["../escaped", "a/b", "..", "x y"])
+    def test_unsafe_csid_falls_back_to_shared(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], bad_csid: str
+    ) -> None:
+        """A ``CSID`` that is not a plain filename component becomes ``shared`` with a stderr warning.
+
+        Left verbatim, ``../escaped`` or a value holding a separator would move the sentinel write out of ``TMPDIR``.
+        """
+        monkeypatch.setenv("CSID", bad_csid)
+        assert _mod._resolve_csid() == "shared"
+        assert "CSID is not a plain filename component" in capsys.readouterr().err
+
+    def test_session_id_fallback_is_validated_too(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The ``CLAUDE_CODE_SESSION_ID`` fallback goes through the same check as ``CSID``."""
+        monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "../../x")
+        assert _mod._resolve_csid() == "shared"
+
+    def test_uuid_shaped_csid_is_kept(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A real session id (UUID or PID) passes through unchanged."""
+        monkeypatch.setenv("CSID", "1f29db67-5fb5-4f9f-86d9-76a1b943ec16")
+        assert _mod._resolve_csid() == "1f29db67-5fb5-4f9f-86d9-76a1b943ec16"

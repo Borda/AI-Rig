@@ -25,7 +25,7 @@ The parent supplies these resolved literal input bindings in the compact Agent p
 - $REVIEW_CHECKLIST — resolved checklist path or empty string
 - $REVIEW_TEMPLATE — resolved review-report.md template path (Step 5); consolidator reads it itself — never embed the template body in this prompt (double-bills its tokens)
 
-`$RUN_DIR` is the exception — do NOT substitute it. Run-dir preamble (prepended by SKILL.md §Step 5) makes consolidator self-resolve `$RUN_DIR` via `cat "${TMPDIR:-/tmp}/dev-review-run-dir-${CSID}"`; leave `$RUN_DIR` literal in prompt text.
+`$RUN_DIR` is the exception — do NOT substitute it. Run-dir preamble (placed after the task line by SKILL.md §Step 5) makes consolidator self-resolve `$RUN_DIR` via `IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/dev-review-run-dir-${CSID}"`; leave `$RUN_DIR` literal in prompt text.
 
 ## Consolidation sequence
 
@@ -37,7 +37,7 @@ The parent supplies these resolved literal input bindings in the compact Agent p
 
 ## Evidence and coverage
 
-- `<REVIEW_CHECKLIST>` empty/unset: insert the top-level note `Review checklist not applied (oss plugin not available) — severity anchors may be inconsistent.`
+- `<REVIEW_CHECKLIST>` empty/unset: insert the top-level note `Review checklist not applied (review-checklist.md missing from this develop install) — severity anchors may be inconsistent.`
 - `$RUN_DIR/cross-validation.md` contains `Cross-Validation: SKIPPED`: prepend `Cross-validation: skipped` to the YAML header and executive summary. Required validation remains incomplete; the note never authorizes unconditional approval or unvalidated findings.
 - Precision gate: include only findings with a concrete actionable location (function, line range, or variable name).
 - Finding density: modules under 100 lines → aim ≤10 total findings. Rank by impact: blocking > critical > high > medium > low.
@@ -98,7 +98,7 @@ The file MUST begin with the template's `---`-delimited YAML metadata block: ope
 
 ## Publication validation
 
-1. Follow the loaded candidate-validation protocol. Do not infer confirmation from confidence or severity. New or materially strengthened claims return to the parent for validation before publication.
+1. Follow the loaded candidate-validation protocol. Do not infer confirmation from confidence or severity. A claim you add or materially strengthen beyond the parent's `cross-validation.md` is not published as confirmed: record it in `review-validation.json` as a candidate with null disposition and one `open_concerns` entry (owner: parent, next_check: validate the claim), keep it out of `findings.jsonl`, and list its candidate IDs in the envelope's `new_claims` array (empty when none) so the parent validates them before delivery.
 2. Write `<REPORT_DIR_LITERAL>/review-validation.json`: contract_version=1, rating_scale=source-5-v1, aggregate source_outcome/source_rating/readiness/readiness_reason, returned/missing assessments, all candidates, and durable open_concerns. Aggregate readiness=complete only when every assessment is complete and open_concerns is empty. A missing required role (presence=missing) has readiness=incomplete; it, like any null candidate, makes the aggregate incomplete, overriding blocked, also under a null aggregate outcome. Header fields mirror the envelope.
 3. Write `findings.jsonl` containing every confirmed actionable candidate exactly once. Every row carries contract_version=1, validation_status=CONFIRMED and candidate_id referring to the matching CONFIRMED candidate. Preserve stable finding IDs separately. Never put unverified concerns in this collection.
 4. The report's Open Concerns names every obligation ID/owner/next_check/closure. Feasible undone checks mean incomplete; genuinely unavailable prerequisites after feasible checks mean blocked. Neither permits unconditional approval or a merge-readiness claim.
@@ -111,5 +111,5 @@ Write the consolidated report to `<REPORT_DIR_LITERAL>/review-report.md`. After 
 Return ONLY compact JSON, preserving this envelope:
 
 ```text
-{"status":"done","findings":N,"severity":{"critical":N,"high":N,"medium":N,"low":N},"file":"<REPORT_DIR_LITERAL>/review-report.md","confidence":0.N,"summary":"<one-line verdict>"}
+{"status":"done","findings":N,"severity":{"critical":N,"high":N,"medium":N,"low":N},"file":"<REPORT_DIR_LITERAL>/review-report.md","confidence":0.N,"new_claims":["<candidate_id>"],"summary":"<one-line verdict>"}
 ```

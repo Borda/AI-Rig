@@ -707,6 +707,38 @@ def test_test_impact_distinguishes_query_failure_from_an_empty_result() -> None:
     assert "not a 'no affected tests' result" in _flat(text)
 
 
+def test_test_impact_answer_pass_reparses_the_original_flags() -> None:
+    """The asked-for target is parsed with the original flags, so ``--no-mocks`` survives the question."""
+    text = _skill_text(_CLAUDE_SKILLS_DIR, "test-impact")
+
+    assert '--arguments="$QNAME $ARGUMENTS"' in text
+    assert '--arguments="$QNAME"' not in text
+
+
+def test_test_impact_caveat_reads_the_summary_keys() -> None:
+    """Step 3 reads the printed summary keys, never the retired tmpfile names with hyphens."""
+    text = _skill_text(_CLAUDE_SKILLS_DIR, "test-impact")
+
+    assert "`query-complete`" not in text
+    assert "<completeness-reason" not in text
+    assert "`query_complete` reads `false`" in text
+
+
+@pytest.mark.parametrize(
+    "runtime_dir", [pytest.param(_CLAUDE_SKILLS_DIR, id="claude"), pytest.param(_CODEX_SKILLS_DIR, id="codex")]
+)
+def test_rename_refs_counts_residual_references_before_claiming_success(runtime_dir: Path) -> None:
+    """``fn-rdeps`` holds call edges only; both skills list non-call sites and report the residual count."""
+    text = _flat(_skill_text(runtime_dir, "rename-refs"))
+
+    assert "--kind name" in text
+    assert "--files-from-json" in text
+    assert "query batch" in text or "query --timeout 20 batch" in text
+    assert "ancestor package" in text
+    assert "--alias-in" in text
+    assert "residual whole-word" in text
+
+
 def test_suppressed_default_checker_rejects_the_benign_zero_fallback() -> None:
     """The suppression comparator rejects the exact idiom that turned a broken index into an empty result."""
     stale = 'TOTAL=$(echo "$RESULT" | python3 -c "..." 2>/dev/null || echo "0")'
@@ -846,7 +878,32 @@ def test_integration_surfaces_separate_active_guidance_and_metadata_evidence(con
     assert "session" in flat
 
 
-@pytest.mark.parametrize("helper", ["anonymize.py", "join_avoidance.py"])
+def test_test_impact_parses_arguments_through_the_shlex_helper() -> None:
+    """Never split ``$ARGUMENTS`` with awk/grep in the skill shell.
+
+    The ``awk '{print $1}'`` split sent a leading ``--no-mocks`` to the engine as the target.
+    """
+    text = _skill_text(_CLAUDE_SKILLS_DIR, "test-impact")
+
+    assert 'parse_test_impact_args.py" --output-prefix "codemap-${_CM_PROJ}" --arguments="$ARGUMENTS"' in text
+    assert "awk '{print $1}'" not in text
+
+
+@pytest.mark.parametrize(
+    "runtime_dir", [pytest.param(_CLAUDE_SKILLS_DIR, id="claude"), pytest.param(_CODEX_SKILLS_DIR, id="codex")]
+)
+def test_debrief_computes_statistics_with_the_helper(runtime_dir: Path) -> None:
+    """The debrief must aggregate through ``debrief_stats.py``, never by reading every shard into context.
+
+    A busy log tree is millions of tokens; file reads truncate large shards, so a hand-built report used partial data.
+    """
+    text = _skill_text(runtime_dir, "debrief-coding")
+
+    assert "bin/debrief_stats.py" in text
+    assert "read **every** returned path" not in text.lower()
+
+
+@pytest.mark.parametrize("helper", ["anonymize.py", "join_avoidance.py", "debrief_stats.py"])
 def test_codex_debrief_uses_portable_helper_launcher(helper: str) -> None:
     """Keep documented telemetry helpers runnable without a bare Python executable."""
     text = (_CODEX_SKILLS_DIR / "debrief-coding" / "SKILL.md").read_text(encoding="utf-8")

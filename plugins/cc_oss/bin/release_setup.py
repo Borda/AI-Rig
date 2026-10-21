@@ -22,7 +22,7 @@ Usage:
 
 Exit codes:
     0 — successful setup
-    1 — detached HEAD (no branch state published)
+    1 — detached HEAD (no branch state published), or a sentinel directory that is a symlink / owned by another user
     2 — bad/missing required argument (argparse default)
 """
 
@@ -39,6 +39,7 @@ from shutil import which
 from urllib.parse import quote
 
 from release_append_marker import branch_state_key
+from resolve_shared_path import resolve as resolve_plugin_dir
 
 #: ``git describe`` flags that skip pre-release tags (rc, dev, alpha, beta) when looking for the last release tag.
 _EXCLUDE_FLAGS: tuple[str, ...] = (
@@ -115,30 +116,24 @@ def _shell_path(path: str) -> str:
 
 
 def _resolve_skill_dir() -> str:
-    """Find installed release skill directory, falling back to source tree path.
+    """Find the active release skill directory, falling back to the source tree path.
 
-    Replicates: ``find ~/.claude/plugins -path "*/oss/*/skills/release" -type d | head -1``
+    Delegates to the plugin's shared resolver: the install registry decides first, so the version Claude Code
+    actually loads wins; the cache scan that follows skips orphaned installs and sorts versions numerically
+    (``0.100`` after ``0.50``). The result is later read and executed as instructions, so a stale or
+    unrelated directory must never win.
 
-    Cache layout is ``<marketplace>/oss/<version>/skills/release`` — the version
-    segment sits between the plugin id and ``skills``, so the plugin-id check
-    lands 4 segments back from ``release``, not 3.
+    Cache layout is ``<marketplace>/oss/<version>/skills/release``.
 
     Returns:
-        Absolute path to the installed ``oss/<version>/skills/release`` directory,
-        or the source-tree fallback ``"plugins/cc_oss/skills/release"`` when not
-        installed.
+        Path to the active ``oss/<version>/skills/release`` directory, or the source-tree fallback
+        ``"plugins/cc_oss/skills/release"`` when not installed.
 
     Examples:
         >>> isinstance(_resolve_skill_dir(), str)
         True
     """
-    plugin_root = Path.home() / ".claude" / "plugins"
-    if plugin_root.is_dir():
-        for match in sorted(plugin_root.rglob("release")):
-            parts = match.parts
-            if match.is_dir() and len(parts) >= 4 and parts[-4] == "oss" and parts[-2:] == ("skills", "release"):
-                return str(match)
-    return "plugins/cc_oss/skills/release"
+    return resolve_plugin_dir("oss", "skills/release")[0]
 
 
 def _resolve_stable_baseline(git: str) -> tuple[str, str, str]:
@@ -183,6 +178,58 @@ def _resolve_stable_baseline(git: str) -> tuple[str, str, str]:
     return last_tag, cherry_pick_subjects, source_tag_ref
 
 
+def _prepare_out_dir(out_dir: Path) -> None:
+    """Create the sentinel directory private to this user, refusing one planted by someone else.
+
+    The sentinels sit under a predictable name in a possibly shared temp dir and later steps read ``SKILL_DIR``
+    back and execute the instructions found there, so a directory (or symlink) pre-created by another user
+    would swap those instructions.
+
+    Args:
+        out_dir: Sentinel directory to create or verify.
+
+    Raises:
+        PermissionError: If ``out_dir`` is a symlink or is owned by another user.
+
+    Examples:
+        >>> import tempfile
+        >>> with tempfile.TemporaryDirectory() as d:
+        ...     target = Path(d) / "release-setup-doctest"
+        ...     _prepare_out_dir(target)
+        ...     target.is_dir()
+        True
+    """
+    out_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if out_dir.is_symlink():
+        raise PermissionError(f"refusing symlinked sentinel directory: {out_dir}")
+    if hasattr(os, "getuid"):
+        if out_dir.lstat().st_uid != os.getuid():
+            raise PermissionError(f"refusing sentinel directory owned by another user: {out_dir}")
+        out_dir.chmod(0o700)
+
+
+def _write_private(path: Path, text: str) -> None:
+    """Create ``path`` fresh (mode 0600), never writing through a pre-existing file or symlink.
+
+    Args:
+        path: Sentinel file to create; an existing entry is unlinked first.
+        text: Content to write, UTF-8 with LF newlines.
+
+    Examples:
+        >>> import tempfile
+        >>> with tempfile.TemporaryDirectory() as d:
+        ...     target = Path(d) / "KEY"
+        ...     _write_private(target, "a\\n")
+        ...     _write_private(target, "b\\n")
+        ...     target.read_text(encoding="utf-8")
+        'b\\n'
+    """
+    path.unlink(missing_ok=True)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    with os.fdopen(os.open(path, flags, 0o600), "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(text)
+
+
 def _write_setup_outputs(out_dir: Path, values: dict[str, str]) -> None:
     """Write each resolved value to its own file under ``out_dir``.
 
@@ -191,7 +238,7 @@ def _write_setup_outputs(out_dir: Path, values: dict[str, str]) -> None:
         values: Ordered key → value mapping; one file written per entry.
     """
     for key, val in values.items():
-        (out_dir / key).write_text(f"{val}\n", encoding="utf-8", newline="\n")
+        _write_private(out_dir / key, f"{val}\n")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -235,7 +282,12 @@ def main(argv: list[str] | None = None) -> int:
 
     csid = os.environ.get("CSID") or os.environ.get("CLAUDE_CODE_SESSION_ID") or "shared"
     out_dir = _native_temp_dir() / f"release-setup-{csid}"
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        _prepare_out_dir(out_dir)
+    except OSError as exc:
+        print(f"Error: unsafe release sentinel directory — {exc}", file=sys.stderr)
+        return 1
 
     values = {
         "SKILL_DIR": _shell_path(skill_dir),

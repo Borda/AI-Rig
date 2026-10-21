@@ -34,6 +34,14 @@ import sys
 import tempfile
 from pathlib import Path
 
+#: Sibling import: bin/ is not a package. Putting it on the path resolves the private writer whether this file runs as
+#: a script, under the test conftest, or as a doctest module.
+_BIN_DIR = str(Path(__file__).resolve().parent)
+if _BIN_DIR not in sys.path:
+    sys.path.insert(0, _BIN_DIR)
+
+from _sentinel_io import write_private_text  # noqa: E402
+
 #: Unquoted single token, mirroring the `--out <path>` spelling the sweep skill documents.
 _OUT_RE = re.compile(r"--out[ \t\r\f\v]+(\S+)")
 
@@ -124,6 +132,10 @@ def _run_parse_out(args: argparse.Namespace) -> int:
     Returns:
         ``0`` when persisted, ``2`` on traversal, escape, or write failure.
     """
+    csid = _session_token()
+    if any(not re.fullmatch(r"[A-Za-z0-9._-]+", value) or ".." in value for value in (args.sentinel, csid)):
+        print("check_output_within_root: invalid sentinel slug or session identity", file=sys.stderr)
+        return 2
     label = args.label or args.sentinel.split("-")[0]
     out = parse_out_flag(args.parse_out)
     if out and ".." in out:
@@ -132,10 +144,10 @@ def _run_parse_out(args: argparse.Namespace) -> int:
     if out and not is_within_root(out, project_root(args.timeout)):
         print(f"{label}: --out path escapes project root: {out}", file=sys.stderr)
         return 2
-    sentinel = _sentinel_dir() / f"{args.sentinel}-{_session_token()}"
+    sentinel = _sentinel_dir() / f"{args.sentinel}-{csid}"
     try:
         # Trailing newline is the `IFS= read -r` reload contract.
-        sentinel.write_text((out or args.default_out) + "\n", encoding="utf-8", newline="\n")
+        write_private_text(sentinel, (out or args.default_out) + "\n")
     except OSError as exc:
         print(f"{label}: cannot write {sentinel}: {exc}", file=sys.stderr)
         return 2
@@ -167,7 +179,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.parse_out is not None:
-        if not args.sentinel:
+        if args.sentinel is None:
             parser.error("--parse-out requires --sentinel")
         return _run_parse_out(args)
     if not args.candidate_path or not args.root_path:

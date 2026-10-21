@@ -46,12 +46,16 @@ import argparse
 import contextlib
 import json
 import os
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
 #: Location of a plugin's manifest relative to the plugin root.
 _MANIFEST_REL = Path(".claude-plugin") / "plugin.json"
+#: Plugin names the namespaced destination ``<name>-<rule>`` may carry: no separator or dot-segment can
+#: leave ``rules/``.
+_PLUGIN_NAME = re.compile(r"[a-z0-9][a-z0-9-]*")
 
 
 class SourceError(Exception):
@@ -228,8 +232,11 @@ def validate_source(plugin_root: Path, plugin_name: str) -> list[Path]:
         Sorted list of validated rule paths.
 
     Raises:
-        SourceError: On any validation failure.
+        SourceError: On any validation failure, including a ``plugin_name`` that is not lowercase letters, digits and
+            hyphens — it is joined onto ``~/.claude/rules``, so ``../x`` would link outside that directory.
     """
+    if not _PLUGIN_NAME.fullmatch(plugin_name):
+        raise SourceError(f"invalid plugin name {plugin_name!r}: expected lowercase letters, digits and hyphens")
     if not plugin_root.is_dir():
         raise SourceError(f"plugin root is not a directory: {plugin_root}")
     declared = _manifest_name(plugin_root)

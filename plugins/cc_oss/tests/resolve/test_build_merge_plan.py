@@ -174,6 +174,115 @@ class TestMainCli:
         assert rc == 0
         assert json.loads(out_file.read_text(encoding="utf-8"))[0]["module"] == "pkg.core"
 
+    @pytest.mark.parametrize(
+        ("remaining", "expected_ids"),
+        [
+            pytest.param(["3", "1"], ["3", "1"], id="remaining-subset-keeps-result-order"),
+            pytest.param([], [], id="empty-remaining-writes-empty-plan"),
+            pytest.param([3], ["3"], id="integer-ids-coerced"),
+        ],
+    )
+    def test_resume_from_uses_remaining_as_priority_order(
+        self, tmp_path: Path, remaining: list[object], expected_ids: list[str]
+    ) -> None:
+        """--resume-from rebuilds the plan from merge-result.json's ``remaining`` ids, in that order.
+
+        After a cherry-pick conflict the resumed plan must hold only the still-unapplied entries, so an applied item
+        that is also in the full ledger is left out, and an empty ``remaining`` still writes a valid empty plan.
+        """
+        commits_file = tmp_path / "commits.jsonl"
+        commits_file.write_text(
+            "".join(f'{{"item_id": {i}, "sha": "s{i}", "group": "sw"}}\n' for i in (1, 2, 3)), encoding="utf-8"
+        )
+        items_file = tmp_path / "items.jsonl"
+        items_file.write_text("".join(f'{{"id": {i}, "file": "f{i}.py"}}\n' for i in (1, 2, 3)), encoding="utf-8")
+        result_file = tmp_path / "merge-result.json"
+        result_file.write_text(
+            json.dumps({"applied": ["2"], "conflict": "3", "remaining": remaining}), encoding="utf-8"
+        )
+        out_file = tmp_path / "plan.json"
+
+        rc = bmp.main(
+            [
+                "--commits",
+                str(commits_file),
+                "--action-items",
+                str(items_file),
+                "--resume-from",
+                str(result_file),
+                "--out",
+                str(out_file),
+            ]
+        )
+
+        assert rc == 0
+        assert [e["item_id"] for e in json.loads(out_file.read_text(encoding="utf-8"))] == expected_ids
+
+    @pytest.mark.parametrize(
+        "result_text",
+        [
+            pytest.param("{not json", id="malformed-json"),
+            pytest.param('{"applied": []}', id="no-remaining-key"),
+            pytest.param('{"remaining": "3 1"}', id="remaining-not-a-list"),
+            pytest.param("[1, 2]", id="result-not-an-object"),
+        ],
+    )
+    def test_resume_from_unusable_result_fails_without_writing_a_plan(self, tmp_path: Path, result_text: str) -> None:
+        """A malformed result file stops the resume with the dedicated exit 3 and leaves no plan to be merged.
+
+        A silently empty plan here would let the resumed merge fence collapse a branch while skipping every unapplied
+        entry, which is the failure the old inline reader guarded with its own BLOCKED line.
+        """
+        result_file = tmp_path / "merge-result.json"
+        result_file.write_text(result_text, encoding="utf-8")
+
+        rc = bmp.main(self._resume_args(tmp_path, result_file))
+
+        assert rc == bmp.EXIT_RESUME_UNUSABLE
+        assert not (tmp_path / "plan.json").exists()
+
+    def test_resume_from_absent_result_file_fails_without_writing_a_plan(self, tmp_path: Path) -> None:
+        """A merge-result.json that was never written (the merge fence did not run) is exit 3, not an empty plan."""
+        rc = bmp.main(self._resume_args(tmp_path, tmp_path / "merge-result.json"))
+
+        assert rc == bmp.EXIT_RESUME_UNUSABLE
+        assert not (tmp_path / "plan.json").exists()
+
+    @staticmethod
+    def _resume_args(tmp_path: Path, result_file: Path) -> list[str]:
+        """Return CLI args resuming from ``result_file`` over a one-item ledger, writing ``plan.json`` in
+        ``tmp_path``."""
+        commits_file = tmp_path / "commits.jsonl"
+        commits_file.write_text('{"item_id": 1, "sha": "aa", "group": "sw"}\n', encoding="utf-8")
+        items_file = tmp_path / "items.jsonl"
+        items_file.write_text('{"id": 1, "file": "core.py"}\n', encoding="utf-8")
+        return [
+            "--commits",
+            str(commits_file),
+            "--action-items",
+            str(items_file),
+            "--resume-from",
+            str(result_file),
+            "--out",
+            str(tmp_path / "plan.json"),
+        ]
+
+    @pytest.mark.parametrize(
+        "extra",
+        [
+            pytest.param([], id="neither-order-source"),
+            pytest.param(["--priority-order", "1", "--resume-from", "merge-result.json"], id="both-order-sources"),
+        ],
+    )
+    def test_exactly_one_order_source_is_required(self, tmp_path: Path, extra: list[str]) -> None:
+        """Neither or both of --priority-order and --resume-from is an argparse usage error (exit 2)."""
+        with pytest.raises(SystemExit) as excinfo:
+            bmp.main(
+                ["--commits", "c.jsonl", "--action-items", "i.jsonl", "--out", str(tmp_path / "plan.json"), *extra]
+            )
+
+        assert excinfo.value.code == 2
+
     def test_missing_codemap_maps_file_degrades_to_empty_module(self, tmp_path: Path) -> None:
         """A --codemap-maps path that doesn't exist on disk degrades silently — every module resolves empty."""
         commits_file = tmp_path / "commits.jsonl"

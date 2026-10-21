@@ -1,7 +1,7 @@
 ---
 name: audit
 description: Full-sweep quality audit of .claude/ config — cross-references, permissions, inventory drift, model tiers, docs freshness. Scope tokens select what to audit; --upgrade applies docs-sourced improvements; --adversarial runs foundry:challenger + Codex adversarial review; --efficiency sweeps model tiers, token bloat, spawn patterns, boilerplate duplication, and bin/ extraction candidates (extraction performed separately via /distill executables). Fix level chosen via always-fire follow-up gate after report.
-argument-hint: '[<scope>...] [--local] [--upgrade | --adversarial | --efficiency] [--skip-gate] [--keep "<items>"]'
+argument-hint: '[<scope>...] [--local] [--upgrade | --adversarial | --efficiency] [--fast] [--skip-gate] [--keep "<items>"]'
 disable-model-invocation: true
 allowed-tools: Read, Write, Edit, Bash, Grep, Glob, Agent, WebFetch, Skill, TaskCreate, TaskUpdate, TaskList, AskUserQuestion
 effort: high
@@ -19,8 +19,8 @@ Full-sweep audit of `.claude/` config + all `plugins/*/` files: agents, skills, 
 
   **Flags** (order independent, any combination with scope):
 
-  - `--local` — audit source tree (`plugins/*/`) not user setup (`.claude/` + installed cache); plugin-dev workflows where local edits not yet installed; sets `LOCAL_MODE=true`
-  - `--upgrade` — fetch latest Claude Code docs, filter new features by genuine value, apply: **config** changes (apply + correctness check), **capability** changes (calibrate before → apply → calibrate after → accept if Δrecall ≥ 0 and ΔF1 ≥ 0). Skip to **Mode: upgrade**. Mutually exclusive with `--adversarial` and `--efficiency` — error if combined with either.
+  - `--local` — audit source tree (`plugins/*/`) not project setup (`.claude/`); plugin-dev workflows where local edits not yet installed; sets `LOCAL_MODE=true`
+  - `--upgrade` — fetch latest Claude Code docs, filter new features by genuine value, apply: **config** changes (apply + correctness check), **capability** changes (`--local` only: calibrate before → apply → calibrate after → accept if Δrecall ≥ 0 and ΔF1 ≥ 0 and at least one delta ≥ 0.05, the noise floor; without `--local` each is reported as skipped). Skip to **Mode: upgrade**. Mutually exclusive with `--adversarial` and `--efficiency` — error if combined with either.
   - `--adversarial` (alias: `--challenge`) — adversarial review of all agents + skills in scope using `foundry:challenger` (Phase A) + Codex adversarial pass (Phase B); surfaces issues beyond standard per-file audit; see **Mode: adversarial**. Mutually exclusive with `--upgrade` only; combinable with `--efficiency`.
   - `--efficiency` — cost and efficiency sweep: model tier validation, token bloat detection, unbounded spawn patterns, cross-file boilerplate duplication, missing model declarations, bin/ extraction candidates (Check 33). Generates prioritized cost-reduction plan with estimated savings. Detection only — run `/distill executables` to act on extraction candidates. Skip to **Mode: efficiency**. Mutually exclusive with `--upgrade` only; combinable with `--adversarial`.
   - `--skip-gate` — suppress follow-up gate (for automation pipelines)
@@ -30,7 +30,7 @@ Full-sweep audit of `.claude/` config + all `plugins/*/` files: agents, skills, 
 
   **Scope tokens** (positional, space-separated — resolve each token before Step 2):
 
-  - No scope: full sweep — sources per `--local`: **without `--local`** covers `.claude/agents/`, `.claude/skills/`, `.claude/rules/`, hooks, settings, `~/.claude/plugins/cache/` installed; **with `--local`** covers `plugins/*/agents/`, `plugins/*/skills/` + `.claude/` secondary
+  - No scope: full sweep — sources per `--local`: **without `--local`** covers `.claude/agents/`, `.claude/skills/`, `.claude/rules/`, hooks, settings — installed plugin cache (`~/.claude/plugins/cache/`) never scanned; audit plugin sources with `--local` in their checkout; **with `--local`** covers `plugins/*/agents/`, `plugins/*/skills/` + `.claude/` secondary
   - `agents` — restrict sweep to agent files only
   - `skills` — restrict sweep to skill files only
   - `rules` — restrict sweep to rule files only
@@ -119,12 +119,12 @@ If `.claude/` missing, abort immediately. Missing `jq` is warning — audit cont
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
-AUDIT_TPL=$(cat "${TMPDIR:-/tmp}/audit-state-${CSID}/audit-tpl" 2>/dev/null || python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_skill_subdir.py" audit templates $( [ "$LOCAL_MODE" = true ] && echo "--local" ))
+IFS= read -r AUDIT_TPL < "${TMPDIR:-/tmp}/audit-state-${CSID}/audit-tpl" 2>/dev/null || AUDIT_TPL=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_skill_subdir.py" audit templates $( [ "$LOCAL_MODE" = true ] && echo "--local" ))
 ```
 
 Place these three lines at the top of every Bash block in Steps 2–11 that references either variable.
 
-**Unsupported flag check** — after extracting supported flags (`--local`, `--upgrade`, `--adversarial`, `--efficiency`, `--skip-gate`, `--keep`), scan `$ARGUMENTS` for remaining `--<token>` tokens. Found → invoke `AskUserQuestion` with question text `` ! Unknown flag(s): `--<token>`. Supported: `--local`, `--upgrade`, `--adversarial`, `--efficiency`, `--skip-gate`, `--keep`. `` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
+**Unsupported flag check** — after extracting supported flags (`--local`, `--upgrade`, `--adversarial`, `--efficiency`, `--fast`, `--skip-gate`, `--keep`, plus the `--challenge` alias of `--adversarial`), scan `$ARGUMENTS` for remaining `--<token>` tokens. Found → invoke `AskUserQuestion` with question text `` ! Unknown flag(s): `--<token>`. Supported: `--local`, `--upgrade`, `--adversarial` (alias `--challenge`), `--efficiency`, `--fast`, `--skip-gate`, `--keep`. `` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
 
 ## Step 1: Run pre-commit (if configured)
 
@@ -148,25 +148,24 @@ Run the zero-LLM checker driver — the same deterministic checkers pre-commit e
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+# timeout: 140000
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
 STATIC_SCOPE=$( [ "$LOCAL_MODE" = true ] && echo plugins || echo .claude )
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/audit_churn.py" --limit 300 --path plugins \
+    > "${TMPDIR:-/tmp}/audit-state-${CSID}/churn-signal.json" 2>/dev/null  # timeout: 20000
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/audit_static.py" --scan-dir "$STATIC_SCOPE" \
     --jsonl "${TMPDIR:-/tmp}/audit-state-${CSID}/static-findings.jsonl"  # timeout: 120000
 ```
 
-Covered deterministically by the driver (map to legacy check IDs — do NOT re-run these as prose): **14a** tag symmetry · **14b** fence symmetry · **14c** README drift · **14d** mode-dispatch integrity · **14e** cross-plugin shared-file drift · **43** bash-variable persistence · **42** spawn-prompt `$VAR` (checks-skills.md) · **32d** orphaned bin/ scripts · **cli-flag-drift** SKILL.md flags vs argparse (`check_cli_flag_drift.py`, checks-index 42) · **R3** bin/computed-path reference integrity. Whole-repo checks (orphaned-bin, routing-links, shared-drift) always scope to `plugins/` regardless of `STATIC_SCOPE`; driver most complete in `--local` mode. Step 5 merges `static-findings.jsonl` into aggregate.
+The block also runs the Step 1c churn pass (independent of the static pass; its output is only read in Steps 3 and 7).
 
-> **Layer-1 recall is benchmarked** — `tests/test_audit_static.py` plants a known defect per scope-aware class and asserts the driver catches every one (100% mechanical recall), so this pass is trusted, not assumed.
+Covered deterministically by the driver (map to legacy check IDs — do NOT re-run these as prose): **14a** tag symmetry · **14b** fence symmetry · **14c** README drift · **14d** mode-dispatch integrity · **14e** cross-plugin shared-file drift · **43** bash-variable persistence · **42** spawn-prompt `$VAR` (checks-skills-sweep.md) · **32d** orphaned bin/ scripts · **cli-flag-drift** SKILL.md flags vs argparse (`check_cli_flag_drift.py`, checks-index 42) · **R3** bin/computed-path reference integrity · **agent-plugin-root** `${CLAUDE_PLUGIN_ROOT:-…}` default in `agents/*.md`, which an agent prompt never substitutes (`check_agent_plugin_root.py`). Whole-repo checks (orphaned-bin, routing-links, shared-drift) always scope to `plugins/` regardless of `STATIC_SCOPE`; driver most complete in `--local` mode. Step 5 merges `static-findings.jsonl` into aggregate.
+
+> **Layer-1 recall is benchmarked** — `tests/audit/test_audit_static.py` plants a known defect per scope-aware class and asserts the driver catches every one (100% mechanical recall), so this pass is trusted, not assumed.
 
 ## Step 1c: Layer-3 recurrence signal (attention weighting)
 
-Read a compact git-churn signal so audit attention follows *measured* churn — files and change-classes that keep being re-fixed are where the next defect most likely hides. Report the dominant recurring-fix class, not only point findings.
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/audit_churn.py" --limit 300 --path plugins \
-    > "${TMPDIR:-/tmp}/audit-state-${CSID}/churn-signal.json" 2>/dev/null  # timeout: 20000
-```
+Read a compact git-churn signal so audit attention follows *measured* churn — files and change-classes that keep being re-fixed are where the next defect most likely hides. Report the dominant recurring-fix class, not only point findings. The Step 1b block above already wrote it (`audit_churn.py`).
 
 Use `churn-signal.json` (`commit_types`, `top_churn`, `recurring_hint`) to: (1) prioritize per-file audits toward the most-churned files first in Step 3 batching; (2) add a **Recurring fix class** line to the Step 7 report naming the dominant theme (e.g. "version-bump churn — candidate for automation"). Zero-LLM, best-effort; skip silently if git is unavailable.
 
@@ -179,20 +178,7 @@ Enumerate everything in scope with built-in tools. Run all Glob calls in paralle
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
-if [ "$LOCAL_MODE" = "true" ]; then
-  find plugins -mindepth 3 -maxdepth 3 -name plugin.json -type f \
-    \( -path 'plugins/*/.claude-plugin/*' -o -path 'plugins/*/.codex-plugin/*' \) 2>/dev/null |
-  while IFS= read -r pj; do
-    plugin_name=$(basename "$(dirname "$(dirname "$pj")")")
-    python3 -c "
-import json
-d = json.load(open('$pj'))
-skills = (d.get('skills') or './skills/').strip('./')
-agents = (d.get('agents') or './agents/').strip('./')
-print(f'PLUGIN_LAYOUT: $plugin_name | skills={skills} | agents={agents}')
-" 2>/dev/null || echo "PLUGIN_LAYOUT: $plugin_name | skills=skills | agents=agents"
-  done
-fi
+[ "$LOCAL_MODE" != "true" ] || python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/plugin_layout.py" plugins  # timeout: 5000
 ```
 
 For every `PLUGIN_LAYOUT:` line, use its `skills=`/`agents=` value (not hardcoded `skills`/`agents`) when Globbing that plugin below — e.g. `codemap-py` prints `skills=claude-skills`, so Glob `claude-skills/*/SKILL.md` under `plugins/codemap-py/`, not `skills/*/SKILL.md`. Plugins with no manifest override resolve to the same `skills`/`agents` names the fixed patterns already assume — no behavior change. **`codex-skills/`-style dirs for non-Claude-Code runtimes intentionally excluded** — only the manifest-declared path is authoritative; a heuristic `*skill*` match would also sweep in skill dirs for a different agent runtime, producing false positives against Claude Code's frontmatter schema.
@@ -241,6 +227,23 @@ printf "⚠ UNSCANNED: %s — no files matched scope globs\n" "<plugin>" | tee -
 Step 11 reads this sentinel and surfaces it as a top-level report section — a zero-coverage plugin must never produce a green summary.
 
 **Narrowed check for `plugins <name>` / tier-2 single-plugin scope**: the all-plugins comparison above does NOT apply — every other plugin under `plugins/` is out of scope by design, and reporting it `UNSCANNED` would be a false positive on every such run. Instead, verify only that the one requested plugin contributed at least one file to the inventory; if it contributed zero, print/persist the same `⚠ UNSCANNED: <name> — no files matched scope globs` line for that single plugin only.
+
+**Default-scope coverage guard** (`LOCAL_MODE=false` — full sweep, `agents` or `skills` scope; mandatory): plugin installs never create `.claude/agents/` or `.claude/skills/` — installed agents and skills live in the plugin cache, which this scope does not read. Without this guard a project with no local agents or skills audits zero of them and reports clean. Reset the sentinel first, every run, so an earlier run's lines never leak into this report:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+mkdir -p "${TMPDIR:-/tmp}/audit-state-${CSID}"
+: > "${TMPDIR:-/tmp}/audit-state-${CSID}/unscanned-plugins"
+```
+
+Inventory holds zero agents and zero skills (`agents`/`skills` scope: zero files of that kind) → print and persist in one bash call:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+_UNSCANNED="${TMPDIR:-/tmp}/audit-state-${CSID}/unscanned-plugins"
+printf "⚠ UNSCANNED: %s — no files matched scope globs\n" ".claude/ agents and skills (installed plugins are not audited; run --local in a plugin checkout)" >> "$_UNSCANNED"
+cat "$_UNSCANNED"
+```
 
 **Scope filtering for Step 2** (applies on top of `LOCAL_MODE`):
 
@@ -301,13 +304,11 @@ Set up the run directory once before spawning any agents:
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
-AUDIT_TPL=$(cat "${TMPDIR:-/tmp}/audit-state-${CSID}/audit-tpl" 2>/dev/null || python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_skill_subdir.py" audit templates $( [ "$LOCAL_MODE" = true ] && echo "--local" ))
-
 RUN_DIR=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/make_run_dir.py" .reports/audit)  # timeout: 5000
 [ -z "$RUN_DIR" ] && { printf "! BREAKING: make_run_dir.py returned empty path — check Python availability and write permission on .reports/\n"; exit 1; }
 echo "Run dir: $RUN_DIR"
 echo "$RUN_DIR" > "${TMPDIR:-/tmp}/audit-state-${CSID}/run-dir"
-cat "$AUDIT_TPL/curator-prompt.md"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" audit templates curator-prompt.md $( [ "$LOCAL_MODE" = true ] && echo "--local" )  # timeout: 5000
 ```
 
 Spawn **foundry:curator** agents in batches of up to `EFFECTIVE_BATCH` (grouping algorithm above) — or one batch if scope ≤ `EFFECTIVE_BATCH`. Each spawn prompt must:
@@ -342,8 +343,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/agent_watch.py" --state-di
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
-AUDIT_MODES=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_skill_subdir.py" audit modes $( [ "$LOCAL_MODE" = true ] && echo "--local" )) || { printf "! BREAKING: audit/modes not found — run /foundry:setup first\n"; exit 1; }  # timeout: 5000
-cat "$AUDIT_MODES/steps-4-5-7.md"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" audit modes steps-4-5-7.md $( [ "$LOCAL_MODE" = true ] && echo "--local" )  # timeout: 5000
 ```
 
 > loads: modes/steps-4-5-7.md (§Step 4–5b and §Step 7)
@@ -353,13 +353,10 @@ Execute §Step 4–5b loaded above — system-wide checks (scope-dispatched), ag
 ## Step 6: Cross-validate critical findings
 
 ```bash
-_SHARED=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_shared_path.py" foundry skills/_shared 2>/dev/null || echo "plugins/cc_foundry/skills/_shared")  # timeout: 5000
-SKIP_CROSS_VAL=false
-[ -f "$_SHARED/cross-validation-protocol.md" ] || { printf "⚠ WARNING: cross-validation-protocol.md not found at $_SHARED — skipping cross-validation\n"; SKIP_CROSS_VAL=true; }
-[ "$SKIP_CROSS_VAL" = false ] && cat "$_SHARED/cross-validation-protocol.md"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_shared_doc.py" --optional foundry skills/_shared cross-validation-protocol.md  # timeout: 5000
 ```
 
-If `$SKIP_CROSS_VAL` = false: follow the cross-validation protocol loaded above.
+Protocol text printed above: follow it. A `⚠ WARNING` line instead = doc missing → skip cross-validation.
 
 **Skill-specific**: the verifier agent is always **foundry:curator**.
 
@@ -386,14 +383,13 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" audit modes 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
-AUDIT_TPL=$(cat "${TMPDIR:-/tmp}/audit-state-${CSID}/audit-tpl" 2>/dev/null || python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_skill_subdir.py" audit templates $( [ "$LOCAL_MODE" = true ] && echo "--local" ))
 IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/audit-state-${CSID}/run-dir" 2>/dev/null || RUN_DIR=""
-cat "$AUDIT_TPL/report-template.md"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" audit templates report-template.md $( [ "$LOCAL_MODE" = true ] && echo "--local" )  # timeout: 5000
 ```
 
 **Step 11a — assemble and persist** — assemble the complete audit report following the template and instructions loaded above, then **Write it to `$RUN_DIR/report.md`** using the Write tool. Set the template's `Path:` field to that same real path. This Write is mandatory, not optional: the terminal step below reads the header back from this file, and the report is the run's only durable artifact once the session ends. Skipping it leaves `Path:` pointing at a file that was never created.
 
-**Unscanned-plugin surfacing** (`--local`/`plugins` scope only): before assembling, read `${TMPDIR:-/tmp}/audit-state-${CSID}/unscanned-plugins` (sentinel from Step 2 coverage reconciliation). Non-empty → include an `### Unscanned Plugins` section in the report immediately after `### Files Audited`, listing every `⚠ UNSCANNED: <plugin>` line verbatim; this makes zero-coverage plugins visible in the durable artifact, not just the transient terminal output. Empty or missing → omit the section.
+**Unscanned-plugin surfacing** (every scope with a Step 2 coverage check — `--local`/`plugins` reconciliation, tier-2 narrowed check, or default-scope coverage guard): before assembling, read `${TMPDIR:-/tmp}/audit-state-${CSID}/unscanned-plugins` (sentinel from Step 2). Non-empty → include an `### Unscanned Plugins` section in the report immediately after `### Files Audited`, listing every `⚠ UNSCANNED: <plugin>` line verbatim; this makes zero-coverage plugins visible in the durable artifact, not just the transient terminal output. Empty or missing → omit the section.
 
 **Step 11b — terminal output** — prepare this block for the final reply after the answer (or the no-question path), after the last tool call including the completion marker and cleanup below. Per quality-gates.md universal rule: read the `---` header block from the top of `$RUN_DIR/report.md` (all fields from opening `---` up to and including closing `---`) and render as a two-column Markdown table (`Field | Value`, one row per key, file order) as the FIRST content of that final reply — never print the raw `---`-delimited block. Then print `→ $RUN_DIR/report.md`, the full Step 7 Audit Report from `$RUN_DIR/audit-report.md` (heading, exact `Total: N`, every finding's `one_line`, rendered as normal Markdown), and the executive summary. The full findings report is printed once here, never before the question or in an option. Omit the `╔═╗` Re:Anchor box (communication.md exempts quality-gates `---` report headers — the table IS the reply header).
 
@@ -410,8 +406,7 @@ rm -f .temp/state/skill-contract.md  # clear contract — skill complete (compac
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
-AUDIT_TPL=$(cat "${TMPDIR:-/tmp}/audit-state-${CSID}/audit-tpl" 2>/dev/null || python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_skill_subdir.py" audit templates $( [ "$LOCAL_MODE" = true ] && echo "--local" ))
-cat "$AUDIT_TPL/../modes/upgrade.md"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" audit modes upgrade.md $( [ "$LOCAL_MODE" = true ] && echo "--local" )  # timeout: 5000
 ```
 
 Execute the mode loaded above.
@@ -423,8 +418,7 @@ Execute the mode loaded above.
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
-AUDIT_TPL=$(cat "${TMPDIR:-/tmp}/audit-state-${CSID}/audit-tpl" 2>/dev/null || python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_skill_subdir.py" audit templates $( [ "$LOCAL_MODE" = true ] && echo "--local" ))
-cat "$AUDIT_TPL/../modes/adversarial.md"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" audit modes adversarial.md $( [ "$LOCAL_MODE" = true ] && echo "--local" )  # timeout: 5000
 ```
 
 Execute the mode loaded above.
@@ -436,8 +430,7 @@ Execute the mode loaded above.
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
-AUDIT_TPL=$(cat "${TMPDIR:-/tmp}/audit-state-${CSID}/audit-tpl" 2>/dev/null || python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_skill_subdir.py" audit templates $( [ "$LOCAL_MODE" = true ] && echo "--local" ))
-cat "$AUDIT_TPL/../modes/efficiency.md"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" audit modes efficiency.md $( [ "$LOCAL_MODE" = true ] && echo "--local" )  # timeout: 5000
 ```
 
 Execute the mode loaded above.
@@ -458,11 +451,12 @@ When user picks fix option (a–c): run Steps 8–10 inline via `modes/fix.md` (
 
 - (a) label: `Fix auto-fixable (Recommended)` — auto-fix critical, high, medium, and low findings (skip NON_AUTO_FIXABLE systemic issues)
 - (c) label: `Fix ALL` — collect all NON_AUTO_FIXABLE decisions upfront (max 4 `AskUserQuestion` calls), then run one integrated fix pass covering auto-fixable + resolved systemic items + lows; most thorough option
+- (d) label: `Skip` — decline path; present in every layout, never replaced
 
 **Conditional options (include when condition met)**:
 
 - (b) label: `Fix SECURITY + CRITICAL + HIGH` — include only when security, critical, or high findings present; omit otherwise to stay within 4-option cap
-- (d) label: `Skip` — always include; when `--efficiency` ran and `extract_count > 0` (HIGH or MEDIUM), replace with `` `Run /distill executables (N HIGH, M MEDIUM candidates)` `` instead
+- `/distill executables` is never an option: `/distill` is `disable-model-invocation`, so a selected option could not run it. When `--efficiency` ran and `extract_count > 0` (HIGH or MEDIUM), print `/distill executables` (N HIGH, M MEDIUM candidates) as plain text in the Step 11 final report instead
 
 **Option slot budget** (`AskUserQuestion` hard cap = 4 options; "Other" always auto-appended as 5th free-text slot):
 
@@ -470,13 +464,11 @@ When user picks fix option (a–c): run Steps 8–10 inline via `modes/fix.md` (
 
 - No sec/crit/high findings: (a) + (c) + (d) = 3 ✓ — slot freed; do NOT fill with custom finding-specific option
 
-- Efficiency override active: (a) + (b) + (c) + distill = 4 ✓ — (d) Skip replaced by distill label
-
 - question: "What next?" The first question's text carries the `Audit Report` headline, exact `Total: N`, severity counts and `→ $RUN_DIR/summary.jsonl`; include `→ $RUN_DIR/audit-report.md` for the saved full findings. Keep the question text to at most 6 plain lines (target 600 characters, hard cap 1,500), with no table, no pipe layout and no code fence.
 
 - Every option: label plus a one-line action description, no `preview`. Display `Fix auto-fixable (Recommended)` second while preserving all labels and answer mapping. The full Step 7 findings report is printed once in the final reply after the answer, after the last tool call, below Step 11b's header table — never before the question (`steps-4-5-7.md` §Step 7).
 
-After completing `--upgrade`, `--adversarial`, or `--efficiency`: also fire this gate. For (d) Skip: remove the mode just run from the "for other modes" list. When `--adversarial --efficiency` combined: fire gate once after both complete with merged finding counts; remove both from (d) hint. Efficiency distill override: selecting distill option invokes `/distill executables` → `foundry:sw-engineer` extraction then `/audit --efficiency` re-run to confirm savings.
+After completing `--upgrade`, `--adversarial`, or `--efficiency`: also fire this gate. For (d) Skip: remove the mode just run from the "for other modes" list. When `--adversarial --efficiency` combined: fire gate once after both complete with merged finding counts; remove both from (d) hint. Efficiency distill: the user runs the printed `/distill executables` (→ `foundry:sw-engineer` extraction), then `/audit --efficiency` re-run confirms savings.
 
 </workflow>
 
@@ -513,7 +505,7 @@ After completing `--upgrade`, `--adversarial`, or `--efficiency`: also fire this
 
 - Follow-up chains:
 
-  - Audit clean → pick `/foundry:setup` from gate to propagate verified config to `~/.claude/`
+  - Audit clean → plugin-source edits reach `~/.claude/` only via plugin update/reinstall; `/foundry:setup` afterwards merges plugin settings/rules only, it does not copy project `.claude/` edits
   - Audit found structural issues → review flagged files manually before syncing; pick fix level from gate
   - Audit found many low items → pick "Fix all" from gate, or run `/develop:refactor` (requires `develop` plugin) for targeted cleanup
   - After fixing agent instructions (from audit gate) → `/foundry:calibrate <agent>` to verify fix improved recall and confidence calibration
@@ -523,6 +515,6 @@ After completing `--upgrade`, `--adversarial`, or `--efficiency`: also fire this
   - Audit Check 22 found unregistered calibratable mode → update `calibrate/modes/skills.md` domain table and run `/foundry:calibrate skills` to verify new target works
   - Audit Check 22 found stale domain table entry → remove from `calibrate/modes/skills.md`
   - `/audit --efficiency` found model over-provisioning → apply P1+P2 changes from efficiency report → re-run `/audit --efficiency` to confirm savings estimate; run `/foundry:calibrate routing --fast` to verify no routing regression from model changes
-  - `/audit --efficiency` found bin/ extraction candidates (HIGH or MEDIUM verdict) → select `Run /distill executables` from follow-up gate to perform extraction; then re-run `/audit --efficiency` to confirm `extract_count == 0`
+  - `/audit --efficiency` found bin/ extraction candidates (HIGH or MEDIUM verdict) → run the `/distill executables` command printed in the final report to perform extraction; then re-run `/audit --efficiency` to confirm `extract_count == 0`
 
 </notes>

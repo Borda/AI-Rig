@@ -149,6 +149,28 @@ class TestFindRunIdProgramFilter:
         _make_run(tmp_path, "r2", "completed", program_file="b.md")
         assert find_run_id(tmp_path, match_program="c.md") is None
 
+    def test_relative_argument_matches_absolute_record(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A relative ``program.md`` argument matches the absolute ``program_file`` that /research:run records.
+
+        /research:fortify passes the path as typed while state.json stores ``realpath``; an exact string compare never
+        matched, so fortify of ``program.md`` reported no completed run.
+        """
+        state_dir, proj = tmp_path / "state", tmp_path / "proj"
+        proj.mkdir()
+        (proj / "program.md").write_text("x", encoding="utf-8")
+        _make_run(state_dir, "run", "completed", program_file=os.path.realpath(proj / "program.md"))
+        monkeypatch.chdir(proj)
+        assert find_run_id(state_dir, match_program="program.md") == "run"
+
+    def test_text_goal_run_never_matches_program(self, tmp_path: Path) -> None:
+        """A text-goal run (``program_file: null``) is never matched by a program filter.
+
+        Guards the normalisation step: ``realpath`` must not be applied to a JSON null.
+        """
+        (tmp_path / "run").mkdir()
+        (tmp_path / "run" / "state.json").write_text('{"status": "completed", "program_file": null}', encoding="utf-8")
+        assert find_run_id(tmp_path, match_program="program.md") is None
+
     @pytest.mark.parametrize(
         ("status", "expected"),
         [

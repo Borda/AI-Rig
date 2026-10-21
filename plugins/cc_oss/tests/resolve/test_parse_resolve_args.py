@@ -14,6 +14,7 @@ Covers:
 from __future__ import annotations
 
 import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -319,3 +320,29 @@ def test_help_flag_exits_zero_via_subprocess() -> None:
     )
     assert result.returncode == 0
     assert "usage:" in result.stdout
+
+
+_SKILL = Path(__file__).resolve().parents[2] / "skills" / "resolve" / "SKILL.md"
+_BASH = shutil.which("bash")
+
+
+@pytest.mark.skipif(not _BASH, reason="resolve Step 1 runs under Bash")
+@pytest.mark.parametrize(
+    ("pr_number", "blocked"),
+    [pytest.param("", True, id="issue-url-blocks"), pytest.param("7", False, id="pull-url-continues")],
+)
+def test_skill_blocks_pr_mode_without_number(pr_number: str, blocked: bool) -> None:
+    """Resolve stops with a clear block when a GitHub URL carries no pull-request number.
+
+    The parser deliberately keeps an issue or repo URL as MODE=pr with an empty PR_NUMBER so it never reaches comment
+    dispatch; every later PR step keys on PR_NUMBER, so the skill must stop right after parsing instead of running on.
+    """
+    guard = next(line for line in _SKILL.read_text(encoding="utf-8").splitlines() if "not a pull-request URL" in line)
+    result = subprocess.run(
+        [_BASH, "-c", f"MODE=pr; PR_NUMBER='{pr_number}'; PR_URL=https://github.com/o/r/issues/7\n{guard}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert (result.returncode == 1) is blocked
+    assert ("! BLOCKED" in result.stdout) is blocked

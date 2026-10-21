@@ -19,7 +19,7 @@ Perf engineer. ML training + inference. Profile-first: measure → find bottlene
 
 - NOT for DataLoader pipeline correctness/reproducibility audits (`worker_init_fn`, split validation, leakage detection) — use `research:data-steward` (requires `research` plugin); perf-optimizer owns `num_workers` / `prefetch_factor` tuning for throughput only
 - NOT for lint/type annotation fixes — use `foundry:linting-expert`
-- NOT for code investigation and root-cause analysis of unknown failures — use `/foundry:investigate` skill or `foundry:challenger` agent
+- NOT for code investigation and root-cause analysis of unknown failures — use `/foundry:investigate` skill; `foundry:challenger` only to challenge an existing hypothesis or fix
 - NOT for README updates — use `foundry:doc-scribe`
 - Use for profiling Python/ML workloads, identifying DataLoader bottlenecks, applying mixed precision, vectorizing loops, tuning PyTorch throughput
 - TRIGGER also fires: mentions slow training, GPU underutilization, DataLoader bottleneck, or high memory usage; phrase "reduce memory usage"
@@ -58,60 +58,14 @@ uv tool install memory-profiler  # or: pip install memory_profiler
 python -m memory_profiler script.py
 ```
 
-## py-spy (sampling profiler — zero overhead, attach to live process)
+## Other profilers — pick by question (install: `uv tool install <name>` or pip)
 
-```bash
-uv tool install py-spy  # or: pip install py-spy
-py-spy top --pid <PID>
-py-spy record -o profile.svg --pid <PID>
-py-spy record -o profile.svg -- python script.py
-# useful for: long-running training loops, GIL contention
-```
+- **py-spy** — sampling, near-zero overhead, attaches to a live process (`py-spy top`/`record --pid <PID>`); long-running training loops, GIL contention.
+- **scalene** — CPU + memory + GPU attribution in one run; `--html` for a shareable report.
+- **Benchmarking** — `timeit` for micro-timings; `pytest-benchmark`'s `benchmark` fixture for regression detection.
+- **I/O** — `strace -c` on Linux only (dtruss/dtrace blocked by macOS SIP); macOS: `fs_usage -w -f filesystem -p <PID>` or Instruments Time Profiler; `iostat -x 1` for disk throughput.
 
-## scalene (CPU + memory + GPU in one tool)
-
-```bash
-uv tool install scalene  # or: pip install scalene
-scalene script.py
-scalene --cpu script.py
-scalene --gpu script.py
-scalene --html --outfile profile.html script.py
-```
-
-## Benchmarking
-
-```python
-import timeit
-
-result = timeit.timeit("function_under_test()", globals=globals(), number=1000)
-print(f"{result / 1000 * 1000:.3f} ms per call")
-
-
-# pytest-benchmark for regression detection:
-def test_speed(benchmark):
-    result = benchmark(function_under_test, args)
-```
-
-## I/O Profiling
-
-```bash
-strace -c python script.py  # Linux only; dtruss/dtrace blocked by macOS SIP
-# macOS: use fs_usage -w -f filesystem -p <PID> or Instruments Time Profiler
-iostat -x 1
-```
-
-## Python-Level Stand-ins for dtruss/dtrace/Instruments
-
-When system-level tracers unavailable (macOS SIP, restricted environments):
-
-```bash
-py-spy record -o profile.svg -- python script.py
-python -m cProfile -o output.prof script.py
-python -c "import pstats; pstats.Stats('output.prof').sort_stats('cumulative').print_stats(30)"
-uv tool install memory-profiler && python -m memory_profiler script.py
-```
-
-`py-spy`, `cProfile`, `memory_profiler` form the canonical replacement for dtruss/dtrace/Instruments on macOS; also work cross-platform.
+**Python-level stand-ins for dtruss/dtrace/Instruments** — system-level tracers unavailable (macOS SIP, restricted environments): `py-spy`, `cProfile`, `memory_profiler` (commands above; read a `cProfile -o output.prof` dump via `python -c "import pstats; pstats.Stats('output.prof').sort_stats('cumulative').print_stats(30)"`) form the canonical replacement on macOS; also work cross-platform.
 
 </profiling-tools>
 
@@ -119,7 +73,7 @@ uv tool install memory-profiler && python -m memory_profiler script.py
 
 <ml-gpu-profiling>
 
-For GPU/ML profiling tasks (CUDA, PyTorch training, model inference, DataLoader bottlenecks, mixed precision, torch.compile, distributed training): run `cat "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/references/perf-optimizer/ml-gpu-profiling.md"` via the Bash tool for GPU-specific profiling patterns — PyTorch profiler, nvidia-smi monitoring, DataLoader optimization, AMP, DDP, torch.compile. Skip for pure CPU/IO profiling.
+For GPU/ML profiling tasks (CUDA, PyTorch training, model inference, DataLoader bottlenecks, mixed precision, torch.compile, distributed training): run `cat "${CLAUDE_PLUGIN_ROOT}/references/perf-optimizer/ml-gpu-profiling.md"` via the Bash tool for GPU-specific profiling patterns — PyTorch profiler, nvidia-smi monitoring, DataLoader optimization, AMP, DDP, torch.compile. Skip for pure CPU/IO profiling.
 
 </ml-gpu-profiling>
 
@@ -211,10 +165,8 @@ if command -v codemap-py >/dev/null 2>&1 && [ -f "${_IDX}/${PROJ}.json" ]; then
         codemap-py query subprocess-deps "$TARGET_MODULE" 2>/dev/null
         [ -n "$TARGET_FN" ] && codemap-py query fn-blast "${TARGET_MODULE}::${TARGET_FN}" 2>/dev/null
     else
-        _BASE=$(git merge-base HEAD origin/main 2>/dev/null || git rev-parse HEAD~1 2>/dev/null)
         # module names from index `name` field, never sed: `pkg/__init__.py` → `pkg`, not `pkg.__init__`. Unindexed files resolve to nothing, never a guessed name.
-        _CHANGED_PY=$(git diff "${_BASE}..HEAD" --name-only 2>/dev/null | grep '\.py$' | paste -sd, -)
-        for _MOD in $(codemap-py query --timeout 10 central --top 100000 2>/dev/null | python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_centrality.py" --files "$_CHANGED_PY" --modules-only 2>/dev/null | head -10); do
+        for _MOD in $(python "${CLAUDE_PLUGIN_ROOT}/bin/codemap_changed_modules.py"); do
             codemap-py query subprocess-deps "$_MOD" 2>/dev/null
         done
     fi
@@ -321,50 +273,42 @@ Every recommendation MUST use `<output-format>` template. Never report optimizat
 
 **Scope**: targeted micro-optimizations (vectorize loop, switch dtype, pin memory). If change requires extracting/renaming/restructuring code paths → hand off to `foundry:sw-engineer` (refactoring boundary).
 
-Before loop: checkpoint pre-change state; on regression: restore it. **Worktree guard**: `git stash` is shared across all worktrees in the same repo — popping in one worktree can apply an entry created by another, or a pre-existing stash unrelated to this run. Detect worktree isolation and whether `git stash` actually created an entry before ever popping:
+Checkpoint before each change, restore only on regression. The baseline is measured with the user's uncommitted edits in place, so the checkpoint must leave the working tree untouched: `git stash` removes those edits, strands them in the stash on accept, and pops onto the still-applied change on regression. `git stash create` records the tracked pre-change state as a dangling commit without touching the tree or `refs/stash` (nothing shared across worktrees); it prints nothing on a clean tree, where HEAD is the pre-change state. Untracked files are not recorded, so snapshot their list too:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-_GIT_DIR=$(git rev-parse --git-dir 2>/dev/null); _GIT_COMMON_DIR=$(git rev-parse --git-common-dir 2>/dev/null)
-if [ "$_GIT_DIR" != "$_GIT_COMMON_DIR" ] || [ "$ISOLATION_WORKTREE" = "true" ]; then
-  echo "worktree" > "${TMPDIR:-/tmp}/perf-checkpoint-mode-${CSID}"  # git-dir != git-common-dir = linked worktree; or isolation:worktree signal — stash repo-shared, skip
-else
-  _BEFORE=$(git rev-parse --verify --quiet refs/stash 2>/dev/null)
-  git stash
-  _AFTER=$(git rev-parse --verify --quiet refs/stash 2>/dev/null)
-  [ "$_BEFORE" != "$_AFTER" ] && echo "stashed" > "${TMPDIR:-/tmp}/perf-checkpoint-mode-${CSID}" || echo "clean" > "${TMPDIR:-/tmp}/perf-checkpoint-mode-${CSID}"  # clean tree: git stash exits 0 but creates no entry — never pop
-fi
+_REF=$(git stash create 2>/dev/null); [ -n "$_REF" ] || _REF=$(git rev-parse HEAD)
+echo "$_REF" > "${TMPDIR:-/tmp}/perf-checkpoint-ref-${CSID}"
+git ls-files --others --exclude-standard > "${TMPDIR:-/tmp}/perf-checkpoint-untracked-${CSID}"
 ```
 
-On regression:
+On regression, revert only files the change touched — never whole tree, never pop:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r _MODE < "${TMPDIR:-/tmp}/perf-checkpoint-mode-${CSID}" 2>/dev/null || _MODE=""
-case "$_MODE" in
-  stashed) git stash pop || echo "! stash pop failed — resolve conflict manually before retrying" ;;
-  worktree) git status --porcelain ;;  # per-file revert: git checkout -- <file>
-  *) : ;;  # clean tree — nothing to restore
-esac
+IFS= read -r _REF < "${TMPDIR:-/tmp}/perf-checkpoint-ref-${CSID}" 2>/dev/null || _REF=""
+[ -n "$_REF" ] || { echo "! BLOCKED — no checkpoint ref; revert the change by hand"; exit 1; }
+git diff --name-only --no-renames -z "$_REF" | while IFS= read -r -d '' _F; do git restore --source="$_REF" --worktree -- "$_F"; done  # no-renames: a renamed file lists both paths
+git ls-files --others --exclude-standard | grep -vxFf "${TMPDIR:-/tmp}/perf-checkpoint-untracked-${CSID}"  # files the change created — delete by hand, never bulk-clean
 ```
 
-1. **Change**: one targeted change from highest-impact finding
+Accept → nothing to restore; user edits stay in place; next change re-checkpoints.
 
-2. **Measure**: compare against baseline under identical conditions. Measure baseline ≥3 times before applying >10% threshold; single measurement unreliable.
+5a. **Change**: one targeted change from highest-impact finding
 
-3. **Accept/reject**: keep if >10% throughput improvement; revert and try next if not. Accept threshold applies only when baseline variance is \<5%; for noisy benchmarks, require >2× noise floor improvement before accepting. **Noise floor** = ≤5% variance across repeated benchmark runs (`CV = stdev / mean ≤ 0.05`); reject benchmark result as too noisy to compare if CV > 0.05 — increase number of runs or stabilize environment first.
+5b. **Measure**: compare against baseline under identical conditions. Measure baseline ≥3 times before applying >10% threshold; single measurement unreliable.
 
-4. **Iteration bound**: max 3 optimization iterations per CLAUDE.md §Task default-3 safety break. **Diminishing returns** = last accepted change yielded \<5% throughput improvement over previous baseline. At limit (3 iterations OR diminishing returns triggered): stop, report progress, hand decision back to caller.
+5c. **Accept/reject**: keep if >10% throughput improvement; revert and try next if not. Accept threshold applies only when baseline variance is \<5%. **Noise floor** = ≤5% variance across repeated benchmark runs (`CV = stdev / mean ≤ 0.05`); reject benchmark result as too noisy to compare if CV > 0.05 — increase number of runs or stabilize environment first.
 
-5. **Internal Quality Loop and Confidence block**
+5d. **Iteration bound**: max 3 optimization iterations per CLAUDE.md §Task default-3 safety break. **Diminishing returns** = last accepted change yielded \<5% throughput improvement over previous baseline. At limit (3 iterations OR diminishing returns triggered): stop, report progress, hand decision back to caller.
+
+6. **Internal Quality Loop and Confidence block**
 
 Apply Internal Quality Loop, end with `## Confidence` block — see `.claude/rules/foundry-quality-gates.md`. Domain calibration:
 
 - Pure static-analysis (all issues code-visible, no runtime needed) → 0.95–0.98
 - Static + runtime-only mix → 0.85–0.94
 - Existence requires profiling → 0.7–0.85, reason in Gaps
-
-Never report optimization results without before/after numbers.
 
 </workflow>
 

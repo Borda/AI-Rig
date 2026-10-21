@@ -12,7 +12,7 @@
 
 When mode == **report**:
 
-Source file = `REPORT_FILE`, already resolved and gated by SKILL.md Step 1's **Report source resolution** block: `IFS= read -r REPORT_FILE < "${TMPDIR:-/tmp}/resolve-report-file-${CSID}"`. Never glob for it again here, and never conclude "no report" from an empty sentinel — empty means that block has not run yet; run it, including its `AskUserQuestion` gate when nothing is found. Starting a fresh `oss:review` without that gate is the documented failure this path exists to prevent.
+Source file = `REPORT_FILE`, already resolved and gated by SKILL.md Step 1's **Report source resolution** block (loaded from `report-intake.md`): `IFS= read -r REPORT_FILE < "${TMPDIR:-/tmp}/resolve-report-file-${CSID}"`. Never glob for it again here, and never conclude "no report" from an empty sentinel — empty means that block has not run yet; run it, including its `AskUserQuestion` gate when nothing is found. Starting a fresh `oss:review` without that gate is the documented failure this path exists to prevent.
 
 ### Report header state
 
@@ -21,7 +21,7 @@ Read the validated report's frontmatter `PR:` field once and publish the exact P
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r REPORT_FILE < "${TMPDIR:-/tmp}/resolve-report-file-${CSID}" 2>/dev/null || REPORT_FILE=""
-[ -f "$REPORT_FILE" ] || { echo "⛔ Report source missing; run the Step 1 report gate"; exit 1; }
+[ -f "$REPORT_FILE" ] || { echo "! BLOCKED — Report source missing; run the Step 1 report gate"; exit 1; }
 : > "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}"
 _REPORT_PR_FIELD=$(awk 'NR == 1 { next } { sub(/\015$/, ""); if ($0 == "---") exit; if ($0 ~ /^PR:[[:space:]]*/) { sub(/^PR:[[:space:]]*/, ""); print } }' "$REPORT_FILE")
 # case + prefix strip, not [[ =~ ]]: zsh (the Bash tool's shell on macOS) never sets BASH_REMATCH
@@ -32,10 +32,10 @@ case "$_REPORT_PR_FIELD" in
 esac
 case "$PR_NUMBER" in
     n/a) ;;
-    ''|*[!0-9]*) echo "⛔ Report PR field is not a PR number or n/a; refusing an ambiguous checkout"; exit 1 ;;
+    ''|*[!0-9]*) echo "! BLOCKED — Report PR field is not a PR number or n/a; refusing an ambiguous checkout"; exit 1 ;;
 esac
 _HEADING_PR=$(sed -nE 's/^## Code Review: (PR #|#)?([1-9][0-9]*)([[:space:]].*)?$/\2/p' "$REPORT_FILE" | head -1)
-[ -z "$_HEADING_PR" ] || [ "$_HEADING_PR" = "$PR_NUMBER" ] || { echo "⛔ Report PR heading conflicts with frontmatter"; exit 1; }
+[ -z "$_HEADING_PR" ] || [ "$_HEADING_PR" = "$PR_NUMBER" ] || { echo "! BLOCKED — Report PR heading conflicts with frontmatter"; exit 1; }
 printf '%s\n' "$PR_NUMBER" > "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}"
 echo "→ Report PR: $PR_NUMBER"
 ```
@@ -63,7 +63,7 @@ cat "$_OSS_SHARED/review-section-taxonomy.md"  # timeout: 5000
 
 The review's own structured findings are the handoff. Never re-derive what the review already recorded:
 
-- **Version-one `review-validation.json` beside the report**: the normal find_review_report.py intake gate validates the contract before any merge. Carry open_concerns (IDs, owner, next_check, closure) unchanged into the final report/handoff; never parse them as actionable findings or silently discard them. Unsupported contract means block with upgrade/review recovery. An incomplete publication arrives here only after SKILL.md **Gap triage** accepted it with zero critical gaps (`resolve-intake-degraded-${CSID}` names it): only its confirmed rows become items (the merge below passes `--accept-degraded` for exactly that report), and every gap goes to the final report's Review Intake section. Never repair the report or its sidecars.
+- **Version-one `review-validation.json` beside the report**: the normal find_review_report.py intake gate validates the contract before any merge. Carry open_concerns (IDs, owner, next_check, closure) unchanged into the final report/handoff; never parse them as actionable findings or silently discard them. Unsupported contract means block with upgrade/review recovery. An incomplete publication arrives here only after **Gap triage** (`report-intake.md`) accepted it with zero critical gaps (`resolve-intake-degraded-${CSID}` names it): only its confirmed rows become items (the merge below passes `--accept-degraded` for exactly that report), and every gap goes to the final report's Review Intake section. Never repair the report or its sidecars.
 - **`findings.jsonl` beside the report** (written by the review consolidator, stable `id` per finding): use it as-is. No taxonomy parse, no retyping.
 - **Older report without it**: parse the report once into the same shape. Use the Write tool to write `$IMPL_DIR/report-findings.jsonl`, then mint ids with the block below. Taxonomy (loaded above):
   - **Grep pattern** row for header matching (contains-match; headers may carry `⚠ LOW CONFIDENCE — ` prefix); skip sections where Grep key is `— skip`.
@@ -85,17 +85,10 @@ IFS= read -r REPORT_FILE < "${TMPDIR:-/tmp}/resolve-report-file-${CSID}" 2>/dev/
 IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
 [ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing"; exit 1; }
 [ -f "$REPORT_FILE" ] || { echo "! BLOCKED — report sentinel empty; run Report source resolution (SKILL.md Step 1) first"; exit 1; }
-FINDINGS="$(dirname "$REPORT_FILE")/findings.jsonl"
-if [ ! -f "$FINDINGS" ]; then
-    FINDINGS="$IMPL_DIR/report-findings.jsonl"
-    [ -f "$FINDINGS" ] || { echo "! BLOCKED — no findings.jsonl beside the report; write $FINDINGS from the parsed report first"; exit 1; }
-    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/mint_finding_ids.py" "$FINDINGS" || exit 1  # timeout: 5000
-fi
-printf '%s\n' "$FINDINGS" > "${TMPDIR:-/tmp}/resolve-findings-file-${CSID}"
 IFS= read -r INTAKE_DEGRADED < "${TMPDIR:-/tmp}/resolve-intake-degraded-${CSID}" 2>/dev/null || INTAKE_DEGRADED=""
-# only the report the user accepted at SKILL.md Gap triage; -ef: relative vs absolute spelling of one file
-[ -n "$INTAKE_DEGRADED" ] && [ "$INTAKE_DEGRADED" -ef "$REPORT_FILE" ] && ACCEPT_DEGRADED="--accept-degraded" || ACCEPT_DEGRADED=""
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/merge_action_items.py" --items "$IMPL_DIR/action-items.jsonl" --findings "$FINDINGS" ${ACCEPT_DEGRADED:+"$ACCEPT_DEGRADED"}  # timeout: 5000
+# the script picks findings.jsonl beside the report (else mints the parsed $IMPL_DIR copy) and persists its path;
+# --intake-accepted admits only the report accepted at Gap triage (report-intake.md), compared by file identity (relative vs absolute spelling)
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/merge_action_items.py" --items "$IMPL_DIR/action-items.jsonl" --report-file "$REPORT_FILE" --impl-dir "$IMPL_DIR" --persist-findings "${TMPDIR:-/tmp}/resolve-findings-file-${CSID}" --intake-accepted "$INTAKE_DEGRADED"  # timeout: 5000
 ```
 
 - Zero findings leave an empty `action-items.jsonl`.
@@ -126,23 +119,21 @@ On the no-PR path only, publish an explicit local-report marker before Step 8. I
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || PR_NUMBER=""
-[ "$PR_NUMBER" = "n/a" ] || { echo "⛔ Local report reference requires no PR number"; exit 1; }
+[ "$PR_NUMBER" = "n/a" ] || { echo "! BLOCKED — Local report reference requires no PR number"; exit 1; }
 printf '%s\n' 'n/a (local report)' > "${TMPDIR:-/tmp}/resolve-pr-ref-${CSID}"
 ```
 
 **Report mode — Step 8 behavior**: use only the `SELECTED_ITEMS` and commit mode produced by Step 3d. If `SELECTED_ITEMS` is empty after the user choice, skip Step 8 and jump to Step 9. Otherwise implement exactly those IDs, including explicitly selected resolved/addressed IDs; never replace the selection with the pending set.
 
-**Challenge Log — evidence and repair assessment remain required in report mode.** Use `action-item-dispatch.md`'s ordinary C1 or Phase 1 route and its persisted Challenge Log; `--no-challenge` retains its explicit SKILL.md behavior. A source report's own verdict or Recommendation never substitutes for challenge output. The medium-effort C1 bridge route performs the same evidence/repair assessment in its task-file brief; other items still dispatch Phase 1.
+**Challenge Log — evidence and repair assessment remain required in report mode.** Use the ordinary C1 route (`dispatch-prelude.md`) or Phase 1 route (`dispatch-phase1.md`) and its persisted Challenge Log; `--no-challenge` retains its explicit SKILL.md behavior. A source report's own verdict or Recommendation never substitutes for challenge output. The medium-effort C1 bridge route performs the same evidence/repair assessment in its task-file brief; other items still dispatch Phase 1.
 
 Two distinct retained proof classes may reduce Part 1 without skipping repair assessment. A separate Step 4 verifier's `verify_verdict: CONFIRMED` reaches only the same `[report]` finding, never an annotated GitHub item or parsed archive. Parent candidate proof carries `candidate_id`, `validation_status: CONFIRMED` and derived `parent_validation_file`/digest; it never manufactures that independent verifier marker. The existing `merge_action_items.py --recheck-verdicts` runs once before the C1 batch and at Phase 1's existing point after C1 mutations, disabling shortcuts when the head/publication/evidence binding changes while retaining historical pointers. Read the exact parent candidate/checks, recheck source/contract/environment applicability, and reuse applicable proved checks instead of repeating them. For matched GitHub items, proof covers only the linked finding; assess distinct requests separately. Missing/stale proof needs investigation of the remaining gap, never automatic confirmation or refutation. Every existing problem still receives Part 2 (is the proposed repair right); unproved claims require the full existence check.
 
-**`BASE_REF` derivation (no-PR path)** — report mode without PR# skips Step 4, so it must publish the local default branch to the same sentinel Step 4 writes for a PR. Step 9 reloads this state in its own shell; an unknown base blocks QA rather than selecting an empty diff range. Comment dispatch jumps to Step 12 and does not run Step 9.
+**`BASE_REF` derivation (no-PR path)** — report mode without PR# skips Step 4, so it must publish the local default branch to the same sentinel Step 4 writes for a PR. Step 9 reloads this state in its own shell; an unknown base blocks QA rather than selecting an empty diff range. Comment dispatch reaches the same lint/QA gate from Step 12 and publishes the base with this same helper (`comment-dispatch.md`).
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-: > "${TMPDIR:-/tmp}/resolve-base-ref-${CSID}"
-BASE_REF=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)
-BASE_REF="${BASE_REF#origin/}"
-[ -n "$BASE_REF" ] && git check-ref-format --branch "$BASE_REF" >/dev/null 2>&1 || { echo "⛔ Cannot determine a valid origin default branch for report QA"; exit 1; }
-printf '%s\n' "$BASE_REF" > "${TMPDIR:-/tmp}/resolve-base-ref-${CSID}"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/resolve_pr_refs.py" --local-base  # timeout: 15000
 ```
+
+Exit 1 prints `⛔ Cannot determine a valid origin default branch for report QA` (the helper's message reads `…for QA`) → stop: the helper tries `origin/HEAD`, then `git remote show origin`, and refuses an invalid name; QA cannot run without a base.

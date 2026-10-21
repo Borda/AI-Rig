@@ -40,6 +40,7 @@
 **refactor**:
 
 - `[COMPLEXITY_TERMS]` = medium/wide
+- Classification — refactor has no separate classification step, so classify here from Step 1's scope analysis, after the Scope gate: `small` (one module, ≤3 files, no public-API rename), `wide` (any Scope-gate trigger left standing: 3+ modules, 5+ files, or a public-API rename), `medium` (everything between: 2 modules, or exactly 4 files in one module). The skip rule "small complexity" in the Trigger line reads this result.
 - `[SKILL_VERB]` = refactor
 - `[PLAN_SECTIONS]` = Refactor goal and motivation, Affected files, Risks (API surface changes, caller impact, test coverage gaps), Approach (ordered refactor steps with clear checkpoints)
 - `[RISK_FOCUS]` = API surface changes, caller impact, test coverage gaps

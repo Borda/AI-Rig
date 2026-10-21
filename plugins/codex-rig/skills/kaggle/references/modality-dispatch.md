@@ -67,6 +67,7 @@ Imports (add to imports `# %%`):
 import tifffile
 import ipywidgets as widgets
 from ipywidgets import interact, IntSlider, FloatSlider
+import matplotlib
 from matplotlib.colors import ListedColormap, BoundaryNorm
 ```
 
@@ -89,9 +90,13 @@ Interactive 3-plane viewer + mask overlay:
 
 ```python
 # %%
-_MASK_COLORS = ["lightgray", "yellow", "cyan", "red"]
-_MASK_CMAP = ListedColormap(_MASK_COLORS[: len(np.unique(mask_vol))])
-_MASK_NORM = BoundaryNorm(np.arange(-0.5, len(np.unique(mask_vol))), _MASK_CMAP.N)
+# labels may be non-contiguous (e.g. {0, 255}) or many: colour by index into actual labels
+_MASK_LABELS = np.unique(mask_vol)
+_N_LABELS = len(_MASK_LABELS)
+_MASK_CMAP = ListedColormap(
+    ["lightgray", *matplotlib.colormaps["turbo"].resampled(max(_N_LABELS - 1, 1))(np.arange(_N_LABELS - 1))]
+)
+_MASK_NORM = BoundaryNorm(np.arange(-0.5, _N_LABELS), _MASK_CMAP.N)
 
 
 def show_volume(vol, mask_vol, z, y, x, mask_alpha):
@@ -108,7 +113,13 @@ def show_volume(vol, mask_vol, z, y, x, mask_alpha):
         (ax_xz, vol[:, y, :], mask_vol[:, y, :], f"Coronal y={y}"),
     ]:
         ax.imshow(sl, cmap="gray")
-        ax.imshow(msl, cmap=_MASK_CMAP, norm=_MASK_NORM, alpha=mask_alpha, interpolation="nearest")
+        ax.imshow(
+            np.searchsorted(_MASK_LABELS, msl),
+            cmap=_MASK_CMAP,
+            norm=_MASK_NORM,
+            alpha=mask_alpha,
+            interpolation="nearest",
+        )
         ax.set_title(title)
         ax.axis("off")
 
@@ -154,15 +165,16 @@ Setup: no extra installs beyond pandas.
 # shape, dtypes, missing values
 print(df_train.shape)
 display(df_train.describe())
-print(df_train.isnull().sum().sort_values(ascending=False).head(20))
+display(df_train.isnull().sum().sort_values(ascending=False).head(20))
 ```
 
 ```python
 # %%
 import seaborn as sns
 
-num_cols = df_train.select_dtypes("number").columns.tolist()
-assert 0 < len(num_cols) <= 20, "Feature-correlation chart requires 1–20 numeric columns"
+# top 20 by variance keeps heatmap legible on wide data
+num_cols = df_train.select_dtypes("number").var().nlargest(20).index.tolist()
+assert num_cols, "Feature-correlation chart requires at least one numeric column"
 fig, ax = plt.subplots(figsize=(len(num_cols), len(num_cols)))
 sns.heatmap(df_train[num_cols].corr(), annot=True, fmt=".2f", ax=ax)
 ax.set_title("Feature correlation")

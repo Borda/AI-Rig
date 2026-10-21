@@ -31,13 +31,16 @@ CODEBASE_OUT=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/resolve-an
 PLAN_OUT=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/resolve-anti-overwrite-path.py" .reports/research "topic-plan-$BRANCH-$DATE")  # timeout: 5000
 # Absolute path — hooks/enforce-topic-header.js reads this to gate the follow-up question
 echo "$PWD/$PLAN_OUT" > "${TMPDIR:-/tmp}/research-topic-report-file-${CSID}"
+echo "CODEBASE_OUT=$CODEBASE_OUT PLAN_OUT=$PLAN_OUT"
 ```
 
 <!-- same branch/date pattern as Step 2a block -->
 
 ### Step P2: Codebase analysis
 
-> **Agent budget** — each spawn costs ~120,851 tok of fixed overhead (~73 tool-calls' worth) plus ~12.0 s/call, so work under ~73 calls is cheaper done inline: spawn nothing — work-displacement only; an isolation-motivated spawn (adversarial reviewer, distinct specialist role, model tier, worktree) runs regardless of size. Keep each agent near ~55 tool-calls; past ~60 they stall without returning an envelope, forcing reconstruction from disk. Every spawn prompt must require an envelope even on exhaustion — `partial: true` plus what was finished.
+<!-- policy-sibling: plugins/cc_research/skills/judge/SKILL.md, plugins/cc_research/skills/fortify/SKILL.md, plugins/cc_research/skills/verify/SKILL.md, plugins/cc_research/skills/plan/SKILL.md, plugins/cc_research/skills/topic/SKILL.md, plugins/cc_research/skills/retro/SKILL.md, plugins/cc_research/skills/topic/modes/team.md — Agent-budget spawn-envelope rule restated in each; keep in sync (plugins/CLAUDE.md §Policy Duplication Marker). -->
+
+> **Agent budget** — every spawn prompt must require an envelope even on exhaustion — `partial: true` plus what was finished.
 
 **Agent wait**: the spawn runs in the background — end the turn and resume on its completion notification, never a `sleep`, `ScheduleWakeup`, `ListAgents`, or `Monitor` loop. A notification without the expected output marks the agent ⏱ `timed_out` at once; surface it in the report (`agent-resolution.md` §Agent waits — no polling).
 
@@ -64,9 +67,14 @@ Read both files (research findings from P1 + codebase analysis from P2). Produce
 ```markdown
 ---
 Title: Research Plan — [method name]
-Topic: [original arguments]
+Date: [YYYY-MM-DD]
+Scope: [original arguments]
+Focus: implementation roadmap mapped to codebase
+Agents: foundry:solution-architect
 Outcome: [ready / needs work]
 Summary: [phase count, task count, top risk]
+Confidence: [score] — [key gaps]
+Next steps: /develop:feature <first Phase 1 task> (requires `develop` plugin)
 Path: [resolved PLAN_OUT]
 ---
 

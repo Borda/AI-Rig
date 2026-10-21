@@ -6,18 +6,23 @@ Triggered when first normalized argument token is `executables`. Reads latest `/
 
 ## Step E1: Locate or run scan
 
+Substitute `<EXEC_PATH>` with the path after `executables` in `ARGUMENTS_FINAL` (SKILL.md flag-parse stdout), or with nothing for auto-detect — this file is `cat`-loaded, so `$ARGUMENTS` is not set in its blocks.
+
 ```bash
-_FS=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_shared_path.py" foundry skills/_shared 2>/dev/null || echo "plugins/cc_foundry/skills/_shared")  # timeout: 5000
+EXEC_ARGS='<EXEC_PATH>'
+case "$EXEC_ARGS" in *'<'*'>'*) echo "! BLOCKED — <EXEC_PATH> not substituted (empty = auto-detect)"; exit 1;; esac
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 RUN_DIR=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/make_run_dir.py" .reports/distill 2>/dev/null || echo ".reports/distill/$(date -u +%Y-%m-%dT%H-%M-%SZ)")  # timeout: 5000
 mkdir -p "$RUN_DIR"  # timeout: 5000
-
-EXEC_ARGS="${ARGUMENTS#executables}"
-EXEC_ARGS="${EXEC_ARGS# }"
+[ -d "plugins/" ] && _SCAN_DIR="plugins/" || _SCAN_DIR=".claude/"
+echo "$RUN_DIR" > "${TMPDIR:-/tmp}/distill-exec-run-dir-${CSID}"; echo "$_SCAN_DIR" > "${TMPDIR:-/tmp}/distill-exec-scan-dir-${CSID}"
+echo "RUN_DIR=$RUN_DIR SCAN_DIR=$_SCAN_DIR"
 if [ -n "$EXEC_ARGS" ]; then
+  # newline-separated scalar, never mapfile — absent in zsh, would leave the list always empty
   if [ -d "$EXEC_ARGS" ]; then
-    mapfile -t CHECK33_FILES < <(ls "$EXEC_ARGS"/efficiency-check33-*.md 2>/dev/null)
+    CHECK33_FILES=$(ls "$EXEC_ARGS"/efficiency-check33-*.md 2>/dev/null)
   elif [ -f "$EXEC_ARGS" ]; then
-    CHECK33_FILES=("$EXEC_ARGS")
+    CHECK33_FILES="$EXEC_ARGS"
   else
     printf "! MISSING — path not found: %s\n" "$EXEC_ARGS"
     exit 1
@@ -28,19 +33,23 @@ else
     | while IFS= read -r d; do
         ls "$d"/efficiency-check33-*.md 2>/dev/null | head -1 | grep -q . && echo "$d" && break
       done)  # timeout: 5000
-  mapfile -t CHECK33_FILES < <(ls "$LATEST_RUN"/efficiency-check33-*.md 2>/dev/null)
+  [ -n "$LATEST_RUN" ] && CHECK33_FILES=$(ls "$LATEST_RUN"/efficiency-check33-*.md 2>/dev/null)
 fi
-echo "Check 33 files: ${#CHECK33_FILES[@]} (from ${LATEST_RUN:-$EXEC_ARGS})"
+echo "Check 33 files (from ${LATEST_RUN:-$EXEC_ARGS}), one per line — none listed = empty:"
+printf '%s\n' "$CHECK33_FILES"
 ```
 
 **If `CHECK33_FILES` non-empty**: proceed to Step E2 using those files.
 
 **If `CHECK33_FILES` empty** (no prior `/audit --efficiency` run): print `[→ No efficiency report found — running bin/ extraction scan]`, execute scan inline:
 
-Determine LOCAL_MODE-aware scan path, extract code blocks:
+Reload E1 run dir + scan path (bash state does not persist across calls), extract code blocks:
 
 ```bash
-[ -d "plugins/" ] && _SCAN_DIR="plugins/" || _SCAN_DIR=".claude/"  # timeout: 3000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/distill-exec-run-dir-${CSID}" 2>/dev/null || RUN_DIR=""
+IFS= read -r _SCAN_DIR < "${TMPDIR:-/tmp}/distill-exec-scan-dir-${CSID}" 2>/dev/null || _SCAN_DIR=""
+[ -n "$RUN_DIR" ] && [ -n "$_SCAN_DIR" ] || { echo "! MISSING — E1 run-dir/scan-dir sentinel; re-run Step E1"; exit 1; }
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/extract_code_blocks.py" "$_SCAN_DIR" --min-tokens 5 > "$RUN_DIR/blocks.jsonl"  # timeout: 30000
 ```
 
@@ -76,6 +85,10 @@ Bin/ extraction candidates:
 **Before-numbers** — capture pre-extraction measurement now, so Step E6 summary quotes a real delta rather than an estimate:
 
 ```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/distill-exec-run-dir-${CSID}" 2>/dev/null || RUN_DIR=""
+IFS= read -r _SCAN_DIR < "${TMPDIR:-/tmp}/distill-exec-scan-dir-${CSID}" 2>/dev/null || _SCAN_DIR=""
+[ -n "$RUN_DIR" ] && [ -n "$_SCAN_DIR" ] || { echo "! MISSING — E1 run-dir/scan-dir sentinel; re-run Step E1"; exit 1; }
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/extract_code_blocks.py" "$_SCAN_DIR" --min-tokens 5 > "$RUN_DIR/blocks-before.jsonl"  # timeout: 30000
 ```
 
@@ -116,7 +129,7 @@ Steps:
    Prefer this bare form — every plugin allow-lists Bash(python:*), so it never prompts. A capture form (VAR=$(python ...)) trips the \"Contains expansion\" gate and passes only via an exact-text entry in that plugin's blueprint-manifest.json; when one is unavoidable, name the call site in the summary so the manifest is regenerated in the same commit. Preserve surrounding sentinel reads and variable assignments consuming block output.
 3. Diff gate — for each modified source file run: git diff HEAD -- <file> | grep "^[+-]" | grep -v "^[+-][+-][+-]"
    Count non-target changed lines. If any lines outside the target block changed: revert the file (git checkout HEAD -- <file>) and re-apply edit targeting only the block. Report diff line counts in summary.
-4. Verify: grep source files to confirm old block body absent; confirm bin/ script exists; run all three gates and confirm each exits 0 — python plugins/cc_foundry/bin/check_orphaned_bin.py, python plugins/cc_foundry/bin/check_cli_flag_drift.py, and python plugins/cc_foundry/bin/check_fence_symmetry.py <changed .md files>.
+4. Verify: grep source files to confirm old block body absent; confirm bin/ script exists; run all three gates and confirm each exits 0 — python \"\${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_orphaned_bin.py\", python \"\${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_cli_flag_drift.py\", and python \"\${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_fence_symmetry.py\" <changed .md files>.
 5. Create test file: write `plugins/<plugin>/tests/test_<script-basename>.py` (or the matching `tests/` dir for the plugin) with at minimum pytest tests covering the public CLI entry point (use monkeypatch/capsys/tmp_path). Follow the test style in `tests/` alongside the bin/ script — check existing tests for fixture and import patterns. Non-empty file required; empty file fails Check R4.
 Put the extraction summary in the envelope summary field, never in a file — your worktree drops untracked and ignored files when removed, and main-tree paths are refused. Include: diff line counts per file, any reverts performed, incidental issues noticed but NOT fixed.
 Return ONLY: {\"status\":\"done\",\"changed\":[\"<every path you created or modified>\"],\"bin_script\":\"<path>\",\"source_files_updated\":N,\"test_file_created\":bool,\"summary\":\"<at most 5 lines>\",\"confidence\":0.N}
@@ -139,14 +152,20 @@ E5 then sees every transplanted change in the main tree; an untransplanted clust
 After all E4 agents complete, collect modified .md files from envelopes. Spawn **foundry:curator** per modified file (all parallel — issue all in one response):
 
 ```text
-Agent(subagent_type="foundry:curator", prompt="Re-audit <file> after bin/ extraction. Check: (1) no inline block body remains — only bin/ invocation one-liner; (2) timeout annotation present on invocation line; (3) variable assignments consuming block output still correct; (4) no orphaned variable references; (5) run git diff HEAD -- <file> and flag any changed lines outside the target block — these are unauthorized side-edits; surface as high finding if found. Write findings to $RUN_DIR/reaudit-<slug>.md. Return ONLY: {\"status\":\"done\",\"file\":\"$RUN_DIR/reaudit-<slug>.md\",\"issues\":N,\"side_edits_detected\":bool,\"confidence\":0.N}")
+Agent(subagent_type="foundry:curator", name="reaudit-<slug>", description="<slug> extraction re-audit", prompt="Re-audit <file> after bin/ extraction. Check: (1) no inline block body remains — only bin/ invocation one-liner; (2) timeout annotation present on invocation line; (3) variable assignments consuming block output still correct; (4) no orphaned variable references; (5) run git diff HEAD -- <file> and flag any changed lines outside the target block — these are unauthorized side-edits; surface as high finding if found. Write findings to $RUN_DIR/reaudit-<slug>.md. Return ONLY: {\"status\":\"done\",\"file\":\"$RUN_DIR/reaudit-<slug>.md\",\"issues\":N,\"side_edits_detected\":bool,\"confidence\":0.N}")
 ```
+
+**Health monitoring for re-audit spawns** (`_shared/agent-spawn-protocol.md`): issue the curator spawns together with `$RUN_DIR/agent-watch-reaudit.tsv` (one row per file: `<slug>\t$RUN_DIR/reaudit-<slug>.md\t900`) in one response, end turn, resume on each completion notification and run `python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/agent_watch.py" --state-dir "$RUN_DIR"` once — never `ScheduleWakeup`, `ListAgents`, `Monitor`, a filler call, a "waiting" line, or a sleep. Empty or missing `reaudit-<slug>.md`: mark that file `timed_out`, surface with ⏱ in the E6 summary as not re-audited.
 
 ## Step E6: Measure, review, commit
 
 **After-numbers** — re-run same measurement, diff against `blocks-before.jsonl` from Step E3, so summary quotes a measured delta:
 
 ```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/distill-exec-run-dir-${CSID}" 2>/dev/null || RUN_DIR=""
+IFS= read -r _SCAN_DIR < "${TMPDIR:-/tmp}/distill-exec-scan-dir-${CSID}" 2>/dev/null || _SCAN_DIR=""
+[ -n "$RUN_DIR" ] && [ -n "$_SCAN_DIR" ] || { echo "! MISSING — E1 run-dir/scan-dir sentinel; re-run Step E1"; exit 1; }
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/extract_code_blocks.py" "$_SCAN_DIR" --min-tokens 5 > "$RUN_DIR/blocks-after.jsonl"  # timeout: 30000
 ```
 
@@ -173,6 +192,6 @@ Extraction complete — <date>
   Convergence: W_0 → W_1 → W_2 (<verdict>)
 ```
 
-Remind: run `/foundry:setup` to propagate bin/ scripts to `~/.claude/` plugin cache, then `/audit --efficiency` to confirm `clusters == 0`.
+Remind: plugin `bin/` scripts reach the `~/.claude/` plugin cache only via plugin update/reinstall (`/foundry:setup` does not copy them); then `/audit --efficiency` to confirm `clusters == 0`.
 
 End response with `## Confidence` block per CLAUDE.md output standards.

@@ -11,7 +11,11 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # Reload vars from Shared setup — fresh shell (Check 41)
 IFS= read -r REST < "${TMPDIR:-/tmp}/release-rest-${CSID}" 2>/dev/null || REST=""
 IFS= read -r LAST_TAG < "${TMPDIR:-/tmp}/release-setup-${CSID}/LAST_TAG" 2>/dev/null || LAST_TAG=""
-RANGE="${REST:+${REST/->/../}}"
+RANGE=""
+set -- $(printf '%s\n' "$REST")  # splits under zsh too; REST may carry flags beside the range
+for _T in "$@"; do
+    case "$_T" in --*|-[a-zA-Z]*) ;; *'->'*) RANGE="${_T/->/..}"; break ;; *..*) RANGE="$_T"; break ;; esac
+done
 RANGE="${RANGE:-$LAST_TAG..HEAD}"
 echo "$RANGE" > "${TMPDIR:-/tmp}/release-demo-range-${CSID}"  # persist for later blocks (Check 41)
 ```
@@ -114,6 +118,8 @@ IFS= read -r DATE < "${TMPDIR:-/tmp}/release-setup-${CSID}/DATE" 2>/dev/null || 
 # always .temp/; prepare mode uses releases/$VERSION/
 DEMO_OUT=".temp/release-demo-$BRANCH-$DATE.py"
 mkdir -p .temp  # timeout: 5000
+echo "$DEMO_OUT" > "${TMPDIR:-/tmp}/release-demo-out-${CSID}"  # same sentinel SKILL.md's demo gate reloads
+echo "DEMO_OUT=$DEMO_OUT"
 ```
 
 Write generated script to `$DEMO_OUT` using Write tool.

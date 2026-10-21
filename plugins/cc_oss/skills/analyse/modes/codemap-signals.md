@@ -10,8 +10,8 @@ Reuse oss shared detector — same helper review/resolve use. codemap-py query o
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-# Resolve analyse skill dir if caller did not (cache first, source fallback)
-_OSS_ANALYSE=${_OSS_ANALYSE:-$(ls -d ~/.claude/plugins/cache/borda-ai-rig/oss/*/skills/analyse 2>/dev/null | sort -V | tail -1)}  # timeout: 5000
+# Resolve analyse skill dir if caller did not (sentinel cold-resolved by analyse/SKILL.md, then source fallback)
+[ -n "$_OSS_ANALYSE" ] || IFS= read -r _OSS_ANALYSE < "${TMPDIR:-/tmp}/analyse-oss-analyse-${CSID}" 2>/dev/null || _OSS_ANALYSE=""
 [ -z "$_OSS_ANALYSE" ] && _OSS_ANALYSE="plugins/cc_oss/skills/analyse"
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/detect_codemap.py" --prefix analyse 2>&1  # timeout: 5000
 IFS= read -r CM_ENABLED < "${TMPDIR:-/tmp}/analyse-codemap-enabled-${CSID}" 2>/dev/null || CM_ENABLED="false"
@@ -33,6 +33,7 @@ Thread names symbols/modules that may no longer exist. Extract candidate identif
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # Caller wrote candidates (one identifier per line) to this file before this fence.
+IFS= read -r CM_ENABLED < "${TMPDIR:-/tmp}/analyse-codemap-enabled-${CSID}" 2>/dev/null || CM_ENABLED="false"
 _CAND="${TMPDIR:-/tmp}/analyse-triage-candidates-${CSID}.txt"
 _BATCH="${TMPDIR:-/tmp}/analyse-triage-batch-${CSID}.json"
 if [ "$CM_ENABLED" = "true" ] && [ -s "$_CAND" ]; then
@@ -62,19 +63,21 @@ Open PRs touching overlapping code are merge-conflict or duplicate-effort risks.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-# GH_OWNER/GH_REPO set by vitality Step 1. Cap: skip when > PR_FILES_CAP open PRs (one API call each).
+# Cap: skip when > PR_FILES_CAP open PRs (file lists grow with PR count).
+IFS= read -r GH_OWNER < "${TMPDIR:-/tmp}/analyse-gh-owner-${CSID}" 2>/dev/null || GH_OWNER=""
+IFS= read -r GH_REPO < "${TMPDIR:-/tmp}/analyse-gh-repo-${CSID}" 2>/dev/null || GH_REPO=""
+[ -n "$GH_OWNER" ] && [ -n "$GH_REPO" ] || { echo "⚠ PR-set overlap skipped — GH_OWNER/GH_REPO sentinels missing"; exit 0; }
 PR_FILES_CAP=25
 _OPEN_PR_NUMS=$(gh pr list -R "$GH_OWNER/$GH_REPO" --state open --json number --jq '.[].number' --limit 201 2>/dev/null)  # timeout: 15000
 _OPEN_PR_COUNT=$(printf '%s\n' "$_OPEN_PR_NUMS" | grep -c . 2>/dev/null) || _OPEN_PR_COUNT=0  # `|| echo 0` appends a second 0: grep -c prints 0 *and* exits 1 on zero matches
 _PRSET="${TMPDIR:-/tmp}/analyse-prset-files-${CSID}.jsonl"
 : > "$_PRSET"
 if [ "$_OPEN_PR_COUNT" -gt 0 ] && [ "$_OPEN_PR_COUNT" -le "$PR_FILES_CAP" ]; then
-    for _n in $_OPEN_PR_NUMS; do
-        _files=$(gh pr view "$_n" -R "$GH_OWNER/$GH_REPO" --json files --jq '[.files[].path]' 2>/dev/null)  # timeout: 10000
-        [ -n "$_files" ] && printf '{"pr":%s,"files":%s}\n' "$_n" "$_files" >> "$_PRSET"
-    done
+    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/gh_batch_query.py" pr-files --repo "$GH_OWNER/$GH_REPO" $_OPEN_PR_NUMS > "$_PRSET" || { echo "⚠ PR-set overlap skipped — batched changed-file fetch failed"; : > "$_PRSET"; }  # timeout: 30000
 fi
 ```
+
+One batched GraphQL request replaces one `gh pr view` per PR. A record with `coverage_gap` (PR vanished, or more than 100 changed files) is a partial file list: still intersect it, and append "(file list partial for #N)" to any candidate pair it supports.
 
 > `> PR_FILES_CAP` open PRs → skip the whole signal; report notes "PR-set overlap skipped — {N} open PRs exceeds cap {PR_FILES_CAP} (per-PR file fetch too costly)". Keeps vitality within GitHub rate limits on high-traffic repos.
 
@@ -84,6 +87,7 @@ fi
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r CM_ENABLED < "${TMPDIR:-/tmp}/analyse-codemap-enabled-${CSID}" 2>/dev/null || CM_ENABLED="false"
 [ "$CM_ENABLED" = "true" ] && codemap-py query coupled --top 30 --exclude-tests 2>/dev/null > "${TMPDIR:-/tmp}/analyse-cm-coupled-${CSID}.json"  # timeout: 10000
 ```
 
@@ -97,6 +101,7 @@ Populate the report template's `### Structural Constraints` block from index-wid
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r CM_ENABLED < "${TMPDIR:-/tmp}/analyse-codemap-enabled-${CSID}" 2>/dev/null || CM_ENABLED="false"
 [ "$CM_ENABLED" = "true" ] || { echo "cm_central=[] cm_collision=0 cm_degraded=0"; }
 if [ "$CM_ENABLED" = "true" ]; then
     codemap-py query central --top 5 2>/dev/null > "${TMPDIR:-/tmp}/analyse-cm-central-${CSID}.json"  # timeout: 10000

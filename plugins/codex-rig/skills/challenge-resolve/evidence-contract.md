@@ -76,9 +76,11 @@ For local reviewer waves, require one raw JSON object with the fields below, wit
   "source_sha256": "SHA-256 of exact retained source JSON bytes",
   "diff_sha256": "SHA-256 of exact retained diff bytes",
   "findings": [],
-  "assessment": {"rating": 4, "rationale": "{\"reviewed_paths\":[\"path/to/source.py\"],\"unreviewed_paths\":[],\"limits\":\"none\",\"judgment\":\"clean\"}"}
+  "assessment": {"rating": 1, "rationale": "{\"reviewed_paths\":[\"path/to/source.py\"],\"unreviewed_paths\":[],\"limits\":\"none\",\"judgment\":\"clean\"}"}
 }
 ```
+
+This loop's `assessment` keeps the two-field `rating`/`rationale` contract that `validate_evidence.py` enforces; choose a rating consistent with `judgment` (1 for clean).
 
 For current native preparation, pass `--challenge-only` to both `review_prepare.py prepare` and `assemble`. Declare exactly one `challenger` in `review-routing.json` and `review-briefs.json`; the challenger brief contains the exact `Review request:`, `Frozen source:`, `Frozen diff:`, and optional `Supporting source:` envelope defined above, ending immediately after its final newline. Preparation retains the role card followed by that exact brief, validates selected source coverage, and does not append the ordinary Code Review task wrapper or source excerpts. Ordinary preparation retains its multi-axis routing contract.
 

@@ -1,15 +1,8 @@
-# Agent Checks — 8, 13
+# Agent Checks — 19, 20, 46
 
 ## Check 19 — Model tier appropriateness
 
-Capability tiers:
-
-| Tier | Model | Example agents |
-| -- | -- | -- |
-| High-stakes design/config | `opus` | solution-architect, curator |
-| Implementation | `opus` | sw-engineer, research:scientist, perf-optimizer |
-| Diagnostics / writing | `sonnet` | web-explorer, doc-scribe, research:data-steward, oss:cicd-steward, oss:shepherd, qa-specialist |
-| Mechanical fetch / rubric scoring | `haiku` | oss:gh-scraper, oss:repo-warden |
+Capability tiers: canonical tier → model → agent table lives in `foundry:curator` `<antipatterns-to-flag>` (foundry `agents/curator.md`) — use it, never restate a roster copy here.
 
 Frontmatter declares aliases only; a pinned model ID freezes the version and is a finding.
 

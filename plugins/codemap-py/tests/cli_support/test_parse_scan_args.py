@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -129,3 +130,43 @@ class TestSkillCallSiteRegression:
         assert rc == 0
         assert capsys.readouterr().out == ""
         assert args_file.read_bytes() == b"--root\x00/abs/proj\x00--incremental\x00"
+
+
+class TestNulOutputTarget:
+    """The ``--nul-output`` file is opened from the path that passed the TMPDIR check, never through a symlink."""
+
+    def test_directory_target_reports_error_instead_of_traceback(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A target inside TMPDIR that cannot be opened for writing exits 1 with a one-line stderr message.
+
+        A directory planted at the expected sentinel name made the former bare ``open`` raise an uncaught
+        ``IsADirectoryError``; the caller then saw a traceback rather than the documented non-zero exit.
+        """
+        monkeypatch.setenv("TMPDIR", str(tmp_path))
+        target = tmp_path / "codemap-scan-args-nul"
+        target.mkdir()
+        rc = main(["--root /abs/proj", "--nul-output", str(target)])
+        assert rc == 1
+        assert "cannot open --nul-output" in capsys.readouterr().err
+
+    @pytest.mark.skipif(not hasattr(os, "O_NOFOLLOW"), reason="platform has no O_NOFOLLOW")
+    def test_symlink_swapped_in_after_check_is_not_followed(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A symlink at the checked path is refused at open time, leaving its target untouched.
+
+        ``Path.resolve`` is pinned to the identity so the containment check passes on the unresolved path, which is
+        exactly the state after an attacker swaps a symlink in between the check and the open. The open must then fail
+        rather than write through the link into a file the caller never named.
+        """
+        monkeypatch.setenv("TMPDIR", str(tmp_path))
+        victim = tmp_path / "victim.txt"
+        victim.write_text("keep")
+        link = tmp_path / "codemap-scan-args-nul"
+        link.symlink_to(victim)
+        monkeypatch.setattr(Path, "resolve", lambda self, strict=False: self)
+        rc = main(["--root /abs/proj", "--nul-output", str(link)])
+        assert rc == 1
+        assert victim.read_text() == "keep"
+        assert "cannot open --nul-output" in capsys.readouterr().err

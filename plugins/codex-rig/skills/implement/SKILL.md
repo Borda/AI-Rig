@@ -55,9 +55,11 @@ This route uses existing task authorization and observed tool capabilities, sepa
 
 ## Parallel Adoption (Portable read-only)
 
-<!-- policy-sibling: skills/manage/SKILL.md (Parallel Adoption section) — near-duplicate; also see skills/code-review/SKILL.md Workflow parallel-review section as a third divergent variant; check siblings before editing this section alone -->
+<!-- policy-sibling: skills/manage/SKILL.md (Parallel Adoption section) — near-duplicate, invariant text in shared/portable-parallel-read.md; also see skills/code-review/SKILL.md Workflow parallel-review section as a third divergent variant; check siblings before editing this section alone -->
 
-This portable section permits only its promoted portable read-only route; its restrictions do not govern the separate Native Bounded Delegation route. Execution Route Selection must resolve to `parallel-read` before this section applies; `auto` does not select it. This consumer's runtime matrix and promotion remain mandatory. Serial parent work uses existing task authorization; exact-plan-digest approval applies when the promoted parallel-read route is selected. This route never bypasses consumer promotion, serial parent authority, or applicable write approval. Supplied denials or stale approvals remain invalid in every execution mode.
+> Only when Execution Route Selection resolves to `parallel-read`, read [portable-parallel-read.md](../../shared/portable-parallel-read.md) before any child preparation; `serial`, `auto`, and native routes do not load it. The reference preserves the shared route gate, write-policy and approval rules, host-compatibility barrier, preflight and runtime-validation qualifiers, resource-lock declaration, fallback, acceptance, and stop rule; the consumer values below stay authoritative for this skill.
+
+This portable section permits only its promoted portable read-only route; its restrictions do not govern the separate Native Bounded Delegation route.
 
 Follow the [canonical G0–G8 execution flow](../../ARCHITECTURE.md#canonical-g0g8-execution-flow) for shared gate order and fork outcomes. This consumer's read-only evidence passes are bounded by G0–G5; parent owns deterministic G6 integration, G7 verification, and G8 verdict/promotion.
 
@@ -67,17 +69,15 @@ The promoted route permits read-only evidence, acceptance, and documentation-imp
 
 ### Required barrier
 
-Apply shared [host compatibility check](../../shared/specialist-orchestration.md#host-compatibility-before-dispatch) before preparing any child work. Include `read_host` only from verified launcher-supported child controls. Missing or incompatible controls stop the selected parallel-read route before dispatch. A plan declaration is not effective-control proof, and post-run validation remains mandatory.
-
 Before any dispatch, freeze goal, mode, `done_when`, baseline, ownership DAG, context packs, role-card hashes, checks, resource locks, and plan digest. Dispatch at most one fixed dependency-ready wave, then join every terminal handoff before implementation, integration, gates, or acceptance; changed scope requires new plan.
 
-The frozen `<run-directory>/execution-plan.json` must include exact `consumer_policy` values `consumer_id=implement`, `capability=portable-read-only`, `promotion_status=promoted`, `parent_mutations=serial`, and `canonical_gates=serial`. It must also include `write_policy`: use `parent_writes=planned` with `approval_requirement=exact-plan-digest` when any parent mutation is planned, otherwise `parent_writes=none` with `approval_requirement=not-required`. When parallel-read is selected, a planned parent write requires `<run-directory>/write-approval.json` containing only exact plan SHA-256, `response=approve`, and `source=explicit-input|user-prompt`. Serial execution or an automatic serial fallback does not require a new digest receipt for already-authorized work.
+The frozen `<run-directory>/execution-plan.json` must include exact `consumer_policy` values `consumer_id=implement`, `capability=portable-read-only`, `promotion_status=promoted`, `parent_mutations=serial`, and `canonical_gates=serial`.
 
 Bootstrap exception: run-directory creation (Step 01), baseline diff/branch persistence (Step 02), and the `write-approval.json` write itself are exempt from requiring a prior approved plan digest — these precursor writes must exist before a plan digest can be computed or approved.
 
-Before dispatch, run `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/parallel_execution.py preflight --consumer implement --plan <run-directory>/execution-plan.json --approval <run-directory>/write-approval.json`; pass `--execution=parallel-read` for the selected portable route, including an environment-selected value. Omit `--approval` when no parent writes are planned or effective execution is serial and no approval was supplied. Resolve host fallback before deciding whether the parallel route needs a receipt. A nonzero result stops route.
+Before dispatch, run `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/parallel_execution.py preflight --consumer implement --plan <run-directory>/execution-plan.json --approval <run-directory>/write-approval.json`; pass `--execution=parallel-read` for the selected portable route, including an environment-selected value.
 
-After every spawned child reaches a terminal handoff, run `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/parallel_execution.py validate-runtime --consumer implement --manifest <run-directory>/execution-manifest.json --plan <run-directory>/execution-plan.json --parent-rollout <authoritative-parent-rollout> --sessions-dir <authoritative-sessions-directory> --run-dir <run-directory> --roles-dir PLUGIN_ROOT/roles`. Require `runtime_promotion_eligible=true`, `consumer_id=implement`, and `write_parallel_eligible=false`. Run the same preflight again after the terminal join and before the first parent mutation. Any plan, approval, consumer, runtime, or join drift stops mutation and requires a new frozen plan plus exact approval.
+After every spawned child reaches a terminal handoff, run `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/parallel_execution.py validate-runtime --consumer implement --manifest <run-directory>/execution-manifest.json --plan <run-directory>/execution-plan.json --parent-rollout <authoritative-parent-rollout> --sessions-dir <authoritative-sessions-directory> --run-dir <run-directory> --roles-dir PLUGIN_ROOT/roles`. Require `runtime_promotion_eligible=true`, `consumer_id=implement`, and `write_parallel_eligible=false`.
 
 ### Serial parent decisions
 
@@ -85,19 +85,11 @@ On this portable route, parent owns all implementation, test, and documentation 
 
 ### Resource conflicts
 
-Declare only validated resource locks such as `git-index`, `cache:<path>`, `generated:<path>`, and `test-env:<name>`. Shared paths, indexes, caches, generated outputs, test environments, ports, devices, or undeclared resources force serial execution or re-planning.
-
-### Fallback
-
-Unavailable or unsafe fan-out uses equal-gate `serial-fallback` from the same frozen plan with the same quality gates and retained evidence. Never label fallback as parallel or weaken checks because dispatch was unavailable.
-
-### Acceptance
-
-This skill's shared runtime matrix and consumer promotion must remain complete before the selected `parallel-read` route starts. Acceptance must prove freeze, complete join, truthful execution label, resource compatibility, equal gates, and unchanged serial parent authority.
+Shared paths, indexes, caches, generated outputs, test environments, ports, devices, or undeclared resources force serial execution or re-planning.
 
 ### Stop rule
 
-Generic portable parallel writes remain disabled. Stop without dispatch on missing promotion, mutable packs, ownership or resource overlap, sensitive or unproven controls, missing terminal evidence, or incomplete join; implementation, test, documentation, and all other mutations remain parent-serial.
+Generic portable parallel writes remain disabled.
 
 ## Workflow (Exact Commands)
 
@@ -121,7 +113,7 @@ Modes:
 - `config`: inventory references and calibration/routing impact before editing.
 - `spike`: read-only or disposable probe; do not present as completed implementation.
 
-Define narrowest reversible change, owners, acceptance. Apply Proportional Execution: finish both independent plan challenges before Step 05 for medium/large or promoted work; reuse accepted parent-scoped plans for bounded child tasks.
+Define narrowest reversible change, owners, acceptance. Assign native bounded owners here, after accepted plan details and before Step 05. Apply Proportional Execution: finish both independent plan challenges before Step 05 for medium/large or promoted work; reuse accepted parent-scoped plans for bounded child tasks.
 
 **Structural context (required for Python targets)**: select one task-neutral route at decision point, then invoke adapter once: `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/codemap_adapter.py context --category implementation --query-kind <kind> [--target <qname>] --out <run-directory>/codemap-context.json`. Invoking it is mandatory whenever target or planned files include a `.py` path; a `skip` route still runs the adapter and persists its `skipped` artifact, never no artifact. Use `skip` for exact localized edit with no unresolved structural fact, matching single route (`central`, `callers`, `blast`, `dependencies`, `test-impact`, or `coupling`) for one unresolved fact, and `standard` for broad or unknown scope. Map direct, all, or production caller questions to `callers`; use `blast` only for explicitly transitive caller questions. An explicit user or tool request for structural evidence overrides `skip`. Per `../../shared/codemap-contract.md`, provider absence/incompatibility stays non-fatal — the artifact records status and reason, then continue with routing above. Persist result once here, before step 05 implementation; step 06 specialist fan-out consumes `<run-directory>/codemap-context.json`, plus at most 3 targeted follow-ups per specialist under the contract's `Specialist follow-up queries` rule, each cited in that specialist's own evidence.
 
@@ -143,7 +135,7 @@ Define narrowest reversible change, owners, acceptance. Apply Proportional Execu
 
 ### 05: Implement minimal change
 
-This step's "implement" produces the draft/proposal work product for the changed surface; it is not a final merge-ready change until specialists join and the terminal review gate at Step 06 completes.
+This step's "implement" produces the draft/proposal work product for the changed surface; it is not a final merge-ready change until specialists join and the terminal review gate at Steps 08-09 completes.
 
 While implementing, keep code understandable from code itself:
 
@@ -157,7 +149,7 @@ Failing-first and acceptance pytest runs in this loop follow [Sandboxed Test Run
 
 ### 06: Orchestrate specialists when the change crosses a domain boundary
 
-Read and apply `../../shared/specialist-orchestration.md` only when task crosses domains, benefits from independent verification, or splits into parallel context packs; do not load it solely for a narrow, understood one-domain change. File count alone does not determine routing. Native bounded owners are assigned after accepted plan details and before Step 05; this step retains any required subsequent specialist review.
+Read and apply `../../shared/specialist-orchestration.md` only when task crosses domains, benefits from independent verification, or splits into parallel context packs; do not load it solely for a narrow, understood one-domain change. File count alone does not determine routing. Native bounded owners are assigned in Step 03; this step retains any required subsequent specialist review.
 
 Before spawning or substituting specialists, write `<run-directory>/specialist-plan.md` with one row per planned pass:
 
@@ -233,19 +225,10 @@ Follow `../../shared/helper-cli-contract.md` and authoritative help. Write with 
 10. Behavior-changing config/agent/skill edit without calibration/routing decision => fail.
 11. Specialist-required domain change without specialist output or labeled substitute => fail.
 12. Missing `development-notes.md` sections => fail.
-13. Result artifact validator failure => fail.
-14. Result artifact missing => fail.
-15. Add a purpose docstring to new or materially changed functions/methods in the configured, established, or fallback project style; generated or third-party code stays outside edited ownership. Correct owned documentation automatically rather than failing for its presentation alone.
-16. Explain non-trivial new or changed blocks with useful inline comments, or simplify the code until its rationale is clear. Missing commentary alone is an advisory; incorrect behavior or a misleading factual contract still needs correction and verification.
-17. Move an explanatory comment directly above a new or changed `def`/`class` into its docstring, preserving meaning. Comments inside the body remain governed by rule 16. Placement alone never withholds verified work.
-18. Simplify long, dense, or deeply nested owned blocks when it improves clarity under the project pattern; prefer guard clauses and avoid speculative abstractions. Subjective density alone is an advisory, not an acceptance failure.
-19. Remove low-value argument-remapping wrappers when doing so reduces maintenance burden without changing authorized behavior. Keep units that materially improve readability, testability, or API stability; wrapper size or usage count alone never blocks delivery.
-20. Missing `confidence-calibration.md` sections => fail.
-21. Shared confidence policy violation from `../../shared/quality-gates.md` => fail.
-
-**Spike exemption**: rules 15-19 (docstring/structure) do not apply to `spike` mode output that stays a disposable, non-retained probe never merged into the codebase. When a spike is later promoted to retained implementation, rules 15-19 resume in full for the promoted code — the exemption does not carry over.
-
-Apply rules 15-19 through authorized automatic owned corrections and relevant configured-check reruns. Preserve useful documentation, project checks, factual evidence and actual authority boundaries. A remaining presentation preference is advisory; block only when a concrete required structure, behavior, fact or authorization remains unmet under [Acceptance and recovery](../../shared/native-skill-contract.md#acceptance-and-recovery).
+13. Detailed workflow: result artifact validator failure => fail.
+14. Detailed workflow: result artifact missing => fail.
+15. Missing `confidence-calibration.md` sections => fail.
+16. Shared confidence policy violation from `../../shared/quality-gates.md` => fail.
 
 ## Quality Gates
 
@@ -260,6 +243,20 @@ Conditional checks:
 
 - `lint`/`format`/`types`: run project-configured commands when code or typed config changed.
 - `calibration`: run when workflow skills, role/agent routing, `.codex/config.toml`, or calibration fixtures changed; Codex Rig source uses `runtime/calibration/run.py --layout plugin`.
+
+### Coding standards
+
+Advisory standards for changed code, applied during Step 05 and inspected by the `review` gate:
+
+1. Add a purpose docstring to new or materially changed functions/methods in the configured, established, or fallback project style; generated or third-party code stays outside edited ownership. Correct owned documentation automatically rather than failing for its presentation alone.
+2. Explain non-trivial new or changed blocks with useful inline comments, or simplify the code until its rationale is clear. Missing commentary alone is an advisory; incorrect behavior or a misleading factual contract still needs correction and verification.
+3. Move an explanatory comment directly above a new or changed `def`/`class` into its docstring, preserving meaning. Comments inside the body remain governed by standard 2. Placement alone never withholds verified work.
+4. Simplify long, dense, or deeply nested owned blocks when it improves clarity under the project pattern; prefer guard clauses and avoid speculative abstractions. Subjective density alone is an advisory, not an acceptance failure.
+5. Remove low-value argument-remapping wrappers when doing so reduces maintenance burden without changing authorized behavior. Keep units that materially improve readability, testability, or API stability; wrapper size or usage count alone never blocks delivery.
+
+**Spike exemption**: standards 1-5 (docstring/structure) do not apply to `spike` mode output that stays a disposable, non-retained probe never merged into the codebase. When a spike is later promoted to retained implementation, standards 1-5 resume in full for the promoted code — the exemption does not carry over.
+
+Apply standards 1-5 through authorized automatic owned corrections and relevant configured-check reruns. Preserve useful documentation, project checks, factual evidence and actual authority boundaries. A remaining presentation preference is advisory; block only when a concrete required structure, behavior, fact or authorization remains unmet under [Acceptance and recovery](../../shared/native-skill-contract.md#acceptance-and-recovery).
 
 ## Calibration Hooks
 

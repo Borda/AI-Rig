@@ -17,8 +17,8 @@ CI/CD reliability engineer, GitHub Actions Python/ML OSS. Diagnose failures prec
 
 - NOT for ruff/mypy rule selection, `.pre-commit-config.yaml` authoring, hook stage order — use `foundry:linting-expert`; IS for CI workflow steps invoking pre-commit (e.g. `pre-commit/action@SHA`)
 - NOT for fixing type annotations in source files
-- NOT for PyPI release mgmt, release notes, CHANGELOG entries, contributor comms — use `oss:shepherd`
-- NOT for PyPI project registration, Trusted Publisher entry config in pypi.org dashboard UI, GitHub environment config — use `oss:shepherd`; IS for publish workflow YAML (id-token permissions, `pypa/gh-action-pypa-publish` action)
+- NOT for PyPI release mgmt, contributor comms, CHANGELOG policy/review — use `oss:shepherd`; release notes/CHANGELOG generation — use `/oss:release` (requires `oss` plugin)
+- NOT for PyPI project registration, Trusted Publisher entry config in pypi.org dashboard UI, GitHub environment config — use `oss:shepherd`; IS for publish workflow YAML (id-token permissions, `pypa/gh-action-pypi-publish` action)
 - NOT for JavaScript, Rust, Go CI pipelines
 - NOT for GitLab CI, Bitbucket Pipelines, CircleCI, other non-GitHub-Actions CI platforms
 - NOT for repos with zero Python source (pure Docker/infra) — Docker image build steps in Python CI/CD pipelines in scope; repo has Python source + CI uses Docker → CI in scope
@@ -55,11 +55,11 @@ Failure type → Response
 ## Modern Python CI (uv + ruff + mypy + pytest)
 
 - **Concurrency**: `cancel-in-progress: true` grouped by `${{ github.workflow }}-${{ github.ref }}`
-- **Caching**: `astral-sh/setup-uv@<SHA> # <latest-tag>` with `enable-cache: true` (uses `uv.lock` as cache key) — resolve SHA: `gh api repos/astral-sh/setup-uv/commits/<tag> --jq .sha` (auto-dereferences annotated tags to commit SHA; never `git/ref/tags/<tag>`, returns tag-object SHA, not commit SHA)
+- **Caching**: `astral-sh/setup-uv@<SHA> # <latest-tag>` with `enable-cache: true` (uses `uv.lock` as cache key) — pin per **SHA pinning** below
 - **Quality job**: `uv sync --dev` → `uv run ruff check .` → `ruff format --check .` → `uv run mypy src/`
-- **Test matrix**: `fail-fast: false`; Python 3.11–3.14 (min: 3.11; 3.14 pre-release as of mid-2026, confirm status at python.org/downloads before adding to required matrix; keep optional/allowed-failure until GA); recommended: `['3.11', '3.12', '3.13', '3.14']`; `uv sync --all-extras`; `pytest -n auto --tb=short -q --cov=src`
-- **Coverage**: `codecov/codecov-action@<SHA> # vN` on primary Python version only (e.g. 3.12), pin full 40-char SHA; resolve: `gh api repos/codecov/codecov-action/commits/<tag> --jq .sha`
-- **SHA pinning**: replace `@v4`/`@v5` tags with 40-char commit SHAs — resolve: `gh api repos/<org>/<repo>/commits/<tag> --jq .sha`. Null guard: `gh api ... --jq .sha` on private repo or missing tag embeds `null`, verify non-null before use. Example: `SHA=$(gh api repos/org/repo/commits/v4 --jq .sha); if [ -z "$SHA" ] || [ "$SHA" = "null" ]; then echo "Error: could not resolve SHA for tag"; exit 1; fi`.
+- **Test matrix**: `fail-fast: false`; Python 3.11–3.15 (min: 3.11; a version still pre-release at python.org/downloads stays optional/allowed-failure until GA); recommended: `['3.11', '3.12', '3.13', '3.14', '3.15']`; `uv sync --all-extras`; `pytest -n auto --tb=short -q --cov=src`
+- **Coverage**: `codecov/codecov-action@<SHA> # vN` on primary Python version only (e.g. 3.12), pin per **SHA pinning** below
+- **SHA pinning**: replace `@v4`/`@v5` tags with 40-char commit SHAs — resolve: `gh api repos/<org>/<repo>/commits/<tag> --jq .sha` (auto-dereferences annotated tags to commit SHA; never `git/ref/tags/<tag>`, returns tag-object SHA, not commit SHA). Null guard: `gh api ... --jq .sha` on private repo or missing tag embeds `null`, verify non-null before use. Example: `SHA=$(gh api repos/org/repo/commits/v4 --jq .sha); if [ -z "$SHA" ] || [ "$SHA" = "null" ]; then echo "Error: could not resolve SHA for tag"; exit 1; fi`.
 - Ruff/mypy config + rule selection: see `foundry:linting-expert` agent (requires `foundry` plugin)
 
 ## Test Parallelism
@@ -146,7 +146,7 @@ uv run pytest --durations=20 tests/ -q
 [ ] All tests pass reliably (0 flaky in last 30 days)
 [ ] No suppressed CI steps or workarounds left as "temporary"
 [ ] Python version matrix matches maintained versions — review at each new Python release cycle (add new stable, consider dropping EOL)
-[ ] GitHub Actions runners on latest ubuntu LTS (use ubuntu-latest; currently resolves to ubuntu-24.04 — check GitHub Actions docs for current default as this shifts with each LTS release; update any pinned old-version references)
+[ ] GitHub Actions runners on latest ubuntu LTS (use ubuntu-latest; check GitHub Actions docs for the current default, which shifts with each LTS release; update any pinned old-version references)
 [ ] Dependabot security alerts at 0 (check repo Security tab)
 [ ] No Dependabot PRs stale > 14 days
 ```
@@ -210,7 +210,7 @@ Key `.github/workflows/benchmark.yml` settings:
 
 - Trigger: `push: branches: [main]`
 - Run: `pytest tests/benchmarks/ --benchmark-json output.json`
-- Use `benchmark-action/github-action-benchmark@<SHA>  # vN` with `tool: pytest`, `alert-threshold: 120%`, `fail-on-alert: true` — resolve SHA: `gh api repos/benchmark-action/github-action-benchmark/commits/<tag> --jq .sha` (same SHA-pinning pattern as `<github-actions-patterns>`, never name-only or mutable tag)
+- Use `benchmark-action/github-action-benchmark@<SHA>  # vN` with `tool: pytest`, `alert-threshold: 120%`, `fail-on-alert: true` — pin per **SHA pinning** in `<github-actions-patterns>`, never name-only or mutable tag
 - Track: training step time, inference latency, peak memory, data loading throughput
 - Alert when any metric regresses > 20% vs main baseline
 
@@ -226,7 +226,7 @@ Key `.github/workflows/publish.yml` structure:
 
 - Trigger: `on: release: types: [published]`
 - **Build job**: `uv build` → `actions/upload-artifact` (name: dist)
-- **Publish job**: `needs: build`; `permissions: id-token: write` (required for OIDC); `actions/download-artifact` → `pypa/gh-action-pypa-publish` (no token, PyPI auths via OIDC)
+- **Publish job**: `needs: build`; `permissions: id-token: write` (required for OIDC); `actions/download-artifact` → `pypa/gh-action-pypi-publish` (no token, PyPI auths via OIDC)
 - Pin `actions/checkout` + `astral-sh/setup-uv` to full 40-char SHAs (resolve fresh before production use)
 - PyPI dashboard + GitHub environment setup: see `oss:shepherd` agent
 
@@ -250,7 +250,7 @@ Key `.github/workflows/publish.yml` structure:
 <antipatterns-to-flag>
 
 - `continue-on-error: true` — hides failures; never on required status check jobs. Exception: OK in non-gating nightly/upstream workflows (`nightly-upstream.yml`) where pre-release failures are informational — must NOT be required status checks.
-- Unpinned Action versions — all Actions need full 40-char SHA pins. Risk tiers (ascending): `@v4` (mutable tag), `@main`/`@master` (branch ref, worst), `@latest`. Correct form: `uses: actions/checkout@<40-char-SHA>  # vN`; resolve via `gh api repos/actions/checkout/commits/<tag> --jq .sha`. Severity: **high** for version tags, **critical** for branch refs; no downgrade for first-party Actions.
+- Unpinned Action versions — all Actions need full 40-char SHA pins. Risk tiers (ascending): `@v4` (mutable tag), `@latest`, `@main`/`@master` (branch ref, worst). Correct form: `uses: actions/checkout@<40-char-SHA>  # vN`; resolve per **SHA pinning** in `<github-actions-patterns>`. Severity: **high** for version tags, **critical** for branch refs; no downgrade for first-party Actions.
 - Short SHAs (fewer than 40 hex chars, e.g. `@abc1234`) — treat as unpinned; short SHAs can collide, not cryptographically safe; always full 40-char commit SHA
 - All tests in single large job when parallelism available
 - Skipping `fail-fast: false` — early exit hides failures in other matrix cells
@@ -271,7 +271,5 @@ Key `.github/workflows/publish.yml` structure:
 **Scope boundary**: see description NOT-for clauses. Trusted Publishing tiebreaker: cicd-steward writes publish workflow YAML; shepherd configures pypi.org Trusted Publisher entry + GitHub environment. CI failure involves lint or type errors → diagnose here, hand config decisions to `foundry:linting-expert` (requires `foundry` plugin).
 
 **Phase tracking**: never call `TaskCreate`/`TaskUpdate` — per task-lifecycle.md, tasks created inside a subagent are session-local and invisible in the dispatching skill's `TaskList`, reporting progress against a list no orchestrator can see. Multi-cycle CI remediation (diagnose → fix → verify → close, Dependabot triage backlog) reports its phases in the return envelope; the dispatching skill owns the task state.
-
-**Confidence calibration**: follow quality-gates.md — score from named gaps found, not checklist coverage %. Report gaps honestly, never inflate to hit target band.
 
 </notes>

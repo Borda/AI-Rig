@@ -1,12 +1,12 @@
 # Hypothesis Pipeline — run/SKILL.md sidecar
 
-Loaded by Step R0 when `--researcher` or `--architect` active. Contains oracle agent orchestration, feasibility annotation, queue filtering, checkpoint resume.
+Loaded by Step R0 (executes after R2) when `--researcher`, `--architect`, or `--hypothesis` active. Contains oracle agent orchestration, feasibility annotation, queue filtering, checkpoint resume.
 
-> **Research run directory**: outputs (`hypotheses.jsonl`, `checkpoint.jsonl`, `journal.md`) go to `.experiments/<run-id>/` — timestamped dir created at R0 start, distinct from `.experiments/state/<run-id>/`. Called `<RUN_DIR>` throughout. See `protocol.md` (companion file, same skill dir) for layout.
+> **Research run directory**: outputs (`hypotheses.jsonl`, `checkpoint.jsonl`, `journal.md`) go to `.experiments/<run-id>/` — timestamped dir created at R1 (R0 block prints it), distinct from `.experiments/state/<run-id>/`. Called `<RUN_DIR>` throughout. See `protocol.md` (companion file, same skill dir) for layout.
 
 **Spawn note**: oracle agents run in the background — issue the batch, then end the turn; no filler call, no "waiting" line, no sleep (CLAUDE.md §6). On completion notifications, check each oracle's output (e.g. `<RUN_DIR>/oracle-researcher.md`); missing or empty → surface with ⏱, continue with partial hypotheses or empty queue if none written.
 
-1. **Build hypothesis queue** — if `--hypothesis <path>` provided, read as pre-built queue (skip oracle phase). Otherwise spawn oracle agents per active flags — parallel if both set:
+1. **Build hypothesis queue** — if `--hypothesis <path>` provided, read as pre-built JSONL queue (skip oracle phase); file is read-only — backfill and `hypothesis_id` tagging happen in memory, never written back. Resuming crashed run with `<RUN_DIR>/hypotheses.jsonl` already on disk → reuse that file as queue, skip oracle phase: re-spawned oracles write a different queue, so checkpointed ids would name other hypotheses. Otherwise spawn oracle agents per active flags — parallel if both set:
 
    **If `--researcher` set** — spawn `research:scientist` (`maxTurns: 15`):
 
@@ -26,17 +26,8 @@ Loaded by Step R0 when `--researcher` or `--architect` active. Contains oracle a
 
    Both agents follow handoff envelope protocol (CLAUDE.md §2). Schema: `protocol.md` (companion file, same skill dir).
 
-2. **Filter and sort** — load annotated queue. Infeasible (`feasible: false`) stay for audit, excluded from execution. Sort by `priority` ascending (1 = first).
+2. **Filter and sort** — load annotated queue. Before filtering, tag every entry with `hypothesis_id` = its 0-indexed line in the queue file (file order, never sorted position). Infeasible (`feasible: false`) stay for audit, excluded from execution. Sort by `priority` ascending (1 = first); entries keep their `hypothesis_id`.
 
-3. **Resume skip** — if `<RUN_DIR>/checkpoint.jsonl` exists (resuming crashed run), read it; absent, read legacy `<RUN_DIR>/checkpoint.json` (same JSONL lines, written by runs before the rename) when present. Skip any hypothesis whose 0-indexed position matches `hypothesis_id` in checkpoint.
+3. **Resume skip** — if `<RUN_DIR>/checkpoint.jsonl` exists (resuming crashed run), read it; absent, read legacy `<RUN_DIR>/checkpoint.json` (same JSONL lines, written by runs before the rename) when present. Skip any hypothesis whose `hypothesis_id` (step 2 file-line id, not queue position) appears in checkpoint.
 
-4. Store active queue in memory as `RESEARCH_QUEUE`.
-
-5. **Bridge availability re-check** — downstream review skill dispatched after this pipeline (Step 6+) → re-verify the bridge is reachable before invoking. Silent stalls happen when it is absent at dispatch time despite being present at run start. Probe the exact installed selector, not the Codex CLI: the CLI on `PATH` says nothing about whether `bridge@borda-ai-rig` is installed and enabled.
-
-   ```bash
-   CODEX_STATUS=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/check_bridge.py" --status 2>/dev/null || echo "absent")  # timeout: 5000
-   [ "$CODEX_STATUS" = "available" ] && CODEX_AVAILABLE=1 || { CODEX_AVAILABLE=""; echo "⚠ bridge@borda-ai-rig is ${CODEX_STATUS} — skipping bridge review step"; }
-   ```
-
-   On empty `CODEX_AVAILABLE`: skip review dispatch, continue with claude-only pipeline. Never block — fall back to single-source review.
+4. Store active queue in memory as `RESEARCH_QUEUE`. Checkpoint line for each popped entry records its `hypothesis_id`.

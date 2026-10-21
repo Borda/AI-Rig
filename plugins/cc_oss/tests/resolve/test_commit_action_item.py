@@ -55,11 +55,11 @@ def test_golden_build_invocation_constructs_expected_commands(monkeypatch: pytes
         ]
     )
     assert rc == 0
-    add_calls = [c for c in calls if len(c) > 1 and c[1] == "add"]
-    commit_calls = [c for c in calls if len(c) > 1 and c[1] == "commit"]
-    assert add_calls == [["/fake/git", "add", "--", "src/a.py", "docs/b.md"]]
+    add_calls = [c for c in calls if _subcommand(c) == "add"]
+    commit_calls = [c for c in calls if _subcommand(c) == "commit"]
+    assert add_calls == [["/fake/git", "--literal-pathspecs", "add", "--", "src/a.py", "docs/b.md"]]
     assert len(commit_calls) == 1
-    assert commit_calls[0][:3] == ["/fake/git", "commit", "-F"]
+    assert commit_calls[0][:4] == ["/fake/git", "--literal-pathspecs", "commit", "-F"]
     assert commit_calls[0][-3:] == ["--", "src/a.py", "docs/b.md"]
 
 
@@ -74,10 +74,17 @@ def test_golden_message_file_invocation_constructs_expected_commands(
     monkeypatch.setattr(cai.subprocess, "run", _make_git_mock(calls=calls))
     rc = cai.main(["--message-file", str(msg), "--files", "src/a.py", "docs/b.md"])
     assert rc == 0
-    add_calls = [c for c in calls if len(c) > 1 and c[1] == "add"]
-    commit_calls = [c for c in calls if len(c) > 1 and c[1] == "commit"]
-    assert add_calls == [["/fake/git", "add", "--", "src/a.py", "docs/b.md"]]
-    assert commit_calls == [["/fake/git", "commit", "-F", str(msg), "--", "src/a.py", "docs/b.md"]]
+    add_calls = [c for c in calls if _subcommand(c) == "add"]
+    commit_calls = [c for c in calls if _subcommand(c) == "commit"]
+    assert add_calls == [["/fake/git", "--literal-pathspecs", "add", "--", "src/a.py", "docs/b.md"]]
+    assert commit_calls == [
+        ["/fake/git", "--literal-pathspecs", "commit", "-F", str(msg), "--", "src/a.py", "docs/b.md"]
+    ]
+
+
+def _subcommand(cmd: list[str]) -> str:
+    """Return the git sub-command of a recorded argv, skipping global ``--`` options such as ``--literal-pathspecs``."""
+    return next((arg for arg in cmd[1:] if not arg.startswith("--")), "")
 
 
 class _FakeCompleted:
@@ -144,7 +151,7 @@ def _make_git_mock(
         if calls is not None:
             calls.append(list(cmd))
         binary = Path(cmd[0]).name
-        subcmd = cmd[1] if len(cmd) > 1 else ""
+        subcmd = _subcommand(cmd)
         if binary == "git" and subcmd == "add":
             return _FakeCompleted(returncode=0)
         if binary == "git" and subcmd == "diff":
@@ -194,8 +201,10 @@ def test_cached_diff_check_scoped_to_given_files(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(cai, "which", lambda _: "/fake/git")
     monkeypatch.setattr(cai.subprocess, "run", _make_git_mock(calls=calls))
     cai.main(["--message-file", str(msg), "--files", "src/a.py", "docs/b.md"])
-    diff_calls = [c for c in calls if len(c) > 1 and c[1] == "diff"]
-    assert diff_calls == [["/fake/git", "diff", "--cached", "--quiet", "--", "src/a.py", "docs/b.md"]]
+    diff_calls = [c for c in calls if _subcommand(c) == "diff"]
+    assert diff_calls == [
+        ["/fake/git", "--literal-pathspecs", "diff", "--cached", "--quiet", "--", "src/a.py", "docs/b.md"]
+    ]
 
 
 @pytest.mark.parametrize(
@@ -223,8 +232,8 @@ def test_multiple_files_with_spaces_are_added_as_separate_args(monkeypatch: pyte
     monkeypatch.setattr(cai.subprocess, "run", _make_git_mock(calls=calls))
     rc = cai.main(["--message-file", str(msg), "--files", "src/a.py", "docs/file with spaces.md"])
     assert rc == 0
-    add_calls = [c for c in calls if c[1] == "add"]
-    assert add_calls == [["/fake/git", "add", "--", "src/a.py", "docs/file with spaces.md"]]
+    add_calls = [c for c in calls if _subcommand(c) == "add"]
+    assert add_calls == [["/fake/git", "--literal-pathspecs", "add", "--", "src/a.py", "docs/file with spaces.md"]]
 
 
 def test_commit_called_with_message_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -456,3 +465,47 @@ def test_build_mode_commits_rendered_message(monkeypatch: pytest.MonkeyPatch) ->
     commit_calls = [c for c in calls if "commit" in c]
     assert len(commit_calls) == 1
     assert "-F" in commit_calls[0]
+
+
+def test_git_timeout_exits_1_without_traceback(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A git call that exceeds its timeout becomes exit 1 plus one stderr line, not an uncaught exception.
+
+    A pre-commit hook or signing prompt that waits on input never returns; the bounded commit turns that hang into a
+    reportable failure instead of stalling the resolve run.
+    """
+    msg = tmp_path / "msg.txt"
+    msg.write_text("msg\n")
+
+    def _hang(cmd: list[str], **kwargs: Any) -> _FakeCompleted:
+        """Answer add and diff normally, then time out on commit."""
+        if _subcommand(cmd) == "commit":
+            raise cai.subprocess.TimeoutExpired(cmd=cmd, timeout=kwargs["timeout"])
+        return _FakeCompleted(returncode=0 if _subcommand(cmd) == "add" else 1)
+
+    monkeypatch.setattr(cai, "which", lambda _: "/fake/git")
+    monkeypatch.setattr(cai.subprocess, "run", _hang)
+    rc = cai.main(["--message-file", str(msg), "--files", "a.py"])
+    assert rc == 1
+    assert f"git timed out after {cai._COMMIT_TIMEOUT} s" in capsys.readouterr().err
+
+
+def test_glob_named_file_commits_only_itself(scratch_repo: Any, tmp_path: Path) -> None:
+    """A file named ``a[1].py`` stages and commits only that file, never the ``a1.py`` its name matches as a glob.
+
+    A pull request can add a file whose name holds glob characters; without ``--literal-pathspecs`` the bracket
+    expression reaches ``git add`` as a pattern and sweeps the unrelated local edit to ``a1.py`` into the bot-authored
+    commit. Brackets, unlike ``*``, are legal file-name characters on every supported OS.
+    """
+    (scratch_repo.path / "a1.py").write_text("one\n", encoding="utf-8")
+    scratch_repo.git("add", "a1.py")
+    scratch_repo.git("commit", "-q", "-m", "add a1")
+    (scratch_repo.path / "a1.py").write_text("unrelated local edit\n", encoding="utf-8")
+    (scratch_repo.path / "a[1].py").write_text("bracket\n", encoding="utf-8")
+    msg = tmp_path / "msg.txt"
+    msg.write_text("fix: bracket file\n", encoding="utf-8")
+    rc = cai.main(["--message-file", str(msg), "--files", "a[1].py"])
+    assert rc == 0
+    assert scratch_repo.git("show", "--name-only", "--format=", "HEAD").split() == ["a[1].py"]
+    assert scratch_repo.git("status", "--porcelain").splitlines() == [" M a1.py"]

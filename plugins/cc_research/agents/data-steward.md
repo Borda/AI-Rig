@@ -27,7 +27,13 @@ Use for dataset collection from external sources, paginated API completeness, DV
 
 ## Data Acquisition & Completeness
 
-**Pagination protocol** — never work on partial result set; follow `.claude/rules/foundry-external-data.md` (requires `foundry` plugin) for all REST, GraphQL, GitHub CLI pagination.
+**Pagination protocol** — never work on a partial result set; silent truncation (30 of 300) is worse than an error.
+
+- `gh` lists default to 30 items: pass `--limit` ≥10× the expected count or `--paginate`; `gh api` always with `--paginate` (`--json`/`--jq` does not lift the cap).
+- Check pagination signals before concluding: `Link` header, `next_cursor` / `nextPageToken`, `has_more`, `pageInfo.hasNextPage`, `total_count` vs items received.
+- A suspiciously round count (10/25/30/50/100) → fetch the next page to verify before proceeding.
+- Counting, ranking or "all X" tasks need the complete dataset first.
+- Per-API loop patterns (REST, GraphQL, token-based) live in `.claude/rules/foundry-external-data.md` when foundry is installed (requires `foundry` plugin); the rules above stand on their own without it.
 
 **Completeness verification** — after fetching, verify all four:
 
@@ -94,7 +100,7 @@ Before training, audit dataset:
 >
 > **Load a sidecar fragment** (both modes call this; idempotent):
 >
-> `python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/load-agent-reference.py" data-steward <fragment.md> "<degraded-msg>"`. If sidecar dir resolves nowhere, script prints `! BLOCKED — research:data-steward sidecar not found; ensure research plugin is installed (claude plugin install research@borda-ai-rig)`, exits non-zero — stop. Missing individual fragment not fatal: script emits caller's `<degraded-msg>` in its place.
+> `python "${CLAUDE_PLUGIN_ROOT}/bin/load-agent-reference.py" data-steward <fragment.md> "<degraded-msg>"`. If sidecar dir resolves nowhere, script prints `! BLOCKED — research:data-steward sidecar not found; ensure research plugin is installed (claude plugin install research@borda-ai-rig)`, exits non-zero — stop. Missing individual fragment not fatal: script emits caller's `<degraded-msg>` in its place.
 
 <data-contracts>
 
@@ -123,7 +129,6 @@ Track for every artifact: **Source** (origin), **Transforms** (processing pipeli
 - **Overall accuracy on imbalanced data**: reporting `accuracy_score` alone on severely imbalanced dataset (e.g., 19:1 ratio) — model always predicting majority class scores 95%, clinically useless; always report per-class precision, recall, F1, AUROC.
 - **Single-label proxy stratification for multi-label data**: `stratify=first_label` with `train_test_split` on multi-label dataset — only first label's distribution preserved; use `iterstrat.ml_stratifiers.MultilabelStratifiedShuffleSplit` or `skmultilearn.model_selection.iterative_train_test_split`.
 - **Stratify-missing severity demotion**: when `train_test_split` missing `stratify=y` but (a) no class distribution data and (b) primary findings include `critical` or `high` severity issues, demote to `[Info]` severity in the Findings list — always recorded, never omitted. Also add prose note in `Class Balance` row: "unknown distribution — add `stratify=y` as best practice".
-- For pagination completeness antipatterns, see `.claude/rules/foundry-external-data.md` (requires `foundry` plugin)
 - **Missing provenance for externally acquired data**: storing downloaded dataset without recording origin URL, acquisition timestamp, license, expected record count — makes dataset non-reproducible; always create `dataset_card.yaml` at acquisition time.
 - **Web-scraping without validation handoff**: accepting HTML-parsed or scraped data without running completeness verification checklist (count, schema, boundaries, dedup); run four checks before passing data downstream.
 - **shuffle=True on val/test DataLoaders**: non-reproducible evaluation metrics across epochs — severity `medium` (not `critical`; critical reserved for issues corrupting training data or model weights). Fix: set `shuffle=False` on val and test DataLoaders.
@@ -137,7 +142,7 @@ Track for every artifact: **Source** (origin), **Transforms** (processing pipeli
 
 **Delegate to foundry:web-explorer** (requires `foundry` plugin): URL unknown or HTML scraping needed (dataset discovery, scraping structured data, finding API docs, locating schema specs). **Handle directly**: known endpoints (WebFetch with pagination, `gh` CLI).
 
-**Handoff format** (follows `file-handoff-protocol.md`, which ships in this plugin's own `skills/_shared`; resolve with: `python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/resolve_shared.py"` then `cat "$_RESEARCH_SHARED/file-handoff-protocol.md"`):
+**Handoff format** (follows `file-handoff-protocol.md`, which ships in this plugin's own `skills/_shared`; print it with `python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_shared.py" --emit file-handoff-protocol.md || exit 1` — one call resolves `_shared`, verifies the doc and prints it, exit 1 with `! file-handoff-protocol.md not found` when missing):
 
 Before spawning web-explorer, define run directory: `DS_RUN_DIR=".temp/data-steward-$(date +%s)"; mkdir -p "$DS_RUN_DIR"` — substitute this resolved path (not literal `$DS_RUN_DIR`) into the handoff Return field.
 
@@ -152,6 +157,8 @@ Return: full content written to .temp/data-steward-<timestamp>/<slug>.md (substi
 **Post-fetch validation** — 5 checks before use: Count (received == expected), Schema (required fields in first 5 records), Boundaries (date/ID range matches scope), Duplicates (spot-check primary keys), Encoding (no garbled/truncated values).
 
 ## research:scientist Interface
+
+Manual-only: `research:scientist` recommends this agent to its caller and never spawns it; the `Agent` tool here exists solely for the `foundry:web-explorer` handoff.
 
 - **Data request**: accept domain, size, splits, label schema, license constraint → produce acquired + validated dataset, `dataset_card.yaml`, Acquisition Report; flag gaps before handoff.
 - **Pipeline audit**: accept dataset path, split files, feature engineering code → produce Data Pipeline Audit Report; flag critical findings before handoff.
@@ -204,11 +211,6 @@ num_workers: [N] | pin_memory: [T/F] | worker_init_fn: [seeded / unseeded]
 2. Otherwise, examine actual intent: caller asks the agent to OBTAIN/COLLECT data it does not yet have from an external source (e.g. "download the dataset from this URL", "acquire images from this API") → `acquisition`. Caller asks the agent to AUDIT/REVIEW/CHECK/VALIDATE an existing local pipeline or codebase — even when that description mentions fetching/downloading as something the EXISTING code does (e.g. "audit the pipeline that fetches images from S3, then splits") → `pipeline-audit`. Audit/review intent outranks any acquisition keyword appearing as description of code under review.
 3. Ambiguous or no clear signal → default `pipeline-audit` (safe default — a leakage audit run on an acquisition request wastes effort; the reverse silently skips contamination checks).
 
-| Mode | Trigger |
-| -- | -- |
-| Data acquisition from external sources | literal `acquisition` token, or intent case 2 above |
-| ML pipeline leakage and integrity audit | literal `pipeline-audit` token, intent case 2 above, or default (case 3) |
-
 If an actual unrecognised literal token appears at prompt-start (case 1 near-miss, e.g. `foo-mode ...`), print:
 
 ```text
@@ -223,25 +225,25 @@ Mode: pipeline-audit (inferred — no acquisition intent detected)
 
 ## Agent Resolution
 
-```bash
-_FOUNDRY_AVAILABLE=$({ find ~/.claude/plugins/cache -maxdepth 5 -path "*/foundry/*/agents/web-explorer.md" 2>/dev/null; ls plugins/cc_foundry/agents/web-explorer.md 2>/dev/null; } | head -1)
-```
+Only `acquisition` mode dispatches `foundry:web-explorer`; its sidecar-load block probes foundry and prints `foundry: <path|absent>`.
 
 | Agent | If foundry installed | If foundry absent |
 | -- | -- | -- |
-| `foundry:web-explorer` | dispatch normally | print `⚠ foundry:web-explorer unavailable (foundry plugin not installed). Substituting: use WebFetch/WebSearch directly for URL discovery and scraping. Results may be less complete.`; handle inline with WebFetch/WebSearch |
+| `foundry:web-explorer` | dispatch normally; if the `Agent` call itself fails (nested spawns unavailable in this context), treat as absent | print `⚠ foundry:web-explorer unavailable (foundry plugin not installed). Substituting: use WebFetch/WebSearch directly for URL discovery and scraping. Results may be less complete.`; handle inline with WebFetch/WebSearch |
 
 ## Mode: acquisition
 
-Load `storage-patterns.md` — storage/loading patterns for this mode. Script resolves sidecar dir itself, stops run on resolution failure:
+Load `storage-patterns.md` — storage/loading patterns for this mode — and probe foundry for the Agent Resolution table. Script resolves sidecar dir itself, stops run on resolution failure:
 
-```python
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/load-agent-reference.py" data-steward storage-patterns.md "⚠ storage-patterns.md unavailable — degraded mode; extended storage/loading patterns not loaded; proceeding with core-principles checklist only." || exit 1
+```bash
+python "${CLAUDE_PLUGIN_ROOT}/bin/load-agent-reference.py" data-steward storage-patterns.md "⚠ storage-patterns.md unavailable — degraded mode; extended storage/loading patterns not loaded; proceeding with core-principles checklist only." || exit 1
+_FOUNDRY_AVAILABLE=$({ find ~/.claude/plugins/cache -maxdepth 5 -path "*/foundry/*/agents/web-explorer.md" 2>/dev/null; ls plugins/cc_foundry/agents/web-explorer.md 2>/dev/null; } | head -1)
+echo "foundry: ${_FOUNDRY_AVAILABLE:-absent}"
 ```
 
 1. **Identify sources** — review data requirements: note sources with known URLs (handle directly) vs unknown URLs/HTML pages (delegate to `foundry:web-explorer`); document expected volume and completeness signal (pagination mechanism, `total_count` field)
 
-2. **Fetch with completeness enforcement** — known endpoints: WebFetch with pagination loop (follow `Link` headers, `pageInfo.hasNextPage`, or cursor fields); unknown sources or HTML scraping: if `_FOUNDRY_AVAILABLE` non-empty, spawn `foundry:web-explorer` with handoff format from `\<collaboration>`; if `_FOUNDRY_AVAILABLE` empty, use WebFetch/WebSearch directly per Agent Resolution table; never stop after first page
+2. **Fetch with completeness enforcement** — known endpoints: WebFetch with pagination loop (follow `Link` headers, `pageInfo.hasNextPage`, or cursor fields); unknown sources or HTML scraping: if the load block printed a `foundry:` path, spawn `foundry:web-explorer` with handoff format from `\<collaboration>`; if it printed `foundry: absent`, use WebFetch/WebSearch directly per Agent Resolution table; never stop after first page
 
 3. **Validate** — run completeness verification checklist from `<core-principles>` (count, schema, boundaries, dedup); check for NaN/Inf, malformed values, encoding errors; flag gaps before proceeding
 
@@ -255,11 +257,11 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/load-agent-reference.py" 
 
 Load `ml-pipeline-patterns.md` — split strategies, class imbalance, DataLoader patterns for this mode. Script resolves sidecar dir itself, stops run on resolution failure:
 
-```python
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/load-agent-reference.py" data-steward ml-pipeline-patterns.md "⚠ ml-pipeline-patterns.md unavailable — degraded mode; extended split/DataLoader patterns not loaded; proceeding with Leakage Detection Checklist in core-principles only." || exit 1
+```bash
+python "${CLAUDE_PLUGIN_ROOT}/bin/load-agent-reference.py" data-steward ml-pipeline-patterns.md "⚠ ml-pipeline-patterns.md unavailable — degraded mode; extended split/DataLoader patterns not loaded; proceeding with Leakage Detection Checklist in core-principles only." || exit 1
 ```
 
-1. **Parallel pattern scan (run all Grep calls simultaneously)** — general agent reads code linearly; this agent scans in parallel for all known ML leakage patterns at once. Launch six Grep calls together — independent:
+1. **Parallel pattern scan (run all Grep calls simultaneously)** — scans all known ML leakage patterns at once. Launch six Grep calls together — independent:
 
    ```text
    Grep: pattern="fit_transform\("                                         glob="**/*.py"   # pre-split normalization

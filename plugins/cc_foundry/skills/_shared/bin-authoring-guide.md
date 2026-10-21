@@ -19,7 +19,7 @@ See also: [bin/ Script Principles](../../README.md#bin-script-principles) in plu
     - bin/ scope: deterministic transforms only (parse args, resolve paths, compute one value); decision flow, branching prompts, agent-dispatch logic stays in SKILL.md prose
     - **Complexity escalation (bin/ scripts only — not inline blocks)**: existing or new `bin/` bash script that hits any trigger → convert to Python (see **Complexity Escalation** section); triggers: (1) 3+ `if/elif` branches, (2) nested conditionals, (3) loop with conditional body, (4) multiple `sed`/`awk` patterns in one pipeline, (5) multiple distinct error-handling paths
     - Reference design: `plugins/codemap-py/bin/` (typed, docstrings, `__name__` guards, dataclass serialization boundaries)
-  - **Language policy — inline blocks in SKILL.md**: bash default; Python only when bash version requires JSON parsing, multi-line string manipulation, or numeric computation (and note: `Bash(python:*)` not in allow list — inline Python triggers approval prompt every invocation)
+  - **Language policy — inline blocks in SKILL.md**: bash default; Python only when bash version requires JSON parsing, multi-line string manipulation, or numeric computation (and note: `Bash(python:*)` is allow-listed in every plugin, so bare inline `python …` never prompts; a capture form `VAR=$(python …)` still trips the "Contains expansion" gate)
 
 ## Cross-OS Compatibility
 
@@ -208,6 +208,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/myplugin}/bin/resolve.py" "myplugin-resolv
 
 ```bash
 # only when value feeds shell command
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r INDEX < "${TMPDIR:-/tmp}/myplugin-resolve-index-${CSID}" 2>/dev/null || INDEX=""
 python scan.py --index "$INDEX"  # timeout: 30000
 ```

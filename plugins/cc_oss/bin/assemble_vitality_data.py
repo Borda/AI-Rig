@@ -39,7 +39,8 @@ Usage:
                               [--analysis-now <epoch-seconds>]
 
 Exit: 0 when DATA_FILE was written (inspect ``status`` for coverage); 1 when the Group 1
-directory is missing or DATA_FILE cannot be written; 2 on invalid arguments (argparse).
+directory is missing, the existing DATA_FILE exceeds the 64 Mi-character cap, or DATA_FILE
+cannot be written; 2 on invalid arguments (argparse).
 """
 
 from __future__ import annotations
@@ -66,6 +67,10 @@ FORBIDDEN_MARKER = "403"
 #: Most results GitHub search returns for one query; ``gh issue list --search`` stops there whatever ``--limit`` asks,
 #: so a search-backed list of this size may be truncated.
 SEARCH_RESULT_CAP = 1000
+
+#: Upper bound, in characters, on one Group 1 file and on the DATA_FILE read back. Both hold repository-controlled
+#: text, and ``vitality_extract.py`` refuses a DATA_FILE above the same bound, so a larger one could never be scored.
+_MAX_INPUT_CHARS = 64 * 1024 * 1024
 
 
 class DatasetKind(str, Enum):
@@ -380,11 +385,18 @@ def _read_group1_payload(path: Path) -> tuple[bool, Any]:
 
     Returns:
         ``(True, parsed_json)`` on success; ``(False, None)`` when the file is absent,
-        zero-byte (failed fetch) or not valid JSON.
+        zero-byte (failed fetch), over ``_MAX_INPUT_CHARS`` or not valid JSON.
     """
     try:
-        text = path.read_text(encoding="utf-8")
+        with path.open(encoding="utf-8") as handle:
+            text = handle.read(_MAX_INPUT_CHARS + 1)
     except FileNotFoundError:
+        return False, None
+    if len(text) > _MAX_INPUT_CHARS:
+        print(
+            f"[assemble_vitality_data] WARN: {path.name} exceeds {_MAX_INPUT_CHARS} characters — treated as failed",
+            file=sys.stderr,
+        )
         return False, None
     if not text.strip():
         return False, None
@@ -471,11 +483,19 @@ def read_existing_records(data_file: Path) -> list[dict[str, Any]]:
 
     Returns:
         Records in first-seen order of their type, each holding its last occurrence.
+
+    Raises:
+        ValueError: DATA_FILE exceeds ``_MAX_INPUT_CHARS``. Dropping its records instead would score a README, CI run
+            or workflow that was fetched as missing.
     """
     try:
-        lines = data_file.read_text(encoding="utf-8").splitlines()
+        with data_file.open(encoding="utf-8") as handle:
+            text = handle.read(_MAX_INPUT_CHARS + 1)
     except FileNotFoundError:
         return []
+    if len(text) > _MAX_INPUT_CHARS:
+        raise ValueError(f"DATA_FILE {data_file} exceeds {_MAX_INPUT_CHARS} characters")
+    lines = text.splitlines()
     kept: dict[str, dict[str, Any]] = {}
     for lineno, line in enumerate(lines, start=1):
         if not line.strip():
@@ -663,8 +683,8 @@ def main(argv: list[str] | None = None) -> int:
         argv: Argument list (defaults to ``sys.argv[1:]``).
 
     Returns:
-        ``0`` when DATA_FILE was written; ``1`` when the Group 1 directory is missing or
-        the write failed.
+        ``0`` when DATA_FILE was written; ``1`` when the Group 1 directory is missing, the
+        existing DATA_FILE is over the size cap, or the write failed.
     """
     args = _parse_args(argv)
     sys.stdout.reconfigure(encoding="utf-8", newline="\n")  # type: ignore[union-attr]
@@ -676,6 +696,9 @@ def main(argv: list[str] | None = None) -> int:
     analysis_now = args.analysis_now if args.analysis_now is not None else int(time.time())
     try:
         coverage = assemble(data_file, group1_dir, args.repo, analysis_now)
+    except ValueError as exc:
+        print(f"[assemble_vitality_data] ERROR: {exc} — refusing to rebuild it", file=sys.stderr)
+        return 1
     except OSError as exc:
         print(f"[assemble_vitality_data] ERROR: cannot write {data_file}: {exc}", file=sys.stderr)
         return 1

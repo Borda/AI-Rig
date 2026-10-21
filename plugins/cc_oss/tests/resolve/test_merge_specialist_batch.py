@@ -363,6 +363,35 @@ class TestMainCli:
         pick_shas = [c[3] for c in recorded if c[1] == "cherry-pick"]
         assert pick_shas == ["bbb2222", "aaa1111"]
 
+    @pytest.mark.parametrize(
+        ("oversized", "plan_text"),
+        [
+            pytest.param("plan", '[{"item_id": "1", "sha": "aaa1111", "module": "' + "m" * 80 + '"}]', id="plan"),
+            pytest.param("centrality", '[{"item_id": "1", "sha": "aaa1111"}]', id="centrality"),
+        ],
+    )
+    def test_oversized_input_file_exits_2_without_git_calls(
+        self,
+        tmp_path: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        oversized: str,
+        plan_text: str,
+    ) -> None:
+        """A plan or centrality file over the size cap → exit 2 with a JSON error, before any cherry-pick.
+
+        Both files are read whole; a wrong path pointing at something huge must stop the merge, not exhaust memory.
+        """
+        monkeypatch.setattr(msb, "_MAX_INPUT_CHARS", 64)
+        recorded = _patch_git(monkeypatch)
+        plan_file = tmp_path / "plan.json"
+        plan_file.write_text(plan_text, encoding="utf-8")
+        cent_file = tmp_path / "centrality.json"
+        cent_file.write_text('{"' + "m" * 80 + '": 1.0}', encoding="utf-8")
+        rc = msb.main(["--plan", str(plan_file), "--commit-mode", "each", "--centrality-file", str(cent_file)])
+        assert (rc, recorded) == (2, [])
+        assert f"{oversized}.json exceeds 64 characters" in capsys.readouterr().out
+
     def test_missing_required_args_exits_2(self) -> None:
         """Neither ``--plan`` nor ``--commit-mode`` supplied → argparse exits 2."""
         with pytest.raises(SystemExit) as exc:

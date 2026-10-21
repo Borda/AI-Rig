@@ -87,7 +87,7 @@ Worked before/after example, recurring casualties of a compression pass (modals,
 
 - `.claude-plugin/plugin.json` — version + metadata; `agents/`, `skills/`, `README.md`, `CLAUDE.md` (optional); `rules/`, `hooks/` — foundry only (exception: `bridge_cc-codex/rules/` = packaged contract docs pinned by its tests, not Claude-loaded rules)
 - `bin/` — standalone executables (`.py`, ≥3.10, see §Installability), auto-added to Bash `PATH`, invoked via `python "${CLAUDE_PLUGIN_ROOT}/bin/<script>.py"`. Scope: deterministic transforms only — decision flow/branching/agent-dispatch stays in SKILL.md prose. Full language policy: `AUTHORING.md` §bin/ Language Policy. Narrow bootstrap exception: shared POSIX `bin/python`, native Windows `bin/python.cmd`, and Codemap runtime launchers select and validate Python before Python code can run; application logic stays in Python, with arguments, streams, and exit status preserved and no workload retries.
-- Inline SKILL.md blocks: bash default; Python only when bash needs JSON parsing, multi-line strings, or numeric computation (`Bash(python:*)` not allow-listed — prompts every call).
+- Inline SKILL.md blocks: bash default; Python only when bash needs JSON parsing, multi-line strings, or numeric computation (`Bash(python:*)` is allow-listed in every plugin, so a bare `python …` call never prompts; a capture form `VAR=$(python …)` still trips the "Contains expansion" gate).
 - `references/<agent>/*.md` — agent sidecar fragments, loaded via `cat`. **Never nest under `agents/`** (registers as an uncontrolled dispatchable agent) or `bin/` (PATH-scanned); `skills/<name>/` is safe. Mechanism: `AUTHORING.md` §references/<agent> Nesting Mechanism.
 
 ## Shared File Authoring Rule (`modes/`, `templates/`, `_shared/`)
@@ -106,13 +106,17 @@ Worked before/after example, recurring casualties of a compression pass (modals,
 - For a policy duplicated outside that declared set, add `<!-- policy-sibling: <path1>, <path2>, ... -->` in every copy and inspect every listed copy before completion.
 - Precedent + worked example: `AUTHORING.md` §Policy Duplication Marker.
 
-## Loading Shared Docs — `cat`, not the Read tool
+## Loading Shared Docs — Bash `cat` or a plugin loader, never the Read tool
 
-Load `_shared/*.md` (+ `modes/`, `templates/`) via `cat "$VAR/foo.md"` in bash — never the Read tool. Read tool path-matches version-pinned cache paths (plugin update re-prompts permission); `Bash(cat:*)` command-matches (prompts once ever).
+Load `_shared/*.md` (+ `modes/`, `templates/`) through Bash — never the Read tool. Read tool path-matches version-pinned cache paths (plugin update re-prompts permission); a Bash command command-matches its allow rule (`Bash(cat:*)`, `Bash(python:*)`) and prompts once ever. Two equivalent forms:
 
-- `$VAR` resolve + `cat` same bash block — bash state doesn't persist cross-call
+- **Resolve + `cat`**: `cat "$VAR/foo.md"`, with `$VAR` resolved in the same bash block — bash state doesn't persist cross-call.
+- **Plugin-owned loader**: a script in the consuming plugin's own `bin/` that resolves the doc and prints it in one Bash call, e.g. `python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" foo.md` (foundry: `load_shared_doc.py`, `load_mode.py`). It prints the doc byte-for-byte like `cat`, fails visibly when the doc is missing (unless the call opts into warn-and-skip), and resolves only its own plugin's files (§Self-Contained `_shared`).
+
+Both forms:
+
 - Keep surrounding "follow/execute protocol" prose — only the load mechanism changes
-- **Don't revert to `` Read `$VAR/foo.md` `` — intentional.** Audit/curator seeing `cat` here: leave as-is.
+- **Either form is compliant; never revert one to the other, and never to `` Read `$VAR/foo.md` ``.** Audit/curator: accept both, never raise a finding that converts one into the other. Migrating a plugin's sites between forms is a deliberate, explicitly scoped change, never an opportunistic edit.
 
 ## Sentinel Reads — `read`, not `$(cat ...)`
 
@@ -194,7 +198,7 @@ No plugin dependency system in Claude Code — never propose "install `foo` as p
 - **Never** use `$HOME/.claude/skills/_shared/...` or bare `.claude/skills/_shared/...`: that path does not exist (`/foundry:setup` symlinks only `rules/*.md` + `TEAM_PROTOCOL.md`), and a `SKILL.md` there silently shadows Claude Code's bundled skill of the same name. Incident + precedent: `AUTHORING.md` §Self-Contained `_shared`.
 - **Never** read another plugin's `_shared` or `bin/` (`resolve_shared_path.py foundry` from a non-foundry plugin, `--foundry`, `$_FOUNDRY_SHARED`, `$_FOUNDRY_BIN`, literal `plugins/cc_<other>/`), except the optional-provider instances below.
 - Shared content needed by two plugins is **duplicated, not borrowed**: copy into each and add a `MANIFEST` entry in `propagate_shared.py` to stay byte-identical.
-- **Optional-provider contract exception** — sanctioned runtime reads or execution of another plugin's file. A consumer may read or execute a *provider* plugin's shipped file when all three hold: (a) the consumer's feature is a no-op without that provider (gated on the provider's CLI/presence), so the content has no value in the provider's absence; (b) resolution goes through the active install record — `resolve_shared_path.py <provider> <subdir>`, registry tier first; the resolver's newest-cache tier (which skips `.orphaned_at` dirs) is a degraded fallback reached only when no usable install record exists or the recorded install lacks the subdir, and a wrapper never globs the cache itself; (c) absence degrades to the consumer's own fallback line. Current instances: (1) `resolve_shared_path.py codemap-py claude-skills/_shared` reads the contract for `codemap-gates.md` / `codemap-context.md`; (2) `resolve_shared_path.py foundry bin` executes the provider's `compact_gate.py` rather than reading a file, with `[ -f "$_GD/compact_gate.py" ]` on the resolver call's same line and the consumer's own fallback echo `compact-gate: continue (foundry gate unavailable)`. Add each new instance to this enumerated list and audit Check 27. Conditions (a)–(c) apply to both. A frozen manifested copy would drift silently against whatever provider version the user actually runs. Content needed *to survive* a plugin's absence (agent-resolution tables, degraded-mode instructions) never qualifies — the catch-22 rule below stands.
+- **Optional-provider contract exception** — sanctioned runtime reads or execution of another plugin's file. A consumer may read or execute a *provider* plugin's shipped file when all three hold: (a) the consumer's feature is a no-op without that provider (gated on the provider's CLI/presence), so the content has no value in the provider's absence; (b) resolution goes through the active install record — `resolve_shared_path.py <provider> <subdir>`, registry tier first; the resolver's newest-cache tier (which skips `.orphaned_at` dirs) is a degraded fallback reached only when no usable install record exists or the recorded install lacks the subdir, and a wrapper never globs the cache itself; (c) absence degrades to the consumer's own fallback line. Current instances: (1) `resolve_shared_path.py codemap-py claude-skills/_shared` reads the contract for `codemap-gates.md` / `codemap-context.md`; (2) `resolve_shared_path.py foundry bin` executes the provider's `compact_gate.py` rather than reading a file. Consumers call the propagated `bin/compaction_boundary.py`, which resolves through its sibling resolver, checks that `compact_gate.py` exists, and prints the consumer's own fallback line `compact-gate: continue (foundry gate unavailable)` when the provider is missing or the gate fails. The `compaction-contract.md` Boundary block keeps the inline form: `[ -f "$_GD/compact_gate.py" ]` on the resolver call's same line plus the same fallback echo. Add each new instance to this enumerated list and audit Check 27. Conditions (a)–(c) apply to both. A frozen manifested copy would drift silently against whatever provider version the user actually runs. Content needed *to survive* a plugin's absence (agent-resolution tables, degraded-mode instructions) never qualifies — the catch-22 rule below stands.
 - Corollary: a standalone install of any single plugin must work with no other plugin present. Agent-dispatch fallback (`hooks/agent-router.js` + per-plugin `_shared/agent-resolution.md`) is unaffected and stays.
 
 ## README Sync
@@ -228,6 +232,8 @@ Apply the repository Version Continuity rule to serialized artifact schemas sepa
 > All changed files under `tests/` → no bump, skip entirely. When a shipped test requires regenerated package-manifest hashes, that generated manifest is supporting test metadata: validate it but do not bump the version or update the changelog. Each touched plugin bumps independently.
 >
 > Pure test, CI, and documentation changes need no changelog entry unless they change shipped product or plugin behavior.
+>
+> **Every changelog bullet states what changed and its user-visible impact** (what now works, breaks less, or behaves differently). A bare file or mechanism name — "Sync report-header-table.js", "update helper", "refactor" — says nothing to the reader; name the behaviour, never only the propagation step. Each claim must trace to the diff.
 >
 > **Baseline = HEAD every time:** Re-read it fresh each session; never trust prior-session recall.
 

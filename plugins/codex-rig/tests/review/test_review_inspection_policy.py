@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
+from _skill_text import read_with_references
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 
@@ -11,7 +12,7 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 @pytest.mark.installed_plugin
 def test_review_dispatch_allows_shared_reads_and_preserves_snapshot() -> None:
     """Keep shared source reads from serializing independent selected review passes."""
-    skill = (PLUGIN_ROOT / "skills/code-review/SKILL.md").read_text(encoding="utf-8")
+    skill = read_with_references(PLUGIN_ROOT / "skills/code-review/SKILL.md", "historical-routes.md")
     assert "dispatch every independent pass in the frozen wave before waiting for any response" in skill
     assert "overlapping reads do not require disjoint file ownership or extra approval" in skill
     assert "keep the reviewed snapshot stable until all passes join" in skill

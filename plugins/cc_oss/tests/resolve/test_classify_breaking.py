@@ -113,3 +113,16 @@ def test_main_malformed_stdin_exits_2(monkeypatch: pytest.MonkeyPatch, capsys: p
     rc = cb.main([])
     assert rc == 2
     assert "error" in json.loads(capsys.readouterr().out)
+
+
+def test_main_deeply_nested_stdin_exits_2_without_traceback(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Nesting deeper than the recursion limit → the same exit 2 error payload, not a RecursionError traceback.
+
+    The batch comes from a subprocess pipe, so a runaway or hostile producer can send arbitrarily deep brackets.
+    """
+    monkeypatch.setattr(sys, "stdin", io.StringIO("[" * 200_000))
+    rc = cb.main([])
+    assert rc == 2
+    assert "error" in json.loads(capsys.readouterr().out)

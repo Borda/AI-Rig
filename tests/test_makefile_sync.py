@@ -8,6 +8,7 @@ plugin state.
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
 import runpy
@@ -23,6 +24,9 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 MAKEFILE = ROOT / "Makefile"
+CONSENT_SCRIPT = ROOT / "plugins" / "bridge_cc-codex" / "bin" / "bridge_consent.py"
+CONSENT_SKIP_NOTICE = "consent unchanged: needs operator terminal or BRIDGE_OPERATOR_TOKEN"
+CONSENT_PROOF_ERROR = "APPROVE_CLAUDE_CONSENT=1 needs operator proof"
 
 
 class FakeClaude(NamedTuple):
@@ -377,18 +381,47 @@ class TestSyncCodexHomePolicy:
         assert f"--codex-home {codex_home.as_posix()}" in logged_args
 
 
+class _Terminal(io.StringIO):
+    """In-memory stream that reports itself as an operator terminal."""
+
+    def isatty(self) -> bool:
+        """Report an interactive terminal so the consent helper agrees to mint a token."""
+        return True
+
+
+def _mint_operator_token(home: Path, monkeypatch: pytest.MonkeyPatch) -> str:
+    """Mint a one-time operator token through the real helper, as an operator terminal would, and return it."""
+    output = _Terminal()
+    with monkeypatch.context() as patch:
+        patch.setenv("CODEX_HOME", str(home))
+        patch.setattr(sys, "stdout", output)
+        patch.setattr(sys, "stdin", _Terminal())
+        assert runpy.run_path(str(CONSENT_SCRIPT))["main"](["issue-token"]) == 0
+    return output.getvalue().splitlines()[1]
+
+
 @pytest.mark.integration
 @pytest.mark.skipif(GNU_MAKE is None, reason="GNU make is not available on this host")
+@pytest.mark.parametrize("with_token", [False, True])
 @pytest.mark.parametrize("approve", ["0", "1", "omitted", "environment"])
 @pytest.mark.parametrize("target", ["sync-codex", "sync-all"])
 def test_sync_consent_defaults_and_overrides(
     fake_codex_sync_script: FakeScript,
     fake_codex_home_sync_script: FakeScript,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     approve: str,
     target: str,
+    with_token: bool,
 ) -> None:
-    """Exercise real sync ordering and consent writes without native installation or user-home access."""
+    """Consent is recorded only with operator proof; a captured sync without proof still succeeds and says so.
+
+    Make runs with piped output, so it has no operator terminal. Without a one-time token the implicit full-sync default
+    must skip with a notice and exit zero rather than fail the whole sync, while an explicit opt-in (command line or
+    environment) fails so a requested grant never silently does nothing; with a token minted by the real helper it
+    grants once and consumes the token. Opting out with ``APPROVE_CLAUDE_CONSENT=0`` changes nothing and leaves the
+    token unused.
+    """
     home = tmp_path / "consent home"
     home.mkdir()
     config = home / "config.toml"
@@ -396,6 +429,9 @@ def test_sync_consent_defaults_and_overrides(
     config.write_text(original, encoding="utf-8")
     env = {**os.environ, "CODEX_HOME": str(home)}
     env.pop("APPROVE_CLAUDE_CONSENT", None)
+    env.pop("BRIDGE_OPERATOR_TOKEN", None)
+    if with_token:
+        env["BRIDGE_OPERATOR_TOKEN"] = _mint_operator_token(home, monkeypatch)
     variables = {
         "CODEX_SYNC_SCRIPT": str(fake_codex_sync_script.path),
         "CODEX_HOME_SYNC_SCRIPT": str(fake_codex_home_sync_script.path),
@@ -418,19 +454,24 @@ def test_sync_consent_defaults_and_overrides(
         env=env,
         extra_vars=variables,
     )
-    assert result.returncode == 0, result.stdout + result.stderr
+    explicit = approve == "1" or (approve == "environment" and target == "sync-codex")
+    consent_requested = explicit or (approve == "omitted" and target == "sync-all")
+    explicit_without_proof = explicit and not with_token
+    assert (result.returncode != 0) == explicit_without_proof, result.stdout + result.stderr
+    assert (CONSENT_PROOF_ERROR in result.stderr) == explicit_without_proof
     assert fake_codex_sync_script.log.read_text(encoding="utf-8") == "install"
     assert fake_codex_home_sync_script.log.exists()
-    if (
-        approve == "1"
-        or (approve == "omitted" and target == "sync-all")
-        or (approve == "environment" and target == "sync-codex")
-    ):
+    token_file = home / ".bridge-consent-operator-token"
+    assert "Type Approve" not in result.stdout
+    if consent_requested and with_token:
         assert "bridge:claude-transfer-consent:v1 begin" in config.read_text(encoding="utf-8")
         assert '"consent": "configured"' in result.stdout
-        assert "Type Approve" not in result.stdout
+        assert "with a one-time operator token" in result.stdout
+        assert not token_file.exists()
     else:
         assert config.read_text(encoding="utf-8") == original
+        assert (consent_requested and not with_token and not explicit) == (CONSENT_SKIP_NOTICE in result.stdout)
+        assert token_file.exists() == with_token
 
 
 @pytest.mark.integration
@@ -474,7 +515,13 @@ def test_codex_sync_failure_never_advances_to_later_consent_stages(
     )
     result = _run_make(
         "sync-codex",
-        env={**os.environ, "FAILED_STAGE": failed_stage, "MAKEFLAGS": "-k" if keep_going else ""},
+        # A token stands in for operator proof so the stub grant is reached instead of the no-proof skip.
+        env={
+            **os.environ,
+            "FAILED_STAGE": failed_stage,
+            "MAKEFLAGS": "-k" if keep_going else "",
+            "BRIDGE_OPERATOR_TOKEN": "stub-operator-token",
+        },
         extra_vars={
             "CODEX_SYNC_SCRIPT": str(script),
             "CODEX_HOME_SYNC_SCRIPT": str(script),
@@ -511,6 +558,7 @@ def test_sync_all_approves_consent_by_default_in_dry_run(target: str) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
     assert 'if [ "1" = "0" ]; then' in result.stdout
     assert 'bridge_consent.py" grant --approve &&' in result.stdout
+    assert CONSENT_SKIP_NOTICE in result.stdout
 
 
 @pytest.mark.integration

@@ -28,7 +28,7 @@ Run evidence-first analysis: truth, risk, next action before implementation, rev
 
 For allowed GitHub reads, run the direct helper under current effective network and filesystem grants or request runtime approval for the complete owning command when required capability is unavailable. No separate workflow consent is needed. Apply [GitHub Read Execution](../../shared/native-skill-contract.md#github-read-execution); an explicit runtime denial or non-overridable restriction stops the attempt.
 
-When runtime permissions show network access enabled and the helper's required paths writable, omit `sandbox_permissions` and `justification` on the direct helper call; give no approval brief. Apply GitHub Read Execution even when the active profile name is omitted. A missing label or failed lookup does not mean disabled access; do not run `codex execpolicy list` to detect a profile. Preserve explicit destination restrictions and check report, `.git`, and checkout paths separately where applicable. Use the ordinary approval boundary only for unavailable required capability, and stop on denial.
+When runtime permissions show network access enabled and the helper's required paths writable, omit `sandbox_permissions` and `justification` on the direct helper call; give no approval brief. Apply GitHub Read Execution even when the active profile name is omitted. A missing label or failed lookup does not mean disabled access; do not run `codex execpolicy list` to detect a profile. Preserve explicit destination restrictions and check report, `.git`, and checkout paths separately where applicable.
 
 Codex provides this selected `SKILL.md` path. Resolve `PLUGIN_ROOT` as directory two levels above containing skill directory, then use only helpers under `PLUGIN_ROOT/shared/` that are listed in `package-manifest.json`. Never guess cache version or fall back to source checkout.
 
@@ -47,7 +47,7 @@ Select the analysis mode from the direct request and available evidence. Local-o
 
 Use [GitHub Reader Runtime Boundary](../../shared/native-skill-contract.md#github-reader-runtime-boundary) for `github_read.py`. For PR evidence, use [PR Collection Runtime Boundary](../../shared/native-skill-contract.md#pr-collection-runtime-boundary) for `collect_pr.py`; the reader helper does not replace its outer collector. Bind a numeric PR target through `select-git-remote.py --canonical-pr-url`, preferring valid GitHub `origin` despite fork remotes and using the sole GitHub remote only when `origin` is absent. Use that canonical URL for collector `--target`, or stop if no safe default identity exists. A user-supplied canonical URL takes precedence and must match a configured remote. Do not create or modify runtime approval rules files. Runtime denial stops the current attempt under the existing recovery policy. Remote publication and other remote mutation remain forbidden.
 
-For every `github_read.py` or `collect_pr.py` execution, use the direct owning command under current effective grants per GitHub Read Execution or with runtime approval for unavailable required capability. On an explicit denial or non-overridable restriction, stop and use only already-available local or pasted evidence when the selected mode permits it. Runtime web tools keep their own permission path.
+Run `collect_pr.py` as the direct owning command per GitHub Read Execution. On an explicit denial or non-overridable restriction, stop and use only already-available local or pasted evidence when the selected mode permits it. Runtime web tools keep their own permission path.
 
 If mode is unsupported, explain which supplied value is invalid and list accepted modes above. If request is ambiguous, name missing source or scope decision and ask one concrete question through User Questions with its supported choices or expected input format, such as a PR number/URL, issue number/URL, or local file path. Continue as `local` when pasted evidence supports requested analysis, stating its freshness limits; do not request mode choice that available evidence already resolves. Resume affected analysis when user supplies missing decision or evidence.
 
@@ -97,24 +97,9 @@ Required sections in `<run-directory>/analysis.md`:
 - `Recommendations`
 - `Gaps`
 
-### 07: Run the self-review check
+### 07: Run the Self-Critical Gate and the diff check
 
-When a diff exists — working-tree changes, a collected local diff, or pasted diff evidence, regardless of mode — run `git diff --check` as argv command. Write its combined output to `<run-directory>/review.txt` and retain its exit status as review evidence; do not erase nonzero result. When no diff exists, record that absence in `<run-directory>/review.txt` instead of running the command.
-
-### 08: Decide gate result
-
-- `pass`: evidence-backed ranked findings, explicit gaps.
-- `fail`: missing scope/blocking-claim evidence, stale external claim as fact, or no result artifact.
-
-### 09: Run shared gates and write the validated result artifact
-
-Follow `../../shared/helper-cli-contract.md` and helper `--help`. Analysis-only: mark lint/format/types/tests not applicable with reasons; review needs non-empty `analysis.md`, `self-review.md`, clean diff. Write `ASSESS_METADATA`, validate `assess`, promote only validated candidate.
-
-Replace skip with command when analysis includes code changes/executable probes.
-
-## Self-Critical Gate
-
-Before final output, answer in `<run-directory>/self-review.md`:
+Before step 08, write `<run-directory>/self-review.md` answering:
 
 1. Which claim would be most damaging if wrong?
 2. What evidence directly supports it?
@@ -123,6 +108,19 @@ Before final output, answer in `<run-directory>/self-review.md`:
 5. What next check would most improve confidence?
 
 Critical conclusion without self-review cannot pass.
+
+Then, when a diff under analysis lives in the working tree, run `git diff --check -- <analysed paths>` as argv command, limited to the paths in the evidence ledger and `<run-directory>/baseline` scope so unrelated caller edits never decide the result; a collected or pasted diff outside the working tree is not covered by this command, so record that limit instead. Write combined output to `<run-directory>/review.txt` and retain its exit status as review evidence; do not erase nonzero result. When no diff exists, record that absence in `<run-directory>/review.txt` instead of running the command.
+
+### 08: Decide gate result
+
+- `pass`: evidence-backed ranked findings, explicit gaps.
+- `fail`: missing scope/blocking-claim evidence, stale external claim as fact, or no result artifact.
+
+### 09: Run shared gates and write the validated result artifact
+
+Follow `../../shared/helper-cli-contract.md` and helper `--help`. Analysis-only: mark lint/format/types/tests not applicable with reasons; review needs non-empty `analysis.md`, `self-review.md`, clean diff. The validator's `assess` entry lists no required files or sections, so these file and section requirements (`evidence.md`, the `analysis.md` sections in step 06, `self-review.md`) are reviewer-checked: confirm them yourself before promotion. Write `ASSESS_METADATA`, validate `assess`, promote only validated candidate.
+
+Replace skip with command when analysis includes code changes/executable probes.
 
 ## Fail-Fast Rules
 

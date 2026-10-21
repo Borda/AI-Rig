@@ -149,6 +149,20 @@ class TestPriorResolutions:
         ]
         assert summary["invalid_lines"] == 1
 
+    def test_skips_a_newer_unpromoted_run_ledger(self, tmp_path: Path) -> None:
+        """Verdicts recorded on a review that never promoted its result must not reach the next review's brief."""
+        promoted = _review_run(tmp_path, 1, [FINDING])
+        (promoted / "resolution.jsonl").write_text('{"finding_id": "F7", "verdict": "fixed"}\n', encoding="utf-8")
+        unpromoted = _review_run(tmp_path, 2, [FINDING])
+        (unpromoted / "result.json").rename(unpromoted / "result.candidate.json")
+        (unpromoted / "resolution.jsonl").write_text('{"finding_id": "F7", "verdict": "rejected"}\n', encoding="utf-8")
+        current = _review_run(tmp_path, 3)
+
+        summary = FINDER.prior_resolutions(current)
+
+        assert summary["review_run"] == str(promoted.resolve())
+        assert [record["verdict"] for record in summary["resolutions"]] == ["fixed"]
+
     def test_first_review_has_no_prior_resolutions(self, tmp_path: Path) -> None:
         """A run without earlier ledgers reports none, which is the normal first-review case."""
         current = _review_run(tmp_path, 1)

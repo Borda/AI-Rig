@@ -19,9 +19,13 @@ Usage:
 
 Exit codes:
     0  success — state file path on stdout
-    1  scan-index binary missing (message on stderr)
+    1  scan-index binary missing, or ``CLAUDE_PLUGIN_ROOT`` is not this script's own
+       plugin root (message on stderr)
     2  parse_scan_args failed (message on stderr)
     3  bad CLI arguments (message on stderr)
+    4  a state or handoff tmpfile could not be written (message on stderr)
+    5  ``$ARGUMENTS`` rejected — unknown flag or ``--root`` without a value; the
+       user-facing message is on stderr and the caller prints it unchanged
 
 This module replaces the former ``setup_scan_env.sh``, which now survives only as a
 thin delegating shim so that pre-existing bash call sites keep working. The port
@@ -31,14 +35,24 @@ and avoids POSIX-only tooling (``hostname -s``, ``tr``, ``mktemp``, ``stat``).
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import os
+import re
 import socket
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 from types import ModuleType
+
+#: This script's own ``bin/`` directory, put on ``sys.path`` so the sibling ``resolve_index_env`` import resolves
+#: from this installation even when the file is imported by path (``pytest --doctest-modules``).
+_BIN_DIR = str(Path(__file__).resolve().parent)
+if _BIN_DIR not in sys.path:
+    sys.path.insert(0, _BIN_DIR)
+
+from resolve_index_env import _tmpdir_unsafe_reason  # noqa: E402  (needs the sys.path insert above)
 
 #: Exit code for a successful run.
 _EXIT_OK = 0
@@ -48,6 +62,17 @@ _EXIT_NO_SCAN_BIN = 1
 _EXIT_PARSE_FAILED = 2
 #: Exit code for a malformed command line.
 _EXIT_BAD_ARGS = 3
+#: Exit code when a state or handoff tmpfile could not be written (planted file, read-only dir, ...).
+_EXIT_WRITE_FAILED = 4
+#: Exit code when ``$ARGUMENTS`` is rejected; distinct so the skill prints the message without a prefix.
+_EXIT_ARGS_REJECTED = 5
+
+#: Seconds ``git rev-parse`` may run before the cwd fallback applies — a hung git (FUSE, network mount) must not
+#: hang setup.
+_GIT_TIMEOUT_SECONDS = 10
+
+#: Session suffixes that are safe as a trailing filename component: no path separator, and not a bare "." or "..".
+_VALID_CSID_RE = re.compile(r"(?!\.\.?$)[A-Za-z0-9_.-]+")
 
 #: Script name used as the prefix of this script's error messages.
 _PROG = "setup_scan_env.py"
@@ -59,6 +84,45 @@ _STATE_FIELDS = ("PROJ_SLUG", "SCAN_BIN", "SCAN_ARGS_RAW", "PROJ_NAME")
 
 class _BadArgs(Exception):
     """Raised for a malformed command line; carries the exact stderr message."""
+
+    exit_code = _EXIT_BAD_ARGS
+
+
+class _ArgumentsRejected(_BadArgs):
+    """``$ARGUMENTS`` failed validation; the message is the user-facing text, printed unchanged."""
+
+    exit_code = _EXIT_ARGS_REJECTED
+
+
+class _ParserUnavailable(_BadArgs):
+    """``parse_scan_args.py`` could not be loaded or run."""
+
+    exit_code = _EXIT_PARSE_FAILED
+
+
+def _validate_arguments(arguments: str) -> None:
+    """Reject unsupported ``$ARGUMENTS`` on the parser's own tokenization.
+
+    ``scan-codebase`` used to space-split ``$ARGUMENTS`` in the shell first, which rejected a quoted
+    root such as ``--root "a --b"`` that ``parse_scan_args`` itself accepts. Validating here keeps one
+    tokenizer for both decisions.
+
+    Args:
+        arguments: Raw ``$ARGUMENTS`` string.
+
+    Raises:
+        _ArgumentsRejected: an unknown flag or a ``--root`` without a value.
+        _ParserUnavailable: the parser module could not be loaded or run.
+    """
+    try:
+        module = _load_parse_scan_args(Path(__file__).resolve().parent / "parse_scan_args.py")
+        rejection = module.validate_scan_args(arguments)
+    except Exception as exc:  # any loader/parser failure maps to the documented parse-failure exit
+        raise _ParserUnavailable(
+            "! parse_scan_args.py failed — check Python availability and plugin installation"
+        ) from exc
+    if rejection:
+        raise _ArgumentsRejected(rejection)
 
 
 def _parse_cli(argv: list[str]) -> str:
@@ -118,6 +182,85 @@ def _load_parse_scan_args(parse_bin: Path) -> ModuleType:
     return module
 
 
+def _own_plugin_root() -> Path:
+    """Return the resolved plugin root this script itself runs from (``bin/..``).
+
+    Returns:
+        Resolved absolute path two levels above this file.
+    """
+    return Path(__file__).resolve().parent.parent
+
+
+def _resolve_plugin_root() -> Path:
+    """Return the plugin root, trusting ``CLAUDE_PLUGIN_ROOT`` only when it names this install.
+
+    The root decides the ``SCAN_BIN`` path written into the state file the caller sources, so an
+    environment value (or a cwd-relative ``plugins/codemap-py`` default, which an untrusted checkout
+    can populate) must never choose it. Unset or empty means this script's own root; any other
+    value must be absolute and resolve to that same directory.
+
+    Returns:
+        This script's own plugin root.
+
+    Raises:
+        ValueError: When ``CLAUDE_PLUGIN_ROOT`` is relative, unresolvable, or names another directory.
+    """
+    own = _own_plugin_root()
+    raw = os.environ.get("CLAUDE_PLUGIN_ROOT") or ""
+    if not raw:
+        return own
+    try:
+        resolved = Path(raw).resolve(strict=True) if os.path.isabs(raw) else None
+    except OSError:
+        resolved = None
+    if resolved != own:
+        raise ValueError(f"CLAUDE_PLUGIN_ROOT {raw!r} is not this script's plugin root ({own})")
+    return own
+
+
+def _safe_csid(raw: str) -> str | None:
+    """Accept a session suffix only when it cannot leave the temp directory.
+
+    Args:
+        raw: Candidate ``CSID`` value.
+
+    Returns:
+        ``raw`` when it is a plain filename component, else ``None``.
+
+    Examples:
+        >>> _safe_csid("8f3a-1c.x_9")
+        '8f3a-1c.x_9'
+        >>> _safe_csid("../../x") is None
+        True
+        >>> _safe_csid("..") is None
+        True
+        >>> _safe_csid("a\\n") is None
+        True
+    """
+    return raw if _VALID_CSID_RE.fullmatch(raw) else None
+
+
+def _resolve_csid() -> str:
+    """Return the session-scope suffix for every written filename.
+
+    The caller exports ``CSID`` before invoking; the ``"shared"`` fallback covers a caller that forgot.
+    Deliberately NOT the repo-wide ``CLAUDE_CODE_SESSION_ID`` chain: this script reads only what its
+    caller sets. A value that is not a plain filename component (``../..``, a separator) would move the
+    sentinel writes out of the temp dir, so it is replaced by ``"shared"`` with a stderr warning.
+
+    Returns:
+        Validated ``CSID``, else ``"shared"``.
+    """
+    raw = os.environ.get("CSID") or ""
+    if not raw:
+        return "shared"
+    safe = _safe_csid(raw)
+    if safe is None:
+        print(f"{_PROG}: CSID is not a plain filename component — using 'shared': {raw!r}", file=sys.stderr)
+        return "shared"
+    return safe
+
+
 def _sanitize_slug(value: str) -> str:
     """Keep only ASCII alphanumerics and dashes, mirroring ``tr -cd '[:alnum:]-'``.
 
@@ -146,8 +289,9 @@ def _repo_root() -> str:
     """Return the git toplevel, falling back to the current directory.
 
     Returns:
-        Absolute path string. The cwd is used both when git exits non-zero (not a
-        repository) and when git is not installed at all.
+        Absolute path string. The cwd is used when git exits non-zero (not a
+        repository), is not installed at all, or does not answer within
+        ``_GIT_TIMEOUT_SECONDS``.
     """
     try:
         completed = subprocess.run(
@@ -155,8 +299,9 @@ def _repo_root() -> str:
             capture_output=True,
             text=True,
             check=False,
+            timeout=_GIT_TIMEOUT_SECONDS,
         )
-    except (OSError, ValueError):
+    except (OSError, ValueError, subprocess.TimeoutExpired):
         return os.getcwd()
     if completed.returncode != 0:
         return os.getcwd()
@@ -176,14 +321,18 @@ def _reject_tmpdir(reason: str) -> None:
     """
     print(reason, file=sys.stderr)
     os.environ.pop("TMPDIR", None)
+    tempfile.tempdir = None  # a value cached while the rejected TMPDIR was set must not survive
 
 
 def _resolve_tmpdir() -> Path:
     """Resolve the base directory for state files, validating ``TMPDIR`` first.
 
     An attacker-controlled ``TMPDIR`` could redirect state writes outside
-    the expected directories, so a supplied value must be both absolute and owned
-    by the current user. A rejected value falls back to the platform temp dir.
+    the expected directories, so a supplied value must be absolute, owned by the
+    current user, and not replaceable by others: no group/other write without the
+    sticky bit, no symlink on its path owned by another user (shared check in
+    ``resolve_index_env._tmpdir_unsafe_reason``). A rejected value falls back to the
+    platform temp dir.
 
     Returns:
         Directory in which every tmpfile and the state file are created.
@@ -194,6 +343,11 @@ def _resolve_tmpdir() -> Path:
         raw = ""
     if raw and hasattr(os, "getuid"):
         raw = _reject_foreign_owner(raw)
+    unsafe = _tmpdir_unsafe_reason(raw) if raw else None
+    if unsafe is not None:
+        # Owner alone is not enough: others may replace files in a writable non-sticky dir or re-point their symlink.
+        _reject_tmpdir(f"{_PROG}: TMPDIR is {unsafe} — ignoring: {raw}")
+        raw = ""
     return Path(raw) if raw else Path(tempfile.gettempdir())
 
 
@@ -231,11 +385,36 @@ def _write_atomic(target: Path, content: str) -> None:
     Args:
         target: Final path to create or replace.
         content: Exact bytes (as text) to store.
+
+    Raises:
+        OSError: When the rename is refused (e.g. a file planted by another user in a sticky
+            directory); the temp file is removed first.
     """
     handle, tmp_name = tempfile.mkstemp(prefix=".codemap-setup-tmp.", dir=str(target.parent))
-    with os.fdopen(handle, "w", encoding="utf-8") as stream:
-        stream.write(content)
-    os.replace(tmp_name, target)
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as stream:
+            stream.write(content)
+        os.replace(tmp_name, target)
+    except OSError:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_name)
+        raise
+
+
+def _touch_nofollow(target: Path) -> None:
+    """Create an empty marker file without following a symlink at ``target``.
+
+    ``Path.touch`` opens through a planted symlink, creating or touching whatever it points at.
+    ``O_NOFOLLOW`` makes the open fail instead (a no-op flag where the platform has none).
+
+    Args:
+        target: Marker path to create.
+
+    Raises:
+        OSError: When ``target`` is a symlink or cannot be created.
+    """
+    fd = os.open(target, os.O_WRONLY | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    os.close(fd)
 
 
 def _write_handoff_tmpfiles(tmpdir: Path, csid: str, state: dict[str, str]) -> None:
@@ -286,7 +465,7 @@ def _mark_incremental_noop(arguments: str, tmpdir: Path, csid: str, state: dict[
     # stderr — keeps stdout reserved for the state file path so the caller can
     # capture only that path.
     print("[codemap] No prior index: falling back to full scan", file=sys.stderr)
-    (tmpdir / f"codemap-incremental-noop-{slug}-{csid}").touch()
+    _touch_nofollow(tmpdir / f"codemap-incremental-noop-{slug}-{csid}")
 
 
 def _escape_single_quotes(value: str) -> str:
@@ -384,7 +563,8 @@ def main(argv: list[str] | None = None) -> int:
         argv: Optional argv override for testing. Defaults to ``sys.argv[1:]``.
 
     Returns:
-        Exit code — 0 success, 1 missing ``scan-index``, 2 parse failure, 3 bad CLI.
+        Exit code — 0 success, 1 missing ``scan-index`` or foreign ``CLAUDE_PLUGIN_ROOT``, 2 parse
+        failure, 3 bad CLI, 4 unwritable state or handoff file.
 
     Examples:
         Invoked from a shell, the only stdout is the state-file path::
@@ -394,11 +574,19 @@ def main(argv: list[str] | None = None) -> int:
     """
     try:
         arguments = _parse_cli(sys.argv[1:] if argv is None else argv)
+        _validate_arguments(arguments)
     except _BadArgs as exc:
         print(str(exc), file=sys.stderr)
-        return _EXIT_BAD_ARGS
+        return exc.exit_code
 
-    plugin_root = Path(os.environ.get("CLAUDE_PLUGIN_ROOT") or "plugins/codemap-py")
+    try:
+        plugin_root = _resolve_plugin_root()
+    except ValueError as exc:
+        print(
+            f"! scan-index binary not found — {exc} — reinstall: claude plugin install codemap-py@borda-ai-rig",
+            file=sys.stderr,
+        )
+        return _EXIT_NO_SCAN_BIN
     scan_bin = plugin_root / "bin" / "scan-index"
     if not os.access(scan_bin, os.X_OK):
         print(
@@ -414,10 +602,7 @@ def main(argv: list[str] | None = None) -> int:
     scan_args_raw, proj_slug, proj_name = identity
 
     tmpdir = _resolve_tmpdir()
-    # Session-scope suffix — the caller exports CSID before invoking; the "shared"
-    # fallback covers a caller that forgot. Deliberately NOT the repo-wide
-    # CLAUDE_CODE_SESSION_ID chain: this script reads only what its caller sets.
-    csid = os.environ.get("CSID") or "shared"
+    csid = _resolve_csid()
 
     state = {
         "PROJ_SLUG": proj_slug,
@@ -425,9 +610,15 @@ def main(argv: list[str] | None = None) -> int:
         "SCAN_ARGS_RAW": scan_args_raw,
         "PROJ_NAME": proj_name,
     }
-    _write_handoff_tmpfiles(tmpdir, csid, state)
-    _mark_incremental_noop(arguments, tmpdir, csid, state)
-    print(_write_state_file(tmpdir, state))
+    try:
+        _write_handoff_tmpfiles(tmpdir, csid, state)
+        _mark_incremental_noop(arguments, tmpdir, csid, state)
+        state_file = _write_state_file(tmpdir, state)
+    except OSError as exc:
+        # Non-zero exit: a caller that ignored a swallowed error would read a stale or planted sentinel.
+        print(f"! {_PROG}: cannot write state under {tmpdir} — {exc}", file=sys.stderr)
+        return _EXIT_WRITE_FAILED
+    print(state_file)
     return _EXIT_OK
 
 

@@ -96,7 +96,7 @@ Applies to: agent files, skill files, CLAUDE.md, any markdown.
 
 ## Report File Format
 
-<!-- policy-sibling: plugins/cc_foundry/rules/quality-gates.md, plugins/cc_develop/rules/quality-gates.md, plugins/cc_research/rules/quality-gates.md, plugins/cc_oss/rules/quality-gates.md -->
+<!-- policy-sibling: plugins/cc_foundry/rules/quality-gates.md, plugins/cc_develop/rules/quality-gates.md, plugins/cc_research/rules/quality-gates.md, plugins/cc_oss/rules/quality-gates.md, plugins/cc_foundry/rules/_full/quality-gates.md -->
 
 Every report file from output routing must begin with YAML metadata block between `---` delimiter lines. Block = canonical meta summary — file keeps raw YAML (machine-parseable by downstream skills); when printed to terminal, convert to two-column table (`Field | Value`, one row per key, file order) before executive summary — never raw YAML in terminal. Table IS reply header; omit `╔═╗` Re:Anchor box when leading with it (see `communication.md` exemption).
 

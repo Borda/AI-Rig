@@ -6,6 +6,7 @@ Path construction and slug sanitisation are pure; the repository lookup monkeypa
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import build_analyse_paths as bap
@@ -243,3 +244,86 @@ class TestDryRun:
         """Each suppressed write is still reported, so a verifier sees the computed value."""
         assert bap.main(["--clean-args", "42", "--today", "2026-09-11", "--dry-run"]) == 0
         assert "[dry-run] would write " in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# report-file mode — the path thread mode writes is the path report mode probes
+# ---------------------------------------------------------------------------
+
+
+def test_report_file_mode_pins_path_and_sentinel(
+    tmp_sentinels: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Report-file mode creates the report directory, pins the hook sentinel and prints the path.
+
+    Thread mode runs this before it writes the report, so the Step 6a hook has a path to gate on.
+    """
+    monkeypatch.chdir(tmp_sentinels)
+    _fake_gh(monkeypatch, "owner/repo")
+    expected = ".reports/analyse/thread/output-analyse-thread-owner-repo-42-2026-09-11.md"
+    assert bap.main(["--mode", "report-file", "--clean-args", "42", "--today", "2026-09-11"]) == 0
+    assert _sentinel(tmp_sentinels, "analyse-report-file") == expected
+    assert (tmp_sentinels / ".reports/analyse/thread").is_dir()
+    assert f"[analyse] report → {expected}" in capsys.readouterr().out
+
+
+def test_report_file_mode_leaves_fast_path_sentinels_alone(
+    tmp_sentinels: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Report-file mode must not reset the drift state Step 2 and Step 4 already decided.
+
+    Thread mode runs after those steps; re-running report mode there would rewrite ``analyse-drift`` and the fast-path
+    flags mid-run.
+    """
+    monkeypatch.chdir(tmp_sentinels)
+    _fake_gh(monkeypatch, "owner/repo")
+    assert bap.main(["--mode", "report-file", "--clean-args", "42", "--today", "2026-09-11"]) == 0
+    assert sorted(path.name for path in tmp_sentinels.glob("analyse-*")) == ["analyse-report-file-shared"]
+
+
+def test_report_written_by_thread_mode_is_found_by_the_fast_path(
+    tmp_sentinels: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A report written at the path thread mode was given arms the reply fast path on the next run.
+
+    The two paths once diverged: thread mode wrote ``output-analyse-thread-<N>-<date>.md`` while the fast path probed
+    ``output-analyse-thread-<repo-slug>-<N>-<date>.md``, so a thread report this skill wrote was never reused.
+    """
+    monkeypatch.chdir(tmp_sentinels)
+    _fake_gh(monkeypatch, "owner/repo")
+    assert bap.main(["--mode", "report-file", "--clean-args", "42", "--today", "2026-09-11"]) == 0
+    (tmp_sentinels / _sentinel(tmp_sentinels, "analyse-report-file")).write_text("report", encoding="utf-8")
+
+    assert bap.main(["--clean-args", "42", "--today", "2026-09-11"]) == 0
+
+    assert _sentinel(tmp_sentinels, "analyse-fast-path-tentative") == "true"
+
+
+def test_report_mode_pins_report_file_only_when_the_report_exists(
+    tmp_sentinels: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A tentative fast-path hit pins the report sentinel; a missing report must not forge one.
+
+    A confirmed hit jumps to Step 7 without thread mode, so nothing else would name the report to the Stop hook. A path
+    to a report that was never produced is the state that once made the hook deny an unrelated question.
+    """
+    monkeypatch.chdir(tmp_sentinels)
+    _fake_gh(monkeypatch, "owner/repo")
+    assert bap.main(["--clean-args", "42", "--today", "2026-09-11"]) == 0
+    assert not (tmp_sentinels / "analyse-report-file-shared").exists()
+
+    report = tmp_sentinels / bap.build_report_path("thread", "owner-repo", "42", "2026-09-11")
+    report.parent.mkdir(parents=True)
+    report.write_text("report", encoding="utf-8")
+    assert bap.main(["--clean-args", "42", "--today", "2026-09-11"]) == 0
+
+    assert _sentinel(tmp_sentinels, "analyse-report-file") == report.relative_to(tmp_sentinels).as_posix()
+
+
+def test_thread_mode_takes_its_report_path_from_the_builder() -> None:
+    """The thread-mode report block calls the builder instead of spelling the report path out itself."""
+    thread = (Path(__file__).resolve().parents[2] / "skills/analyse/modes/thread.md").read_text(encoding="utf-8")
+    block = next(block for block in re.findall(r"```bash\n(.*?)```", thread, re.DOTALL) if "analyse-today" in block)
+
+    assert 'build_analyse_paths.py" --mode report-file' in block
+    assert "REPORT_FILE=" not in block

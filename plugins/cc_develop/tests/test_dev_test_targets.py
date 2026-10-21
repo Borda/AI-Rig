@@ -13,6 +13,7 @@ from pathlib import Path
 
 import dev_test_targets as dtt
 import pytest
+from dev_run_dir import write_sentinel
 
 _skip_no_git = pytest.mark.skipif(shutil.which("git") is None, reason="selector reads git output")
 
@@ -203,9 +204,108 @@ class TestRecordDir:
     [
         pytest.param(["--pytest-cmd", "  "], id="empty-runner"),
         pytest.param(["--pytest-cmd", "pytest", "--base=--evil"], id="dash-ref"),
+        pytest.param(["--pytest-cmd", "pytest; rm -rf /"], id="shell-text-runner"),
+        pytest.param(["--pytest-cmd", "python -m pytest -p evil"], id="runner-with-extra-option"),
     ],
 )
 def test_main_rejects_unusable_arguments(argv: list[str], capsys: pytest.CaptureFixture[str]) -> None:
-    """An empty runner or a dash-prefixed ref exits 1 with a JSON error instead of selecting anything."""
+    """An empty, non-allowlisted or shell-shaped runner, or a dash-prefixed ref, exits 1 with a JSON error.
+
+    Plan mode only prints ``command``, but a caller may run it verbatim, so the runner faces the same allowlist the
+    ``--run`` path applies.
+    """
     assert dtt.main(argv) == 1
     assert "error" in json.loads(capsys.readouterr().out)
+
+
+def test_main_rejects_record_dir_outside_project_and_temp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``--record-dir`` outside the working directory and ``$TMPDIR`` exits 1 and creates nothing there."""
+    project, scratch, elsewhere = tmp_path / "project", tmp_path / "scratch", tmp_path / "elsewhere"
+    project.mkdir()
+    scratch.mkdir()
+    monkeypatch.chdir(project)
+    monkeypatch.setenv("TMPDIR", str(scratch))
+
+    assert dtt.main(["--pytest-cmd", "pytest", "--record-dir", str(elsewhere)]) == 1
+    assert "--record-dir" in json.loads(capsys.readouterr().out)["error"]
+    assert not elsewhere.exists()
+
+
+@_skip_no_git
+class TestSkillSentinels:
+    """``--skill`` reads the pytest command and the run directory from the sentinels the skills used to read by hand."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate_sentinels(self, tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Keep sentinels outside the fixture repository, so they never show up as untracked changed files."""
+        monkeypatch.setenv("TMPDIR", str(tmp_path_factory.mktemp("sentinels")))
+        monkeypatch.setenv("CSID", "targets-test")
+
+    def test_records_into_the_skill_dev_dir_sentinel(
+        self, repo: Path, no_codemap: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The selection record lands in the directory ``dev-<skill>-dev-dir`` names, and the runner gets its pytest.
+
+        This is the contract the six skill blocks relied on when they passed ``--pytest-cmd "$PYTEST_CMD"`` and
+        ``--record-dir "${DEV_DIR:-.developments}"``: runner detection's command runs the selected tests and the run
+        record sits beside the skill's checkpoint.
+        """
+        import run_pytest_short
+
+        calls: list[list[str]] = []
+        monkeypatch.setattr(run_pytest_short, "main", lambda argv: calls.append(argv) or 0)
+        write_sentinel("dev-pytest-cmd", "uv run pytest")
+        write_sentinel("dev-fix-dev-dir", str(repo / "run"))
+        _write(repo, "src/pkg/mod.py", "def f():\n    return 3\n")
+
+        assert dtt.main(["--skill", "fix", "--run"]) == 0
+
+        assert calls[0][:3] == ["uv run pytest", "tests/test_mod.py", "tests/test_uses.py"]
+        assert (repo / "run" / "test-targets.jsonl").is_file()
+
+    def test_missing_dev_dir_sentinel_records_under_developments(
+        self, repo: Path, no_codemap: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Without a run-dir sentinel the record goes to ``.developments``, the old shell default."""
+        import run_pytest_short
+
+        monkeypatch.setattr(run_pytest_short, "main", lambda argv: 0)
+        write_sentinel("dev-pytest-cmd", "pytest")
+        _write(repo, "src/pkg/mod.py", "def f():\n    return 3\n")
+
+        assert dtt.main(["--skill", "refactor", "--run"]) == 0
+
+        assert (repo / ".developments" / "test-targets.jsonl").is_file()
+
+    def test_explicit_record_dir_wins_over_the_sentinel(
+        self, repo: Path, no_codemap: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A caller that passes ``--record-dir`` keeps control of where the record goes."""
+        import run_pytest_short
+
+        monkeypatch.setattr(run_pytest_short, "main", lambda argv: 0)
+        write_sentinel("dev-pytest-cmd", "pytest")
+        write_sentinel("dev-feature-dev-dir", str(repo / "from-sentinel"))
+        _write(repo, "src/pkg/mod.py", "def f():\n    return 3\n")
+
+        assert dtt.main(["--skill", "feature", "--run", "--record-dir", str(repo / "explicit")]) == 0
+
+        assert (repo / "explicit" / "test-targets.jsonl").is_file()
+        assert not (repo / "from-sentinel").exists()
+
+    def test_empty_pytest_sentinel_points_at_project_detection(
+        self, repo: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """An unresolved runner exits 1 naming the step that sets it, instead of running an empty command."""
+        assert dtt.main(["--skill", "fix", "--run"]) == 1
+
+        assert "! PYTEST_CMD unresolved — re-run §Project Detection" in json.loads(capsys.readouterr().out)["error"]
+
+    def test_skill_and_pytest_cmd_are_mutually_exclusive(self) -> None:
+        """Passing both sources is an argparse error (exit 2), never a silent preference."""
+        with pytest.raises(SystemExit) as exit_info:
+            dtt.main(["--skill", "fix", "--pytest-cmd", "pytest"])
+
+        assert exit_info.value.code == 2

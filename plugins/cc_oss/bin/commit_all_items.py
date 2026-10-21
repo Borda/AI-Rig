@@ -3,7 +3,7 @@
 
 Builds a commit message summarising counts of as-suggested, self-resolved, and
 rejected items, then runs ``git commit -m <message>``. Extracted from
-oss:resolve action-item-dispatch COMMIT_MODE=all block.
+oss:resolve dispatch-phase3 COMMIT_MODE=all block.
 
 Usage:
     commit_all_items.py PR_NUMBER N_AS_SUGGESTED N_SELF_RESOLVED N_REJECTED \\
@@ -21,11 +21,20 @@ Args:
 from __future__ import annotations
 
 import argparse
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from shutil import which
+
+from commit_action_item import _sanitize_field
+
+#: Seconds allowed for the cheap ``git diff --cached`` staged check.
+_PLUMBING_TIMEOUT = 30
+#: Seconds allowed for ``git commit``: far above any normal pre-commit hook run, yet bounded so a hook or a signing
+#: prompt waiting on input that never comes cannot hang the resolve run for ever.
+_COMMIT_TIMEOUT = 600
 
 
 @dataclass(frozen=True)
@@ -94,9 +103,14 @@ def build_commit_message(fields: CommitSummaryFields) -> str:
         True
     """
     codex_trailer = "\nCo-authored-by: Codex <codex@openai.com>" if fields.include_codex else ""
-    body_section = f"\n{fields.bullet_list}\n" if fields.bullet_list.strip() else "\n"
+    pr_number = _sanitize_field(fields.pr_number)
+    # Only bullet boundaries and trailing blank lines belong to the template; flatten item continuations so
+    # reviewer-supplied newlines cannot create resolve markers or co-author trailers.
+    bullet_list = re.sub(r"\n(?!- |\n*$)", " ", fields.bullet_list)
+    bullet_list = "\n".join(_sanitize_field(line) for line in bullet_list.split("\n"))
+    body_section = f"\n{bullet_list}\n" if bullet_list.strip() else "\n"
     return (
-        f"Resolve review items for PR {fields.pr_number}\n"
+        f"Resolve review items for PR {pr_number}\n"
         f"{body_section}"
         f"Challenge log: {fields.n_as_suggested} as-suggested, "
         f"{fields.n_self_resolved} self-resolved, {fields.n_rejected} rejected\n"
@@ -207,18 +221,25 @@ def main(argv: list[str] | None = None) -> int:
         bullet_list = Path(summaries_file).read_text(encoding="utf-8")
     msg = build_commit_message(CommitSummaryFields(pr_number, *int_counts, bullet_list, include_codex))
     git = _resolve("git")
-    cached = subprocess.run([git, "diff", "--cached", "--quiet"], check=False)  # noqa: S603
-    if cached.returncode == 0:
-        print("commit_all_items: staging area empty — no commit created", file=sys.stderr)
-        return 0
-    # No timeout on the commit: it triggers user-controlled pre-commit hooks whose
-    # duration is unbounded by design (ruff, mypy, custom checks routinely exceed a
-    # few seconds). A short timeout would kill git mid-hook, leaving a partial commit.
-    # Matches commit_action_item.py; short timeouts stay only on cheap plumbing calls.
-    result = subprocess.run(  # noqa: S603
-        [git, "commit", "-m", msg],
-        check=False,
-    )
+    try:
+        cached = subprocess.run(  # noqa: S603
+            [git, "diff", "--cached", "--quiet"], check=False, timeout=_PLUMBING_TIMEOUT
+        )
+        if cached.returncode == 0:
+            print("commit_all_items: staging area empty — no commit created", file=sys.stderr)
+            return 0
+        # Generous commit timeout: the commit runs user-controlled pre-commit hooks (ruff, mypy,
+        # custom checks routinely exceed a few seconds), so a short timeout would kill git mid-hook.
+        # The bound exists only for a hook or signing prompt that waits on input for ever.
+        # Matches commit_action_item.py; short timeouts stay only on cheap plumbing calls.
+        result = subprocess.run(  # noqa: S603
+            [git, "commit", "-m", msg],
+            check=False,
+            timeout=_COMMIT_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired as exc:
+        print(f"commit_all_items: git timed out after {exc.timeout} s — no commit created", file=sys.stderr)
+        return 1
     return result.returncode
 
 

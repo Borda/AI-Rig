@@ -15,7 +15,11 @@ Cascade order:
 2. ``CLAUDE_PLUGIN_ROOT/skills/<skill>/<subdir>`` when ``CLAUDE_PLUGIN_ROOT``
    is set in the environment and the path exists (handles installed-plugin
    runtime — the canonical fast path).
-3. ``.claude/skills/<skill>/<subdir>`` when present (project-local override).
+3. ``.claude/skills/<skill>/<subdir>`` when ``--local`` is passed and the path is present
+   (project-local override). Opt-in only: the path is relative to the working directory, so
+   without ``--local`` a repository being reviewed could ship its own ``modes/`` or
+   ``templates/`` and have them loaded as skill instructions ahead of the installed plugin.
+   A hit here prints a ``! WARNING`` line to stderr.
 4. Fallback scan: ``find ~/.claude/plugins/cache -path '*/<skill>/<subdir>'``
    then pick a deterministic best match (highest version, lex-sorted).
 
@@ -30,8 +34,10 @@ Arguments:
     subdir  Subdirectory name to resolve (e.g. ``modes``, ``templates``).
 
 Options:
-    --local  Prefer ``plugins/cc_foundry/skills/<skill>/<subdir>`` after
-             ``CLAUDE_PLUGIN_ROOT`` check; for plugin-dev workflows.
+    --local  Trust the working directory: prefer
+             ``plugins/cc_foundry/skills/<skill>/<subdir>`` ahead of
+             ``CLAUDE_PLUGIN_ROOT`` and honour a ``.claude/skills/<skill>/<subdir>``
+             override; for plugin-dev workflows.
 
 Exit codes:
     0  Success — resolved path printed to stdout
@@ -262,8 +268,9 @@ def resolve(skill: str, subdir: str, *, local: bool, home: Path | None = None) -
     Args:
         skill: Skill directory name.
         subdir: Subdirectory under the skill.
-        local: When True, the local source tree is preferred ahead of the
-            ``CLAUDE_PLUGIN_ROOT`` tier (plugin-dev workflow).
+        local: When True, the working directory is trusted: the local source tree is preferred
+            ahead of the ``CLAUDE_PLUGIN_ROOT`` tier and the project-local ``.claude/skills``
+            override is honoured (plugin-dev workflow).
         home: Override ``$HOME`` for the cache-scan tier. Defaults to
             ``os.path.expanduser("~")``.
 
@@ -295,9 +302,15 @@ def resolve(skill: str, subdir: str, *, local: bool, home: Path | None = None) -
     if hit is not None:
         return hit
 
-    # Tier 3: project-local override
-    hit = _from_project_local(skill, subdir)
+    # Tier 3: project-local override. cwd-relative, so a reviewed repo could plant instructions
+    # here; honoured only under --local, and never silently.
+    hit = _from_project_local(skill, subdir) if local else None
     if hit is not None:
+        print(
+            f"! WARNING: project-local override in use: {hit.resolve().as_posix()} replaces the installed "
+            f"{skill}/{subdir} (--local)",
+            file=sys.stderr,
+        )
         return hit
 
     # Tier 4: cache scan
@@ -315,7 +328,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--local",
         action="store_true",
-        help="Prefer plugins/cc_foundry/skills/<skill>/<subdir> (plugin-dev workflows).",
+        help="Trust the working directory: prefer plugins/cc_foundry/skills/<skill>/<subdir> and honour "
+        ".claude/skills/<skill>/<subdir> (plugin-dev workflows).",
     )
     parser.add_argument(
         "--home",

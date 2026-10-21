@@ -7,15 +7,19 @@
 **Purpose**: Pre-release readiness check — surfaces outstanding work, alignment gaps, blockers before cutting release
 
 ```bash
-# LAST_TAG, REPO_ROOT, SKILL_DIR from Shared setup above
-# audit mode: REST = optional version token (not range); RANGE defaults to LAST_TAG..HEAD
-RANGE="${RANGE:-$LAST_TAG..HEAD}"
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r LAST_TAG < "${TMPDIR:-/tmp}/release-setup-${CSID}/LAST_TAG" 2>/dev/null || LAST_TAG=""
 IFS= read -r SOURCE_TAG_REF < "${TMPDIR:-/tmp}/release-setup-${CSID}/SOURCE_TAG_REF" 2>/dev/null || SOURCE_TAG_REF=""
-IFS= read -r CHERRY_PICK_SUBJECTS < "${TMPDIR:-/tmp}/release-setup-${CSID}/CHERRY_PICK_SUBJECTS" 2>/dev/null || CHERRY_PICK_SUBJECTS=""
+IFS= read -r REST < "${TMPDIR:-/tmp}/release-rest-${CSID}" 2>/dev/null || REST=""
+# audit mode: REST = optional version token (not range); RANGE defaults to LAST_TAG..HEAD
+TARGET="${REST%% *}"; case "$TARGET" in --*) TARGET="";; esac
+echo "$TARGET" > "${TMPDIR:-/tmp}/release-audit-target-${CSID}"
+RANGE="${RANGE:-$LAST_TAG..HEAD}"
+case "$RANGE" in ..*) echo "! BLOCKED — release range base unresolved (LAST_TAG empty)" >&2; exit 1;; esac
 RELEASE_MODE="linear"; PENDING_CHERRY_PICKS=0
-[ -n "$SOURCE_TAG_REF" ] && RELEASE_MODE="stable-branch" && PENDING_CHERRY_PICKS=$(printf '%s\n' "$CHERRY_PICK_SUBJECTS" | grep -c . 2>/dev/null || echo 0)
-echo "release mode: $RELEASE_MODE (source=$SOURCE_TAG_REF, pending=$PENDING_CHERRY_PICKS)"
+# subjects file is multi-line; a line-read keeps only the first
+[ -n "$SOURCE_TAG_REF" ] && RELEASE_MODE="stable-branch" && PENDING_CHERRY_PICKS=$(grep -c . "${TMPDIR:-/tmp}/release-setup-${CSID}/CHERRY_PICK_SUBJECTS" 2>/dev/null || true)
+echo "release mode: $RELEASE_MODE (source=$SOURCE_TAG_REF, pending=${PENDING_CHERRY_PICKS:-0}, target=${TARGET:-none})"
 ```
 
 ### Phase 0: Release-model guardrail
@@ -41,8 +45,9 @@ Verify all APIs scheduled for removal at `$TARGET` absent from HEAD. Runs after 
 git -C "$REPO_ROOT" grep -n 'remove_in=' HEAD -- '*.py' 2>/dev/null | grep -v '^\s*#'  # timeout: 5000
 
 # Source B: CHANGELOG 🗑️ Deprecated entries — prior releases may name removal version in prose
-CHANGELOG_FILE=$(find "$REPO_ROOT" -maxdepth 2 -name "CHANGELOG.md" 2>/dev/null | head -1)
-[ -f "$CHANGELOG_FILE" ] && grep -n '🗑️\|Deprecated\|remove_in\|scheduled for removal\|will be removed' "$CHANGELOG_FILE" 2>/dev/null | head -60  # timeout: 3000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+CHANGELOG_FILE=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/resolve_changelog_file.py" --repo-root "${REPO_ROOT:-.}" --write-sentinel)  # timeout: 5000
+[ -f "${REPO_ROOT:-.}/$CHANGELOG_FILE" ] && grep -n '🗑️\|Deprecated\|remove_in\|scheduled for removal\|will be removed' "${REPO_ROOT:-.}/$CHANGELOG_FILE" 2>/dev/null | head -60  # timeout: 3000
 ```
 
 **Step 2** — for each `remove_in="V.W"` found, compare with `$TARGET`:
@@ -52,15 +57,9 @@ CHANGELOG_FILE=$(find "$REPO_ROOT" -maxdepth 2 -name "CHANGELOG.md" 2>/dev/null 
 
 ```bash
 # stdlib version parse — no packaging dep
-python3 -c "
-import sys, re
-def parse_ver(v):
-    v = v.strip('\"v ')
-    parts = [int(x) for x in re.sub(r'[^0-9.]', '', v).split('.') if x]
-    return tuple(parts) if parts else (0,)
-rv, tv = parse_ver(sys.argv[1]), parse_ver(sys.argv[2])
-print('OVERDUE' if rv <= tv else 'FUTURE')
-" "<remove_in_value>" "${TARGET:-0}"  # timeout: 5000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r TARGET < "${TMPDIR:-/tmp}/release-audit-target-${CSID}" 2>/dev/null || TARGET=""
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/compare_removal_version.py" "<remove_in_value>" "${TARGET:-0}"  # timeout: 5000
 ```
 
 **Step 3** — for each OVERDUE item, check if old symbol still present in HEAD. Read 3-line context around `remove_in=` match to extract deprecated function or class name (typically decorated name 1–2 lines above), then:
@@ -81,13 +80,22 @@ git -C "$REPO_ROOT" grep -n "^def <symbol>\|^class <symbol>\|    def <symbol>\| 
 Verify no blocking `/oss:review` (or codex-lineage review) verdict already exists for the current branch before declaring readiness — closes the gap where `audit` re-derives blockers a prior review already found instead of surfacing them immediately as a pre-flight failure.
 
 ```bash
-REVIEW_FILE=$(ls -t .reports/review/*/review-report.md .reports/review/*/*/review-report.md .reports/codex/review/*/review-notes.md 2>/dev/null | head -1)
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r BRANCH_REF < "${TMPDIR:-/tmp}/release-setup-${CSID}/BRANCH_REF" 2>/dev/null || BRANCH_REF=""
+PR_NUM=$(gh pr view --json number --jq .number 2>/dev/null || true)  # timeout: 15000
+REVIEW_FILE=""
+for F in .reports/review/*/review-report.md .reports/review/*/*/review-report.md .reports/codex/review/*/review-notes.md; do
+    [ -f "$F" ] || continue
+    # newest review that names this PR or branch — a newer review of another branch is no blocker here
+    { [ -n "$PR_NUM" ] && grep -qE "^PR:[[:space:]]+#$PR_NUM[[:space:]]*$" "$F"; } || { [ -n "$BRANCH_REF" ] && grep -qF -- "$BRANCH_REF" "$F"; } || continue
+    [ -z "$REVIEW_FILE" ] || [ "$F" -nt "$REVIEW_FILE" ] && REVIEW_FILE="$F"
+done
+echo "REVIEW_FILE=${REVIEW_FILE:-none}"
 ```
 
-- No match → skip this check (informational: no prior review on file).
-- Match under `.reports/review/pr-*/run-*/review-report.md` or the legacy pre-rename `.reports/review/*/review-report.md` (both oss lineage) → grep its `Outcome:` YAML field. `✗` or `⚠ NEEDS_ATTENTION` with unresolved blocking findings → add to Phase 2 Findings summary: `| Upstream review blocking | ✗ <REVIEW_FILE> reports <Outcome value> | <path> | critical |`.
+- `none` → skip this check (informational: no prior review on file for this PR/branch).
+- Match under `.reports/review/pr-*/run-*/review-report.md` or the legacy pre-rename `.reports/review/*/review-report.md` (both oss lineage) → read its `Outcome:` YAML field (token alone, optional leading `✓`/`⚠`/`✗`). Token `NEEDS_WORK` or `REJECT` → add to Phase 2 Findings summary: `| Upstream review blocking | ✗ <REVIEW_FILE> reports <Outcome value> | <path> | critical |`. `APPROVE`/`MINOR_EDITS`/`INSUFFICIENT_BUT_PROMISING`/`null` → no finding.
 - Match under `.reports/codex/review/*/review-notes.md` (codex lineage) → grep `Recommendation:` / `Blocking findings:` lines. `needs-more-work` with non-empty `Blocking findings:` → same critical finding, quoting the blocking finding IDs.
-- Only act on a review whose header/scope names the branch or PR currently being released — a review for a different branch/PR is not a blocker here; note it as informational context instead.
 
 ### Phase 2: Readiness checks
 
@@ -127,16 +135,18 @@ Skill(skill="bridge:review", args="Read-only adversarial release-readiness audit
 
 Check specifically: (1) do public docs/examples touched or implied by this range still match current default behavior — not just changed files, but examples elsewhere in docs/ that call the same code path; (2) does the migration guide (if any) place new behavior under the correct version step, not backported into an earlier historical entry; (3) does the changelog/PR narrative account for every commit in range, including ones bundled into another PR; (4) any new or changed optional dependency reaching a platform without a recorded review/disposition.
 
-Write full findings to <ADVERSARIAL_AUDIT_FILE> using the Write tool. Return ONLY: {\"status\":\"done\",\"file\":\"<path>\",\"critical\":N,\"high\":N,\"medium\":N,\"low\":N,\"confidence\":0.N}")
+You are read-only and must not create files: return every finding in your result with its severity (critical, high, medium, low) and exact file:line evidence, plus your confidence.")
 ```
 
-Expand `<REPO_ROOT>`, `<RANGE>`, `<TARGET>`, `<ADVERSARIAL_AUDIT_FILE>` (`.temp/release-codex-audit-$BRANCH-$DATE.md`) to literal values before spawning.
+Expand `<REPO_ROOT>`, `<RANGE>`, `<TARGET>` to literal values before the call.
 
-Read the returned file. Every `critical`/`high` finding → add a row to the Findings summary table above (`severity: critical` or `high`), quoting the finding text. `medium`/`low` → append as `> ⚠ Codex audit notes: <summary>` below the table, non-blocking.
+`bridge:review` cannot write files, so the orchestrator persists its result when the call returns: Write the returned findings (envelope findings, or the transcript at the bridge-reported artifact path) to `<ADVERSARIAL_AUDIT_FILE>` (`.temp/release-codex-audit-$BRANCH-$DATE.md`, expanded to a literal path) with the Write tool. A `status` other than `complete` → Write that status and its fault there instead and add no Codex finding; report the pass as not completed, never as clean.
+
+From the returned findings: every `critical`/`high` finding → add a row to the Findings summary table above (`severity: critical` or `high`), quoting the finding text. `medium`/`low` → append as `> ⚠ Codex audit notes: <summary>` below the table, non-blocking.
 
 ### Output routing
 
-Write full report to `.reports/release/$BRANCH-$DATE.md` (create dir with `mkdir -p .reports/release` if needed) — **not** `.temp/`. Overrides quality-gates default `.temp/output-...` path. Print verdict line and executive summary to terminal per quality-gates rules.
+Write full report to `.reports/release/$BRANCH-$DATE.md` (create dir with `mkdir -p .reports/release` if needed; path already exists → append counter suffix `-2`, `-3`, never overwrite) — **not** `.temp/`. Overrides quality-gates default `.temp/output-...` path. Print verdict line and executive summary to terminal per quality-gates rules.
 
 ### Verdict line (mandatory final output)
 

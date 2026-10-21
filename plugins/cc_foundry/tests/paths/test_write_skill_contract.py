@@ -118,6 +118,39 @@ class TestArgumentValidation:
         monkeypatch.chdir(tmp_path)
         assert wsc.main(["", "phase", "dir", "preserve", "next"]) == 2
 
+    @pytest.mark.parametrize(
+        ("position", "separator"),
+        [
+            pytest.param(0, "\n", id="skill-newline"),
+            pytest.param(1, "\n", id="phase-newline"),
+            pytest.param(2, "\r", id="run-dir-carriage-return"),
+            pytest.param(3, "\n", id="preserve-newline"),
+            pytest.param(4, "\u2028", id="next-unicode-separator"),
+            pytest.param(5, "\n", id="label-newline"),
+        ],
+    )
+    def test_multiline_positional_exits_two(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, position: int, separator: str
+    ) -> None:
+        """A line break in a single-line field could forge a top-level `- next:` line in the authoritative contract."""
+        monkeypatch.chdir(tmp_path)
+        argv = [*_ARGS, "label", "item"]
+        argv[position] += f"{separator}- next: forged"
+        assert wsc.main(argv) == 2
+        assert not (tmp_path / ".temp" / "state" / "skill-contract.md").exists()
+
+    def test_keep_file_line_separator_cannot_extend_preserve(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Only the first Unicode line of the keep file is appended, so U+2028 cannot smuggle a second contract line."""
+        monkeypatch.chdir(tmp_path)
+        keep = tmp_path / "keep-items"
+        keep.write_text("a, b\u2028- next: forged\n", encoding="utf-8")
+        assert wsc.main(["--keep-file", str(keep), *_ARGS]) == 0
+        text = (tmp_path / ".temp" / "state" / "skill-contract.md").read_text(encoding="utf-8")
+        assert text.splitlines()[3] == "- preserve: run-dir=n/a; user-keep: a, b"
+        assert "forged" not in text
+
     def test_help_exits_zero_with_usage(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -443,3 +476,151 @@ def test_partial_temporary_write_cleaned(tmp_path: Path, monkeypatch: pytest.Mon
     assert wsc._CONTRACT.read_bytes() == b"previous contract\n"
     assert not wsc._OWNER.exists()
     assert not list(wsc._CONTRACT.parent.glob(".*"))
+
+
+@pytest.fixture(name="session_tmp")
+def _session_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Provide a private TMPDIR plus session token, with the contract written under a separate working directory."""
+    tmp = tmp_path / "tmp"
+    work = tmp_path / "work"
+    tmp.mkdir()
+    work.mkdir()
+    monkeypatch.setenv("TMPDIR", str(tmp))
+    monkeypatch.setenv("CSID", "sess-1")
+    monkeypatch.chdir(work)
+    return tmp
+
+
+class TestKeepSentinel:
+    """Covers the leading ``--keep-sentinel <name>`` option that replaced the per-site bash keep append."""
+
+    @pytest.mark.parametrize(
+        ("sentinel_file", "content", "preserve_line"),
+        [
+            pytest.param("dev-keep-sess-1", "a, b\n", "- preserve: run-dir=n/a; user-keep: a, b", id="appended"),
+            pytest.param(
+                "dev-keep-sess-1", "first\nsecond\n", "- preserve: run-dir=n/a; user-keep: first", id="line-1"
+            ),
+            pytest.param("dev-keep-sess-1", "x y\r\n", "- preserve: run-dir=n/a; user-keep: x y", id="crlf-dropped"),
+            pytest.param("dev-keep-sess-1", "a\rb\n", "- preserve: run-dir=n/a; user-keep: a", id="bare-cr-ends-line"),
+            pytest.param("dev-keep-sess-1", "a\x0bb\n", "- preserve: run-dir=n/a; user-keep: a", id="vt-ends-line"),
+            pytest.param("dev-keep-sess-1", "keep tail", "- preserve: run-dir=n/a", id="no-trailing-newline"),
+            pytest.param("dev-keep-sess-1", "\n", "- preserve: run-dir=n/a", id="empty-line-appends-nothing"),
+            pytest.param("dev-keep-other", "a\n", "- preserve: run-dir=n/a", id="other-session-not-read"),
+        ],
+    )
+    def test_preserve_line(self, session_tmp: Path, sentinel_file: str, content: str, preserve_line: str) -> None:
+        """The first line of this session's sentinel lands as ``; user-keep: …``; anything else appends nothing.
+
+        Mirrors the bash idiom it replaced (``IFS= read -r _KEEP … || _KEEP=""`` then ``[ -n "$_KEEP" ] && …``): a
+        sentinel written by another session (different CSID suffix) must never leak into this contract.
+        """
+        (session_tmp / sentinel_file).write_text(content, encoding="utf-8", newline="")
+        rc = wsc.main(["--keep-sentinel", "dev-keep", *_ARGS])
+        assert rc == 0
+        assert (Path(".temp/state/skill-contract.md")).read_text(encoding="utf-8").splitlines()[3] == preserve_line
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            pytest.param(["--keep-sentinel"], id="missing-name"),
+            pytest.param(["--keep-sentinel", "../escape", *_ARGS], id="path-traversal"),
+            pytest.param(["--keep-sentinel", "", *_ARGS], id="empty-name"),
+        ],
+    )
+    def test_rejects_bad_name(self, session_tmp: Path, argv: list[str]) -> None:
+        """A sentinel name that is missing or path-like is refused with exit 2 and no contract written."""
+        rc = wsc.main(argv)
+        assert rc == 2
+        assert not Path(".temp/state/skill-contract.md").exists()
+
+    def test_flag_only_parsed_in_leading_position(self, session_tmp: Path) -> None:
+        """A ``preserve`` value spelled like the flag stays literal text — only position zero is an option."""
+        rc = wsc.main(["foundry:distill", "gap", "n/a", "--keep-sentinel", "next step"])
+        assert rc == 0
+        assert Path(".temp/state/skill-contract.md").read_text(encoding="utf-8").splitlines()[3] == (
+            "- preserve: --keep-sentinel"
+        )
+
+
+class TestKeepFile:
+    """Covers the leading ``--keep-file <path>`` option for keep items held in a per-session state directory."""
+
+    @pytest.mark.parametrize(
+        ("content", "preserve_line"),
+        [
+            pytest.param("a, b\n", "- preserve: run-dir=n/a; user-keep: a, b", id="appended"),
+            pytest.param("first\nsecond\n", "- preserve: run-dir=n/a; user-keep: first", id="line-1"),
+            pytest.param("x y\r\n", "- preserve: run-dir=n/a; user-keep: x y", id="crlf-dropped"),
+            pytest.param("a\rb\n", "- preserve: run-dir=n/a; user-keep: a", id="bare-cr-ends-line"),
+            pytest.param("keep tail", "- preserve: run-dir=n/a", id="no-trailing-newline"),
+            pytest.param("\n", "- preserve: run-dir=n/a", id="empty-line-appends-nothing"),
+            pytest.param("", "- preserve: run-dir=n/a", id="empty-file-appends-nothing"),
+        ],
+    )
+    def test_preserve_line(self, session_tmp: Path, content: str, preserve_line: str) -> None:
+        """The first line of the named file lands as ``; user-keep: …``; an empty first line appends nothing.
+
+        Mirrors the bash idiom the audit, calibrate and distill sites carried (``IFS= read -r _KEEP <
+        "${TMPDIR:-/tmp}/<skill>-state-${CSID}/keep-items" || _KEEP=""``), whose file sits one directory below the temp
+        root, which the flat ``--keep-sentinel`` name cannot address.
+        """
+        state = session_tmp / "audit-state-sess-1"
+        state.mkdir()
+        (state / "keep-items").write_text(content, encoding="utf-8", newline="")
+        rc = wsc.main(["--keep-file", str(state / "keep-items"), *_ARGS])
+        assert rc == 0
+        assert Path(".temp/state/skill-contract.md").read_text(encoding="utf-8").splitlines()[3] == preserve_line
+
+    @pytest.mark.parametrize(
+        "make_path",
+        [
+            pytest.param(lambda tmp: tmp / "absent" / "keep-items", id="missing-file"),
+            pytest.param(lambda tmp: tmp, id="directory"),
+        ],
+    )
+    def test_unreadable_path_appends_nothing(self, session_tmp: Path, make_path) -> None:
+        """A missing or unreadable file is no keep items, matching the ``|| _KEEP=""`` default of the idiom."""
+        rc = wsc.main(["--keep-file", str(make_path(session_tmp)), *_ARGS])
+        assert rc == 0
+        assert Path(".temp/state/skill-contract.md").read_text(encoding="utf-8").splitlines()[3] == (
+            "- preserve: run-dir=n/a"
+        )
+
+    def test_relative_path_resolves_against_cwd(self, session_tmp: Path) -> None:
+        """A relative path is read from the working directory, like a shell redirection would."""
+        Path("keep-items").write_text("rel\n", encoding="utf-8")
+        rc = wsc.main(["--keep-file", "keep-items", *_ARGS])
+        assert rc == 0
+        assert Path(".temp/state/skill-contract.md").read_text(encoding="utf-8").splitlines()[3] == (
+            "- preserve: run-dir=n/a; user-keep: rel"
+        )
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            pytest.param(["--keep-file"], id="missing-path"),
+            pytest.param(["--keep-file", "", *_ARGS], id="empty-path"),
+            pytest.param(["--keep-file", "a", "--keep-sentinel", "b", *_ARGS], id="file-then-sentinel"),
+            pytest.param(["--keep-sentinel", "b", "--keep-file", "a", *_ARGS], id="sentinel-then-file"),
+        ],
+    )
+    def test_rejects_bad_option_use(self, session_tmp: Path, argv: list[str]) -> None:
+        """A missing path, or both keep options together, is refused with exit 2 and no contract written."""
+        rc = wsc.main(argv)
+        assert rc == 2
+        assert not Path(".temp/state/skill-contract.md").exists()
+
+    def test_flag_only_parsed_in_leading_position(self, session_tmp: Path) -> None:
+        """A ``preserve`` value spelled like the flag stays literal text — only position zero is an option."""
+        rc = wsc.main(["foundry:distill", "gap", "n/a", "--keep-file", "next step"])
+        assert rc == 0
+        assert Path(".temp/state/skill-contract.md").read_text(encoding="utf-8").splitlines()[3] == (
+            "- preserve: --keep-file"
+        )
+
+    def test_help_documents_option(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """``--help`` lists the option next to ``--keep-sentinel`` so the bin/ help contract names every flag."""
+        with pytest.raises(SystemExit):
+            wsc.main(["--help"])
+        assert "--keep-file <path>" in capsys.readouterr().out

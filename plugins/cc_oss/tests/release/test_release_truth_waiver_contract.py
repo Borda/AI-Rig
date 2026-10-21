@@ -11,8 +11,25 @@ from pathlib import Path
 import pytest
 import release_append_marker as ram
 
-_RELEASE = Path(__file__).resolve().parents[2] / "skills/release"
+_PLUGIN = Path(__file__).resolve().parents[2]
+_RELEASE = _PLUGIN / "skills/release"
+#: The truth-check probe runs ``${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/symbol_exists_at_ref.py`` from a scratch
+#: repo, where the bare ``plugins/cc_oss`` fallback resolves to nothing; point it at this plugin (forward slashes work
+#: in Git Bash).
+_PROBE_ENV = {**os.environ, "CLAUDE_PLUGIN_ROOT": _PLUGIN.as_posix()}
+_PROBE_MARKER = "symbol_exists_at_ref.py"
 _skip_shell_unavailable = pytest.mark.skipif(shutil.which("bash") is None, reason="Release setup uses Bash.")
+
+
+def _delegation_text() -> str:
+    """Read the delegated-run procedure that SKILL.md loads for prepare, audit and size-guarded runs."""
+    return (_RELEASE / "modes/delegation.md").read_text(encoding="utf-8")
+
+
+def _delegated_then_inline_blocks() -> list[str]:
+    """Collect the bash blocks of the delegated procedure first, then those of SKILL.md."""
+    text = _delegation_text() + "\n" + (_RELEASE / "SKILL.md").read_text(encoding="utf-8")
+    return re.findall(r"```bash\n(.*?)```", text, re.DOTALL)
 
 
 def _bash_path(path: str) -> str:
@@ -20,6 +37,17 @@ def _bash_path(path: str) -> str:
     if sys.platform != "win32":
         return path
     return subprocess.check_output(["cygpath", "-u", path], text=True).strip()
+
+
+def _probe_block(instructions: str) -> str:
+    """Pick the truth-probe bash block, with the spawn-time ``<OSS_BIN>`` placeholder bound to this plugin's bin dir.
+
+    The gather template runs in a subagent shell that has no ``CLAUDE_PLUGIN_ROOT``, so the orchestrator substitutes an
+    absolute bin path for ``<OSS_BIN>`` before spawning; this performs the same substitution.
+    """
+    blocks = re.findall(r"```bash\n(.*?)```", instructions, re.DOTALL)
+    probe = next(block for block in blocks if _PROBE_MARKER in block)
+    return probe.replace("<OSS_BIN>", (_PLUGIN / "bin").as_posix())
 
 
 def _init_release_head(root: Path) -> str:
@@ -68,13 +96,39 @@ def test_gather_retains_qualified_removal_and_breaking_claims() -> None:
     assert "baseline" in write_contract
 
 
+def test_gather_template_receives_an_absolute_bin_dir_not_the_plugin_root_env() -> None:
+    """The gather subagent's shell has no ``CLAUDE_PLUGIN_ROOT``, so its bin calls must use a spawn-time absolute path.
+
+    With the env fallback ``plugins/cc_oss``, which does not exist in the user's repository, every probe exits as
+    inconclusive and the truth check degrades silently. The orchestrator resolves the directory once and substitutes it.
+    """
+    template = (_RELEASE / "templates/gather-prompt.md").read_text(encoding="utf-8")
+    delegation = _delegation_text()
+
+    assert "CLAUDE_PLUGIN_ROOT" not in template
+    assert template.count("<OSS_BIN>/") == 2
+    assert "`<OSS_BIN>`" in delegation
+    assert "OSS_BIN=$OSS_BIN" in delegation
+
+
+@pytest.mark.parametrize("relative_path", ["modes/classify-truth-check.md", "templates/gather-prompt.md"])
+def test_truth_probe_is_the_bin_script_not_an_inline_heredoc(relative_path: str) -> None:
+    """Each truth-check site calls the one probe script instead of carrying a pasted AST heredoc.
+
+    A heredoc-carrying block is not allow-listed and drops out of blueprint extraction, so it prompted on every symbol
+    checked; the two sites also held byte-identical copies that could drift apart.
+    """
+    instructions = (_RELEASE / relative_path).read_text(encoding="utf-8")
+    assert instructions.count(_PROBE_MARKER) == 1
+    assert "<<'PY'" not in instructions
+
+
 @_skip_shell_unavailable
 @pytest.mark.parametrize("relative_path", ["modes/classify-truth-check.md", "templates/gather-prompt.md"])
 def test_python_baseline_probe_ignores_docstring_only_name(tmp_path: Path, relative_path: str) -> None:
     """A docstring mention stays inconclusive until absence is independently established."""
     instructions = (_RELEASE / relative_path).read_text(encoding="utf-8")
-    blocks = re.findall(r"```bash\n(.*?)```", instructions, re.DOTALL)
-    probe = next(block for block in blocks if 'python - "$REF" "$SYMBOL"' in block)
+    probe = _probe_block(instructions)
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, capture_output=True)
     module = tmp_path / "api.py"
     module.write_text('"""The old docs showed:\n\ndef Legacy():\n    pass\n"""\n', encoding="utf-8", newline="\n")
@@ -97,6 +151,7 @@ def test_python_baseline_probe_ignores_docstring_only_name(tmp_path: Path, relat
     completed = subprocess.run(
         [shutil.which("bash"), "-c", "REF=v1; SYMBOL=Legacy; PUBLIC_PATH=api.py; " + probe],
         cwd=tmp_path,
+        env=_PROBE_ENV,
         capture_output=True,
         text=True,
         check=False,
@@ -114,6 +169,7 @@ def test_python_baseline_probe_ignores_docstring_only_name(tmp_path: Path, relat
     defined = subprocess.run(
         [shutil.which("bash"), "-c", "REF=HEAD; SYMBOL=Legacy; PUBLIC_PATH=api.py; " + probe],
         cwd=tmp_path,
+        env=_PROBE_ENV,
         capture_output=True,
         text=True,
         check=False,
@@ -193,11 +249,7 @@ def test_python_probe_exit_code_for_source_binding(
     absence: the probe fails closed (exit 2) instead of failing on decoding or certifying the name as absent.
     """
     instructions = (_RELEASE / relative_path).read_text(encoding="utf-8")
-    probe = next(
-        block
-        for block in re.findall(r"```bash\n(.*?)```", instructions, re.DOTALL)
-        if 'python - "$REF" "$SYMBOL"' in block
-    )
+    probe = _probe_block(instructions)
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, capture_output=True)
     (tmp_path / "api.py").write_bytes(source)
     subprocess.run(["git", "add", "api.py"], cwd=tmp_path, check=True, capture_output=True)
@@ -210,6 +262,7 @@ def test_python_probe_exit_code_for_source_binding(
     completed = subprocess.run(
         [shutil.which("bash"), "-c", f"REF=HEAD; SYMBOL='{symbol}'; PUBLIC_PATH=api.py; " + probe],
         cwd=tmp_path,
+        env=_PROBE_ENV,
         capture_output=True,
         text=True,
         check=False,
@@ -222,9 +275,8 @@ def test_python_probe_exit_code_for_source_binding(
 @pytest.mark.parametrize("setup", ["delegated", "inline"])
 def test_waiver_ledger_is_unique_per_same_day_invocation(tmp_path: Path, setup: str) -> None:
     """Two invocations on one branch and date preserve separate waiver evidence."""
-    skill = (_RELEASE / "SKILL.md").read_text(encoding="utf-8")
-    blocks = re.findall(r"```bash\n(.*?)```", skill, re.DOTALL)
-    candidates = [block for block in blocks if "release-waived-${CSID}" in block and "GATHER_FILE=" in block]
+    blocks = _delegated_then_inline_blocks()
+    candidates = [block for block in blocks if "release-waived-${CSID}" in block and "mktemp" in block]
     assert len(candidates) == 2
     script = candidates[0 if setup == "delegated" else 1]
     environment = os.environ.copy()
@@ -255,9 +307,8 @@ def test_waiver_ledger_is_unique_per_same_day_invocation(tmp_path: Path, setup: 
 @pytest.mark.parametrize("setup", ["delegated", "inline"])
 def test_waiver_ledger_uses_current_session_in_fresh_shell(tmp_path: Path, setup: str) -> None:
     """A release ledger sentinel must never be written under an empty session ID."""
-    skill = (_RELEASE / "SKILL.md").read_text(encoding="utf-8")
-    blocks = re.findall(r"```bash\n(.*?)```", skill, re.DOTALL)
-    script = [block for block in blocks if "release-waived-${CSID}" in block and "GATHER_FILE=" in block][
+    blocks = _delegated_then_inline_blocks()
+    script = [block for block in blocks if "release-waived-${CSID}" in block and "mktemp" in block][
         0 if setup == "delegated" else 1
     ]
     environment = os.environ.copy()
@@ -280,11 +331,7 @@ def test_waiver_ledger_uses_current_session_in_fresh_shell(tmp_path: Path, setup
 def test_python_probe_rejects_private_method_outside_claimed_public_module(tmp_path: Path, relative_path: str) -> None:
     """An unrelated private method cannot establish a public binding at the prior tag."""
     instructions = (_RELEASE / relative_path).read_text(encoding="utf-8")
-    probe = next(
-        block
-        for block in re.findall(r"```bash\n(.*?)```", instructions, re.DOTALL)
-        if 'python - "$REF" "$SYMBOL"' in block
-    )
+    probe = _probe_block(instructions)
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, capture_output=True)
     (tmp_path / "private.py").write_text(
         "class Hidden:\n    def Legacy(self):\n        pass\n", encoding="utf-8", newline="\n"
@@ -301,6 +348,7 @@ def test_python_probe_rejects_private_method_outside_claimed_public_module(tmp_p
     completed = subprocess.run(
         [shutil.which("bash"), "-c", "REF=v1; SYMBOL=Legacy; PUBLIC_PATH=public.py; " + probe],
         cwd=tmp_path,
+        env=_PROBE_ENV,
         capture_output=True,
         text=True,
         check=False,
@@ -310,6 +358,7 @@ def test_python_probe_rejects_private_method_outside_claimed_public_module(tmp_p
     without_path = subprocess.run(
         [shutil.which("bash"), "-c", "REF=v1; SYMBOL=Legacy; PUBLIC_PATH=''; " + probe],
         cwd=tmp_path,
+        env=_PROBE_ENV,
         capture_output=True,
         text=True,
         check=False,
@@ -553,7 +602,7 @@ def test_empty_ledger_with_reported_waiver_stops_before_output(tmp_path: Path) -
 @_skip_shell_unavailable
 def test_delegated_count_disagreement_stops_before_artifact_phase(tmp_path: Path) -> None:
     """A gather envelope cannot advance with fewer ledger entries than waivers."""
-    instructions = (_RELEASE / "SKILL.md").read_text(encoding="utf-8")
+    instructions = _delegation_text()
     script = next(
         block
         for block in re.findall(r"```bash\n(.*?)```", instructions, re.DOTALL)
@@ -590,8 +639,7 @@ def test_gather_envelope_breaking_count_matches_ledger_before_artifacts(
     tmp_path: Path, breaking_value: int | str | None, ledger_line: str, expected_success: bool
 ) -> None:
     """The delegated breaking approval count must come from typed, item-backed evidence."""
-    skill = (_RELEASE / "SKILL.md").read_text(encoding="utf-8")
-    blocks = re.findall(r"```bash\n(.*?)```", skill, re.DOTALL)
+    blocks = re.findall(r"```bash\n(.*?)```", _delegation_text(), re.DOTALL)
     validate = next(block for block in blocks if "delegation validation failed" in block)
     reconcile = next(block for block in blocks if "gather waiver count disagrees" in block)
     (tmp_path / "gather.md").write_text("gathered\n", encoding="utf-8", newline="\n")
@@ -626,8 +674,7 @@ def test_gather_envelope_breaking_count_matches_ledger_before_artifacts(
 )
 def test_gather_envelope_missing_total_waiver_count_fails_closed(tmp_path: Path, total_count: int | str | None) -> None:
     """A missing or invalid total count cannot match an empty ledger."""
-    skill = (_RELEASE / "SKILL.md").read_text(encoding="utf-8")
-    blocks = re.findall(r"```bash\n(.*?)```", skill, re.DOTALL)
+    blocks = re.findall(r"```bash\n(.*?)```", _delegation_text(), re.DOTALL)
     validate = next(block for block in blocks if "delegation validation failed" in block)
     reconcile = next(block for block in blocks if "gather waiver count disagrees" in block)
     (tmp_path / "gather.md").write_text("gathered\n", encoding="utf-8", newline="\n")

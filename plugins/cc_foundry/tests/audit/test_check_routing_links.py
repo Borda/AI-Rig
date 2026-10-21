@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -13,6 +15,7 @@ from check_routing_links import (
     R2Finding,
     R3Finding,
     Severity,
+    _project_root,
     _resolve_computed_abs,
     _resolve_computed_rel,
     extract_bin_refs,
@@ -28,6 +31,15 @@ from check_routing_links import (
 )
 
 _HAS_PROJECT_PLUGIN_TREE = (Path(__file__).resolve().parent.parent.parent.parent / "cc_foundry").is_dir()
+
+_skip_git_unavailable = pytest.mark.skipif(shutil.which("git") is None, reason="git not installed")
+
+
+def _init_repo(path: Path) -> Path:
+    """Create ``path`` as an empty git repository and return it."""
+    path.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(path)], check=True)
+    return path
 
 
 # ---------------------------------------------------------------------------
@@ -677,6 +689,54 @@ class TestMain:
         assert exit_code == 0
         captured = capsys.readouterr()
         assert "✓" in captured.out
+
+    @_skip_git_unavailable
+    def test_plugins_dir_in_another_git_repo_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+    ) -> None:
+        """A --plugins-dir that lives in a different git repository than the cwd is outside the project root.
+
+        The root used to be derived from --plugins-dir itself, so any directory inside some repository counted as
+        contained by that repository's own root and the guard never fired; it must be measured from the cwd.
+        """
+        project = _init_repo(tmp_path / "project")
+        other_plugins = _init_repo(tmp_path / "other") / "plugins"
+        other_plugins.mkdir()
+        monkeypatch.chdir(project)
+        exit_code = main(["--plugins-dir", str(other_plugins)])
+        assert exit_code == 2
+        assert "SECURITY" in capsys.readouterr().err
+
+    @_skip_git_unavailable
+    def test_plugins_dir_in_project_subdirectory_is_accepted(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+    ) -> None:
+        """Running from a subdirectory still accepts a --plugins-dir that sits under the repository root.
+
+        The guard measures against the git top-level of the cwd rather than the cwd itself, so ``../plugins`` from a
+        subdirectory of the project stays valid.
+        """
+        project = _init_repo(tmp_path / "project")
+        (project / "plugins").mkdir()
+        (project / "sub").mkdir()
+        cache_dir = tmp_path / "cache"
+        cache_dir.mkdir()
+        monkeypatch.chdir(project / "sub")
+        exit_code = main(["--plugins-dir", str(project / "plugins"), "--cache-dir", str(cache_dir)])
+        assert exit_code == 0
+        assert "SECURITY" not in capsys.readouterr().err
+
+    def test_project_root_falls_back_to_cwd_when_git_is_missing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A missing git binary degrades the root to the current directory instead of crashing the check."""
+
+        def _no_git(*_args: object, **_kwargs: object) -> None:
+            raise FileNotFoundError("git")
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr("check_routing_links.subprocess.run", _no_git)
+        assert _project_root(30) == tmp_path.resolve()
 
     @pytest.mark.skipif(not _HAS_PROJECT_PLUGIN_TREE, reason="requires project-root plugins/ tree")
     def test_real_plugins_dir_no_crash(self) -> None:

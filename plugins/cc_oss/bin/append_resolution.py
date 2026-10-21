@@ -56,7 +56,7 @@ VERDICT_BY_RESOLUTION: Final = {
     "unverified": "unverified",
     "already-fixed": "already-fixed",
 }
-#: challenge-log.txt producer format (action-item-dispatch.md append block): fixed key order, free text only in the
+#: challenge-log.txt producer format (dispatch-prelude.md append block): fixed key order, free text only in the
 #: last four fields — anchoring on the known keys keeps a reviewer's quoted ``x=1`` from splitting a field.
 _LOG_LINE_RE: Final = re.compile(
     r"^id=(?P<id>\d+) resolution=(?P<resolution>\S+) evidence=(?P<evidence>\S+) suggestion=(?P<suggestion>\S+)"

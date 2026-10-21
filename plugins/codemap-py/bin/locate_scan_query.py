@@ -2,9 +2,9 @@
 """locate_scan_query.py — resolve the scan-query executable via three-tier fallback.
 
 Tiers (first hit wins):
-    1. ``scan-query`` on PATH (``shutil.which``)
+    1. ``scan-query`` on PATH (``shutil.which``), absolute hits only
     2. ``${CLAUDE_PLUGIN_ROOT}/bin/scan-query``
-    3. ``~/.claude/plugins/cache/*/codemap/*/bin/scan-query`` (newest semver)
+    3. ``~/.claude/plugins/cache/borda-ai-rig/codemap-py/*/bin/scan-query`` (newest semver)
 
 Usage:
     locate_scan_query.py
@@ -26,6 +26,11 @@ import re
 import shutil
 import sys
 from pathlib import Path
+
+#: Marketplace and plugin directory names under ``~/.claude/plugins/cache`` that tier 3 trusts; globbing every
+#: marketplace would accept an executable from any plugin that merely ships a matching directory name.
+_CACHE_MARKETPLACE = "borda-ai-rig"
+_CACHE_PLUGIN = "codemap-py"
 
 
 def _find_executable(path: Path) -> Path | None:
@@ -51,7 +56,7 @@ def _find_executable(path: Path) -> Path | None:
 def _version_key(path: Path) -> list[int]:
     """Extract semver digits from the version directory in *path* for sorting.
 
-    Expects a path segment like ``…/codemap/<version>/bin/…`` and returns
+    Expects a path segment like ``…/codemap-py/<version>/bin/…`` and returns
     the numeric components of ``<version>`` so ``max()`` picks the newest.
 
     Args:
@@ -77,9 +82,10 @@ def locate_scan_query() -> Path:
     Raises:
         FileNotFoundError: When no tier locates an executable.
     """
-    # Tier 1 — PATH
+    # Tier 1 — PATH. A relative hit comes from a relative PATH entry (".", "") and so depends on the
+    # working directory, which may be an untrusted checkout; skip it and fall through to the pinned tiers.
     found = shutil.which("scan-query")
-    if found and os.access(found, os.X_OK):
+    if found and os.path.isabs(found) and os.access(found, os.X_OK):
         return Path(found)
 
     # Tier 2 — canonicalized CLAUDE_PLUGIN_ROOT, which guards against symlink and relative-path tricks.
@@ -97,13 +103,15 @@ def locate_scan_query() -> Path:
             except OSError:
                 pass  # unresolvable candidate (broken symlink, permission error) — skip to Tier 3
 
-    # Tier 3 — cache glob, newest semver
+    # Tier 3 — pinned marketplace/plugin cache glob, newest semver
     # Apply the same containment guard as Tier 2: reject a cache symlink that escapes
-    # cache_base rather than trusting the glob match alone.
-    cache_base = Path.home() / ".claude" / "plugins" / "cache"
-    glob_hits = list(cache_base.glob("*/codemap/*/bin/scan-query"))
+    # cache_base rather than trusting the glob match alone. cache_base is resolved so a
+    # symlinked ~/.claude does not make every candidate look like an escape.
+    cache_base = (Path.home() / ".claude" / "plugins" / "cache").resolve()
+    plugin_cache = cache_base / _CACHE_MARKETPLACE / _CACHE_PLUGIN
+    glob_hits = list(plugin_cache.glob("*/bin/scan-query"))
     if sys.platform == "win32":
-        glob_hits += list(cache_base.glob("*/codemap/*/bin/scan-query.exe"))
+        glob_hits += list(plugin_cache.glob("*/bin/scan-query.exe"))
     candidates = []
     for hit in glob_hits:
         found = _find_executable(hit)
@@ -117,7 +125,7 @@ def locate_scan_query() -> Path:
     if candidates:
         return max(candidates, key=_version_key)
 
-    raise FileNotFoundError("scan-query binary not found (PATH, CLAUDE_PLUGIN_ROOT, cache glob all empty)")
+    raise FileNotFoundError("scan-query binary not found (PATH, CLAUDE_PLUGIN_ROOT, plugin cache all empty)")
 
 
 def main(argv: list[str] | None = None) -> int:

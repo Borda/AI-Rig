@@ -9,10 +9,22 @@ Argparse is deliberately not used: `preserve` and `next` routinely begin with a 
 carry flag-like text, which argparse would read as options. `-h`/`--help` is handled
 explicitly instead, so the bin/ help contract still holds.
 
-Usage: python write_skill_contract.py <skill> <phase> <run-dir> <preserve> <next>
-       python write_skill_contract.py <skill> <phase> <run-dir> <preserve> <next> <label> <items>
+Usage: python write_skill_contract.py [KEEP] <skill> <phase> <run-dir> <preserve> <next>
+       python write_skill_contract.py [KEEP] <skill> <phase> <run-dir> <preserve> <next> <label> <items>
+       KEEP is `--keep-sentinel <name>` or `--keep-file <path>`, never both.
        Either form may end with -- calls_ahead=<N> drop=<text> interactive=false
   Metadata keys are optional, unique, and accepted only after a literal `--`; N is a non-negative integer.
+  KEEP is accepted only as the leading option pair, so a `preserve` or `next` value that happens to look
+  like a flag is never taken for one. Either option reads the first line of one keep file and, when that
+  line is non-empty, appends `; user-keep: <line>` to `preserve` — the same text callers used to assemble in bash with
+  `IFS= read -r _KEEP < …; [ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"`. A missing
+  or unreadable file appends nothing, matching the `|| _KEEP=""` default of that idiom.
+  `--keep-sentinel <name>` names the flat session sentinel `${TMPDIR}/<name>-${CSID}` (TMPDIR falls back
+  to the platform temp dir, CSID to CLAUDE_CODE_SESSION_ID, then "shared"); `<name>` is a bare file-name
+  stem (letters, digits, `.`, `_`, `-`), never a path.
+  `--keep-file <path>` names the file itself, for keep items that live inside a per-session state
+  directory (`${TMPDIR}/<skill>-state-${CSID}/keep-items`) a flat name cannot address; the caller's
+  shell expands the path, a relative one resolves against the working directory.
   Callers keep their own sentinel reads: the `${_OUT}`-style values must expand in the
   caller's shell, while `<REFINE_ITER>`-style placeholders are literal fill-in tokens the
   orchestrator substitutes as prose. Both survive as-is through a double-quoted argument.
@@ -21,6 +33,8 @@ Usage: python write_skill_contract.py <skill> <phase> <run-dir> <preserve> <next
   ("skip any candidate marked refuted/ruled-out above"); without it, a post-compaction
   resume is told to consult a list that was never written, and re-probes what it ruled out.
   An empty `<items>` omits the block, so a caller need not branch.
+  Every other positional value must be a single line: a line break inside `preserve` or `next` could
+  forge a top-level `- next:` / `- run-dir:` line in the owner-stamped contract, so it exits 2.
 Exit codes: 0 = written · 1 = contract file unwritable · 2 = invalid arguments or metadata
 """
 
@@ -43,10 +57,112 @@ _OWNER = _CONTRACT.with_suffix(".owner")
 
 #: Argument synopsis printed for -h or --help: the five-argument form and the seven-argument form with label and items.
 _USAGE = (
-    "usage: write_skill_contract.py <skill> <phase> <run-dir> <preserve> <next>\n"
-    "       write_skill_contract.py <skill> <phase> <run-dir> <preserve> <next> <label> <items>\n"
+    "usage: write_skill_contract.py [--keep-sentinel <name> | --keep-file <path>] <skill> <phase> <run-dir> <preserve> <next>\n"
+    "       write_skill_contract.py [--keep-sentinel <name> | --keep-file <path>] <skill> <phase> <run-dir> <preserve> <next> <label> <items>\n"
     "       Either form: [-- calls_ahead=<non-negative int> drop=<text> interactive=false]"
 )
+
+#: Leading option naming the flat session sentinel that holds the user's `--keep` items.
+_KEEP_SENTINEL_FLAG = "--keep-sentinel"
+
+#: Leading option naming the file that holds the user's `--keep` items, wherever it lives.
+_KEEP_FILE_FLAG = "--keep-file"
+_KEEP_FLAGS = (_KEEP_SENTINEL_FLAG, _KEEP_FILE_FLAG)
+
+#: A sentinel name is a bare file-name stem; anything path-like could read outside the temp dir.
+_SENTINEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+
+
+def _sentinel_path(name: str) -> Path:
+    """Return the session-scoped sentinel file ``${TMPDIR}/<name>-${CSID}``.
+
+    Callers export CSID before invoking this script, so the child process sees the same token the shell used to
+    write the sentinel.
+
+    Examples:
+        >>> _sentinel_path("fix-keep-items").name.startswith("fix-keep-items-")
+        True
+    """
+    tmp_root = os.environ.get("TMPDIR") or tempfile.gettempdir()
+    csid = os.environ.get("CSID") or os.environ.get("CLAUDE_CODE_SESSION_ID") or "shared"
+    return Path(tmp_root) / f"{name}-{csid}"
+
+
+def _split_keep_option(args: list[str]) -> tuple[list[str], Path | None]:
+    """Take a leading ``--keep-sentinel <name>`` or ``--keep-file <path>`` pair off the argument list.
+
+    Only the very first position is inspected: ``<skill>`` never starts with a dash, while
+    ``preserve`` and ``next`` legitimately may, so scanning further would misread them. For the same
+    reason a second keep option right after the first is an error, never a skill name.
+
+    Examples:
+        >>> rest, keep_path = _split_keep_option(["--keep-file", "state/keep-items", "develop:fix"])
+        >>> rest, keep_path.name
+        (['develop:fix'], 'keep-items')
+        >>> _split_keep_option(["develop:fix", "--keep-file", "x"])
+        (['develop:fix', '--keep-file', 'x'], None)
+    """
+    if not args or args[0] not in _KEEP_FLAGS:
+        return args, None
+    flag = args[0]
+    if len(args) < 2:
+        raise ValueError(f"{flag} requires a value")
+    if flag == _KEEP_SENTINEL_FLAG:
+        if _SENTINEL_NAME.fullmatch(args[1]) is None:
+            raise ValueError(f"{flag} requires a bare sentinel name (letters, digits, '.', '_', '-')")
+        keep_path = _sentinel_path(args[1])
+    else:
+        if not args[1]:
+            raise ValueError(f"{flag} requires a non-empty path")
+        keep_path = Path(args[1])
+    rest = args[2:]
+    if rest and rest[0] in _KEEP_FLAGS:
+        raise ValueError(f"{_KEEP_SENTINEL_FLAG} and {_KEEP_FILE_FLAG} are alternatives; pass one")
+    return rest, keep_path
+
+
+def _read_keep_items(path: Path) -> str:
+    """Return the first line of the keep file, or an empty string when it is absent.
+
+    Mirrors the shell read-back ``IFS= read -r _KEEP < "<file>" || _KEEP=""``: the first newline-terminated
+    line, surrounding whitespace kept. A missing, unreadable or newline-less file is no keep items, as there
+    (``read`` exits non-zero at end of file without a newline and the idiom's default empties the value);
+    ``extract-keep-flag.py`` always writes the trailing newline. Two deliberate differences, both for the
+    contract rather than for fidelity:
+
+    - One trailing CR is dropped, so a file written with CRLF line endings on Windows does not carry a stray
+      carriage return into the contract.
+    - The line is cut at its first ``str.splitlines()`` separator (bare CR, VT, FF, FS, GS, RS, NEL, U+2028,
+      U+2029), where ``read -r`` would keep them. ``_multiline_field`` treats each of those as a line break, and
+      this value joins ``preserve`` after that check, so an uncut separator could forge a top-level ``- next:``
+      line in the owner-stamped contract.
+    """
+    try:
+        # bytes, not read_text: text mode translates a bare CR to a newline and would hide the no-newline case
+        text = path.read_bytes().decode("utf-8", errors="replace")
+    except OSError:
+        return ""
+    line, newline, _ = text.partition("\n")
+    if not newline:
+        return ""
+    lines = line.removesuffix("\r").splitlines()
+    return lines[0] if lines else ""
+
+
+def _multiline_field(fields: dict[str, str]) -> str | None:
+    """Name the first field holding a line break, or ``None`` when every field is a single line.
+
+    Any ``str.splitlines()`` separator counts (incl. U+2028, U+0085), as for metadata values: a break inside
+    ``preserve`` or ``next`` could forge a top-level ``- next:`` or ``- run-dir:`` line in the owner-stamped,
+    authoritative contract.
+
+    Examples:
+        >>> _multiline_field({"next": "go\\n- run-dir: /elsewhere"})
+        'next'
+        >>> _multiline_field({"next": "go", "phase": ""}) is None
+        True
+    """
+    return next((name for name, value in fields.items() if "".join(value.splitlines()) != value), None)
 
 
 def _parse_metadata(args: list[str]) -> tuple[list[str], str]:
@@ -134,6 +250,7 @@ def main(argv: list[str] | None = None) -> int:
         sys.exit(0)
 
     try:
+        args, keep_path = _split_keep_option(args)
         args, metadata = _parse_metadata(args)
         if any(line.strip() == "- gate-metadata:" for arg in args for line in arg.splitlines()):
             raise ValueError("gate-metadata is a reserved line")
@@ -154,6 +271,16 @@ def main(argv: list[str] | None = None) -> int:
     if not skill:
         print("write_skill_contract: <skill> must not be empty", file=sys.stderr)
         return 2
+    # <items> is the one multi-line argument; each of its lines is rendered indented under `- <label>:`.
+    offender = _multiline_field(
+        {"skill": skill, "phase": phase, "run-dir": run_dir, "preserve": preserve, "next": next_step, "label": label}
+    )
+    if offender:
+        print(f"write_skill_contract: <{offender}> must be a single line", file=sys.stderr)
+        return 2
+    keep_items = _read_keep_items(keep_path) if keep_path else ""
+    if keep_items:
+        preserve = f"{preserve}; user-keep: {keep_items}"
 
     contract = (
         "## Active Skill Contract\n"

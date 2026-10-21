@@ -4,7 +4,7 @@
 
 Loaded once at J3 start via `cat "$_RESEARCH_SHARED/judge-j3-prompts.md"`; supplies both templates. Expand `${PROGRAM_PATH}` and `${RUN_DIR}` to concrete values before passing to `Agent(...)` — see substitution requirement, judge/SKILL.md. When the complexity gate fires, both templates go into ONE merged `research:scientist` spawn (arch first, then sci, separated by `---`) — per-dimension output files and Confidence blocks stay exactly as each template specifies. Assembling that merged prompt has one easy-to-miss rule: drop each template's own `Return ONLY:` line, close with the combined array instruction in § Merged spawn — envelope override below.
 
-## J3_ARCH_PROMPT (foundry:solution-architect)
+## J3_ARCH_PROMPT (methodology dimension — spawned on research:scientist)
 
 ```markdown
 Act as a research supervisor reviewing a PhD student's experimental protocol.

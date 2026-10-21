@@ -1,0 +1,1 @@
+**Agent 5 — foundry:linting-expert** (dimension covered by the Agent 4 merged spawn — see §Merged spawn units): Static analysis audit. Check ruff and mypy pass. Type annotation gaps on public APIs, suppressed violations without explanation, missing pre-commit hooks. Flag mismatched target Python version. Findings to `$RUN_DIR/linting-expert.md`.

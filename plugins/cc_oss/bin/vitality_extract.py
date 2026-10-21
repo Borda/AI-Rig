@@ -145,11 +145,11 @@ _INSTALL_RE = re.compile(r"install|pip install|npm install|cargo add|brew instal
 #: Axis 6 checkpoint 3 — README usage section.
 _USAGE_RE = re.compile(r"usage|quickstart|getting started|example", re.IGNORECASE)
 #: Axis 6 checkpoint 7 — CONTRIBUTING dev setup.
-_DEV_SETUP_RE = re.compile(r"setup|local.*install|dev.*env|getting started", re.IGNORECASE)
+_DEV_SETUP_RE = re.compile(r"setup|local.{0,120}install|dev.{0,120}env|getting started", re.IGNORECASE)
 #: Axis 6 checkpoint 8 — CONTRIBUTING PR/review process.
-_PR_PROCESS_RE = re.compile(r"pull.request|review.*process|merge.*process|workflow", re.IGNORECASE)
+_PR_PROCESS_RE = re.compile(r"pull.request|review.{0,120}process|merge.{0,120}process|workflow", re.IGNORECASE)
 #: Axis 6 checkpoint 9 — CONTRIBUTING code style or lint guidance.
-_STYLE_RE = re.compile(r"code.*style|lint|format|coding.*standard|ruff|mypy|eslint|prettier", re.IGNORECASE)
+_STYLE_RE = re.compile(r"code.{0,120}style|lint|format|coding.{0,120}standard|ruff|mypy|eslint|prettier", re.IGNORECASE)
 #: Axis 2 abandonment — subjects that name the repository itself. "this package/module/tool/plugin ..." stays out: a
 #: README uses those words for sub-components ("foo.bar: this module is deprecated, use foo.baz").
 _ABANDON_SUBJECT = r"(?:project|repo|repository|library|fork)"
@@ -2671,6 +2671,10 @@ def extract(records: dict[str, dict[str, Any]], group: AxisGroup, analysis_now: 
     }
 
 
+#: Upper bound on DATA_FILE size in characters; the README and workflow texts it carries are repository-controlled.
+_MAX_DATA_FILE_CHARS = 64 * 1024 * 1024
+
+
 def main(argv: list[str] | None = None) -> int:
     """Print the compact per-axis extraction for one group.
 
@@ -2678,7 +2682,7 @@ def main(argv: list[str] | None = None) -> int:
         argv: Argument list (defaults to ``sys.argv[1:]``).
 
     Returns:
-        ``0`` on success; ``1`` when DATA_FILE cannot be read.
+        ``0`` on success; ``1`` when DATA_FILE cannot be read or exceeds the size cap.
     """
     parser = argparse.ArgumentParser(
         prog="vitality_extract.py",
@@ -2693,9 +2697,15 @@ def main(argv: list[str] | None = None) -> int:
     sys.stdout.reconfigure(encoding="utf-8", newline="\n")  # type: ignore[union-attr]
     try:
         with open(args.data_file, encoding="utf-8") as handle:
-            text = handle.read()
+            text = handle.read(_MAX_DATA_FILE_CHARS + 1)
     except OSError as exc:
         print(f"[vitality_extract] ERROR: cannot read DATA_FILE {args.data_file}: {exc}", file=sys.stderr)
+        return 1
+    if len(text) > _MAX_DATA_FILE_CHARS:
+        print(
+            f"[vitality_extract] ERROR: DATA_FILE {args.data_file} exceeds {_MAX_DATA_FILE_CHARS} characters",
+            file=sys.stderr,
+        )
         return 1
     result = extract(load_records(text), AxisGroup(args.group), args.analysis_now)
     print(json.dumps(result, ensure_ascii=False, separators=(",", ":")))

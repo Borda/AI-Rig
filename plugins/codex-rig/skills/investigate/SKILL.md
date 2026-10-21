@@ -42,7 +42,7 @@ Write `<run-directory>/symptom.md` with:
 
 ### 03: Gather signals before forming hypotheses
 
-Run `git log --oneline -10` and `python --version` as separate argv commands. Write their complete outputs to `<run-directory>/recent-commits.txt` and `<run-directory>/python-version.txt`; record either collection failure, never treat empty file as successful evidence.
+Run `git log --oneline -10` and `python --version` as separate argv commands. Write their complete outputs to `<run-directory>/recent-commits.txt` and `<run-directory>/python-version.txt`; record either collection failure, never treat empty file as successful evidence. PATH `python` may differ from the interpreter the failing command uses (project environment, launcher, explicit path): when it does, also run `<that-interpreter> --version` and append its path and output to `python-version.txt` as a separately labelled entry.
 
 Inspect `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/collect_diff.py --help`, collect `working-tree` scope into `<run-directory>/baseline`; record collection failure, never treat as empty diff.
 
@@ -134,8 +134,8 @@ Follow `../../shared/helper-cli-contract.md` and authoritative help. Write with 
 
 Required checks:
 
-- `review`: hypothesis table, probe outcomes, rejected alternatives, and `git diff --check`.
-- `artifact`: shared validator confirms investigation artifacts, gate logs, and result JSON shape.
+- `review`: hypothesis table, probe outcomes, rejected alternatives, and `git diff --check -- <run-owned paths>` limited to files this run edited or generated, so unrelated caller edits never decide the result; with no such paths, record that absence.
+- `artifact`: shared validator confirms investigation artifact files and required section-name presence (not section content), gate logs, and result JSON shape; `review` owns content checks.
 
 Conditional checks:
 

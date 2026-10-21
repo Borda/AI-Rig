@@ -4,7 +4,6 @@ description: "Post-install setup for the develop plugin. Run once after installi
 argument-hint: '[--approve]'
 allowed-tools: Bash, AskUserQuestion
 effort: low
-model: sonnet
 ---
 
 <objective>
@@ -21,11 +20,7 @@ Deliver develop's rules to Claude's user-level rule namespace, and its own permi
 | `.claude-plugin/permissions-{allow,deny}.json` → `~/.claude/settings.json` | merged additively except for the exact obsolete repository API rule |
 | Any other key of `~/.claude/settings.json` | never touched |
 
-**Why namespaced?** Claude loads user rules from one flat directory. Four plugins ship a `rules/quality-gates.md`; installing source basenames would collide. Every rule installs as `<plugin>-<source-name>.md` — `quality-gates.md` becomes `develop-quality-gates.md`. Prefix is inert — verified against Claude Code 2.1.220: a filename prefix changes neither unconditional loading nor `paths:` frontmatter matching.
-
-**Why symlink, not copy?** Rules load at session start. A symlink serves the installed version after every upgrade; a copy silently serves stale content forever.
-
-**Why does develop deliver only its own rules?** Each plugin installs independently. A plugin shipping a sibling's rules would break standalone installation, couple releases. Still true with the delta variant: `develop-quality-gates.md` links either `rules/quality-gates-delta.md` (when a foundry-owned `foundry-quality-gates.md` is already delivered) or the complete `rules/quality-gates.md` (when it is not) — both sources belong to this plugin, and the delta only *points* at foundry's copy for the shared obligations rather than delivering it. Standalone install loses no rule; all four `quality-gates.md` copies loading at once was 51,274 B of context on every turn.
+Every rule installs as `<plugin>-<source-name>.md` — `quality-gates.md` becomes `develop-quality-gates.md`, linking either `rules/quality-gates-delta.md` (when a foundry-owned `foundry-quality-gates.md` is already delivered) or the complete `rules/quality-gates.md` (when it is not); both sources belong to this plugin. The form is chosen on each run, so re-run `/develop:setup` after foundry's rules are delivered or removed — the owned link then switches form. Rationale (namespacing, symlink over copy, own-rules-only delivery, delta variant): README §`/develop:setup`.
 
 NOT for: statusLine, `TEAM_PROTOCOL.md`, or plugin-cache purging — those are `/foundry:setup` (requires `foundry` plugin). Of `~/.claude/settings.json` only the `permissions.allow` and `permissions.deny` arrays are touched, additively except for removing the exact obsolete `Bash(gh api repos/*:*)` rule. Writes nothing under `~/.codex/`.
 
@@ -47,17 +42,9 @@ Parse `$ARGUMENTS` for `--approve` (case-insensitive) → `APPROVE_ALL=true`, el
 ## Step 1: Python
 
 ```bash
-PYTHON_CMD=""
-for c in python python3; do
-    command -v "$c" >/dev/null 2>&1 && "$c" --version 2>/dev/null | grep -qE "Python 3\.(1[0-9]|[2-9][0-9])" && PYTHON_CMD="$c" && break
-done
-if [ -z "$PYTHON_CMD" ] && command -v py >/dev/null 2>&1 && py -3 --version 2>/dev/null | grep -qE "Python 3\.(1[0-9]|[2-9][0-9])"; then
-    PYTHON_CMD="py -3"
-fi
-[ -z "$PYTHON_CMD" ] && { printf "! Python 3.10+ not found — install it and re-run /develop:setup\n"; exit 1; }
-printf "  Python: %s\n" "$PYTHON_CMD"
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-echo "$PYTHON_CMD" > "${TMPDIR:-/tmp}/develop-setup-python-${CSID}"
+# later steps run bare `python` (plugin bin/python shim on PATH) — probe that exact command
+python --version 2>&1 | grep -qE "Python 3\.(1[0-9]|[2-9][0-9])" || { printf "! Python 3.10+ not found as 'python' — install it and re-run /develop:setup\n"; exit 1; }
+printf "  Python: %s\n" "$(python --version 2>&1)"
 ```
 
 ## Step 2: Dry run — see what would change
@@ -65,10 +52,8 @@ echo "$PYTHON_CMD" > "${TMPDIR:-/tmp}/develop-setup-python-${CSID}"
 `$CLAUDE_PLUGIN_ROOT` is the installed plugin version. `sync_rules.py` re-validates it (manifest exists, parses, declares `develop`; `rules/` is a real directory holding ≥1 non-empty regular `*.md`) and aborts before touching anything on any check failure.
 
 ```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r PYTHON_CMD < "${TMPDIR:-/tmp}/develop-setup-python-${CSID}" 2>/dev/null || PYTHON_CMD=python
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}"
-$PYTHON_CMD "$PLUGIN_ROOT/bin/sync_rules.py" --plugin-name develop --plugin-root "$PLUGIN_ROOT" --dry-run  # timeout: 15000
+python "$PLUGIN_ROOT/bin/sync_rules.py" --plugin-name develop --plugin-root "$PLUGIN_ROOT" --dry-run  # timeout: 15000
 ```
 
 Non-zero exit → print stderr verbatim and stop; nothing was modified.
@@ -78,10 +63,8 @@ Non-zero exit → print stderr verbatim and stop; nothing was modified.
 Run without `--dry-run`. Add `--approve` only when `APPROVE_ALL=true`:
 
 ```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r PYTHON_CMD < "${TMPDIR:-/tmp}/develop-setup-python-${CSID}" 2>/dev/null || PYTHON_CMD=python
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}"
-$PYTHON_CMD "$PLUGIN_ROOT/bin/sync_rules.py" --plugin-name develop --plugin-root "$PLUGIN_ROOT"  # timeout: 15000
+python "$PLUGIN_ROOT/bin/sync_rules.py" --plugin-name develop --plugin-root "$PLUGIN_ROOT"  # timeout: 15000
 ```
 
 Output lines, one per destination: `linked:` · `unchanged:` · `replaced (--approve):` · `removed obsolete:` · `conflict, kept as-is:` · `FAILED:`.
@@ -106,7 +89,7 @@ On **(b)**, re-run Step 3's command with `--approve` appended and report the res
 
 This plugin ships its own `permissions-allow.json` and `permissions-deny.json`. Claude Code doesn't read them from the plugin manifest, so without this step they're inert files — allow entries never suppress a prompt, deny entries never block anything.
 
-Merge is idempotent: `unique` keeps existing entries from duplicating. Each plugin merges only its own pair; the allow merge removes the exact obsolete repository API rule and preserves every other entry.
+Merge is idempotent: existing entries never duplicate. Each plugin merges only its own pair; the allow merge removes the exact obsolete repository API rule and preserves every other entry.
 
 Create the file on first install, back it up before any write — a standalone install may reach this step with no `~/.claude/settings.json` at all:
 
@@ -122,45 +105,19 @@ Report: "Backed up ~/.claude/settings.json → ~/.claude/settings.json.bak-<time
 
 Before merging, remove only the obsolete `Bash(gh api repos/*:*)` entry; no broad repository API allow is added. Preserve every other user allow entry, all deny entries, and unrelated settings, including existing repository API, GraphQL, branch and tag allows that foundry may also have installed.
 
-Writes merged `permissions.allow` array:
+Writes merged `permissions.allow` and `permissions.deny` arrays via `merge_settings_permissions.py` — one atomic write covers both arrays, so allow never lands without deny. A missing or invalid shipped file aborts the block with settings unchanged:
 
 ```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}"
-_jq_result=$(jq --slurpfile perms "$PLUGIN_ROOT/.claude-plugin/permissions-allow.json" \
-    '.permissions.allow = (((.permissions.allow // []) | map(select(. != "Bash(gh api repos/*:*)"))) + $perms[0] | unique)' \
-    ~/.claude/settings.json)  # timeout: 5000
-[ $? -eq 0 ] && [ -n "$_jq_result" ] && printf '%s\n' "$_jq_result" > "${TMPDIR:-/tmp}/develop_setup_tmp.json-${CSID}" && mv "${TMPDIR:-/tmp}/develop_setup_tmp.json-${CSID}" ~/.claude/settings.json || { printf "! jq failed merging permissions.allow — settings.json unchanged\n"; exit 1; }
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/merge_settings_permissions.py" --allow "$PLUGIN_ROOT/.claude-plugin/permissions-allow.json" --drop-allow 'Bash(gh api repos/*:*)' --drop-allow 'Bash(claude:*)' --drop-allow 'Bash(find:*)' --drop-allow 'Bash(node:*)' --drop-allow 'Bash(sed:*)' --deny "$PLUGIN_ROOT/.claude-plugin/permissions-deny.json" || { printf "! permissions merge failed — settings.json unchanged\n"; exit 1; }  # timeout: 5000
 ```
 
-Report: "Added N new permissions.allow entries (M already present)." Also report whether the exact obsolete repository API rule was removed.
-
-Writes merged `permissions.deny` array:
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}"
-_jq_result=$(jq --slurpfile deny "$PLUGIN_ROOT/.claude-plugin/permissions-deny.json" \
-    '.permissions.deny = ((.permissions.deny // []) + $deny[0] | unique)' \
-    ~/.claude/settings.json)  # timeout: 5000
-if [ $? -eq 0 ] && [ -n "$_jq_result" ]; then
-    printf '%s\n' "$_jq_result" > "${TMPDIR:-/tmp}/develop_setup_tmp.json-${CSID}" && mv "${TMPDIR:-/tmp}/develop_setup_tmp.json-${CSID}" ~/.claude/settings.json
-else
-    IFS= read -r SETUP_BAK_TS < "${TMPDIR:-/tmp}/develop-setup-bak-ts-${CSID}" 2>/dev/null || SETUP_BAK_TS=$(ls -t "$HOME/.claude/settings.json.bak-develop-"* 2>/dev/null | head -1 | sed 's/.*\.bak-develop-//')
-    cp "$HOME/.claude/settings.json.bak-develop-${SETUP_BAK_TS}" ~/.claude/settings.json  # timeout: 5000
-    printf "! jq failed merging permissions.deny — restored settings.json to pre-merge state (allow half also rolled back)\n"
-    exit 1
-fi
-```
-
-Report: "Added N new permissions.deny entries (M already present)."
-
-Deny wins over allow in Claude Code — merging both in either order yields the same effective policy.
+Writeback happens in-bash above (atomic rename). Report from the script's two output lines: "Added N new permissions.allow entries (M already present)." plus whether the exact obsolete repository API rule was removed (`dropped`), and "Added N new permissions.deny entries (M already present)."
 
 Validate what was written; settings.json that no longer parses is restored from the backup taken above:
 
 ```bash
-jq empty ~/.claude/settings.json  # timeout: 5000
+python -m json.tool ~/.claude/settings.json > /dev/null  # timeout: 5000 — Step 1 guarantees python; jq may be absent (native Windows), and its exit 127 would restore the backup over a good merge
 ```
 
 Zero exit → continue to Step 6. Non-zero exit → restore, report the failure, and stop:

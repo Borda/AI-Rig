@@ -40,47 +40,71 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import check_bridge
 import get_plugin_install_path
+from _sentinel_io import write_private_text
 
 _PREFLIGHT_TTL = 14400  # 4 hours in seconds
 #: Directory of per-check marker files recording preflight checks that already passed.
 _PREFLIGHT_DIR = Path(".temp/state/preflight")
 
 
-def _preflight_ok(name: str, state_dir: Path = _PREFLIGHT_DIR) -> bool:
+def _preflight_dir() -> Path:
+    """Locate the preflight cache directory, anchored at the repository root rather than the working directory.
+
+    Run from a subdirectory, a cwd-relative path would keep a second cache there that no other invocation reads or
+    clears. The walk looks for a ``.git`` entry (directory, or file in a linked worktree) and starts no subprocess.
+
+    Returns:
+        ``<repository root>/.temp/state/preflight``, or the same path under the working directory outside a repository.
+
+    Examples:
+        >>> _preflight_dir().parts[-3:]
+        ('.temp', 'state', 'preflight')
+    """
+    cwd = Path.cwd()
+    root = next((candidate for candidate in (cwd, *cwd.parents) if (candidate / ".git").exists()), cwd)
+    return root / _PREFLIGHT_DIR
+
+
+def _preflight_ok(name: str, state_dir: Path | None = None) -> bool:
     """Return True if ``name`` has a valid (non-expired) preflight cache entry.
 
     Args:
         name: Cache key (e.g. ``"gh"``, ``"bridge"``).
-        state_dir: Directory containing ``<name>.ok`` timestamp files.
+        state_dir: Directory containing ``<name>.ok`` timestamp files; defaults to :func:`_preflight_dir`.
 
     Returns:
-        ``True`` when the cache file exists and is within TTL.
+        ``True`` when the cache file is a regular file owned by the current user and its timestamp is within TTL.
+        A timestamp in the future is invalid: it would read as a negative age and pass for ever.
 
     Examples:
         >>> _preflight_ok("nonexistent_key_xyz")
         False
     """
-    cache_file = state_dir / f"{name}.ok"
-    if not cache_file.is_file():
+    cache_file = (state_dir or _preflight_dir()) / f"{name}.ok"
+    if cache_file.is_symlink() or not cache_file.is_file():
         return False
     try:
+        # the cache lives in the working tree, so a checked-out repository can ship its own marker
+        if hasattr(os, "getuid") and cache_file.stat().st_uid != os.getuid():
+            return False
         ts = int(cache_file.read_text(encoding="utf-8").strip())
         now = int(datetime.now(tz=timezone.utc).timestamp())
-        return (now - ts) < _PREFLIGHT_TTL
+        return 0 <= (now - ts) < _PREFLIGHT_TTL
     except (ValueError, OSError):
         return False
 
 
-def _preflight_pass(name: str, state_dir: Path = _PREFLIGHT_DIR) -> None:
+def _preflight_pass(name: str, state_dir: Path | None = None) -> None:
     """Write a fresh preflight cache entry for ``name``.
 
     Args:
         name: Cache key.
-        state_dir: Directory to write the ``<name>.ok`` file.
+        state_dir: Directory to write the ``<name>.ok`` file; defaults to :func:`_preflight_dir`.
 
     Examples:
         No doctest — filesystem side effects; covered by pytest.
     """
+    state_dir = state_dir or _preflight_dir()
     state_dir.mkdir(parents=True, exist_ok=True)
     (state_dir / f"{name}.ok").write_text(str(int(datetime.now(tz=timezone.utc).timestamp())), encoding="utf-8")
 
@@ -231,10 +255,8 @@ def _write_preflight_outputs(codex_available: bool) -> None:
     native = PureWindowsPath if sys.platform == "win32" else PurePosixPath
     env_tmpdir = os.environ.get("TMPDIR")
     tmpdir = Path(env_tmpdir if env_tmpdir and native(env_tmpdir).is_absolute() else tempfile.gettempdir())
-    (tmpdir / f"resolve-preflight-CODEX_AVAILABLE-{csid}").write_text(
-        f"{str(codex_available).lower()}\n", encoding="utf-8", newline="\n"
-    )
-    (tmpdir / f"resolve-preflight-GH_OK-{csid}").write_text("true\n", encoding="utf-8", newline="\n")
+    write_private_text(tmpdir / f"resolve-preflight-CODEX_AVAILABLE-{csid}", f"{str(codex_available).lower()}\n")
+    write_private_text(tmpdir / f"resolve-preflight-GH_OK-{csid}", "true\n")
 
 
 def main(argv: list[str] | None = None) -> int:

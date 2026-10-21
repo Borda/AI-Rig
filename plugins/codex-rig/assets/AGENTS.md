@@ -53,6 +53,8 @@ Apply this policy to every same or plausibly shared obstacle, incl. one appearin
 
 ## Coordination Discipline
 
+<!-- policy-sibling: plugins/cc_foundry/rules/communication.md §Progress and Transparency -->
+
 - Start every user-facing message with short plain-English explanation of outcome, situation, or requested action before technical details. This includes progress updates, questions, approval requests, errors, blockers, handoffs, and final answers. Keep later evidence precise; machine-only payloads and explicitly requested exact output formats stay unchanged.
 - Prefer structured terminal updates: one short introductory sentence, then concise bullets for parallel facts, numbered steps for ordered actions, and compact tables for comparisons. Show concrete counts and evidence links; separate completion status, verification, open work and next owner/action. Keep detailed explanations in the linked full report. Preserve exact-output contracts and native question ownership.
 - In new human-facing terminal tables, keep file paths out of every cell, including Evidence, Artifact, Surface, and cells mixing evidence with actions. Preserve surrounding prose, then list every path immediately below its table as `- <item>: <file-path>`, repeating the item for each path. Preserve paths and full evidence in machine records and linked reports. This display rule does not alter raw machine output, exact caller contracts, or explicitly historical renderings.

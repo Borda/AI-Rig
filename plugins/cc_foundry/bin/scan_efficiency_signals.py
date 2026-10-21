@@ -7,9 +7,12 @@ efficiency consolidator expects:
 ``Unbounded spawn patterns``
     An ``Agent(`` call inside a ``for``/``while`` with no batch guard nearby.
 ``Missing model declarations``
-    A skill or agent whose frontmatter has no ``model:`` line, so it inherits the
-    session model. There is no ``disable-model-invocation`` exemption: such a
-    skill is still user-invocable and still inherits.
+    ``NO_MODEL``: an agent, or a ``context: fork`` skill, whose frontmatter has no
+    ``model:`` line, so it inherits the session model. ``INLINE_MODEL``: a skill
+    without ``context: fork`` that declares ``model:``, which replaces the session
+    model for the rest of the turn and rewrites the cached prompt prefix; inline
+    skills are meant to run on the session model. There is no
+    ``disable-model-invocation`` exemption: such a skill is still user-invocable.
 ``Boilerplate duplication``
     File counts for three recurring inline patterns.
 ``Bin/ extraction candidates``
@@ -41,6 +44,8 @@ _LOOP = re.compile(r"^\s*(for|while)\b")
 _BATCH_GUARD = re.compile(r"BATCH_SIZE|EFFECTIVE_BATCH|head -n? ?\d+")
 #: Matches a ``model:`` line in agent frontmatter.
 _MODEL_FIELD = re.compile(r"^model:", re.MULTILINE)
+#: Matches a ``context: fork`` line in skill frontmatter: the skill runs in its own subagent context.
+_FORK_FIELD = re.compile(r"^context:\s*fork\s*$", re.MULTILINE)
 
 #: Section label → regex counted across files, for the two count-only sections.
 BOILERPLATE: dict[str, str] = {
@@ -83,10 +88,17 @@ def unbounded_spawns(path: Path, text: str) -> str | None:
 
 
 def missing_model(path: Path, text: str) -> str | None:
-    """Return a finding line when the file's frontmatter declares no model."""
-    if _MODEL_FIELD.search(frontmatter(text)):
-        return None
-    return f"NO_MODEL: {path.as_posix()}"
+    """Return a finding line when the file's model declaration is misplaced for its kind.
+
+    Agents and ``context: fork`` skills must declare a tier; inline skills (``SKILL.md`` without ``context: fork``) must
+    not, because their ``model:`` swaps the session model mid-conversation.
+    """
+    head = frontmatter(text)
+    declares = bool(_MODEL_FIELD.search(head))
+    inline_skill = path.name == "SKILL.md" and not _FORK_FIELD.search(head)
+    if inline_skill:
+        return f"INLINE_MODEL: {path.as_posix()}" if declares else None
+    return None if declares else f"NO_MODEL: {path.as_posix()}"
 
 
 def _declares_model(path: Path) -> bool:

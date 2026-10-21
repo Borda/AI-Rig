@@ -22,6 +22,7 @@ from typing import Any
 
 import pytest
 import release_setup as rs
+import resolve_shared_path as rsp
 
 
 class _FakeCompleted:
@@ -359,32 +360,110 @@ def test_output_values_end_with_newline(monkeypatch: pytest.MonkeyPatch, tmp_pat
         assert (out_dir / key).read_text().endswith("\n"), f"{key} missing trailing newline"
 
 
-def test_resolve_skill_dir_matches_versioned_plugin_cache(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: pytest.TempPathFactory,
-) -> None:
+@pytest.fixture(autouse=True)
+def _stub_plugin_dir_resolver(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the install-registry subprocess out of the faked git call sequence.
+
+    The real resolver shells out to the registry helper, which would consume entries of the sequential git fake and
+    answer from the developer's real install. Resolver tests below swap the real function back in.
+    """
+    monkeypatch.setattr(rs, "resolve_plugin_dir", lambda *_args, **_kwargs: ("plugins/cc_oss/skills/release", 3))
+
+
+@pytest.fixture
+def real_resolver(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """Run the real cache resolver against a throwaway home with the registry tier disabled."""
+    monkeypatch.setattr(rs, "resolve_plugin_dir", rsp.resolve)
+    monkeypatch.setattr(rsp, "_locate_helper", lambda *_args: None)
+    monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
+    monkeypatch.setattr(rs.Path, "home", classmethod(lambda _cls: tmp_path))
+    return tmp_path / ".claude" / "plugins" / "cache" / "borda-ai-rig" / "oss"
+
+
+def test_resolve_skill_dir_matches_versioned_plugin_cache(real_resolver: Path) -> None:
     """Installed cache layout inserts a version dir between plugin id and ``skills``.
 
     Real layout is ``~/.claude/plugins/cache/<marketplace>/oss/<version>/skills/release``
     — one segment deeper than the un-versioned layout the old 3-segment check assumed,
     so it never matched and always fell through to the source-tree fallback.
     """
-    skill_dir = tmp_path / ".claude" / "plugins" / "cache" / "borda-ai-rig" / "oss" / "0.38.4" / "skills" / "release"
+    skill_dir = real_resolver / "0.38.4" / "skills" / "release"
     skill_dir.mkdir(parents=True)
-    monkeypatch.setattr(rs.Path, "home", classmethod(lambda _cls: tmp_path))
 
     resolved = rs._resolve_skill_dir()
 
     assert resolved == str(skill_dir)
 
 
-def test_resolve_skill_dir_falls_back_when_not_installed(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: pytest.TempPathFactory,
-) -> None:
+def test_resolve_skill_dir_falls_back_when_not_installed(real_resolver: Path) -> None:
     """No installed ``oss/<version>/skills/release`` anywhere → source-tree fallback."""
-    monkeypatch.setattr(rs.Path, "home", classmethod(lambda _cls: tmp_path))
-
     resolved = rs._resolve_skill_dir()
 
     assert resolved == "plugins/cc_oss/skills/release"
+
+
+def test_resolve_skill_dir_prefers_highest_numeric_version_and_skips_orphans(real_resolver: Path) -> None:
+    """``0.100.0`` outranks ``0.50.0`` numerically; an orphaned newer install is ignored.
+
+    The resolved directory is later read and executed as instructions, so a lexically sorted or orphaned install must
+    never win over the version Claude Code loads.
+    """
+    for version in ("0.50.0", "0.100.0", "0.200.0"):
+        (real_resolver / version / "skills" / "release").mkdir(parents=True)
+    (real_resolver / "0.200.0" / ".orphaned_at").write_text("1\n", encoding="utf-8", newline="\n")
+
+    resolved = rs._resolve_skill_dir()
+
+    assert resolved == str(real_resolver / "0.100.0" / "skills" / "release")
+
+
+_skip_without_symlinks = pytest.mark.skipif(
+    sys.platform == "win32", reason="symlink and POSIX ownership semantics; Windows has no equivalent sentinel exposure"
+)
+
+
+@_skip_without_symlinks
+def test_prepare_out_dir_refuses_symlinked_directory(tmp_path: Path) -> None:
+    """A sentinel directory pre-planted as a symlink is refused, not written through.
+
+    Another user who pre-creates the predictable ``release-setup-<token>`` name as a symlink could otherwise redirect
+    the sentinels, including the ``SKILL_DIR`` later read and executed.
+    """
+    target = tmp_path / "elsewhere"
+    target.mkdir()
+    planted = tmp_path / "release-setup-shared"
+    planted.symlink_to(target, target_is_directory=True)
+
+    with pytest.raises(PermissionError):
+        rs._prepare_out_dir(planted)
+
+
+@_skip_without_symlinks
+def test_write_private_replaces_planted_symlink_without_following_it(tmp_path: Path) -> None:
+    """A pre-planted sentinel symlink is replaced by a private file; its target stays untouched."""
+    victim = tmp_path / "victim.txt"
+    victim.write_text("keep\n", encoding="utf-8", newline="\n")
+    sentinel = tmp_path / "SKILL_DIR"
+    sentinel.symlink_to(victim)
+
+    rs._write_private(sentinel, "fresh\n")
+
+    assert (victim.read_text(encoding="utf-8"), sentinel.is_symlink(), sentinel.read_text(encoding="utf-8")) == (
+        "keep\n",
+        False,
+        "fresh\n",
+    )
+
+
+@_skip_without_symlinks
+def test_main_refuses_symlinked_sentinel_directory(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """``main`` exits 1 and publishes nothing when the sentinel directory is a planted symlink."""
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    target = tmp_path / "elsewhere"
+    target.mkdir()
+    (tmp_path / "release-setup-shared").symlink_to(target, target_is_directory=True)
+    _patch_git_sequence(monkeypatch, (0, "/repo"), (0, "main"), (0, "v1.0.0"))
+
+    rc = rs.main([])
+
+    assert (rc, list(target.iterdir())) == (1, [])

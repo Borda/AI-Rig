@@ -71,8 +71,10 @@ def _read_text_guarded(path: Path) -> str:
         ValueError: when file exceeds ``_MAX_FILE_SIZE`` bytes.
 
     Examples:
-        >>> import tempfile, pathlib
-        >>> tmp = pathlib.Path(tempfile.mktemp(suffix=".txt"))
+        >>> import os, tempfile, pathlib
+        >>> fd, name = tempfile.mkstemp(suffix=".txt")
+        >>> os.close(fd)
+        >>> tmp = pathlib.Path(name)
         >>> _ = tmp.write_text("hello")
         >>> _read_text_guarded(tmp)
         'hello'
@@ -97,8 +99,10 @@ def load_weights(scoring_file: Path) -> dict[int, float]:
         Dict mapping axis number (1–9) to float weight.
 
     Examples:
-        >>> import tempfile, pathlib
-        >>> tmp = pathlib.Path(tempfile.mktemp(suffix=".md"))
+        >>> import os, tempfile, pathlib
+        >>> fd, name = tempfile.mkstemp(suffix=".md")
+        >>> os.close(fd)
+        >>> tmp = pathlib.Path(name)
         >>> _ = tmp.write_text("| 1 foo | 0.17 |\\n| 2 bar | 0.18 |\\n")
         >>> w = load_weights(tmp)
         >>> len(w)  # only 2 entries → fallback

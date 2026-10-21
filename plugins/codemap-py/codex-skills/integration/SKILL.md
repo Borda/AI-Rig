@@ -50,7 +50,7 @@ If installed Codex lacks documented `--json`, use text output and mark structure
 
 ### 1. Resolve mode
 
-Case-insensitive: empty or starting with `audit` → audit; otherwise `plan`, `apply`, `sync`, or `demo`. Any other input: ask through User Questions which of those five modes and wait. Use the packaged native `ask_user` form when the synchronous menu cannot fit all five; offer every mode as a separate option and retain each mode's later input and approval requirements.
+Case-insensitive: empty or starting with `audit` → audit; otherwise `plan`, `apply`, `sync`, or `demo`. Any other input: ask through User Questions which of those five modes and wait. Use the packaged native `ask_user` form when the synchronous menu cannot fit all five; offer every mode as a separate option and retain each mode's later input and approval requirements. Intentional difference: the Claude skill prints the mode list and stops, because its question tool caps at four options; Codex's `ask_user` form fits all five.
 
 ### 2. Run it
 
@@ -61,6 +61,8 @@ PLUGIN_ROOT/bin/codemap-py integrate apply --plan <artifact> --approve <sha256>
 PLUGIN_ROOT/bin/codemap-py integrate sync --source <s> --plan <artifact> --approve <sha256> [--runtime <r>]
 PLUGIN_ROOT/bin/codemap-py integrate demo [--runtime <r>]
 ```
+
+These lines are a synopsis: run one composed command for the chosen mode, add optional flags only when the user asked for them, and never pass a `<placeholder>` or `[...]` literally — stop and ask when a required value (plan artifact, SHA-256, source) is unknown. Intentional difference: the Claude skill ships one runnable block per mode whose unsubstituted placeholder aborts it, because a Claude Bash block runs as written.
 
 `audit`: bounded read-only provider/consumer/version/content/managed-block/index/log/usage inspection. Never runs `plan`, `apply`, `sync`, index, query self-heal, native mutation, or global-instruction installation. Checks provider identity and active consumer guidance reachability/content separately; report `consumer_query_guidance_missing`, `consumer_query_guidance_unreachable`, or `consumer_query_guidance_drift` as source maintenance, not active wiring. Same-version content mismatch is high-severity drift; native listing without provenance is `session_catalog: unobservable`. Codex has CLI/tool shards but no skill-start hook; host hooks provide no token usage — report evidence limits, not fresh-session activation or token savings. `--json` uses schema 2 (`codemap-py.integration.v2`); `--since` filters telemetry.
 

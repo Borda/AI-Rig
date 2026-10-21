@@ -54,6 +54,8 @@ from typing import Any, Final
 
 #: Fewest samples required before a significance test is run; smaller samples are reported as insufficient data.
 MIN_SAMPLES_FOR_TEST: Final[int] = 6
+#: Largest JSONL file read; run ledgers stay far below it, so a bigger file is rejected before it is loaded.
+MAX_JSONL_BYTES: Final[int] = 64 * 1024 * 1024
 
 
 @dataclass(frozen=True, slots=True)
@@ -233,22 +235,27 @@ def _load_jsonl(path: Path) -> list[dict[str, Any]]:
     """Read a JSONL file; return list of parsed records.
 
     Tolerates a trailing truncated line by silently skipping it (matches retro SKILL.md behaviour). Raises
-    ``ValueError`` on the first non-final malformed line.
+    ``ValueError`` on the first non-final malformed line, and on a file larger than :data:`MAX_JSONL_BYTES` — a run
+    ledger holds at most a few hundred records, so anything that size is not one and would only exhaust memory.
+
+    The file is streamed line by line rather than read whole. A malformed line is held back until the next line is
+    seen: only when no line at all (blank lines included) follows it is it the tolerated trailing truncation.
     """
+    if path.stat().st_size > MAX_JSONL_BYTES:
+        raise ValueError(f"{path} exceeds {MAX_JSONL_BYTES} bytes — not a run ledger")
     records: list[dict[str, Any]] = []
+    pending: tuple[int, json.JSONDecodeError] | None = None
     with path.open("r", encoding="utf-8") as fh:
-        lines = fh.readlines()
-    for idx, raw in enumerate(lines):
-        stripped = raw.strip()
-        if not stripped:
-            continue
-        try:
-            records.append(json.loads(stripped))
-        except json.JSONDecodeError as exc:
-            if idx == len(lines) - 1:
-                # Trailing truncated line — tolerate.
-                break
-            raise ValueError(f"malformed JSON at line {idx + 1}: {exc.msg}") from exc
+        for number, raw in enumerate(fh, start=1):
+            if pending is not None:
+                raise ValueError(f"malformed JSON at line {pending[0]}: {pending[1].msg}") from pending[1]
+            stripped = raw.strip()
+            if not stripped:
+                continue
+            try:
+                records.append(json.loads(stripped))
+            except json.JSONDecodeError as exc:
+                pending = (number, exc)
     return records
 
 

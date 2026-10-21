@@ -21,7 +21,7 @@ Implements three checks:
        least one consumer SKILL.md or agent .md file in the same plugin.
        Flag: ORPHAN-RISK when basename is invisible to grep — deletion-prone.
        Scope: modes/, templates/, _shared/ only. SKILL.md/agent files themselves are covered
-       by Check 32a (checks-skills.md). R2 is complementary, not overlapping.
+       by Check 32a (checks-skills-deadfiles.md). R2 is complementary, not overlapping.
 
   R3 — bin/ script reference integrity (reverse direction of Check 32d)
        Check 32d walks bin/ scripts and verifies each is referenced somewhere in .md files
@@ -54,6 +54,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from enum import Enum
@@ -1096,6 +1097,36 @@ def format_results(results: CheckResults, active_checks: set[str]) -> tuple[str,
 # ---------------------------------------------------------------------------
 
 
+def _project_root(timeout: int) -> Path:
+    """Return the project root the ``--plugins-dir`` containment guard measures against.
+
+    The root comes from the directory the checker runs in, never from the argument being
+    validated: deriving it from ``--plugins-dir`` itself would make any directory inside some
+    git repository "contained" by that repository's own root.
+
+    Args:
+        timeout: Seconds allowed for the ``git rev-parse`` subprocess.
+
+    Returns:
+        The git top-level of the current directory, or the current directory itself when git is
+        missing, times out, or the directory is not inside a repository.
+    """
+    cwd = Path.cwd().resolve()
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],  # noqa: S607 - git resolved via PATH on purpose
+            capture_output=True,
+            text=True,
+            cwd=cwd,
+            timeout=timeout,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return cwd
+    toplevel = result.stdout.strip()
+    return Path(toplevel).resolve() if result.returncode == 0 and toplevel else cwd
+
+
 def main(argv: list[str] | None = None) -> int:
     """Check routed script references for invalid targets."""
     parser = argparse.ArgumentParser(
@@ -1141,19 +1172,7 @@ def main(argv: list[str] | None = None) -> int:
     # (the default lives there) — it just must not contain unresolved traversal.
     plugins_dir = Path(args.plugins_dir).resolve()
     cache_dir = Path(args.cache_dir).resolve()
-    try:
-        import subprocess as _sp
-
-        _r = _sp.run(
-            ["git", "rev-parse", "--show-toplevel"],  # noqa: S607 - git resolved via PATH on purpose
-            capture_output=True,
-            text=True,
-            cwd=str(plugins_dir),
-            timeout=args.timeout,
-        )
-        project_root = Path(_r.stdout.strip()).resolve() if _r.returncode == 0 else Path.cwd().resolve()
-    except Exception:
-        project_root = Path.cwd().resolve()
+    project_root = _project_root(args.timeout)
     try:
         plugins_dir.relative_to(project_root)
     except ValueError:

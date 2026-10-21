@@ -17,4 +17,4 @@ Governs `/research:judge` refinement loops, `/research:verify` fix rounds, and p
 - `<branch>` in the `.temp/output-*` filename = `$(git branch --show-current 2>/dev/null | tr '/' '-' || echo 'main')`
 - Prose paragraphs: no hard line breaks at column width
 - **Follow-up gate options**: skill-defined; minimum: (a) primary action · (b) skip. Canonical examples by skill:
-  - `research:topic` → (a) `/research:plan` · (b) `/develop:feature` · (c) skip
+  - `research:topic` → (a) `/research:topic plan` · (b) `/develop:feature` · (c) skip

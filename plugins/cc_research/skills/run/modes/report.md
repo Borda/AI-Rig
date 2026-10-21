@@ -21,7 +21,7 @@ Agents:      [Agents used]
 Outcome:     GOAL_ACHIEVED | IMPROVED | STALLED | DIVERGED
 Best:        [metric_key] = [best] ([delta]% improvement)
 Confidence:  [score] — [key gaps]
-Next steps:  /research:retro | /research:fortify | /research:run --resume
+Next steps:  /research:retro | /research:fortify
 Path:        → .reports/research/run-<branch>-<date>.md
 ---
 

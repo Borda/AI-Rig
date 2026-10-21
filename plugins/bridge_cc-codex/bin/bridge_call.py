@@ -18,12 +18,13 @@ its actual exit status; unavailable status is diagnosed without inventing a retu
 from __future__ import annotations
 
 import argparse
+import errno
 import hashlib
 import json
 import math
+import ntpath
 import os
 import re
-import shutil
 import signal
 import stat
 import subprocess
@@ -99,18 +100,24 @@ CHILD_ENV_BASE_KEYS = ("PATH", "HOME", "LANG", "LC_ALL", "TERM", "TMPDIR", "USER
 #: Variables additionally copied on Windows, without which a child Python fails to start.
 CHILD_ENV_WINDOWS_KEYS = ("SystemRoot", "SYSTEMROOT", "COMSPEC", "PATHEXT", "TEMP", "TMP", "USERPROFILE")
 # Provider auth and config discovery for the two supported children. Without
-# these the child cannot authenticate and every call fails closed.
-#: Provider credential, endpoint and config-directory variables copied so the Codex or Claude child can authenticate.
-CHILD_ENV_PROVIDER_KEYS = (
-    "CODEX_HOME",
-    "OPENAI_API_KEY",
-    "OPENAI_BASE_URL",
+# these the child cannot authenticate and every call fails closed. Each child
+# receives only its own vendor's set: a model-directed command inside a Codex
+# child must not be able to read the Anthropic token, nor a Claude child the
+# OpenAI key.
+#: Provider credential, endpoint and config-directory variables copied so a Codex child can authenticate.
+CHILD_ENV_CODEX_KEYS = ("CODEX_HOME", "OPENAI_API_KEY", "OPENAI_BASE_URL")
+#: Provider credential, endpoint and config-directory variables copied so a Claude child can authenticate.
+CHILD_ENV_CLAUDE_KEYS = (
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_BASE_URL",
     "ANTHROPIC_AUTH_TOKEN",
     "CLAUDE_CONFIG_DIR",
     "CLAUDE_CODE_OAUTH_TOKEN",
 )
+#: Both hosts' provider variables, used only for a child executable that is neither known host.
+CHILD_ENV_PROVIDER_KEYS = (*CHILD_ENV_CODEX_KEYS, *CHILD_ENV_CLAUDE_KEYS)
+#: Provider variable set selected by the child executable's name.
+_CHILD_ENV_KEYS_BY_HOST = {"codex": CHILD_ENV_CODEX_KEYS, "claude": CHILD_ENV_CLAUDE_KEYS}
 # Operator escape hatch: a comma-separated list of additional variable names to
 # let through. The fixed sets above assume a direct-API-key login on a host with
 # open egress; a corporate proxy (`HTTPS_PROXY`, `NO_PROXY`, `SSL_CERT_FILE`) or
@@ -123,6 +130,16 @@ CHILD_ENV_PROVIDER_KEYS = (
 CHILD_ENV_EXTRA_VARIABLE = "BRIDGE_CHILD_ENV_EXTRA"
 #: Pattern a name from the operator's extra-variable list must match to be passed to the child.
 _ENVIRONMENT_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+#: Pattern for caller-supplied identifiers that reach child argv or prompt text: model, session id, run id.
+#: The leading alphanumeric keeps a value from being parsed as a child CLI option.
+_CALLER_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
+#: Largest job record or cancellation marker, in bytes, read back from the artifact store; a record holds the task text,
+#: bounded by the transport budget, plus one envelope, bounded by the child capture limit.
+MAX_JOB_RECORD_BYTES = 1024 * 1024
+#: Permission bits for bridge artifact directories, which hold task text and model output.
+_ARTIFACT_DIRECTORY_MODE = 0o700
+#: Permission bits for bridge artifact files: job records, transcripts and incident records.
+_ARTIFACT_FILE_MODE = 0o600
 
 
 class ArtifactBoundaryError(ValueError):
@@ -193,9 +210,19 @@ class BridgePaths:
         return path
 
     def prepare(self) -> None:
-        """Create all bridge artifact directories for a request."""
+        """Create all bridge artifact directories for a request, accessible only to the current user.
+
+        Job records and transcripts hold task text and model output, which the umask default would leave readable by
+        other users of a shared host. ``chmod`` also tightens directories an earlier version created; where the platform
+        or ownership refuses it, the request proceeds with the existing mode.
+        """
         for directory in (self.root, self.jobs, self.incidents):
-            self._member(directory).mkdir(parents=True, exist_ok=True)
+            member = self._member(directory)
+            member.mkdir(mode=_ARTIFACT_DIRECTORY_MODE, parents=True, exist_ok=True)
+            try:
+                member.chmod(_ARTIFACT_DIRECTORY_MODE)
+            except OSError:
+                pass
 
     def relative(self, path: Path) -> str:
         """Return a stable workspace-relative artifact path when possible."""
@@ -241,6 +268,32 @@ class EnvelopeContext:
     substitution: dict[str, str] | None = None
 
 
+def validate_caller_identifier(name: str, value: str | None) -> None:
+    """Reject a caller-supplied model, session or run identifier that is not identifier-shaped.
+
+    Both entry points, the CLI and the MCP server, pass these values into child argv or prompt text. A value starting
+    with a dash would be parsed as a child CLI option, and free text would reach the child prompt and the logs.
+
+    Args:
+        name: Label used in the error message, such as ``--model`` or ``model``.
+        value: Candidate value; ``None`` and the empty string mean "not supplied" and pass.
+
+    Raises:
+        ValueError: When ``value`` is not a string or does not match the identifier pattern.
+
+    Examples:
+        >>> validate_caller_identifier("--model", "gpt-5.1-codex")
+        >>> validate_caller_identifier("--model", None)
+        >>> validate_caller_identifier("--model", "-c")
+        Traceback (most recent call last):
+        ValueError: --model must match ^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$
+    """
+    if value is None or value == "":
+        return
+    if not isinstance(value, str) or not _CALLER_IDENTIFIER.fullmatch(value):
+        raise ValueError(f"{name} must match {_CALLER_IDENTIFIER.pattern}")
+
+
 def validate_request_transport_budget(request: Request) -> None:
     """Reject task text whose encoded prompt cannot safely fit the local CLI transport."""
     if len(request.task.encode("utf-8")) > MAX_TASK_UTF8_BYTES:
@@ -253,7 +306,8 @@ def validate_request_transport_budget(request: Request) -> None:
         if request.direction == "codex_to_claude"
         else build_codex_argv(request, schema_path)
     )
-    resolved_command = _resolved_command(command)
+    # Missing peers still reach the spawn error path; this lookup only measures transport size.
+    resolved_command = [_resolve_executable(command[0]) or command[0], *command[1:]]
     units = _windows_command_utf16_units(resolved_command)
     if units > MAX_WINDOWS_COMMAND_UTF16_UNITS or (
         _is_windows_batch_shim(resolved_command[0]) and units > MAX_WINDOWS_BATCH_COMMAND_UTF16_UNITS
@@ -433,7 +487,7 @@ def _sandbox_probe(
     while the profile here is selected through ``default_permissions`` as in the child's run). On a host with managed
     requirements, whether they change the run's profile is unverified.
     """
-    env = build_child_environment()
+    env = build_child_environment(host="codex")
     env["CODEX_HOME"] = str(codex_home)
     try:
         result = subprocess.run(  # noqa: S603 - argv list, no shell
@@ -697,7 +751,42 @@ def run_request(
     _prior_incident: str | None = None,
     _job_path: Path | None = None,
 ) -> dict[str, Any]:
-    """Run one foreground request and return a fully validated public envelope."""
+    """Run one foreground request and return a fully validated public envelope.
+
+    A write-capable request also compares the workspace's protected paths (see :data:`PROTECTED_WORKSPACE_PATHS`) before
+    and after the attempt and names any that changed in ``findings``: a peer could otherwise plant a Git hook or host
+    settings that run code in a later session, without listing them in ``files_touched``.
+    """
+    guarded = _is_write_verb(request.verb) and _attempt == 0
+    protected_before = _protected_state(request.workspace) if guarded else {}
+    envelope = _run_request_attempt(
+        request,
+        host=host,
+        _attempt=_attempt,
+        _recovery=_recovery,
+        _prior_incident=_prior_incident,
+        _job_path=_job_path,
+    )
+    changed = _protected_changes(protected_before, request.workspace) if guarded else []
+    if changed:
+        envelope["findings"].append(
+            "Protected workspace path changed during this write-capable peer run: "
+            + ", ".join(changed)
+            + ". Review it before any host session or Git command trusts this workspace."
+        )
+    return envelope
+
+
+def _run_request_attempt(
+    request: Request,
+    *,
+    host: str = "codex",
+    _attempt: int = 0,
+    _recovery: dict[str, str] | None = None,
+    _prior_incident: str | None = None,
+    _job_path: Path | None = None,
+) -> dict[str, Any]:
+    """Run one attempt of :func:`run_request`, including its bounded lower-effort retry."""
     if not math.isfinite(request.timeout_seconds) or request.timeout_seconds <= 0:
         raise ValueError("timeout_seconds must be a finite positive number")
     validate_request_transport_budget(request)
@@ -1010,10 +1099,12 @@ def _compact_command_event(line: bytes) -> bytes:
         return line
 
 
-def build_child_environment(source: Mapping[str, str] | None = None, platform: str | None = None) -> dict[str, str]:
+def build_child_environment(
+    source: Mapping[str, str] | None = None, platform: str | None = None, host: str | None = None
+) -> dict[str, str]:
     """Build the child environment from an allowlist instead of inheriting the parent's.
 
-    Only keys named in :data:`CHILD_ENV_BASE_KEYS`, :data:`CHILD_ENV_PROVIDER_KEYS`, on Windows
+    Only keys named in :data:`CHILD_ENV_BASE_KEYS`, the provider set for ``host``, on Windows
     :data:`CHILD_ENV_WINDOWS_KEYS`, and any the operator names in
     :data:`CHILD_ENV_EXTRA_VARIABLE` survive. Keys absent from ``source`` are omitted rather than
     set empty, so the child cannot tell a dropped variable from an unset one.
@@ -1021,6 +1112,9 @@ def build_child_environment(source: Mapping[str, str] | None = None, platform: s
     Args:
         source: Environment to filter. Defaults to :data:`os.environ`.
         platform: Platform name to decide the Windows key set. Defaults to :data:`sys.platform`.
+        host: Child host, ``"codex"`` or ``"claude"``, selecting :data:`CHILD_ENV_CODEX_KEYS` or
+            :data:`CHILD_ENV_CLAUDE_KEYS`. Any other value, or ``None``, keeps both sets
+            (:data:`CHILD_ENV_PROVIDER_KEYS`).
 
     Returns:
         Filtered environment mapping, without the bridge depth marker (the caller adds it).
@@ -1030,6 +1124,10 @@ def build_child_environment(source: Mapping[str, str] | None = None, platform: s
         {'PATH': '/bin'}
         >>> build_child_environment({"OPENAI_API_KEY": "k"}, platform="linux")
         {'OPENAI_API_KEY': 'k'}
+        >>> build_child_environment({"OPENAI_API_KEY": "k", "ANTHROPIC_API_KEY": "a"}, platform="linux", host="codex")
+        {'OPENAI_API_KEY': 'k'}
+        >>> build_child_environment({"OPENAI_API_KEY": "k", "ANTHROPIC_API_KEY": "a"}, platform="linux", host="claude")
+        {'ANTHROPIC_API_KEY': 'a'}
         >>> sorted(build_child_environment({"COMSPEC": "c", "PATH": "p"}, platform="win32"))
         ['COMSPEC', 'PATH']
         >>> sorted(build_child_environment({"COMSPEC": "c", "PATH": "p"}, platform="linux"))
@@ -1040,7 +1138,7 @@ def build_child_environment(source: Mapping[str, str] | None = None, platform: s
     """
     env = os.environ if source is None else source
     active = sys.platform if platform is None else platform
-    allowed = [*CHILD_ENV_BASE_KEYS, *CHILD_ENV_PROVIDER_KEYS]
+    allowed = [*CHILD_ENV_BASE_KEYS, *_CHILD_ENV_KEYS_BY_HOST.get(host or "", CHILD_ENV_PROVIDER_KEYS)]
     if active == "win32":
         allowed.extend(CHILD_ENV_WINDOWS_KEYS)
     allowed.extend(_extra_child_environment_keys(env))
@@ -1081,7 +1179,10 @@ def _spawn_child(command: list[str], workspace: Path, timeout: float) -> subproc
     A refused spawn and an adapter that supplies no pipes both finish the call before supervision can begin, so each
     returns a complete :class:`ChildOutcome` instead of a process for the caller to wait on.
     """
-    environment = build_child_environment()
+    # command[0] is the bare host name here; _resolved_command runs after this point. ntpath splits on both separators
+    # and, unlike Path, never picks WindowsPath from os.name (simulated-Windows tests on Python < 3.12 would crash).
+    host = os.path.splitext(ntpath.basename(command[0]))[0].lower() if command else None
+    environment = build_child_environment(host=host)
     environment[DEPTH_ENVIRONMENT_VARIABLE] = str(_next_bridge_depth())
     kwargs: dict[str, Any] = {
         "cwd": workspace,
@@ -1115,23 +1216,25 @@ def _wait_for_child(
     deadline: float,
     job_path: Path | None,
     paths: BridgePaths | None = None,
-) -> tuple[bool, str | None, bool]:
+) -> tuple[bool, str | None, bool, bool]:
     """Supervise one running child until capture overflow, cancellation, the hard cutoff, or its own exit.
 
-    Returns whether the cutoff was reached, the cooperative-cancellation reason when there is one, and whether both
-    output readers drained inside the cleanup grace.
+    Returns whether the cutoff was reached, the cooperative-cancellation reason when there is one, whether both output
+    readers drained inside the cleanup grace, and whether this call already terminated the child's process group. The
+    last flag lets the caller skip a second group signal: once the group is gone and its leader reaped, its id can be
+    recycled, and a repeated signal could reach an unrelated process group.
     """
     while True:
         if output.output_limited.is_set():
             _terminate_process_group(process)
-            return False, None, _finish_output_readers(readers)
+            return False, None, _finish_output_readers(readers), True
         if job_path is not None and _job_cancel_requested(job_path, paths=paths):
             _terminate_process_group(process)
-            return False, "cancelled by job owner", _finish_output_readers(readers)
+            return False, "cancelled by job owner", _finish_output_readers(readers), True
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             _terminate_process_group(process)
-            return True, None, _finish_output_readers(readers)
+            return True, None, _finish_output_readers(readers), True
         if process.poll() is not None:
             drained = _finish_output_readers(readers)
             if not drained:
@@ -1139,7 +1242,7 @@ def _wait_for_child(
                 # terminate the remaining group before returning its bounded output.
                 _terminate_process_group(process)
                 _finish_output_readers(readers)
-            return False, None, drained
+            return False, None, drained, not drained
         time.sleep(min(0.05, remaining))
 
 
@@ -1153,14 +1256,16 @@ def _run_child(command: list[str], workspace: Path, timeout: float, job_path: Pa
     try:
         output = _ChildOutputBuffer()
         _start_output_readers(process, output, readers)
-        timed_out, error, drained = _wait_for_child(
+        timed_out, error, drained, terminated = _wait_for_child(
             process, output, readers, time.monotonic() + timeout, job_path, BridgePaths(workspace) if job_path else None
         )
         # Final flush can reveal that an incomplete record was not compactable.
         # Overflow wins on every exit path so timeout recovery cannot replay it.
         stdout, stderr = output.text()
         if output.output_limited.is_set():
-            _terminate_process_group(process)
+            # Never signal a group twice: once it is gone and its leader reaped, its id can be recycled.
+            if not terminated:
+                _terminate_process_group(process)
             return ChildOutcome(
                 stdout,
                 stderr,
@@ -1220,10 +1325,41 @@ def _finish_output_readers(readers: list[threading.Thread]) -> bool:
     return not any(reader.is_alive() for reader in readers)
 
 
+def _resolve_executable(executable: str) -> str | None:
+    """Find an absolute executable using PATH only, without implicit Windows cwd search.
+
+    Empty and dot PATH entries are ignored. Windows applies PATHEXT to bare names, including npm batch shims; explicit
+    paths remain supported without falling back to a different executable.
+    """
+    windows = sys.platform == "win32" or os.name == "nt"
+    path_module = ntpath if windows else os.path
+    if path_module.dirname(executable):
+        candidates = [os.path.abspath(executable)]
+    else:
+        names = [executable]
+        if windows:
+            extensions = os.environ.get("PATHEXT", ".COM;.EXE;.BAT;.CMD").split(";")
+            extensions = [extension for extension in extensions if extension]
+            if not any(executable.lower().endswith(extension.lower()) for extension in extensions):
+                names = [executable + extension for extension in extensions]
+        candidates = []
+        for entry in os.environ.get("PATH", os.defpath).split(";" if windows else os.pathsep):
+            directory = entry.strip('"') if windows else entry
+            if not directory or path_module.normpath(directory) == ".":
+                continue
+            candidates.extend(os.path.abspath(os.path.join(directory, name)) for name in names)
+    for candidate in candidates:
+        if os.path.isfile(candidate) and (windows or os.access(candidate, os.X_OK)):
+            return candidate
+    return None
+
+
 def _resolved_command(command: list[str]) -> list[str]:
-    """Resolve the executable through PATH so Windows npm shims (.cmd) launch."""
-    resolved = shutil.which(command[0])
-    return [resolved, *command[1:]] if resolved else command
+    """Resolve argv to an absolute executable or raise the usual missing-file error."""
+    resolved = _resolve_executable(command[0])
+    if resolved is None:
+        raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), command[0])
+    return [resolved, *command[1:]]
 
 
 def _drain_terminated_child(process: subprocess.Popen[str]) -> tuple[str, str]:
@@ -1256,12 +1392,18 @@ def _terminate_process_group(process: subprocess.Popen[str]) -> None:
         if kill_process_group is None:
             process.kill()
             return
+        if process.returncode is not None and _process_group_gone(process.pid):
+            # A reaped leader with no group left: its id may already be recycled, so nothing here is ours to signal.
+            return
         try:
             kill_process_group(process.pid, signal.SIGTERM)
         except OSError:
             process.kill()
             return
-        _wait_for_cleanup_grace(process)
+        if _wait_for_cleanup_grace(process):
+            # The group is empty and its leader reaped, so its id may already be
+            # recycled: a second signal could reach an unrelated process group.
+            return
         try:
             # The leader can exit during the grace period while descendants retain
             # inherited pipes, so leader completion is never proof that its group ended.
@@ -1277,11 +1419,12 @@ def _terminate_process_group(process: subprocess.Popen[str]) -> None:
             print("Bridge child exit status unavailable after bounded cleanup wait", file=sys.stderr)
 
 
-def _wait_for_cleanup_grace(process: subprocess.Popen[str]) -> None:
+def _wait_for_cleanup_grace(process: subprocess.Popen[str]) -> bool:
     """Allow cooperative child-tree exit for a bounded interval before force termination.
 
-    Returns as soon as no process remains in the child's group, so a tree that exits promptly does not pay the whole
-    grace. The leader's own exit is not enough: descendants can outlive it while holding inherited pipes.
+    Returns ``True`` as soon as no process remains in the child's group, so a tree that exits promptly does not pay the
+    whole grace, and ``False`` when the grace expires with members left. The leader's own exit is not enough:
+    descendants can outlive it while holding inherited pipes.
     """
     deadline = time.monotonic() + CLEANUP_GRACE_SECONDS
     while time.monotonic() < deadline:
@@ -1291,8 +1434,9 @@ def _wait_for_cleanup_grace(process: subprocess.Popen[str]) -> None:
         except (OSError, subprocess.TimeoutExpired):
             pass
         if _process_group_gone(process.pid):
-            return
+            return True
         time.sleep(CLEANUP_POLL_SECONDS)
+    return False
 
 
 def _process_group_gone(process_group_id: int) -> bool:
@@ -1324,7 +1468,7 @@ def _terminate_windows_process_tree(pid: int) -> bool:
     """
     try:
         result = subprocess.run(  # noqa: S603 - argv list, no shell
-            ["taskkill", "/PID", str(pid), "/T", "/F"],  # noqa: S607 - taskkill resolved via PATH on purpose
+            _resolved_command(["taskkill", "/PID", str(pid), "/T", "/F"]),
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -1565,7 +1709,7 @@ def _write_transcript(paths: BridgePaths, stdout: str, stderr: str) -> str:
     """Write one bounded child transcript and return its workspace-relative path."""
     path = paths._member(paths.root / f"raw-{time.time_ns()}-{uuid.uuid4().hex[:8]}.txt")
     payload = f"stdout:\n{stdout}\n\nstderr:\n{stderr}\n".encode()
-    with path.open("xb") as stream:
+    with open(path, "xb", opener=_private_opener) as stream:
         stream.write(payload[:MAX_CHILD_TRANSCRIPT_BYTES])
     return paths.relative(path)
 
@@ -1578,8 +1722,10 @@ def _workspace_state(workspace: Path) -> list[str]:
     block dispatch outside every documented cutoff.
     """
     try:
-        result = subprocess.run(
-            ["git", "status", "--porcelain"],  # noqa: S607 - git resolved via PATH on purpose
+        result = subprocess.run(  # noqa: S603 - executable resolved from PATH, explicit argv.
+            # A write-capable child can set core.fsmonitor in the repository config;
+            # git status would run that command here, outside the child's sandbox.
+            _resolved_command(["git", "-c", "core.fsmonitor=false", "status", "--porcelain"]),
             cwd=workspace,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
@@ -1592,6 +1738,82 @@ def _workspace_state(workspace: Path) -> list[str]:
     except (OSError, subprocess.TimeoutExpired):
         return []
     return [line for line in result.stdout.splitlines() if line]
+
+
+#: Workspace paths whose content can run code in a later host session or Git command: Git hooks and repository config,
+#: attribute-driven filters, Claude project settings and hooks, the project MCP server list, and Codex project config.
+#: A Claude peer in acceptEdits print mode cannot write most of them, and Codex keeps the root ``.git`` and ``.codex``
+#: read-only, but ``.claude`` and ``.mcp.json`` stay writable for a Codex peer, so every write run is checked.
+PROTECTED_WORKSPACE_PATHS = (".git/hooks", ".git/config", ".gitattributes", ".claude", ".mcp.json", ".codex")
+#: Subtrees skipped inside a protected directory: Claude-created Git worktrees are full checkouts, not configuration.
+_PROTECTED_SKIP_DIRECTORIES = frozenset({"worktrees"})
+#: Most entries fingerprinted per run, and most bytes hashed; past either, entries keep a size-and-mtime signature.
+_PROTECTED_MAX_ENTRIES = 4000
+_PROTECTED_MAX_HASH_BYTES = 8 * 1024 * 1024
+#: Largest single file hashed; a larger one keeps a size-and-mtime signature.
+_PROTECTED_MAX_FILE_HASH_BYTES = 256 * 1024
+
+
+def _protected_state(workspace: Path) -> dict[str, str]:
+    """Fingerprint every entry under :data:`PROTECTED_WORKSPACE_PATHS` without following links.
+
+    Keys are workspace-relative POSIX paths. Small files are keyed by content digest, so a restored modification time
+    does not hide an edit; links by their target; directories by presence. The walk is bounded by
+    :data:`_PROTECTED_MAX_ENTRIES` and the hash budget, and never raises: an unreadable entry gets a fixed marker.
+    """
+    state: dict[str, str] = {}
+    budget = [_PROTECTED_MAX_HASH_BYTES]
+    try:
+        root = Path(workspace).resolve()
+    except (OSError, RuntimeError):
+        return state
+    for relative in PROTECTED_WORKSPACE_PATHS:
+        for entry in _walk_protected(root / relative):
+            if len(state) >= _PROTECTED_MAX_ENTRIES:
+                return state
+            state[entry.relative_to(root).as_posix()] = _protected_fingerprint(entry, budget)
+    return state
+
+
+def _walk_protected(path: Path) -> Iterable[Path]:
+    """Yield ``path`` and, for a real directory, its descendants in sorted order, never entering a linked directory."""
+    try:
+        metadata = path.lstat()
+    except OSError:
+        return
+    yield path
+    if not stat.S_ISDIR(metadata.st_mode) or _is_link_or_reparse_point(metadata):
+        return
+    for directory, subdirectories, files in os.walk(path):
+        subdirectories[:] = sorted(name for name in subdirectories if name not in _PROTECTED_SKIP_DIRECTORIES)
+        for name in (*subdirectories, *sorted(files)):
+            yield Path(directory, name)
+
+
+def _protected_fingerprint(path: Path, budget: list[int]) -> str:
+    """Return a change-revealing signature of one protected entry, spending the shared hash ``budget``."""
+    try:
+        metadata = path.lstat()
+        if stat.S_ISLNK(metadata.st_mode):
+            return f"link:{os.readlink(path)}"
+        if stat.S_ISDIR(metadata.st_mode):
+            return "dir"
+        if not stat.S_ISREG(metadata.st_mode):
+            return f"special:{stat.S_IFMT(metadata.st_mode)}"
+        if metadata.st_size > _PROTECTED_MAX_FILE_HASH_BYTES or metadata.st_size > budget[0]:
+            return f"stat:{metadata.st_size}:{metadata.st_mtime_ns}:{metadata.st_mode}"
+        budget[0] -= metadata.st_size
+        with open(path, "rb", opener=_nonblocking_opener) as stream:
+            digest = hashlib.sha256(stream.read(_PROTECTED_MAX_FILE_HASH_BYTES + 1)).hexdigest()
+        return f"file:{metadata.st_mode}:{digest}"
+    except OSError:
+        return "unreadable"
+
+
+def _protected_changes(before: dict[str, str], workspace: Path) -> list[str]:
+    """Return the protected entries added, removed, or changed since ``before``, sorted."""
+    after = _protected_state(workspace)
+    return sorted(key for key in before.keys() | after.keys() if before.get(key) != after.get(key))
 
 
 def _workspace_delta(before: list[str], workspace: Path) -> list[str]:
@@ -1792,12 +2014,12 @@ def start_background(request: Request) -> dict[str, Any]:
         "started_ts": time.time(),
     }
     _write_json(record_path, record, paths=paths)
+    # No --task: other local users can read a process's argv, so the supervisor
+    # loads the task from the job record written above.
     command = [
         sys.executable,
         str(Path(__file__).resolve()),
         request.verb,
-        "--task",
-        request.task,
         "--effort",
         request.effort,
         "--timeout-seconds",
@@ -1837,11 +2059,12 @@ def job_status(workspace: Path, job_id: str) -> dict[str, Any]:
     if record is None:
         return {"job_id": job_id, "status": "missing"}
     observed = _observed_status(record)
-    if observed == "stalled":
+    if observed in {"stalled", "failed"}:
         # A dead supervisor is terminal regardless of any cancellation marker:
         # nothing remains alive to consume the marker, so reporting
-        # cancel_requested would hide the signal that ends polling.
-        status = "stalled"
+        # cancel_requested would hide the signal that ends polling. A failed
+        # supervisor exited after writing its own terminal record.
+        status = observed
     elif _job_cancel_requested(_job_record_path(workspace, job_id), paths=BridgePaths(workspace)):
         status = "cancelled" if record.get("result") is not None else "cancel_requested"
     else:
@@ -1867,7 +2090,12 @@ def _observed_status(record: dict[str, Any]) -> str:
     """
     status = str(record["status"])
     pid = record.get("pid")
-    if status == "running" and isinstance(pid, int) and not isinstance(pid, bool) and not _process_exists(pid):
+    if (
+        status == "running"
+        and isinstance(pid, int)
+        and not isinstance(pid, bool)
+        and not _supervisor_alive(pid, record.get("pid_started_ts"))
+    ):
         return "stalled"
     started = record.get("started_ts")
     if (
@@ -1880,12 +2108,84 @@ def _observed_status(record: dict[str, Any]) -> str:
     return status
 
 
+#: Seconds a PID's ``ps`` elapsed time may fall short of the supervisor's recorded run time and still count as the same
+#: process: the record is written moments after start, ``etime`` has one-second resolution, and wall-clock adjustments
+#: must not turn a live supervisor into a stalled one.
+_SUPERVISOR_START_SLACK_SECONDS = 60.0
+
+
+def _supervisor_alive(pid: int, started_ts: Any) -> bool:
+    """Report whether a recorded supervisor still runs: its PID exists and, where checkable, is still the same process.
+
+    A PID is recycled after its process exits, so existence alone can keep reporting a dead supervisor as running; and
+    ``os.kill(pid, 0)`` fails with a permission error for a recycled PID another user owns, which the existence probe
+    must read as alive. When the record carries the supervisor's own start timestamp, POSIX ``ps`` supplies the PID's
+    owner and elapsed run time: a different owner (the supervisor always runs as this user), or a process younger than
+    the recorded start, is another process that reused the PID. Only a positive mismatch counts as dead; an unavailable
+    or unparsable ``ps`` keeps the existence verdict. Windows keeps the existence probe alone, as ``tasklist`` reports
+    no start time, and records written before the timestamp existed keep it too.
+    """
+    if not _process_exists(pid):
+        return False
+    if os.name == "nt" or isinstance(started_ts, bool) or not isinstance(started_ts, (int, float)):
+        return True
+    identity = _posix_process_identity(pid)
+    if identity is None:
+        return True
+    owner, elapsed = identity
+    if hasattr(os, "getuid") and owner != os.getuid():
+        return False
+    return elapsed + _SUPERVISOR_START_SLACK_SECONDS >= time.time() - float(started_ts)
+
+
+def _posix_process_identity(pid: int) -> tuple[int, float] | None:
+    """Return a POSIX process's owner UID and elapsed run time in seconds, or ``None`` when ``ps`` cannot say."""
+    try:
+        probe = subprocess.run(  # noqa: S603 - argv list, no shell
+            _resolved_command(["ps", "-o", "uid=", "-o", "etime=", "-p", str(pid)]),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    fields = probe.stdout.split()
+    if probe.returncode != 0 or len(fields) != 2:
+        return None
+    try:
+        return int(fields[0]), _elapsed_seconds(fields[1])
+    except ValueError:
+        return None
+
+
+def _elapsed_seconds(value: str) -> float:
+    """Convert a POSIX ``ps`` elapsed time, ``[[dd-]hh:]mm:ss``, to seconds.
+
+    Raises:
+        ValueError: When ``value`` is not in that form.
+
+    Examples:
+        >>> _elapsed_seconds("05:07"), _elapsed_seconds("01:00:00"), _elapsed_seconds("2-00:00:01")
+        (307.0, 3600.0, 172801.0)
+    """
+    days, separator, clock = value.rpartition("-")
+    parts = [int(part) for part in clock.split(":")]
+    if not 2 <= len(parts) <= 3 or (separator and len(parts) != 3):
+        raise ValueError(f"unrecognized elapsed time: {value!r}")
+    hours, minutes, seconds = [0, *parts] if len(parts) == 2 else parts
+    return float((int(days) if separator else 0) * 86400 + hours * 3600 + minutes * 60 + seconds)
+
+
 def _process_exists(pid: int) -> bool:
     """Probe process liveness without Windows ``os.kill`` termination semantics."""
     if os.name == "nt":
         try:
             probe = subprocess.run(  # noqa: S603 - argv list, no shell
-                ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],  # noqa: S607 - tasklist resolved via PATH on purpose
+                _resolved_command(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"]),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
@@ -1922,10 +2222,13 @@ def job_result(workspace: Path, job_id: str) -> dict[str, Any]:
             return _cancelled_envelope(stored)
         return stored
     observed = _observed_status(record)
-    if observed != "stalled" and _job_cancel_requested(
+    if observed not in {"stalled", "failed"} and _job_cancel_requested(
         _job_record_path(workspace, job_id), paths=BridgePaths(workspace)
     ):
         return {"job_id": job_id, "status": "cancel_requested"}
+    if observed == "failed" and isinstance(record.get("error"), str):
+        # The supervisor's own failure reason; without it a failed job reports no cause at all.
+        return {"job_id": job_id, "status": observed, "error": record["error"]}
     return {"job_id": job_id, "status": observed}
 
 
@@ -1955,7 +2258,10 @@ def _read_job(workspace: Path, job_id: str) -> dict[str, Any] | None:
     path = _job_record_path(workspace, canonical_id)
     if not path.is_file():
         return None
-    value = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        value = _read_artifact_json(path)
+    except FileNotFoundError:
+        return None
     if not isinstance(value, dict) or value.get("job_id") != canonical_id:
         raise ValueError("job record identity does not match its requested identifier")
     if not isinstance(value.get("status"), str):
@@ -2002,10 +2308,34 @@ def _job_cancel_requested(job_path: Path, *, paths: BridgePaths | None = None) -
     try:
         if paths is not None:
             paths._member(cancel_path)
-        value = json.loads(cancel_path.read_text(encoding="utf-8"))
+        value = _read_artifact_json(cancel_path)
     except (OSError, ValueError):
         return False
     return isinstance(value, dict) and value.get("job_id") == job_path.stem
+
+
+def _read_artifact_json(path: Path) -> Any:
+    """Read one bounded JSON job artifact without following a link or waiting on a FIFO swapped in at its name.
+
+    ``BridgePaths._member`` inspects the leaf with ``lstat`` first, but the name can be replaced before the read opens
+    it. ``O_NOFOLLOW`` refuses a symlink at open time where the platform has the flag, ``O_NONBLOCK`` keeps a FIFO from
+    blocking the poll loop, and the opened descriptor must be a regular single-link file. The read stops one byte past
+    :data:`MAX_JOB_RECORD_BYTES`, so a planted huge file cannot exhaust memory.
+
+    Raises:
+        FileNotFoundError: When the artifact is absent.
+        OSError: When the artifact cannot be opened safely, for example a symlink refused by ``O_NOFOLLOW``.
+        ValueError: When the opened file is not a regular single-link file, exceeds the bound, or is not UTF-8 JSON.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
+    with os.fdopen(os.open(path, flags), "rb") as stream:
+        metadata = os.fstat(stream.fileno())
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+            raise ValueError("bridge job artifact must be a regular single-link file")
+        data = stream.read(MAX_JOB_RECORD_BYTES + 1)
+    if len(data) > MAX_JOB_RECORD_BYTES:
+        raise ValueError("bridge job artifact exceeds its size bound")
+    return json.loads(data.decode("utf-8"))
 
 
 def _cancelled_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
@@ -2048,7 +2378,7 @@ def _write_json(path: Path, value: dict[str, Any], *, paths: BridgePaths | None 
         if paths is not None:
             paths._member(path)
             paths._member(temporary)
-        with temporary.open("x", encoding="utf-8", newline="\n") as stream:
+        with open(temporary, "x", encoding="utf-8", newline="\n", opener=_private_opener) as stream:
             created = True
             stream.write(json.dumps(value, sort_keys=True) + "\n")
         _replace_with_retry(temporary, path, paths=paths)
@@ -2062,6 +2392,16 @@ def _write_json(path: Path, value: dict[str, Any], *, paths: BridgePaths | None 
         except ArtifactBoundaryError:
             pass  # Do not follow a replaced parent merely to clean up a failed write.
         raise
+
+
+def _private_opener(path: str, flags: int) -> int:
+    """Open an artifact file for :func:`open` so a newly created file is readable only by the current user."""
+    return os.open(path, flags, _ARTIFACT_FILE_MODE)
+
+
+def _nonblocking_opener(path: str, flags: int) -> int:
+    """Open a file for :func:`open` without waiting for a FIFO writer, so a later regular-file check can refuse it."""
+    return os.open(path, flags | getattr(os, "O_NONBLOCK", 0))
 
 
 def _replace_with_retry(source: Path, target: Path, *, paths: BridgePaths | None = None) -> None:
@@ -2097,11 +2437,38 @@ def _resolve_task(args: argparse.Namespace) -> str:
     if args.task is not None:
         return args.task
     if args.task_file is None:
+        if args.supervisor and args.job_id is not None:
+            return _stored_job_task(Path(args.workspace).resolve(), args.job_id)
         raise ValueError("one of --task or --task-file is required")
+    return _read_task_file(Path(args.task_file))
+
+
+def _read_task_file(path: Path) -> str:
+    """Read one bounded task file, refusing anything but a regular file.
+
+    The read stops one byte past :data:`MAX_TASK_UTF8_BYTES`, so ``/dev/zero`` or a huge file cannot exhaust memory
+    before the transport budget is checked.
+    """
     try:
-        return Path(args.task_file).read_text(encoding="utf-8")
+        with open(path, "rb", opener=_nonblocking_opener) as stream:
+            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                raise ValueError("--task-file must be a regular file")
+            data = stream.read(MAX_TASK_UTF8_BYTES + 1)
     except OSError as error:
         raise ValueError(f"--task-file could not be read: {error}") from error
+    if len(data) > MAX_TASK_UTF8_BYTES:
+        raise ValueError("task exceeds Bridge's encoded transport budget")
+    return data.decode("utf-8")
+
+
+def _stored_job_task(workspace: Path, job_id: str) -> str:
+    """Return the task text a detached supervisor's launcher stored in its job record."""
+    record = _read_job(workspace, job_id)
+    request = record.get("request") if record is not None else None
+    task = request.get("task") if isinstance(request, dict) else None
+    if not isinstance(task, str):
+        raise ValueError("supervisor job record holds no task")
+    return task
 
 
 def _run_as_supervisor(request: Request, job_id: str) -> dict[str, Any]:
@@ -2113,6 +2480,8 @@ def _run_as_supervisor(request: Request, job_id: str) -> dict[str, Any]:
         raise ValueError("supervisor job record is missing")
     if not _job_cancel_requested(record_path, paths=paths):
         record["pid"] = os.getpid()
+        # Lets status probes tell this process from a later one that reuses its PID (see _supervisor_alive).
+        record["pid_started_ts"] = time.time()
         record["status"] = "running"
         _write_json(record_path, record, paths=paths)
     try:
@@ -2149,6 +2518,8 @@ def _request_from_args(args: argparse.Namespace) -> Request:
         raise ValueError("unknown bridge verb")
     if args.session_id and not _is_write_verb(args.verb):
         raise ValueError("--session-id is available only for implement")
+    for flag, value in (("--model", args.model), ("--session-id", args.session_id), ("--run-id", args.run_id)):
+        validate_caller_identifier(flag, value)
     if args.background and not _is_write_verb(args.verb):
         raise ValueError("--background is available only for implement")
     if args.depth < 0:

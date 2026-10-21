@@ -21,19 +21,15 @@ NOT for: running experiments (use `/research:run`); methodology validation (use 
 
 ## Agent Resolution
 
-**Environment precondition** — `CLAUDE_PLUGIN_ROOT` set automatically when skill runs via plugin manager. Fallback `plugins/cc_research` resolves only from project root. Neither resolves (bare `.claude/` copy invoked from subdirectory) → bin/ scripts return empty strings silently.
-
-**bin/ scripts this skill depends on** (deployed inside `${CLAUDE_PLUGIN_ROOT}/bin/`): `resolve_shared.py`, `make_run_dir.py`. Each call below followed by explicit empty-result guard — silent failure surfaces as fail-fast error, never empty-string path.
-
 **Agent resolution**: load and follow the protocol below. Contains: foundry check + fallback table. Foundry not installed → substitute each `foundry:X` with `general-purpose` per table. Agents this skill uses: `foundry:solution-architect`, `foundry:perf-optimizer`, `research:scientist`.
 
 ```bash
+# loads: unsupported-flag-protocol.md
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-_RESEARCH_SHARED=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/resolve_shared.py" 2>/dev/null)  # timeout: 5000
-[ -z "$_RESEARCH_SHARED" ] && { echo "! Plugin path resolution failed — ensure research plugin installed and CLAUDE_PLUGIN_ROOT set, or invoke /research:plan from project root."; exit 1; }
-echo "$_RESEARCH_SHARED" > "${TMPDIR:-/tmp}/research-shared-${CSID}"  # cold resolve — every later site reads this sentinel instead of re-running python
-cat "$_RESEARCH_SHARED/agent-resolution.md"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/resolve_shared.py" --persist research-shared --emit agent-resolution.md --emit unsupported-flag-protocol.md || exit 1  # timeout: 5000 — cold resolve; every later site reads the research-shared sentinel instead of re-running python
 ```
+
+The same call prints the unsupported-flag protocol used by the flag check below.
 
 ## Plan Mode (Steps P-P0–P-P4)
 
@@ -43,14 +39,7 @@ Triggered by `plan <goal|file>`. Wizard configures run.
 
 **Task tracking**: create tasks for P-P0, P-P1, P-P2, P-P2b, P-P3 at start, all in the same response as the first real tool call; add P-P4 only if `--team` detected in arguments. Every later `TaskUpdate` rides with the next real tool call — never a bookkeeping-only turn; the one standalone call is a `completed` right before a long report.
 
-**Unsupported flag check**: load and follow the protocol below. Supported flags for this skill: `--team`.
-
-```bash
-# loads: unsupported-flag-protocol.md
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r _RESEARCH_SHARED < "${TMPDIR:-/tmp}/research-shared-${CSID}" 2>/dev/null || _RESEARCH_SHARED=""  # warm read (Check 41)
-cat "$_RESEARCH_SHARED/unsupported-flag-protocol.md"
-```
+**Unsupported flag check**: follow the unsupported-flag protocol printed by the Agent Resolution block above. Supported flags for this skill: `--team`.
 
 ### Step P-P0: Detect input type
 
@@ -64,7 +53,9 @@ Extract first positional token (strip all `--<flag>` tokens from `$ARGUMENTS`, t
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/parse-skill-flags.py" --flags team "$ARGUMENTS")"  # timeout: 5000
+# --keep-state: no eval; --inlined: this step keeps no compaction contract, so it clears none
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/parse-skill-flags.py" --flags team --keep-state research-plan --inlined "$ARGUMENTS" >/dev/null  # timeout: 5000
+IFS= read -r CLEAN_ARGS < "${TMPDIR:-/tmp}/research-plan-clean-args-${CSID}" 2>/dev/null || CLEAN_ARGS=""
 # CLEAN_ARGS has flags and --keep "<items>" removed; sed pair still strips user's own
 # wrapping quotes — no flag parser touches those
 _STRIPPED=$(echo "$CLEAN_ARGS" | sed -E 's/^"(.*)"$/\1/; s/^'\''(.*)'\''$/\1/')  # timeout: 5000
@@ -74,6 +65,8 @@ SECOND_ARG=$(echo "$_STRIPPED" | tr ' ' '\n' | grep -v '^--' | grep -v '^$' | se
 echo "$FILE_ARG" > "${TMPDIR:-/tmp}/research-plan-file-arg-${CSID}"
 OUT_ARG=""; [ "$NONFLAG_TOKEN_COUNT" = "2" ] && [ -f "$FILE_ARG" ] && case "$SECOND_ARG" in *.md) OUT_ARG="$SECOND_ARG";; esac
 echo "$OUT_ARG" > "${TMPDIR:-/tmp}/research-plan-out-arg-${CSID}"  # empty = no override, P-P2b defaults to program.md
+FILE_EXISTS=false; { [ "$NONFLAG_TOKEN_COUNT" = "1" ] || [ "$NONFLAG_TOKEN_COUNT" = "2" ]; } && [ -f "$FILE_ARG" ] && FILE_EXISTS=true  # 3+ tokens are goal text: never test -f
+echo "NONFLAG_TOKEN_COUNT=$NONFLAG_TOKEN_COUNT FILE_ARG=$FILE_ARG FILE_EXISTS=$FILE_EXISTS OUT_ARG=$OUT_ARG"  # classification rules below read these values
 ```
 
 1. `NONFLAG_TOKEN_COUNT == 1` AND `test -f "$FILE_ARG"` succeeds → **file path**, default output (`program.md`). Enter profiling flow.
@@ -84,30 +77,27 @@ echo "$OUT_ARG" > "${TMPDIR:-/tmp}/research-plan-out-arg-${CSID}"  # empty = no 
 
 Run baseline profiling using `FILE_ARG` only — never raw `$ARGUMENTS` in cProfile command.
 
-**Module-file guard**: `python -m cProfile` requires executable script (has `if __name__ == "__main__":` guard or runs directly). Library/module files without entry point produce empty cProfile output. Pre-check:
+**Module-file guard**: `python -m cProfile` requires executable script (has `if __name__ == "__main__":` guard or runs directly). Library/module files without entry point produce empty cProfile output. One block pre-checks the guard and, when it passes, profiles — a failed guard only skips the profile run. The last line prints `PROFILE_AVAILABLE=true|false`:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r FILE_ARG < "${TMPDIR:-/tmp}/research-plan-file-arg-${CSID}" 2>/dev/null || FILE_ARG=""   # re-derive — bash state lost between Bash() calls
 grep -q '__main__' "$FILE_ARG" 2>/dev/null || { echo "⚠ File has no __main__ guard — cProfile will produce empty output. Falling back to goal-string path."; PROFILE_AVAILABLE=false; }
-```
-
-If `PROFILE_AVAILABLE=false` from above guard, skip the cProfile block below. Otherwise:
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r FILE_ARG < "${TMPDIR:-/tmp}/research-plan-file-arg-${CSID}" 2>/dev/null || FILE_ARG=""   # re-derive — bash state lost between Bash() calls
-CPROFILE_OUT=$(mktemp -t research-plan-XXXX)  # timeout: 3000
-python -m cProfile -s cumtime "$FILE_ARG" > "$CPROFILE_OUT" 2>&1  # timeout: 600000
-PROFILE_EXIT=$?
-if [ $PROFILE_EXIT -ne 0 ]; then
-    echo "⚠ cProfile failed (exit $PROFILE_EXIT) — continuing without profile data. Wizard will prompt for goal string instead."
-    PROFILE_AVAILABLE=false
-else
-    PROFILE_AVAILABLE=true
-    head -40 "$CPROFILE_OUT"  # timeout: 5000
-    # wall-clock number comes from cProfile's own header ("N function calls in X.XXX seconds") — label it "(measured under profiler)"; second bare `time python` run costs up to 10 min for number run skill re-measures via metric_cmd anyway
+if [ "$PROFILE_AVAILABLE" != "false" ]; then
+    CPROFILE_OUT=$(mktemp -t research-plan-XXXX)  # timeout: 3000
+    echo "→ profiling $FILE_ARG under cProfile (≤600 s) — runs the script"
+    python -m cProfile -s cumtime "$FILE_ARG" > "$CPROFILE_OUT" 2>&1  # timeout: 600000
+    PROFILE_EXIT=$?
+    if [ $PROFILE_EXIT -ne 0 ]; then
+        echo "⚠ cProfile failed (exit $PROFILE_EXIT) — continuing without profile data. Wizard will prompt for goal string instead."
+        PROFILE_AVAILABLE=false
+    else
+        PROFILE_AVAILABLE=true
+        head -40 "$CPROFILE_OUT"  # timeout: 5000
+        # wall-clock number comes from cProfile's own header ("N function calls in X.XXX seconds") — label it "(measured under profiler)"; second bare `time python` run costs up to 10 min for number run skill re-measures via metric_cmd anyway
+    fi
 fi
+echo "PROFILE_AVAILABLE=$PROFILE_AVAILABLE"
 ```
 
 **Fallback path** — ONLY when `PROFILE_AVAILABLE=false`: skip bottleneck selection menu. Invoke `AskUserQuestion` with options: (a) **Provide goal** — enter optimization goal string directly (cProfile unavailable — note: cProfile requires self-contained runnable script with `if __name__ == '__main__'` guard; modules and test files not supported); (b) **Abort** — stop. Use user's response as `<goal>`. Proceed directly to P-P1. Skip profile-available path entirely — do not read or execute following block.
@@ -138,7 +128,7 @@ Set as `<goal>`, proceed to P-P1.
 
 - question: "This input does not look like an optimization goal (`/research:plan` expects 'Reduce X' / 'Increase Y' / 'Improve Z metric'). How to proceed?"
 - (a) label: `rephrase as optimization goal` — description: provide revised goal with measurable improvement target
-- (b) label: `abort` — description: stop; use `/research` for explanatory questions
+- (b) label: `abort` — description: stop; use `/research:topic` for explanatory questions
 
 Stop if user selects (b). Never proceed to P-P2 or P-P3 without valid optimization goal.
 
@@ -162,6 +152,8 @@ max_iterations:  [default 20]
 agent_strategy:  [auto | perf | code | ml | arch]
 scope_files:     [files the ideation agent may modify]
 compute:         local | colab | docker
+metric_repeats:  [default 1; ≥3 when metric_cmd is timing or stochastic — run keeps only gains beyond noise, cost × N]
+min_delta_pct:   [default 0.1 — smallest kept gain, % of best metric]
 ```
 
 Dry-run both commands before presenting (add `# timeout: 60000` to timed bash calls — user commands may run minutes; ML pipeline data-loading steps may exceed 60s — increase timeout or use guard_cmd dry-run only when metric dry-run slow). Failure → add the full error and proposed corrections to the saved config artifact, then print that content once as the last reply text before `AskUserQuestion`. Its question text carries the short error/correction summary and `→ <resolved config path>` under the limits above — (a) **I fixed the command — re-run dry-run** · (b) **Proceed anyway (I know this command is correct)** · (c) **Abort**. Never proceed to P-P3 without user confirmation after failure.
@@ -170,13 +162,14 @@ Dry-run both commands before presenting (add `# timeout: 60000` to timed bash ca
 
 After user confirms, run expert agent review before writing `program.md`. Dispatch conditional on goal type — run whichever apply in parallel.
 
-**Foundry availability check** — before dispatching any `foundry:*` agent: run `find ~/.claude/plugins/cache -path "*/foundry*" -name "solution-architect.md" 2>/dev/null | head -1`. Result empty: skip architecture review entirely, and skip a **solo** `foundry:perf-optimizer` spawn (perf gate fired alone, foundry absent); print `⚠ foundry plugin not installed — skipping foundry:solution-architect and foundry:perf-optimizer reviews. Continuing without architecture/perf advisory.`; record gap in advisory block as `architect: skipped (foundry absent)`. When the merged spawn is `research:scientist` (both ML and perf gates fired), the perf dimension still runs as part of that merged spawn — it is not foundry-gated. Proceed to P-P3 with available advisor output (scientist when ML gate fired, carrying the perf dimension too when both gates fired).
+**Foundry availability check** — before dispatching any `foundry:*` agent: run `find ~/.claude/plugins/cache -path "*/foundry*" -name "solution-architect.md" 2>/dev/null | head -1`. Result empty: follow the loaded `agent-resolution.md` fallback table — spawn `general-purpose` in place of `foundry:solution-architect` and of a **solo** `foundry:perf-optimizer` (perf gate fired alone), with the same prompts and gates; print `⚠ foundry plugin not installed — architecture/perf reviews run as general-purpose (reduced specialisation).`; record in advisory block as `architect: general-purpose fallback (foundry absent)`. When the merged spawn is `research:scientist` (both ML and perf gates fired), the perf dimension still runs as part of that merged spawn — it is not foundry-gated. Proceed to P-P3 with available advisor output (scientist when ML gate fired, carrying the perf dimension too when both gates fired).
 
 **Pre-spawn — create plan run dir** (review files share single timestamped dir):
 
 ```bash
 PLAN_RUN_DIR=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/make_run_dir.py" "plan" ".experiments" 2>/dev/null)  # timeout: 5000
 [ -z "$PLAN_RUN_DIR" ] && { echo "! make_run_dir.py returned empty — research plugin path resolution failed"; exit 1; }
+echo "PLAN_RUN_DIR=$PLAN_RUN_DIR"  # value substituted into spawn prompts below; also keeps block exit 0
 ```
 
 **Spawn note**: P-P2 advisors (architect, scientist, perf) run in the background — issue the batch, then end the turn; no filler call, no "waiting" line, no sleep (CLAUDE.md §6). Timeout handled post-hoc — on completion notifications, check review file of each dimension ACTUALLY dispatched this run (subset of `plan-review-architect.md`, `plan-review-scientist.md`, `plan-review-perf.md` — derive expected list from launch batch, never from gates' full menu). Any expected file missing or empty = that dimension timed out: surface with ⏱ and continue to P-P3 with remaining advisor output.
@@ -185,7 +178,9 @@ PLAN_RUN_DIR=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/make_run_d
 
 When gate fires, before constructing the Agent() call, substitute actual computed value of `$PLAN_RUN_DIR` into the prompt string (e.g. `.experiments/plan-2026-05-13T10-00-00Z`):
 
-> **Agent budget** — each spawn costs ~120,851 tok of fixed overhead (~73 tool-calls' worth) plus ~12.0 s/call, so work under ~73 calls is cheaper done inline: spawn nothing — work-displacement only; an isolation-motivated spawn (adversarial reviewer, distinct specialist role, model tier, worktree) runs regardless of size. Keep each agent near ~55 tool-calls; past ~60 they stall without returning an envelope, forcing reconstruction from disk. Every spawn prompt must require an envelope even on exhaustion — `partial: true` plus what was finished.
+<!-- policy-sibling: plugins/cc_research/skills/judge/SKILL.md, plugins/cc_research/skills/fortify/SKILL.md, plugins/cc_research/skills/verify/SKILL.md, plugins/cc_research/skills/topic/SKILL.md, plugins/cc_research/skills/retro/SKILL.md, plugins/cc_research/skills/topic/modes/plan.md, plugins/cc_research/skills/topic/modes/team.md — Agent-budget spawn-envelope rule restated in each; keep in sync (plugins/CLAUDE.md §Policy Duplication Marker). -->
+
+> **Agent budget** — every spawn prompt must require an envelope even on exhaustion — `partial: true` plus what was finished.
 
 ````text
 Agent(subagent_type="foundry:solution-architect", prompt="Review a proposed research experiment scope.\n\nGoal: <goal>\nScope files (newline-separated paths in a markdown code block):\n```\n<scope_files — one path per line>\n```\nMetric command: <metric_cmd>\n\nCheck: (1) Do scope_files cover the components relevant to the goal? List architectural dependencies outside scope that the ideation agent would need to touch. (2) Are there shared abstractions (base classes, imports, shared state) outside scope required for changes within it?\n\nWrite your full review to `<PLAN_RUN_DIR>/plan-review-architect.md` using the Write tool.\nReturn ONLY: {\"ok\":true|false,\"gaps\":[\"...\"],\"suggestions\":[\"...\"],\"file\":\"<PLAN_RUN_DIR>/plan-review-architect.md\",\"confidence\":0.N}")
@@ -261,11 +256,15 @@ scope_files:
 compute: local | colab | docker
 colab_hw: # optional: H100 | L4 | T4 | A100 (used when compute: colab)
 sandbox_network: none | bridge  # ⚠ not validated by judge.md C-checks — manually verify before running
+metric_repeats: 1  # optional: 1–10; ≥3 for timing or stochastic metrics (run keeps only gains beyond noise)
+min_delta_pct: 0.1  # optional: smallest gain kept, % of best metric
 ```
 
 ## Notes
 <optional free-form text — strategy hints, context, known constraints — ignored by the skill>
 ````
+
+<!-- policy-sibling: plugins/cc_research/skills/judge/SKILL.md, plugins/cc_research/skills/run/SKILL.md, plugins/cc_research/skills/run/modes/colab-setup.md, plugins/cc_research/skills/sweep/SKILL.md — the template's `colab_hw` known set {H100, L4, T4, A100} is restated in each; keep in sync (plugins/CLAUDE.md §Policy Duplication Marker). -->
 
 Print:
 
@@ -281,19 +280,14 @@ Next steps:
 
 `--team` detected in `$ARGUMENTS`:
 
-**Precondition** — P-P3 must have completed successfully (file written, no overwrite-abort). P-P3 aborted (user chose Abort at overwrite check, or any prior P-P step aborted): mark P-P4 task `deleted`, do NOT execute steps 2–4 below, and do NOT append to any pre-existing file. P-P4 owns only the append; P-P3 owns file existence and base template.
+**Precondition** — P-P3 must have completed successfully (file written, no overwrite-abort). P-P3 aborted (user chose Abort at overwrite check, or any prior P-P step aborted): mark P-P4 task `deleted`, do NOT execute steps 2–3 below. P-P4 never edits the `program.md` P-P3 wrote: plan does no literature search, so it has no method-family or SOTA facts to add, and run ignores any extra section.
 
 1. Complete Steps P-P0–P-P3 as normal — produce `program.md` with full single-researcher structure.
-2. Append `## Team Mode Notes` section to the `program.md` just written by P-P3 (never to a pre-existing file untouched by P-P3):
-   - Number of distinct method families found (determines team size at run step)
-   - Whether SOTA consensus exists — if clear winner, note team mode may not add value
-3. Tell user: "`--team` applies at run step, not plan step. Run: `/research:run <program.md> --team` to execute with parallel researchers."
-4. Resolve run-modes dir, read team protocol — include one-line summary in Team Mode Notes:
+2. Tell user: "`--team` applies at run step, not plan step. Run: `/research:run <program.md> --team` to execute with parallel researchers."
+3. Confirm run's team mode ships with this install — without it `/research:run --team` cannot start:
    ```bash
-   _RESEARCH_RUN_MODES=$(ls -td ~/.claude/plugins/cache/borda-ai-rig/research/*/skills/run/modes 2>/dev/null | head -1)
-   [ -d "$_RESEARCH_RUN_MODES" ] || _RESEARCH_RUN_MODES="$(git rev-parse --show-toplevel 2>/dev/null)/plugins/cc_research/skills/run/modes"
+   _RESEARCH_RUN_MODES="${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/skills/run/modes"
    [ -f "$_RESEARCH_RUN_MODES/team.md" ] || { echo "⚠ team.md not found at $_RESEARCH_RUN_MODES"; }
-   cat "$_RESEARCH_RUN_MODES/team.md"
    ```
 
 </workflow>

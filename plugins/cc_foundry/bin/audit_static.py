@@ -14,6 +14,9 @@ Each registered check is one of three kinds:
 A check "fails" when its subprocess exits non-zero; its finding lines are the
 non-empty stdout lines that are not a ``✓`` success line.
 
+``--scan-dir`` is operator-supplied and trusted; file names found under it are
+passed after ``--`` so a name beginning with ``-`` is never read as an option.
+
 Usage:
     audit_static.py [--scan-dir plugins] [--jsonl <path>]
 
@@ -54,7 +57,18 @@ CHECKS: list[dict[str, object]] = [
     {"id": "shared-drift", "kind": "whole", "script": "propagate_shared.py"},
     {"id": "codemap-guard", "kind": "whole", "script": "check_codemap_guard.py"},
     {"id": "agent-waits", "kind": "scan", "script": "check_agent_waits.py"},
+    {"id": "agent-plugin-root", "kind": "scan", "script": "check_agent_plugin_root.py"},
 ]
+
+
+def _is_plugin_dir(scope: Path) -> bool:
+    """Return True when scope is one plugin (it carries a Claude or Codex plugin manifest), not a plugins root.
+
+    Examples:
+        >>> _is_plugin_dir(Path("/nonexistent-plugin-dir"))
+        False
+    """
+    return any((scope / marker / "plugin.json").is_file() for marker in (".claude-plugin", ".codex-plugin"))
 
 
 def _argv(check: dict[str, object], scope: Path) -> list[str] | None:
@@ -69,14 +83,28 @@ def _argv(check: dict[str, object], scope: Path) -> list[str] | None:
     """
     script = str(BIN / str(check["script"]))
     kind = check["kind"]
+    if kind == "scan" and _is_plugin_dir(scope):
+        # These two checkers read `--scan-dir` as a plugins ROOT (its subdirs are plugins), so a single-plugin
+        # scope would exit 2 with no findings, a false FAIL; hand them the plugin itself instead.
+        if check["id"] == "readme-drift":
+            return [sys.executable, script, "--", str(scope)]
+        if check["id"] == "mode-dispatch":
+            skills = [str(p) for p in sorted(scope.glob("*skills/*/SKILL.md"))]
+            return [sys.executable, script, "--", *skills] if skills else None
     if kind == "scan":
         return [sys.executable, script, "--scan-dir", str(scope)]
     if kind == "whole":
         return [sys.executable, script]
     files: list[str] = []
+    single_plugin = _is_plugin_dir(scope)
     for pattern in check["globs"]:  # type: ignore[union-attr]
-        files.extend(str(p) for p in sorted(scope.glob(str(pattern))))
-    return [sys.executable, script, *files] if files else None
+        # Globs are written for a plugins root (`*/agents/*.md`); one plugin as scope drops the leading plugin level.
+        pattern = str(pattern)
+        if single_plugin and pattern.startswith("*/"):
+            pattern = pattern[2:]
+        files.extend(str(p) for p in sorted(scope.glob(pattern)))
+    # `--` first: with scope `.` a top-level `-x.md` globs to a bare `-x.md`, which argparse reads as an option.
+    return [sys.executable, script, "--", *files] if files else None
 
 
 def _findings(stdout: str) -> list[str]:
@@ -130,6 +158,12 @@ def run_checks(scope: Path) -> list[dict[str, object]]:
         # Findings come from stdout only; a passing check has none by definition
         # (stderr carries benign runtime warnings, not audit findings).
         lines = _findings(proc.stdout) if proc.returncode != 0 else []
+        if proc.returncode != 0 and not lines:
+            # Non-zero exit with no finding lines is a checker that could not run (usage error, bad scope), not a
+            # clean FAIL with zero findings — surface it as an error carrying its first stderr line.
+            reason = next((ln for ln in proc.stderr.splitlines() if ln.strip()), f"exit {proc.returncode}")
+            results.append({"check": check["id"], "status": "error", "findings": 0, "lines": [reason]})
+            continue
         status = "pass" if proc.returncode == 0 else "fail"
         results.append({"check": check["id"], "status": status, "findings": len(lines), "lines": lines})
     return results

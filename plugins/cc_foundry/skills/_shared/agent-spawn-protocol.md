@@ -35,6 +35,7 @@ One deadline per agent, armed in the spawn response, checked at each wake-up —
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/agent_watch.py" --state-dir "$RUN_DIR"  # timeout: 5000
 ```
 
+- **Exit codes**: 0 report printed · 1 state dir missing · 2 zero rows (batch file not written or run dir lost) → treat as lost deadlines, re-arm before waiting further.
 - **Act on every row**: `done` → consume · `timed_out` → ⏱ now, take the step's documented fallback · `pending`/`awaiting-envelope` for an agent whose notification already arrived → ⏱ `timed_out` now (an envelope-only agent whose notification carried its envelope is done — persist the envelope first when the step says to) · rows still open with no notification → end the turn.
 - A re-spawned agent gets a fresh row in a new batch file (`agent-watch-<batch>-retry.tsv`), never an edited row — editing rewrites the mtime of every sibling's deadline.
 

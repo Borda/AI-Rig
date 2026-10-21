@@ -11,7 +11,7 @@ Three message-source modes (mutually exclusive):
 * ``--build`` plus fields — script assembles the canonical per-item ``each``-mode
   message (subject + ``[resolve No.<id>]`` attribution block + co-author trailers),
   so the ``each``-mode template lives in one place instead of being inlined in
-  ``action-item-dispatch.md``.
+  ``dispatch-prelude.md`` and ``dispatch-phase2.md``.
 * ``--build-group`` plus fields — script assembles the ``grouped``-mode message from
   the group's topic label and the per-item commit subjects. Item subjects already
   carry a Conventional Commits ``type(scope):`` prefix, so the topic label is never
@@ -55,12 +55,17 @@ _CC_SUBJECT_RE = re.compile(r"^(?P<type>[a-z]+)(?:\((?P<scope>[^()]*)\))?(?P<ban
 _CC_TYPES = frozenset({"feat", "fix", "docs", "style", "refactor", "perf", "test", "build", "ci", "chore", "revert"})
 #: Grouping labels from the ``domain`` auto mapping that are not themselves valid commit types.
 _TOPIC_TYPES = {"tests": "test", "logic": "fix", "misc": "chore", "config": "chore"}
-#: Grouped-subject length cap, matching the documented ``grouped`` contract in action-item-dispatch.md.
+#: Grouped-subject length cap, matching the documented ``grouped`` contract in dispatch-phase3.md.
 _GROUP_SUBJECT_MAX = 72
 #: Co-author trailer appended to every commit message this script builds.
 _CLAUDE_TRAILER = "Co-authored-by: claude[bot] <209825114+claude[bot]@users.noreply.github.com>"
 #: Extra co-author trailer added when Codex contributed to the change (``include_codex``).
 _CODEX_TRAILER = "Co-authored-by: Codex <codex@openai.com>"
+#: Seconds allowed for the cheap index calls (``git add``, ``git diff --cached``).
+_PLUMBING_TIMEOUT = 30
+#: Seconds allowed for ``git commit``: far above any normal pre-commit hook run, yet bounded so a hook or a signing
+#: prompt waiting on input that never comes cannot hang the resolve run for ever.
+_COMMIT_TIMEOUT = 600
 
 
 def _sanitize_field(text: str) -> str:
@@ -126,7 +131,7 @@ class EachMessageFields:
 def build_each_message(fields: EachMessageFields) -> str:
     """Build the canonical ``each``-mode per-item commit message.
 
-    Mirrors the heredoc previously inlined in ``action-item-dispatch.md``:
+    Mirrors the heredoc previously inlined in the resolve Step 8 dispatch mode:
     subject line, ``[resolve No.<id>]`` attribution block
     quoting the first 72 chars of the review comment, the challenge-outcome line,
     then the Claude (and optional Codex) co-author trailers.
@@ -523,19 +528,45 @@ def _resolve_message_file(opts: dict[str, str | bool]) -> tuple[str, str | None]
 def _stage_and_commit(git: str, msg_file: str, files: list[str]) -> int:
     """Stage ``files`` and commit them using ``msg_file`` as the message.
 
+    Every call runs with ``--literal-pathspecs``: the file names come from review data, and a name such as ``*`` or
+    ``:(glob)**`` would otherwise be read as a pattern and stage files the item never touched.
+
     Args:
         git: Absolute path to the ``git`` executable.
         msg_file: Path to the commit message file.
-        files: Pathspec of files to stage and commit.
+        files: Literal paths of the files to stage and commit.
 
     Returns:
         Exit code: the git subprocess's own return code; 3 when nothing is
-        staged for these files after ``git add``.
+        staged for these files after ``git add``; 1 when a git call times out.
 
     Examples:
         No doctest — subprocess-dependent; covered by pytest.
     """
-    add_proc = subprocess.run([git, "add", "--", *files], check=False)  # noqa: S603
+    try:
+        return _stage_and_commit_calls(git, msg_file, files)
+    except subprocess.TimeoutExpired as exc:
+        print(f"commit_action_item: git timed out after {exc.timeout} s — no commit created", file=sys.stderr)
+        return 1
+
+
+def _stage_and_commit_calls(git: str, msg_file: str, files: list[str]) -> int:
+    """Run the add, staged-check and commit calls for :func:`_stage_and_commit`.
+
+    Args:
+        git: Absolute path to the ``git`` executable.
+        msg_file: Path to the commit message file.
+        files: Literal paths to stage and commit.
+
+    Returns:
+        Same exit codes as :func:`_stage_and_commit`, except a timeout, which propagates.
+
+    Raises:
+        subprocess.TimeoutExpired: If a git call exceeds its timeout.
+    """
+    add_proc = subprocess.run(  # noqa: S603
+        [git, "--literal-pathspecs", "add", "--", *files], check=False, timeout=_PLUMBING_TIMEOUT
+    )
     if add_proc.returncode != 0:
         print(f"commit_action_item: git add failed (exit {add_proc.returncode})", file=sys.stderr)
         return add_proc.returncode
@@ -546,8 +577,9 @@ def _stage_and_commit(git: str, msg_file: str, files: list[str]) -> int:
     # diff via a combined reset does deliberately; scoping is what lets this group's own emptiness
     # be told apart from "some unrelated group's diff happens to still be staged".
     cached_proc = subprocess.run(  # noqa: S603
-        [git, "diff", "--cached", "--quiet", "--", *files],
+        [git, "--literal-pathspecs", "diff", "--cached", "--quiet", "--", *files],
         check=False,
+        timeout=_PLUMBING_TIMEOUT,
     )
     if cached_proc.returncode == 0:
         print(
@@ -566,7 +598,9 @@ def _stage_and_commit(git: str, msg_file: str, files: list[str]) -> int:
     # index and working tree identical for these files (a soft reset touches only the index). Any
     # future caller that stages a file via a partial `git add -p` (or a hook rewrites it after
     # `add`) would silently commit content the caller never staged.
-    result = subprocess.run([git, "commit", "-F", msg_file, "--", *files], check=False)  # noqa: S603
+    result = subprocess.run(  # noqa: S603
+        [git, "--literal-pathspecs", "commit", "-F", msg_file, "--", *files], check=False, timeout=_COMMIT_TIMEOUT
+    )
     return result.returncode
 
 

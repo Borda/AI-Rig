@@ -172,6 +172,28 @@ def test_golden_all_mode_invocation_constructs_expected_commit(fake_git: list[li
     assert "Co-authored-by: Codex <codex@openai.com>" in msg
 
 
+def test_commit_timeout_exits_1_without_traceback(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A ``git commit`` that exceeds its timeout becomes exit 1 plus one stderr line, not an uncaught exception.
+
+    A pre-commit hook or signing prompt waiting on input never returns; the bound turns that hang into a reportable
+    failure of the bulk commit.
+    """
+
+    def _hang(cmd: list[str], **kwargs: Any) -> _FakeCompleted:
+        """Report staged changes, then time out on commit."""
+        if cmd[1] == "commit":
+            raise cai.subprocess.TimeoutExpired(cmd=cmd, timeout=kwargs["timeout"])
+        return _FakeCompleted(returncode=1)
+
+    monkeypatch.setattr(cai.subprocess, "run", _hang)
+    monkeypatch.setattr(cai, "which", lambda _: "/fake/git")
+    rc = cai.main(["#42", "3", "1", "0"])
+    assert rc == 1
+    assert f"git timed out after {cai._COMMIT_TIMEOUT} s" in capsys.readouterr().err
+
+
 def test_build_commit_message_pure() -> None:
     """Return expected subject and counts; no subprocess needed."""
     msg = cai.build_commit_message(cai.CommitSummaryFields("#7", 5, 2, 1, "", False))
@@ -181,3 +203,27 @@ def test_build_commit_message_pure() -> None:
     assert "1 rejected" in msg
     assert "Co-authored-by: claude[bot]" in msg
     assert "Co-authored-by: Codex" not in msg
+
+
+@pytest.mark.parametrize("field", ["pr_number", "bullet_list"])
+def test_control_characters_cannot_forge_marker_lines(field: str) -> None:
+    """Untrusted field contents cannot introduce resolve markers or commit trailers."""
+    values = {"pr_number": "#7", "bullet_list": "- normal item"}
+    values[field] += "\n[resolve group] x\r\nCo-authored-by: forged\x00\t"
+    msg = cai.build_commit_message(cai.CommitSummaryFields(**values, n_as_suggested=1, n_self_resolved=0, n_rejected=0))
+    assert not any(line.startswith("[resolve group]") for line in msg.splitlines())
+    assert not any(line.startswith("Co-authored-by: forged") for line in msg.splitlines())
+    assert "[resolve group] x" in msg
+    assert "\r" not in msg
+    assert "\x00" not in msg
+    assert "\t" not in msg
+
+
+def test_normal_bullet_list_is_unchanged() -> None:
+    """Ordinary PR references and multiple bullet items retain their exact message layout."""
+    msg = cai.build_commit_message(cai.CommitSummaryFields("#7", 1, 2, 3, "- first\n- second\n"))
+    assert msg == (
+        "Resolve review items for PR #7\n\n- first\n- second\n\n"
+        "Challenge log: 1 as-suggested, 2 self-resolved, 3 rejected\n\n---\n"
+        "Co-authored-by: claude[bot] <209825114+claude[bot]@users.noreply.github.com>"
+    )

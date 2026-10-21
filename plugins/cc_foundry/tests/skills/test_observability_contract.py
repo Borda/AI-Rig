@@ -48,7 +48,7 @@ _VISIBLE = [
     ),
     # manage
     pytest.param(
-        "skills/manage/SKILL.md",
+        "skills/manage/modes/create.md",
         "Schema file: $MANAGE_SCHEMA_FILE (cached: $MANAGE_SCHEMA_CACHED)",
         id="manage-schema-line",
     ),
@@ -61,7 +61,7 @@ _VISIBLE = [
     pytest.param("skills/calibrate/SKILL.md", "mark target `⏱` in report", id="calibrate-timeout-report"),
     pytest.param("skills/calibrate/SKILL.md", "result.jsonl", id="calibrate-result-artifact"),
     pytest.param("skills/calibrate/SKILL.md", ".notes/logs/calibrations.jsonl", id="calibrate-log"),
-    pytest.param("skills/calibrate/SKILL.md", "## Fix Apply — <date>", id="calibrate-apply-summary"),
+    pytest.param("skills/calibrate/modes/apply.md", "## Fix Apply — <date>", id="calibrate-apply-summary"),
     pytest.param("skills/calibrate/SKILL.md", 'TaskCreate "Analyse and report"', id="calibrate-task-progress"),
     # audit
     pytest.param("skills/audit/SKILL.md", "surface with ⏱ in final report", id="audit-timeout-report"),
@@ -75,7 +75,7 @@ _VISIBLE = [
     pytest.param("skills/brainstorm/SKILL.md", "incomplete review noted", id="brainstorm-incomplete-review"),
     pytest.param(
         "skills/brainstorm/SKILL.md",
-        'OUTPUT_PATH=".temp/brainstorm/$TS/curator-review.md"',
+        'OUTPUT_PATH=".temp/brainstorm/$TS/tree-review.md"',
         id="brainstorm-review-artifact",
     ),
     pytest.param("skills/create/SKILL.md", "**Task tracking**: TaskCreate all steps", id="create-task-progress"),

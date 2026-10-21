@@ -137,6 +137,16 @@ class TestMainCli:
         assert rc == 1
         assert "not an object" in capsys.readouterr().err
 
+    def test_exit_one_when_state_file_oversized(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A file over the size cap → exit 1 before it is parsed, so a stray huge file never loads into memory."""
+        state = _write_state(tmp_path / "state.json", {"config": {"metric": {"direction": "lower"}}})
+        monkeypatch.setattr(_mod, "MAX_STATE_BYTES", 8)
+        rc = main([str(state), "config.metric.direction"])
+        assert rc == 1
+        assert "not a run state file" in capsys.readouterr().err
+
 
 class TestSubprocessIntegration:
     """End-to-end subprocess check: missing file path → exit 1 contract."""

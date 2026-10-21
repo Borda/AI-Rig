@@ -206,6 +206,164 @@ class TestDangerFilter:
         assert bbm.main(["--update", "--scan-dir", str(scan_dir)]) == 0
         assert "cc_foundry: 2 entries, 2 dropped by danger filter" in capsys.readouterr().err
 
+    @pytest.mark.parametrize(
+        ("text", "dropped"),
+        [
+            pytest.param('$PYTHON_CMD "$ROOT/bin/x.py" --apply', 1, id="variable-command-word"),
+            pytest.param("sed -i s/a/b/ f", 1, id="sed-in-place"),
+            pytest.param('FOO="a b" rm -rf x', 1, id="assignment-with-spaces-hides-rm"),
+            pytest.param("n=$(( $(wc -c < f) / 3 ))", 0, id="arithmetic-is-not-a-command"),
+            pytest.param("[[ -n $A && $B =~ x ]] || echo no", 0, id="conditional-test-stays-one-segment"),
+        ],
+    )
+    def test_command_word_classes_decide_the_dropped_count(self, text: str, dropped: int) -> None:
+        """A command word the filter cannot judge is dropped, while arithmetic and ``[[ ]]`` tests are not commands.
+
+        The idioms ``$(( $(wc -c < f) / 3 ))`` and ``[[ a && $B =~ x ]]`` put a ``$`` word first in a split segment;
+        they must not be mistaken for a variable command word, or common token-count and flag-validation blocks would
+        lose their auto-allow, while ``FOO="a b" rm`` must not hide the ``rm`` behind a multi-word assignment.
+        """
+        entries, dropped_count = bbm.block_entries(text, "f.md:1")
+        assert dropped_count == dropped
+        assert bool(entries) is (dropped == 0)
+
+
+class TestAllowlistGate:
+    """The fail-closed allowlist: an entry is manifested only when every command it runs is listed.
+
+    The denylist stays the cross-language contract; this gate is generator-only, so these cases need no JS twin.
+    """
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            pytest.param('V=$(python "${CLAUDE_PLUGIN_ROOT}/bin/x.py" --flag)', id="plugin-script-capture"),
+            pytest.param('git status --short && git diff --stat "$BASE"', id="read-only-git"),
+            pytest.param(
+                'case "$MODE" in\nall|grouped) echo ok ;;\n*) exit 1 ;;\nesac', id="case-labels-and-alternatives"
+            ),
+            pytest.param('case "$T" in\n  tox*|"make test") echo x ;;\nesac', id="quoted-label-with-space"),
+            pytest.param('_q() {\n  codemap-py query "$@"\n}\n_q central --top 5', id="function-definition-and-call"),
+            pytest.param("cat <<'EOF' > f.md\nmv a b\nEOF", id="quoted-heredoc-body-is-data"),
+            pytest.param("command -v jq >/dev/null 2>&1 && echo ok", id="fd-redirection-does-not-split"),
+            pytest.param("find . -name '*.md' -print0 | xargs -0 grep -l x", id="xargs-wraps-listed-command"),
+            pytest.param("timeout 5 curl -sS https://example.com", id="timeout-wraps-curl-get"),
+            pytest.param('eval "$(python "$ROOT/bin/parse.py" "$ARGS")"', id="eval-of-plugin-script-output"),
+            pytest.param("uv run pytest tests/ -q", id="uv-run-listed-command"),
+            pytest.param('ARGS+=(--output "$F")', id="array-append"),
+            pytest.param('mv "$_NOW" "$_NOW.done"', id="consume-marker-rename"),
+            pytest.param(
+                'IFS= read -r CACHE_FILE < "${TMPDIR:-/tmp}/cache-file-${CSID}"\n'
+                'jq . f > "$CACHE_FILE.tmp" && mv "$CACHE_FILE.tmp" "$CACHE_FILE"',
+                id="mv-atomic-publish-of-state-file",
+            ),
+            pytest.param(
+                'IFS= read -r D < "${TMPDIR:-/tmp}/report-dir-${CSID}"\nmv -f "$D/report.md" "$D/report.refused.md"',
+                id="mv-forced-within-state-dir",
+            ),
+            pytest.param("python -\"$F\" <<'PY'\nimport sys\nprint(sys.argv[1])\nPY", id="python-quoted-heredoc"),
+            pytest.param(
+                "python -c 'import json,sys; print(json.load(sys.stdin)[\"a\"])' < f", id="python-literal-code"
+            ),
+            pytest.param(
+                'IFS= read -r RUNNER < "${TMPDIR:-/tmp}/qs-runner-${CSID}" 2>/dev/null || RUNNER="python -m"\n'
+                'eval "$RUNNER pytest -q" > "$LOG" 2>&1',
+                id="runner-eval-from-sentinel",
+            ),
+            pytest.param('RUNNER="uv run"\neval "$RUNNER ruff --version"', id="runner-eval-from-literal"),
+            pytest.param(
+                'IFS= read -r METRIC_CMD < "${TMPDIR:-/tmp}/metric-cmd-${CSID}"\nbash -c "$METRIC_CMD"',
+                id="shell-string-from-sentinel",
+            ),
+            pytest.param('cp -p "$f" "$RUN_DIR/pre/$f"', id="cp-snapshot"),
+            pytest.param('echo x | tee -a "$LOG"', id="tee-append"),
+            pytest.param(
+                '[ -f "${TMPDIR:-/tmp}/flags-${CSID}" ] && . "${TMPDIR:-/tmp}/flags-${CSID}"', id="source-sentinel"
+            ),
+            pytest.param(
+                'IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/impl-${CSID}"\n. "$IMPL_DIR/pr-vars.sh"',
+                id="source-under-sentinel-root",
+            ),
+            pytest.param('tmpenv=$(mktemp)\n. "$tmpenv"', id="source-mktemp-file"),
+            pytest.param(
+                'IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/impl-${CSID}"\nbash "$IMPL_DIR/full-suite.sh"',
+                id="shell-script-from-own-state",
+            ),
+            pytest.param('unlink "${TMPDIR:-/tmp}/lock-${CSID}"', id="unlink-sentinel"),
+            pytest.param("kaggle competitions list -p 1", id="kaggle-list"),
+            pytest.param('{\n  echo a\n  echo b\n} > "$OUT"', id="group-redirection"),
+            pytest.param("jq -r '.a' f \\\n  | sort -u", id="continuation-line"),
+        ],
+    )
+    def test_listed_commands_are_admitted(self, text: str) -> None:
+        """Shapes the shipped blueprints rely on stay in the manifest.
+
+        Each case is shell syntax a head-only allowlist would misread as an unlisted command — a ``case`` label, a
+        function call, a heredoc line, the fd after ``2>&``, a continuation backslash — or a wrapper whose wrapped
+        command is listed.
+        """
+        assert bbm.unlisted_command(text) is None
+        assert bbm.is_excluded(text) is False
+
+    @pytest.mark.parametrize(
+        ("text", "offender"),
+        [
+            pytest.param("mv a b", "mv", id="mv"),
+            pytest.param(
+                'IFS= read -r D < "${TMPDIR:-/tmp}/report-dir-${CSID}"\nmv "$D/report.md" "$HOME/report.md"',
+                "mv",
+                id="mv-out-of-state-dir",
+            ),
+            pytest.param('mv -f "$D/a.md" "$D/b.md"', "mv", id="mv-under-untrusted-root"),
+            pytest.param("cp -r build /", "cp /", id="cp-onto-root"),
+            pytest.param('. "$HOME/.bashrc"', ". $HOME/.bashrc", id="source-non-state-file"),
+            pytest.param('. "$IMPL_DIR/vars.sh"', ". $IMPL_DIR/vars.sh", id="source-under-untrusted-root"),
+            pytest.param("perl -pi -e 's/a/b/' f", "perl", id="unknown-interpreter"),
+            pytest.param('python -c "$CODE"', "python -c", id="python-code-from-expansion"),
+            pytest.param("python -m pip install x", "python -m pip", id="python-unlisted-module"),
+            pytest.param("python - <<EOF\nprint('$X')\nEOF", "python -", id="python-unquoted-heredoc"),
+            pytest.param('node -e \'require("fs").rmSync("x")\'', "node -e", id="node-inline-code"),
+            pytest.param("awk '{system(\"rm \" $1)}' f", "awk system/pipe/write", id="awk-system"),
+            pytest.param("curl -X POST -d x https://example.com", "curl -X POST", id="curl-post"),
+            pytest.param("find . -name '*.bak' -exec mv {} /tmp \\;", "mv", id="find-exec-unlisted"),
+            pytest.param("ls | xargs -I {} mv {} dst", "mv", id="xargs-unlisted"),
+            pytest.param('eval "$RUNNER pytest -q"', "$RUNNER", id="eval-of-unset-variable"),
+            pytest.param('X=$(cat "$F")\neval "$X"', "$X", id="eval-of-variable-from-substitution"),
+            pytest.param(
+                'IFS= read -r X < "${TMPDIR:-/tmp}/x-${CSID}"\nfor X in a b; do eval "$X"; done',
+                "$X",
+                id="eval-of-variable-also-set-by-loop",
+            ),
+            pytest.param('kaggle competitions download "$SLUG"', "kaggle competitions download", id="kaggle-download"),
+            pytest.param('unlink "$dest"', "unlink", id="unlink-non-state-path"),
+            pytest.param("case x in a) mv p q;; esac", "mv", id="arm-on-case-line"),
+            pytest.param("f() { mv a b; }", "mv", id="function-body"),
+            pytest.param("cat <<EOF\nnow: $(mv a b)\nEOF", "mv", id="live-heredoc-substitution"),
+            pytest.param("cat <<EOF\nnever closed", "unterminated heredoc", id="unterminated-heredoc"),
+            pytest.param("2>/dev/null mv a b", "mv", id="redirection-before-command"),
+            pytest.param('bash "$DIR/run.sh"', "shell script $DIR/run.sh", id="shell-script-operand"),
+            pytest.param("trap 'mv a b' EXIT", "mv", id="trap-handler"),
+            pytest.param("uv add --dev pkg", "uv add", id="uv-add"),
+        ],
+    )
+    def test_unlisted_commands_are_excluded(self, text: str, offender: str) -> None:
+        """Any command the allowlist does not name keeps its entry out of the manifest, and is reported by name.
+
+        The denylist misses every one of these (``mv``, ``tee``, ``python -c``, ``eval "$RUNNER …"`` and friends) or,
+        for the ``case``-line arm and the function body, cannot see the command at all.
+        """
+        assert bbm.unlisted_command(text) == offender
+        assert bbm.is_excluded(text) is True
+
+    def test_unlisted_drop_is_counted_with_danger_drops(
+        self, scan_dir: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """An allowlist drop is reported in the same stderr count as a denylist drop, never silently."""
+        skill = scan_dir / "cc_foundry" / "skills" / "demo" / "SKILL.md"
+        skill.write_text("```bash\necho safe\nmv a b\n```\n", encoding="utf-8")
+        assert bbm.main(["--update", "--scan-dir", str(scan_dir)]) == 0
+        assert "cc_foundry: 2 entries, 2 dropped by danger filter" in capsys.readouterr().err
+
 
 class TestHashing:
     """block_entries: whole-block plus per-command digests."""

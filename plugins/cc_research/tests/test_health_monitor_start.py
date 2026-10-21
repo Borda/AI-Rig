@@ -145,3 +145,11 @@ class TestHappyPath:
         health_monitor_start.main([skill_id])
         kv = _parse_kv(capsys.readouterr().out)
         assert "\\" not in kv["SENTINEL"]
+
+
+def test_skill_id_with_trailing_newline_is_rejected() -> None:
+    """A newline-terminated skill-id exits 2 instead of embedding the newline in the sentinel path.
+
+    ``_SKILL_RE`` ends in ``$``, which ``re.match`` lets match before a final newline; ``fullmatch`` does not.
+    """
+    assert health_monitor_start.main(["skill\n"]) == 2

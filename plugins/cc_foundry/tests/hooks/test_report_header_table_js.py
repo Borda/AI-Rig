@@ -1029,6 +1029,24 @@ def test_question_is_not_a_workflow_follow_up(question: dict, skill: str) -> Non
     assert _call("isWorkflowFollowUp", question, skill) is False
 
 
+@_skip_node_unavailable
+@pytest.mark.parametrize(
+    "label",
+    [
+        pytest.param("/research:topic plan", id="topic-plan-option"),
+        pytest.param("/research:plan", id="legacy-plan-option"),
+    ],
+)
+def test_headerless_topic_follow_up_is_recognized_by_its_plan_option(label: str) -> None:
+    """A topic follow-up whose option is the plan continuation activates the report gate even with no header.
+
+    Scenario: the topic skill's option (a) is `/research:topic plan`; matching only the older `/research:plan` spelling
+    let that question slip past the gate, so a follow-up could be asked before the report header was delivered.
+    """
+    question = {"questions": [{"question": "What next?", "options": [{"label": label}, {"label": "Skip"}]}]}
+    assert _call("isWorkflowFollowUp", question, "research:topic") is True
+
+
 # ── finalReplyText ─────────────────────────────────────────────────────────
 
 

@@ -68,13 +68,22 @@ def _find_working_posix_bash() -> str | None:
 _POSIX_BASH = _find_working_posix_bash()
 
 
+def _codemap_py_stubs(query_body: str) -> str:
+    """Shell stub of the ``codemap-py`` dispatcher the batch snippet calls.
+
+    ``index`` succeeds silently; ``query`` runs ``query_body`` with the ``query`` word already consumed, so the body
+    sees the arguments the engine itself would receive.
+    """
+    return f'_cm_query() {{ {query_body} }}\ncodemap-py() {{ case "$1" in index) return 0;; query) shift; _cm_query "$@";; esac; }}'
+
+
 class TestContextContract:
     """The shipped context contract is the plugin-agnostic single source of truth."""
 
     def test_has_version_header(self):
         """Contract header carries an explicit version string feeding the injection version check."""
         text = _CONTEXT_CONTRACT.read_text(encoding="utf-8")
-        assert "# Codemap context contract — v4" in text
+        assert "# Codemap context contract — v5" in text
 
     @pytest.mark.parametrize(
         "section",
@@ -170,12 +179,13 @@ class TestContextContract:
         stubs = "\n".join(
             (
                 'git() { printf "%s\\n" "$FAKE_REPO"; }',
-                "scan-index() { return 0; }",
-                # The snippet probes `scan-query --help` once to learn whether this build knows
+                # The snippet probes `codemap-py query --help` once to learn whether this build knows
                 # `--format`. That probe is capability detection, not a query, so it stays out of
                 # the trace; $SCAN_HELP decides which answer the stub gives.
-                'scan-query() { case "$1" in --help) printf "%s\\n" "${SCAN_HELP:-usage: scan-query}"; return 0;; esac; '
-                'printf "%s\\n" "$*" >> "$TRACE"; printf \'%s\\n\' \'{"query_complete":true}\'; }',
+                _codemap_py_stubs(
+                    'case "$1" in --help) printf "%s\\n" "${SCAN_HELP:-usage: codemap-py query}"; return 0;; esac; '
+                    'printf "%s\\n" "$*" >> "$TRACE"; printf \'%s\\n\' \'{"query_complete":true}\';'
+                ),
                 "",
             )
         )
@@ -259,9 +269,10 @@ class TestContextContract:
         stubs = "\n".join(
             (
                 'git() { printf "%s\\n" "$FAKE_REPO"; }',
-                "scan-index() { return 0; }",
-                'scan-query() { case "$1" in --help) printf "%s\\n" "usage: scan-query [--format {json,tsv}]"; return 0;; esac; '
-                'printf "%s\\n" "$*" >> "$TRACE"; printf \'%s\\n\' \'{"query_complete":true}\'; }',
+                _codemap_py_stubs(
+                    'case "$1" in --help) printf "%s\\n" "usage: codemap-py query [--format {json,tsv}]"; return 0;; esac; '
+                    'printf "%s\\n" "$*" >> "$TRACE"; printf \'%s\\n\' \'{"query_complete":true}\';'
+                ),
                 "",
             )
         )
@@ -305,10 +316,11 @@ class TestContextContract:
         stubs = "\n".join(
             (
                 'git() { printf "%s\\n" "$FAKE_REPO"; }',
-                "scan-index() { return 0; }",
-                'scan-query() { case "$1" in --help) printf "%s\\n" "usage: scan-query [--timeout N]"; return 0;; esac; '
-                'case "$*" in *--format*) printf "%s\\n" "unrecognized arguments: --format" >&2; return 2;; esac; '
-                'printf "%s\\n" "$*" >> "$TRACE"; printf \'%s\\n\' \'{"query_complete":true}\'; }',
+                _codemap_py_stubs(
+                    'case "$1" in --help) printf "%s\\n" "usage: codemap-py query [--timeout N]"; return 0;; esac; '
+                    'case "$*" in *--format*) printf "%s\\n" "unrecognized arguments: --format" >&2; return 2;; esac; '
+                    'printf "%s\\n" "$*" >> "$TRACE"; printf \'%s\\n\' \'{"query_complete":true}\';'
+                ),
                 "",
             )
         )
@@ -364,9 +376,10 @@ class TestContextContract:
         stubs = "\n".join(
             (
                 'git() { printf "%s\\n" "$FAKE_REPO"; }',
-                "scan-index() { return 0; }",
-                'scan-query() { case "$1" in --help) printf "%s\\n" "usage: scan-query [--format {json,tsv}]"; return 0;; esac; '
-                'printf "%s\\n" "name\tn" ; printf "%s\\n" "a\t1"; printf "%s\\n" "$ENVELOPE" >&2; }',
+                _codemap_py_stubs(
+                    'case "$1" in --help) printf "%s\\n" "usage: codemap-py query [--format {json,tsv}]"; return 0;; esac; '
+                    'printf "%s\\n" "name\tn" ; printf "%s\\n" "a\t1"; printf "%s\\n" "$ENVELOPE" >&2;'
+                ),
                 "",
             )
         )
@@ -404,9 +417,10 @@ class TestContextContract:
         stubs = "\n".join(
             (
                 'git() { printf "%s\\n" "$FAKE_REPO"; }',
-                "scan-index() { return 0; }",
-                'scan-query() { case "$1" in --help) printf "%s\\n" "usage: scan-query [--format {json,tsv}]"; return 0;; esac; '
-                'printf "%s\\n" \'{"index": {"stale": false, "query_complete": true}}\' >&2; }',
+                _codemap_py_stubs(
+                    'case "$1" in --help) printf "%s\\n" "usage: codemap-py query [--format {json,tsv}]"; return 0;; esac; '
+                    'printf "%s\\n" \'{"index": {"stale": false, "query_complete": true}}\' >&2;'
+                ),
                 "",
             )
         )
@@ -436,11 +450,13 @@ class TestContextContract:
         batch = contract.split("## Batch pre-flight pattern", 1)[1].split("```bash", 1)[1].split("```", 1)[0]
         stubs = (
             'git() { printf "%s\\n" "$FAKE_REPO"; }\n'
-            "scan-index() { return 0; }\n"
-            'scan-query() { case "$*" in --help) return 0;; *rdeps*) '
-            "case \"$FAILURE\" in nonzero) printf '%s\\n' '{\"query_complete\":true}'; return 1;; "
-            "error) printf '%s\\n' '{\"error\":\"unavailable\"}'; return 0;; empty) return 0;; esac;; esac; "
-            "printf '%s\\n' '{\"query_complete\":true}'; }\n"
+            + _codemap_py_stubs(
+                'case "$*" in --help) return 0;; *rdeps*) '
+                "case \"$FAILURE\" in nonzero) printf '%s\\n' '{\"query_complete\":true}'; return 1;; "
+                "error) printf '%s\\n' '{\"error\":\"unavailable\"}'; return 0;; empty) return 0;; esac;; esac; "
+                "printf '%s\\n' '{\"query_complete\":true}';"
+            )
+            + "\n"
         )
         index_dir = tmp_path / ".cache" / "codemap"
         index_dir.mkdir(parents=True)

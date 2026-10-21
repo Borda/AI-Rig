@@ -29,12 +29,16 @@ Exit codes: 0 = appended (or nothing staged) · 1 = ledger or source unreadable/
 from __future__ import annotations
 
 import argparse
+import glob
 import sys
 from pathlib import Path
 
 
 def staged_records(ledger: Path) -> list[Path]:
     """List the staged ``.rec`` files waiting to be appended to ``ledger``.
+
+    The ledger name is matched literally, so ``[``, ``]`` or ``*`` in it cannot widen the match onto another ledger's
+    staged files. A symlinked ``.rec`` is skipped: it would copy its target's content into the ledger.
 
     Args:
         ledger: Path of the ledger file.
@@ -47,8 +51,8 @@ def staged_records(ledger: Path) -> list[Path]:
         []
     """
     single = ledger.with_name(ledger.name + ".rec")
-    parallel = sorted(ledger.parent.glob(ledger.name + ".*.rec")) if ledger.parent.is_dir() else []
-    return ([single] if single.is_file() else []) + [path for path in parallel if path.is_file()]
+    parallel = sorted(ledger.parent.glob(glob.escape(ledger.name) + ".*.rec")) if ledger.parent.is_dir() else []
+    return [path for path in [single, *parallel] if path.is_file() and not path.is_symlink()]
 
 
 def terminated(chunk: bytes) -> bytes:

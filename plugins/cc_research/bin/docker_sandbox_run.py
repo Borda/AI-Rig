@@ -33,6 +33,8 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import csv
+import io
 import os
 import re
 import subprocess
@@ -210,6 +212,36 @@ def _verify_rejection_reason(arg: str) -> str | None:
     return None
 
 
+def bind_mount(source: str | Path, target: str, *, readonly: bool) -> str:
+    """Render one ``--mount`` bind value that survives colons and commas in the host path.
+
+    Docker parses ``--mount`` as one CSV record, so a comma inside the path would split the
+    ``source`` field; CSV quoting keeps it intact. Colons need no escaping in this form, which
+    is why it replaces the ``-v src:dst`` syntax.
+
+    Args:
+        source: Host path; resolved to an absolute path.
+        target: Mount point inside the container.
+        readonly: Whether to append the ``readonly`` option.
+
+    Returns:
+        The value to pass after ``--mount``.
+
+    Examples:
+        >>> value = bind_mount("/a:b", "/workspace", readonly=True)
+        >>> value == f"type=bind,source={Path('/a:b').resolve()},target=/workspace,readonly"
+        True
+        >>> bind_mount("/a,b", "/w", readonly=False).startswith('type=bind,"source=')
+        True
+    """
+    fields = ["type=bind", f"source={Path(source).resolve()}", f"target={target}"]
+    if readonly:
+        fields.append("readonly")
+    buffer = io.StringIO()
+    csv.writer(buffer, lineterminator="").writerow(fields)
+    return buffer.getvalue()
+
+
 def build_explore_command(
     arg: str,
     network: str,
@@ -287,8 +319,9 @@ def build_explore_command(
         "--security-opt=no-new-privileges",
         "--read-only",
         *limits.as_flags(),
-        "-v",
-        f"{workdir}:/workspace:ro",
+        *(("--user", f"{os.getuid()}:{os.getgid()}") if hasattr(os, "getuid") else ()),
+        "--mount",
+        bind_mount(workdir, "/workspace", readonly=True),
         "--tmpfs",
         TMPFS_MOUNT,
         "-w",
@@ -327,7 +360,7 @@ def build_verify_command(
         >>> cmd = build_verify_command("pytest -q", "bridge", "/proj")
         >>> cmd[-3:]
         ['sh', '-c', 'pytest -q']
-        >>> any("experiments:rw" in c for c in cmd)
+        >>> any(c.endswith("target=/workspace/.experiments") for c in cmd)
         True
         >>> build_verify_command("pytest -q", "none", "/proj", cidfile="/c.cid")[3:5]
         ['--cidfile', '/c.cid']
@@ -353,10 +386,11 @@ def build_verify_command(
         "--security-opt=no-new-privileges",
         "--read-only",
         *limits.as_flags(),
-        "-v",
-        f"{workdir}:/workspace:ro",
-        "-v",
-        f"{workdir}/.experiments:/workspace/.experiments:rw",
+        *(("--user", f"{os.getuid()}:{os.getgid()}") if hasattr(os, "getuid") else ()),
+        "--mount",
+        bind_mount(workdir, "/workspace", readonly=True),
+        "--mount",
+        bind_mount(Path(workdir) / ".experiments", "/workspace/.experiments", readonly=False),
         "--tmpfs",
         TMPFS_MOUNT,
         "-w",
@@ -650,6 +684,16 @@ def main(argv: list[str] | None = None, env: dict[str, str] | None = None, cwd: 
             print(f"docker_sandbox_run.py: {reason}", file=sys.stderr)
             return 2
         cmd = build_verify_command(arg, network, workdir, cidfile=cidfile, limits=limits)
+        # ``--mount type=bind`` refuses a missing source, where ``-v`` silently created it.
+        experiments = Path(workdir) / ".experiments"
+        experiments.mkdir(exist_ok=True)
+        if hasattr(os, "getuid") and not os.access(experiments, os.W_OK):
+            # Sandboxes before ``--user`` ran as root, so on Linux earlier runs may have left this dir root-owned.
+            print(
+                f"docker_sandbox_run.py: warning: {experiments} is not writable by uid {os.getuid()}; "
+                'earlier root-run sandboxes may have left it root-owned — run: sudo chown -R "$(id -u):$(id -g)" .experiments',
+                file=sys.stderr,
+            )
     else:
         # argparse choices should have rejected, but guard anyway.
         print(f"unknown mode: {mode} (expected: explore|verify)", file=sys.stderr)

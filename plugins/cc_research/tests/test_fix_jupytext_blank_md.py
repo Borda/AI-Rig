@@ -84,6 +84,11 @@ class TestFixText:
 
 
 class TestMain:
+    @pytest.fixture(autouse=True)
+    def _work_in_tmp(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Run from ``tmp_path``, as kaggle runs from the project root that holds its notebook."""
+        monkeypatch.chdir(tmp_path)
+
     def test_writes_fixed_file_and_reports_count(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """Write the cleared file and report the replacement count in default mode."""
         target = tmp_path / "notebook.py"
@@ -112,4 +117,28 @@ class TestMain:
         captured = capsys.readouterr()
         assert rc == 1
         assert "1 bare" in captured.out
+        assert target.read_text(encoding="utf-8") == original
+
+    @pytest.mark.parametrize(
+        "relative",
+        [pytest.param("../outside/notebook.py", id="dot-dot-segment"), pytest.param(None, id="absolute-path")],
+    )
+    def test_file_outside_working_directory_is_skipped(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], relative: str | None
+    ) -> None:
+        """A path resolving outside the working directory is left untouched with a skip notice on stderr.
+
+        The fixer rewrites files in place; its only caller passes the kaggle notebook it just wrote under the project,
+        so any argument escaping the working tree is refused rather than rewritten.
+        """
+        original = "# %% [markdown]\n# Para one.\n#\n# Para two.\n"
+        target = tmp_path / "outside" / "notebook.py"
+        target.parent.mkdir()
+        target.write_text(original, encoding="utf-8")
+        (tmp_path / "work").mkdir()
+        monkeypatch.chdir(tmp_path / "work")
+        rc = gate.main([relative or str(target)])
+        captured = capsys.readouterr()
+        assert rc == 0
+        assert "outside the working directory" in captured.err
         assert target.read_text(encoding="utf-8") == original

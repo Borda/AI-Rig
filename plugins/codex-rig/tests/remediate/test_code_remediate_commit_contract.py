@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from _skill_text import read_with_references
+
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 CODE_REMEDIATE_SKILL = PLUGIN_ROOT / "skills" / "code-remediate" / "SKILL.md"
 
@@ -37,7 +39,7 @@ def test_review_and_remediation_require_explicit_convergence_authorization() -> 
         assert "Existing explicit approval for the same scope remains valid" in skill
         if name == "code-review":
             assert "ask before entering that workflow or loop" in skill
-    remediation = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    remediation = read_with_references(CODE_REMEDIATE_SKILL, "source-recovery.md")
     fork = remediation.split("- **Fork PR:**", 1)[1].split("####", 1)[0]
     assert "separate explicit approval for the adversarial recovery loop" in fork
 
@@ -171,9 +173,10 @@ def test_pr_remediation_establishes_destination_before_merge_and_rechecks_before
 
 def test_legacy_resume_recovers_before_committing_without_repeating_mode_choice() -> None:
     """Keep an authorized topic commit reachable after legacy branch recovery."""
-    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
-    resume = skill.split("On resume, inspect", maxsplit=1)[1].split("\n\n", maxsplit=1)[0]
-    commit = skill.split("### 12: Offer An Opt-In Commit After Verified Remediation", maxsplit=1)[1]
+    own = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(CODE_REMEDIATE_SKILL, "source-recovery.md")
+    resume = own.split("On resume, inspect", maxsplit=1)[1].split("\n\n", maxsplit=1)[0]
+    commit = own.split("### 12: Offer An Opt-In Commit After Verified Remediation", maxsplit=1)[1]
     assert "remediation-branch-recovered.json" in resume
     assert "never replace it or fall back after a failed check" in resume
     assert "run `recover`" in skill

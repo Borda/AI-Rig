@@ -109,15 +109,45 @@ class TestResolveCascade:
         cwd_with_local_tree: Path,
         monkeypatch: pytest.MonkeyPatch,
         fake_home: Path,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """Use the project skill override when no higher resolution tier matches."""
+        """Use the project skill override under --local when no higher resolution tier matches, and say so on stderr.
+
+        The override is repository-supplied text that load_mode.py streams as skill instructions, so a hit is never
+        silent: the warning names the resolved absolute path so the operator can see which tree supplied it.
+        """
         monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
         override = cwd_with_local_tree / ".claude" / "skills" / "manage" / "templates"
         override.mkdir(parents=True)
 
-        result = resolve("manage", "templates", local=False, home=fake_home)
+        result = resolve("manage", "templates", local=True, home=fake_home)
 
         assert result == Path(".claude") / "skills" / "manage" / "templates"
+        err = capsys.readouterr().err
+        assert "! WARNING: project-local override in use" in err
+        assert override.resolve().as_posix() in err
+
+    def test_tier3_project_local_ignored_without_local(
+        self,
+        cwd_with_local_tree: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        fake_home: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Without --local a cwd-relative .claude/skills override never outranks the installed plugin cache.
+
+        A repository under review can ship ``.claude/skills/<skill>/modes``; honouring it by default would let that
+        repository replace the instructions the installed plugin loads. The cached copy must win and nothing is printed.
+        """
+        monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
+        (cwd_with_local_tree / ".claude" / "skills" / "audit" / "modes").mkdir(parents=True)
+        cached = fake_home / ".claude" / "plugins" / "cache" / "borda-ai-rig" / "foundry" / "0.1.0" / "skills"
+        (cached / "audit" / "modes").mkdir(parents=True)
+
+        result = resolve("audit", "modes", local=False, home=fake_home)
+
+        assert result == cached / "audit" / "modes"
+        assert capsys.readouterr().err == ""
 
     def test_tier4_cache_scan_picks_highest(
         self,

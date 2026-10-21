@@ -25,6 +25,8 @@ import os
 import tempfile
 from pathlib import Path
 
+from dev_run_dir import write_atomic  # sibling bin/ script; atomic, link-safe sentinel writes
+
 #: Separates the stored digest from the plan path inside the sentinel file.
 _SEP = "  "
 
@@ -50,7 +52,7 @@ def record(plan: str) -> None:
     if digest is None:
         sentinel.unlink(missing_ok=True)
         return
-    sentinel.write_text(f"{digest}{_SEP}{plan}\n", encoding="utf-8")
+    write_atomic(sentinel, f"{digest}{_SEP}{plan}")
 
 
 def check() -> None:

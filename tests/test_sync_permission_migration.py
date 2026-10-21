@@ -8,9 +8,13 @@ otherwise defeat its gh write guard's one-time approval. Other plugins merge den
 from __future__ import annotations
 
 import json
+import os
 import re
+import shlex
 import shutil
 import subprocess
+import sys
+from itertools import pairwise
 from pathlib import Path
 
 import pytest
@@ -26,7 +30,76 @@ RETIRED_DENY_PLUGINS = ["cc_foundry"]
 TRIMMED_ALLOW_PLUGINS = ["cc_oss", "cc_develop", "cc_research"]
 GUARDED_ALLOW_RULES = {NEW_RULE, "Bash(gh api graphql:*)", "Bash(git branch:*)", "Bash(git tag:*)"}
 #: Exact allow rules each plugin's setup removes from user settings before merging its own list.
-RETIRED_RULES = {plugin: {OLD_RULE} for plugin in PLUGINS} | {"cc_oss": {OLD_RULE, OVERLAY_INSTALL_RULE}}
+RETIRED_SHELL_RULES = {"Bash(find:*)", "Bash(node:*)", "Bash(claude:*)", "Bash(sed:*)"}
+RETIRED_RULES = {plugin: {OLD_RULE, *RETIRED_SHELL_RULES} for plugin in PLUGINS}
+RETIRED_RULES["cc_oss"].add(OVERLAY_INSTALL_RULE)
+NARROWED_SHELL_RULES = {
+    "cc_foundry": [
+        "Bash(claude plugin validate)",
+        'Bash(find "$INDEX" -mmin +60 -print)',
+        'Bash(find "$_ROOT" -path "*/agents/*.md")',
+        'Bash(find "$_ROOT" -path "*/rules/*.md")',
+        'Bash(find "$_ROOT" -path "*skills/*/SKILL.md")',
+        'Bash(find "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}" -maxdepth 5 -path "*/calibrate/modes/skills.md")',
+        'Bash(find -path "*/agents/*.md")',
+        "Bash(find .cache*)",
+        "Bash(find .developments*)",
+        "Bash(find .experiments*)",
+        "Bash(find .notes*)",
+        "Bash(find .plans*)",
+        "Bash(find .reports*)",
+        "Bash(find .temp*)",
+        'Bash(find plugins -path "*/skills/*/SKILL.md")',
+        'Bash(find ~/.claude/plugins/cache -name "*" -type d)',
+        "Bash(node --check:*)",
+        "Bash(sed 's/.*\\.bak-//')",
+    ],
+    "cc_develop": [
+        "Bash(claude --version)",
+        "Bash(claude plugin list)",
+        "Bash(find .cache*)",
+        "Bash(find .notes*)",
+        "Bash(find .plans*)",
+        "Bash(find .reports*)",
+        "Bash(find .temp*)",
+        'Bash(find ~/.claude/plugins/cache -maxdepth 5 -path "*/foundry/*/agents/sw-engineer.md")',
+        "Bash(node --check:*)",
+    ],
+    "cc_oss": [
+        "Bash(find .cache*)",
+        "Bash(find .notes*)",
+        "Bash(find .plans*)",
+        "Bash(find .reports*)",
+        "Bash(find .temp*)",
+        'Bash(find ~/.claude/plugins/cache -maxdepth 5 -path "*/foundry/*/agents/sw-engineer.md")',
+        "Bash(node --check:*)",
+        "Bash(sed 's/-\\+/-/g; s/^-//; s/-$//')",
+        "Bash(sed 's/\\.[^.]*$//')",
+        "Bash(sed 's|refs/remotes/origin/||')",
+        "Bash(sed -nE 's/^(PR:[[:space:]]*|## Code Review: (PR )?)#?([1-9][0-9]*)([[:space:]].*)?$/\\3/p' \"$REVIEW_FILE\")",
+    ],
+    "cc_research": [
+        "Bash(find .cache*)",
+        "Bash(find .experiments*)",
+        "Bash(find .notes*)",
+        "Bash(find .plans*)",
+        "Bash(find .reports*)",
+        "Bash(find .temp*)",
+        'Bash(find ~/.claude/plugins/cache -maxdepth 5 -path "*/foundry/*/agents/sw-engineer.md")',
+        'Bash(find ~/.claude/plugins/cache -maxdepth 5 -path "*/foundry/*/agents/web-explorer.md")',
+        'Bash(find ~/.claude/plugins/cache -path "*/foundry*" -name "solution-architect.md")',
+        "Bash(node --check:*)",
+    ],
+    "codemap-py": [
+        "Bash(find .cache*)",
+        "Bash(find .notes*)",
+        "Bash(find .plans*)",
+        "Bash(find .reports*)",
+        "Bash(find .temp*)",
+        "Bash(node --check:*)",
+        "Bash(sed 's/\\./\\\\./g')",
+    ],
+}
 #: oss review template whose overlay support check and fetch must each reach their own harness permission prompt.
 OVERLAY_TEMPLATE = ROOT / "plugins/cc_oss/skills/review/templates/agent-prompts.md"
 #: Interpreter the overlay procedure names as ``<env-python>``.
@@ -94,6 +167,31 @@ def test_shipped_allow_rules_preserve_the_foundry_only_guard_boundary(plugin: st
         assert GUARDED_ALLOW_RULES <= rules
 
 
+@pytest.mark.parametrize("plugin", PLUGINS)
+def test_shell_permissions_keep_only_scoped_commands(plugin: str) -> None:
+    """Retired command families must prompt while Python, eval and scoped utilities stay available."""
+    rules = set(_plugin_json(plugin, "permissions-allow.json"))
+    assert rules.isdisjoint(RETIRED_SHELL_RULES)
+    assert {rule for rule in rules if rule.startswith(("Bash(find", "Bash(node", "Bash(claude", "Bash(sed"))} == set(
+        NARROWED_SHELL_RULES[plugin]
+    )
+    assert {"Bash(eval:*)", "Bash(python:*)", "Bash(node --check:*)", "Bash(find .temp*)"} <= rules
+    assert not any(
+        "sed -i" in rule or ("find " in rule and any(flag in rule for flag in ["-delete", "-exec"])) for rule in rules
+    )
+
+
+def test_no_plugin_ships_retired_shell_allows() -> None:
+    """Installing any plugin must not silently restore the retired broad command grants."""
+    sources = list((ROOT / "plugins").glob("*/.claude-plugin/permissions-allow.json"))
+    assert sources
+    assert {
+        str(path): sorted(RETIRED_SHELL_RULES.intersection(json.loads(path.read_text())))
+        for path in sources
+        if RETIRED_SHELL_RULES.intersection(json.loads(path.read_text()))
+    } == {}
+
+
 def test_overlay_command_extraction_finds_every_fetch_step() -> None:
     """The template still spells the support check, fetch and both pip fallback commands where the scan finds them.
 
@@ -142,6 +240,97 @@ def test_no_shipped_allow_rule_preapproves_overlay_fetch(plugin: str) -> None:
     assert [(rule, command) for rule in rules for command in commands if _bash_rule_matches(rule, command)] == []
 
 
+#: Shared script every setup runs to merge its shipped permission lists; its call line is the executable contract.
+MERGE_SCRIPT = "bin/merge_settings_permissions.py"
+#: Flags of that call belonging to each array, so one merge can be executed without touching the other.
+MERGE_FLAGS = {"allow": ("--allow", "--drop-allow"), "deny": ("--deny", "--retire-deny-file")}
+
+
+def _setup_source(plugin: str) -> tuple[Path, str]:
+    """Return a plugin's root and the text of the file documenting its permission merge."""
+    root = ROOT / "plugins" / plugin
+    source = root / ("README.md" if plugin == "codemap-py" else "skills/setup/SKILL.md")
+    return root, source.read_text(encoding="utf-8")
+
+
+def _merge_call_flags(text: str, root: Path) -> dict[str, list[str]]:
+    """Return ``{flag: values}`` from the ``python …/merge_settings_permissions.py`` lines of a setup; empty if none.
+
+    Flags are read from the shipped call itself, so a lost ``--drop-allow`` or ``--retire-deny-file`` changes the
+    executed migration and fails the assertions below. ``$PLUGIN_ROOT`` expands to the plugin under test.
+    """
+    flags: dict[str, list[str]] = {}
+    for line in text.replace("\\\n", " ").splitlines():
+        if not (line.lstrip().startswith("python ") and MERGE_SCRIPT in line):
+            continue
+        tokens = shlex.split(line.split(" || ", 1)[0].replace("$PLUGIN_ROOT", root.as_posix()))
+        for flag, value in pairwise(tokens):
+            if flag.startswith("--"):
+                flags.setdefault(flag, []).append(value)
+    return flags
+
+
+def _run_merge_script(
+    root: Path, flags: dict[str, list[str]], kind: str, settings: dict[str, object], tmp_path: Path
+) -> tuple[dict[str, object], dict[str, object]]:
+    """Execute the shipped ``kind`` ("allow" or "deny") merge twice on isolated settings under a temporary home."""
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    target = home / ".claude" / "settings.json"
+    target.write_text(json.dumps(settings), encoding="utf-8")
+    command = [sys.executable, str(root / MERGE_SCRIPT), "--settings", str(target)]
+    for flag in MERGE_FLAGS[kind]:
+        for value in flags.get(flag, []):
+            command += [flag, value]
+    env = {**os.environ, "HOME": str(home), "USERPROFILE": str(home)}
+    subprocess.run(command, env=env, capture_output=True, text=True, check=True)
+    first = json.loads(target.read_text(encoding="utf-8"))
+    subprocess.run(command, env=env, capture_output=True, text=True, check=True)
+    return first, json.loads(target.read_text(encoding="utf-8"))
+
+
+def _run_merge_jq(
+    root: Path, text: str, kind: str, settings: dict[str, object]
+) -> tuple[dict[str, object], dict[str, object]]:
+    """Execute the inline jq ``kind`` merge a setup still documents (Codemap's manual merge) twice."""
+    expressions = re.findall(rf"'([^'\n]*\.permissions\.{kind} = [^'\n]*)'", text)
+    assert len(expressions) == 1, f"setup must expose one executable {kind} merge"
+    meta = root / ".claude-plugin"
+    command = [JQ, "--slurpfile", "perms" if kind == "allow" else kind, str(meta / f"permissions-{kind}.json")]
+    retired = meta / "permissions-deny-retired.json"
+    if kind == "deny" and retired.exists():
+        command += ["--slurpfile", "retired", str(retired)]
+    command.append(expressions[0])
+    first = subprocess.run(command, input=json.dumps(settings), capture_output=True, text=True, check=True)
+    second = subprocess.run(command, input=first.stdout, capture_output=True, text=True, check=True)
+    return json.loads(first.stdout), json.loads(second.stdout)
+
+
+def _expected_merge(rules: list[str], removed: set[str]) -> list[str]:
+    """Return the array a shipped merge should produce from ``rules`` (existing then shipped) minus ``removed``.
+
+    ``merge_settings_permissions.py`` and Codemap's documented inline jq merge both keep first occurrences in order, so
+    user rules keep their order.
+    """
+    return [rule for rule in dict.fromkeys(rules) if rule not in removed]
+
+
+def _apply_setup_merge(
+    plugin: str, settings: dict[str, object], kind: str, tmp_path: Path
+) -> tuple[dict[str, object], dict[str, object]]:
+    """Run one plugin's shipped ``kind`` merge twice and return the settings after each run.
+
+    A setup that calls ``merge_settings_permissions.py`` has that call executed with only the flags of ``kind``; one
+    that still documents an inline jq filter (Codemap) has the filter executed. Dispatch follows the source text, so a
+    plugin switches paths the moment its setup adopts the script.
+    """
+    root, text = _setup_source(plugin)
+    flags = _merge_call_flags(text, root)
+    if flags:
+        return _run_merge_script(root, flags, kind, settings, tmp_path)
+    return _run_merge_jq(root, text, kind, settings)
+
+
 @pytest.mark.integration
 @pytest.mark.skipif(JQ is None, reason="jq is required to execute the shipped setup migration")
 @pytest.mark.parametrize("plugin", PLUGINS)
@@ -149,6 +338,24 @@ def test_no_shipped_allow_rule_preapproves_overlay_fetch(plugin: str) -> None:
     "settings",
     [
         pytest.param({}, id="first-install"),
+        pytest.param(
+            {
+                "permissions": {
+                    "allow": [
+                        *sorted(RETIRED_SHELL_RULES),
+                        *sorted(RETIRED_SHELL_RULES),
+                        "Bash(find .temp*)",
+                        "Bash(node --check:*)",
+                        "Bash(sed -n custom)",
+                        "Bash(claude plugin list)",
+                        "Bash(eval:*)",
+                        "Bash(python:*)",
+                    ]
+                },
+                "theme": "dark",
+            },
+            id="retired-shell-rules-including-identical-user-grants",
+        ),
         pytest.param({"permissions": {"allow": [OLD_RULE, OLD_RULE]}}, id="duplicate-stale-rules"),
         pytest.param({"permissions": {"allow": [OLD_RULE, NEW_RULE]}}, id="old-and-new-rules"),
         pytest.param(
@@ -167,31 +374,23 @@ def test_no_shipped_allow_rule_preapproves_overlay_fetch(plugin: str) -> None:
         ),
     ],
 )
-def test_setup_migrates_only_obsolete_rule(plugin: str, settings: dict[str, object]) -> None:
+def test_setup_migrates_only_obsolete_rule(plugin: str, settings: dict[str, object], tmp_path: Path) -> None:
     """Setup must remove only the exact rules that plugin retired, preserve user settings, and remain idempotent.
 
     Only oss shipped ``Bash(uv pip install:*)``, so only oss setup removes it; every other plugin's setup keeps a user's
     own copy of that rule untouched.
     """
     root = ROOT / "plugins" / plugin
-    source = root / ("README.md" if plugin == "codemap-py" else "skills/setup/SKILL.md")
-    skill = source.read_text(encoding="utf-8")
-    expressions = re.findall(r"'([^'\n]*\.permissions\.allow = [^'\n]*)'", skill)
-    assert len(expressions) == 1, "setup must expose one executable allow merge"
-    command = [JQ, "--slurpfile", "perms", str(root / ".claude-plugin/permissions-allow.json"), expressions[0]]
-
-    first = subprocess.run(command, input=json.dumps(settings), capture_output=True, text=True, check=True)
-    migrated = json.loads(first.stdout)
-    second = subprocess.run(command, input=first.stdout, capture_output=True, text=True, check=True)
+    migrated, again = _apply_setup_merge(plugin, settings, "allow", tmp_path)
 
     shipped = json.loads((root / ".claude-plugin/permissions-allow.json").read_text())
     original_permissions = settings.get("permissions", {})
     original_allow = original_permissions.get("allow", [])
-    assert migrated["permissions"]["allow"] == sorted(set(original_allow + shipped) - RETIRED_RULES[plugin])
+    assert migrated["permissions"]["allow"] == _expected_merge(original_allow + shipped, RETIRED_RULES[plugin])
     assert (NEW_RULE in migrated["permissions"]["allow"]) is (
         plugin not in TRIMMED_ALLOW_PLUGINS or NEW_RULE in original_allow
     )
-    assert json.loads(second.stdout) == migrated
+    assert again == migrated
     expected = json.loads(json.dumps(settings))
     expected.setdefault("permissions", {})["allow"] = migrated["permissions"]["allow"]
     assert migrated == expected
@@ -265,37 +464,21 @@ def test_only_foundry_ships_the_retired_deny_list(plugin: str) -> None:
         ),
     ],
 )
-def test_setup_retires_only_the_shipped_gh_write_denies(plugin: str, settings: dict[str, object]) -> None:
+def test_setup_retires_only_the_shipped_gh_write_denies(
+    plugin: str, settings: dict[str, object], tmp_path: Path
+) -> None:
     """Setup removes exactly the retired gh write denies, adds the shipped ones, keeps the rest, and is idempotent.
 
     A user's own deny entry that only resembles a retired one (``Bash(gh pr merge --admin:*)``) stays: removal is an
     exact string match against the plugin's retired list.
     """
-    root = ROOT / "plugins" / plugin
-    source = root / ("README.md" if plugin == "codemap-py" else "skills/setup/SKILL.md")
-    expressions = re.findall(r"'([^'\n]*\.permissions\.deny = [^'\n]*)'", source.read_text(encoding="utf-8"))
-    assert len(expressions) == 1, "setup must expose one executable deny merge"
-    meta = root / ".claude-plugin"
-    command = [
-        JQ,
-        "--slurpfile",
-        "deny",
-        str(meta / "permissions-deny.json"),
-        "--slurpfile",
-        "retired",
-        str(meta / "permissions-deny-retired.json"),
-        expressions[0],
-    ]
-
-    first = subprocess.run(command, input=json.dumps(settings), capture_output=True, text=True, check=True)
-    migrated = json.loads(first.stdout)
-    second = subprocess.run(command, input=first.stdout, capture_output=True, text=True, check=True)
+    migrated, again = _apply_setup_merge(plugin, settings, "deny", tmp_path)
 
     original_deny = settings.get("permissions", {}).get("deny", [])
     shipped = _plugin_json(plugin, "permissions-deny.json")
     retired = set(_plugin_json(plugin, "permissions-deny-retired.json"))
-    assert migrated["permissions"]["deny"] == sorted(set(original_deny + shipped) - retired)
-    assert json.loads(second.stdout) == migrated
+    assert migrated["permissions"]["deny"] == _expected_merge(original_deny + shipped, retired)
+    assert again == migrated
     expected = json.loads(json.dumps(settings))
     expected.setdefault("permissions", {})["deny"] = migrated["permissions"]["deny"]
     assert migrated == expected
@@ -304,25 +487,20 @@ def test_setup_retires_only_the_shipped_gh_write_denies(plugin: str, settings: d
 @pytest.mark.integration
 @pytest.mark.skipif(JQ is None, reason="jq is required to execute the shipped setup migration")
 @pytest.mark.parametrize("plugin", [plugin for plugin in PLUGINS if plugin not in RETIRED_DENY_PLUGINS])
-def test_other_plugins_merge_denies_additively(plugin: str) -> None:
+def test_other_plugins_merge_denies_additively(plugin: str, tmp_path: Path) -> None:
     """Sibling setup and Codemap's manual merge preserve stale and custom denies for Foundry to scrub."""
-    root = ROOT / "plugins" / plugin
-    source = root / ("README.md" if plugin == "codemap-py" else "skills/setup/SKILL.md")
-    expressions = re.findall(r"'([^'\n]*\.permissions\.deny = [^'\n]*)'", source.read_text(encoding="utf-8"))
-    assert len(expressions) == 1
     settings = {
         "permissions": {"deny": [RETIRED_GH_DENY, *RETIRED_LOCAL_DENY, "Bash(custom-deny:*)"]},
         "env": {"CUSTOM_SETTING": "preserved"},
     }
-    command = [JQ, "--slurpfile", "deny", str(root / ".claude-plugin/permissions-deny.json"), expressions[0]]
-    first = subprocess.run(command, input=json.dumps(settings), capture_output=True, text=True, check=True)
-    migrated = json.loads(first.stdout)
-    second = subprocess.run(command, input=first.stdout, capture_output=True, text=True, check=True)
+    migrated, again = _apply_setup_merge(plugin, settings, "deny", tmp_path)
     expected = {
         **settings,
         "permissions": {
-            "deny": sorted(set(settings["permissions"]["deny"] + _plugin_json(plugin, "permissions-deny.json")))
+            "deny": _expected_merge(
+                settings["permissions"]["deny"] + _plugin_json(plugin, "permissions-deny.json"), set()
+            )
         },
     }
     assert migrated == expected
-    assert json.loads(second.stdout) == expected
+    assert again == expected

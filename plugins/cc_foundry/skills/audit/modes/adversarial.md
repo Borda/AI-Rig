@@ -10,7 +10,7 @@ Adversarial review of all agents + skills in scope. Runs parallel with or after 
 
 **Spawn wave cap (overrides "same response"/"parallel with" phrasing below when combined count is high)**: caps are per model tier (`CAP_OPUS`/`CAP_SONNET`, constants block; canonical table in claude-config.md §Parallel Spawn Ceilings), not one shared total — "parallel" between phases means logically independent, not necessarily launched in one burst.
 
-- **Opus pool** (`CAP_OPUS`, default 5): Steps 3-4's curator batches + Phase A's curator batches + Phase A-prime's curator batches all draw from this one pool, since all three spawn `foundry:curator`. Before launching, sum every opus-tier batch about to be spawned across all currently-due phases; if that sum exceeds `CAP_OPUS`, split into ordered waves of `WAVE_STEP` (default 5) — Step 3/4 first (core audit value), then Phase A, then Phase A-prime. Wait for a wave to return before opening the next.
+- **Opus pool** (`CAP_OPUS`, default 5): Steps 3-4's curator batches + Phase A's challenger batches + Phase A-prime's curator batches all draw from this one pool, since `foundry:curator` and `foundry:challenger` are both opus-tier. Before launching, sum every opus-tier batch about to be spawned across all currently-due phases; if that sum exceeds `CAP_OPUS`, split into ordered waves of `WAVE_STEP` (default 5) — Step 3/4 first (core audit value), then Phase A, then Phase A-prime. Wait for a wave to return before opening the next.
 - **Sonnet pool** (`CAP_SONNET`, default 8): Step 4's docs-freshness web-explorer + Phase D's qa-specialist batches draw from this pool, separately from the opus pool above — the two may run concurrently.
 - **Phase B** (Codex bridge call) isn't a Claude `Agent()` spawn and draws from neither pool — it fits any wave with room, governed by Codex-side capacity instead (see codex-rig `specialist-orchestration.md` if `bridge` routes through it).
 
@@ -18,11 +18,11 @@ Below a pool's cap, launch that pool's phases together as written below.
 
 **Phase A — Challenger sweep** (parallel with Phase B):
 
-For each file in scope (Step 2 inventory; default all agents + skills if no explicit scope), spawn **foundry:curator** (config-file adversarial review — `foundry:challenger` NOT-for excludes config-file review, routes to `foundry:curator`):
+For each file in scope (Step 2 inventory; default all agents + skills if no explicit scope), spawn **foundry:challenger** (adversarial challenge of design decisions inside agent/skill files is in challenger scope; only config structure review — verbosity, formatting, cross-ref integrity, step numbering — routes to `foundry:curator`, which Phase A-prime and Step 3 already cover):
 
-> "Adversarially challenge this agent/skill. Do NOT accept claims at face value. Find: (1) unstated assumptions failing in edge cases, (2) NOT-for coverage gaps — tasks this agent wrongly accepts because exclusions are incomplete, (3) conflicting instructions producing non-deterministic or contradictory behavior, (4) workflow steps routing to the wrong sub-agent for the stated goal, (5) implicit scope contradicting explicit NOT-for lines. Report every finding with specific evidence from the file."
+> "Adversarially challenge this agent/skill. `--no-codex` — Phase B runs the Codex pass separately. Do NOT accept claims at face value. Find: (1) unstated assumptions failing in edge cases, (2) NOT-for coverage gaps — tasks this agent wrongly accepts because exclusions are incomplete, (3) conflicting instructions producing non-deterministic or contradictory behavior, (4) workflow steps routing to the wrong sub-agent for the stated goal, (5) implicit scope contradicting explicit NOT-for lines. Report every finding with specific evidence from the file."
 >
-> Write full findings to `<RUN_DIR>/challenger-<file-slug>.md` where `<file-slug>` = `<plugin>-<skill-dir-name>` for skills or `<plugin>-<agent-name>` for agents (e.g. `foundry-audit`, `oss-review`, `foundry-curator`); `.claude/` files prefix `local`. Never use bare `challenger-SKILL.md`. Return ONLY: `{"status":"done","file":"<path>","findings":N,"severity":{"security":N,"critical":N,"high":N,"medium":N,"low":N},"confidence":0.N}`
+> Write full findings to `<RUN_DIR>/challenger-<file-slug>.md` where `<file-slug>` = `<plugin>-<skill-dir-name>` for skills or `<plugin>-<agent-name>` for agents (e.g. `foundry-audit`, `oss-review`, `foundry-curator`); `.claude/` files prefix `local`. Never use bare `challenger-SKILL.md`. Envelope severity mapping from your Blocker/Concern/Nitpick sections: each Blocker → `critical`, each Concern → `high`, each Nitpick → `low`; a Blocker or Concern from the Security Risks dimension → `security` instead; `medium` stays 0. Return ONLY: `{"status":"done","file":"<path>","findings":N,"severity":{"security":N,"critical":N,"high":N,"medium":N,"low":N},"confidence":0.N}`
 
 Use `ADVERSARIAL_BATCH_SIZE` (default 2) for grouping — smaller batches than Step 3 (`BATCH_SIZE_MIN`) to maximise per-file attention depth. Same plugin-aware batching algorithm; substitute `ADVERSARIAL_BATCH_SIZE` for `BATCH_SIZE_MIN`.
 
@@ -33,7 +33,7 @@ Resolve checklist path first — spawned curator runs in a fresh shell, can't ex
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
-AUDIT_TPL=$(cat "${TMPDIR:-/tmp}/audit-state-${CSID}/audit-tpl" 2>/dev/null || python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_skill_subdir.py" audit templates $( [ "$LOCAL_MODE" = true ] && echo "--local" ))
+IFS= read -r AUDIT_TPL < "${TMPDIR:-/tmp}/audit-state-${CSID}/audit-tpl" 2>/dev/null || AUDIT_TPL=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_skill_subdir.py" audit templates $( [ "$LOCAL_MODE" = true ] && echo "--local" ))
 printf "CURATOR_PROMPT_PATH=%s/curator-prompt.md\n" "$AUDIT_TPL"
 ```
 
@@ -50,12 +50,10 @@ Use `ADVERSARIAL_BATCH_SIZE` grouping. Phase C deduplicates Phase A-prime findin
 ```bash
 CODEX_STATUS=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_bridge.py" --status 2>/dev/null || echo "absent")  # timeout: 5000
 [ "$CODEX_STATUS" = "available" ] && CODEX_AVAILABLE=true || CODEX_AVAILABLE=""  # timeout: 5000
-_SHARED=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_shared_path.py" foundry skills/_shared 2>/dev/null || echo "plugins/cc_foundry/skills/_shared")  # timeout: 5000
-[ -f "$_SHARED/codex-prepass.md" ] || { printf "⚠ WARNING: codex-prepass.md not found at $_SHARED — skipping codex pre-pass\n"; CODEX_AVAILABLE=""; }
-[ -n "$CODEX_AVAILABLE" ] && cat "$_SHARED/codex-prepass.md"
+[ -n "$CODEX_AVAILABLE" ] && python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_shared_doc.py" --optional foundry skills/_shared codex-prepass.md  # timeout: 5000
 ```
 
-`$CODEX_AVAILABLE` non-empty: apply the codex-prepass.md instructions above, run Codex pass on all in-scope files. Focus Codex on: cross-file inconsistencies, circular dispatch chains, agent description ambiguities causing routing failures, workflow steps assuming capabilities declared tools don't provide. Else: `echo "⚠ bridge@borda-ai-rig is ${CODEX_STATUS} — skipping codex adversarial pass"`.
+`$CODEX_AVAILABLE` non-empty and the codex-prepass.md text printed above (a `⚠ WARNING` line instead = doc missing → skip, as the Else): apply the codex-prepass.md instructions above, run Codex pass on all in-scope files. Focus Codex on: cross-file inconsistencies, circular dispatch chains, agent description ambiguities causing routing failures, workflow steps assuming capabilities declared tools don't provide. Else: `echo "⚠ bridge@borda-ai-rig is ${CODEX_STATUS} — skipping codex adversarial pass"`.
 
 Codex writes per-file findings to `<RUN_DIR>/codex-adversarial-<file-slug>.md`, same `<file-slug>` convention as Phase A. Return compact JSON envelope per file.
 
@@ -65,14 +63,15 @@ For state-changing workflows, include unchanged downstream consumers and the nex
 
 Scope resolution — map audit scope tokens to plugin dirs, collect all bin/ scripts:
 
-- Default (full sweep): all `plugins/*/bin/*.py` and `plugins/*/bin/*.sh`
-- Named scope (e.g. `foundry`, `oss`, `codemap`): `plugins/<name>/bin/*.py` and `plugins/<name>/bin/*.sh`
+- Default (full sweep): all `plugins/*/bin/*.py`
+- Named scope (e.g. `foundry`, `oss`, `codemap`): `plugins/<name>/bin/*.py`
 - `--local` mode: same paths from `plugins/` source tree; non-local: same paths under `~/.claude/plugins/cache/borda-ai-rig/`
+- `bin/` executables are Python-only (plugins/CLAUDE.md §Installability); legacy `.sh` shims are portability debt, out of Phase D scope — list any found as unreviewed in the report
 - Zero bin/ scripts for scope: skip Phase D, note in report
 
 Per-plugin security sweep — for each plugin in scope with bin/ scripts, spawn **foundry:qa-specialist**:
 
-> "Security and vulnerability review of all bin/ scripts in `plugins/<name>/bin/`. You are a black-box security reviewer — focus on executable surface only, not callers. Review every `.py` and `.sh` file in the directory. For Python scripts, check OWASP Top 10 applicability: (1) injection — `subprocess` calls with `shell=True` or string-concatenated command args; (2) path traversal — unvalidated file paths from argv; (3) insecure deserialization — `pickle.load`, `yaml.load` without `Loader`; (4) hardcoded secrets — API keys, tokens, passwords in source; (5) uncontrolled resource consumption — unbounded loops or file reads without size check. For shell scripts: (1) unquoted variable expansion in command positions; (2) `eval` with external input; (3) `rm -rf` with unvalidated variable path; (4) hardcoded credentials. Write full findings per file to `<RUN_DIR>/security-<plugin-name>.md`. Return ONLY: `{\"status\":\"done\",\"file\":\"<path>\",\"scripts_reviewed\":N,\"findings\":N,\"severity\":{\"critical\":N,\"high\":N,\"medium\":N,\"low\":N},\"confidence\":0.N}`"
+> "Security and vulnerability review of all bin/ scripts in `plugins/<name>/bin/`. Read-only audit: do NOT create, edit or run tests, and do NOT modify any repository file — your only write is the findings file below. You are a black-box security reviewer — focus on executable surface only, not callers. Review every `.py` file in the directory. Check OWASP Top 10 applicability: (1) injection — `subprocess` calls with `shell=True` or string-concatenated command args; (2) path traversal — unvalidated file paths from argv; (3) insecure deserialization — `pickle.load`, `yaml.load` without `Loader`; (4) hardcoded secrets — API keys, tokens, passwords in source; (5) uncontrolled resource consumption — unbounded loops or file reads without size check. Write full findings per file to `<RUN_DIR>/security-<plugin-name>.md`. Return ONLY: `{\"status\":\"done\",\"file\":\"<path>\",\"scripts_reviewed\":N,\"findings\":N,\"severity\":{\"critical\":N,\"high\":N,\"medium\":N,\"low\":N},\"confidence\":0.N}`"
 
 Use `BATCH_SIZE_MIN` (not `ADVERSARIAL_BATCH_SIZE`) for Phase D — bin/ scripts shorter, security checks deterministic; BATCH_SIZE_MIN fine here. Plugin with ≤5 bin/ scripts: one foundry:qa-specialist spawn covers all; larger sets batch by 5.
 

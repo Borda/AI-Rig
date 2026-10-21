@@ -35,6 +35,9 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+#: Largest state file parsed; a run's state.json is a few kilobytes, so anything bigger is refused before loading.
+MAX_STATE_BYTES = 16 * 1024 * 1024
+
 
 def _validate_state_path(raw: str) -> tuple[Path | None, str]:
     """Resolve ``raw`` and confirm it is a regular file inside an allowed root.
@@ -151,6 +154,8 @@ def _load_state_dict(raw_path: str) -> tuple[dict, None] | tuple[None, str]:
     if state_file is None:
         return None, reason
     try:
+        if state_file.stat().st_size > MAX_STATE_BYTES:
+            return None, f"{state_file} exceeds {MAX_STATE_BYTES} bytes — not a run state file"
         with state_file.open("r", encoding="utf-8") as fh:
             data = json.load(fh)
     except (OSError, json.JSONDecodeError) as exc:

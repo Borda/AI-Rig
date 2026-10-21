@@ -43,8 +43,10 @@ def _read_text_guarded(path: Path) -> str:
         ValueError: when file exceeds ``_MAX_FILE_SIZE`` bytes.
 
     Examples:
-        >>> import tempfile, pathlib
-        >>> tmp = pathlib.Path(tempfile.mktemp(suffix=".txt"))
+        >>> import os, tempfile, pathlib
+        >>> fd, name = tempfile.mkstemp(suffix=".txt")
+        >>> os.close(fd)
+        >>> tmp = pathlib.Path(name)
         >>> _ = tmp.write_text("hello")
         >>> _read_text_guarded(tmp)
         'hello'
@@ -112,9 +114,22 @@ def extract_vars(scores: dict) -> dict[str, str]:
         result[f"AXIS{n}_CONF"] = str(axis.get("conf", -1))
         result[f"AXIS{n}_STATUS"] = str(axis.get("label", "⚪"))
         result[f"AXIS{n}_SIGNAL"] = str(axis.get("signal", ""))
-        result[f"WEIGHT_{n}"] = str(round(float(weights.get(k, 0)) * 100))
+        result[f"WEIGHT_{n}"] = str(_weight_pct(weights.get(k, 0)))
 
     return result
+
+
+def _weight_pct(raw: object) -> int:
+    """Convert an axis weight fraction to a whole percent; a malformed weight counts as 0.
+
+    Examples:
+        >>> _weight_pct(0.17), _weight_pct("0.2"), _weight_pct("n/a"), _weight_pct(None)
+        (17, 20, 0, 0)
+    """
+    try:
+        return round(float(raw) * 100)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0
 
 
 def emit(variables: dict[str, str]) -> str:

@@ -67,6 +67,26 @@ MANIFEST: list[dict[str, object]] = [
         ],
     },
     {
+        # Every phased skill ends its compaction boundary by printing the contract's Boundary step and running the
+        # optional foundry gate; the trailer was inlined per skill, and a plugin may be installed alone.
+        "canonical": "plugins/cc_foundry/bin/compaction_boundary.py",
+        "copies": [
+            "plugins/cc_oss/bin/compaction_boundary.py",
+            "plugins/cc_develop/bin/compaction_boundary.py",
+            "plugins/cc_research/bin/compaction_boundary.py",
+        ],
+    },
+    {
+        # Every plugin's /setup merges its shipped permissions-{allow,deny}.json into ~/.claude/settings.json;
+        # the jq filter each inlined drifted per plugin, and a plugin may be installed alone.
+        "canonical": "plugins/cc_foundry/bin/merge_settings_permissions.py",
+        "copies": [
+            "plugins/cc_oss/bin/merge_settings_permissions.py",
+            "plugins/cc_develop/bin/merge_settings_permissions.py",
+            "plugins/cc_research/bin/merge_settings_permissions.py",
+        ],
+    },
+    {
         # Appends staged `.rec` records to a growing ledger (plugins/CLAUDE.md §Growing Ledgers).
         # The shell form needs `rm`, which prompts on every append; a plugin may be installed alone.
         "canonical": "plugins/cc_foundry/bin/append_ledger.py",
@@ -386,6 +406,17 @@ MANIFEST: list[dict[str, object]] = [
         "copies": [
             "plugins/cc_foundry/bin/agent_watch.py",
             "plugins/cc_develop/bin/agent_watch.py",
+            "plugins/cc_research/bin/agent_watch.py",
+        ],
+    },
+    {
+        # Private sentinel writer: removes whatever sits at a predictable ${TMPDIR} name, then creates
+        # the file O_EXCL | O_NOFOLLOW with mode 0600, so a planted symlink or another user's file is
+        # never written through. research's sentinel writers need it too, and a plugin may be
+        # installed alone, so each ships its own byte-identical copy.
+        "canonical": "plugins/cc_oss/bin/_sentinel_io.py",
+        "copies": [
+            "plugins/cc_research/bin/_sentinel_io.py",
         ],
     },
     {

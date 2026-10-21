@@ -143,6 +143,7 @@ def test_proposed_project_requires_confirmation_before_dispatch(tool: str, tmp_p
     The confirmation form names Codex as the folder's source, so a user cannot mistake an unprompted proposal for a path
     they typed themselves; the typed-path form used by ``bind`` carries no such origin line.
     """
+    (tmp_path / ".git").mkdir()  # project marker: implement refuses a folder without one
     with client() as connection:
         connection.initialize()
         connection.call("bridge_bind_workspace", arguments={"proposed_workspace": str(tmp_path)})
@@ -272,6 +273,7 @@ def test_stdio_calls_require_confirmed_binding_before_any_provider_artifacts(too
     """Keep every executable sibling blocked until both native user forms complete."""
     workspace = tmp_path / "project"
     workspace.mkdir()
+    (workspace / ".git").mkdir()  # project marker: implement refuses a folder without one
     with client() as connection:
         connection.initialize()
         assert status(connection)["binding_status"] == "unbound"
@@ -657,6 +659,7 @@ def test_bound_stdio_rejects_nested_incident_escape(tool: str, tmp_path: Path) -
     outside = tmp_path / "outside"
     root = workspace / ".temp/bridge"
     root.mkdir(parents=True)
+    (workspace / ".git").mkdir()  # project marker: implement refuses a folder without one
     outside.mkdir()
     (root / "incidents").symlink_to(outside, target_is_directory=True)
     with client() as connection:
@@ -898,3 +901,97 @@ def test_atomic_artifact_collision_preserves_existing_temporary(
         bridge_call._write_json(target, {"status": "queued"}, paths=paths)
     assert temporary.read_bytes() == original
     assert not target.exists()
+
+
+@pytest.mark.parametrize(
+    ("relative", "refused"),
+    [
+        pytest.param(".ssh", True, id="ssh-home"),
+        pytest.param(".aws/profiles", True, id="aws-subtree"),
+        pytest.param("projects/app", False, id="project-below-home"),
+    ],
+)
+def test_credential_directories_cannot_root_a_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, relative: str, refused: bool
+) -> None:
+    """Credential directories under the home are refused as workspaces while ordinary project folders stay allowed.
+
+    A write-capable run rooted in ~/.ssh or ~/.aws could read or rewrite keys; a project folder below the home is the
+    normal case and must keep binding.
+    """
+    monkeypatch.setattr(bridge_mcp, "_user_home", lambda: tmp_path.resolve())
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+    folder = tmp_path / relative
+    folder.mkdir(parents=True)
+
+    reason = bridge_mcp._workspace_refusal(folder.resolve())
+
+    assert (reason == "a credential or system configuration directory such as ~/.ssh or /etc") is refused
+
+
+@pytest.mark.parametrize(
+    ("marker", "relative", "refused"),
+    [
+        pytest.param("repo/README.md", "repo", True, id="no-marker"),
+        pytest.param("repo/.git", "repo", False, id="git-file-of-a-linked-worktree"),
+        pytest.param("repo/pyproject.toml", "repo", False, id="pyproject-file"),
+        pytest.param("repo/.git", "repo/src/pkg", False, id="marker-in-ancestor"),
+    ],
+)
+def test_implement_requires_a_project_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, marker: str, relative: str, refused: bool
+) -> None:
+    """A write-capable call needs project evidence in the bound folder or an ancestor below the home.
+
+    The denylist cannot name every sensitive folder, so an acceptEdits run is limited to folders that look like a
+    project; a subfolder of a repository qualifies through the repository root, and a README alone does not.
+    """
+    monkeypatch.setattr(bridge_mcp, "_user_home", lambda: tmp_path.resolve())
+    folder = tmp_path / relative
+    folder.mkdir(parents=True)
+    (tmp_path / marker).write_text("", encoding="utf-8")
+
+    reason = bridge_mcp._project_marker_refusal(folder.resolve())
+
+    assert (reason is not None) is refused
+
+
+def test_implement_marker_in_the_home_itself_does_not_qualify(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A dotfiles repository in the home does not turn every folder below the home into a project."""
+    monkeypatch.setattr(bridge_mcp, "_user_home", lambda: tmp_path.resolve())
+    (tmp_path / ".git").mkdir()
+    folder = tmp_path / "Documents"
+    folder.mkdir()
+
+    reason = bridge_mcp._project_marker_refusal(folder.resolve())
+
+    assert reason == "a folder with no project marker such as .git or pyproject.toml in it or its parents"
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [pytest.param("model", "-c", id="model-option-shaped"), pytest.param("run_id", "run id", id="run-id-free-text")],
+)
+def test_mcp_rejects_non_identifier_model_and_run_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str, value: str
+) -> None:
+    """MCP arguments obey the CLI's identifier rule before a request reaches the Claude child.
+
+    A dash-led model would be parsed as a child CLI option, and free text would reach the child prompt and the logs.
+    """
+    monkeypatch.setattr(bridge_mcp, "run_request", lambda *args, **kwargs: pytest.fail("invalid identifier dispatched"))
+
+    response = bridge_mcp.handle_message(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": "bridge_advise", "arguments": {"task": "Check.", name: value}},
+        },
+        trusted_workspace=tmp_path,
+    )
+
+    assert response is not None
+    assert response["error"]["code"] == -32602
+    assert response["error"]["message"].startswith(f"{name} must match")

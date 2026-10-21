@@ -1,6 +1,6 @@
 # 🌉 bridge_CC-Codex — Claude Code ↔ Codex
 
-After installation, run `$bridge:setup` in Codex to configure [Claude provider consent](rules/provider-consent.md) once. To explicitly approve that consent without a terminal question, use `$bridge:setup --approve-claude-consent`; plain setup retains operator-terminal confirmation. The approval covers task-relevant private code Claude reads in confirmed projects and ordinary inference, with explicit exclusions; installation alone grants nothing. Later calls check and reuse the grant without per-file prompts. The operator can revoke it with `bridge_consent.py revoke`. Stored user policy does not prove the active host loaded it: a fresh session may be needed, and project/managed restrictions remain authoritative. Python 3.10 needs an existing `tomli` for this optional policy stage.
+After installation, run `$bridge:setup` in Codex to configure [Claude provider consent](rules/provider-consent.md) once. To approve that consent without typing the confirmation in the setup flow, run `bin/bridge_consent.py issue-token` in your own terminal and pass the printed one-time token: `$bridge:setup --approve-claude-consent --consent-token <token>`. The token is valid 5 minutes and consumed by one grant; `grant --approve` run from a script without a terminal needs it as `BRIDGE_OPERATOR_TOKEN` and otherwise exits 2 without writing. Plain setup retains operator-terminal confirmation. The approval covers task-relevant private code Claude reads in confirmed projects and ordinary inference, with explicit exclusions; installation alone grants nothing. Later calls check and reuse the grant without per-file prompts. The operator can revoke it with `bridge_consent.py revoke`. Stored user policy does not prove the active host loaded it: a fresh session may be needed, and project/managed restrictions remain authoritative. Python 3.10 needs an existing `tomli` for this optional policy stage.
 
 Codex setup helper recipes use the quoted packaged Python launcher (`bin/python`, or `bin/python.cmd` on native Windows). Direct MCP startup retains its separate Python 3.10+ host-PATH prerequisite.
 
@@ -16,7 +16,7 @@ A user-reported dismissed question leaves its decision pending. The root checks 
 
 The bridge is useful with either host integration installed and has no dependency on another plugin from this repository. Existing-plugin replacement and consumer migration are deliberately outside this standalone package.
 
-> Release: `0.11.0`. Claude- and Codex-side setup skills provide an approval-bound lifecycle for safe configuration and repair while retaining full caller-input, workspace/session authority, recursion, asynchronous lifecycle, envelope/transcript, and approval boundaries.
+> Release: `0.12.0`. Claude- and Codex-side setup skills provide an approval-bound lifecycle for safe configuration and repair while retaining full caller-input, workspace/session authority, recursion, asynchronous lifecycle, envelope/transcript, and approval boundaries.
 
 ______________________________________________________________________
 
@@ -196,13 +196,27 @@ The verb skills accept the bridge's task text and these caller-selected fields:
 | `advise`, `review`, `implement` | `--network none\|github-read` (default `none`; caller opt-in, Codex peer only).                                                                                                                                                |
 | `advise` and `review`           | May receive one bounded retry at the next lower supported effort tier, so the retry can finish within the same budget.                                                                                                         |
 
+Pass task text with `--task`, or with `--task-file <path>` when it contains a backtick, `$`, double quote, backslash or a flag-shaped token; the two are mutually exclusive, and the file must be a regular file of at most 16 KiB. Worst-case wall time of one call is `--timeout-seconds` × 2.4: the hard cutoff is × 1.2, and a timed-out `advise` or `review` retries once at the next lower effort with the same budget. Foreground calls set their Bash `timeout` above that figure; when it can reach the ~10 min foreground cap, run the call in the background. A `status=error` object (exit 2) is a refused invocation, such as passing both `--task` and `--task-file`: fix the invocation rather than retrying it unchanged.
+
 Long-running implementation work may be detached. Use the job identifier printed by the bridge to inspect or stop it — one check when you have a reason to look, never a polling loop; any state other than `queued` or `running` is final:
 
 ```text
-/bridge:status <job-id>
-/bridge:result <job-id>
-/bridge:cancel <job-id>
+/bridge:status [--workspace PATH] <job-id>
+/bridge:result [--workspace PATH] <job-id>
+/bridge:cancel [--workspace PATH] <job-id>
 ```
+
+Pass the same `--workspace` the originating call used; when it omitted the option, pass the absolute directory it ran from, never `.`, since a different or omitted value resolves to another workspace and reports `missing`. Job states:
+
+| State               | Meaning                                                                                                 |
+| ------------------- | ------------------------------------------------------------------------------------------------------- |
+| `queued`, `running` | Not final; check again only when there is a reason to.                                                  |
+| `cancel_requested`  | Not final: the supervisor and any write-capable child are still being torn down; ends as `cancelled`.   |
+| `finished`          | The job completed; read it with `/bridge:result`.                                                       |
+| `cancelled`         | Cancellation completed.                                                                                 |
+| `failed`            | The supervisor itself errored; its error is returned. An `implement` job may already have edited files. |
+| `stalled`           | The supervisor is gone, or the job is still queued after 120 seconds. Route to `/bridge:result`.        |
+| `missing`           | No such job in this workspace: a wrong workspace, a job that never existed, or one already pruned.      |
 
 > Background execution and lifecycle controls are available only for Claude Code → Codex `implement`. `advise` and `review` are ephemeral calls without job records; the Claude skills run them as background Bash calls (`run_in_background: true`) when the budget can reach the ~10 min foreground cap or the caller has independent work, so the host shows a task row and a completion notification at no extra model cost. Every Claude skill reply ends with one usage line copied from the envelope (`codex <model>/<effort> · in … (cached …) · out … · N s`). The Codex → Claude MCP transport does not expose reverse background requests or separate status/result/cancel skills.
 
@@ -234,7 +248,7 @@ codex plugin add bridge@borda-ai-rig
 
 The Codex manifest declares the bridge MCP server via `.codex-mcp.json`, which starts `bin/bridge_mcp.py` using native `cwd: "."` and relative script arguments. Claude Code ships no `.mcp.json` at all: the Claude-to-Codex direction is CLI-only (`bin/bridge_call.py`), and Claude Code auto-discovers any file literally named `.mcp.json` at a plugin's root regardless of manifest intent, so the plugin deliberately never ships one to avoid registering a server Claude Code has no use for.
 
-> The server starts unbound; its launch directory locates installed code and never grants project authority. Call `bridge_bind_workspace` with the known absolute project folder as untrusted `proposed_workspace`, then confirm its exact canonical target in one native form, which states that Codex proposed the folder. Empty arguments retain manual selection followed by confirmation. Rebinding clears old authority immediately, including cancellation. Every advise/review/implement call requires the current `binding_id` returned by binding/status; missing or stale IDs fail before provider work. Folder resolution and directory identity are rechecked before each executable call. Filesystem root, home itself and every directory above it, installed payload/cache folders, and agent configuration homes with everything inside them (`~/.claude`, `~/.codex`, and the directories `CLAUDE_CONFIG_DIR` and `CODEX_HOME` name) are refused; project subdirectories of home are allowed. Binding is process-local project identity, not editing approval, runtime permission, authentication, or paid-call consent. If Codex asks you to trust or enable the installed MCP content, review the displayed command and approve it according to your local policy.
+> The server starts unbound; its launch directory locates installed code and never grants project authority. Call `bridge_bind_workspace` with the known absolute project folder as untrusted `proposed_workspace`, then confirm its exact canonical target in one native form, which states that Codex proposed the folder. Empty arguments retain manual selection followed by confirmation. Rebinding clears old authority immediately, including cancellation. Every advise/review/implement call requires the current `binding_id` returned by binding/status; missing or stale IDs fail before provider work. Folder resolution and directory identity are rechecked before each executable call. Filesystem root, home itself and every directory above it, installed payload/cache folders, agent configuration homes with everything inside them (`~/.claude`, `~/.codex`, and the directories `CLAUDE_CONFIG_DIR` and `CODEX_HOME` name), user credential directories with everything inside them (`~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.kube`, `~/.docker`), and, outside Windows, `/etc` with everything inside it are refused; project subdirectories of home are allowed. `bridge_implement` additionally needs project evidence in the bound folder or an ancestor below the home: `.git` (directory or worktree file), `.hg`, `.svn`, `pyproject.toml`, `setup.py`, `setup.cfg`, `package.json`, `Cargo.toml`, `go.mod`, `pom.xml`, `build.gradle`, `build.gradle.kts`, `CMakeLists.txt` or `Makefile`; advise and review need none. `bridge_setup.py --workspace` refuses the same denied folders (no marker rule) for every action except the read-only `check`. Binding is process-local project identity, not editing approval, runtime permission, authentication, or paid-call consent. If Codex asks you to trust or enable the installed MCP content, review the displayed command and approve it according to your local policy.
 
 Start a fresh Codex session after installation, then run the Codex-side setup skill:
 
@@ -346,7 +360,7 @@ Safety boundaries:
 - `implement` can modify the current worktree under the host's normal permission policy.
 - Setup configuration and repair are state-changing operations bound to an exact approval digest.
 - Authentication failures, permission denials, unsupported models, and unknown faults are surfaced as structured results or incidents.
-- Timeout and cancellation give POSIX peer groups a two-second cooperative grace, then force termination even when the group leader already exited. Windows invokes `taskkill /T /F` before a leader can exit and orphan its tree; native Windows reparse and tree behavior still require native-host verification.
+- Timeout and cancellation give POSIX peer groups a two-second cooperative grace, then force termination of any members left, even when the group leader already exited; once the group is empty no second signal is sent, because its id may already belong to an unrelated process group. Windows invokes `taskkill /T /F` before a leader can exit and orphan its tree; native Windows reparse and tree behavior still require native-host verification.
 - Provider login output is never captured, and rollback never touches credentials.
 - The peer child receives an allowlisted environment, not the caller's: base process keys, provider authentication keys, and on Windows the interpreter start-up keys. Unrelated API keys, cloud credentials, and the session's inter-agent messaging variables are dropped. A host whose proxy or enterprise provider path needs more names them in `BRIDGE_CHILD_ENV_EXTRA` (comma-separated).
 - ! BREAKING — unless the caller opts in with `--network github-read`, every Codex invocation pins `sandbox_workspace_write.network_access=false`, so an `implement` task that installed a dependency, refreshed a lockfile, or ran a network-touching hook now fails inside the sandbox. The control is Codex-side only; the Claude child is constrained by permission mode instead.
@@ -364,27 +378,7 @@ Finalization freezes the bounded capture under its lock; a failed drain returns 
 
 Update the marketplace snapshot through the host's normal plugin manager, then restart the host session. Uninstalling one half does not remove the other half or alter host credentials. Remote publication, marketplace refresh, provider login, MCP trust approval, and any permission escalation remain human-owned operations.
 
-The bridge's checked-in manifests and host baseline describe the CLI surface it was verified against. If setup reports missing or changed flags, upgrade the host or use a bridge release that supports the installed host; do not patch the baseline at runtime. Ordinary `make sync-*` runs invoke only the direct static doctor with explicit read-only semantics; they never invoke a setup skill, model, approval token, authentication, repair, restart, or provider call. Run the local verification commands below after source changes. On Linux or macOS:
-
-```bash
-python -m pytest -q plugins/bridge_cc-codex
-git diff --check -- plugins/bridge_cc-codex
-disposable_parent_directory="$(mktemp -d)"
-python plugins/bridge_cc-codex/scripts/build_package.py --output "$disposable_parent_directory/bridge"
-python plugins/bridge_cc-codex/scripts/validate_package.py "$disposable_parent_directory/bridge"
-```
-
-On native Windows PowerShell:
-
-```powershell
-& python -m pytest -q plugins/bridge_cc-codex
-git diff --check -- plugins/bridge_cc-codex
-$disposableParentDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ("bridge-" + [System.Guid]::NewGuid())
-New-Item -ItemType Directory -Path $disposableParentDirectory | Out-Null
-$disposablePackageDirectory = Join-Path $disposableParentDirectory "bridge"
-& python plugins/bridge_cc-codex/scripts/build_package.py --output $disposablePackageDirectory
-& python plugins/bridge_cc-codex/scripts/validate_package.py $disposablePackageDirectory
-```
+The bridge's checked-in manifests and host baseline describe the CLI surface it was verified against. If setup reports missing or changed flags, upgrade the host or use a bridge release that supports the installed host; do not patch the baseline at runtime. Ordinary `make sync-*` runs invoke only the direct static doctor with explicit read-only semantics; they never invoke a setup skill, model, approval token, authentication, repair, restart, or provider call. After source changes, run the local verification commands in [Development and release verification](docs/development.md#local-checks): the focused plugin test suite, the whitespace check, and the disposable install-shaped package build and validation, with both Linux/macOS and native Windows PowerShell variants.
 
 Run `action=verify-live ... live=required` only after explicitly accepting the separate provider call and its cost. A live setup probe verifies one selected path at that moment; it is diagnostic evidence, not proof that a future task will succeed. This documentation does not claim that either host is currently authenticated or live-verified.
 

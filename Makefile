@@ -3,7 +3,7 @@
 # Remote installs use pushed state — commit and push before running.
 #
 # Run from the project root:
-#   make sync-all            # Claude + Codex scopes, including standing Claude consent (default target)
+#   make sync-all            # Claude + Codex scopes, plus standing Claude consent from an operator terminal or BRIDGE_OPERATOR_TOKEN (default target)
 #   make sync-all APPROVE_CLAUDE_CONSENT=0  # leave standing consent unchanged
 #   make sync-claude         # Claude scope only
 #   make sync-codex          # Codex scope only
@@ -44,8 +44,14 @@ CODEX_HOME_SYNC_SCRIPT := $(PROJECT_DIR)/scripts/sync_codex_session_policy.py
 BRIDGE_CONSENT_SCRIPT := $(PROJECT_DIR)/plugins/bridge_cc-codex/bin/bridge_consent.py
 BRIDGE_CONSENT_LAUNCHER := $(PROJECT_DIR)/plugins/bridge_cc-codex/bin/python
 # Full sync approves standing consent by default; respect command-line and environment overrides.
+# CONSENT_EXPLICIT records whether the operator set the value (command line or environment): an explicit opt-in
+# without operator proof fails, the implicit full-sync default skips. sync-all forwards it to the sub-make, where its
+# own re-passed APPROVE_CLAUDE_CONSENT would otherwise always look explicit.
 ifeq ($(origin APPROVE_CLAUDE_CONSENT),undefined)
 sync-all: APPROVE_CLAUDE_CONSENT = 1
+CONSENT_EXPLICIT := 0
+else
+CONSENT_EXPLICIT := 1
 endif
 APPROVE_CLAUDE_CONSENT ?= 0
 ifneq ($(APPROVE_CLAUDE_CONSENT),0)
@@ -109,7 +115,7 @@ sync-all:
 	@$(call workflow,Full sync - Claude + Codex scopes); \
 	status=0; \
 	$(MAKE) sync-claude || status=1; \
-	$(MAKE) sync-codex APPROVE_CLAUDE_CONSENT=$(APPROVE_CLAUDE_CONSENT) || status=1; \
+	$(MAKE) sync-codex APPROVE_CLAUDE_CONSENT=$(APPROVE_CLAUDE_CONSENT) CONSENT_EXPLICIT=$(CONSENT_EXPLICIT) || status=1; \
 	if [ $$status -ne 0 ]; then \
 		echo "⚠ sync-all finished with failures — see output above"; \
 	else \
@@ -402,10 +408,27 @@ sync-codex-home-policy:
 		--codex-home "$${CODEX_HOME:-$$HOME/.codex}"
 
 # Consent follows policy sync so its exact block survives the next ordinary sync.
+# The grant needs operator proof (terminal or BRIDGE_OPERATOR_TOKEN from issue-token); without either the implicit
+# full-sync default is skipped so a piped or scripted full sync still succeeds, while an explicit
+# APPROVE_CLAUDE_CONSENT=1 fails so a requested grant never silently does nothing. The terminal probe runs the helper's own
+# predicate through the launcher: bash `[ -t ]` can disagree with native Windows Python under mintty. Probe exit 3 =
+# no terminal; any other failure falls through so the grant reports it.
 sync-codex-bridge-consent:
 	@if [ "$(APPROVE_CLAUDE_CONSENT)" = "0" ]; then \
 		echo "  – Claude transfer consent unchanged (opt in with APPROVE_CLAUDE_CONSENT=1)"; \
 		exit 0; \
+	fi; \
+	if [ -z "$${BRIDGE_OPERATOR_TOKEN:-}" ]; then \
+		probe=0; \
+		"$(BRIDGE_CONSENT_LAUNCHER)" -c 'import sys; sys.exit(0 if sys.stdin.isatty() and sys.stdout.isatty() else 3)' || probe=$$?; \
+		if [ "$$probe" = "3" ]; then \
+			if [ "$(CONSENT_EXPLICIT)" = "1" ]; then \
+				echo "✗ APPROVE_CLAUDE_CONSENT=1 needs operator proof: run from a terminal or pass BRIDGE_OPERATOR_TOKEN from bridge_consent.py issue-token" >&2; \
+				exit 1; \
+			fi; \
+			echo "  – consent unchanged: needs operator terminal or BRIDGE_OPERATOR_TOKEN"; \
+			exit 0; \
+		fi; \
 	fi; \
 	$(call stage,Record explicit Claude transfer consent); \
 	"$(BRIDGE_CONSENT_LAUNCHER)" "$(BRIDGE_CONSENT_SCRIPT)" grant --approve && \

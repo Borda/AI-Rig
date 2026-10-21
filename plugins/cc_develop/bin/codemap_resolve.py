@@ -31,11 +31,14 @@ Usage:
 
 Exits 0: prints "true" or "false" to stdout
 Exits 1: strict mode and binary/index missing — error to stderr
+Exits 2: invalid sentinel prefix or session identity — one error line before any write
 """
 
 import argparse
+import contextlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -58,11 +61,33 @@ def _currency_file(prefix: str) -> Path:
 
 
 def _write_currency(prefix: str, value: str) -> None:
-    """Record *value* in the currency sentinel, ignoring write failures."""
+    """Record *value* in the currency sentinel, ignoring write failures.
+
+    The sentinel name is predictable (``CSID`` falls back to ``shared``) and lives in a shared temp dir, and a plain
+    ``write_text`` follows a symlink planted at that name and overwrites its target. A private temp file swapped in with
+    ``os.replace`` replaces the directory entry itself, so a planted link is displaced rather than followed. Bytes with
+    a bare newline keep a Windows write from adding the CR that ``read -r`` would return as part of the value. An entry
+    another user already owns at that name is left alone rather than replaced; native Windows has no ``os.getuid``, so
+    the ownership check is skipped there, where the per-user temp dir already keeps other users out.
+    """
+    path = _currency_file(prefix)
+    tmp_name = ""
+    getuid = getattr(os, "getuid", None)
     try:
-        _currency_file(prefix).write_text(value + "\n")
+        if getuid is not None and os.lstat(path).st_uid != getuid():
+            return  # another user's file: refuse to replace it, and the gate stays advisory
     except OSError:
-        pass  # currency status is advisory; never fail the gate on it
+        pass  # missing (the normal case) or unreadable; the atomic write below decides
+    try:
+        fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(f"{value}\n".encode())
+        os.replace(tmp_name, path)
+    except OSError:
+        # currency status is advisory; never fail the gate on it
+        if tmp_name:
+            with contextlib.suppress(OSError):
+                Path(tmp_name).unlink(missing_ok=True)
 
 
 def _canonical_root() -> Path:
@@ -175,6 +200,10 @@ def main(argv: list[str] | None = None) -> int:
     """Resolve the codemap mode, print true/false, and record index currency."""
     args = _parse_args(list(sys.argv[1:] if argv is None else argv))
     mode, prefix = args.mode, args.currency_prefix
+    csid = os.environ.get("CSID") or os.environ.get("CLAUDE_CODE_SESSION_ID") or "shared"
+    if any(not re.fullmatch(r"[A-Za-z0-9._-]+", value) or ".." in value for value in (prefix, csid)):
+        print("codemap_resolve: invalid sentinel prefix or session identity", file=sys.stderr)
+        return 2
 
     if mode in ("off", "false"):
         print("false")

@@ -45,7 +45,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/codemap_scan.py" --source=
 
 ## Review-pipeline injection (oss:review, develop:review)
 
-Review orchestrators run v4 pre-flight queries **per changed module** before spawning dimension agents, persist structured output, pass to each agent as `CODEMAP_CONTEXT` so agents skip only equivalent structural retrieval. Pre-flight queries (module-level only — a name-only changed-files list can't supply the `module::fn` qnames `fn-rdeps`/`fn-blast` need; bare-module fn-\* calls failed 100% in production, usage audit F1; fn-level returns once diff-hunk qname derivation lands — audit plan P1.2b):
+Review orchestrators run v5 pre-flight queries **per changed module** before spawning dimension agents, persist structured output, pass to each agent as `CODEMAP_CONTEXT` so agents skip only equivalent structural retrieval. Pre-flight queries (module-level only — a name-only changed-files list can't supply the `module::fn` qnames `fn-rdeps`/`fn-blast` need; bare-module fn-\* calls failed 100% in production, usage audit F1; fn-level returns once diff-hunk qname derivation lands — audit plan P1.2b):
 
 ```bash
 codemap-py query --timeout 5 rdeps       "$MODULE"            2>/dev/null  # importer count → risk tier

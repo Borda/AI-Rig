@@ -163,6 +163,27 @@ def test_passes_through_exit_code(monkeypatch: pytest.MonkeyPatch, returncode: i
     assert pytest_gate.main(argv) == returncode
 
 
+@pytest.mark.parametrize(
+    "target",
+    [
+        pytest.param("-p", id="plugin-flag"),
+        pytest.param("--rootdir=/etc", id="rootdir-option"),
+        pytest.param("--basetemp=x::y", id="option-with-node-id"),
+    ],
+)
+def test_rejects_option_shaped_target(
+    target: str, captured_argv: list[list[str]], capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A target starting with ``-`` exits 1 before pytest starts, even though it resolves under the working directory.
+
+    ``Path("-p")`` resolves to ``<cwd>/-p``, so the containment check alone passed it straight into pytest's argv.
+    """
+    with pytest.raises(SystemExit) as exc:
+        pytest_gate.main(["pytest", target])
+    assert (exc.value.code, captured_argv) == (1, [])
+    assert "option-shaped target" in capsys.readouterr().err
+
+
 def test_rejects_target_outside_cwd(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -1,5 +1,89 @@
 # Changelog
 
+## 0.69.0
+
+- Narrow broad `find`, `node`, `claude`, and `sed` allows while retaining scoped read-only rules and broad `eval`/`python` for existing recipes; ad-hoc commands outside shipped blocks now prompt unless a narrower rule covers them. Setup removes the old broad entries from `settings.json`, including an identical entry added by hand.
+
+- Shared keep-state helpers reject sentinel identities containing `..` before changing state; audit Check R4 also recognizes real tests that import or reference a script under another test filename, reducing false missing-test findings.
+
+- `/foundry:setup` uses Python for every JSON read, probe and atomic settings write, so setup completes without jq on native Windows and other hosts while preserving existing env values and safe re-runs.
+
+- The Windows Python launcher disables implicit current-directory executable lookup, preventing a checkout's planted interpreter from running during runtime selection.
+
+- `/foundry:calibrate --local` help now states what the flag changes (rules target, mode files, cross-plugin availability check) and that agent/skill targets always come from the source tree, matching `resolve_agent_file.py`.
+
+- `/foundry:setup` validates settings with Python instead of jq, so machines without jq keep a valid settings merge rather than restoring its backup; malformed JSON still triggers restoration.
+
+- `/foundry:brainstorm` writes its question-delivery copies (`<slug>-branches.md`, `-tree.md`, `-spec-draft.md`, `-plan.md`) under a per-invocation `.reports/brainstorm/<ts>/` run dir printed at Step 0, so a later brainstorm or breakdown run on the same slug no longer overwrites an earlier run's files; rounds within one run still replace their own copy.
+
+- `foundry:perf-optimizer` and `foundry:sw-engineer` replace basic tool-usage examples (py-spy/scalene/timeit/strace commands, a sample `pyproject.toml`, a Protocol class, an exception-hierarchy listing) with one-line principles, shrinking each agent's always-loaded prompt; the macOS SIP tracing caveat and the `pstats` read-back one-liner stay.
+
+- `parse-skill-flags.py` no longer drops a `--keep` value whose quotes the shell consumed when the host substituted `$ARGUMENTS` (`--keep "a b"` used to arrive as `--keep a b` and persist an empty keep list); it now also accepts `--keep 'a b'` and `--keep="a b"`, strips a dangling `--keep` from `CLEAN_ARGS`, and warns on stderr when the value was unquoted or empty, so a lost compaction keep list is visible instead of silent.
+
+- `/foundry:audit` Check 45 resolves a policy-sibling path against the marker file's own plugin root when it is not found from the repository root, so plugin-relative sibling paths in shipped files (codex-rig, research) no longer raise false `45-BROKEN` findings (20 on the current tree, now 0).
+
+- `/foundry:brainstorm`, `/foundry:investigate`, `/foundry:distill` and `/foundry:calibrate` start with one `parse-skill-flags.py --keep-state` call instead of `extract-keep-flag.py` followed by an `eval` of `parse-skill-flags.py`: one process fewer per skill start and no `eval` of script output, with the same owner-safe stale-contract clear and keep sentinel. `/foundry:manage` and `/foundry:profile` drop `eval` too and read their flags from per-session sentinels. `parse-skill-flags.py` gains `--keep-state <prefix>`, `--out-file` and `--inlined` (synced from oss).
+
+- `resolve_shared_path.py`'s last-resort source-tree tier now uses a cwd-relative `plugins/<dir>/<subdir>` only when the working directory is that plugin's own source repository (`plugins/<dir>/.claude-plugin/plugin.json` names the requested plugin). Otherwise the tier is skipped and the CLI exits 1 with a `!` message naming the refused tree, so a repository under analysis can no longer supply the shared docs that foundry loads via `load_shared_doc.py` or a sibling plugin loads via its own copy.
+
+- `heal_git_artifacts.py worktrees` no longer deletes unregistered directories (orphans) by default: they are reported with a hint and removed only with the new `--include-orphans`, after a fresh re-check right before deletion (still unregistered, `git worktree list` answering, untouched since the sweep, no uncommitted work in its own `.git`). Symlinked children are reported as skipped instead of silently dropped from the report, and `--managed-prefix` rejects `*` (exit 2), so one sweep can no longer claim every child of a directory.
+
+- `/foundry:audit` Check 23 and the curator agent accept a shared-doc load by either `cat` or a plugin `bin/` loader and no longer propose converting one to the other.
+
+- `/foundry:audit` Check 28 and the Check 27 `_shared` path greps now also scan `plugins/*/claude-skills/`, so bridge and codemap-py skills get the cross-plugin and subagent_type checks.
+
+- `/foundry:audit` Layer 1 gains the `agent-plugin-root` check (`bin/check_agent_plugin_root.py`): agent Markdown that writes `${CLAUDE_PLUGIN_ROOT:-plugins/<plugin>}` is flagged, because the host substitutes only the exact `${CLAUDE_PLUGIN_ROOT}` token in an agent prompt and the default form resolves to a repo-relative path an installed plugin does not have. `audit_static.py` exits 1 on a finding; a line carrying `plugin-root-check: allow` is exempt. The foundry agents now use the exact token. `audit_static.py --scan-dir <one plugin>` passes that plugin to `readme-drift`, `mode-dispatch` and `tag-symmetry` directly instead of reporting a findingless FAIL or skipping, and a checker that exits non-zero without findings is reported as an error with its stderr line.
+
+- `/foundry:audit --efficiency` now flags a `model:` field on any inline skill (one without `context: fork`) in every plugin, not only foundry; on this tree that covers 9 skills outside foundry: `cc_oss` `resolve`, `analyse`, `review` and `release`, and `codemap-py` `query-code`, `integration`, `debrief-coding`, `rename-refs` and `test-impact`.
+
+- `bin/plugin_layout.py` prints each plugin's manifest-declared skills and agents directories, and `--local` audits glob those instead of a fixed `*/skills/*/SKILL.md`, so a plugin that renames its skills directory (for example `claude-skills/`) is no longer silently skipped.
+
+- Skills that run inline in the main session (`humanizer`, `investigate`, `profile`, `session`, `setup`) no longer set `model:`, which only applies with `context: fork`. The efficiency audit flags an inline skill that sets one, and `humanizer` leaves the haiku ceiling row and the isolation-spawn examples in the rules.
+
+- `/foundry:audit`: the `/distill executables` follow-up option is gone from the gate, `--adversarial` Phase A spawns `foundry:challenger` (`--no-codex`) and Phase D reads `.py` files only, `--upgrade` accepts a change only on a capability A/B run with `--local` and a 0.05 noise floor, and `audit_preflight.py` stops with `BLOCKED` on an unsafe session id or a state directory owned by someone else. `/foundry:manage` prints the final `/foundry:audit` and `/foundry:calibrate` commands for the user to run, since both are `disable-model-invocation`.
+
+- `check_bash_persistence.py` no longer misses cross-block variable references (Checks 41 and 43), also scans `modes/` files, and an explicit `--scan-dir` with no match no longer falls back to the current directory.
+
+- `/foundry:calibrate` accepts `claude-skills` targets, passes `model=` for `--local` targets, records `severity_assigned[]`, adds a pace gate and ledger, and persists `TIMESTAMP` in apply mode; interactive skills (`create`, `brainstorm`, `manage create`) are excluded from the skill domain table. `/foundry:create` splits its first question. `/foundry:brainstorm` reviews its Step 5 output through `foundry:challenger`, caps D2 at 4, and keeps `/develop:*` and `/foundry:manage` out of its B3 invocations. `/foundry:distill` external mode reviews before writing, and `--project` defaults to the current project only.
+
+- `quality-stack.md` reads its shared directory from the `qs-shared-dir-${CSID}` sentinel and stops with `BLOCKED` when it is missing; it also recognises `uv.lock`, `poetry` and pre-commit setups, treats MYPY as advisory, and spawns the Cycle 1 agents directly. `perf-optimizer` checkpoints with `git stash create`; `sw-engineer` routes pre-commit work and `doc-scribe` carries a NOT-for clause; `solution-architect` and `creator` fall back to a `needs_decision` envelope; `challenger` gets the `Skill` tool and a security scope.
+
+- ! BREAKING: `resolve_skill_subdir.py` resolves the project-local tier only with `--local`, so `/foundry:manage create` no longer sees `.claude/skills` overrides.
+
+- Bin hardening: sentinel and state writes are atomic and link-safe (`extract-keep-flag.py` also takes `--inlined` and skips a contract owned by another session), `jq_write.py` exits 3 on an unlisted flag, `write_skill_contract.py` rejects a multi-line value, `find-polluter.py` exits 1 on a timeout or an option-shaped test id, `check_bridge.py` accepts only allow-listed marketplaces, `heal_git_artifacts.py` rejects a `--pattern` that is not a bare file-name glob and keeps a worktree with an unreadable status out of the removable tier, and `resolve_shared_path.py` rejects `SUBDIR` traversal and reads its own name from `plugin.json`. `purge_plugin_cache.py` deletes nothing when the registry is unusable, `resolve_agent_file.py` rejects path components, `compact_gate.py` rejects a wildcard session id, `symlink_with_guard.py` rejects a degenerate marker or a source link leaving the plugin root, `check_codemap_guard.py` reads its `MANIFEST` with `ast.literal_eval` instead of importing the file, and `verify_blueprint_audit.py` survives a deeply nested record.
+
+- `extract-keep-flag.py` refuses a keep sentinel another user already owns (exit 1 with an error naming the file, instead of reusing a planted value) and creates a missing `--out-file` state directory with mode 0700, so other users can no longer list it. Sentinel names are unchanged; native Windows skips the owner check.
+
+- `merge_settings_permissions.py` merges the shipped permissions in the order they were written (no re-sort) and writes through a symlinked `settings.json`. The blueprint allow manifest drops 18 mutating command idioms, so those blocks prompt again instead of auto-allowing.
+
+- The `/foundry:audit` skills checks moved from one `checks-skills.md` into `checks-skills-{gaps,bash,contract,crossplugin,deadfiles,duplication,sweep}.md`, which `checks-skills.md` now indexes. A `skills` scope run no longer loads the sweep file (Checks 35, 42, 43, 44; the `plugins` and `full` scopes still do), and the Check 27 and 30b self-exclusion greps cover every `checks-skills*.md` file.
+
+- `write_skill_contract.py` takes a leading `--keep-sentinel <name>` or `--keep-file <path>` (not both) and appends the first line of that sentinel or file as `user-keep:` itself; a missing or empty source adds nothing. `audit`, `calibrate`, `distill`, `brainstorm` and `investigate` use it instead of an inline `read -r _KEEP` plus string append.
+
+- `load_shared_doc.py --optional` prints a one-line warning and exits 0 when the plugin, subdir or file is missing, instead of `! BREAKING` and exit 1; the audit codex pre-pass and the Step 6 cross-validation load use it in place of an inline `[ -f ] || warn` block.
+
+- New `compaction_boundary.py` runs the compaction contract resolve and gate as one call, finds the contract relative to its own plugin so an installed plugin works from any directory, and times out its child processes; it is propagated to `develop` and `oss`.
+
+- New `codemap_changed_modules.py` lists the codemap modules touched by the current diff from `git diff -z`, so a path git quotes or one with a comma now resolves; `challenger`, `doc-scribe`, `perf-optimizer`, `qa-specialist`, `solution-architect` and `sw-engineer` call it instead of an inline pipeline.
+
+- `extract_code_blocks.py` now finds fences inside blockquotes: it strips the opener's quote depth from content and close lines and skips a block whose quote ends before the close, so blockquoted fences that were missed before are now found.
+
+- `jq_write.py` accepts `--slurpfile <name> <file>` (source confined to the working directory, `TMPDIR` or `~/.claude`) and writes `settings*.json` directly under `~/.claude`, so `/foundry:setup` no longer needs an unchecked `jq … > tmp && mv` write-back. `list_audit_files.py --paths-only -0` prints NUL-separated paths for `xargs -0`.
+
+- `/foundry:manage` Step 4 (`create`, `rename`, `content-edit`, `delete`, `perm`) and `/foundry:calibrate` Step 6 (apply) moved into `modes/` files loaded on demand, so a run reads only the mode it uses. Duplicated rules in `manage`, `calibrate`, `distill`, `profile`, `investigate` and `brainstorm` are stated once.
+
+- `/foundry:audit --efficiency` run alone now writes the `aggregate.md` and `summary.jsonl` the audit gate reads, and `check_codemap_guard.py` tracks the split `oss` dispatch files. Agent `tools:` grants match what each file uses: `challenger` drops `WebFetch`/`WebSearch` and `web-explorer` drops `Glob`.
+
+- `quality-stack.md`: when doctests run as a separate pass (their collection failed, so they could not join the main run), a failing doctest now halts the quality stack with `GENUINE FAILURE`, and any other non-zero pytest exit except 5 halts with `CONFIG ERROR`. Before, that exit code was recorded and never read, so failing doctests were reported as `not-merged` and the run continued. Exit 5 (no doctests in the module) still passes.
+
+- `resolve_shared_path.py` no longer executes a `plugins/<dir>/bin/get_plugin_install_path.py` found in the working directory: with `CLAUDE_PLUGIN_ROOT` unset and no cached copy it runs the helper shipped beside itself, so a repository checked out for review cannot plant code that runs during path resolution. The registry lookup reads `<home>/.claude/plugins/installed_plugins.json` explicitly and ignores a recorded `installPath` outside `~/.claude/plugins/cache/borda-ai-rig`, falling back to the cache scan.
+
+- `/foundry:audit` without `--local` no longer claims to audit the installed plugin cache, which it never read. When the project's `.claude/` holds no agents or skills, the run records `⚠ UNSCANNED` for them and the report carries an `Unscanned Plugins` section instead of a clean result.
+
+- `build_blueprint_manifest.py` admits an entry to `blueprint-manifest.json` only when every command it runs passes a fail-closed allowlist. An unknown command word (`ln`, `perl`, `strace`, an unlisted CLI) keeps the block out, so it prompts, while the reviewed shapes shipped skills rely on stay auto-allowed: read-only utilities, plugin `python` scripts, `python -c` with fixed code, `eval "$RUNNER …"` whose runner the same block reads from the skill's own sentinel or sets to a literal, sourcing or unlinking a session state file, `cp`, `tee`, `mv "$F" "$F.done"` consume-marker renames, `mv` (plain or `-f`) between two session state paths that name no variable except `TMPDIR`, `CSID` or one the block sets from its own state (so `.temp/$DEST` with an outside value still prompts), and wrappers whose wrapped command passes. On the same tree cc_foundry keeps 1292 of the 1336 entries the previous gate admitted. The blocks left out are the `perf-optimizer` `git restore` checkpoint revert, the `/foundry:setup` loop that `unlink`s and re-links files in `~/.claude/rules`, and documentation examples (`uv tool install`, `strace`, `uv pip`, placeholder `<script>.sh` blocks).
+
+- The blueprint hook's danger re-check (`blueprint-allow.js`) and the generator's `is_dangerous` now see a command hidden behind a `case` arm label or inside a function definition, so `case x in a) rm -rf /;; esac` and `f() { rm -rf x; }` are refused even on a manifest hit. Before, the label or the `f()` word was read as the command and the `rm` passed. New shared cross-language vectors pin both languages to the same verdicts.
+
 ## 0.68.3
 
 - `batch-nudge.js` runs on `PostToolBatch` instead of guessing parallelism from a 1.5 s gap between `PreToolUse` calls. The batch size is read directly, so a slow tool or a fast model turn no longer counts as a missed batch. The reminder is injected as `additionalContext` instead of `PostToolUse` exit 2 stderr, node starts once per batch instead of twice per tool call, and the reminder cites `foundry-claude-config.md §Turn Batching`, which exists, instead of a missing CLAUDE.md section. Verified on Claude Code 2.1.304; the docs give no minimum version, and a build without the event leaves the nudge inactive.

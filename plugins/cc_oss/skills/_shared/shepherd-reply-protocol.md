@@ -11,9 +11,9 @@ SPAWN_DATE="$(date -u +%Y-%m-%d)"
 > **Agent waits** — no polling: end the turn after this spawn and resume on its completion notification, under the calling skill's per-agent deadline rule (`agent_watch.py`); never `ScheduleWakeup`, `ListAgents` or a `Monitor` loop.
 
 ```
-Agent(subagent_type="oss:shepherd", prompt="
-  Read the report at <REPORT_PATH>.
-  PR/issue number: <N>. Contributor handle (if known): <HANDLE>.
+Agent(subagent_type="oss:shepherd", name="shepherd-reply", description="Draft contributor reply", prompt="
+  Draft a contributor reply for PR/issue <N>, reading the report at <REPORT_PATH>.
+  Contributor handle (if known): <HANDLE>.
 
   Write a two-part contributor reply:
 

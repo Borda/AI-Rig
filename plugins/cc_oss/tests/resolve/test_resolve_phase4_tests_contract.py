@@ -34,25 +34,25 @@ def _bash_path(path: Path) -> str:
     ("relative", "anchor", "rule"),
     [
         pytest.param(
-            "modes/action-item-dispatch.md",
+            "modes/dispatch-phase2.md",
             "Per group, mark its items'",
             'resolve_test_plan.py\\" targeted --files',
             id="specialist-targeted",
         ),
         pytest.param(
-            "modes/action-item-dispatch.md",
+            "modes/dispatch-phase2.md",
             "Per group, mark its items'",
             "Never run the\nwhole test suite, not even once",
             id="specialist-no-full-suite",
         ),
         pytest.param(
-            "modes/action-item-dispatch.md",
+            "modes/dispatch-prelude.md",
             "**C1 —",
             "Never run the whole test suite — the caller runs it at the final gate.",
             id="bridge-no-full-suite",
         ),
         pytest.param(
-            "modes/action-item-dispatch.md",
+            "modes/dispatch-phase1.md",
             "two-part challenge",
             "Read-only: run no tests.",
             id="challenge-runs-no-tests",

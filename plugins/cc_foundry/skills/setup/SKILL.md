@@ -4,7 +4,6 @@ description: Post-install setup for foundry plugin. Run once after installing on
 argument-hint: '[--approve]'
 allowed-tools: Read, Write, Bash, AskUserQuestion
 effort: low
-model: sonnet
 ---
 
 <objective>
@@ -48,26 +47,27 @@ NOT for: editing project `.claude/settings.json` (Step 8 READS it to propagate a
 
 ## Flag detection
 
-Parse `$ARGUMENTS` for `--approve` (case-insensitive). If found, set `APPROVE_ALL=true`; else `APPROVE_ALL=false`.
+`--approve` (case-insensitive) sets `APPROVE_ALL=true`; else `APPROVE_ALL=false`. The setup block below parses it in-bash, persists it to a sentinel and prints `APPROVE_ALL=<value>` — carry that stdout value as model context for every gate below.
 
-**Early git repository check** — Step 6 requires a git repository. `--approve` mode has no interactive fallback, so check immediately before Step 1:
+**Unsupported flag check** — run before the setup block: scan `$ARGUMENTS` for `--<token>` tokens other than `--approve`. Found: invoke `AskUserQuestion` with question text `` ! Unknown flag(s): `--<token>`. Supported: `--approve`. `` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
+
+`APPROVE_ALL=true`: every `AskUserQuestion` below **skipped** — ★ recommended option applied automatically. Print `[--approve] auto-accepting recommended option` in place of question.
+
+## Setup block — flag, Python, plugin root, backup (Steps 1–2)
+
+One block, no decision between its parts. **Early git repository check** — Step 6 requires a git repository and `--approve` mode has no interactive fallback, so the block checks it first. Then it probes Python 3.10+ — required before any `bin/*.py` calls (Windows Store stub returns exit 9009 when given args; caught by `2>/dev/null`) — then runs Step 1 and Step 2:
 
 ```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+APPROVE_ALL=false
+printf '%s\n' "$ARGUMENTS" | grep -qiE '(^|[[:space:]])--approve([[:space:]]|$)' && APPROVE_ALL=true
+echo "$APPROVE_ALL" > "${TMPDIR:-/tmp}/foundry-setup-approve-${CSID}"
+echo "APPROVE_ALL=$APPROVE_ALL"
 if [ "$APPROVE_ALL" = "true" ] && [ ! -e ".git" ]; then
     printf "! --approve requires git repository — run from project root\n"
     exit 1
 fi
-```
 
-`APPROVE_ALL=true`: every `AskUserQuestion` below **skipped** — ★ recommended option applied automatically. Print `[--approve] auto-accepting recommended option` in place of question.
-
-**Unsupported flag check** — after all supported flags extracted, scan `$ARGUMENTS` for remaining `--<token>` tokens. Found: invoke `AskUserQuestion` with question text `` ! Unknown flag(s): `--<token>`. Supported: `--approve`. `` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
-
-## Python detection
-
-Probe Python 3.10+ — required before any `bin/*.py` calls. Windows Store stub returns exit 9009 when given args; caught by `2>/dev/null`:
-
-```bash
 PYTHON_CMD=""
 SHIM_DIR="$HOME/.local/bin"
 if command -v python >/dev/null 2>&1 && python --version 2>/dev/null | grep -qE "Python 3\.(1[0-9]|[2-9][0-9])"; then
@@ -94,45 +94,42 @@ printf "  Python: %s\n" "$PYTHON_CMD"
 if [ -f "$SHIM_DIR/python" ] && ! echo ":$PATH:" | grep -q ":$SHIM_DIR:"; then
     printf "  ⚠ %s not on PATH — add to shell rc:\n      export PATH=\"\$HOME/.local/bin:\$PATH\"\n" "$SHIM_DIR"
 fi
-```
 
-`~/.local/bin` is XDG-standard user-bin directory on modern macOS/Linux. Shim created only when `python` absent or resolves to Store stub. Idempotent — re-running setup overwrites shim with same content. `~/.local/bin` not yet on `$PATH`: setup prints `export PATH="$HOME/.local/bin:$PATH"` line for user's shell rc.
-
-## Step 1: Locate the installed plugin
-
-Resolve validated install root via canonical resolver — registry lookup, cache-scan fallback (skips `.orphaned_at`, newest by semver), and both security gates (under cache dir + `plugin.json` name match) live in the script; do not re-implement inline:
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 PLUGIN_ROOT=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_plugin_root.py" --plugin-name foundry 2>/dev/null)  # timeout: 15000
 case $? in
     0) ;;
     2) echo "! SECURITY: resolve_plugin_root.py rejected the candidate root — aborting setup"; exit 1 ;;
     *) PLUGIN_ROOT="" ;;  # not found; handled by empty-check below
 esac
-echo "$PLUGIN_ROOT" > "${TMPDIR:-/tmp}/setup-plugin-root-${CSID}"  # persist for later blocks (Check 41)
-```
+echo "$PLUGIN_ROOT" > "${TMPDIR:-/tmp}/setup-plugin-root-${CSID}"  # persist for later blocks (Check 43)
+[ -n "$PLUGIN_ROOT" ] || { printf "! foundry plugin not found — install it first with: claude plugin marketplace add Borda/AI-Rig && claude plugin install foundry@borda-ai-rig\n"; exit 1; }
+[ -f "$PLUGIN_ROOT/hooks/statusline.js" ] || { printf "! %s/hooks/statusline.js missing — aborting setup\n" "$PLUGIN_ROOT"; exit 1; }
+echo "PLUGIN_ROOT=$PLUGIN_ROOT"
 
-`$PLUGIN_ROOT` empty after both attempts: stop, report: "foundry plugin not found — install it first with: `claude plugin marketplace add Borda/AI-Rig && claude plugin install foundry@borda-ai-rig`"
-
-Confirm `$PLUGIN_ROOT/hooks/statusline.js` exists. Not: stop, report.
-
-## Step 2: Back up settings.json
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 SETUP_BAK_TS=$(date -u +%Y%m%dT%H%M%SZ)
 [ -f ~/.claude/settings.json ] || printf '{}\n' > ~/.claude/settings.json  # create empty in-bash if absent — no Write-tool permission prompt (headless-safe)
 cp ~/.claude/settings.json "$HOME/.claude/settings.json.bak-${SETUP_BAK_TS}"  # timeout: 5000
 echo "$SETUP_BAK_TS" > "${TMPDIR:-/tmp}/foundry-setup-bak-ts-${CSID}"  # persist for restore in Step 9
 ```
 
-Report: "Backed up ~/.claude/settings.json → ~/.claude/settings.json.bak-<timestamp>"
+`~/.local/bin` is XDG-standard user-bin directory on modern macOS/Linux. Shim created only when `python` absent or resolves to Store stub. Idempotent — re-running setup overwrites shim with same content. `~/.local/bin` not yet on `$PATH`: setup prints `export PATH="$HOME/.local/bin:$PATH"` line for user's shell rc.
+
+## Step 1: Locate the installed plugin
+
+Runs inside the setup block above. Resolve validated install root via canonical resolver — registry lookup, cache-scan fallback (skips `.orphaned_at`, newest by semver), and both security gates (under cache dir + `plugin.json` name match) live in the script; do not re-implement inline.
+
+`$PLUGIN_ROOT` empty after both attempts: the block stops and reports: "foundry plugin not found — install it first with: `claude plugin marketplace add Borda/AI-Rig && claude plugin install foundry@borda-ai-rig`"
+
+`$PLUGIN_ROOT/hooks/statusline.js` missing: the block stops and reports.
+
+## Step 2: Back up settings.json
+
+Runs inside the setup block above. Report: "Backed up ~/.claude/settings.json → ~/.claude/settings.json.bak-<timestamp>"
 
 ## Step 3: Check for stale hooks block
 
 ```bash
-jq -e 'has("hooks")' ~/.claude/settings.json >/dev/null 2>&1  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/settings_json.py" has-hooks ~/.claude/settings.json >/dev/null 2>&1  # timeout: 5000
 ```
 
 `hooks` key exists: user has pre-plugin-migration settings block — hooks fire twice.
@@ -146,9 +143,7 @@ Otherwise, use `AskUserQuestion`:
 On **(a)**: strip `hooks` key in-bash (no Write tool), continue:
 
 ```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-_jq_result=$(jq 'del(.hooks)' ~/.claude/settings.json)  # timeout: 5000
-[ $? -eq 0 ] && [ -n "$_jq_result" ] && printf '%s\n' "$_jq_result" > "${TMPDIR:-/tmp}/foundry_setup_tmp.json-${CSID}" && mv "${TMPDIR:-/tmp}/foundry_setup_tmp.json-${CSID}" ~/.claude/settings.json || { printf "! jq failed stripping hooks — settings.json unchanged\n"; exit 1; }
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/settings_json.py" delete-hooks ~/.claude/settings.json || { printf "! failed stripping hooks — settings.json unchanged\n"; exit 1; }  # timeout: 5000
 ```
 
 On **(b)**: warn "Double-firing risk: existing hooks block will fire alongside plugin-registered hooks." Continue.
@@ -159,11 +154,9 @@ Check if statusLine already points to the **current** plugin's statusline.js (fi
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r PLUGIN_ROOT < "${TMPDIR:-/tmp}/setup-plugin-root-${CSID}" 2>/dev/null || PLUGIN_ROOT=""  # reload (Check 41)
-jq --arg root "$PLUGIN_ROOT" -e '
-    (.statusLine.command // "") as $cmd
-    | ($cmd | contains("statusline.js")) and ($cmd | contains($root))
-' ~/.claude/settings.json >/dev/null 2>&1  # timeout: 5000
+IFS= read -r PLUGIN_ROOT < "${TMPDIR:-/tmp}/setup-plugin-root-${CSID}" 2>/dev/null || PLUGIN_ROOT=""  # reload (Check 43)
+[ -n "$PLUGIN_ROOT" ] || { printf "! PLUGIN_ROOT sentinel missing — re-run /foundry:setup\n"; exit 1; }  # empty root makes contains("") true → stale entry kept
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/settings_json.py" statusline-current ~/.claude/settings.json --root "$PLUGIN_ROOT" >/dev/null 2>&1  # timeout: 5000
 ```
 
 Already set to current `$PLUGIN_ROOT`: report "statusLine already set to current plugin version — skipping." A stale entry exists (statusline.js present but `$PLUGIN_ROOT` doesn't match): check returns non-zero, merge below overwrites with current path. Otherwise:
@@ -172,43 +165,31 @@ Writes `statusLine` key to `~/.claude/settings.json`:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-_jq_result=$(jq --arg cmd "node \"$PLUGIN_ROOT/hooks/statusline.js\"" \
-    '.statusLine = {"async":true,"command":$cmd,"type":"command"}' \
-    ~/.claude/settings.json)  # timeout: 5000
-[ $? -eq 0 ] && [ -n "$_jq_result" ] && printf '%s\n' "$_jq_result" > "${TMPDIR:-/tmp}/foundry_setup_tmp.json-${CSID}" && mv "${TMPDIR:-/tmp}/foundry_setup_tmp.json-${CSID}" ~/.claude/settings.json || { printf "! jq failed updating statusLine — settings.json unchanged\n"; exit 1; }
+IFS= read -r PLUGIN_ROOT < "${TMPDIR:-/tmp}/setup-plugin-root-${CSID}" 2>/dev/null || PLUGIN_ROOT=""  # reload: fresh shell (Check 43)
+[ -n "$PLUGIN_ROOT" ] || { printf "! PLUGIN_ROOT sentinel missing — re-run /foundry:setup\n"; exit 1; }
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/settings_json.py" set-statusline ~/.claude/settings.json --command "node \"$PLUGIN_ROOT/hooks/statusline.js\"" || { printf "! failed updating statusLine — settings.json unchanged\n"; exit 1; }  # timeout: 5000
 ```
 
-Writeback happens in-bash above (`mv` — no Write-tool permission prompt, headless-safe). Report: `  statusLine: set to current plugin version`.
+Writeback happens in-bash above (`settings_json.py` atomic rename — no Write-tool permission prompt, headless-safe). Report: `  statusLine: set to current plugin version`.
 
 ## Step 5: Merge permissions.allow and permissions.deny
 
-Merge `$PLUGIN_ROOT/.claude-plugin/permissions-allow.json` into `~/.claude/settings.json` via jq below — add only entries not already present (exact string match). Before merging, remove only the obsolete `Bash(gh api repos/*:*)` entry; the shipped `Bash(gh api repos/*)` replaces it. Preserve every other user allow entry, all deny entries, and unrelated settings:
+Merge `$PLUGIN_ROOT/.claude-plugin/permissions-allow.json` and `permissions-deny.json` into `~/.claude/settings.json` via `merge_settings_permissions.py` below — one atomic write covers both arrays. A missing or invalid shipped file aborts the block with settings unchanged.
 
-Writes merged `permissions.allow` array:
+- **allow**: add only entries not already present (exact string match). Before merging, remove only the obsolete `Bash(gh api repos/*:*)` entry; the shipped `Bash(gh api repos/*)` replaces it.
+- **deny**: first remove exactly the retired entries listed in `permissions-deny-retired.json` (exact string match): the deny entries earlier versions shipped for `gh` writes — a settings deny rule still applies after a hook `allow`, so they would defeat the user's one-time `gh-write` approval, and `hooks/gh-write-guard.js` now gates every gh write — and for local `git branch -D`/`-d` and `git tag -d`, since local Git runs freely. Then add only entries not already present.
+- Preserve every other user allow and deny entry, and unrelated settings.
 
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-_jq_result=$(jq --slurpfile perms "$PLUGIN_ROOT/.claude-plugin/permissions-allow.json" \
-    '.permissions.allow = (((.permissions.allow // []) | map(select(. != "Bash(gh api repos/*:*)"))) + $perms[0] | unique)' \
-    ~/.claude/settings.json)  # timeout: 5000
-[ $? -eq 0 ] && [ -n "$_jq_result" ] && printf '%s\n' "$_jq_result" > "${TMPDIR:-/tmp}/foundry_setup_tmp.json-${CSID}" && mv "${TMPDIR:-/tmp}/foundry_setup_tmp.json-${CSID}" ~/.claude/settings.json || { printf "! jq failed merging permissions.allow — settings.json unchanged\n"; exit 1; }
-```
-
-Writeback happens in-bash above (`mv`). Report: "Added N new permissions.allow entries (M already present)." Also report whether the exact obsolete repository API rule was replaced.
-
-Check whether `$PLUGIN_ROOT/.claude-plugin/permissions-deny.json` exists. If so: merge via jq below. First remove exactly the retired entries listed in `permissions-deny-retired.json` (exact string match): the deny entries earlier versions shipped for `gh` writes — a settings deny rule still applies after a hook `allow`, so they would defeat the user's one-time `gh-write` approval, and `hooks/gh-write-guard.js` now gates every gh write — and for local `git branch -D`/`-d` and `git tag -d`, since local Git runs freely. Then add only entries not already present; every other user deny entry stays:
-
-Writes merged `permissions.deny` array:
+Writes merged `permissions.allow` and `permissions.deny` arrays:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-_jq_result=$(jq --slurpfile deny "$PLUGIN_ROOT/.claude-plugin/permissions-deny.json" --slurpfile retired "$PLUGIN_ROOT/.claude-plugin/permissions-deny-retired.json" \
-    '.permissions.deny = ((((.permissions.deny // []) - $retired[0]) + $deny[0]) | unique)' \
-    ~/.claude/settings.json)  # timeout: 5000
-[ $? -eq 0 ] && [ -n "$_jq_result" ] && printf '%s\n' "$_jq_result" > "${TMPDIR:-/tmp}/foundry_setup_tmp.json-${CSID}" && mv "${TMPDIR:-/tmp}/foundry_setup_tmp.json-${CSID}" ~/.claude/settings.json || { printf "! jq failed merging permissions.deny — settings.json unchanged\n"; exit 1; }
+IFS= read -r PLUGIN_ROOT < "${TMPDIR:-/tmp}/setup-plugin-root-${CSID}" 2>/dev/null || PLUGIN_ROOT=""  # reload: fresh shell (Check 43)
+[ -n "$PLUGIN_ROOT" ] || { printf "! PLUGIN_ROOT sentinel missing — re-run /foundry:setup\n"; exit 1; }
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/merge_settings_permissions.py" --allow "$PLUGIN_ROOT/.claude-plugin/permissions-allow.json" --drop-allow 'Bash(gh api repos/*:*)' --drop-allow 'Bash(claude:*)' --drop-allow 'Bash(find:*)' --drop-allow 'Bash(node:*)' --drop-allow 'Bash(sed:*)' --deny "$PLUGIN_ROOT/.claude-plugin/permissions-deny.json" --retire-deny-file "$PLUGIN_ROOT/.claude-plugin/permissions-deny-retired.json" || { printf "! permissions merge failed — settings.json unchanged\n"; exit 1; }  # timeout: 5000
 ```
 
-Writeback happens in-bash above (`mv`). Report: "Added N new permissions.deny entries (M already present)." Also report how many retired deny entries were removed.
+Writeback happens in-bash above (atomic rename). Report from the script's two output lines: "Added N new permissions.allow entries (M already present)." plus whether the exact obsolete repository API rule was replaced (`dropped`), and "Added N new permissions.deny entries (M already present)." plus how many retired deny entries were removed (`retired`).
 
 ## Step 6: Copy permissions-guide.md
 
@@ -222,7 +203,8 @@ Copy `$PLUGIN_ROOT/permissions-guide.md` to `.claude/permissions-guide.md` — o
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r PLUGIN_ROOT < "${TMPDIR:-/tmp}/setup-plugin-root-${CSID}" 2>/dev/null || PLUGIN_ROOT=""  # reload: fresh shell (Check 41)
+IFS= read -r PLUGIN_ROOT < "${TMPDIR:-/tmp}/setup-plugin-root-${CSID}" 2>/dev/null || PLUGIN_ROOT=""  # reload: fresh shell (Check 43)
+[ -n "$PLUGIN_ROOT" ] || { printf "! PLUGIN_ROOT sentinel missing — re-run /foundry:setup\n"; exit 1; }
 if [ ! -f ".claude/permissions-guide.md" ]; then  # timeout: 5000
     cp "$PLUGIN_ROOT/permissions-guide.md" ".claude/permissions-guide.md"
     printf "  copied: permissions-guide.md\n"
@@ -234,7 +216,7 @@ fi
 ## Step 7: Merge enabledPlugins and env defaults
 
 ```bash
-jq -e '.enabledPlugins["bridge@borda-ai-rig"] == true' ~/.claude/settings.json >/dev/null 2>&1  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/settings_json.py" plugin-enabled ~/.claude/settings.json --name "bridge@borda-ai-rig" >/dev/null 2>&1  # timeout: 5000
 ```
 
 Already `true`: report "enabledPlugins already set — skipping." Otherwise:
@@ -242,35 +224,33 @@ Already `true`: report "enabledPlugins already set — skipping." Otherwise:
 Writes `enabledPlugins["bridge@borda-ai-rig"]` key:
 
 ```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-_jq_result=$(jq '.enabledPlugins["bridge@borda-ai-rig"] = true' \
-    ~/.claude/settings.json)  # timeout: 5000
-[ $? -eq 0 ] && [ -n "$_jq_result" ] && printf '%s\n' "$_jq_result" > "${TMPDIR:-/tmp}/foundry_setup_tmp.json-${CSID}" && mv "${TMPDIR:-/tmp}/foundry_setup_tmp.json-${CSID}" ~/.claude/settings.json || { printf "! jq failed updating enabledPlugins — settings.json unchanged\n"; exit 1; }
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/settings_json.py" enable-plugin ~/.claude/settings.json --name "bridge@borda-ai-rig" || { printf "! failed updating enabledPlugins — settings.json unchanged\n"; exit 1; }  # timeout: 5000
 ```
 
-Writeback happens in-bash above (`mv`).
+Writeback happens in-bash above (`settings_json.py` atomic rename).
 
 Then merge `$PLUGIN_ROOT/.claude-plugin/env-defaults.json` into `.env`. Claude Code ships task tools (`TaskCreate`/`TaskList`/`TaskUpdate`/`TaskGet`) **disabled** unless `CLAUDE_CODE_ENABLE_TODO_TOOLS` is set, so without this key every skill mandating task tracking silently no-ops outside a project that sets the var itself:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r PLUGIN_ROOT < "${TMPDIR:-/tmp}/setup-plugin-root-${CSID}" 2>/dev/null || PLUGIN_ROOT=""  # reload: fresh shell (Check 41)
-# //= per key — a user who deliberately set "0" keeps it; only absent keys get the shipped default
-_jq_result=$(jq --slurpfile envd "$PLUGIN_ROOT/.claude-plugin/env-defaults.json" \
-    '.env = ((.env // {}) as $cur | reduce ($envd[0] | to_entries[]) as $e ($cur; .[$e.key] //= $e.value))' \
-    ~/.claude/settings.json)  # timeout: 5000
-[ $? -eq 0 ] && [ -n "$_jq_result" ] && printf '%s\n' "$_jq_result" > "${TMPDIR:-/tmp}/foundry_setup_tmp.json-${CSID}" && mv "${TMPDIR:-/tmp}/foundry_setup_tmp.json-${CSID}" ~/.claude/settings.json || { printf "! jq failed merging env defaults — settings.json unchanged\n"; exit 1; }
+IFS= read -r PLUGIN_ROOT < "${TMPDIR:-/tmp}/setup-plugin-root-${CSID}" 2>/dev/null || PLUGIN_ROOT=""  # reload: fresh shell (Check 43)
+[ -n "$PLUGIN_ROOT" ] || { printf "! PLUGIN_ROOT sentinel missing — re-run /foundry:setup\n"; exit 1; }
+# A user who deliberately set "0" keeps it; only absent keys get the shipped default
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/settings_json.py" merge-env ~/.claude/settings.json --defaults "$PLUGIN_ROOT/.claude-plugin/env-defaults.json" || { printf "! failed merging env defaults — settings.json unchanged\n"; exit 1; }  # timeout: 5000
 ```
 
-Writeback happens in-bash above (`mv`). Report: `  env: N default(s) added (M already set)`. Existing values never overwritten — a key already present keeps user's value, including a deliberate `"0"`.
+Writeback happens in-bash above (`settings_json.py` atomic rename). Report: `  env: N default(s) added (M already set)`. Existing values never overwritten — a key already present keeps user's value, including a deliberate `"0"`.
 
 ## Step 8: Merge advisorModel (from project settings)
 
 ```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 ADV=""
 if [ -f ".claude/settings.json" ]; then
-    ADV=$(jq -r '.advisorModel // empty' .claude/settings.json 2>/dev/null)  # timeout: 5000
+    ADV=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/settings_json.py" advisor-model .claude/settings.json 2>/dev/null)  # timeout: 5000
 fi
+echo "$ADV" > "${TMPDIR:-/tmp}/foundry-setup-adv-${CSID}"
+echo "ADV=$ADV"
 ```
 
 `$ADV` empty: report `  advisorModel: skipped (not pinned in project .claude/settings.json)`, continue.
@@ -278,7 +258,9 @@ fi
 Check if global already equals it:
 
 ```bash
-jq --arg m "$ADV" -e '.advisorModel == $m' ~/.claude/settings.json >/dev/null 2>&1  # timeout: 5000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r ADV < "${TMPDIR:-/tmp}/foundry-setup-adv-${CSID}" 2>/dev/null || ADV=""  # reload: fresh shell
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/settings_json.py" advisor-matches ~/.claude/settings.json --model "$ADV" >/dev/null 2>&1  # timeout: 5000
 ```
 
 Already equal: report `  advisorModel already set to <value> — skipping.`
@@ -287,21 +269,22 @@ Otherwise:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-_jq_result=$(jq --arg m "$ADV" '.advisorModel = $m' ~/.claude/settings.json)  # timeout: 5000
-[ $? -eq 0 ] && [ -n "$_jq_result" ] && printf '%s\n' "$_jq_result" > "${TMPDIR:-/tmp}/foundry_setup_tmp.json-${CSID}" && mv "${TMPDIR:-/tmp}/foundry_setup_tmp.json-${CSID}" ~/.claude/settings.json || { printf "! jq failed updating advisorModel — settings.json unchanged\n"; exit 1; }
+IFS= read -r ADV < "${TMPDIR:-/tmp}/foundry-setup-adv-${CSID}" 2>/dev/null || ADV=""  # reload: fresh shell
+[ -n "$ADV" ] || { printf "! advisorModel sentinel empty — settings.json unchanged\n"; exit 1; }
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/settings_json.py" set-advisor ~/.claude/settings.json --model "$ADV" || { printf "! failed updating advisorModel — settings.json unchanged\n"; exit 1; }  # timeout: 5000
 ```
 
-Writeback happens in-bash above (`mv` — no Write-tool permission prompt). Report `  advisorModel: set to <value>`.
+Writeback happens in-bash above (`settings_json.py` atomic rename — no Write-tool permission prompt). Report `  advisorModel: set to <value>`.
 
 ## Step 9: Validate
 
 After all writes, confirm file parses as valid JSON:
 
 ```bash
-jq empty ~/.claude/settings.json  # timeout: 5000
+python -m json.tool ~/.claude/settings.json > /dev/null  # timeout: 5000 — Step 1 guarantees Python for every JSON operation
 ```
 
-`jq` exits non-zero: restore from backup: `export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"; IFS= read -r SETUP_BAK_TS < "${TMPDIR:-/tmp}/foundry-setup-bak-ts-${CSID}" 2>/dev/null || SETUP_BAK_TS=$(ls -t "$HOME/.claude/settings.json.bak-"* 2>/dev/null | head -1 | sed 's/.*\.bak-//'); cp "$HOME/.claude/settings.json.bak-${SETUP_BAK_TS}" ~/.claude/settings.json`, report error, stop. Valid: continue.
+`python -m json.tool` exits non-zero: restore from backup: `export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"; IFS= read -r SETUP_BAK_TS < "${TMPDIR:-/tmp}/foundry-setup-bak-ts-${CSID}" 2>/dev/null || SETUP_BAK_TS=$(ls -t "$HOME/.claude/settings.json.bak-"* 2>/dev/null | head -1 | sed 's/.*\.bak-//'); cp "$HOME/.claude/settings.json.bak-${SETUP_BAK_TS}" ~/.claude/settings.json`, report error, stop. Valid: continue.
 
 ## Step 10: Symlink rules and TEAM_PROTOCOL.md
 
@@ -333,15 +316,21 @@ Cleanup also purges two dest dirs unconditionally — both skills and agents are
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-mapfile -t LINK_CONFLICTS < <(python "$PLUGIN_ROOT/bin/symlink_with_guard.py" scan --plugin-root "$PLUGIN_ROOT")  # timeout: 30000
-printf '%s\n' "${LINK_CONFLICTS[@]}" > "${TMPDIR:-/tmp}/foundry-setup-conflicts-${CSID}.txt"  # timeout: 3000 — persist for Phase 4, calls don't share state
+IFS= read -r PLUGIN_ROOT < "${TMPDIR:-/tmp}/setup-plugin-root-${CSID}" 2>/dev/null || PLUGIN_ROOT=""  # reload: fresh shell (Check 43)
+[ -n "$PLUGIN_ROOT" ] || { printf "! PLUGIN_ROOT sentinel missing — re-run /foundry:setup\n"; exit 1; }
+# reset Phase 3 choice sentinels, approved list and scan marker — a prior run's answer or scan must not leak into Phase 4
+echo false > "${TMPDIR:-/tmp}/foundry-setup-skip-conflicts-${CSID}"; echo false > "${TMPDIR:-/tmp}/foundry-setup-per-item-${CSID}"; echo false > "${TMPDIR:-/tmp}/foundry-setup-scan-ok-${CSID}"; : > "${TMPDIR:-/tmp}/foundry-setup-approved-${CSID}.txt"
+# file + exit status, never process substitution (its status is lost: a failed scan would read as zero conflicts and skip consent); no mapfile — absent in zsh
+python "$PLUGIN_ROOT/bin/symlink_with_guard.py" scan --plugin-root "$PLUGIN_ROOT" > "${TMPDIR:-/tmp}/foundry-setup-conflicts-${CSID}.txt" || { printf "! BLOCKED — conflict scan failed (exit %d); nothing linked — fix the error above, re-run /foundry:setup\n" "$?"; exit 1; }  # timeout: 30000
+echo true > "${TMPDIR:-/tmp}/foundry-setup-scan-ok-${CSID}"
+echo "--- LINK_CONFLICTS ---"; cat "${TMPDIR:-/tmp}/foundry-setup-conflicts-${CSID}.txt"; echo "--- end LINK_CONFLICTS ---"
 ```
 
 The `scan` mode walks the same two patterns (rules `*.md`, `TEAM_PROTOCOL.md`), prints one conflict per line. Entries surface only when dest is a real file or a symlink failing the same ownership proof Phase 1 uses. Each line names the *destination* file: `rules/foundry-<name>.md → <target>` · `rules/foundry-<name>.md  (real file)` · `TEAM_PROTOCOL.md → <target>`.
 
 **Phase 3 — Handle remaining conflicts** (real files or symlinks to non-foundry paths):
 
-`$LINK_CONFLICTS` empty: skip to Phase 4.
+Phase 2 printed no line between the `LINK_CONFLICTS` markers: skip to Phase 4. Phase 2 stopped with `! BLOCKED`: stop setup here — never run Phase 4.
 
 `APPROVE_ALL=true`: print `[--approve] auto-accepting: replace all symlink conflicts`, replace all (apply option a below). # --approve mode: auto-accept all conflicts; AskUserQuestion skipped
 
@@ -357,41 +346,42 @@ Options:
 
 (a) Replace all ★ recommended (b) Skip all conflicts — keep existing files unchanged (c) Choose per entry
 
-- On **(b)**: set `SKIP_CONFLICTS_MODE=true`.
-- On **(c)**: initialize `APPROVED_CONFLICT_ENTRIES=()` and `PER_ITEM_REVIEW_MODE=true`.
-  - **Cap**: `${#LINK_CONFLICTS[@]} > 10`: put "⚠ ${#LINK_CONFLICTS[@]} conflicts found — per-item review capped at 10; showing first 10. Run again for the rest." in the per-entry question text below (not reply text before the call), process only first 10.
+- On **(b)**: set `SKIP_CONFLICTS_MODE=true` — persist it: `export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"; echo true > "${TMPDIR:-/tmp}/foundry-setup-skip-conflicts-${CSID}"`.
+- On **(c)**: set `PER_ITEM_REVIEW_MODE=true` — persist the flag: `export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"; echo true > "${TMPDIR:-/tmp}/foundry-setup-per-item-${CSID}"`.
+  - **Cap**: N = conflict lines Phase 2 printed; N > 10: put "⚠ N conflicts found — per-item review capped at 10; showing first 10. Run again for the rest." in the per-entry question text below (not reply text before the call), process only first 10.
   - Collect per-entry consent in **ONE** `AskUserQuestion` call: build `ceil(N/4)` questions, each `multiSelect: true` with up to 4 options (harness cap), one option per conflicting entry, labelled with entry name and its current state; header "Replace these?".
   - A ticked option = approve replacing that entry; unticked = keep existing. Cap 10 conflicts → 3 questions in one call. Do not iterate one call per entry — per-entry consent preserved by the per-entry option, not by a serial window.
-  - For each ticked entry: append entry's identifier — the destination path exactly as the Phase 2 conflict line names it, i.e. `rules/foundry-<name>.md` for rules, or `TEAM_PROTOCOL.md` — to `APPROVED_CONFLICT_ENTRIES`; unticked entries left out. Phase 4 matches this string verbatim against `rules/$base`, so a bare `foundry-<name>.md` never matches and silently skips an approved rule.
-  - After answers return, persist: `export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"; printf '%s\n' "${APPROVED_CONFLICT_ENTRIES[@]}" > ${TMPDIR:-/tmp}/foundry-setup-approved-${CSID}.txt`.
+  - For each ticked entry: append entry's identifier — the destination path exactly as the Phase 2 conflict line names it, i.e. `rules/foundry-<name>.md` for rules, or `TEAM_PROTOCOL.md` — to the approved-entries file (`foundry-setup-approved-${CSID}.txt`, emptied in Phase 2); unticked entries left out. Phase 4 matches this string verbatim against `rules/$base`, so a bare `foundry-<name>.md` never matches and silently skips an approved rule.
+  - After answers return, persist the ticked identifiers, replacing `'<entry>'` with one single-quoted word per ticked identifier (none ticked: skip — the file is already empty, so Phase 4 skips every conflict; a model-context list does not survive into the next Bash call): `export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"; for ENTRY in '<entry>'; do case "$ENTRY" in *'<'*'>'*|"") echo "! BLOCKED — approved-entry placeholder unsubstituted"; exit 1 ;; esac; printf '%s\n' "$ENTRY" >> "${TMPDIR:-/tmp}/foundry-setup-approved-${CSID}.txt"; done`.
 
-Items not in `$LINK_CONFLICTS` (current, stale foundry, absent) bypass this gate — handled silently in Phase 4.
+Items not on the Phase 2 conflict list (`foundry-setup-conflicts-${CSID}.txt`: current, stale foundry, absent) bypass this gate — handled silently in Phase 4.
 
 **Phase 4 — Symlink** — for each approved, auto-replaced, or absent entry, `ln -sf` creates/replaces. Stale foundry symlinks from Phase 2 included here (auto-replaced silently). Conflict guard depends on which Phase 3 branch fired:
 
 - `SKIP_CONFLICTS_MODE=true` (option b): skip every entry that is a real file or non-foundry symlink — those are conflicts the user declined.
-- `PER_ITEM_REVIEW_MODE=true` (option c): for entries that appear in `$LINK_CONFLICTS`, only replace when the entry's identifier is in `APPROVED_CONFLICT_ENTRIES`; otherwise skip. Entries not in `$LINK_CONFLICTS` (current / stale foundry / absent) always replace.
+- `PER_ITEM_REVIEW_MODE=true` (option c): for entries listed in the Phase 2 conflict file (`foundry-setup-conflicts-${CSID}.txt`), only replace when the entry's identifier is in the approved-entries file; otherwise skip. Entries not in the conflict file (current / stale foundry / absent) always replace.
 - Neither flag (option a or no conflicts): replace unconditionally.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-# restore arrays from Phase 2/3; Bash calls don't share state
-mapfile -t LINK_CONFLICTS < ${TMPDIR:-/tmp}/foundry-setup-conflicts-${CSID}.txt 2>/dev/null || LINK_CONFLICTS=()
-mapfile -t APPROVED_CONFLICT_ENTRIES < ${TMPDIR:-/tmp}/foundry-setup-approved-${CSID}.txt 2>/dev/null || APPROVED_CONFLICT_ENTRIES=()
+# Phase 2/3 lists stay files — Bash calls don't share state; no mapfile (absent in zsh)
+_CONF="${TMPDIR:-/tmp}/foundry-setup-conflicts-${CSID}.txt"; _APPR="${TMPDIR:-/tmp}/foundry-setup-approved-${CSID}.txt"
+IFS= read -r _SCAN_OK < "${TMPDIR:-/tmp}/foundry-setup-scan-ok-${CSID}" 2>/dev/null || _SCAN_OK=false
+[ "$_SCAN_OK" = true ] || { printf "! BLOCKED — Phase 2 conflict scan did not complete; nothing linked — re-run /foundry:setup\n"; exit 1; }
+IFS= read -r SKIP_CONFLICTS_MODE < "${TMPDIR:-/tmp}/foundry-setup-skip-conflicts-${CSID}" 2>/dev/null || SKIP_CONFLICTS_MODE=false
+IFS= read -r PER_ITEM_REVIEW_MODE < "${TMPDIR:-/tmp}/foundry-setup-per-item-${CSID}" 2>/dev/null || PER_ITEM_REVIEW_MODE=false
+IFS= read -r _PR < "${TMPDIR:-/tmp}/setup-plugin-root-${CSID}" 2>/dev/null && PLUGIN_ROOT="$_PR"  # reload: fresh shell (Check 43); caller-exported PLUGIN_ROOT kept when sentinel absent
+[ -n "$PLUGIN_ROOT" ] || { printf "! PLUGIN_ROOT sentinel missing — re-run /foundry:setup\n"; exit 1; }
 
 _approved() {
-    local needle="$1"
-    for e in "${APPROVED_CONFLICT_ENTRIES[@]:-}"; do
-        [ "$e" = "$needle" ] && return 0
-    done
-    return 1
+    [ -f "$_APPR" ] && grep -qxF -- "$1" "$_APPR"
 }
 _in_conflicts() {
-    local needle="$1"
-    for c in "${LINK_CONFLICTS[@]:-}"; do
-        # LINK_CONFLICTS entries start with "rules/<base>" or "TEAM_PROTOCOL.md"
-        case "$c" in "$needle"*) return 0 ;; esac
-    done
+    [ -f "$_CONF" ] || return 1
+    while IFS= read -r c; do
+        # conflict lines start with "rules/<base>" or "TEAM_PROTOCOL.md"
+        case "$c" in "$1"*) return 0 ;; esac
+    done < "$_CONF"
     return 1
 }
 
@@ -428,13 +418,14 @@ Report first — deletes nothing:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r PLUGIN_ROOT < "${TMPDIR:-/tmp}/setup-plugin-root-${CSID}" 2>/dev/null || PLUGIN_ROOT=""  # reload: fresh shell (Check 41)
+IFS= read -r PLUGIN_ROOT < "${TMPDIR:-/tmp}/setup-plugin-root-${CSID}" 2>/dev/null || PLUGIN_ROOT=""  # reload: fresh shell (Check 43)
+[ -n "$PLUGIN_ROOT" ] || { printf "! PLUGIN_ROOT sentinel missing — re-run /foundry:setup\n"; exit 1; }
 python "$PLUGIN_ROOT/bin/purge_plugin_cache.py" --protect "$PLUGIN_ROOT" --protect "${CLAUDE_PLUGIN_ROOT:-}"  # timeout: 30000
 ```
 
 Output `nothing to purge …`: print it, skip to Step 12 (no prompt).
 
-Otherwise the report lists `<plugin>/<version>  <size>  orphaned <N>d ago  leases:N` plus a total. Deletion is irreversible, so gate it. `APPROVE_ALL=true`: print `[--approve] auto-accepting: purge all listed cache versions`, take option (a) without prompting. Else Write the full list to `.temp/setup/cache-purge.md` first; it is printed once, rendered as normal Markdown, as the last reply text before `AskUserQuestion` — Bash output is not reply text the user reads. The question text carries the purge headline, candidate count, total reclaimable size and `→ .temp/setup/cache-purge.md`. Keep the question text to at most 6 plain lines (target 600 characters, hard cap 1,500), with no table, no pipe layout and no code fence. Options carry labels and one-line action descriptions, no `preview`; place the recommended option second without changing labels or answer mapping.
+Otherwise the report lists `<plugin>/<version>  <size>  orphaned <N>d ago  leases:N` plus a total. Deletion is irreversible, so gate it. `APPROVE_ALL=true`: print `[--approve] auto-accepting: purge all listed cache versions`, take option (a) without prompting. Else Write the full list to `.temp/setup/cache-purge.md` first (a prior run's file exists: Read it before the Write, which refuses an unread existing file); it is printed once, rendered as normal Markdown, as the last reply text before `AskUserQuestion` — Bash output is not reply text the user reads. The question text carries the purge headline, candidate count, total reclaimable size and `→ .temp/setup/cache-purge.md`. Keep the question text to at most 6 plain lines (target 600 characters, hard cap 1,500), with no table, no pipe layout and no code fence. Options carry labels and one-line action descriptions, no `preview`; place the recommended option second without changing labels or answer mapping.
 
 - (a) **Purge all listed** — reclaim every listed version
 - (b) **Skip** — keep everything, proceed to Step 12
@@ -456,7 +447,7 @@ Substitute `<N>` with count from report line before running. Versions newer than
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r PLUGIN_ROOT < "${TMPDIR:-/tmp}/setup-plugin-root-${CSID}" 2>/dev/null || PLUGIN_ROOT=""  # reload: fresh shell (Check 41)
+IFS= read -r PLUGIN_ROOT < "${TMPDIR:-/tmp}/setup-plugin-root-${CSID}" 2>/dev/null || PLUGIN_ROOT=""  # reload: fresh shell (Check 43)
 CLAUDE_MD_STATE=absent
 if [ -f "$HOME/.claude/CLAUDE.md" ]; then
     cmp -s "$HOME/.claude/CLAUDE.md" "$PLUGIN_ROOT/CLAUDE.src.md" && CLAUDE_MD_STATE=identical || CLAUDE_MD_STATE=diverged

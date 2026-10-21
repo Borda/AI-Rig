@@ -15,15 +15,20 @@ Codemap absent, or an edit fails either check against the current batch → clos
 
 ### Batch identity and per-edit snapshot
 
-`BATCH_ID`/`N` are derived, not assumed — both persisted, since shell state does not survive across Bash() calls:
+`BATCH_ID`/`N` are derived, not assumed — both persisted, since shell state does not survive across Bash() calls. Identity is stamped with its owning run (`<skill>:<DEV_DIR>`): a run aborted mid-batch (cap stop, user abort, halt) leaves `dev-batch-id`/`dev-batch-n` behind, and a later run in the same session would otherwise continue its `N` and bisect — then revert — the aborted run's edits. A stamp mismatch discards the leftover identity; a compaction resume inside the same run keeps it:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r _SKILL < "${TMPDIR:-/tmp}/dev-batch-skill-${CSID}" 2>/dev/null || _SKILL="feature"
+IFS= read -r _DEV_DIR < "${TMPDIR:-/tmp}/dev-${_SKILL}-dev-dir-${CSID}" 2>/dev/null || _DEV_DIR=""
+IFS= read -r _OWNER < "${TMPDIR:-/tmp}/dev-batch-run-${CSID}" 2>/dev/null || _OWNER=""
 IFS= read -r BATCH_ID < "${TMPDIR:-/tmp}/dev-batch-id-${CSID}" 2>/dev/null || BATCH_ID=""
+[ "$_OWNER" = "${_SKILL}:${_DEV_DIR}" ] || BATCH_ID=""
 if [ -z "$BATCH_ID" ]; then
     BATCH_ID=$(date -u +%Y%m%dT%H%M%SZ)
     echo "$BATCH_ID" > "${TMPDIR:-/tmp}/dev-batch-id-${CSID}"
     echo 0 > "${TMPDIR:-/tmp}/dev-batch-n-${CSID}"
+    echo "${_SKILL}:${_DEV_DIR}" > "${TMPDIR:-/tmp}/dev-batch-run-${CSID}"
 fi
 IFS= read -r N < "${TMPDIR:-/tmp}/dev-batch-n-${CSID}" 2>/dev/null || N=0
 N=$((N + 1))
@@ -54,13 +59,19 @@ After the last edit in the batch is applied, snapshot once more the same way (on
 
 ### Batch run
 
-One pytest invocation covering the union of the batch's `test-impact` sets, capturing its exit as `BATCH_RUN_EXIT` — `dev_test_targets.py --pytest-cmd "$PYTEST_CMD" --run` is that invocation: it selects across every file changed since HEAD, which includes every batch member, and runs the selection as one pytest process. The non-overlap predicate above keeps calling codemap directly: deciding attribution needs an index-grade test set per edit, while the heuristic fallback only selects what to run. **Only on success** persist the batch size for the caller's cap accounting and reset batch identity for the next batch — on failure, leave `BATCH_ID`/`N` in place so the bisect fence below can still read them. The batch-size sentinel path is read from `_SKILL`, written once by the calling skill (`feature`/`refactor`) before loading this file — never a literal `<skill>` placeholder, which a fenced block can never substitute at runtime and can never match the permission manifest (`plugins/CLAUDE.md` §Blueprint Blocks):
+One pytest invocation covering the union of the batch's `test-impact` sets, capturing its exit as `BATCH_RUN_EXIT` — `dev_test_targets.py --pytest-cmd "$PYTEST_CMD" --run` is that invocation: it selects across every file changed since HEAD, which includes every batch member, and runs the selection as one pytest process. The non-overlap predicate above keeps calling codemap directly: deciding attribution needs an index-grade test set per edit, while the heuristic fallback only selects what to run. **Only on success** persist the batch size for the caller's cap accounting and reset batch identity for the next batch — on failure, leave `BATCH_ID`/`N` in place so the bisect fences in `batch-bisect.md` (loaded on failure below) can still read them. The batch-size sentinel path is read from `_SKILL`, written once by the calling skill (`feature`/`refactor`) before loading this file — never a literal `<skill>` placeholder, which a fenced block can never substitute at runtime and can never match the permission manifest (`plugins/CLAUDE.md` §Blueprint Blocks):
 
 ```bash
+# timeout: 600000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r N < "${TMPDIR:-/tmp}/dev-batch-n-${CSID}" 2>/dev/null || N=0
 IFS= read -r _SKILL < "${TMPDIR:-/tmp}/dev-batch-skill-${CSID}" 2>/dev/null || _SKILL="feature"
-# ... run the union pytest invocation here; capture BATCH_RUN_EXIT=$? ...
+IFS= read -r PYTEST_CMD < "${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}" 2>/dev/null || PYTEST_CMD=""
+IFS= read -r DEV_DIR < "${TMPDIR:-/tmp}/dev-${_SKILL}-dev-dir-${CSID}" 2>/dev/null || DEV_DIR=""
+[ -n "$PYTEST_CMD" ] || { echo "! BLOCKED — PYTEST_CMD sentinel missing; re-run Project Detection"; exit 1; }
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_test_targets.py" --pytest-cmd "$PYTEST_CMD" --run --record-dir "${DEV_DIR:-.developments}"
+BATCH_RUN_EXIT=$?
+echo "BATCH_RUN_EXIT=$BATCH_RUN_EXIT"
 if [ "${BATCH_RUN_EXIT:-1}" -eq 0 ]; then
     # N counted every snapshot taken, including the one closing "after last edit" snapshot
     # (see "one more N increment" above) — edits processed = N - 1, not N.
@@ -68,7 +79,7 @@ if [ "${BATCH_RUN_EXIT:-1}" -eq 0 ]; then
 fi
 ```
 
-Identity clears in its own fence, never combined with the write above — a fence containing `rm -f` is flagged `is_dangerous` by `blueprint-allow.js`, which declines the *whole* submitted block before any manifest lookup regardless of what else is in it (same defect class R2 fixed in `quality-stack.md`). The calling procedure invokes this fence only when the fence above's `BATCH_RUN_EXIT` was `0` — on failure this fence never runs, leaving `BATCH_ID`/`N` in place for the bisect fence below:
+Identity clears in its own fence, never combined with the write above — a fence containing `rm -f` is flagged `is_dangerous` by `blueprint-allow.js`, which declines the *whole* submitted block before any manifest lookup regardless of what else is in it (same defect class R2 fixed in `quality-stack.md`). The calling procedure invokes this fence only when the run fence's printed `BATCH_RUN_EXIT=` value was `0` — on failure this fence never runs, leaving `BATCH_ID`/`N` in place for the bisect fences in `batch-bisect.md` (loaded on failure below):
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -77,50 +88,18 @@ rm -f "${TMPDIR:-/tmp}/dev-batch-id-${CSID}" "${TMPDIR:-/tmp}/dev-batch-n-${CSID
 
 ### On batch failure — bisect, never blind revert
 
-Edit N's isolated patch is the diff between its own pre-snapshot and the next edit's pre-snapshot — never the cumulative pre-snapshot alone, and never `git apply -R` on a snapshot that predates edits other than N. The batch's edit count is derived once (never left to prose), then a real loop assigns `N` and computes every patch up front — nothing here waits for a "calling procedure" to substitute `N` by hand:
+> loads: batch-bisect.md
+
+Only when the run fence printed a non-zero `BATCH_RUN_EXIT=` — the identity-clear fence above never ran, so `BATCH_ID`/`N` are still in place. Load the bisect procedure and follow it:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r BATCH_ID < "${TMPDIR:-/tmp}/dev-batch-id-${CSID}" 2>/dev/null || BATCH_ID=""
-IFS= read -r _N_TOTAL < "${TMPDIR:-/tmp}/dev-batch-n-${CSID}" 2>/dev/null || _N_TOTAL=0
-[ "$_N_TOTAL" -ge 1 ] || { echo "! bisect: batch-n sentinel missing or zero, cannot derive edit count"; exit 1; }
-_BATCH_EDITS=$((_N_TOTAL - 1))   # N_total counts every snapshot incl. the closing one — see Batch run
-echo "$_BATCH_EDITS" > "${TMPDIR:-/tmp}/dev-batch-edits-${BATCH_ID}-${CSID}"
-for N in $(seq 1 "$_BATCH_EDITS"); do
-    IFS= read -r PRE_N < "${TMPDIR:-/tmp}/dev-batch-pre-${BATCH_ID}-${N}-${CSID}" 2>/dev/null || PRE_N=""
-    IFS= read -r PRE_N_PLUS_1 < "${TMPDIR:-/tmp}/dev-batch-pre-${BATCH_ID}-$((N + 1))-${CSID}" 2>/dev/null || PRE_N_PLUS_1=""
-    [ -n "$PRE_N" ] && [ -n "$PRE_N_PLUS_1" ] || { echo "! bisect: snapshot $N missing, aborting rather than diffing against an empty path"; exit 1; }
-    git diff "$PRE_N" "$PRE_N_PLUS_1" > "${TMPDIR:-/tmp}/dev-batch-patch-${BATCH_ID}-${N}-${CSID}.diff"  # timeout: 5000
-done
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" batch-bisect.md
 ```
-
-1. Split the batch in half.
-2. Revert the second half's edits via `git apply -R < <patch-N>` per edit, newest-applied first — never `quality-stack.md:106`'s `git checkout HEAD -- <file>`, which is file-scoped and would discard every edit to a shared file, not just the reverted one. The non-overlap predicate (disjoint files) guarantees each isolated patch applies/reverts cleanly against the current tree regardless of order within its half.
-3. Re-run the first half's test set.
-4. First half green → the culprit is in the reverted half; re-apply it edit-by-edit (still bisecting) until the single failing edit is isolated.
-5. First half also red → the culprit is in the first half; recurse there instead, leaving the second half reverted.
-6. Worst case for a 4-edit batch: `ceil(log2(4)) = 2` extra runs to isolate the culprit.
-7. Once the culprit is isolated (or every edit confirmed individually), write the batch size and clear identity — the only place either happens on a failure branch, mirroring Batch run's success gate. Two fences, never one: a fence containing `rm -f` is flagged `is_dangerous` and declined whole before any manifest lookup, so the write and the clear stay split exactly as in Batch run above. The size sentinel reads `_SKILL` the same way — never a literal `<skill>` placeholder:
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r BATCH_ID < "${TMPDIR:-/tmp}/dev-batch-id-${CSID}" 2>/dev/null || BATCH_ID=""
-IFS= read -r _BATCH_EDITS < "${TMPDIR:-/tmp}/dev-batch-edits-${BATCH_ID}-${CSID}" 2>/dev/null || _BATCH_EDITS=1
-IFS= read -r _SKILL < "${TMPDIR:-/tmp}/dev-batch-skill-${CSID}" 2>/dev/null || _SKILL="feature"
-echo "$_BATCH_EDITS" > "${TMPDIR:-/tmp}/dev-${_SKILL}-batch-size-${CSID}"
-```
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r BATCH_ID < "${TMPDIR:-/tmp}/dev-batch-id-${CSID}" 2>/dev/null || BATCH_ID=""
-rm -f "${TMPDIR:-/tmp}/dev-batch-id-${CSID}" "${TMPDIR:-/tmp}/dev-batch-n-${CSID}" "${TMPDIR:-/tmp}/dev-batch-edits-${BATCH_ID}-${CSID}"
-```
-
-Bisect reverts happen in-loop, no confirmation prompt — distinct in scope from `quality-stack.md:106`'s Recovery section, which fires only after the full quality stack has already reported failure and stays confirm-first, unchanged.
 
 ### Cap accounting
 
-`MAX_INNER_CYCLES` counts **edits processed**, not batches or cycles. The caller's cap-check fence reads `${TMPDIR:-/tmp}/dev-${_SKILL}-batch-size-${CSID}` (written above when the batch closes) and consumes it — `${BATCH_SIZE:-1}` only ever falls back to `1` when no batch closed since the last read, so the no-batch (`BATCH_ENABLED=false`) path is unaffected and keeps today's per-cycle cap exactly. A 4-edit batch that passes in one run consumes 4 against the cap; a batch that fails and bisects also consumes its base edit count (step 7's write above) — the extra pytest invocations bisect itself runs to isolate the culprit are not separately added to this count, only the batch's own edits are.
+`MAX_INNER_CYCLES` counts **edits processed**, not batches or cycles. The caller's cap-check fence reads `${TMPDIR:-/tmp}/dev-${_SKILL}-batch-size-${CSID}` (written above when the batch closes) and consumes it — `${BATCH_SIZE:-1}` only ever falls back to `1` when no batch closed since the last read, so the no-batch (`--no-batch`; gate printed `batch mode: off`) path is unaffected and keeps today's per-cycle cap exactly. A 4-edit batch that passes in one run consumes 4 against the cap; a batch that fails and bisects also consumes its base edit count (step 7's write in `batch-bisect.md`) — the extra pytest invocations bisect itself runs to isolate the culprit are not separately added to this count, only the batch's own edits are.
 
 ### Red-green reconciliation (TDD contexts only)
 

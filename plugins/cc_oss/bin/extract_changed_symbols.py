@@ -147,7 +147,8 @@ def main(argv: list[str] | None = None) -> int:
         argv: Optional argument list (defaults to ``sys.argv[1:]``).
 
     Returns:
-        Always 0 — empty output signals no changes or invalid range.
+        0 — symbols printed; empty output signals no changes or an unresolvable range. 1 — a range part starts
+        with ``-`` (git would read it as an option).
 
     Examples:
         No doctest — subprocess-dependent; covered by pytest.
@@ -172,6 +173,10 @@ def main(argv: list[str] | None = None) -> int:
 
     git = _resolve("git")
 
+    # git reads a leading "-" as an option (e.g. --output=PATH truncates a file), never as a revision
+    if any(part.startswith("-") for part in (range_arg, *range_arg.split(".."))):
+        print(f"extract_changed_symbols: refusing option-like range {range_arg!r}", file=sys.stderr)
+        return 1
     if ".." in range_arg:
         left, _, right = range_arg.partition("..")
         right = right or "HEAD"

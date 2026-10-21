@@ -107,7 +107,11 @@ def _run(payload: str, root: Path, temp: Path, hook: Path = HOOK, cwd: Path | No
         ["node", str(hook)],
         input=payload,
         env=env,
-        cwd=cwd,
+        # Default to the temp dir: the hook reads `<cwd>/.temp/state/skill-contract.md`, so the repo cwd would let a
+        # live contract from a real session in this checkout leak into SessionStart output. A test that deliberately
+        # passes a missing temp dir runs from this test directory instead, never from a `tmp_path` parent, which a
+        # concurrent pytest session's basetemp rotation can delete mid-run.
+        cwd=cwd or (temp if temp.is_dir() else Path(__file__).parent),
         capture_output=True,
         text=True,
         encoding="utf-8",

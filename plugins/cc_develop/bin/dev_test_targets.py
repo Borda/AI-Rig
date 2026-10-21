@@ -23,6 +23,11 @@ Usage:
     python dev_test_targets.py --pytest-cmd "$PYTEST_CMD" --files a.py b.py
     python dev_test_targets.py --pytest-cmd "$PYTEST_CMD" --run           # select, then run in the same call
     python dev_test_targets.py --pytest-cmd "$PYTEST_CMD" --run --record-dir "$DEV_DIR"   # plus a run record
+    python dev_test_targets.py --skill fix --run                          # sentinels instead of the two arguments above
+
+``--skill NAME`` replaces ``--pytest-cmd`` and ``--record-dir`` for the three loop skills: the script reads the
+``dev-pytest-cmd`` sentinel (runner detection) and records into the directory the ``dev-NAME-dev-dir`` sentinel holds,
+else ``.developments`` — what each skill's shell block used to read and pass. An explicit ``--record-dir`` still wins.
 
 Output: one JSON object on stdout — ``changed``, ``tests``, ``sources`` (test → codemap/heuristic/changed),
 ``codemap`` usage counts, ``command`` (``$PYTEST_CMD`` plus the selected tests, or ``null``) and ``note``. With
@@ -53,6 +58,14 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
+
+import run_pytest_short  # sibling bin/ script; its allowlist and path fence also guard plan mode
+from dev_run_dir import read_sentinel  # sibling bin/ script; session-scoped sentinel reads
+
+#: Loop skills whose ``dev-<skill>-dev-dir`` sentinel names the run directory ``--skill`` records into.
+SKILLS = ("feature", "fix", "refactor")
+#: Run-record directory when a skill has no ``dev-<skill>-dev-dir`` sentinel — the shell blocks' old default.
+_DEFAULT_RECORD_DIR = ".developments"
 
 #: Matches a Python test file name: test_*.py or *_test.py.
 _TEST_NAME = re.compile(r"(^test_.*|.*_test)\.py$")
@@ -366,7 +379,9 @@ def main(argv: list[str] | None = None) -> int:
         Process exit code (see module docstring).
     """
     parser = argparse.ArgumentParser(description="Targeted tests for the current change.")
-    parser.add_argument("--pytest-cmd", required=True, help="repository pytest invocation ($PYTEST_CMD)")
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--pytest-cmd", help="repository pytest invocation ($PYTEST_CMD)")
+    source.add_argument("--skill", choices=SKILLS, help="read the pytest command and run directory from sentinels")
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--base", help="git revision whose later commits also count as changed")
     group.add_argument("--files", nargs="+", help="explicit changed files, relative to the repository root")
@@ -375,8 +390,21 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", newline="\n")  # type: ignore[union-attr]
+    if args.skill:
+        args.pytest_cmd = read_sentinel("dev-pytest-cmd")
+        args.record_dir = args.record_dir or read_sentinel(f"dev-{args.skill}-dev-dir") or _DEFAULT_RECORD_DIR
     if not args.pytest_cmd.strip():
-        return _error("--pytest-cmd is empty; re-read the dev-pytest-cmd sentinel from runner detection")
+        return _error(
+            "! PYTEST_CMD unresolved — re-run §Project Detection (runner-detection.md); "
+            "the dev-pytest-cmd sentinel is empty"
+            if args.skill
+            else "--pytest-cmd is empty; re-read the dev-pytest-cmd sentinel from runner detection"
+        )
+    # Plan mode only prints the command, but a caller may run it verbatim, so it faces the runner's own allowlist.
+    if not run_pytest_short.is_allowed_pytest_cmd(args.pytest_cmd.strip()):
+        return _error(f"--pytest-cmd is not an allowlisted pytest runner: {args.pytest_cmd.strip()!r}")
+    if args.record_dir and not run_pytest_short.within_workspace(args.record_dir):
+        return _error("--record-dir resolves outside the project and temp directories")
     values = [args.base] if args.base else list(args.files or [])
     if any(value.startswith("-") for value in values):
         return _error("a ref or file argument starts with '-'")
@@ -394,8 +422,6 @@ def main(argv: list[str] | None = None) -> int:
         if record_dir:
             record(record_dir, payload, None, None)
         return 0
-    import run_pytest_short  # sibling bin/ script; imported lazily so plan-only calls never load it
-
     runner_args = [args.pytest_cmd.strip(), *payload["tests"]]
     if log:
         runner_args += ["--tail-n", "40", "--log", str(log)]

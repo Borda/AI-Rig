@@ -51,5 +51,5 @@ def test_baseline_tool_ask_still_happens(section_start: str, section_end: str, m
 def test_codemap_gate_still_asks() -> None:
     """The codemap index gate is delegated to the shared contract, which must still ask before building."""
     skill = (_REVIEW / "SKILL.md").read_text(encoding="utf-8")
-    assert 'cat "$_DEV_SHARED/codemap-gates.md"' in skill
+    assert 'bin/dev_load_shared.py" codemap-gates.md' in skill
     assert "Gate A always asks (`AskUserQuestion`)" in (_SHARED / "codemap-gates.md").read_text(encoding="utf-8")

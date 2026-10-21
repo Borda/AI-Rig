@@ -16,15 +16,29 @@ Files needed from another plugin are duplicated into this one via
 Output contract
 ---------------
 * ``<develop-shared-path>\\n``
-* Exits 0 always; the caller validates that the printed path exists.
+* Exits 0 when a path was resolved; the caller validates that the printed path exists.
+* Exits 1, printing nothing, when no develop install is cached and the working directory is not the develop plugin's
+  own source repository (see Tier 2).
+
+``--init`` is the cold start every develop skill runs once per invocation: it persists the session sentinels instead of
+printing the path, so each skill replaces a four-line resolve-and-echo block with one call plus a warm read.
+
+* ``dev-shared-<CSID>`` — the resolved path every later block warm-reads.
+* ``dev-agent-watch-dir-<CSID>`` — a fresh ``<cwd>/.temp/develop/agent-watch-<UTC time>`` per run, so a prior run's
+  deadline batches never report as stale (``agent-resolution.md`` §Agent waits).
+* Nothing on stdout. A failed sentinel write still exits 0 (later blocks use their fallbacks); an untrusted working
+  directory exits 1 before any sentinel is written.
 
 Tier cascade
 ------------
 * **Tier 1** — Cache semver scan under
   ``~/.claude/plugins/cache/borda-ai-rig/<plugin>/*/skills/_shared``,
   skipping versions marked ``.orphaned_at``.
-* **Tier 2** — Source-tree fallback ``plugins/<plugin>/skills/_shared``
-  (with stderr warning).
+* **Tier 2** — Source-tree fallback ``plugins/cc_develop/skills/_shared`` relative to the working directory (with
+  stderr warning). The CLI uses it only when the working directory carries
+  ``plugins/cc_develop/.claude-plugin/plugin.json`` whose ``name`` is ``develop`` — this plugin's own source
+  repository. Anywhere else that tree is the text of whatever repository the session was opened in, and skills ``cat``
+  protocol files from it, so the CLI fails closed instead.
 
 <!-- file: dev_shared_resolve.py — consumers: dev-shared-resolve.sh -->
 """
@@ -32,15 +46,23 @@ Tier cascade
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import shutil
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
+
+from dev_run_dir import write_sentinel  # sibling bin/ script; atomic, link-safe sentinel writes
 
 #: Marketplace directory name under the Claude plugin cache in which installed plugin versions are searched.
 _MARKETPLACE = "borda-ai-rig"
 #: Path, relative to a plugin root, of the shared-docs directory this resolver locates.
 _SHARED_SUBDIR = "skills/_shared"
+#: This plugin's manifest ``name``; the source-repository marker must carry exactly this value.
+_PLUGIN = "develop"
+#: Working-directory-relative source-tree path the resolver falls back to when no install is cached.
+SOURCE_FALLBACK = (Path("plugins") / f"cc_{_PLUGIN}" / _SHARED_SUBDIR).as_posix()
 
 
 def _resolve(cmd: str) -> str:
@@ -126,7 +148,9 @@ def resolve_shared_path(home: Path | None = None) -> str:
     """Resolve this plugin's own ``skills/_shared`` path.
 
     Tier 1: cache scan via :func:`_resolve_plugin_shared`.
-    Tier 2: source-tree fallback ``plugins/cc_develop/skills/_shared``.
+    Tier 2: source-tree fallback ``plugins/cc_develop/skills/_shared``, returned unchecked. Only the CLI gates it on
+    :func:`source_repo_marker_present`; an in-process caller reading files from the returned path must apply that
+    gate itself.
 
     Args:
         home: Override for ``Path.home()`` (testing).
@@ -140,22 +164,124 @@ def resolve_shared_path(home: Path | None = None) -> str:
         ...     resolve_shared_path(home=Path(d))  # source-tree fallback
         'plugins/cc_develop/skills/_shared'
     """
+    return _locate(home)[0]
+
+
+def _locate(home: Path | None) -> tuple[str, bool]:
+    """Resolve the shared path and report whether it came from the installed cache.
+
+    Args:
+        home: Override for ``Path.home()`` (testing).
+
+    Returns:
+        ``(path, from_cache)``; ``from_cache`` is ``False`` for the working-directory source fallback.
+    """
     home = home if home is not None else Path.home()
     dev_path = _resolve_plugin_shared("develop", home)
-    if dev_path is None:
-        dev_path = (Path("plugins") / "cc_develop" / _SHARED_SUBDIR).as_posix()
-    return dev_path
+    if dev_path is not None:
+        return dev_path, True
+    return SOURCE_FALLBACK, False
+
+
+def source_repo_marker_present(cwd: Path | None = None) -> bool:
+    """Report whether the working directory is this plugin's own source repository.
+
+    The source-tree tier reads ``plugins/cc_develop/skills/_shared`` relative to the working directory. Outside this
+    plugin's source repository that tree belongs to whatever repository the session was opened in, so it is trusted
+    only when the same directory also carries ``plugins/cc_develop/.claude-plugin/plugin.json`` naming ``develop``.
+
+    Args:
+        cwd: Directory to inspect; defaults to ``Path.cwd()``.
+
+    Returns:
+        ``True`` when the manifest exists, parses as a JSON object, and its ``name`` is exactly ``develop``.
+
+    Examples:
+        >>> import tempfile
+        >>> with tempfile.TemporaryDirectory() as d:
+        ...     manifest = Path(d) / "plugins" / "cc_develop" / ".claude-plugin" / "plugin.json"
+        ...     before = source_repo_marker_present(Path(d))
+        ...     manifest.parent.mkdir(parents=True)
+        ...     _ = manifest.write_text('{"name": "develop"}', encoding="utf-8")
+        ...     (before, source_repo_marker_present(Path(d)))
+        (False, True)
+    """
+    manifest = (cwd if cwd is not None else Path.cwd()) / "plugins" / f"cc_{_PLUGIN}" / ".claude-plugin" / "plugin.json"
+    try:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(data, dict) and data.get("name") == _PLUGIN
+
+
+def persist_run_sentinels(shared: str, cwd: Path | None = None, now: datetime | None = None) -> bool:
+    """Write the cold-start sentinels: the resolved shared path and a fresh agent-watch directory for this run.
+
+    Args:
+        shared: Resolved ``skills/_shared`` path every later block warm-reads.
+        cwd: Directory the watch dir hangs under; defaults to ``Path.cwd()``.
+        now: Clock override (testing); defaults to the current UTC time.
+
+    Returns:
+        ``True`` when both sentinels were written.
+
+    Examples:
+        >>> import os, tempfile
+        >>> from unittest import mock
+        >>> env = {"CSID": "doc"}
+        >>> with tempfile.TemporaryDirectory() as scratch, mock.patch.dict(os.environ, {**env, "TMPDIR": scratch}):
+        ...     stamp = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+        ...     ok = persist_run_sentinels("shared", cwd=Path("/work"), now=stamp)
+        ...     (ok, (Path(scratch) / "dev-agent-watch-dir-doc").read_text().strip())
+        (True, '/work/.temp/develop/agent-watch-2026-01-02T03-04-05Z')
+    """
+    stamp = (now or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H-%M-%SZ")
+    watch_dir = f"{(cwd or Path.cwd()).as_posix()}/.temp/develop/agent-watch-{stamp}"
+    written = (write_sentinel("dev-shared", shared), write_sentinel("dev-agent-watch-dir", watch_dir))
+    return all(path is not None for path in written)
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Resolve and print the shared document path."""
+    """Resolve the shared document path; print it, or with ``--init`` persist the run's cold-start sentinels.
+
+    Returns 1 without output when only the working-directory tier is available and the working directory is not the
+    develop source repository; 0 otherwise.
+    """
     sys.stdout.reconfigure(encoding="utf-8", newline="\n")
     parser = argparse.ArgumentParser(
         prog="dev_shared_resolve",
         description="Resolve the develop plugin's own skills/_shared path.",
     )
-    parser.parse_args(argv)
-    print(resolve_shared_path())
+    parser.add_argument(
+        "--init",
+        action="store_true",
+        help="persist dev-shared and a fresh dev-agent-watch-dir sentinel instead of printing the path",
+    )
+    args = parser.parse_args(argv)
+    path, from_cache = _locate(None)
+    if not from_cache:
+        # Skills `cat` protocol files from this directory; in a repository under analysis it is that repository's text.
+        if not source_repo_marker_present():
+            print(
+                f"! dev_shared_resolve: no installed develop plugin, and the working directory is not the develop "
+                f"plugin source repository (no plugins/cc_{_PLUGIN}/.claude-plugin/plugin.json naming {_PLUGIN}) — "
+                f"refusing to read {path} from it; install develop@borda-ai-rig",
+                file=sys.stderr,
+            )
+            return 1
+        print(
+            f"dev_shared_resolve: no installed develop plugin; using {path} from the working directory, "
+            "the develop plugin source repository (local dev only)",
+            file=sys.stderr,
+        )
+    if args.init:
+        if not persist_run_sentinels(path):
+            print(
+                "dev_shared_resolve: could not write the session sentinels; later blocks use their fallbacks",
+                file=sys.stderr,
+            )
+        return 0
+    print(path)
     return 0
 
 

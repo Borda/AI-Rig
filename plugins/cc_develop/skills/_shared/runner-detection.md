@@ -42,7 +42,7 @@ Guard on emptiness before running — never let unresolved command reach shell.
 
 ## Language preflight gate
 
-> Applied by `feature` and `fix` only — the skills that hard-require pytest and abort on a non-Python repo. Other loaders of this file (`debug`, `refactor`) skip this section; they do not gate on repo language.
+> Applied by `feature` and `fix` only — the skills that hard-require pytest and abort on a non-Python repo. Other loaders of this file skip this section: `debug` runs its own language check (`LANG_HINT`, which also recognizes `Pipfile`), and `refactor` has no language gate — its NOT-for line is the only non-Python guard.
 
 ```bash
 # timeout: 5000

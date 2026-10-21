@@ -8,6 +8,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -21,11 +22,14 @@ _TRIMMED_ALLOWS = {
     "Bash(git tag:*)",
 }
 
+RETIRED_SHELL_ALLOWS = {"Bash(find:*)", "Bash(node:*)", "Bash(claude:*)", "Bash(sed:*)"}
+
 
 def test_standalone_allow_list_omits_broad_write_matches() -> None:
     """Fresh OSS installs must not pre-approve API writes or local branch/tag deletion."""
     allow = json.loads((_PLUGIN / ".claude-plugin/permissions-allow.json").read_text(encoding="utf-8"))
-    assert _TRIMMED_ALLOWS.isdisjoint(allow)
+    assert (_TRIMMED_ALLOWS | RETIRED_SHELL_ALLOWS).isdisjoint(allow)
+    assert {"Bash(eval:*)", "Bash(python:*)", "Bash(node --check:*)", "Bash(find .temp*)"} <= set(allow)
     assert "Bash(gh api search/*)" in allow
 
 
@@ -63,12 +67,12 @@ def test_hook_inventory_and_registrations_keep_only_oss_modules() -> None:
 
 
 @pytest.mark.integration
-@pytest.mark.skipif(not _BASH or not shutil.which("jq"), reason="setup requires Bash and jq")
+@pytest.mark.skipif(not _BASH, reason="setup requires Bash")
 @pytest.mark.parametrize("existing_settings", [False, True])
 def test_setup_executes_additive_idempotent_merges(tmp_path: Path, existing_settings: bool) -> None:
-    """Real jq merges preserve user denies and shared allows, removing only the two old OSS allow spellings."""
+    """The shipped merge call preserves user denies and shared allows, retiring obsolete OSS and shell grants."""
     assert _BASH is not None
-    legacy_allow = {"Bash(gh api repos/*:*)", "Bash(uv pip install:*)"}
+    legacy_allow = {"Bash(gh api repos/*:*)", "Bash(uv pip install:*)"} | RETIRED_SHELL_ALLOWS
     user_allow = _TRIMMED_ALLOWS | {"Bash(custom-reader:*)"}
     user_deny = {"Bash(gh pr merge:*)", "Bash(git branch -D:*)", "Bash(custom-writer:*)"}
     settings = {"theme": "dark", "permissions": {"allow": sorted(user_allow | legacy_allow), "deny": sorted(user_deny)}}
@@ -76,6 +80,11 @@ def test_setup_executes_additive_idempotent_merges(tmp_path: Path, existing_sett
         settings = {}
         user_allow = set()
         user_deny = set()
+    # Merge keeps user order (legacy spellings dropped) and appends shipped rules once each, in shipped-file order.
+    existing = {
+        "allow": [rule for rule in sorted(user_allow | legacy_allow) if rule not in legacy_allow] if user_allow else [],
+        "deny": sorted(user_deny),
+    }
     config = tmp_path / ".claude/settings.json"
     config.parent.mkdir()
     config.write_text(json.dumps(settings), encoding="utf-8")
@@ -83,36 +92,40 @@ def test_setup_executes_additive_idempotent_merges(tmp_path: Path, existing_sett
     env = {
         **os.environ,
         "HOME": tmp_path.as_posix(),
+        "USERPROFILE": str(tmp_path),
         "TMPDIR": tmp_path.as_posix(),
         "CLAUDE_PLUGIN_ROOT": _PLUGIN.as_posix(),
     }
     text = (_PLUGIN / "skills/setup/SKILL.md").read_text(encoding="utf-8")
     blocks = re.findall(r"```bash\n(.*?)\n```", text, re.DOTALL)
+    candidates = [block for block in blocks if "merge_settings_permissions.py" in block]
+    assert len(candidates) == 1
+    # The block's bare `python` may not be on PATH (or may be a different interpreter) under the test runner.
+    merge = re.sub(r"^python ", f'"{Path(sys.executable).as_posix()}" ', candidates[0], count=1, flags=re.MULTILINE)
     for _ in range(2):
-        for kind, original in (("allow", user_allow), ("deny", user_deny)):
-            candidates = [block for block in blocks if f".permissions.{kind} =" in block]
-            assert len(candidates) == 1
-            # A bare name lets Windows select System32's WSL launcher ahead of the PATH shell.
-            result = subprocess.run(
-                [_BASH, "-c", candidates[0]],
-                env=env,
-                capture_output=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=30,
-            )
-            assert result.returncode == 0, (
-                f"{_BASH} exited {result.returncode}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
-            )
+        # A bare name lets Windows select System32's WSL launcher ahead of the PATH shell.
+        result = subprocess.run(
+            [_BASH, "-c", merge],
+            env=env,
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+        )
+        assert result.returncode == 0, (
+            f"{_BASH} exited {result.returncode}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+        )
+        for kind in ("allow", "deny"):
+            assert f"permissions.{kind}: added" in result.stdout
             merged = json.loads(config.read_text(encoding="utf-8"))
             shipped = json.loads((_PLUGIN / f".claude-plugin/permissions-{kind}.json").read_text(encoding="utf-8"))
-            assert merged["permissions"][kind] == sorted(original | set(shipped))
+            assert merged["permissions"][kind] == list(dict.fromkeys(existing[kind] + shipped))
             if existing_settings:
                 assert merged["theme"] == "dark"
     final = json.loads(config.read_text(encoding="utf-8"))
-    for kind, original in (("allow", user_allow), ("deny", user_deny)):
+    for kind in ("allow", "deny"):
         shipped = json.loads((_PLUGIN / f".claude-plugin/permissions-{kind}.json").read_text(encoding="utf-8"))
-        assert final["permissions"][kind] == sorted(original | set(shipped))
+        assert final["permissions"][kind] == list(dict.fromkeys(existing[kind] + shipped))
 
 
 def test_readme_and_setup_explain_the_upgrade_boundary() -> None:

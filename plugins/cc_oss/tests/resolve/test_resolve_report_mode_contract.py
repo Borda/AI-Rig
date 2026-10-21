@@ -44,9 +44,41 @@ def _bash_block_after(document: str, marker: str) -> str:
     return document[start : document.index("```", start)]
 
 
+def _at_pr_head(tmp_path: Path, session: str, *, is_cross_repo: bool) -> Path:
+    """Create a repository already on the PR branch, with the sentinels Step 4's reference helper writes.
+
+    The local SHA equals the PR head SHA, so the one Step 4 block skips ``gh pr checkout`` and runs through to its end.
+    """
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-q", "-b", "feature", str(repo)], check=True)
+    sentinels = {
+        "head-ref": "feature",
+        "pr-head-oid": "a" * 40,
+        "local-sha": "a" * 40,
+        "is-cross-repo": str(is_cross_repo).lower(),
+    }
+    for name, value in sentinels.items():
+        (tmp_path / f"resolve-{name}-{session}").write_text(f"{value}\n", encoding="utf-8", newline="\n")
+    return repo
+
+
+def _step_4_path(tmp_path: Path, gh_body: str) -> str:
+    """Return a PATH whose ``gh`` is a stub running ``gh_body``, with the test interpreter ahead of the system one."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    gh = bin_dir / "gh"
+    gh.write_text(f"#!/bin/sh\n{gh_body}\n", encoding="utf-8", newline="\n")
+    gh.chmod(0o755)
+    return f"{bin_dir}{os.pathsep}{Path(sys.executable).parent}{os.pathsep}{os.environ.get('PATH', '')}"
+
+
 @pytest.mark.skipif(_BASH is None, reason="Resolve route uses Bash")
 def test_report_header_pr_reaches_step_4_in_fresh_shell(tmp_path: Path) -> None:
-    """A bare report invocation persists its header PR for later checkout blocks."""
+    """A bare report invocation persists its header PR for the one Step 4 checkout block.
+
+    The block runs to its end on a repository already at the PR head, so its reference helper, checkout verification and
+    ``FORK_REMOTE`` derivation all complete after the persisted number is read in a fresh shell.
+    """
     report_doc = (_RESOLVE / "modes" / "report-intelligence.md").read_text(encoding="utf-8")
     skill = (_RESOLVE / "SKILL.md").read_text(encoding="utf-8")
     report = tmp_path / "review-report.md"
@@ -80,10 +112,17 @@ def test_report_header_pr_reaches_step_4_in_fresh_shell(tmp_path: Path) -> None:
     )
     assert producer.returncode == 0, producer.stderr
     assert (tmp_path / f"resolve-pr-number-{session}").read_text(encoding="utf-8") == "42\n"
+    repo = _at_pr_head(tmp_path, session, is_cross_repo=False)
     consumer = _bash_block_after(skill, "**Branch-safety pre-check**")
-    result = subprocess.run([_BASH, "-c", consumer], cwd=tmp_path, env=env, capture_output=True, text=True)
-    assert result.returncode == 0, result.stderr
-    assert (tmp_path / "42").read_text(encoding="utf-8") == "--pr 42"
+    result = subprocess.run(
+        [_BASH, "-c", consumer],
+        cwd=repo,
+        env=env | {"PATH": _step_4_path(tmp_path, "exit 1")},
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (repo / "42").read_text(encoding="utf-8") == "--pr 42"
 
 
 @pytest.mark.parametrize("shell", _SHELLS)
@@ -140,33 +179,34 @@ def test_report_header_state_rejects_ambiguous_pr(
 def test_report_header_pr_creates_fork_reference_in_later_shell(
     tmp_path: Path, resolved_pr: str, expected_status: int, expected_ref: str
 ) -> None:
-    """A fork commit uses the URL for the persisted PR rather than an empty parser URL."""
+    """A fork commit uses the URL for the persisted PR rather than an empty parser URL.
+
+    The reference derivation is the tail of the one Step 4 block, so the repository sits at the PR head and the block
+    reaches it without a checkout; a stale reference is truncated before the URL check, so a mismatch leaves it empty.
+    """
     skill = (_RESOLVE / "SKILL.md").read_text(encoding="utf-8")
     session = "report-fork-state-test"
     (tmp_path / f"resolve-pr-number-{session}").write_text("42\n", encoding="utf-8", newline="\n")
-    (tmp_path / f"resolve-is-cross-repo-{session}").write_text("true\n", encoding="utf-8", newline="\n")
+    repo = _at_pr_head(tmp_path, session, is_cross_repo=True)
     (tmp_path / f"resolve-head-repo-owner-{session}").write_text("alice\n", encoding="utf-8", newline="\n")
     (tmp_path / f"resolve-pr-ref-{session}").write_text("stale\n", encoding="utf-8", newline="\n")
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    gh = bin_dir / "gh"
-    gh.write_text(
-        f"#!/bin/sh\nprintf 'https://github.com/owner/repo/pull/{resolved_pr}\\n'\n", encoding="utf-8", newline="\n"
-    )
-    gh.chmod(0o755)
+    plugin = tmp_path / "plugin"
+    (plugin / "bin").mkdir(parents=True)
+    (plugin / "bin" / "resolve_pr_refs.py").write_text("", encoding="utf-8", newline="\n")
     result = subprocess.run(
-        [_BASH, "-c", _bash_block_after(skill, "Determine `FORK_REMOTE` for push")],
-        cwd=tmp_path,
+        [_BASH, "-c", _bash_block_after(skill, "**Branch-safety pre-check**")],
+        cwd=repo,
         env=os.environ
         | {
             "CLAUDE_CODE_SESSION_ID": session,
+            "CLAUDE_PLUGIN_ROOT": str(plugin),
             "TMPDIR": str(tmp_path),
-            "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+            "PATH": _step_4_path(tmp_path, f"printf 'https://github.com/owner/repo/pull/{resolved_pr}\\n'"),
         },
         capture_output=True,
         text=True,
     )
-    assert result.returncode == expected_status, result.stderr
+    assert result.returncode == expected_status, result.stdout + result.stderr
     assert (tmp_path / f"resolve-pr-ref-{session}").read_text(encoding="utf-8") == expected_ref
 
 
@@ -191,7 +231,12 @@ def test_report_without_pr_persists_base_for_step_9(tmp_path: Path) -> None:
     (tmp_path / "note.txt").write_text("changed\n", encoding="utf-8", newline="\n")
     subprocess.run(["git", "-C", str(tmp_path), "commit", "-qam", "change"], check=True)
     session = "report-base-state-test"
-    env = os.environ | {"CLAUDE_CODE_SESSION_ID": session, "TMPDIR": str(tmp_path)}
+    env = os.environ | {
+        "CLAUDE_CODE_SESSION_ID": session,
+        "TMPDIR": str(tmp_path),
+        "CLAUDE_PLUGIN_ROOT": str(_RESOLVE.parents[1]),
+        "PATH": f"{Path(sys.executable).parent}{os.pathsep}{os.environ.get('PATH', '')}",
+    }
     producer = subprocess.run(
         [_BASH, "-c", _bash_block_after(report_doc, "**`BASE_REF` derivation (no-PR path)**")],
         cwd=tmp_path,
@@ -269,13 +314,19 @@ def test_report_without_default_ref_clears_stale_base(tmp_path: Path) -> None:
     result = subprocess.run(
         [_BASH, "-c", _bash_block_after(report_doc, "**`BASE_REF` derivation (no-PR path)**")],
         cwd=tmp_path,
-        env=os.environ | {"CLAUDE_CODE_SESSION_ID": session, "TMPDIR": str(tmp_path)},
+        env=os.environ
+        | {
+            "CLAUDE_CODE_SESSION_ID": session,
+            "TMPDIR": str(tmp_path),
+            "CLAUDE_PLUGIN_ROOT": str(_RESOLVE.parents[1]),
+            "PATH": f"{Path(sys.executable).parent}{os.pathsep}{os.environ.get('PATH', '')}",
+        },
         capture_output=True,
         text=True,
     )
     assert result.returncode != 0
     assert "Cannot determine a valid origin default branch" in result.stdout
-    assert sentinel.read_text(encoding="utf-8") == ""
+    assert sentinel.read_text(encoding="utf-8").strip() == ""
 
 
 @pytest.mark.skipif(_BASH is None, reason="Resolve route uses Bash")
@@ -322,7 +373,10 @@ def test_no_pr_report_writes_local_commit_reference(tmp_path: Path, prior_ref: s
 )
 def test_every_commit_route_rejects_missing_or_stale_pr_reference(tmp_path: Path, marker: str, next_line: str) -> None:
     """A fresh shell cannot invent #0 or reuse #42 for a no-PR report commit."""
-    dispatch = (_RESOLVE / "modes" / "action-item-dispatch.md").read_text(encoding="utf-8")
+    dispatch = "\n".join(
+        (_RESOLVE / f"modes/dispatch-{p}.md").read_text(encoding="utf-8")
+        for p in ("prelude", "phase1", "phase2", "phase3")
+    )
     block = _bash_block_after(dispatch, marker)
     prefix = block[: block.index(next_line)]
     session = "local-reference-consumer-test"
@@ -353,7 +407,10 @@ def test_every_commit_route_rejects_missing_or_stale_pr_reference(tmp_path: Path
 
 def test_specialist_commit_prompt_reads_current_report_reference() -> None:
     """A child worktree must load the parent run's reference instead of guessing a PR token."""
-    dispatch = (_RESOLVE / "modes" / "action-item-dispatch.md").read_text(encoding="utf-8")
+    dispatch = "\n".join(
+        (_RESOLVE / f"modes/dispatch-{p}.md").read_text(encoding="utf-8")
+        for p in ("prelude", "phase1", "phase2", "phase3")
+    )
     prompt = dispatch[dispatch.index("Per group, mark its items'") : dispatch.index("**Fire all specialist groups")]
     assert "resolve-pr-number-${CSID}" in prompt
     assert "resolve-pr-ref-${CSID}" in prompt
@@ -388,7 +445,10 @@ def test_merged_report_items_fold_into_pr_jsonl_before_selection() -> None:
     """Step 3c merges review findings into Step 3b's jsonl through the helper, keeping GitHub ids, before Step 3d."""
     skill = (_RESOLVE / "SKILL.md").read_text(encoding="utf-8")
     merge = skill[skill.index("## Step 3c") : skill.index("## Step 3d")]
-    dispatch = (_RESOLVE / "modes" / "action-item-dispatch.md").read_text(encoding="utf-8")
+    dispatch = "\n".join(
+        (_RESOLVE / f"modes/dispatch-{p}.md").read_text(encoding="utf-8")
+        for p in ("prelude", "phase1", "phase2", "phase3")
+    )
     assert "action-items.jsonl" in merge
     assert "merge_action_items.py" in merge
     assert "--candidates" in merge
@@ -404,7 +464,10 @@ def test_merged_report_items_fold_into_pr_jsonl_before_selection() -> None:
 
 def test_c1_each_commit_requires_credit_and_success_before_item_ledger() -> None:
     """A failed Codex-direct commit must leave no completed per-item record."""
-    dispatch = (_RESOLVE / "modes" / "action-item-dispatch.md").read_text(encoding="utf-8")
+    dispatch = "\n".join(
+        (_RESOLVE / f"modes/dispatch-{p}.md").read_text(encoding="utf-8")
+        for p in ("prelude", "phase1", "phase2", "phase3")
+    )
     block_start = dispatch.index("```bash", dispatch.index("**Only `each` mode commits here.**")) + len("```bash\n")
     block = dispatch[block_start : dispatch.index("```", block_start)]
     each = block[
@@ -421,7 +484,10 @@ def test_c1_each_commit_requires_credit_and_success_before_item_ledger() -> None
 @pytest.mark.skipif(any(shutil.which(name) is None for name in ("bash", "jq")), reason="Step 8 needs Bash and jq")
 def test_step_8_blocks_missing_commit_choice_before_dispatch(tmp_path: Path) -> None:
     """A skipped selection step cannot start item implementation with an unset mode."""
-    dispatch = (_RESOLVE / "modes" / "action-item-dispatch.md").read_text(encoding="utf-8")
+    dispatch = "\n".join(
+        (_RESOLVE / f"modes/dispatch-{p}.md").read_text(encoding="utf-8")
+        for p in ("prelude", "phase1", "phase2", "phase3")
+    )
     start = dispatch.index("```bash", dispatch.index("Substitute the Step 3d selection")) + len("```bash\n")
     prelude = dispatch[start : dispatch.index("```", start)].replace(
         'SELECTED_ITEMS="<space-separated selected ids>"', 'SELECTED_ITEMS="1"'
@@ -449,7 +515,10 @@ def test_step_8_blocks_missing_commit_choice_before_dispatch(tmp_path: Path) -> 
 @pytest.mark.skipif(any(shutil.which(name) is None for name in ("bash", "jq")), reason="Step 8 needs Bash and jq")
 def test_step_8_rejects_selection_missing_from_persisted_report_items(tmp_path: Path) -> None:
     """A stale or unmerged JSONL cannot silently dispatch another item under the selected ID."""
-    dispatch = (_RESOLVE / "modes" / "action-item-dispatch.md").read_text(encoding="utf-8")
+    dispatch = "\n".join(
+        (_RESOLVE / f"modes/dispatch-{p}.md").read_text(encoding="utf-8")
+        for p in ("prelude", "phase1", "phase2", "phase3")
+    )
     start = dispatch.index("```bash", dispatch.index("Substitute the Step 3d selection")) + len("```bash\n")
     prelude = dispatch[start : dispatch.index("```", start)].replace(
         'SELECTED_ITEMS="<space-separated selected ids>"', 'SELECTED_ITEMS="2"'
@@ -526,7 +595,10 @@ def test_failed_c1_each_commit_leaves_no_item_ledger(tmp_path: Path) -> None:
     (plugin / "bin").mkdir(parents=True)
     (plugin / "bin" / "commit_action_item.py").write_text("raise SystemExit(1)\n", encoding="utf-8", newline="\n")
 
-    dispatch = (_RESOLVE / "modes" / "action-item-dispatch.md").read_text(encoding="utf-8")
+    dispatch = "\n".join(
+        (_RESOLVE / f"modes/dispatch-{p}.md").read_text(encoding="utf-8")
+        for p in ("prelude", "phase1", "phase2", "phase3")
+    )
     start = dispatch.index("```bash", dispatch.index("**Only `each` mode commits here.**")) + len("```bash\n")
     # unedited: the item id comes from c1-item-current.txt, recorded by the brief block
     fence = dispatch[start : dispatch.index("```", start)]
@@ -568,7 +640,10 @@ def test_handoff_wiring_reaches_each_consumer() -> None:
 
     Script-level tests cannot see these call sites; a dropped block would silently disable the re-check or the ledger.
     """
-    dispatch = (_RESOLVE / "modes" / "action-item-dispatch.md").read_text(encoding="utf-8")
+    dispatch = "\n".join(
+        (_RESOLVE / f"modes/dispatch-{p}.md").read_text(encoding="utf-8")
+        for p in ("prelude", "phase1", "phase2", "phase3")
+    )
     skill = (_RESOLVE / "SKILL.md").read_text(encoding="utf-8")
     review = (_RESOLVE.parent / "review" / "SKILL.md").read_text(encoding="utf-8")
     consolidator = (_RESOLVE.parent / "review" / "templates" / "consolidator-prompt.md").read_text(encoding="utf-8")

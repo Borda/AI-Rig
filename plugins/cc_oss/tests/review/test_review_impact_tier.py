@@ -7,6 +7,8 @@ lineup, because a trimmed review of a risky change is the failure this script ex
 
 from __future__ import annotations
 
+import io
+
 import pytest
 import review_impact_tier as rit
 
@@ -114,3 +116,34 @@ class TestFailSafe:
         monkeypatch.setattr(rit.shutil, "which", lambda _name: None)
         payload = _payload(_module("src/pkg/core.py", "pkg.core::_prep"))
         assert rit.classify(payload)[0] == "FULL"
+
+
+class TestStdinCap:
+    @pytest.mark.parametrize(
+        ("stdin_text", "expected_line"),
+        [
+            pytest.param("{}", "FULL · impact unknown: no changed modules mapped", id="within-cap-parsed"),
+            pytest.param(
+                '{"changed_modules": []}' + " " * 64,
+                "FULL · impact unknown: diff-impact input exceeds 32 characters",
+                id="over-cap-not-parsed",
+            ),
+        ],
+    )
+    def test_main_bounds_stdin_and_fails_safe(
+        self,
+        stdin_text: str,
+        expected_line: str,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Diff-impact JSON within the cap is classified; larger input is never read whole and reports FULL.
+
+        The calling skill pipes codemap output straight into this script and redirects stdout into the impact sentinel,
+        so an oversized payload must still yield a FULL line and exit 0 instead of being slurped into memory.
+        """
+        stream = io.StringIO(stdin_text)
+        monkeypatch.setattr(rit, "MAX_INPUT_CHARS", 32)
+        monkeypatch.setattr(rit.sys, "stdin", stream)
+        exit_code = rit.main([])
+        assert (exit_code, capsys.readouterr().out.strip(), stream.tell() <= 33) == (0, expected_line, True)

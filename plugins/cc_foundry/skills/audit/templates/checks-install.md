@@ -44,16 +44,17 @@ Root cause guard for `adversarial.md` / `upgrade.md` silent-deletion bug class. 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
-printf "=== Check R1: Computed path resolution (local + installed duality) ===\n"
+printf "=== Checks R1–R3: computed paths, grep-visible refs, bin/ scripts ===\n"
 if [ "$LOCAL_MODE" != "true" ]; then
-    printf "✓: Check R1 skipped in non-local mode (no plugin source tree)\n"
+    printf "✓: Checks R1–R3 skipped in non-local mode (no plugin source tree)\n"
 else
     python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_routing_links.py" \
         --plugins-dir plugins \
-        --installed-plugins-json ~/.claude/plugins/installed_plugins.json \
-        --check R1  # timeout: 15000
+        --installed-plugins-json ~/.claude/plugins/installed_plugins.json  # timeout: 20000
 fi
 ```
+
+One pass runs R1, R2 and R3 (`--check` omitted); the R2 and R3 sections below carry only their own scope and severity.
 
 **Severity**:
 
@@ -67,24 +68,11 @@ Fix: re-install plugin with `claude plugin install <plugin>@borda-ai-rig` to syn
 
 Structural guard: for every `.md` file in `plugins/*/skills/*/modes/`, `plugins/*/skills/*/templates/`, `plugins/*/skills/_shared/` — verify its **basename** appears as literal string in ≥1 consumer `.md` file in same plugin.
 
-**Scope**: `modes/`, `templates/`, `_shared/` only. SKILL.md and agent `.md` files covered by Check 32a (checks-skills.md); R2 complementary — covers subdirectories 32a doesn't walk.
+**Scope**: `modes/`, `templates/`, `_shared/` only. SKILL.md and agent `.md` files covered by Check 32a (checks-skills-deadfiles.md); R2 complementary — covers subdirectories 32a doesn't walk.
 
 **Why**: grep-based dead-file checks (Check 32a, 32b) and agent zero-hit analysis search for filename. File loaded only via computed path (e.g. `$AUDIT_TPL/../modes/adversarial.md`) has zero literal-basename hits → grep tools conclude unreferenced → deletion risk.
 
-Skip if `LOCAL_MODE != true`.
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
-printf "=== Check R2: Grep-visible referencing (orphan-risk detection) ===\n"
-if [ "$LOCAL_MODE" != "true" ]; then
-    printf "✓: Check R2 skipped in non-local mode (no plugin source tree)\n"
-else
-    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_routing_links.py" \
-        --plugins-dir plugins \
-        --check R2  # timeout: 15000
-fi
-```
+Skip if `LOCAL_MODE != true`. Run by the R1 block above.
 
 **Severity**: `R2-ORPHAN-RISK` → **medium** — file is grep-invisible; any automated or agent-assisted dead-file sweep will incorrectly flag as unreferenced and may delete it.
 
@@ -100,21 +88,7 @@ This single-line comment costs ~5 tokens, permanently protects file from grep-ba
 
 Check 32d walks `bin/` scripts, flags those unreferenced by any `.md` file (orphaned scripts). R3 is the reverse: for every `${CLAUDE_PLUGIN_ROOT:-plugins/<x>}/bin/<script>` reference in any plugin `.md` file, verify script exists locally — catches typos, deleted scripts, refactor leftovers leaving dangling references.
 
-Skip if `LOCAL_MODE != true`.
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
-printf "=== Check R3: bin/ script existence (local + installed) ===\n"
-if [ "$LOCAL_MODE" != "true" ]; then
-    printf "✓: Check R3 skipped in non-local mode (no plugin source tree)\n"
-else
-    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_routing_links.py" \
-        --plugins-dir plugins \
-        --installed-plugins-json ~/.claude/plugins/installed_plugins.json \
-        --check R3  # timeout: 15000
-fi
-```
+Skip if `LOCAL_MODE != true`. Run by the R1 block above.
 
 **Severity**:
 
@@ -122,16 +96,6 @@ fi
 - `R3-WARN` (script exists locally but absent from installed cache) → **high** — same as R1-FAIL but for bin/ scripts; users get broken skill at runtime after install
 
 Fix: create missing script locally (FAIL) or re-install plugin to sync (WARN).
-
-> **Convenience shortcut**: run all three checks together:
->
-> ```bash
-> python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_routing_links.py" \
->     --plugins-dir plugins \
->     --installed-plugins-json ~/.claude/plugins/installed_plugins.json  # timeout: 20000
-> ```
->
-> Omitting `--check` runs R1, R2, R3 in one pass.
 
 | Sub-check | Condition | Severity | Auto-fix |
 | -- | -- | -- | -- |

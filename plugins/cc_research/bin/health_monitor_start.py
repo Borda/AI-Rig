@@ -77,7 +77,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     skill_id = args.skill_id
-    if not _SKILL_RE.match(skill_id):
+    if not _SKILL_RE.fullmatch(skill_id):
         print(f"health_monitor_start: invalid SKILL_ID: {skill_id!r}", file=sys.stderr)
         return 2
 

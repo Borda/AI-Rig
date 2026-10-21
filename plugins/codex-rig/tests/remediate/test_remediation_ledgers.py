@@ -352,6 +352,20 @@ class TestReviewResolutionFeedback:
 
         assert not (review_run / "resolution.jsonl").exists()
 
+    def test_refuses_an_unpromoted_review_candidate(
+        self, selected_run: tuple[Path, dict], tmp_path_factory: pytest.TempPathFactory
+    ) -> None:
+        """A review that never promoted its candidate was never admitted, so it receives no verdicts."""
+        run, result = selected_run
+        _promote_with_report_ids(run, result)
+        review_run = _review_run(tmp_path_factory.mktemp("reviews"), run)
+        (review_run / "result.json").rename(review_run / "result.candidate.json")
+
+        with pytest.raises(HELPER.DeriveError, match="resolution-review-run-mismatch"):
+            HELPER.append_review_resolutions(run, review_run)
+
+        assert not (review_run / "resolution.jsonl").exists()
+
     def test_requires_a_promoted_remediation_result(
         self, selected_run: tuple[Path, dict], tmp_path_factory: pytest.TempPathFactory
     ) -> None:

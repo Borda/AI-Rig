@@ -38,6 +38,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from shutil import which
+from urllib.parse import quote
 
 #: Enforce safe owner/repo/branch shapes to defuse URL-path injection (A03:2021).
 _NAME_RE = re.compile(r"^[a-zA-Z0-9._-]+$")
@@ -188,7 +189,7 @@ def _list_names(ctx: FetchContext, sub_path: str) -> list[str] | None:
     Returns:
         Names in API order, or ``None`` when the listing failed or was not a JSON array.
     """
-    api_path = f"repos/{ctx.owner_repo}/contents" + (f"/{sub_path}" if sub_path else "")
+    api_path = f"repos/{ctx.owner_repo}/contents" + (f"/{quote(sub_path)}" if sub_path else "")
     rc, stdout = _gh_call(ctx.gh, api_path, "[.[] | .name]", ctx.timeout)
     if rc != 0 or not stdout:
         return None
@@ -201,7 +202,8 @@ def _list_names(ctx: FetchContext, sub_path: str) -> list[str] | None:
 
 def _fetch_file_text(ctx: FetchContext, path: str) -> str | None:
     """Fetch and decode one repository file; ``None`` when absent or undecodable."""
-    rc, raw = _gh_call(ctx.gh, f"repos/{ctx.owner_repo}/contents/{path}", ".content", ctx.timeout)
+    # path segments come from remote directory listings: quote so a name with ?, # or % cannot rewrite the API request
+    rc, raw = _gh_call(ctx.gh, f"repos/{ctx.owner_repo}/contents/{quote(path)}", ".content", ctx.timeout)
     if rc != 0 or not raw:
         return None
     text = _decode_b64(raw)
@@ -381,7 +383,7 @@ def _fetch_codeowners(ctx: FetchContext, root: list[str] | None) -> None:
 def _fetch_branch_status(ctx: FetchContext, default_branch: str) -> None:
     """Fetch the default branch's ``protected`` flag (no admin rights needed); append ``default_branch_status``."""
     rc, stdout = _gh_call(
-        ctx.gh, f"repos/{ctx.owner_repo}/branches/{default_branch}", "{protected: .protected}", ctx.timeout
+        ctx.gh, f"repos/{ctx.owner_repo}/branches/{quote(default_branch)}", "{protected: .protected}", ctx.timeout
     )
     if rc != 0 or not stdout:
         return
@@ -402,7 +404,8 @@ def _fetch_ci_runs(ctx: FetchContext, default_branch: str) -> None:
     ``merge_group`` runs). Completed runs only: pending runs never enter the pass-rate sample.
     """
     api_path = (
-        f"repos/{ctx.owner_repo}/actions/runs?branch={default_branch}&status=completed&per_page={_CI_RUNS_PER_PAGE}"
+        f"repos/{ctx.owner_repo}/actions/runs?branch={quote(default_branch, safe='')}&status=completed"
+        f"&per_page={_CI_RUNS_PER_PAGE}"
     )
     jq = "[.workflow_runs[] | {conclusion, name, event, head_branch}]"
     rc, stdout = _gh_call(ctx.gh, api_path, jq, max(ctx.timeout, _CI_RUNS_TIMEOUT))
@@ -419,7 +422,9 @@ def _fetch_ci_runs(ctx: FetchContext, default_branch: str) -> None:
 
 def _fetch_branch_protection(ctx: FetchContext, default_branch: str) -> None:
     """Fetch default-branch protection settings; append ``branch_protection`` record on success."""
-    rc, stdout = _gh_call(ctx.gh, f"repos/{ctx.owner_repo}/branches/{default_branch}/protection", None, ctx.timeout)
+    rc, stdout = _gh_call(
+        ctx.gh, f"repos/{ctx.owner_repo}/branches/{quote(default_branch)}/protection", None, ctx.timeout
+    )
     if rc != 0 or not stdout:
         return
     try:

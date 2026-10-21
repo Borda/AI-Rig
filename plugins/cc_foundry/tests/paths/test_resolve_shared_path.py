@@ -31,6 +31,8 @@ class TestValidation:
             pytest.param(["plug!in", "skills/_shared"], "invalid PLUGIN", id="plugin-special-chars"),
             pytest.param(["foundry", "skills/../etc"], "invalid SUBDIR", id="subdir-traversal"),
             pytest.param(["foundry", "skills/_shared!"], "invalid SUBDIR", id="subdir-special-chars"),
+            pytest.param(["foundry", "/etc"], "invalid SUBDIR", id="subdir-absolute"),
+            pytest.param(["foundry", "skills//_shared"], "invalid SUBDIR", id="subdir-empty-segment"),
         ],
     )
     def test_invalid_argument_exits_two(
@@ -44,6 +46,37 @@ class TestValidation:
         rc = resolve_shared_path.main(argv)
         assert rc == 2
         assert message in capsys.readouterr().err
+
+
+class TestOwnPluginName:
+    """The cache name of the plugin this script ships in comes from its manifest, not its directory name."""
+
+    def test_installed_cache_root_named_by_version_uses_manifest(self, tmp_path: Path) -> None:
+        """An installed root ``<cache>/oss/0.50.4`` is named ``oss`` by ``plugin.json``, not ``0.50.4``.
+
+        Scenario: deriving the name from the directory gives the version string, so the helper lookup under
+        ``<cache>/<name>`` never exists and the cache tier of the helper search is dead.
+        """
+        root = tmp_path / "oss" / "0.50.4"
+        (root / ".claude-plugin").mkdir(parents=True)
+        (root / ".claude-plugin" / "plugin.json").write_text('{"name": "oss"}', encoding="utf-8")
+        assert resolve_shared_path._own_plugin_name(root) == "oss"
+
+    @pytest.mark.parametrize(
+        "manifest",
+        [
+            pytest.param(None, id="manifest-missing"),
+            pytest.param("not json", id="manifest-malformed"),
+            pytest.param('{"name": "../evil"}', id="manifest-unsafe-name"),
+        ],
+    )
+    def test_source_checkout_falls_back_to_directory_name(self, tmp_path: Path, manifest: str | None) -> None:
+        """A missing, malformed or unsafe manifest falls back to the ``cc_``-stripped directory name."""
+        root = tmp_path / "cc_research"
+        (root / ".claude-plugin").mkdir(parents=True)
+        if manifest is not None:
+            (root / ".claude-plugin" / "plugin.json").write_text(manifest, encoding="utf-8")
+        assert resolve_shared_path._own_plugin_name(root) == "research"
 
 
 class TestTier0EnvHit:
@@ -201,9 +234,57 @@ class TestTier1Registry:
         assert tier == 1
         assert Path(path) == active_shared
 
+    def test_install_path_outside_cache_rejected(self, tmp_path: Path) -> None:
+        """A registry record pointing outside the marketplace cache never resolves at tier 1.
+
+        Scenario: a hand-edited or foreign ``installed_plugins.json`` records ``installPath`` in an arbitrary
+        directory holding the requested subdir. Skills ``cat`` what this resolver returns as instructions, so the
+        record must not redirect them there; resolution falls through to the cache scan instead.
+        """
+        foreign_shared = tmp_path / "elsewhere" / "skills" / "_shared"
+        foreign_shared.mkdir(parents=True)
+        registry = tmp_path / ".claude" / "plugins" / "installed_plugins.json"
+        registry.parent.mkdir(parents=True)
+        record = {"installPath": (tmp_path / "elsewhere").as_posix(), "installedAt": "2026-09-18T06:00:47.793Z"}
+        registry.write_text(json.dumps({"plugins": {"foundry@borda-ai-rig": [record]}}), encoding="utf-8")
+        assert resolve_shared_path._tier1_registry(tmp_path, "foundry", "skills/_shared", "") is None
+
+
+class TestHelperLookup:
+    """The registry helper is executed, so it is only ever taken from this plugin's own trees."""
+
+    def test_cwd_planted_helper_never_executed(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A ``plugins/<dir>/bin/get_plugin_install_path.py`` in the working directory is not run.
+
+        Scenario: a skill runs inside a contributor checkout with ``CLAUDE_PLUGIN_ROOT`` unset and no cached copy of
+        the resolver's plugin. The old source-tree tier executed the checkout's file of that name with the session's
+        interpreter; the helper must instead come from beside the resolver itself.
+        """
+        marker = tmp_path / "planted-ran"
+        own_dir_name = Path(resolve_shared_path.__file__).resolve().parent.parent.name
+        planted = tmp_path / "plugins" / own_dir_name / "bin" / "get_plugin_install_path.py"
+        planted.parent.mkdir(parents=True)
+        planted.write_text(f"open({marker.as_posix()!r}, 'w').close()\n", encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+        resolve_shared_path.resolve("foundry", "skills/_shared", home=tmp_path, env_root="")
+        assert not marker.exists()
+
+    def test_falls_back_to_helper_beside_resolver(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """With no env root and no cached copy, the helper shipped beside the resolver is the one used."""
+        monkeypatch.chdir(tmp_path)
+        helper = resolve_shared_path._locate_helper(tmp_path, "")
+        assert helper == Path(resolve_shared_path.__file__).resolve().with_name("get_plugin_install_path.py")
+
+
+def _write_file(root: Path, relpath: str, text: str) -> None:
+    """Create ``root/relpath`` with ``text``, making parent directories as needed."""
+    target = root / relpath
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(text, encoding="utf-8")
+
 
 class TestTier3SourceFallback:
-    """Tier 3 — source-tree fallback when nothing else hits."""
+    """Tier 3 — source-tree fallback when nothing else hits, trusted only inside the plugin's own source repo."""
 
     @pytest.mark.parametrize(
         ("plugin", "source_dir"),
@@ -215,17 +296,63 @@ class TestTier3SourceFallback:
     def test_source_fallback_exists(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, plugin: str, source_dir: str
     ) -> None:
-        """Source tree present → tier 3 returns the on-disk ``plugins/<dir>/<subdir>``.
+        """Source tree present with its own manifest → tier 3 returns the on-disk ``plugins/<dir>/<subdir>``.
 
         Claude plugin dirs carry the ``cc_`` prefix; provider plugins such as codemap-py do not, and the dev-checkout
         fallback must find both.
         """
         source = tmp_path / "plugins" / source_dir / "skills" / "_shared"
         source.mkdir(parents=True)
+        _write_file(tmp_path, f"plugins/{source_dir}/.claude-plugin/plugin.json", json.dumps({"name": plugin}))
         monkeypatch.chdir(tmp_path)
         path, tier = resolve_shared_path.resolve(plugin, "skills/_shared", home=tmp_path, env_root="")
         assert tier == 3
         assert path == f"plugins/{source_dir}/skills/_shared"
+
+    @pytest.mark.parametrize(
+        ("plugin", "relpath", "text"),
+        [
+            pytest.param("foundry", "plugins/cc_foundry/README.md", "readme", id="no-manifest"),
+            pytest.param(
+                "foundry", "plugins/cc_foundry/.claude-plugin/plugin.json", '{"name": "oss"}', id="other-plugin-name"
+            ),
+            pytest.param("foundry", "plugins/cc_foundry/.claude-plugin/plugin.json", "{bad", id="malformed-manifest"),
+            pytest.param(
+                "codemap-py",
+                "plugins/codemap-py/.claude-plugin/plugin.json",
+                '["codemap-py"]',
+                id="non-object-manifest",
+            ),
+        ],
+    )
+    def test_untrusted_source_tree_skipped(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, plugin: str, relpath: str, text: str
+    ) -> None:
+        """A cwd tree without the plugin's own manifest is skipped, so resolution ends at the not-found tier.
+
+        A repository under analysis can carry its own ``plugins/<dir>/skills/_shared``; callers ``cat`` protocol files
+        from the resolved path, so returning it would hand that repository's text to the agent as protocol.
+        """
+        source_dir = relpath.split("/")[1]
+        (tmp_path / "plugins" / source_dir / "skills" / "_shared").mkdir(parents=True)
+        _write_file(tmp_path, relpath, text)
+        monkeypatch.chdir(tmp_path)
+        _path, tier = resolve_shared_path.resolve(plugin, "skills/_shared", home=tmp_path, env_root="")
+        assert tier == -1
+
+    def test_main_untrusted_source_tree_exits_1(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The CLI exits 1, prints no path, and names the refused working-directory tree on stderr."""
+        (tmp_path / "plugins" / "cc_foundry" / "skills" / "_shared").mkdir(parents=True)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", "")
+        monkeypatch.setattr(resolve_shared_path.Path, "home", classmethod(lambda _cls: tmp_path))
+        rc = resolve_shared_path.main(["foundry", "skills/_shared"])
+        captured = capsys.readouterr()
+        assert rc == 1
+        assert captured.out == ""
+        assert "not the foundry plugin source repository" in captured.err
 
     def test_main_tier3_warns_and_exits_0(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
@@ -233,6 +360,7 @@ class TestTier3SourceFallback:
         """Warn while returning a successful source-tree fallback."""
         source = tmp_path / "plugins" / "cc_foundry" / "skills" / "_shared"
         source.mkdir(parents=True)
+        _write_file(tmp_path, "plugins/cc_foundry/.claude-plugin/plugin.json", '{"name": "foundry"}')
         monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", "")
         monkeypatch.setattr(resolve_shared_path.Path, "home", classmethod(lambda _cls: tmp_path))

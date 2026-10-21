@@ -26,7 +26,7 @@ Flags:
                       is rejected.
     --idx-dir <path>  Codemap index directory override (default: <git toplevel>/.cache/codemap).
 
-Temp files written:
+Temp files written, each created fresh with mode 0600 (``_sentinel_io.py``):
     ${TMPDIR:-/tmp}/<prefix>-codemap-enabled-<CSID>   → "true" or "false"
     ${TMPDIR:-/tmp}/<prefix>-codemap-currency-<CSID>  → "current", "stale", or "no_index"
 
@@ -47,6 +47,14 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+#: Sibling import: bin/ is not a package. Putting it on the path resolves the private writer whether this file runs as
+#: a script, under the test conftest, or as a doctest module.
+_BIN_DIR = str(Path(__file__).resolve().parent)
+if _BIN_DIR not in sys.path:
+    sys.path.insert(0, _BIN_DIR)
+
+from _sentinel_io import write_private_text  # noqa: E402
 
 
 def _check_currency(index_path: Path) -> tuple[str, str]:
@@ -325,13 +333,11 @@ def main(argv: list[str] | None = None) -> int:
     # Distinct from `enabled`: the user asking for --no-codemap is not the same as codemap
     # being unavailable, and the Gate A/B machinery branches on the difference. Callers that
     # used to derive this from an inline shell test read it back from here instead.
-    (Path(tmpdir) / f"{prefix}-codemap-forced-off-{csid}").write_text(
-        f"{str(force_off).lower()}\n", encoding="utf-8", newline="\n"
-    )
+    write_private_text(Path(tmpdir) / f"{prefix}-codemap-forced-off-{csid}", f"{str(force_off).lower()}\n")
 
     if force_off:
-        out_file.write_text("false\n")
-        currency_file.write_text("off\n")
+        write_private_text(out_file, "false\n")
+        write_private_text(currency_file, "off\n")
         return 0
 
     root = _project_root()
@@ -346,19 +352,19 @@ def main(argv: list[str] | None = None) -> int:
     rc = _check_index_availability(scan_query_available, index_found, strict, proj, index_path)
     if rc is not None:
         if rc == 0:
-            currency_file.write_text("no_index\n")
-            out_file.write_text("false\n")
+            write_private_text(currency_file, "no_index\n")
+            write_private_text(out_file, "false\n")
         return rc
 
     currency, currency_reason = _check_currency(index_path)
-    currency_file.write_text(f"{currency}\n")
+    write_private_text(currency_file, f"{currency}\n")
 
     if currency == "stale":
         print(
             f"⚠ codemap-py: index is stale — {currency_reason}\n  Run /codemap-py:scan-codebase to refresh it.",
         )
 
-    out_file.write_text("true\n")
+    write_private_text(out_file, "true\n")
     return 0
 
 

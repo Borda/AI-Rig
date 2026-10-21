@@ -15,13 +15,24 @@ either; it only joins them. An item present in ``priority-order`` but absent fro
 (rejected in Phase 1, or skipped by its Phase 2 agent) is silently omitted — that is its correct
 terminal state, tracked elsewhere (``challenge-log.txt`` / ``skipped-items.txt``), not a plan entry.
 
+After a cherry-pick conflict the merge script returns the entries it has not applied yet (``remaining`` in its
+``merge-result.json``). ``--resume-from`` takes that list as the priority order, so the resumed plan is rebuilt from the
+result file itself instead of from an id list typed back in by hand.
+
 Usage:
     build_merge_plan.py --commits phase2-commits.jsonl --action-items action-items.jsonl \\
         --priority-order "3 1 2" --out merge-plan.json [--codemap-maps codemap-maps.json]
+    build_merge_plan.py --commits phase2-commits.jsonl --action-items action-items.jsonl \\
+        --resume-from merge-result.json --out merge-plan.json [--codemap-maps codemap-maps.json]
+
+Exactly one of ``--priority-order`` and ``--resume-from`` is required.
 
 Exit codes:
-    0 — plan written (possibly empty array, when no item in priority-order ever committed)
+    0 — plan written (possibly empty array, when no item in priority-order ever committed or ``remaining`` is empty)
     1 — a required input file is missing or fails to parse as JSON/JSONL
+    2 — argparse usage error (neither or both of ``--priority-order`` and ``--resume-from``)
+    3 — ``--resume-from`` names a file that is absent, not JSON, or has no ``remaining`` list (the merge fence did not
+        write a usable result); kept apart from 1 so the caller reports that cause on its own
 """
 
 from __future__ import annotations
@@ -30,6 +41,9 @@ import argparse
 import json
 import sys
 from pathlib import Path
+
+#: Exit status for an unusable ``--resume-from`` result file, distinct from malformed ledger or action-item input (1).
+EXIT_RESUME_UNUSABLE = 3
 
 
 def _read_jsonl(path: str) -> list[dict]:
@@ -177,6 +191,33 @@ def _load_plan_inputs(commits_path: str, action_items_path: str) -> tuple[list[d
     return commits, action_items
 
 
+def _read_remaining(result_path: str) -> list[str] | str:
+    """Read the unapplied item ids from a ``merge_specialist_batch.py`` result file.
+
+    Args:
+        result_path: Path to ``merge-result.json``.
+
+    Returns:
+        The ``remaining`` item ids as strings in file order (empty when every entry was applied), or an error string.
+
+    Examples:
+        >>> import json, tempfile
+        >>> with tempfile.TemporaryDirectory() as d:
+        ...     p = Path(d, "r.json")
+        ...     _ = p.write_text(json.dumps({"applied": ["1"], "remaining": ["3", 4]}), encoding="utf-8")
+        ...     _read_remaining(str(p))
+        ['3', '4']
+    """
+    try:
+        raw = json.loads(Path(result_path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return f"build_merge_plan: could not read {result_path}: {exc}; did the merge fence run and write it?"
+    remaining = raw.get("remaining") if isinstance(raw, dict) else None
+    if not isinstance(remaining, list):
+        return f"build_merge_plan: no 'remaining' list in {result_path}; did the merge fence run and write it?"
+    return [str(item_id) for item_id in remaining]
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point.
 
@@ -184,8 +225,8 @@ def main(argv: list[str] | None = None) -> int:
         argv: Optional argument list (defaults to ``sys.argv[1:]``).
 
     Returns:
-        Exit code: 0 on success (plan written, possibly empty); 1 on missing/malformed input, or a
-        malformed ledger/action-items row (duplicate item_id, missing sha/id).
+        Exit code: 0 on success (plan written, possibly empty); 1 on missing/malformed input or a malformed
+        ledger/action-items row (duplicate item_id, missing sha/id); 3 on an unusable ``--resume-from`` file.
 
     Examples:
         No doctest — filesystem-dependent; covered by pytest.
@@ -196,7 +237,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--commits", required=True, help="Path to phase2-commits.jsonl")
     parser.add_argument("--action-items", required=True, help="Path to action-items.jsonl")
-    parser.add_argument("--priority-order", required=True, help="Space-separated item ids, priority order")
+    order = parser.add_mutually_exclusive_group(required=True)
+    order.add_argument("--priority-order", help="Space-separated item ids, priority order")
+    order.add_argument("--resume-from", help="Path to merge-result.json; its 'remaining' ids are the priority order")
     parser.add_argument("--out", required=True, help="Path to write the assembled plan JSON array")
     parser.add_argument("--codemap-maps", default=None, help="Optional path to codemap-maps.json")
     args = parser.parse_args(argv)
@@ -221,7 +264,14 @@ def main(argv: list[str] | None = None) -> int:
         except (OSError, json.JSONDecodeError):
             file_module = {}
 
-    priority_order = args.priority_order.split()
+    if args.resume_from is not None:
+        resumed = _read_remaining(args.resume_from)
+        if isinstance(resumed, str):
+            print(resumed, file=sys.stderr)
+            return EXIT_RESUME_UNUSABLE
+        priority_order = resumed
+    else:
+        priority_order = args.priority_order.split()
     try:
         plan = build_plan(commits, action_items, file_module, priority_order)
     except ValueError as exc:

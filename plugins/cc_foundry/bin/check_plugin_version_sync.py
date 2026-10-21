@@ -29,6 +29,32 @@ from typing import Any
 #: Matches a plain ``MAJOR.MINOR.PATCH`` version with no leading zeros, capturing the three numbers.
 _SEMVER = re.compile(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)\Z")
 
+#: Seconds one Git call may run before it counts as failed.
+_GIT_TIMEOUT = 60
+
+
+def _git(args: list[str], *, cwd: Path | None = None, text: bool = True) -> subprocess.CompletedProcess:
+    """Run Git with a bounded wait.
+
+    A timeout comes back as return code 124 with a stderr note, so every caller's existing non-zero check fails closed
+    instead of hanging a pre-commit run.
+
+    Args:
+        args: Arguments after ``git``.
+        cwd: Directory to run in; the process working directory when None.
+        text: Decode stdout/stderr as text when True, keep bytes when False.
+
+    Returns:
+        The completed process; never raises on a non-zero exit or a timeout.
+    """
+    argv = ["git", *args]
+    try:
+        return subprocess.run(  # noqa: S603 - argv list, no shell
+            argv, cwd=cwd, capture_output=True, text=text, check=False, timeout=_GIT_TIMEOUT
+        )
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(argv, 124, "" if text else b"", "git timed out")
+
 
 def _read_version(manifest: Path) -> str | None:
     """Return the ``version`` string from a plugin manifest, or None if unreadable.
@@ -76,12 +102,7 @@ def find_desyncs(scan_dir: Path) -> list[str]:
 
 def find_removed_host_manifests(scan_dir: Path) -> list[str]:
     """Find tracked host manifests deleted from plugins that still ship files."""
-    root_result = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"],  # noqa: S607 - git resolved via PATH on purpose
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    root_result = _git(["rev-parse", "--show-toplevel"])
     if root_result.returncode != 0:
         return ["cannot locate the Git checkout for tracked host manifests"]
     root = Path(root_result.stdout.strip()).resolve()
@@ -89,13 +110,7 @@ def find_removed_host_manifests(scan_dir: Path) -> list[str]:
         relative_scan = scan_dir.resolve().relative_to(root)
     except ValueError:
         return []  # A caller may scan an unrelated, untracked directory for host sync only.
-    tracked = subprocess.run(  # noqa: S603 - argv list, no shell
-        ["git", "ls-tree", "-r", "--name-only", "HEAD", "--", relative_scan.as_posix()],  # noqa: S607 - git via PATH
-        cwd=root,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    tracked = _git(["ls-tree", "-r", "--name-only", "HEAD", "--", relative_scan.as_posix()], cwd=root)
     if tracked.returncode != 0:
         return ["cannot inspect committed host manifests"]
     tracked_paths = {Path(line) for line in tracked.stdout.splitlines()}
@@ -234,24 +249,12 @@ def _deleted_sibling_versions(root: Path, plugin_root: str) -> dict[str, frozens
     baseline for that case without needing Git's content-similarity rename detection, which a fan-out split does not
     trigger.
     """
-    deleted = subprocess.run(  # noqa: S603 - argv list, no shell
-        ["git", "diff", "HEAD", "--diff-filter=D", "--name-only", "--", f"{plugin_root}/**/*.py"],  # noqa: S607 - git via PATH
-        cwd=root,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    deleted = _git(["diff", "HEAD", "--diff-filter=D", "--name-only", "--", f"{plugin_root}/**/*.py"], cwd=root)
     if deleted.returncode != 0:
         return {}
     versions: dict[str, set[int]] = {}
     for deleted_path in deleted.stdout.splitlines():
-        prior = subprocess.run(  # noqa: S603 - argv list, no shell
-            ["git", "show", f"HEAD:{deleted_path}"],  # noqa: S607 - git resolved via PATH on purpose
-            cwd=root,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        prior = _git(["show", f"HEAD:{deleted_path}"], cwd=root)
         if prior.returncode != 0:
             continue
         try:
@@ -361,21 +364,11 @@ _PLUGIN_MANIFEST_TAILS = {(".claude-plugin", "plugin.json"), (".codex-plugin", "
 
 def _git_checkout_root() -> tuple[Path, None] | tuple[None, str]:
     """Locate the checkout root, requiring a readable committed HEAD to compare against."""
-    root_result = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"],  # noqa: S607 - git resolved via PATH on purpose
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    root_result = _git(["rev-parse", "--show-toplevel"])
     if root_result.returncode != 0:
         return None, "cannot locate the Git checkout for version continuity"
     root = Path(root_result.stdout.strip()).resolve()
-    head_result = subprocess.run(
-        ["git", "cat-file", "-e", "HEAD^{commit}"],  # noqa: S607 - git resolved via PATH on purpose
-        cwd=root,
-        capture_output=True,
-        check=False,
-    )
+    head_result = _git(["cat-file", "-e", "HEAD^{commit}"], cwd=root, text=False)
     if head_result.returncode != 0:
         return None, "cannot read committed HEAD for version continuity"
     return root, None
@@ -410,24 +403,12 @@ def _read_current_and_prior(relative: Path, root: Path) -> tuple[str, subprocess
         current_source = (root / relative).read_text(encoding="utf-8")
     except (OSError, ValueError) as exc:
         return [f"{label}: cannot read selected file: {exc}"]
-    tracked = subprocess.run(  # noqa: S603 - argv list, no shell
-        ["git", "ls-tree", "--name-only", "HEAD", "--", label],  # noqa: S607 - git resolved via PATH on purpose
-        cwd=root,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    tracked = _git(["ls-tree", "--name-only", "HEAD", "--", label], cwd=root)
     if tracked.returncode != 0:
         return [f"{label}: cannot inspect committed HEAD"]
     if not tracked.stdout.strip():
         return current_source, None
-    prior = subprocess.run(  # noqa: S603 - argv list, no shell
-        ["git", "show", f"HEAD:{label}"],  # noqa: S607 - git resolved via PATH on purpose
-        cwd=root,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    prior = _git(["show", f"HEAD:{label}"], cwd=root)
     if prior.returncode != 0:
         return [f"{label}: cannot read committed HEAD file"]
     return current_source, prior

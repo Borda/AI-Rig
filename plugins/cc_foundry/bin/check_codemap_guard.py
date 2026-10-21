@@ -47,11 +47,12 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+
+from check_bin_test_coverage import read_manifest
 
 #: Lines that derive a codemap index location. A consumer that calls the provider's CLI
 #: instead never matches this, and is therefore invisible to the check by construction.
@@ -150,7 +151,10 @@ REGISTRY: dict[str, Guard] = {
         "python-local", "oss-owned detector with its own --prefix/--strict CLI; resolves in Python, not bash"
     ),
     "plugins/cc_oss/skills/resolve/SKILL.md": Guard("bash-preamble", "skill-local pre-flight; fragment"),
-    "plugins/cc_oss/skills/resolve/modes/action-item-dispatch.md": Guard(
+    "plugins/cc_oss/skills/resolve/modes/dispatch-prelude.md": Guard(
+        "inline-index-path", "index file path built inline for the codemap_cache.py read call"
+    ),
+    "plugins/cc_oss/skills/resolve/modes/dispatch-phase1.md": Guard(
         "inline-index-path", "index file path built inline for the codemap_cache.py read call"
     ),
     "plugins/cc_oss/skills/review/modes/codemap-context.md": Guard(
@@ -163,21 +167,19 @@ def manifest_paths(bin_dir: Path) -> set[str]:
     """Return every repo-relative path MANIFEST covers, canonical and copies alike.
 
     Read from ``propagate_shared.py`` rather than restated here, so a file becomes exempt
-    the moment it is genuinely drift-locked and never merely because someone said so.
+    the moment it is genuinely drift-locked and never merely because someone said so. The file is
+    parsed as data, never imported: ``--root`` can point at a tree this checker audits, and importing
+    its ``propagate_shared.py`` would run that tree's code.
 
     Args:
         bin_dir: Directory holding ``propagate_shared.py``.
 
     Returns:
-        Repo-relative path strings under MANIFEST control.
+        Repo-relative path strings under MANIFEST control; empty when the file is missing or holds no
+        literal ``MANIFEST`` list, so every guard copy then needs its registry entry.
     """
-    spec = importlib.util.spec_from_file_location("_propagate_shared", bin_dir / "propagate_shared.py")
-    if spec is None or spec.loader is None:
-        return set()
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
     paths: set[str] = set()
-    for entry in module.MANIFEST:
+    for entry in read_manifest(bin_dir / "propagate_shared.py") or []:
         paths.add(str(entry["canonical"]))
         paths.update(str(c) for c in entry["copies"])
     return paths

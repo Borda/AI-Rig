@@ -20,9 +20,9 @@ Metric-driven optimization with explicit guards, rollback criteria, experiment l
   "checkpoint": "optional boolean for a resumable numeric campaign; default false",
   "source_run": "required existing managed run directory for resume, ablation, or retrospective",
   "variants": "ablation only: bounded named component-removal patches and their rationale",
-  "metric_cmd": "required command that emits or validates the target metric",
+  "metric_cmd": "required for single and campaign; for resume, ablation and retrospective recovered from source_run: command that emits or validates the target metric",
   "metric_direction": "higher|lower",
-  "guard_cmd": "required command that must continue to pass",
+  "guard_cmd": "required for single and campaign; recovered from source_run otherwise: command that must continue to pass",
   "max_iterations": "optional integer, default 1",
   "min_delta": "optional practical significance threshold",
   "scope_files": [
@@ -86,13 +86,11 @@ No fan-out for one small measured change with stable metric/guard. Never let spe
 
 **Structural context (optional)**: when `scope_files` resolves to Python module/symbol, select one task-neutral route and probe codemap-py once before first iteration: `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/codemap_adapter.py context --category implementation --query-kind <kind> [--target <qname>] --out <run-directory>/codemap-context.json`. Use `skip` for exact localized optimization with no unresolved structural fact, matching single route (`central`, `callers`, `blast`, `dependencies`, `test-impact`, or `coupling`) for one unresolved fact, `standard` for broad or unknown scope. Map direct, all, or production caller questions to `callers`; use `blast` only for explicitly transitive caller questions. An explicit user or tool request for structural evidence overrides `skip`. Per `../../shared/codemap-contract.md`, absence/incompatibility is non-fatal — continue with hypothesis above. Persist result once here, before step 04 applies any change; any triggered specialist consumes `<run-directory>/codemap-context.json`; added queries only under the contract's bounded `Specialist follow-up queries` rule.
 
-Initialize machine-readable iteration log:
-
-Create empty `<run-directory>/experiments.jsonl` with filesystem tool before first iteration.
+Machine-readable iteration log, `single` and non-checkpointed `campaign` only: `<run-directory>/experiments.jsonl` is created once, after step 07 decides keep or revert for the final iteration. Do not create it here; a checkpointed campaign's `campaign.py init` creates its own ledger and fails if the file exists.
 
 ### 04: Apply one minimal optimization change per iteration
 
-One independent hypothesis per iteration. Never optimize unmeasured paths. Before each, write `<run-directory>/iteration-<n>-before.patch` with scoped-file diff. If iteration fails and only its patch is present, revert with `git apply -R` against iteration diff; otherwise fail run when clean reversal cannot be proven. Never use `git reset --hard`.
+One independent hypothesis per iteration. Never optimize unmeasured paths. Before each, write `<run-directory>/iteration-<n>-before.patch` with scoped-file diff; after the change, write `<run-directory>/iteration-<n>-after.patch` the same way. The iteration's own change is after minus before, so earlier kept iterations and unrelated user edits stay out of it. If iteration fails and only its own change is present, reverse exactly that change, as in [campaign.md](campaign.md) restore rule; otherwise fail run when clean reversal cannot be proven. Never use `git reset --hard`.
 
 ### 05: Re-measure
 
@@ -109,7 +107,7 @@ Required fields:
 - confidence
 - noise caveats
 
-Append one JSON object/iteration to `<run-directory>/experiments.jsonl`:
+Write one JSON record per iteration to `<run-directory>/iteration-<n>-record.json` with the filesystem tool, once, never edited. Once the final iteration is decided (step 07), create `<run-directory>/experiments.jsonl` exclusively with the filesystem tool from those record files, one object per line in iteration order: a new derived log, as in [Component ablations](ablation.md), never a ledger appended to mid-run. Checkpointed campaigns skip this; `campaign.py finish` is their only writer. Record shape:
 
 ```json
 {

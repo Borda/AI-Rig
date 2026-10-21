@@ -266,3 +266,34 @@ class TestMain:
         objects = [json.loads(ln) for ln in capsys.readouterr().out.splitlines() if ln.strip()]
         assert all("SKILL.md" in obj["file"] for obj in objects)
         assert len(objects) == 1
+
+
+class TestBlockquotedFences:
+    """Fences inside ``>`` blockquotes (rule-file RULE_FULL resolvers, skill notes) are extracted."""
+
+    def test_blockquoted_fence_emitted_with_prefix_stripped(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A ``> ```bash`` fence yields its code without the quote prefix, at the original file line numbers.
+
+        These blocks were invisible to the efficiency audit's duplicate scan and to ``/foundry:distill executables``
+        snapshots before the prefix was stripped.
+        """
+        (tmp_path / "rule.md").write_text(
+            '> Full rule:\n>\n> ```bash\n> RULE="$(ls -td ~/x | head -1)"  # timeout: 5000\n> ```\n', encoding="utf-8"
+        )
+        ecb.main([str(tmp_path)])
+        objects = [json.loads(ln) for ln in capsys.readouterr().out.splitlines() if ln.strip()]
+        assert [(o["content"], o["line_start"], o["line_end"]) for o in objects] == [
+            ('RULE="$(ls -td ~/x | head -1)"  # timeout: 5000', 3, 5)
+        ]
+
+    def test_quote_ending_before_close_skips_block(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """A blockquote that ends before its fence closes is skipped like any unclosed fence; later blocks still parse.
+
+        The unquoted line after the quote is rescanned, so a plain fence starting there is not swallowed.
+        """
+        (tmp_path / "doc.md").write_text("> ```bash\n> echo a\n```bash\necho b\n```\n", encoding="utf-8")
+        ecb.main([str(tmp_path)])
+        objects = [json.loads(ln) for ln in capsys.readouterr().out.splitlines() if ln.strip()]
+        assert [o["content"] for o in objects] == ["echo b"]

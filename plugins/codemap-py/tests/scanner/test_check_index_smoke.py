@@ -265,3 +265,58 @@ class TestRunSmokeOSError:
         payload = json.loads(capsys.readouterr().out)
         assert payload["ok"] is False
         assert "failed to invoke" in payload["error"]
+
+
+class TestSmokeScriptIsAnchoredOnThisFile:
+    """The smoke script is chosen by this file's location, never by the environment or working directory."""
+
+    def test_foreign_plugin_root_is_refused(self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+        """An absolute ``CLAUDE_PLUGIN_ROOT`` holding its own smoke script must not be executed.
+
+        The old containment check compared the script against a root built from the same variable, so any directory
+        passed its own test.
+        """
+        planted = tmp_path / "bin"
+        planted.mkdir()
+        (planted / "smoke_test_index.py").write_text("raise SystemExit(0)\n", encoding="utf-8")
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path))
+        with pytest.raises(ValueError, match="own plugin root"):
+            check_index_smoke._resolve_smoke_script()
+
+    def test_own_root_resolves_to_the_sibling_script(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """With the variable unset or naming this tree, the script beside this file is returned."""
+        own_root = check_index_smoke._own_plugin_root()
+        monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
+        unset = check_index_smoke._resolve_smoke_script()
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(own_root))
+        assert check_index_smoke._resolve_smoke_script() == unset == own_root / "bin" / "smoke_test_index.py"
+
+    def test_cwd_relative_default_is_not_used(self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A ``plugins/<name>/bin/smoke_test_index.py`` planted in the working directory is ignored."""
+        planted = tmp_path / "plugins" / "codemap" / "bin"
+        planted.mkdir(parents=True)
+        (planted / "smoke_test_index.py").write_text("raise SystemExit(0)\n", encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
+        assert check_index_smoke._resolve_smoke_script() == (
+            check_index_smoke._own_plugin_root() / "bin" / "smoke_test_index.py"
+        )
+
+
+class TestAgeHoursIsCoercedToANumber:
+    """Child output is untrusted, so ``age_hours`` leaves the wrapper as a number or ``None``."""
+
+    @pytest.mark.parametrize(
+        ("age", "expected"),
+        [
+            pytest.param("1.5", None, id="string"),
+            pytest.param(True, None, id="bool"),
+            pytest.param([1], None, id="list"),
+            pytest.param(3, 3.0, id="int"),
+            pytest.param(2.5, 2.5, id="float"),
+        ],
+    )
+    def test_non_numeric_age_becomes_none(self, age: Any, expected: float | None) -> None:
+        """Strings, booleans and containers are dropped; ints and floats pass through as floats."""
+        raw = json.dumps({"ok": True, "stale": False, "age_hours": age})
+        assert project_smoke_result(raw).age_hours == expected

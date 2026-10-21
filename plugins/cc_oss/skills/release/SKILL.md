@@ -2,7 +2,7 @@
 name: release
 description: "Prepare release communication and check readiness. Main mode: notes with optional flags --changelog, --summary, --migration, --append (incremental: reruns the full pipeline scoped to newly-landed commits, integrating results into existing DRAFT.md/CHANGELOG.md/SUMMARY.md/MIGRATION.md instead of full regenerate — non-destructive except revert/pivot and the re-folded DRAFT.md Summary); range as v1->v2. Other modes: prepare (full pipeline: audit → all artifacts), audit (pre-release readiness: blockers, docs alignment, version consistency, CVEs), demo (story-telling release notebook in jupytext # %% format). TRIGGER when: user requests release notes, CHANGELOG entry, migration guide, internal summary, release readiness audit, release demo, or an incremental update to an already-drafted release; phrases: 'draft release notes', 'prepare release', 'audit release readiness', 'generate CHANGELOG for v1->v2', 'release demo notebook', 'update release notes with the latest commits'. SKIP: actual git tagging or PyPI/registry upload (use git tag, gh release create, twine upload directly); release communication for a non-Python project where this skill's pytest-centric audit assumptions do not apply; PR-level review (use /oss:review); thread/issue analysis (use /oss:analyse)."
 argument-hint: '[notes] [v1->v2] [--changelog] [--summary] [--migration] [--append] | prepare <version> | audit [version] | demo [range]'
-allowed-tools: Read, Write, Edit, Bash, TaskList, TaskCreate, TaskUpdate, Agent, AskUserQuestion, WebFetch
+allowed-tools: Read, Write, Edit, Bash, TaskList, TaskCreate, TaskUpdate, Agent, Skill, AskUserQuestion, WebFetch
 model: sonnet
 effort: high
 ---
@@ -39,7 +39,9 @@ Range notation: `v1->v2` (e.g. `v1.2->v2.0`) — converted internally to git ran
 
 **Non-destructive except revert/pivot**: integration is purely additive — new bullets/blocks/paragraphs join existing artifacts without touching untouched content — except DRAFT.md's Summary, which every cycle re-folds (top-5 wins, re-derived upgrade call, one `New since last draft` pointer line), and *unless* this cycle's Classify/Truth-check phases detect that a new commit reverts or materially changes something a PRIOR cycle already wrote (see Gather changes' "Cross-cycle revert/pivot detection"); that stale entry is struck or superseded, never left stale alongside a contradicting new one.
 
-- After merge, a **Post-merge re-validation** pass (see `modes/release-draft-template.md`) re-runs Truth check, Identify highlights re-ranking, Validate migration docs, and Validate docs against the FINAL merged content — catches prior-cycle content that went stale from THIS cycle's changes without being a clean detected revert/pivot (e.g. a Spotlight built on a commit a later cycle reverts). </inputs>
+- After merge, a **Post-merge re-validation** pass (see `modes/release-draft-template.md`) re-runs Truth check, Identify highlights re-ranking, Validate migration docs, and Validate docs against the FINAL merged content — catches prior-cycle content that went stale from THIS cycle's changes without being a clean detected revert/pivot (e.g. a Spotlight built on a commit a later cycle reverts).
+
+</inputs>
 
 <workflow>
 
@@ -83,66 +85,28 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/agent_watch.py" --state-dir "$
 
 ## Delegation strategy
 
-In `prepare` and `audit` modes, delegate gather/explore/validate to subagent via file-based handoff (CLAUDE.md §2) — these phases produce large output, bloat main context:
-
-1. Pre-compute gather file and waived-changes ledger paths, create dir:
-   ```bash
-   # BRANCH, DATE from Shared setup below
-   GATHER_FILE=".temp/release-gather-$BRANCH-$DATE.md"
-   mkdir -p .temp  # timeout: 5000
-   export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-   WAIVED_FILE=$(mktemp ".temp/release-waived-$BRANCH-$DATE-XXXXXXXX") || exit 1  # one atomic, distinct ledger per invocation; preserve earlier runs
-   echo "$WAIVED_FILE" > "${TMPDIR:-/tmp}/release-waived-${CSID}"  # persist for downstream reload (Check 41) — see modes/classify-truth-check.md "Waived changes ledger"
-   ```
-2. Assert variables before spawning:
-   ```bash
-   export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-   # reload SKILL_DIR, LAST_TAG (Check 41)
-   IFS= read -r SKILL_DIR < "${TMPDIR:-/tmp}/release-setup-${CSID}/SKILL_DIR" 2>/dev/null || SKILL_DIR=""
-   IFS= read -r LAST_TAG < "${TMPDIR:-/tmp}/release-setup-${CSID}/LAST_TAG" 2>/dev/null || LAST_TAG=""
-   [ -n "$GATHER_FILE" ] && [ -n "$WAIVED_FILE" ] && [ -n "$REPO_ROOT" ] && [ -n "$RANGE" ] || { echo "Error: GATHER_FILE, WAIVED_FILE, REPO_ROOT, or RANGE is empty — verify Shared setup and Gather changes completed"; exit 1; }  # timeout: 5000
-   # LAST_TAG empty is valid (first-ever release, no prior tag) — gather-prompt.md's baseline check handles it, never asserted here
-   cat "$SKILL_DIR/templates/gather-prompt.md"  # timeout: 5000
-   ```
-
-> **Agent budget** — each spawn costs ~120,851 tok of fixed overhead (~73 tool-calls' worth) plus ~12.0 s/call, so work under ~73 calls is cheaper done inline: spawn nothing — work-displacement only; an isolation-motivated spawn (adversarial reviewer, distinct specialist role, model tier, worktree) runs regardless of size. Keep each agent near ~55 tool-calls; past ~60 they stall without returning an envelope, forcing reconstruction from disk. Every spawn prompt must require an envelope even on exhaustion — `partial: true` plus what was finished.
-
-Template (loaded above). Substitute `<REPO_ROOT>`, `<RANGE>`, `<GATHER_FILE>`, `<WAIVED_FILE>`, `<LAST_TAG>` with literal values (`<LAST_TAG>` may substitute to an empty string — the template's own fallback covers that). Spawn:
-
-> loads: gather-prompt.md `Agent(subagent_type="foundry:sw-engineer", prompt=<substituted gather-prompt.md content>)`
-
-3. Validate envelope; every "abort" is a hard `exit 1`:
-   ```bash
-   STATUS=$(echo "$ENVELOPE" | jq -r '.status' 2>/dev/null)
-   GATHER_FILE=$(echo "$ENVELOPE" | jq -r '.file' 2>/dev/null)
-   BREAKING=$(echo "$ENVELOPE" | jq -r '.breaking // 0' 2>/dev/null)  # default 0 — never skip migration guide on missing field
-   UNCONFIRMED=$(echo "$ENVELOPE" | jq -er 'if (.unconfirmed | type) == "number" and (.unconfirmed >= 0) and (.unconfirmed == (.unconfirmed | floor)) then .unconfirmed else error("invalid unconfirmed") end' 2>/dev/null) || { echo "Error: missing or invalid unconfirmed count" >&2; exit 1; }
-   UNCONFIRMED_BREAKING=$(echo "$ENVELOPE" | jq -er 'if (.unconfirmed_breaking | type) == "number" and (.unconfirmed_breaking >= 0) and (.unconfirmed_breaking == (.unconfirmed_breaking | floor)) then .unconfirmed_breaking else error("invalid unconfirmed_breaking") end' 2>/dev/null) || { echo "Error: missing or invalid unconfirmed_breaking count" >&2; exit 1; }
-   if [ "$STATUS" != "done" ] || [ -z "$GATHER_FILE" ] || [ "$GATHER_FILE" = "null" ] || [ ! -f "$GATHER_FILE" ]; then
-       echo "Error: delegation validation failed — status=$STATUS, file=$GATHER_FILE" >&2
-       exit 1
-   fi
-   ```
-
-Validate the gather result against this invocation's ledger before any artifact phase. Each `unconfirmed` item has exactly one `REMOVED:` or `NET-STATE-ADD:` line; cross-cycle and post-merge entries use other prefixes. Persist the verified count for `prepare` Phase 6, which runs in a fresh shell:
+`prepare` and `audit` delegate gather/explore/validate (pre-compute, envelope validation, ledger reconcile, Phases 5–6 parallel delegation); `notes` and `demo` delegate only through the Size guard below. Load the procedure before the first delegated step — an inline `notes`/`demo` run under the size guard never needs it:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r WAIVED_FILE < "${TMPDIR:-/tmp}/release-waived-${CSID}" 2>/dev/null || WAIVED_FILE=""
-[ -n "$WAIVED_FILE" ] && [ -f "$WAIVED_FILE" ] || { echo "Error: waiver ledger missing after gather" >&2; exit 1; }
-case "$UNCONFIRMED" in ''|*[!0-9]*) echo "Error: invalid unconfirmed count" >&2; exit 1;; esac
-LEDGER_UNCONFIRMED=$(grep -Ec '^(REMOVED|NET-STATE-ADD):' "$WAIVED_FILE" || true)
-[ "$LEDGER_UNCONFIRMED" -eq "$UNCONFIRMED" ] || { echo "Error: gather waiver count disagrees with ledger" >&2; exit 1; }
-LEDGER_BREAKING=$(grep -Ec '^(REMOVED|NET-STATE-ADD): ⚠️ Breaking Changes:' "$WAIVED_FILE" || true)
-[ "$LEDGER_BREAKING" -eq "$UNCONFIRMED_BREAKING" ] || { echo "Error: breaking waiver count disagrees with category ledger" >&2; exit 1; }
-printf '%s\n' "$UNCONFIRMED" > "${TMPDIR:-/tmp}/release-unconfirmed-${CSID}"
+IFS= read -r RELEASE_MODE < "${TMPDIR:-/tmp}/release-mode-${CSID}" 2>/dev/null || RELEASE_MODE=""
+IFS= read -r RANGE < "${TMPDIR:-/tmp}/release-range-${CSID}" 2>/dev/null || RANGE=""
+IFS= read -r LAST_TAG < "${TMPDIR:-/tmp}/release-setup-${CSID}/LAST_TAG" 2>/dev/null || LAST_TAG=""
+case "$RELEASE_MODE" in notes|demo) [ "$(git rev-list --count "${RANGE:-${LAST_TAG:-HEAD~20}..HEAD}" 2>/dev/null)" -gt 50 ] 2>/dev/null || exit 0 ;; esac  # size guard: ≤50 commits runs inline, procedure never loaded
+# reload SKILL_DIR (Check 41)
+IFS= read -r SKILL_DIR < "${TMPDIR:-/tmp}/release-setup-${CSID}/SKILL_DIR" 2>/dev/null || SKILL_DIR=""
+cat "$SKILL_DIR/modes/delegation.md"  # timeout: 5000
 ```
+
+<!-- loads: modes/delegation.md -->
+
+Follow above and execute. The breaking-waiver gate and unconfirmed notification below apply in every mode: delegated runs after the ledger reconcile in `modes/delegation.md`, inline runs after Truth check (below).
 
 If `$UNCONFIRMED_BREAKING` is nonzero, require review before any release artifact is written.
 
 - Read this invocation's `$WAIVED_FILE` and show every `REMOVED:` or `NET-STATE-ADD:` entry marked ⚠️ Breaking Changes, with its old name, baseline/HEAD evidence, and proposed category.
-- The typed envelope count and marked ledger lines must agree exactly at the gate above; a count alone is not item evidence.
-- Invoke `AskUserQuestion` for each item: **Approve the proposed classification** or **Abort release preparation**.
+- The typed envelope count and marked ledger lines must agree exactly at the ledger reconcile in `modes/delegation.md`; a count alone is not item evidence.
+- Invoke `AskUserQuestion` with one question per item, at most 4 per call (more items → successive calls of ≤4): **Approve the proposed classification** or **Abort release preparation**.
 - Proceed only after explicit approval of every item; an absent/ambiguous answer aborts.
 - Do not describe the automatic reclassification as already user-confirmed.
 - Apply this gate in both delegated `prepare`/`audit` runs before Phase 2b; inline `notes`/`demo`/`--append` runs use the same rule immediately after Truth check.
@@ -152,6 +116,7 @@ When `unconfirmed > 0`, surface removed/reclassified items as notification (not 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r WAIVED_FILE < "${TMPDIR:-/tmp}/release-waived-${CSID}" 2>/dev/null || WAIVED_FILE=""
+IFS= read -r UNCONFIRMED < "${TMPDIR:-/tmp}/release-unconfirmed-${CSID}" 2>/dev/null || UNCONFIRMED=0
 if [ "${UNCONFIRMED:-0}" -gt 0 ] 2>/dev/null && [ -n "$WAIVED_FILE" ] && [ -f "$WAIVED_FILE" ]; then
     WAIVED_ITEMS=$(grep -E '^(REMOVED|NET-STATE-ADD):' "$WAIVED_FILE" | head -20)  # timeout: 3000
     echo "Truth check removed/reclassified ${UNCONFIRMED} unverified claim(s) (category-specific HEAD/baseline check):"
@@ -161,54 +126,15 @@ fi
 
 Pass `$GATHER_FILE` path to artifact phase — do NOT read gather file into main context. The ledger is a separate, smaller file — grepping it is not a gather-file read.
 
-**Phases 5–6 parallel delegation** (`prepare`/`audit` modes, after phases 1–4 complete): Audit changelog and Extract contributors are independent — delegate concurrently to reclaim tokens.
-
-Pre-compute output paths and persist for downstream reload (fresh shell, Check 41):
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-# fresh shell loses vars between blocks (Check 41)
-IFS= read -r BRANCH < "${TMPDIR:-/tmp}/release-setup-${CSID}/BRANCH" 2>/dev/null || BRANCH=""
-IFS= read -r DATE < "${TMPDIR:-/tmp}/release-setup-${CSID}/DATE" 2>/dev/null || DATE=""
-IFS= read -r RANGE < "${TMPDIR:-/tmp}/release-range-${CSID}" 2>/dev/null || RANGE=""
-IFS= read -r REPO_ROOT < "${TMPDIR:-/tmp}/release-setup-${CSID}/REPO_ROOT" 2>/dev/null || REPO_ROOT=""
-IFS= read -r RELEASE_MODE < "${TMPDIR:-/tmp}/release-mode-${CSID}" 2>/dev/null || RELEASE_MODE="notes"
-IFS= read -r VERSION < "${TMPDIR:-/tmp}/release-prepare-version-${CSID}" 2>/dev/null || VERSION=""
-GATHER_FILE=".temp/release-gather-$BRANCH-$DATE.md"
-[ -f "$GATHER_FILE" ] || { echo "Error: GATHER_FILE missing — phases 1–4 must complete first"; exit 1; }  # timeout: 5000
-CHANGELOG_AUDIT_FILE=".temp/release-changelog-audit-$BRANCH-$DATE.md"
-CONTRIBUTORS_FILE=".temp/release-contributors-$BRANCH-$DATE.md"
-mkdir -p .temp  # timeout: 5000
-echo "${CHANGELOG_AUDIT_FILE:-}" > "${TMPDIR:-/tmp}/release-changelog-audit-${CSID}"
-echo "${CONTRIBUTORS_FILE:-}" > "${TMPDIR:-/tmp}/release-contributors-${CSID}"
-# reload SKILL_DIR (Check 41)
-IFS= read -r SKILL_DIR < "${TMPDIR:-/tmp}/release-setup-${CSID}/SKILL_DIR" 2>/dev/null || SKILL_DIR=""
-cat "$SKILL_DIR/modes/changelog-audit-prompt.md"  # timeout: 5000
-```
-
-<!-- loads: modes/changelog-audit-prompt.md -->
-
-Prompt (loaded above) — substitute `$RELEASE_MODE`, `$VERSION` along with the other listed variables, then execute (spawn Agent A + Agent B per instructions in that file).
-
-Validate both envelopes:
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/parse_release_envelopes.py" --envelope-a "$ENVELOPE_A" --envelope-b "$ENVELOPE_B"  # timeout: 5000
-```
-
-`$SCOPE_FLAGGED` > 0 → read the "Scope check" section of `$CHANGELOG_AUDIT_FILE`; every row there (critical = already-released commit landed a second time, medium = unreviewed branch merge) must reach the Findings summary table in `audit`/`prepare` modes — see `templates/audit-checks.md` Output, "Changelog scope" row — never left inside the audit file only. This is the check the reviewer needs surfaced before approving the PR, not something to bury in a report nobody opens. Same rule for the printed `unsourced` count: > 0 → copy each "unsourced entry" row from `$CHANGELOG_AUDIT_FILE` into the "Changelog evidence" row of the Findings summary (`templates/audit-checks.md`).
-
-`notes` and `demo` modes: skip delegation — single-pass; run gather/explore/validate inline. **Size guard**: estimate commit count with `git rev-list --count ${RANGE:-${LAST_TAG:-HEAD~20}..HEAD} 2>/dev/null`. If >50, delegate to `foundry:sw-engineer` subagent same as prepare mode — inline gather with >50 commits causes context flood. Define `GATHER_FILE` before spawning so envelope-validation block above can resolve the path:
+`notes` and `demo` modes: skip delegation — single-pass; run gather/explore/validate inline. **Size guard**: estimate commit count with `git rev-list --count ${RANGE:-${LAST_TAG:-HEAD~20}..HEAD} 2>/dev/null`. If >50, delegate to `foundry:sw-engineer` subagent same as prepare mode — inline gather with >50 commits causes context flood. Define `GATHER_FILE` before spawning so the envelope-validation block in `modes/delegation.md` can resolve the path:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # reload BRANCH/DATE (Check 41)
 IFS= read -r BRANCH < "${TMPDIR:-/tmp}/release-setup-${CSID}/BRANCH" 2>/dev/null || BRANCH=""
 IFS= read -r DATE < "${TMPDIR:-/tmp}/release-setup-${CSID}/DATE" 2>/dev/null || DATE=""
-   GATHER_FILE=".temp/release-gather-$BRANCH-$DATE.md"
-   mkdir -p .temp  # timeout: 5000
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+GATHER_FILE=".temp/release-gather-$BRANCH-$DATE.md"
+mkdir -p .temp  # timeout: 5000
 WAIVED_FILE=$(mktemp ".temp/release-waived-$BRANCH-$DATE-XXXXXXXX") || exit 1  # one atomic, distinct ledger per invocation; preserve earlier runs
 echo "$WAIVED_FILE" > "${TMPDIR:-/tmp}/release-waived-${CSID}"  # persist for Gather changes' cross-cycle detection + Truth check (Check 41)
 ```
@@ -226,8 +152,13 @@ echo "$WAIVED_FILE" > "${TMPDIR:-/tmp}/release-waived-${CSID}"  # persist for Ga
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/parse-skill-flags.py" --flags changelog,summary,migration,append "$ARGUMENTS")"  # timeout: 5000
-DO_CHANGELOG="$FLAG_CHANGELOG"; DO_SUMMARY="$FLAG_SUMMARY"; DO_MIGRATION="$FLAG_MIGRATION"; DO_APPEND="$FLAG_APPEND"
+# --keep-state: no eval, writes release-{changelog,summary,migration,append,clean-args}-${CSID}; --inlined: release keeps no compaction contract, so it clears none
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/parse-skill-flags.py" --flags changelog,summary,migration,append --keep-state release --inlined "$ARGUMENTS" >/dev/null  # timeout: 5000
+IFS= read -r DO_CHANGELOG < "${TMPDIR:-/tmp}/release-changelog-${CSID}" 2>/dev/null || DO_CHANGELOG=false
+IFS= read -r DO_SUMMARY < "${TMPDIR:-/tmp}/release-summary-${CSID}" 2>/dev/null || DO_SUMMARY=false
+IFS= read -r DO_MIGRATION < "${TMPDIR:-/tmp}/release-migration-${CSID}" 2>/dev/null || DO_MIGRATION=false
+IFS= read -r DO_APPEND < "${TMPDIR:-/tmp}/release-append-${CSID}" 2>/dev/null || DO_APPEND=false
+IFS= read -r CLEAN_ARGS < "${TMPDIR:-/tmp}/release-clean-args-${CSID}" 2>/dev/null || CLEAN_ARGS=""
 FIRST=$(echo "$CLEAN_ARGS" | awk '{print $1}')
 # REST keeps the raw blob's tail — downstream readers of the sentinel expect flags intact
 REST=""; case "$ARGUMENTS" in *" "*) REST="${ARGUMENTS#* }";; esac
@@ -239,8 +170,11 @@ for _a in $_PARSE_INPUT; do case "$_a" in --*) echo "⚠ unknown flag: $_a";; *)
 RANGE="${RANGE/->/..}"
 # persist (Check 41) — Gather-changes needs this for marker-based RANGE resolution
 echo "${DO_APPEND}" > "${TMPDIR:-/tmp}/release-do-append-${CSID}"
+echo "${DO_CHANGELOG}" > "${TMPDIR:-/tmp}/release-do-changelog-${CSID}"
 echo "${DO_SUMMARY}" > "${TMPDIR:-/tmp}/release-do-summary-${CSID}"
 echo "${DO_MIGRATION}" > "${TMPDIR:-/tmp}/release-do-migration-${CSID}"
+# explicit range dies with this shell; only v1..v2 persists (lone token = prepare/audit version, not a range); always written so a prior run's range never leaks in
+case "$RANGE" in *..*) printf '%s\n' "$RANGE";; *) printf '\n';; esac > "${TMPDIR:-/tmp}/release-range-${CSID}"
 case "$FIRST" in prepare|audit|demo) RELEASE_MODE="$FIRST";; *) RELEASE_MODE="notes";; esac
 printf '%s\n' "$RELEASE_MODE" > "${TMPDIR:-/tmp}/release-mode-${CSID}"
 ```
@@ -251,7 +185,7 @@ printf '%s\n' "$RELEASE_MODE" > "${TMPDIR:-/tmp}/release-mode-${CSID}"
 
 ## Shared setup
 
-Run this first — cold-start fallback (sets `$_OSS_SHARED`):
+Run this first. Extracted to `bin/release_setup.py` — resolves `SKILL_DIR`, `REPO_ROOT`, portable scratch `BRANCH`, raw `BRANCH_REF`, persistent `BRANCH_KEY`, `DATE`, `LAST_TAG`, `CHERRY_PICK_SUBJECTS`, `SOURCE_TAG_REF`. It refuses detached HEAD before publishing branch state. Writes each var under `${TMPDIR:-/tmp}/release-setup-${CSID}/`; stable-branch banner and "no stable tag" warnings go to stderr. One block first runs the cold-start fallback (sets `$_OSS_SHARED`) and loads `agent-resolution.md`, then the setup script:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -259,12 +193,7 @@ _OSS_SHARED=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/resolve_shared_p
 # persist (Check 41)
 echo "${_OSS_SHARED:-}" > "${TMPDIR:-/tmp}/release-oss-shared-${CSID}"
 # loads: oss-shared-resolver.md
-```
-
-Extracted to `bin/release_setup.py` — resolves `SKILL_DIR`, `REPO_ROOT`, portable scratch `BRANCH`, raw `BRANCH_REF`, persistent `BRANCH_KEY`, `DATE`, `LAST_TAG`, `CHERRY_PICK_SUBJECTS`, `SOURCE_TAG_REF`. It refuses detached HEAD before publishing branch state. Writes each var under `${TMPDIR:-/tmp}/release-setup-${CSID}/`; stable-branch banner and "no stable tag" warnings go to stderr.
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+[ -d "$_OSS_SHARED" ] && cat "$_OSS_SHARED/agent-resolution.md"  # timeout: 5000
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/release_setup.py" || exit 1  # timeout: 10000
 IFS= read -r SKILL_DIR < "${TMPDIR:-/tmp}/release-setup-${CSID}/SKILL_DIR" 2>/dev/null || SKILL_DIR=""
 IFS= read -r REPO_ROOT < "${TMPDIR:-/tmp}/release-setup-${CSID}/REPO_ROOT" 2>/dev/null || REPO_ROOT=""
@@ -289,6 +218,8 @@ if [ "$RELEASE_MODE" = notes ]; then
 fi
 ```
 
+**Agent Resolution** — `agent-resolution.md` (loaded above): foundry check + fallback table. Foundry not installed → at every spawn substitute `foundry:X` with `general-purpose` + the table's role prefix and model. Agents this skill dispatches: `foundry:sw-engineer` (gather, size-guard gather, adversarial review), `foundry:doc-scribe` (changelog audit, contributors). The `foundry:humanizer` pass in `modes/release-draft-template.md` keeps its own availability rule. <!-- Inline fallback (if agent-resolution.md unreadable): foundry:sw-engineer → general-purpose, foundry:doc-scribe → general-purpose. -->
+
 <!-- branch: no-stable-tags — isolated; ≤1 call; fires only when repo has no stable git tags -->
 
 When no stable tags exist, `LAST_TAG` resolves to initial commit — surface via `AskUserQuestion` ("No stable tags found. Range base is initial commit — proceed?"). Options: (a) Proceed with initial commit as base · (b) Abort — stop release process. On (b): stop, print "Release aborted — no stable tags found; create a tag first with `git tag v0.1.0`" and exit.
@@ -307,6 +238,8 @@ IFS= read -r BRANCH_REF < "${TMPDIR:-/tmp}/release-setup-${CSID}/BRANCH_REF" 2>/
 IFS= read -r BRANCH_KEY < "${TMPDIR:-/tmp}/release-setup-${CSID}/BRANCH_KEY" 2>/dev/null || BRANCH_KEY=""
 IFS= read -r DO_APPEND < "${TMPDIR:-/tmp}/release-do-append-${CSID}" 2>/dev/null || DO_APPEND="false"
 IFS= read -r RELEASE_MODE < "${TMPDIR:-/tmp}/release-mode-${CSID}" 2>/dev/null || RELEASE_MODE=""
+# explicit v1->v2 from Mode detection; empty → marker/LAST_TAG default below
+[ -n "$RANGE" ] || IFS= read -r RANGE < "${TMPDIR:-/tmp}/release-range-${CSID}" 2>/dev/null || RANGE=""
 if [ -z "$RANGE" ] && [ "$DO_APPEND" = "true" ]; then
     # marker present+valid -> "<sha>..HEAD"; else "$LAST_TAG..HEAD" (non-append default)
     RANGE=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/release_append_marker.py" resolve --branch "$BRANCH_REF" --last-tag "$LAST_TAG")  # timeout: 5000
@@ -388,13 +321,13 @@ The default-branch list is discovery context, not the contributor inventory. Que
 
 ```bash
 # Commit association follows the release range, including maintenance-branch merges.
-COMMIT_SHAS=$(git rev-list "$RANGE") || { echo "Error: release candidate enumeration failed" >&2; exit 1; }
-while IFS= read -r CANDIDATE_SHA; do
-    [ -z "$CANDIDATE_SHA" ] && continue
-    PR_ASSOCIATIONS=$(gh api --method GET --paginate --slurp "repos/{owner}/{repo}/commits/$CANDIDATE_SHA/pulls" -f per_page=100) || { echo "Error: PR association coverage unavailable for $CANDIDATE_SHA; retain gap, do not claim complete credits" >&2; exit 1; }  # timeout: 15000
-    printf '%s' "$PR_ASSOCIATIONS" | jq --arg sha "$CANDIDATE_SHA" '{commit: $sha, pull_requests: [.[][] | select(.merged_at != null) | {number, title, author: .user, base: .base.ref, merge_commit_sha}]}' || { echo "Error: invalid PR association evidence" >&2; exit 1; }
-done <<< "$COMMIT_SHAS"
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+[ -n "$RANGE" ] || IFS= read -r RANGE < "${TMPDIR:-/tmp}/release-range-${CSID}" 2>/dev/null || RANGE=""
+[ -n "$RANGE" ] || { echo "Error: release range unresolved; cannot enumerate candidate commits" >&2; exit 1; }
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/gh_batch_query.py" commit-prs --range "$RANGE" --offset-file "${TMPDIR:-/tmp}/release-assoc-offset-${CSID}" || { echo "Error: PR association coverage unavailable; retain gap, do not claim complete credits" >&2; exit 1; }  # timeout: 180000
 ```
+
+One batched GraphQL request covers 25 commits (500 per run, about 20 requests). stderr printing `NEXT_OFFSET=<n>` → re-run this exact block until it stops printing it; association coverage is incomplete until then. Each output line is one commit's record `{commit, pull_requests: [{number, title, author, base, merge_commit_sha}]}`, merged PRs only; a `coverage_gap` field (commit unknown to GitHub, or more than 100 associated PRs) is an explicit coverage gap, never an empty association.
 
 Retain each commit's association result, including empty results, in gathered evidence. Fetch the associated PR's metadata when needed to verify repository and commit/diff membership; do not discard an association because its base is not the default branch. Empty successful lookup means no associated merged PR was returned, not a fabricated author; keep Git authors/coauthors. Failed lookup, deleted author, or ambiguous association remains an explicit gap. Do not silently continue with the default-branch list after an association failure.
 
@@ -404,54 +337,28 @@ Retain verified commit-to-PR associations and each in-range PR author's known lo
 
 Record all `REVERT_SET` pairs before Classify. Commits in `REVERT_SET` excluded from standard sections; collected for 🔄 Reverted. If only revert is in range (original predates range) → classify as ✗ Removed (or ⚠ Breaking Changes if API surface changed without prior deprecation) — NOT 🔄 Reverted; net user effect is non-zero.
 
-**Cross-cycle revert/pivot detection** (`--append` only, when a prior `DRAFT.md`/`$CHANGELOG_FILE` exists — extends the "non-destructive except revert/pivot" rule across append cycles, not just within one range).
+**Cross-cycle revert/pivot detection** (`--append` only, when a prior `DRAFT.md`/`$CHANGELOG_FILE` exists — extends the "non-destructive except revert/pivot" rule across append cycles, not just within one range). Runs in the orchestrator after Detect revert pairs. Load the procedure and the Append notes only for an `--append` run:
 
-**Two detection paths — patch-id provenance (deterministic, content-stable) for literal reverts, semantic judgment (best-effort) for pivots.**
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r DO_APPEND < "${TMPDIR:-/tmp}/release-do-append-${CSID}" 2>/dev/null || DO_APPEND="false"
+[ "$DO_APPEND" = "true" ] || exit 0
+# reload SKILL_DIR (Check 41)
+IFS= read -r SKILL_DIR < "${TMPDIR:-/tmp}/release-setup-${CSID}/SKILL_DIR" 2>/dev/null || SKILL_DIR=""
+cat "$SKILL_DIR/modes/append-cross-cycle.md"  # timeout: 5000
+```
 
-- Every prior cycle's write is recorded in `.temp/release-state-v2/$BRANCH_KEY/provenance.jsonl` (see `<notes>` "Provenance store (patch-id keyed)"): one entry per `(patch-id, artifact, exact written text)` tuple, keyed on `git patch-id --stable` output rather than raw commit sha — a bare sha changes on `--amend`, `rebase`, or `cherry-pick` even when the diff itself is untouched, so a raw-sha key would silently miss a revert of a commit that has since been reworded or cherry-picked; `patch-id` is a normalized hash of the diff content and survives all three.
-- A genuine `git revert` commit always carries git's own auto-generated `This reverts commit <sha>.` trailer in its body — that sha identifies the reverted commit's *current* form, turned into its patch-id and looked up in the store (no text-matching involved).
-- A **pivot** (a symbol's classification changes without a literal revert commit — e.g. deprecated this cycle after being added in a prior one) has no such trailer to key off; it still needs the model's semantic judgment, same as before.
-- A revert commit *without* a usable trailer (manual revert, not made via `git revert`) also falls back to the semantic path — as does a trailer sha whose diff produces no stable patch-id (see step 2 below).
+<!-- loads: modes/append-cross-cycle.md -->
 
-1. **Read** the current `DRAFT.md` Notable-changes bullets and `$CHANGELOG_FILE`'s Unreleased section into context (Read tool — actual content, not just piped grep output).
-2. **Revert case — patch-id lookup first**: for each revert whose original predates `$RANGE` (the "only revert in range" case above), extract the original sha from the revert commit's own trailer, then convert it to a patch-id — the sha itself is never the lookup key, since it may point at a commit reworded/rebased/cherry-picked since it was recorded, but its diff content (hence patch-id) is unaffected by any of those:
-   ```bash
-   ORIGINAL_SHA=$(git log -1 --format=%B "<revert-commit-sha>" | grep -oE 'This reverts commit [0-9a-f]{40}' | grep -oE '[0-9a-f]{40}')  # timeout: 3000
-   [ -n "$ORIGINAL_SHA" ] && ORIGINAL_PID=$(git show "$ORIGINAL_SHA" | git patch-id --stable | awk '{print $1}')  # timeout: 3000
-   # ORIGINAL_PID empty despite found sha → merge commit w/o -m, or empty commit — rare, treat as "no trailer" below
-   ```
-   Trailer found and patch-id non-empty → look it up:
-   ```bash
-   export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-   IFS= read -r BRANCH_KEY < "${TMPDIR:-/tmp}/release-setup-${CSID}/BRANCH_KEY" 2>/dev/null || BRANCH_KEY=""
-   PROVENANCE_FILE=".temp/release-state-v2/$BRANCH_KEY/provenance.jsonl"
-   LEGACY_PROVENANCE=".temp/release-state-v2/$BRANCH_KEY/provenance.json"
-   [ ! -f "$PROVENANCE_FILE" ] || jq -c --arg pid "$ORIGINAL_PID" 'select(.patch_id == $pid)' "$PROVENANCE_FILE"
-   [ ! -f "$LEGACY_PROVENANCE" ] || jq -c --arg pid "$ORIGINAL_PID" '.[] | select(.patch_id == $pid)' "$LEGACY_PROVENANCE"  # timeout: 3000
-   ```
-   One or more matches → each is a confirmed `CROSS_CYCLE_MATCH` directly (step 4) — a patch-id match is definitive, no semantic confirmation needed, even when the matched record's stored `sha` differs from `$ORIGINAL_SHA` (expected whenever the original commit was reworded/rebased/cherry-picked since it was recorded — the diff, not the sha, is what's being matched). No matches → the reverted commit predates any drafted artifact (already published, or never drafted), or its diff has genuinely changed since — falls through to normal ✗ Removed/⚠ Breaking classification, same as today. No trailer found (manual/non-`git revert` revert commit), or trailer found but patch-id computation produced empty output → fall through to step 3's grep-narrow-then-confirm path for this revert, same as a pivot.
-3. **Pivot case (and any revert without a usable trailer) — semantic judgment, best-effort not a guarantee**: grep is only a *narrowing hint*, never the decision.
-   - Grep for the de-`Revert`-wrapped subject/PR title (revert-without-trailer) or the changed symbol name (pivot: a newly-classified ⚠ Breaking Changes / 🌱 Changed / 🗑️ Deprecated / ❌ Removed item).
-   - A grep hit is a candidate to inspect — never an automatic match; a bare substring (e.g. `run`, `Config`) can hit unrelated bullets, treat every hit as "maybe."
-   - **Confirm semantically**: does the candidate line genuinely describe the same feature/symbol this new commit reverts or supersedes? Only a positive judgment call proceeds to step 4.
-   - Known limitation, accepted: a prior cycle's bullet reworded into human prose by `oss:shepherd` can defeat this grep hint — e.g. raw subject `Revert "feat: add ConfigLoaderV2"` vs. shepherded bullet "dropped the legacy config loader."
-   - Don't chase this with fuzzier matching, which only trades false-negatives for false-positives — the patch-id path above already removes this failure mode for the common case of a real `git revert`.
-4. **Record** `CROSS_CYCLE_MATCH: {artifact: <file>, matched_text: <exact current line/bullet, copied verbatim>, via: "patch_id"|"semantic"}` — matched_text must always be a full existing line/bullet, **never a bare symbol/subject substring**, so the Edit-tool strike (see `modes/release-draft-template.md` "Append merge") stays scoped to the one confirmed entry instead of risking a match on every bullet that happens to contain the token.
-   - Treat as **net-state removal** — same Net-state principle as within-range `REVERT_SET`, just spanning cycles: the reader never saw the reverted/superseded content ship in a published release, so it vanishes from both artifacts entirely, no redundant ✗ Removed/⚠ Breaking bullet added.
-   - This detection runs in the orchestrator, not a subagent — append the entry to the ledger directly, same reload as `SKILL.md`'s "waived changes ledger" sentinel:
-   ```bash
-   export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-   IFS= read -r WAIVED_FILE < "${TMPDIR:-/tmp}/release-waived-${CSID}" 2>/dev/null || WAIVED_FILE=""
-   [ -n "$WAIVED_FILE" ] && echo "CROSS_CYCLE_MATCH: $MATCHED_TEXT — superseded, struck from $ARTIFACT" >> "$WAIVED_FILE"  # timeout: 3000
-   ```
-
-No patch-id match, no candidate found, or a candidate inspected but not confirmed → proceed as a normal, purely-additive item (default — never manufacture a match speculatively). A stale bullet surviving the semantic path is an accepted best-effort gap, not silent data loss — the Semantic consistency review pass (`modes/release-draft-template.md`, runs before every write) is the last line of defense that can still catch a surviving contradiction. Collect all `CROSS_CYCLE_MATCH` entries for Audit changelog and Write release draft to consume.
+Follow above and execute. Collect all `CROSS_CYCLE_MATCH` entries for Audit changelog and Write release draft to consume.
 
 ## Explore codebase
 
 For top 3–5 significant changes (features, breaking, major behavior), read actual diff or changed files:
 
 ```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r RANGE < "${TMPDIR:-/tmp}/release-range-${CSID}" 2>/dev/null || RANGE=""
 git diff "$RANGE" -- <file>    # timeout: 3000
 git show <commit>:<file>       # timeout: 3000
 ```
@@ -515,6 +422,7 @@ MIGRATION_DOC=$(find "$REPO_ROOT" -maxdepth 3 \( \
 [ -z "$MIGRATION_DOC" ] && MIGRATION_DOC=$(find "$REPO_ROOT/docs" -maxdepth 2 \( \
   -iname "migration*" -o -iname "upgrade*" -o -iname "breaking*" -o -iname "api-changes*" \
 \) 2>/dev/null | head -1)  # timeout: 5000
+printf '%s\n' "$MIGRATION_DOC" > "${TMPDIR:-/tmp}/release-migration-doc-${CSID}"
 ```
 
 Skip entirely when `$MIGRATION_DOC` empty — no migration/upgrade docs exist in project.
@@ -524,6 +432,8 @@ Skip entirely when `$MIGRATION_DOC` empty — no migration/upgrade docs exist in
 Check each item:
 
 ```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r MIGRATION_DOC < "${TMPDIR:-/tmp}/release-migration-doc-${CSID}" 2>/dev/null || MIGRATION_DOC=""
 grep -i "<symbol_or_key>" "$MIGRATION_DOC" 2>/dev/null  # timeout: 3000
 ```
 
@@ -551,7 +461,7 @@ Read `$CHANGELOG_AUDIT_FILE` for audit findings; report added/flagged/unsourced 
 
 **`notes` mode or delegation fallback**:
 
-Search order: `CHANGELOG.md` at repo root, `docs/CHANGELOG.md`, any `CHANGELOG*` one level deep (excluding `node_modules/`, `.venv/`, `vendor/`). Store as `$CHANGELOG_FILE`.
+`bin/resolve_changelog_file.py` (called in the fence below) resolves `$CHANGELOG_FILE`: `CHANGELOG.md` at repo root, `docs/CHANGELOG.md`, any `CHANGELOG*` one level deep (excluding `node_modules/`, `.venv/`, `vendor/`); none found → `CHANGELOG.md`. `prepare` and `audit` use the same resolver.
 
 Before the first changelog edit in every `notes` run, stage the complete artifact set, including plain notes and the invalid-marker append fallback. If no changelog exists, select `CHANGELOG.md` as its destination. This begin step copies the live draft, changelog, selected dated plain summary/migration outputs, existing standalone summary/migration files, provenance, and marker; it does not publish any bytes. A pending promotion is recovered during setup before a new candidate begins. Keep `$CHANGELOG_FILE` as the live path for reporting and provenance, and use `$EDIT_CHANGELOG_FILE` for every changelog Read/Edit/Write from this point through the final truth gate:
 
@@ -572,7 +482,9 @@ IFS= read -r FROZEN_END < "${TMPDIR:-/tmp}/release-append-end-${CSID}" 2>/dev/nu
 FROZEN_END="${FROZEN_END:-$FROZEN_HEAD}"
 IFS= read -r FROZEN_BRANCH < "${TMPDIR:-/tmp}/release-append-branch-${CSID}" 2>/dev/null || FROZEN_BRANCH=""
 FROZEN_TAGS_FILE="${TMPDIR:-/tmp}/release-append-tags-${CSID}"
-CHANGELOG_FILE="${CHANGELOG_FILE:-CHANGELOG.md}"
+IFS= read -r REPO_ROOT < "${TMPDIR:-/tmp}/release-setup-${CSID}/REPO_ROOT" 2>/dev/null || REPO_ROOT=""
+[ -n "${CHANGELOG_FILE:-}" ] || CHANGELOG_FILE=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/resolve_changelog_file.py" --repo-root "${REPO_ROOT:-.}") || { echo "Error: changelog path unresolved" >&2; exit 1; }  # timeout: 5000
+printf '%s\n' "$CHANGELOG_FILE" > "${TMPDIR:-/tmp}/release-changelog-file-${CSID}"
 EDIT_CHANGELOG_FILE="$CHANGELOG_FILE"
 : > "${TMPDIR:-/tmp}/release-append-stage-${CSID}"
 if [ "$RELEASE_MODE" = notes ]; then
@@ -611,6 +523,7 @@ After resolving or creating `$CHANGELOG_FILE`, persist its exact path for fresh-
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+[ -n "$CHANGELOG_FILE" ] || IFS= read -r CHANGELOG_FILE < "${TMPDIR:-/tmp}/release-changelog-file-${CSID}" 2>/dev/null || CHANGELOG_FILE=""
 [ -n "$CHANGELOG_FILE" ] && [ -f "${EDIT_CHANGELOG_FILE:-$CHANGELOG_FILE}" ] || { echo "Error: changelog path unresolved" >&2; exit 1; }
 printf '%s\n' "$CHANGELOG_FILE" > "${TMPDIR:-/tmp}/release-changelog-file-${CSID}"
 ```
@@ -683,7 +596,7 @@ For each resolved human handle, find a LinkedIn link via this ordered chain — 
 
 5. No step produced a link → omit LinkedIn, same as today's no-match behavior.
 
-Canonical Contributors format (the template's Contributors line points here): `- **Name** (@github_handle, [LinkedIn](https://linkedin.com/in/handle)) — <brief what they did>`. Omit `@handle` when unresolvable. `<brief what they did>` picks up to 3 most significant contributions per line 440's ranking and describes the contribution itself (feature/fix/area) — never a PR number, issue link, or `(#N)` reference.
+Canonical Contributors format (the template's Contributors line points here): `- **Name** (@github_handle, [LinkedIn](https://linkedin.com/in/handle)) — <brief what they did>`. Omit `@handle` when unresolvable. `<brief what they did>` picks up to 3 most significant contributions per the Extract contributors ranking and describes the contribution itself (feature/fix/area) — never a PR number, issue link, or `(#N)` reference.
 
 ## Identify highlights
 
@@ -865,7 +778,6 @@ Follow above and execute.
 <notes>
 
 - **Doc artifacts ≠ released product**: CHANGELOG.md, DRAFT.md, MIGRATION.md, SUMMARY.md, demo.py = communication artifacts; released product published separately via `git tag`, `gh release create`, PyPI upload.
-- **AskUserQuestion usage**: spread across `notes`/`prepare`/`audit`/`demo` modes; each call in distinct branch-path (no single path has >4 sequential calls); compliant with sequential-call limit.
 - **Numbers reference**: numeric limits documented with rationale in `guidelines/numbers-reference.md`; update whenever limits change
 - Filter noise (CI config, dep bumps, typos) unless user-impacting
 - **Public-facing content policy**: user-visible changes only. Never include: internal staff names, internal maintenance, CI/tooling, internal dep bumps, housekeeping with no user impact.
@@ -882,20 +794,8 @@ Follow above and execute.
 
 - **Demo real-world-only policy**: use actual project data/fixtures/API — synthetic requires explicit user approval; fallback: (1) document each failed attempt in `## Demo attempts`, (2) ask Codex if available, (3) ask user via `AskUserQuestion`, (4) synthetic only on explicit approval
 - **Changelog audit preserves history**: add missing entries and flag unrelated or uncertain extras. Remove only the exact confirmed stale Unreleased claim for an unshipped revert/pivot; preserve historical entries and every unrelated item.
-- **`--append` marker**: `.temp/release-state-v2/<branch-key>/marker` — not date-stamped like sibling `.temp/release-*` artifacts (must survive across days/sessions); losing it (TTL cleanup, gitignore) degrades safely to the existing full-range/full-overwrite behavior, never to corruption — see `bin/release_append_marker.py` docstring for the full rationale.
-- **Provenance store (patch-id keyed)**: `.temp/release-state-v2/<branch-key>/provenance.jsonl` — same cross-session lifecycle reasoning as the marker (per-branch, `.temp/`, gitignored, not date-stamped). Append-only log, one `{schema_version: 1, patch_id, sha, subject, artifact, anchor_text, written_at}` record per line, one per (contributing commit, artifact, exact-written-text) tuple; every `notes`-mode write (full regenerate or `--append` merge) stages the records for each newly-written bullet/entry that traces to specific commit(s) in a `.rec` file and appends them with `bin/append_ledger.py`, never rewriting earlier lines — see "Post-write bookkeeping" → "Provenance record" in `release-draft-template.md`.
-  - Historical `provenance.json` (unversioned JSON array, rewritten whole each cycle) in the same directory is read-only data: the revert lookup still reads it, but no step stages, appends to, or publishes it.
-  - Consumed by Gather changes' cross-cycle revert detection: a genuine `git revert` commit's own `This reverts commit <sha>.` trailer is converted to its `git patch-id --stable` and looked up here — a hit means an exact, deterministic `{artifact, anchor_text}` strike, no text-matching guesswork.
-  - **`patch_id` is the only lookup key**: a raw commit sha changes on `--amend`, `rebase`, or `cherry-pick` even when the diff is untouched, so a sha-keyed store would silently miss a revert of a commit reworded or cherry-picked since it was recorded; `git patch-id --stable` is a normalized hash of the diff content and survives all three (verified empirically: identical patch-id across `--amend` and cherry-pick onto another branch, while the sha changed each time). `sha` and `subject` are carried for human debugging only, never used as a matching key.
-  - A commit whose diff produces no stable patch-id (a merge commit shown without `-m`, or a genuinely empty commit) is recorded with `patch_id: null` and can only ever be struck via the semantic path — a documented gap, not a bug.
-  - Recorded artifacts in practice: DRAFT.md (Notable-changes, Spotlights, Migration guide), `$CHANGELOG_FILE`, standalone `MIGRATION.md` — never Summary (DRAFT.md's own section or standalone `SUMMARY.md`, blended prose without a reliable commit anchor) or Contributors (per-person, not per-commit-revertible).
-  - Routine appends preserve earlier SUMMARY.md prose and carried DRAFT.md win bullets; source-backed corrections in the final cross-artifact truth gate remain required and do not use patch-id provenance.
-  - Losing the store (TTL cleanup) degrades the revert path to the same semantic-grep fallback already used for pivots — never to corruption or a silently-missed strike (Semantic consistency review is still the backstop).
-- **`--append` integration scope**: covers every DRAFT.md section (Summary, Spotlights, Migration guide, Notable-changes subsections, Contributors), plus root-level `SUMMARY.md`/`MIGRATION.md` when their flags are set. Valid-marker runs merge against staged copies; invalid-marker runs full-regenerate staged copies. Both publish through `bin/release_append_publish.py` after source and truth checks; its journal finishes interrupted promotion without replaying Summary prose and refuses unknown user edits. Merge is purely additive except DRAFT.md's re-folded Summary and a detected cross-cycle revert/pivot (Gather changes' `CROSS_CYCLE_MATCH`), which strikes the specific stale entry instead of leaving a contradicting pair.
-- **Post-merge re-validation gates only the merge path**: Truth check / Identify highlights / Validate migration docs / Validate docs re-run against the final merged DRAFT.md only when `$MARKER_VALID == true` (see release-draft-template.md). A full regenerate (no marker, or `prepare`) is already single-pass-valid — nothing accumulated from a prior cycle to re-check.
-- **Collapse guard**: `SUMMARY.md`/`MIGRATION.md` merges (whole-file artifacts, no section structure to sanity-check against) carry a mechanical byte-count trip-wire — content collapsing from substantial to near-empty during a merge cycle is refused and restored from the pre-merge Read, never silently written (see `release-draft-template.md` "Collapse guard"). DRAFT.md's own sections can legitimately empty down to a dropped header (all items struck, nothing added) — that's intended, not guarded against; the guard is scoped to the two headerless artifacts where a full-file wipe was the actual historical bug.
+- **`--append` notes** (marker location, patch-id provenance store, integration scope, post-merge re-validation gate, collapse guard, Summary folding): `modes/append-cross-cycle.md` § Append notes, loaded with the cross-cycle procedure for an `--append` run.
 - **Every completed `notes`-mode write refreshes the marker** — including plain (non-`--append`) runs. Marker refresh uses the completed range endpoint after the final truth gate; an explicit range ending before `HEAD` never certifies later commits. The workflow then records a receipt bound to branch, source `HEAD`, range endpoint, and exact nonempty draft bytes, and `write` refuses missing or stale receipts. This is a workflow gate against accidental direct writes, not an attestation against a local caller who forges workflow inputs. New side effect for users who've never used `--append`: a `.temp/release-state-v2/<branch-key>/marker` file now appears. It is gitignored and seeds the baseline for later `--append` adoption without changing `DRAFT.md`/`CHANGELOG.md` output.
-- **DRAFT.md Summary folds; standalone `SUMMARY.md` accumulates**: each `--append` cycle re-ranks DRAFT.md's win bullets over the whole release (max 5) and replaces its one `New since last draft` pointer line with only that cycle's win names, so the public Summary stays readable at a glance. Internal `SUMMARY.md` still piles increment paragraphs under its own `### Since last draft` with no `remove` path — cosmetic drift, not a correctness or data-loss issue; the next full regenerate (no marker / `prepare`) reconciles it.
 - Follow-up chains:
   - Readiness check → `/oss:release prepare <version>` runs built-in audit first; use standalone `/oss:release audit [version]` only for readiness check without cutting release
   - Breaking changes → `/oss:analyse` (requires `oss` plugin) for ecosystem impact

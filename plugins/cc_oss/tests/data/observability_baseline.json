@@ -5,7 +5,7 @@
       ".reports/analyse/ecosystem",
       ".reports/analyse/ecosystem/output-analyse-ecosystem-$TODAY.md",
       ".reports/analyse/thread",
-      ".reports/analyse/thread/output-analyse-thread-$NUMBER-$TODAY.md",
+      ".reports/analyse/thread/output-analyse-thread-<repo-slug>-<N>-<date>.md",
       ".reports/analyse/thread/output-reply-thread-<CLEAN_ARGS>-<TODAY>.md",
       ".reports/analyse/vitality",
       ".reports/analyse/vitality/$",
@@ -431,7 +431,7 @@
       },
       {
         "head": "! BLOCKED \u2014 item_id placeholder not substituted",
-        "now": "! BLOCKED \u2014 IMPL_DIR sentinel missing; cannot confirm straggler commits"
+        "now": "! BLOCKED \u2014 IMPL_DIR sentinel missing; cannot verify child tasks befo"
       },
       {
         "head": "! BLOCKED \u2014 malformed commit entry in",
@@ -651,7 +651,7 @@
       },
       {
         "head": "\u26d4 BASE_REF sentinel missing or invalid; refusing vacuous QA r",
-        "now": "\u26d4 BASE_REF sentinel missing or invalid; refusing vacuous QA r"
+        "now": "! BLOCKED \u2014 BASE_REF sentinel missing or invalid; refusing vacuous QA r"
       },
       {
         "head": "\u26d4 Cannot determine a valid origin default branch for report Q",
@@ -659,95 +659,95 @@
       },
       {
         "head": "\u26d4 Cannot establish a merge base with origin/",
-        "now": "\u26d4 Cannot establish a merge base with origin/"
+        "now": "! BLOCKED \u2014 Cannot establish a merge base with origin/"
       },
       {
         "head": "\u26d4 Cannot switch to",
-        "now": "\u26d4 Cannot switch to"
+        "now": "! BLOCKED \u2014 Cannot switch to"
       },
       {
         "head": "\u26d4 Conflict markers still present in staged files \u2014 re-inspect",
-        "now": "\u26d4 Conflict markers still present in staged files \u2014 re-inspect"
+        "now": "! BLOCKED \u2014 Conflict markers still present in staged files \u2014 re-inspect"
       },
       {
         "head": "\u26d4 Could not resolve fork PR URL",
-        "now": "\u26d4 Could not resolve fork PR URL"
+        "now": "! BLOCKED \u2014 Could not resolve fork PR URL"
       },
       {
         "head": "\u26d4 Fork PR URL does not match PR number",
-        "now": "\u26d4 Fork PR URL does not match PR number"
+        "now": "! BLOCKED \u2014 Fork PR URL does not match PR number"
       },
       {
         "head": "\u26d4 Local report reference requires no PR number",
-        "now": "\u26d4 Local report reference requires no PR number"
+        "now": "! BLOCKED \u2014 Local report reference requires no PR number"
       },
       {
         "head": "\u26d4 No staged files found \u2014 sw-engineer may not have staged res",
-        "now": "\u26d4 No staged files found \u2014 sw-engineer may not have staged res"
+        "now": "! BLOCKED \u2014 No staged files found \u2014 sw-engineer may not have staged res"
       },
       {
         "head": "\u26d4 On default branch",
-        "now": "\u26d4 On default branch"
+        "now": "! BLOCKED \u2014 on default branch"
       },
       {
         "head": "\u26d4 QA gate blocked push \u2014 review findings above, fix errors, t",
-        "now": "\u26d4 QA gate blocked push \u2014 review findings above, fix errors, t"
+        "now": "! BLOCKED \u2014 QA gate blocked push \u2014 review findings above, fix errors, t"
       },
       {
         "head": "\u26d4 Report PR field is not a PR number or n/a; refusing an ambi",
-        "now": "\u26d4 Report PR field is not a PR number or n/a; refusing an ambi"
+        "now": "! BLOCKED \u2014 Report PR field is not a PR number or n/a; refusing an ambi"
       },
       {
         "head": "\u26d4 Report PR heading conflicts with frontmatter",
-        "now": "\u26d4 Report PR heading conflicts with frontmatter"
+        "now": "! BLOCKED \u2014 Report PR heading conflicts with frontmatter"
       },
       {
         "head": "\u26d4 Report source missing; run the Step 1 report gate",
-        "now": "\u26d4 Report source missing; run the Step 1 report gate"
+        "now": "! BLOCKED \u2014 Report source missing; run the Step 1 report gate"
       },
       {
         "head": "\u26d4 SAME-REPO RULE VIOLATION: on",
-        "now": "\u26d4 SAME-REPO RULE VIOLATION: on"
+        "now": "! BLOCKED \u2014 SAME-REPO RULE VIOLATION: on"
       },
       {
         "head": "\u26d4 Step 10 PR number sentinel missing or invalid; cannot verif",
-        "now": "\u26d4 Step 10 PR number sentinel missing or invalid; cannot verif"
+        "now": "! BLOCKED \u2014 Step 10 PR number sentinel missing or invalid; cannot verif"
       },
       {
         "head": "\u26d4 Step 10 fallback: FORK_REMOTE/HEAD_REF unresolved \u2014 refusin",
-        "now": "\u26d4 Step 10 fallback: FORK_REMOTE/HEAD_REF unresolved \u2014 refusin"
+        "now": "! BLOCKED \u2014 Step 10 fallback: FORK_REMOTE/HEAD_REF unresolved \u2014 refusin"
       },
       {
         "head": "\u26d4 Step 4 PR number sentinel missing or invalid; refusing PR r",
-        "now": "\u26d4 Step 4 PR number sentinel missing or invalid; refusing PR r"
+        "now": "! BLOCKED \u2014 Step 4 PR number sentinel missing or invalid; refusing chec"
       },
       {
         "head": "\u26d4 Step 4 PR number sentinel missing or invalid; refusing chec",
-        "now": "\u26d4 Step 4 PR number sentinel missing or invalid; refusing chec"
+        "now": "! BLOCKED \u2014 Step 4 PR number sentinel missing or invalid; refusing chec"
       },
       {
         "head": "\u26d4 Step 4 verify: HEAD_REF/IS_CROSS_REPO sentinels missing \u2014 c",
-        "now": "\u26d4 Step 4 verify: HEAD_REF/IS_CROSS_REPO sentinels missing \u2014 c"
+        "now": "! BLOCKED \u2014 Step 4 verify: HEAD_REF/IS_CROSS_REPO sentinels missing \u2014 c"
       },
       {
         "head": "\u26d4 Unmerged files remain \u2014 resolve before continuing:",
-        "now": "\u26d4 Unmerged files remain \u2014 resolve before continuing:"
+        "now": "! BLOCKED \u2014 Unmerged files remain \u2014 resolve before continuing:"
       },
       {
         "head": "\u26d4 another oss:resolve is active on branch",
-        "now": "\u26d4 another oss:resolve is active on branch"
+        "now": "! BLOCKED \u2014 another oss:resolve is active on branch"
       },
       {
         "head": "\u26d4 checkout did not land on",
-        "now": "\u26d4 checkout did not land on"
+        "now": "! BLOCKED \u2014 checkout did not land on"
       },
       {
         "head": "\u26d4 fetch origin/",
-        "now": "\u26d4 fetch origin/"
+        "now": "! BLOCKED \u2014 fetch origin/"
       },
       {
         "head": "\u26d4 gh pr checkout failed \u2014 aborting (network, branch deleted,",
-        "now": "\u26d4 gh pr checkout failed \u2014 aborting (network, branch deleted,"
+        "now": "! BLOCKED \u2014 gh pr checkout failed \u2014 aborting (network, branch deleted,"
       }
     ],
     "task_calls": {
@@ -849,10 +849,6 @@
         "now": "\u26a0 No agent output files found in"
       },
       {
-        "head": "\u26a0 Shallow clone detected \u2014 running: git fetch --unshallow to",
-        "now": "\u26a0 Shallow clone detected \u2014 running: git fetch --unshallow to"
-      },
-      {
         "head": "\u26a0 _OSS_SHARED resolved to",
         "now": "\u26a0 _OSS_SHARED resolved to"
       },
@@ -861,21 +857,17 @@
         "now": "\u26a0 bridge@borda-ai-rig is"
       },
       {
-        "head": "\u26a0 git fetch --unshallow failed \u2014 Step 3 checks may be incompl",
-        "now": "\u26a0 git fetch --unshallow failed \u2014 Step 3 checks may be incompl"
-      },
-      {
         "head": "\u26a0 module battery capped at 10 of",
         "now": "\u26a0 module battery capped at 10 of"
       },
       {
         "head": "\u26d4 _OSS_SHARED resolved to",
-        "now": "\u26d4 _OSS_SHARED resolved to"
+        "now": "! BLOCKED \u2014 _OSS_SHARED resolved to"
       }
     ],
     "task_calls": {
       "completed": 8,
-      "deleted": 4,
+      "deleted": 3,
       "in_progress": 7
     },
     "task_phases": []

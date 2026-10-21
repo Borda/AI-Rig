@@ -1,12 +1,12 @@
-<!-- file: gather-prompt.md — consumers: oss/skills/release/SKILL.md (Delegation strategy) -->
+<!-- file: gather-prompt.md — consumers: oss/skills/release/modes/delegation.md (Delegation strategy) -->
 
-Working directory: \<REPO_ROOT>. Run all git commands from there (git -C \<REPO_ROOT> <cmd>, or cd \<REPO_ROOT> first). For git range <RANGE>, against last published tag \<LAST_TAG> (may be empty — first-ever release, no prior tag):
+Gather release evidence for <RANGE> into \<GATHER_FILE>. Working directory: \<REPO_ROOT>. Run all git commands from there (git -C \<REPO_ROOT> <cmd>, or cd \<REPO_ROOT> first). For git range <RANGE>, against last published tag \<LAST_TAG> (may be empty — first-ever release, no prior tag):
 
 Run gather phase: git log, git diff --stat, gh pr list.
 
 Retain verified commit-to-PR associations and each in-range PR author's known login/display name in \<GATHER_FILE> for contributor extraction. Establish range membership from release commits and verified PR linkage — not merge dates or full merged-PR list. Include authors absent from Git authors/coauthors (e.g. maintainer-authored squash merges without original-author trailers). Keep this identity inventory even when classification groups changes or drops net-zero claims. Missing linkage, deleted identities, or incomplete PR metadata must remain explicit contributor-coverage gaps; never label Git-only coverage complete or invent identities.
 
-For every SHA from `git -C <REPO_ROOT> rev-list "<RANGE>"`, run `gh api --method GET --paginate --slurp "repos/{owner}/{repo}/commits/<sha>/pulls" -f per_page=100` from \<REPO_ROOT>. Retain all pages and each SHA's merged-PR associations (PR number, author, base, merge commit); never restrict lookup to default branch. Verify actual repo/commit/diff membership before crediting. Successful empty result retains Git authors/coauthors without inventing a PR; failed, deleted, or ambiguous metadata stays a coverage gap in \<GATHER_FILE>. Do not substitute default-branch merged-PR list after lookup failure.
+For every SHA of `<RANGE>`, run from \<REPO_ROOT> `python "<OSS_BIN>/gh_batch_query.py" commit-prs --range "<RANGE>" --offset-file "<GATHER_FILE>.assoc-offset"` (one batched GraphQL request per 25 commits); while stderr prints `NEXT_OFFSET=<n>`, re-run the identical command, and treat association as incomplete until it stops. Each stdout line is one SHA's merged-PR associations (PR number, author, base, merge commit); never restrict lookup to default branch. Verify actual repo/commit/diff membership before crediting. Successful empty result retains Git authors/coauthors without inventing a PR; a `coverage_gap` field, a failed run, deleted, or ambiguous metadata stays a coverage gap in \<GATHER_FILE>. Do not substitute default-branch merged-PR list after lookup failure.
 
 Run classify phase: classify NET state at HEAD, not each intermediate commit.
 
@@ -20,44 +20,7 @@ Run explore phase: top 3–5 most significant changed files (read actual diffs).
 Run truth check phase for each 🚀 Added, ⚠️ Breaking Changes, 🌱 Changed, or ❌ Removed item naming a specific symbol (function, class, method, config key, CLI flag, `pyproject.toml`/`setup.cfg` extra). Check the final name at HEAD for Added/Changed; check the old name at `<LAST_TAG>` and HEAD for Breaking/Removed/rename claims. Apply the **same claim-specific declaration predicate at both refs**. For Python, identify the actual public module file named by the claim and set `PUBLIC_PATH` to its repository-relative `.py` path; if the file or class-method coordinate is unknown, keep the claim inconclusive. Run this probe from `<REPO_ROOT>` with `REF=<LAST_TAG>`, `SYMBOL=<old_name>`, and the old `PUBLIC_PATH`, then with `REF=HEAD` and the category-appropriate name and path. Exit 0 = module-level binding candidate in that exact file; 2 = inconclusive. Confirm the candidate's actual public export/entrypoint at both refs (for example package `__init__.py` or `__all__`) before calling it truth-checked. The probe never proves absence: conditional definitions, decorators, computed names, class methods, and dynamic bindings fall outside its finite syntax coverage. A docstring, comment, or unrelated private method cannot establish baseline presence. Establish absence through explicit source review of the relevant public surface; if uncertain, keep the claim qualified:
 
 ```bash
-python - "$REF" "$SYMBOL" "$PUBLIC_PATH" <<'PY'
-import ast
-import subprocess
-import sys
-
-ref, symbol, path = sys.argv[1:]
-if not path.endswith(".py") or path.startswith("/") or ".." in path.split("/"):
-    sys.exit(2)
-source = subprocess.run(["git", "show", f"{ref}:{path}"], capture_output=True)
-if source.returncode:
-    print(source.stderr.decode("utf-8", errors="replace"), file=sys.stderr)
-    sys.exit(2)
-try:
-    tree = ast.parse(source.stdout)
-except (SyntaxError, UnicodeError) as error:
-    print(f"Cannot parse {ref}:{path}: {error}", file=sys.stderr)
-    sys.exit(2)
-declarations = tree.body
-named = any(isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.name == symbol for node in declarations)
-assigned = any(
-    isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == symbol for target in node.targets)
-    or isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.target.id == symbol
-    or isinstance(node, ast.Import) and any((alias.asname or alias.name.split(".", 1)[0]) == symbol for alias in node.names)
-    or isinstance(node, ast.ImportFrom) and any((alias.asname or alias.name) == symbol for alias in node.names)
-    for node in declarations
-)
-flag = any(
-    isinstance(node, ast.Expr)
-    and isinstance(node.value, ast.Call)
-    and isinstance(node.value.func, ast.Attribute)
-    and node.value.func.attr == "add_argument"
-    and any(isinstance(arg, ast.Constant) and arg.value == symbol for arg in node.value.args)
-    for node in declarations
-)
-if named or assigned or flag:
-    sys.exit(0)
-sys.exit(2)
-PY
+python "<OSS_BIN>/symbol_exists_at_ref.py" "$REF" "$SYMBOL" "$PUBLIC_PATH"  # timeout: 5000
 ```
 
 For TypeScript/JavaScript/Go/Rust, inspect an actual declaration at both refs with `git show <ref>:<path>`; raw `git grep -w` matches are only candidates. For manifest/config claims, use `git grep -nF '<name>' <ref> -- 'pyproject.toml' 'setup.cfg' '*.toml'` to locate candidates, then confirm the exact key/extra declaration in its section at both refs. Never count comments or values as declarations. A command/parse failure means inconclusive, not absent. Added/Changed final name absent at HEAD → remove the claim, then immediately append via Bash (never batch for later): `echo 'REMOVED: <item> — symbol not found in HEAD' >> "<WAIVED_FILE>"`. Repeat for newly revealed dependencies.

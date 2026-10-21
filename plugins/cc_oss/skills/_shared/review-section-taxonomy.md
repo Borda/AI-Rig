@@ -21,7 +21,7 @@ Canonical section headers, grep keys, agent ownership, resolve triage type. Both
 | `### Recommended Next Steps` | (skip) | — | — | — |
 | `### Review Confidence` | (skip) | — | — | — |
 
-`resolve change` feeds oss:resolve's Phase 2 specialist routing (`action-item-dispatch.md`) — keep in sync with that file's `change` → `IMPL_AGENT` table whenever either changes.
+`resolve change` feeds oss:resolve's Phase 2 specialist routing (`dispatch-prelude.md`) — keep in sync with that file's `change` → `IMPL_AGENT` table whenever either changes.
 
 ## Severity → Resolve Type
 

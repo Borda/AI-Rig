@@ -2,8 +2,7 @@
 name: investigate
 description: "Systematic diagnosis for unknown failures — local environment, tool setup, CI vs local divergence, hook misbehavior, and runtime anomalies. Gathers signals broadly, ranks hypotheses, uses adversarial review (Codex or foundry:challenger) for ambiguous cases, probes each, and reports root cause with a recommended next action. NOT for known code bugs (/develop:debug (requires `develop` plugin)) or config quality (/foundry:audit). TRIGGER when: unknown failure with no Python traceback — hook not firing, CI passes locally but fails remotely, background agent stalled, behavior inconsistent with config; phrases: \"not working but config looks right\", \"hook not triggering\", \"why isn't X running\". SKIP: Python traceback present (use develop:debug (requires `develop` plugin)); known code bug with repro (use develop:fix (requires `develop` plugin)); pure config quality check (use foundry:audit)."
 argument-hint: <symptom, question, or failing command> [--fast] [--keep "<items>"]
-allowed-tools: Read, Write, Bash, Grep, Glob, Agent, Skill, TaskList, TaskCreate, TaskUpdate, AskUserQuestion
-model: opus
+allowed-tools: Read, Write, Bash, Grep, Agent, Skill, TaskList, TaskCreate, TaskUpdate, AskUserQuestion
 effort: high
 ---
 
@@ -50,9 +49,8 @@ One block: flag parsing, stale-ledger clear, and the run directory Step 2 needs.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/extract-keep-flag.py" investigate "$ARGUMENTS"  # timeout: 5000 — parses --keep, clears stale contract
-eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/parse-skill-flags.py" --flags fast "$ARGUMENTS")"  # timeout: 5000
-ARGUMENTS="$CLEAN_ARGS"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/parse-skill-flags.py" --flags fast --keep-state investigate "$ARGUMENTS" >/dev/null  # timeout: 5000 — no eval; investigate-{fast,clean-args,keep-items}-${CSID}, clears stale contract
+IFS= read -r ARGUMENTS < "${TMPDIR:-/tmp}/investigate-clean-args-${CSID}" 2>/dev/null || ARGUMENTS=""
 rm -f "${TMPDIR:-/tmp}/investigate-verdicts-${CSID}"  # stale probe ledger  # timeout: 3000
 INVESTIGATE_RUN=".temp/investigate/$(date -u +%Y-%m-%dT%H-%M-%SZ)"
 mkdir -p "$INVESTIGATE_RUN"
@@ -118,10 +116,8 @@ Step 4 spawn prompts must instruct subagent to Read these files (not rely on inl
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _INVESTIGATE_RUN < "${TMPDIR:-/tmp}/investigate-run-path-${CSID}" 2>/dev/null || _INVESTIGATE_RUN=""
-IFS= read -r _KEEP < "${TMPDIR:-/tmp}/investigate-keep-items-${CSID}" 2>/dev/null || _KEEP=""
 _PRESERVE="run-dir=$_INVESTIGATE_RUN, symptom=$_INVESTIGATE_RUN/symptom.txt, signals=$_INVESTIGATE_RUN/signals.md"
-[ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/write_skill_contract.py" "foundry:investigate" "hypothesise+probe (after signal gather)" "$_INVESTIGATE_RUN" "$_PRESERVE" "rank hypotheses (Step 3) → adversarial review (Step 4) → probe (Step 5) → report (Step 6)"  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/write_skill_contract.py" --keep-sentinel investigate-keep-items "foundry:investigate" "hypothesise+probe (after signal gather)" "$_INVESTIGATE_RUN" "$_PRESERVE" "rank hypotheses (Step 3) → adversarial review (Step 4) → probe (Step 5) → report (Step 6)"  # timeout: 5000
 ```
 
 ## Step 3: Rank hypotheses
@@ -146,10 +142,8 @@ Refresh the compaction contract now that ranking is done — the boundary moves 
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # Compaction contract — boundary 2: ranking done, entering adversarial+probe loop (compaction-contract.md §Lifecycle)
 IFS= read -r _IR < "${TMPDIR:-/tmp}/investigate-run-path-${CSID}" 2>/dev/null || _IR=""
-IFS= read -r _KEEP < "${TMPDIR:-/tmp}/investigate-keep-items-${CSID}" 2>/dev/null || _KEEP=""
 _PRESERVE="run-dir=$_IR, symptom=$_IR/symptom.txt, signals=$_IR/signals.md, hypotheses=$_IR/hypotheses.md"
-[ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/write_skill_contract.py" "foundry:investigate" "adversarial+probe (after hypotheses ranked)" "$_IR" "$_PRESERVE" "adversarial review (Step 4, unless --fast) → probe hypotheses (Step 5) → report (Step 6). Resume from hypotheses.md — do NOT re-rank."  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/write_skill_contract.py" --keep-sentinel investigate-keep-items "foundry:investigate" "adversarial+probe (after hypotheses ranked)" "$_IR" "$_PRESERVE" "adversarial review (Step 4, unless --fast) → probe hypotheses (Step 5) → report (Step 6). Resume from hypotheses.md — do NOT re-rank."  # timeout: 5000
 ```
 
 Common categories:
@@ -165,8 +159,6 @@ Common categories:
 ## Step 4: Auxiliary review (optional)
 
 **Skip entirely** when `--fast` passed, or top hypothesis has strong direct evidence. Skip: proceed to Step 5.
-
-When `--fast`: mark Step 4 task `deleted` (not completed — it was skipped).
 
 Otherwise, set up adversarial review in one block — run dir from Step 1's sentinel, bridge status from Step 2's (bash state does not persist):
 
@@ -185,13 +177,9 @@ echo "CODEX_OUT=$INVESTIGATE_RUN/codex-review.md"  # spawn-prompt reads these st
 echo "CODEX_AVAILABLE=$CODEX_AVAILABLE"  # branch below MUST read this value from stdout
 ```
 
-> **Step 1 writes the run path to `${TMPDIR:-/tmp}/investigate-run-path-${CSID}`, Step 2 the bridge status to `${TMPDIR:-/tmp}/investigate-codex-${CSID}`** — both reads above depend on them.
-
-**Read `CODEX_AVAILABLE=…` from bash stdout above** (NOT shell state). Printed `true`: spawn Codex; else spawn `foundry:challenger`. Spawn prompts below instruct subagent to Read persisted symptom/signals/hypotheses files (written in Steps 2 and 3) — more reliable than inlining values, which LLM can paraphrase under context pressure.
+**Read `CODEX_AVAILABLE=…` from bash stdout above.** Printed `true`: spawn Codex; else spawn `foundry:challenger`. Spawn prompts below instruct subagent to Read the persisted symptom/signals/hypotheses files (Steps 2, 3), never inlined values.
 
 Bridge available (requires `bridge@borda-ai-rig` installed and enabled): substitute concrete path strings for `<INVESTIGATE_RUN>` and `<CODEX_OUT>` before constructing prompt:
-
-> **Agent budget** — each spawn costs ~120,851 tok of fixed overhead (~73 tool-calls' worth) plus ~12.0 s/call, so work under ~73 calls is cheaper done inline: spawn nothing — work-displacement only; an isolation-motivated spawn (adversarial reviewer, distinct specialist role, model tier, worktree) runs regardless of size. Keep each agent near ~55 tool-calls; past ~60 they stall without returning an envelope, forcing reconstruction from disk. Every spawn prompt must require an envelope even on exhaustion — `partial: true` plus what was finished.
 
 ```text
 Skill(skill="bridge:review", args="Read-only adversarial review of hypothesis quality. Read <INVESTIGATE_RUN>/symptom.txt, <INVESTIGATE_RUN>/signals.md, and <INVESTIGATE_RUN>/hypotheses.md. Challenge the top hypothesis, identify blind spots, and surface alternative root causes. Return actionable findings with locations; do not apply fixes.")
@@ -202,10 +190,12 @@ After the call returns, use the Write tool yourself to persist its findings text
 Else (Codex unavailable): substitute `<INVESTIGATE_RUN>` with printed run-dir path:
 
 ```text
-Agent(subagent_type="foundry:challenger", prompt="Adversarial review of hypothesis quality. Read these files for full context: <INVESTIGATE_RUN>/symptom.txt, <INVESTIGATE_RUN>/signals.md, <INVESTIGATE_RUN>/hypotheses.md. Challenge the top hypothesis, identify blindspots, and surface alternative root causes. Read-only analysis only. Write full findings to <INVESTIGATE_RUN>/challenger-review.md using the Write tool. Return ONLY: {\"status\":\"done\",\"file\":\"<path>\",\"findings\":N,\"severity\":{\"critical\":N,\"high\":N,\"medium\":N,\"low\":N},\"confidence\":0.N,\"summary\":\"<one-line>\"}")
+Agent(subagent_type="foundry:challenger", name="challenger", description="Hypothesis quality review", prompt="Adversarial review of hypothesis quality. Read these files for full context: <INVESTIGATE_RUN>/symptom.txt, <INVESTIGATE_RUN>/signals.md, <INVESTIGATE_RUN>/hypotheses.md. Challenge the top hypothesis, identify blindspots, and surface alternative root causes. Read-only analysis only. Write full findings to <INVESTIGATE_RUN>/challenger-review.md using the Write tool. Return ONLY: {\"status\":\"done\",\"file\":\"<path>\",\"partial\":false,\"findings\":N,\"severity\":{\"critical\":N,\"high\":N,\"medium\":N,\"low\":N},\"confidence\":0.N,\"summary\":\"<one-line>\"}")
 ```
 
 Before issuing call: scan constructed prompt string for remaining `<` or `>` characters — present means substitution incomplete; resolve before spawning.
+
+> Every spawn prompt must require an envelope even on exhaustion — `partial: true` plus what was finished.
 
 **Deadline** (`_shared/agent-spawn-protocol.md` §Deadlines): in the same response as the spawn, Write `<INVESTIGATE_RUN>/agent-watch-challenger.tsv` = `challenger\t<INVESTIGATE_RUN>/challenger-review.md\t600`, then end the turn — never `ScheduleWakeup`, `ListAgents` or `Monitor`. On its notification run once:
 
@@ -251,7 +241,7 @@ echo "<hypothesis> :: <Confirmed|Ruled-out|Inconclusive>" >> ${TMPDIR:-/tmp}/inv
 IFS= read -r _IR < "${TMPDIR:-/tmp}/investigate-run-path-${CSID}" 2>/dev/null || _IR=""
 _VERDICTS=$(tail -8 "${TMPDIR:-/tmp}/investigate-verdicts-${CSID}" 2>/dev/null)  # cap keeps contract compact; tail keeps most-recent verdicts
 _REVIEW=""; [ -f "$_IR/codex-review.md" ] && _REVIEW="$_IR/codex-review.md"; [ -f "$_IR/challenger-review.md" ] && _REVIEW="$_IR/challenger-review.md"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/write_skill_contract.py" "foundry:investigate" "probe (Step 5)" "$_IR" "hypotheses=$_IR/hypotheses.md${_REVIEW:+, review=$_REVIEW}" "probe remaining pending hypotheses → confirm root cause → report (Step 6). Skip Confirmed/Ruled-out in the probed list below." "probed (do NOT re-probe)" "$_VERDICTS"  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/write_skill_contract.py" --keep-sentinel investigate-keep-items "foundry:investigate" "probe (Step 5)" "$_IR" "hypotheses=$_IR/hypotheses.md${_REVIEW:+, review=$_REVIEW}" "probe remaining pending hypotheses → confirm root cause → report (Step 6). Skip Confirmed/Ruled-out in the probed list below." "probed (do NOT re-probe)" "$_VERDICTS"  # timeout: 5000
 ```
 
 Stop when one hypothesis confirmed with clear evidence, or top-3 all ruled out (expand to lower-ranked candidates — max 2 expansion rounds, per CLAUDE.md §Safety breaks for loops default cap of 3). Cap hit with nothing confirmed: stop, report inconclusive with the ruled-out list — do not loop through the full candidate table.
@@ -275,7 +265,7 @@ Re-resolve `$INVESTIGATE_RUN` from persisted path file (`cat "${TMPDIR:-/tmp}/in
   - `/develop:fix` — code regression confirmed (application code only — NOT for `.claude/` changes) (requires `develop` plugin — check plugin availability before following this recommendation)
   - `/foundry:manage update <name> "<change directive>"` — `.claude/` agent/skill content needs adding or updating (NOT for structural/quality sweeps — use `/foundry:audit` for that)
   - `/foundry:audit` — structural/quality issue in `.claude/` config confirmed (e.g. broken cross-refs, missing blocks, tag imbalance); NOT for content additions — use `/manage update` for those
-  - `/foundry:setup` — propagate project `.claude/` to `~/.claude/` (foundry plugin is the distribution path)
+  - `/foundry:setup` — after a plugin update/reinstall: re-merge plugin settings/rules into `~/.claude/` (does not copy project `.claude/` edits)
   - Manual step: [command to run]
   - Further investigation needed: [missing information]
 ```
@@ -294,7 +284,7 @@ End with a `## Confidence` block:
 - Pass 1: [gap addressed]
 ```
 
-Invoke `AskUserQuestion` as follow-up gate: (a) Invoke recommended next action (from Recommended next action field above) (b) Run additional investigation with narrowed hypothesis (c) Skip — diagnosis complete
+Print the recommended next action as a plain-text command first: `/develop:fix`, `/foundry:manage` and `/foundry:audit` are `disable-model-invocation: true` — user-run, never `Skill()`-chained, so no option may claim to invoke them. Then invoke `AskUserQuestion` as follow-up gate: (a) Invoke recommended next action (from Recommended next action field above) — offer only when its target is model-invocable (check its frontmatter, e.g. `/foundry:setup`); otherwise omit (a), keep letters (b) Run additional investigation with narrowed hypothesis (c) Skip — diagnosis complete
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -309,6 +299,7 @@ rm -f .temp/state/skill-contract.md ${TMPDIR:-/tmp}/investigate-verdicts-${CSID}
 - **Scope vs `/develop:debug`**: `/develop:debug` (requires `develop` plugin) needs known test failure, runs TDD fix loop. `/investigate` = "something wrong, don't know what" — cause may not be in application code
 - **Scope vs `/foundry:audit`**: `/foundry:audit` = scheduled quality sweep of `.claude/`. `/investigate` = triggered by live failure; two complement each other (investigate finds config symptom, audit confirms structural issue)
 - **Follow-up**: `/develop:fix` (requires `develop` plugin) for implementing resolution once root cause confirmed
+- **No `model:` by design**: without `context: fork` a skill's `model:` replaces the session model for the rest of the turn (Claude Code skills docs, frontmatter `model`), so on any other session model the cached prefix is rewritten on entry and again on the next prompt. Runs on the session model; depth comes from `effort: high`
 - **Broad first**: always complete Step 2 before hypothesising — premature anchoring = most common investigation failure
 - **Parallel probes**: run independent probes in single response, avoid serial latency
 - **Inconclusiveness valid**: report what's ruled out, what info would close remaining gap — don't fabricate root cause to appear decisive

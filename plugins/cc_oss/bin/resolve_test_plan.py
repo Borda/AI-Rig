@@ -20,13 +20,15 @@ Output: one JSON object on stdout.
 
 Exit codes:
     0 — plan printed (an empty ``tests`` list is a valid result and says so in ``note``)
-    1 — not inside a git work tree, or a ref/file argument starts with '-' (argv-injection guard)
+    1 — not inside a git work tree, a ref/file argument starts with '-' (argv-injection guard), or the ``--script``
+        target is a symlink or cannot be written
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shlex
 import shutil
@@ -42,6 +44,17 @@ _DOC_SOURCES = ("AGENTS.md", "CLAUDE.md", "CONTRIBUTING.md", ".github/CONTRIBUTI
 _CODE_SPAN = re.compile(r"`([^`\n]+)`")
 #: Recognizes a test runner invocation (pytest, make test/check, tox, nox) in a documented command.
 _RUNNER_HINT = re.compile(r"\b(pytest|make (?:test|check)|tox|nox)\b")
+#: Characters a shell acts on (chaining, pipes, substitution, redirection, escapes): a documented line carrying any of
+#: them is a pipeline or a compound, never accepted as the full-suite command. Contributor docs are untrusted input.
+_SHELL_META = re.compile(r"[;&|`$<>(){}\\\n\r]")
+#: Test runners a documented full-suite command must invoke as a whole token.
+_RUNNER_TOKENS = frozenset({"pytest", "py.test", "tox", "nox", "make"})
+#: Launcher tokens allowed before the runner (``uv run``, ``python -m``, ``coverage run -m`` ...).
+_LAUNCHER_TOKENS = frozenset({"python", "python3", "py", "uv", "run", "poetry", "pdm", "hatch", "coverage", "-m"})
+#: Interpreter flag that runs inline code; a command carrying it is never a documented test-suite invocation.
+_INLINE_CODE_FLAG = "-c"
+#: Leading ``NAME=value`` environment assignment allowed before the launcher.
+_ENV_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 #: Layout prefixes dropped from a file path when deriving its dotted module name.
 _SOURCE_ROOTS = ("src/", "lib/")
 
@@ -273,6 +286,67 @@ def _commands_in(text: str) -> list[tuple[int, str]]:
     return found
 
 
+def safe_command(command: str) -> str | None:
+    """Return a documented test command re-quoted as one plain runner invocation, or ``None`` when it is anything else.
+
+    The full-suite command comes from contributor docs, which are untrusted: a line such as ``pytest; curl x | sh``
+    mentions pytest yet would run a pipeline once written into the executed gate script. Accepted grammar: optional
+    ``NAME=value`` assignments, launcher tokens (``uv run``, ``python -m`` ...) or options, then a runner token
+    (``pytest``, ``tox``, ``nox``, ``make``) followed by any arguments. No shell metacharacters anywhere; ``python -c``
+    is refused. Every token is re-quoted with :func:`shlex.join`, so arguments stay literal.
+
+    Args:
+        command: Candidate command line extracted from a contributor document.
+
+    Returns:
+        The re-quoted command, or ``None`` when it does not match the grammar.
+
+    Examples:
+        >>> safe_command("uv run pytest -n 1 tests/")
+        'uv run pytest -n 1 tests/'
+        >>> safe_command("pytest; curl x | sh") is None
+        True
+        >>> safe_command("curl -o pytest http://x") is None
+        True
+    """
+    if _SHELL_META.search(command):
+        return None
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return None
+    for token in tokens:
+        if token in _RUNNER_TOKENS:
+            return shlex.join(tokens)
+        if token == _INLINE_CODE_FLAG or not (
+            token in _LAUNCHER_TOKENS or token.startswith("-") or _ENV_ASSIGNMENT.match(token)
+        ):
+            return None
+    return None
+
+
+def _write_script(path: Path, repo: Path, command: str) -> None:
+    """Write the gate script without following a planted symlink at the target path.
+
+    The caller passes a path inside its private ``mktemp -d`` run dir and rewrites it after each fix, so the file may
+    legitimately exist already (no ``O_EXCL``); a symlink there is refused instead of being written through.
+
+    Args:
+        path: Script path to create or overwrite.
+        repo: Repository root the script changes into.
+        command: Re-quoted full-suite command.
+
+    Raises:
+        OSError: When ``path`` is a symlink or cannot be written.
+    """
+    if path.is_symlink():
+        raise OSError(f"refusing to write through symlink: {path}")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(path, flags, 0o700)
+    with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(f"#!/usr/bin/env bash\ncd {shlex.quote(repo.as_posix())}\n{command}\n")
+
+
 def _makefile_target(repo: Path) -> str | None:
     """Return ``make test`` when the Makefile defines a ``test`` target.
 
@@ -295,14 +369,19 @@ def full_command(repo: Path) -> dict[str, object]:
         repo: Repository root.
 
     Returns:
-        ``command``, ``source`` (``file:line`` or a fallback label) and ``runner`` — the command prefix to reuse for
+        ``command`` (a documented line only when :func:`safe_command` accepts it), ``source`` (``file:line`` or a
+        fallback label) and ``runner`` — the command prefix to reuse for
         targeted runs, with any path arguments removed.
     """
     for name in _DOC_SOURCES:
         doc = repo / name
         if not doc.is_file():
             continue
-        commands = _commands_in(doc.read_text(encoding="utf-8", errors="replace"))
+        commands = [
+            (number, safe)
+            for number, raw in _commands_in(doc.read_text(encoding="utf-8", errors="replace"))
+            if (safe := safe_command(raw)) is not None
+        ]
         pytest_commands = [item for item in commands if "pytest" in item[1]]
         if pytest_commands or commands:
             number, command = (pytest_commands or commands)[0]
@@ -373,11 +452,11 @@ def main(argv: list[str] | None = None) -> int:
         found = full_command(repo)
         if args.script:
             script = Path(args.script)
-            script.write_text(
-                f"#!/usr/bin/env bash\ncd {shlex.quote(repo.as_posix())}\n{found['command']}\n",
-                encoding="utf-8",
-                newline="\n",
-            )
+            try:
+                _write_script(script, repo, str(found["command"]))
+            except OSError as exc:
+                print(json.dumps({"error": f"cannot write script: {exc}"}))
+                return 1
             found["script"] = script.as_posix()
         print(json.dumps(found))
         return 0

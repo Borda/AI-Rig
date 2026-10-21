@@ -4,7 +4,10 @@
 Scans ``<state_dir_base>/*/state.json`` files sorted by mtime descending (newest first)
 and returns the basename of the first matching directory whose ``state.json`` has
 ``status`` in (``"completed"``, ``"goal-achieved"``). When ``--match-program <path>``
-is supplied, the run's ``program_file`` field must additionally equal ``<path>``.
+is supplied, the run's ``program_file`` field must additionally name the same file as
+``<path>`` — both sides are resolved with ``os.path.realpath`` (non-strict), because
+``/research:run`` records ``program_file`` as an absolute path while callers such as
+``/research:fortify program.md`` pass whatever the user typed.
 
 Extracted from the ``python -c`` inline blocks in
 ``plugins/cc_research/skills/fortify/SKILL.md`` (lines 99, 101) and
@@ -31,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -78,14 +82,39 @@ def _load_state(state_file: Path) -> dict | None:
     return data
 
 
+def _normalise_program(value: object) -> object:
+    """Return a comparable form of a ``program_file`` value.
+
+    Non-empty strings resolve through ``os.path.realpath`` without ``strict`` so a relative
+    argument and the absolute path recorded in ``state.json`` compare equal, even when that
+    path no longer exists on disk. Anything else (``None`` for a text-goal run, an empty string, a
+    non-string) is returned unchanged, so it never matches a real program path.
+
+    Args:
+        value: Raw ``program_file`` value, or the ``--match-program`` argument.
+
+    Returns:
+        The resolved path string, or ``value`` itself when it is not a non-empty string.
+
+    Examples:
+        >>> _normalise_program(None) is None
+        True
+        >>> _normalise_program("")
+        ''
+    """
+    if isinstance(value, str) and value:
+        return os.path.realpath(value)
+    return value
+
+
 def find_run_id(state_dir: Path, match_program: str | None = None) -> str | None:
     """Return the basename of the latest completed run directory under ``state_dir``.
 
     Iterates immediate subdirectories of ``state_dir`` sorted by mtime descending
     (newest first), inspects each ``<subdir>/state.json``, and returns the first
     match. A match requires ``status`` in ``{"completed", "goal-achieved"}``; when
-    ``match_program`` is supplied, the ``program_file`` field must also equal it
-    exactly (no path normalisation — matches the original inline behaviour).
+    ``match_program`` is supplied, the ``program_file`` field must also name the same
+    file once both sides pass through :func:`_normalise_program`.
 
     Args:
         state_dir: Directory containing per-run subdirectories.
@@ -105,13 +134,14 @@ def find_run_id(state_dir: Path, match_program: str | None = None) -> str | None
     # Sort by mtime descending — newest first; ties broken by name for determinism.
     # _safe_mtime guards against a dir removed between iterdir and stat (race/TTL sweep).
     candidates.sort(key=lambda p: (_safe_mtime(p), p.name), reverse=True)
+    wanted = _normalise_program(match_program)
     for run_dir in candidates:
         state = _load_state(run_dir / "state.json")
         if state is None:
             continue
         if state.get("status") not in _COMPLETED_STATUSES:
             continue
-        if match_program is not None and state.get("program_file", "") != match_program:
+        if match_program is not None and _normalise_program(state.get("program_file", "")) != wanted:
             continue
         return run_dir.name
     return None
@@ -128,7 +158,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         "--match-program",
         default=None,
         metavar="PATH",
-        help="Restrict matches to runs whose state.json program_file equals PATH (exact string match).",
+        help="Restrict matches to runs whose state.json program_file names the same file as PATH (realpath compare).",
     )
     return parser.parse_args(argv)
 

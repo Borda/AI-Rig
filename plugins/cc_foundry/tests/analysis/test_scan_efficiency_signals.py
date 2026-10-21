@@ -86,6 +86,24 @@ class TestMissingModel:
         assert finding is not None
         assert finding.startswith("NO_MODEL:")
 
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            pytest.param("---\nname: x\nmodel: haiku\n---\n", "INLINE_MODEL:", id="inline-skill-declaring-model"),
+            pytest.param("---\nname: x\neffort: low\n---\n", None, id="inline-skill-without-model"),
+            pytest.param("---\nname: x\ncontext: fork\n---\n", "NO_MODEL:", id="forked-skill-without-model"),
+            pytest.param("---\nname: x\ncontext: fork\nmodel: sonnet\n---\n", None, id="forked-skill-with-model"),
+        ],
+    )
+    def test_skill_model_follows_fork_context(self, tmp_path: Path, text: str, expected: str | None) -> None:
+        """A skill's `model:` belongs only on `context: fork` skills; inline skills run on the session model.
+
+        An inline skill's `model:` swaps the session model for the rest of the turn and rewrites the cached prefix, so
+        it is the declaration, not its absence, that is flagged there; a forked skill still needs an explicit tier.
+        """
+        finding = ses.missing_model(tmp_path / "skills" / "x" / "SKILL.md", text)
+        assert (finding.split(" ", 1)[0] if finding else None) == expected
+
 
 class TestDeclaresModel:
     """Covers which files are required to declare a tier."""
@@ -126,10 +144,10 @@ class TestScan:
         assert "unsupported-flag-check boilerplate: 1 files" in capsys.readouterr().out
 
     def test_missing_model_reported_for_skill(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """A SKILL.md without a model line appears in the report."""
+        """A forked SKILL.md without a model line appears in the report."""
         skill = tmp_path / "skills" / "demo"
         skill.mkdir(parents=True)
-        (skill / "SKILL.md").write_text("---\nname: demo\n---\n", encoding="utf-8")
+        (skill / "SKILL.md").write_text("---\nname: demo\ncontext: fork\n---\n", encoding="utf-8")
         ses.scan(tmp_path)
         assert "NO_MODEL:" in capsys.readouterr().out
 

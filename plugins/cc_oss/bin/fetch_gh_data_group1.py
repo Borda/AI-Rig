@@ -35,6 +35,9 @@ from shutil import which
 #: GitHub allows owner and repo names matching [A-Za-z0-9._-]; we enforce the
 #: combined ``owner/repo`` shape strictly to defuse URL-path injection (A03:2021).
 _REPO_RE = re.compile(r"^[a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+$")
+#: A cutoff lands inside a ``gh search`` query (``closed:>=<cutoff>``), so a space or extra qualifier would widen the
+#: search to other repositories: only ``YYYY-MM-DD`` with an optional ``THH:MM:SSZ`` is accepted.
+_CUTOFF_RE = re.compile(r"\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}Z)?")
 
 #: GraphQL query listing the 100 most recently updated discussions with number, title, state and creation time.
 _DISCUSSIONS_QUERY = (
@@ -109,13 +112,19 @@ def _fetch_one(gh: str, name: str, cmd_args: list[str], output_dir: Path) -> tup
         No doctest — subprocess-dependent; covered by pytest.
     """
     out_path = output_dir / f"{name}.json"
-    result = subprocess.run(  # noqa: S603
-        [gh, *cmd_args],
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=90,
-    )
+    try:
+        result = subprocess.run(  # noqa: S603
+            [gh, *cmd_args],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=90,
+        )
+    except subprocess.TimeoutExpired:
+        # one hung dataset must not abort the fan-out: `future.result()` would re-raise it and lose every other dataset
+        out_path.write_text("", encoding="utf-8")
+        print(f"⚠ fetch_gh_data_group1: {name} timed out after 90 s (non-fatal)", file=sys.stderr)
+        return name, False
     if result.returncode == 0:
         out_path.write_text(result.stdout, encoding="utf-8")
         return name, True
@@ -270,7 +279,14 @@ def _build_datasets(owner_repo: str, cutoffs: Cutoffs) -> list[tuple[str, list[s
         ),
         (
             "secret_scanning_alerts",
-            ["api", f"repos/{owner_repo}/secret-scanning/alerts?state=open"],
+            # hide_secret (API default false) + del(.secret): the literal secret value never reaches the group1 file
+            # or anything derived from it; scoring only counts open alerts.
+            [
+                "api",
+                f"repos/{owner_repo}/secret-scanning/alerts?state=open&hide_secret=true",
+                "--jq",
+                "[.[] | del(.secret)]",
+            ],
         ),
         (
             "fork_dates",
@@ -406,13 +422,17 @@ def _parse_args(args: list[str]) -> tuple[dict, str | None]:
     output_dir = fields["output_dir"]
     if not owner_repo:
         return fields, "fetch_gh_data_group1: --repo required"
-    if not _REPO_RE.match(owner_repo):
+    # `.` and `..` pass the character class but would walk the `repos/<owner>/<repo>` API path
+    if not _REPO_RE.match(owner_repo) or {".", ".."} & set(owner_repo.split("/")):
         return (
             fields,
             f"fetch_gh_data_group1: --repo must match 'owner/repo' (allowed chars: A-Za-z0-9._-), got: {owner_repo!r}",
         )
     if not output_dir:
         return fields, "fetch_gh_data_group1: --output-dir required"
+    for flag, field in _FLAG_FIELDS.items():
+        if field.startswith("cutoff_") and fields[field] and not _CUTOFF_RE.fullmatch(fields[field]):
+            return fields, f"fetch_gh_data_group1: {flag} must be YYYY-MM-DD[THH:MM:SSZ], got: {fields[field]!r}"
 
     return fields, None
 

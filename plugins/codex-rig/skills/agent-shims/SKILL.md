@@ -1,6 +1,6 @@
 ---
 name: agent-shims
-description: 'Safely manage Codex Rig role-agent shims: doctor, status, install, or remove; one action only.'
+description: 'Safely manage Codex Rig role-agent shims: doctor, status, or remove; install only reports its platform block. One action only.'
 ---
 
 > Before asking, read [User Questions](../../shared/codex-user-questions.md).
@@ -20,7 +20,7 @@ Locate `../../scripts/manage_role_agents.py` relative to this installed `SKILL.m
 - `doctor`: run read-only live prerequisite check, render its JSON result for person.
 - `status`: run read-only health and installed-roster summary, render its JSON result for person.
 - `install`: report stable platform block. Never request approval; no new shim plan or write is allowed.
-- `remove`: use same exact-digest flow to remove every intact managed shim. Never delete by filename prefix or marker alone. On failure, apply the same per-exit-code recovery guidance listed below for `doctor` and `status` — it applies to `remove`'s failure modes too.
+- `remove`: use same exact-digest flow to remove every intact managed shim. Never delete by filename prefix or marker alone. On failure, apply the same per-failure-category recovery guidance in item 4 below for `doctor` and `status` — it applies to `remove`'s failure modes too.
 
 Preserve manager's exit contract: `0` success/converged, `2` usage, `3` cancelled, `4` drift/conflict, `5` prerequisite blocked, `6` untrusted state, `7` internal/recovery failure. Never retry mutating action after codes `4`, `6`, or `7`; report evidence, keep files untouched.
 

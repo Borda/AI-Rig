@@ -10,15 +10,30 @@ False-positive suppression — a cross-block reference is NOT reported when the
 referencing block already recovers the value locally:
 
 1. Re-derivation: the block re-loads persisted state before the reference via
-   ``eval "$(...)"`` or ``source``/``.`` sourcing (state-file reload pattern).
-   Direct ``VAR=...`` re-assignment in the same block is likewise safe.
+   ``eval "$(...)"`` or ``source``/``.`` sourcing (state-file reload pattern),
+   at line start or after ``&&``/``||``/``;``/``then``/``do`` (e.g.
+   ``[ -f "$F" ] && . "$F"``). Re-assignment in the same block is likewise
+   safe: ``VAR=...``, the sentinel read-back ``IFS= read -r VAR < file``,
+   ``mapfile``/``readarray`` targets and ``for VAR in`` loop variables.
 2. Empty-var-defended: every reference is a parameter expansion with a default
    (``${VAR:-x}``) or feeds a stripped var guarded by ``[ -z "$X" ] && X=...``.
-3. Template placeholder: the block also contains a ``$X``/``${X}`` token never
-   assigned in ANY bash block (e.g. loop counter ``${I}``) — the block is an
-   orchestrator-filled template, not verbatim-executed shell.
 
-References inside full-line ``#`` comments are ignored (not executed shell).
+Exemption is per variable, never per block. A token no block assigns (an
+orchestrator-filled ``${I}``, an ``<identifier>`` placeholder) is never
+reported itself, but it no longer hides other lost variables in the same
+block — the old whole-block template exemption let the standard
+``export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"`` preamble mask nearly
+every block.
+
+Text the shell never expands is ignored before scanning: single-quoted spans
+(e.g. jq programs carrying ``$cmd``) and ``#`` comments, full-line or trailing.
+Known limitation: heredoc bodies are lexed like ordinary shell, so an
+apostrophe inside an unquoted heredoc body would open a false single-quoted
+span; no scanned block has that shape.
+
+Scope of ``--scan-dir``: every Markdown file under a plugin's ``skills/`` tree (``SKILL.md`` plus the ``modes/``,
+``_shared/`` and ``templates/`` files it loads), each ``agents/*.md`` prompt and ``claude-skills/``. Their blocks run as
+separate Bash calls just like the entry point's. Explicit file arguments are checked whatever their path.
 
 Usage:
     python "${CLAUDE_PLUGIN_ROOT}/bin/check_bash_persistence.py" [files...]
@@ -66,6 +81,9 @@ _SKIP_VARS: frozenset[str] = frozenset(
         "RUN_DIR",
         "REPORT_DIR",
         "SKIP_GATE",
+        # session-token sources of the standard CSID preamble; set by the shell/harness, never by a block
+        "PPID",
+        "CLAUDE_CODE_SESSION_ID",
         # common short loop/counter vars unlikely to cause real persistence bugs
         "f",
         "i",
@@ -96,24 +114,40 @@ _SKIP_VARS: frozenset[str] = frozenset(
 )
 
 _MIN_BLOCKS = 2  # need ≥2 blocks for a cross-block reference to be possible
+#: Globs, relative to a scan root, of the Markdown files whose ```bash blocks run as separate Bash calls.
+_SCAN_GLOBS: tuple[str, ...] = ("*/skills/**/*.md", "*/agents/*.md", "*/claude-skills/**/*.md")
 #: Matches the opening fence of a ``bash`` code block.
 _BASH_OPEN = re.compile(r"^```bash\s*$")
 #: Matches a bare closing code fence.
 _FENCE_CLOSE = re.compile(r"^```\s*$")
 #: Matches a shell variable assignment at line start, optionally prefixed by ``export`` or ``local``.
 _ASSIGN = re.compile(r"^[ \t]*(?:export[ \t]+|local[ \t]+)?([A-Za-z_][A-Za-z0-9_]*)=")
+#: Matches an assignment after a command separator, case-branch ``)``, brace or list keyword
+#: (``A=1; B=2``, ``read -r X || X=""``, ``SINCE) SINCE=$V;;``, ``then X=1``).
+_ASSIGN_INLINE = re.compile(
+    r"(?:[;)&|{]|\bthen\b|\bdo\b|\belse\b)[ \t]*(?:export[ \t]+|local[ \t]+)?([A-Za-z_][A-Za-z0-9_]*)="
+)
 #: Matches a ``$VAR`` or ``${VAR}`` reference with a name of at least two characters.
 _REF = re.compile(r"\$\{?([A-Za-z_][A-Za-z0-9_]+)\}?")
-#: Single-char-permitting reference regex — used only for template-placeholder detection (e.g. ${I}).
-_REF_ANY = re.compile(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?")
-#: State-reload commands that re-derive prior shell state within a fresh block.
-#: The `.`/`source` path may be quoted (`. "$FILE"`) or bare (`. $FILE`, `. ./f`).
-_RELOAD = re.compile(r"""^[ \t]*(?:eval[ \t]+"?\$\(|source[ \t]+|\.[ \t]+["'./~$])""")
-#: Angle-bracket identifier placeholders (e.g. <TARGET_MODULE>, <file>) mark a block
-#: as a usage-example/doc snippet, not verbatim-executed shell. Matches only
-#: <identifier> with no interior spaces — never shell redirection (`< file`),
-#: process substitution (`<(`), or heredocs (`<<`).
-_ANGLE_PLACEHOLDER = re.compile(r"<[A-Za-z_][A-Za-z0-9_]*>")
+#: State-reload commands that re-derive prior shell state within a fresh block, at line start or after a
+#: command separator / list keyword. The `.`/`source` path may be quoted (`. "$FILE"`) or bare (`. $FILE`, `. ./f`).
+_RELOAD = re.compile(r"""(?:^|&&|\|\||;|\bthen\b|\bdo\b)[ \t]*(?:eval[ \t]+"?\$\(|source[ \t]+|\.[ \t]+["'./~$])""")
+#: Shell lexemes relevant to expansion: backslash escapes and double-quoted strings are kept verbatim (they expand);
+#: single-quoted spans and ``#`` comments (``#`` at line start or after whitespace) never expand and get blanked.
+_LEX = re.compile(r"""(?P<keep>\\.|"(?:[^"\\]|\\.)*")|(?P<blank>'[^']*'|(?<!\S)\#[^\n]*)""", re.S)
+#: A ``read``/``mapfile``/``readarray`` command word and its arguments up to the next command separator.
+_READ_CMD = re.compile(r"(?:^|(?<=[\s;|&(]))(read|mapfile|readarray)[ \t]+([^;|&\n]*)")
+#: A ``for VAR in`` loop header.
+_FOR_VAR = re.compile(r"\bfor[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]+in\b")
+#: Option letters that consume the next word as their argument, per builtin (``read -t`` takes a timeout,
+#: ``mapfile -t`` takes none).
+_ARG_FLAGS: dict[str, frozenset[str]] = {
+    "read": frozenset("adinNptu"),
+    "mapfile": frozenset("dnOsuCc"),
+    "readarray": frozenset("dnOsuCc"),
+}
+#: A bare shell identifier.
+_IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
 def extract_bash_blocks(text: str) -> list[str]:
@@ -148,11 +182,86 @@ def extract_bash_blocks(text: str) -> list[str]:
     return blocks
 
 
+def strip_unexpanded(block: str) -> str:
+    """Blank out the parts of a bash block the shell never expands, keeping line structure.
+
+    Single-quoted spans and ``#`` comments are replaced by spaces (newlines kept, so
+    line indices stay aligned with the original block). Double-quoted strings and
+    backslash escapes are kept verbatim — an apostrophe inside ``"..."`` is not a
+    quote opener.
+
+    Args:
+        block: bash block body text.
+
+    Returns:
+        Block text with unexpanded spans blanked.
+
+    Examples:
+        >>> strip_unexpanded("jq '$cmd' \\"$F\\"\\n").split()
+        ['jq', '"$F"']
+        >>> "$X" in strip_unexpanded('echo "it\\'s $X"\\n')
+        True
+        >>> strip_unexpanded("echo $A  # don't\\necho $B\\n").splitlines()[1]
+        'echo $B'
+    """
+
+    def _sub(m: re.Match[str]) -> str:
+        if m.group("keep") is not None:
+            return m.group(0)
+        return re.sub(r"[^\n]", " ", m.group(0))
+
+    return _LEX.sub(_sub, block)
+
+
+def _read_targets(line: str) -> set[str]:
+    """Return variable names a ``read``/``mapfile``/``readarray`` command or ``for`` header assigns on one line.
+
+    Option words are skipped; options taking an argument consume the next word
+    (``read -a NAME`` makes ``NAME`` a target). Collection stops at the first
+    word that is not an identifier (a redirection, a quote, a separator).
+
+    Args:
+        line: single line of bash, already passed through strip_unexpanded.
+
+    Returns:
+        Set of assigned names.
+
+    Examples:
+        >>> sorted(_read_targets('IFS= read -r RUN_DIR < "$F" 2>/dev/null || RUN_DIR=""'))
+        ['RUN_DIR']
+        >>> sorted(_read_targets("while IFS=$'\\\\t' read -r A B; do"))
+        ['A', 'B']
+        >>> sorted(_read_targets("mapfile -t FILES < <(ls)"))
+        ['FILES']
+        >>> sorted(_read_targets("read -t 5 -a ARR"))
+        ['ARR']
+        >>> sorted(_read_targets("for P in $LIST; do"))
+        ['P']
+    """
+    names = set(_FOR_VAR.findall(line))
+    for m in _READ_CMD.finditer(line):
+        arg_flags = _ARG_FLAGS[m.group(1)]
+        words = iter(m.group(2).split())
+        for word in words:
+            if word.startswith("-") and len(word) > 1:
+                if word[-1] in arg_flags:
+                    nxt = next(words, "")
+                    if word[-1] == "a" and m.group(1) == "read" and _IDENT.fullmatch(nxt):
+                        names.add(nxt)
+                continue
+            if not _IDENT.fullmatch(word):
+                break
+            names.add(word)
+    return names
+
+
 def assigned_vars(block: str) -> frozenset[str]:
     """Return variable names assigned in a bash block.
 
-    Only matches bare assignments at the start of a line (after optional
-    whitespace and optional export/local prefix). Comment lines are skipped.
+    Matches bare assignments at the start of a line (after optional whitespace
+    and optional export/local prefix) or after a separator / case-branch ``)`` /
+    list keyword, plus ``read``/``mapfile``/``readarray`` targets and
+    ``for VAR in`` loop variables anywhere on a line. Comment lines are skipped.
 
     Args:
         block: bash block body text.
@@ -167,6 +276,10 @@ def assigned_vars(block: str) -> frozenset[str]:
         frozenset()
         >>> sorted(assigned_vars("export QUX=y\\nlocal QUZ=z\\n"))
         ['QUX', 'QUZ']
+        >>> sorted(assigned_vars('IFS= read -r PYTEST_CMD < "$S" || PYTEST_CMD=""\\n'))
+        ['IFS', 'PYTEST_CMD']
+        >>> sorted(assigned_vars('A=1; B=2\\ncase "$K" in SINCE) SINCE=$V;; esac\\n'))
+        ['A', 'B', 'SINCE']
     """
     names: set[str] = set()
     for line in block.splitlines():
@@ -175,6 +288,8 @@ def assigned_vars(block: str) -> frozenset[str]:
         m = _ASSIGN.match(line)
         if m:
             names.add(m.group(1))
+        names.update(_ASSIGN_INLINE.findall(line))
+        names |= _read_targets(line)
     return frozenset(names)
 
 
@@ -250,46 +365,12 @@ def _ref_line_indices(block: str, var: str) -> list[int]:
     return [i for i, ln in enumerate(lines) if not ln.lstrip().startswith("#") and _refs_var(ln, var)]
 
 
-def is_template_block(block: str, all_assigned: frozenset[str]) -> bool:
-    """Return True when block contains an orchestrator-substituted placeholder token.
-
-    A ``$X``/``${X}`` token never assigned in ANY bash block (and not a known-safe
-    env/loop var), or an ``<identifier>`` angle-bracket placeholder, signals the
-    block is a Claude-filled template / usage example, not verbatim shell.
-
-    Args:
-        block: referencing bash block body.
-        all_assigned: union of variable names assigned across all blocks in the file.
-
-    Returns:
-        True if a never-assigned placeholder token is present.
-
-    Examples:
-        >>> is_template_block("cp x ${I}.md\\n", frozenset({"RUN_ID"}))
-        True
-        >>> is_template_block("echo ${RUN_ID}\\n", frozenset({"RUN_ID"}))
-        False
-        >>> is_template_block('grep "$SQ" rdeps <TARGET_MODULE>\\n', frozenset({"SQ"}))
-        True
-    """
-    for line in block.splitlines():
-        if line.lstrip().startswith("#"):
-            continue
-        if _ANGLE_PLACEHOLDER.search(line):
-            return True
-        for m in _REF_ANY.finditer(line):
-            tok = m.group(1)
-            if tok in _SKIP_VARS or tok in all_assigned:
-                continue
-            return True
-    return False
-
-
 def reloads_before_ref(block: str, var: str) -> bool:
     """Return True if block re-loads persisted state before first reference to var.
 
-    Detects ``eval "$(...)"`` and ``source``/``.`` sourcing lines appearing above
-    the first reference — the state-file reload / re-derivation pattern.
+    Detects ``eval "$(...)"`` and ``source``/``.`` sourcing on lines above the
+    first reference, at line start or after a separator such as
+    ``[ -f "$F" ] && . "$F"`` — the state-file reload / re-derivation pattern.
 
     Args:
         block: referencing bash block body.
@@ -303,12 +384,14 @@ def reloads_before_ref(block: str, var: str) -> bool:
         True
         >>> reloads_before_ref('rm "$S"\\neval "$(gen)"\\n', "S")
         False
+        >>> reloads_before_ref('[ -f "$F" ] && . "$F"\\necho "$MODE"\\n', "MODE")
+        True
     """
     idxs = _ref_line_indices(block, var)
     if not idxs:
         return False
     lines = block.splitlines()
-    return any(_RELOAD.match(lines[i]) for i in range(idxs[0]))
+    return any(_RELOAD.search(lines[i]) for i in range(idxs[0]))
 
 
 def _defended_at(lines: list[str], i: int, var: str) -> bool:
@@ -361,11 +444,27 @@ def refs_all_defended(block: str, var: str) -> bool:
     return all(_defended_at(lines, i, var) for i in idxs)
 
 
-def check_file(path: Path) -> list[str]:
-    """Return C41 violation strings for one SKILL.md file.
+def scan_paths(root: Path) -> list[Path]:
+    """Return every Markdown file under ``root`` whose bash blocks run as separate Bash calls.
+
+    That is a skill's ``SKILL.md`` and everything it loads (``modes/``, ``_shared/``, ``templates/``), each agent
+    prompt, and Claude-side bridge skills. A mode file's blocks are executed as their own Bash calls exactly like
+    the entry point's, so the same fresh-shell loss applies to them.
 
     Args:
-        path: path to SKILL.md to analyse.
+        root: Directory searched recursively.
+
+    Returns:
+        Matching paths, possibly with duplicates when patterns overlap (callers de-duplicate).
+    """
+    return [path for pattern in _SCAN_GLOBS for path in root.rglob(pattern)]
+
+
+def check_file(path: Path) -> list[str]:
+    """Return C41 violation strings for one Markdown file.
+
+    Args:
+        path: path to the skill, mode, template or agent Markdown file to analyse.
 
     Returns:
         List of finding strings; empty list = no violations.
@@ -383,16 +482,13 @@ def check_file(path: Path) -> list[str]:
         text = path.read_text(encoding="utf-8")
     except OSError:
         return []
-    blocks = extract_bash_blocks(text)
+    blocks = [strip_unexpanded(b) for b in extract_bash_blocks(text)]
     if len(blocks) < _MIN_BLOCKS:
         return []
     assigns = [assigned_vars(b) for b in blocks]
-    all_assigned: frozenset[str] = frozenset().union(*assigns)
     findings: list[str] = []
     for i in range(1, len(blocks)):
         block = blocks[i]
-        if is_template_block(block, all_assigned):  # rule 3: orchestrator-filled template
-            continue
         for var in sorted(referenced_vars(block)):
             if var in assigns[i]:  # re-assigned directly in same block
                 continue
@@ -419,18 +515,20 @@ def main(argv: list[str] | None = None) -> int:
     Returns:
         Exit code: 0 = all pass, 1 = violations found.
     """
-    parser = argparse.ArgumentParser(description="Detect shell variable persistence issues in SKILL.md files")
-    parser.add_argument("files", nargs="*", help="SKILL.md files to check")
-    parser.add_argument("--scan-dir", metavar="DIR", help="recursively scan DIR for SKILL.md files")
+    parser = argparse.ArgumentParser(description="Detect shell variable persistence issues in skill and agent Markdown")
+    parser.add_argument("files", nargs="*", help="Markdown files to check")
+    parser.add_argument(
+        "--scan-dir", metavar="DIR", help="recursively scan DIR for skill (incl. modes/_shared/templates) and agent .md"
+    )
     parser.add_argument("--timeout", type=int, help="ignored — accepted for CLI compatibility")
     args = parser.parse_args(argv)
 
     paths: list[Path] = []
     if args.scan_dir:
-        paths.extend(Path(args.scan_dir).rglob("*/skills/*/SKILL.md"))
+        paths.extend(scan_paths(Path(args.scan_dir)))
     paths.extend(Path(f) for f in args.files)
-    if not paths:
-        paths.extend(Path(".").rglob("*/skills/*/SKILL.md"))
+    if not paths and not args.scan_dir:  # an explicit --scan-dir with no matches must not fall back to scanning cwd
+        paths.extend(scan_paths(Path(".")))
 
     all_findings: list[str] = []
     for p in sorted(set(paths)):

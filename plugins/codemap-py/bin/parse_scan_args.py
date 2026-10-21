@@ -28,7 +28,6 @@ import os
 import re
 import shlex
 import sys
-import tempfile
 from pathlib import Path
 
 #: ``--root <value>`` where value is one of:
@@ -65,6 +64,70 @@ def _extract_root(arguments: str) -> str | None:
     return next(group for group in match.groups() if group is not None)
 
 
+#: Second line of every rejection message; ``scan-codebase`` prints the message verbatim.
+_SUPPORTED_LINE = "Supported: --root <path>, --incremental"
+
+
+def _flag_tokens(arguments: str) -> list[str]:
+    """Return the tokens left once the ``--root <value>`` pair is removed, split with shell quoting.
+
+    Removing the pair through :data:`_ROOT_RE` keeps validation on the same tokenization as root
+    extraction, so a quoted root such as ``--root "a --b"`` is never re-split into a fake ``--b`` flag.
+
+    Args:
+        arguments: Raw $ARGUMENTS string from the caller.
+
+    Returns:
+        Remaining tokens; an unbalanced quote falls back to whitespace splitting.
+
+    Examples:
+        >>> _flag_tokens('--root "a --b" --incremental')
+        ['--incremental']
+        >>> _flag_tokens("--root")
+        ['--root']
+    """
+    match = _ROOT_RE.search(arguments)
+    rest = arguments if match is None else f"{arguments[: match.start()]} {arguments[match.end() :]}"
+    try:
+        return shlex.split(rest)
+    except ValueError:
+        return rest.split()
+
+
+def validate_scan_args(arguments: str) -> str | None:
+    """Return the user-facing rejection message for unsupported $ARGUMENTS, or ``None`` when valid.
+
+    Args:
+        arguments: Raw $ARGUMENTS string from the caller.
+
+    Returns:
+        ``None`` when only ``--root <path>`` and ``--incremental`` appear; otherwise a two-line message
+        (``! --root requires a value`` or ``! Unknown flag(s): ...``, then the ``Supported:`` line).
+
+    Examples:
+        >>> validate_scan_args('--root "a --b" --incremental') is None
+        True
+        >>> print(validate_scan_args("--incremental --root"))
+        ! --root requires a value
+        Supported: --root <path>, --incremental
+        >>> print(validate_scan_args("--root --incremental"))
+        ! --root requires a value
+        Supported: --root <path>, --incremental
+        >>> print(validate_scan_args("--full --root=/x"))
+        ! Unknown flag(s): --full --root=/x
+        Supported: --root <path>, --incremental
+    """
+    root = _extract_root(arguments)
+    tokens = _flag_tokens(arguments)
+    if (root is not None and root.startswith("--")) or "--root" in tokens:
+        # a bare --root would otherwise fall back to a silent default-root scan
+        return f"! --root requires a value\n{_SUPPORTED_LINE}"
+    unknown = [token for token in tokens if token.startswith("--") and token != "--incremental"]  # noqa: S105 - CLI flag name, not a credential
+    if unknown:
+        return f"! Unknown flag(s): {' '.join(unknown)}\n{_SUPPORTED_LINE}"
+    return None
+
+
 def parse_scan_args(arguments: str) -> list[str]:
     """Parse the $ARGUMENTS string for ``--root`` and ``--incremental`` flags.
 
@@ -96,7 +159,8 @@ def parse_scan_args(arguments: str) -> list[str]:
     if root_val is not None:
         tokens.extend(["--root", root_val])
 
-    if "--incremental" in arguments:
+    # token test, not substring: "--root /a--incremental" must not enable incremental mode
+    if "--incremental" in _flag_tokens(arguments):
         tokens.append("--incremental")
 
     return tokens
@@ -190,15 +254,29 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if nul_output is not None:
-        # Validate write target is within TMPDIR to prevent arbitrary write via ``--nul-output``.
+        # Validate write target is within TMPDIR to prevent arbitrary write via ``--nul-output``. The base comes from
+        # the shared resolver, so an untrusted TMPDIR (foreign owner, writable by others, re-pointable link) cannot
+        # widen the allowed area.
+        bin_dir = str(Path(__file__).resolve().parent)
+        if bin_dir not in sys.path:
+            sys.path.insert(0, bin_dir)
+        from resolve_index_env import _resolve_tmpdir
+
         _nul_resolved = Path(nul_output).resolve()
-        _tmpdir = Path(os.environ.get("TMPDIR") or tempfile.gettempdir()).resolve()
+        _tmpdir = Path(_resolve_tmpdir()).resolve()
         try:
             _nul_resolved.relative_to(_tmpdir)
         except ValueError:
             print(f"! --nul-output path outside TMPDIR ({_tmpdir}): {nul_output}", file=sys.stderr)
             return 1
-        with open(nul_output, "wb") as fh:
+        # Open the path that was just checked, not the caller's spelling: a symlink swapped in after the
+        # check is refused (O_NOFOLLOW) instead of followed.
+        try:
+            fd = os.open(_nul_resolved, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        except OSError as exc:
+            print(f"! cannot open --nul-output {nul_output}: {exc}", file=sys.stderr)
+            return 1
+        with os.fdopen(fd, "wb") as fh:
             for token in tokens:
                 fh.write(token.encode() + b"\x00")
         return 0

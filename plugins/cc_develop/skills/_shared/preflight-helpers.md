@@ -12,8 +12,9 @@ Run when skill accepts `--plan <path>` flag. Sets `$PLAN_FILE`.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/parse-skill-flags.py" --flags worktree --value-flags plan "$ARGUMENTS")"  # timeout: 5000 — both --plan spellings
-PLAN_FILE="$VALUE_PLAN"
+# --keep-state: no eval; --inlined: runs mid-skill, the calling skill's contract stays
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/parse-skill-flags.py" --flags worktree --value-flags plan --keep-state dev-preflight --inlined "$ARGUMENTS" >/dev/null  # timeout: 5000 — both --plan spellings
+IFS= read -r PLAN_FILE < "${TMPDIR:-/tmp}/dev-preflight-plan-${CSID}" 2>/dev/null || PLAN_FILE=""
 if [ -n "$PLAN_FILE" ] && [ ! -f "$PLAN_FILE" ]; then
   echo "! BREAKING — plan file not found: $PLAN_FILE"
   echo "Fix: pass an existing plan path via --plan <path> or --plan=<path>"
@@ -26,7 +27,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/plan_hash.py" record "$PLA
 
 ## Team Spawn Template
 
-Spawn prompt template for foundry:sw-engineer teammate spawns. Replace `[ROLE_PHRASE]` and `[FILE_SLUG]` with skill-specific values before inserting. debug and fix run 2-3 hypothesis investigators in parallel in the caller's tree (no worktree isolation, so their reports land where the lead reads them): keep the `Read-only investigation` line verbatim for them; feature and refactor teammates are writers — drop that line.
+Spawn prompt template for foundry:sw-engineer teammate spawns. Replace `[ROLE_PHRASE]` and `[FILE_SLUG]` with skill-specific values before inserting. Each `Agent()` call sets `name` (e.g. `fix-hypothesis-a`) and `description` (3–5 words of scope) and opens prompt line 1 with the teammate's delta (`[TASK_DELTA]`, e.g. `Investigate root-cause hypothesis [N].`); the shared `[ROLE_PHRASE]` and boilerplate follow line 1. debug and fix run 2-3 hypothesis investigators in parallel in the caller's tree (no worktree isolation, so their reports land where the lead reads them): keep the `Read-only investigation` line verbatim for them; feature and refactor teammates are writers — drop that line.
 
 Output filenames are per-skill contracts — the consumer skill's spawn prompts and completion-check/gate expressions are the source of truth; this table mirrors them. Never invent a different shape from the generic `[FILE_SLUG]-[N]-[timestamp]` pattern below — feature's Wave-1 gate and each completion-check glob key on these exact names:
 
@@ -38,8 +39,9 @@ Output filenames are per-skill contracts — the consumer skill's spawn prompts 
 | refactor | `[refactor goal]` | `[RUN_DIR]/refactor-[agent-name].md` (agent-name = qa-specialist, sw-engineer; no timestamp — completion check globs `-type f`) |
 
 ```
+[TASK_DELTA]
 You are a foundry:sw-engineer teammate working on: [ROLE_PHRASE].
-Read ${HOME}/.claude/TEAM_PROTOCOL.md — use AgentSpeak v2 for inter-agent messages.
+Read ~/.claude/TEAM_PROTOCOL.md — use AgentSpeak v2 for inter-agent messages.
 Your hypothesis: [hypothesis N]. Investigate ONLY this root cause.
 [debug/fix hypothesis investigators only] Read-only investigation: never edit, create or delete tracked files and never run `git stash`, `git checkout`, `git reset` or `git restore` — sibling investigators share this working tree; run reproduction probes in a `mktemp -d` copy or under the run directory; write only your analysis file.
 Report findings to @lead using deltaT# or epsilonT# codes.

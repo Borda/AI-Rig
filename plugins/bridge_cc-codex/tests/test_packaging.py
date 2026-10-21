@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import os
+import runpy
 import subprocess
 import sys
 from pathlib import Path
@@ -261,10 +263,24 @@ def test_packaged_consent_runtime_is_executable_and_fingerprinted(
         if action == "check":
             assert json.loads(result.stdout)["consent"] == "absent"
     assert not (home / "config.toml").exists()
+
+    class _Terminal(io.StringIO):
+        """Stand in for the operator terminal that alone may mint a one-time consent token."""
+
+        def isatty(self) -> bool:
+            """Report a terminal so the installed helper accepts the mint."""
+            return True
+
+    printed = _Terminal()
+    with monkeypatch.context() as patch:
+        patch.setenv("CODEX_HOME", str(home))
+        patch.setattr(sys, "stdout", printed)
+        patch.setattr(sys, "stdin", _Terminal())
+        assert runpy.run_path(str(output / "bin/bridge_consent.py"))["main"](["issue-token"]) == 0
     granted = subprocess.run(
         [sys.executable, str(output / "bin/bridge_consent.py"), "grant", "--approve"],
         cwd=tmp_path,
-        env=env,
+        env={**env, "BRIDGE_OPERATOR_TOKEN": printed.getvalue().splitlines()[1]},
         stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,

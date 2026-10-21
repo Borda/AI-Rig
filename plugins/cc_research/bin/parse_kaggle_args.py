@@ -21,8 +21,10 @@ flag and then never echoed it, so a resumed run gave no sign of which checkpoint
 
 Side effects:
     creates ``.experiments/kaggle/``, clears a stale ``.temp/state/skill-contract.md`` left by a
-    crashed prior run (compaction-contract.md §Lifecycle), and writes five sentinels:
-    ``kaggle-{competition-name,eda-only,inference-only,offline-setup,keep-items}-${CSID}``.
+    crashed prior run (compaction-contract.md §Lifecycle), and writes six sentinels:
+    ``kaggle-{competition-name,eda-only,inference-only,offline-setup,resume,keep-items}-${CSID}``.
+    ``resume`` holds the ``--resume`` path (empty when absent) so Step 3 can tell the generating
+    agent to extend that script instead of overwriting it.
     All paths are CWD-relative, matching the shell original — the contract and experiment dirs
     belong to the project the skill runs in, not to this script's location.
 
@@ -40,6 +42,14 @@ import re
 import sys
 import tempfile
 from pathlib import Path
+
+#: Sibling import: bin/ is not a package. Putting it on the path resolves the private writer whether this file runs as
+#: a script, under the test conftest, or as a doctest module.
+_BIN_DIR = str(Path(__file__).resolve().parent)
+if _BIN_DIR not in sys.path:
+    sys.path.insert(0, _BIN_DIR)
+
+from _sentinel_io import write_private_text  # noqa: E402
 
 #: Duplicated from ``extract-keep-flag.py`` rather than imported — that script's name is
 #: hyphenated and so not importable, and a shared module would add import machinery to a
@@ -135,6 +145,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("arguments", nargs="?", default="", help="Raw $ARGUMENTS string.")
     args = parser.parse_args(argv)
+    csid = _session_token()
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", csid) or ".." in csid:
+        print("parse_kaggle_args: invalid sentinel session identity", file=sys.stderr)
+        return 2
     raw = args.arguments
 
     competition = _first_token(raw)
@@ -152,12 +166,12 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     tmp = _sentinel_dir()
-    csid = _session_token()
     payload = {
         "competition-name": competition,
         "eda-only": str(eda_only).lower(),
         "inference-only": str(inference_only).lower(),
         "offline-setup": str(offline_setup).lower(),
+        "resume": resume,
         "keep-items": keep_items,
     }
     try:
@@ -166,7 +180,7 @@ def main(argv: list[str] | None = None) -> int:
         for name, value in payload.items():
             # Trailing newline is the `IFS= read -r` reload contract; without it read exits
             # non-zero and the `|| VAR=...` fallback wipes the value.
-            (tmp / f"kaggle-{name}-{csid}").write_text(value + "\n", encoding="utf-8", newline="\n")
+            write_private_text(tmp / f"kaggle-{name}-{csid}", value + "\n")
     except OSError as exc:
         print(f"parse_kaggle_args: cannot persist state: {exc}", file=sys.stderr)
         return 1

@@ -269,6 +269,24 @@ class TestDoctestFold:
         assert "not-merged" in text
         assert "3-state" in text
 
+    def test_separate_doctest_pass_halts_on_failure(self) -> None:
+        """The degraded separate doctest pass acts on its exit code instead of only recording it.
+
+        Scenario: collection failed, so doctests run as their own pass. A failing doctest there (pytest exit 1) used
+        to be captured in ``DOCTEST_EXIT`` and never read, so the stack continued and reported ``not-merged``. Exit 5
+        (module has no doctests) stays a pass; every other non-zero exit halts.
+        """
+        fences = _bash_fences(_text())
+        doctest_fence = next(f for f in fences if 'if [ "$DOCTEST_MERGED" != "true" ]; then' in f)
+        case_idx = doctest_fence.index("case $DOCTEST_EXIT in")
+        assert doctest_fence.index("DOCTEST_EXIT=$?") < case_idx
+        arms = doctest_fence[case_idx:]
+        assert "0|5) ;;" in arms
+        assert "1)\n" in arms
+        assert "*)\n" in arms
+        assert arms.count("exit 1") == 2
+        assert arms.count("Quality stack halted — do not proceed further") == 2
+
     def test_doctest_classification_covers_both_pytest_default_patterns(self) -> None:
         """Classification matches pytest's *both* default ``python_files`` patterns.
 

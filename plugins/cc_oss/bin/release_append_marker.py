@@ -65,6 +65,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import os
@@ -539,12 +540,19 @@ def _write_marker_atomic(path: Path, sha: str) -> str | None:
     if any(component.is_symlink() for component in (path, *path.parents)):
         return "release marker path must not traverse a symlink"
     path.parent.mkdir(parents=True, exist_ok=True)
-    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+    # temp file + os.replace: a crash mid-write leaves the previous marker, never an empty one
+    pending = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
     try:
-        with os.fdopen(os.open(path, flags, 0o600), "w", encoding="utf-8", newline="\n") as marker:
+        pending.unlink(missing_ok=True)
+        with os.fdopen(os.open(pending, flags, 0o600), "w", encoding="utf-8", newline="\n") as marker:
             marker.write(sha.strip() + "\n")
+        os.replace(pending, path)
     except OSError as exc:
         return f"release marker write failed: {exc}"
+    finally:
+        with contextlib.suppress(OSError):
+            pending.unlink(missing_ok=True)
     return None
 
 

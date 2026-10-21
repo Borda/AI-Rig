@@ -132,9 +132,15 @@ class TestBookkeeping:
         assert "**Zero bookkeeping-only turns**" in _skill()
 
     def test_cross_validation_task_stays_visible(self) -> None:
-        """The Step 4 task is still created upfront and deleted when unused, so the step list matches the baseline."""
+        """The Step 4 task is created upfront and never deleted: parent validation runs on every review.
+
+        Only the verifier spawns depend on critical/blocking findings, so a review without them still completes the
+        task.
+        """
         skill = _skill()
-        assert "always created upfront, so the step stays visible; the delete rides with Step 5's first call" in skill
+        assert (
+            "Never deleted: parent validation runs on every review, only the verifier spawns are conditional" in skill
+        )
 
 
 def test_step_2_prelude_is_one_call() -> None:

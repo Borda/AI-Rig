@@ -11,12 +11,16 @@ pushes a scope it cannot describe.
 
 Usage:
     python "${CLAUDE_PLUGIN_ROOT}/bin/derive_fork_remote.py" --fork-remote "$FORK_REMOTE" --head-ref "$HEAD_REF" \
-        --base-ref "$BASE_REF"
+        --base-ref "$BASE_REF" --fork-repo "$FORK_REPO"
+
+``FORK_REPO`` comes from the ``resolve-head-repo-name`` sentinel ``resolve_pr_refs.py`` writes (the PR's
+``headRepository.name``); empty keeps origin's repository name.
 
 Exit codes:
     0 — push scope computed and printed
-    1 — the fork remote or head ref is unresolved, the push scope could not be computed, or one of
-        --fork-remote/--head-ref/--base-ref starts with '-' (argv-injection guard)
+    1 — the fork remote or head ref is unresolved, the push scope could not be computed, one of
+        --fork-remote/--head-ref/--base-ref starts with '-' (argv-injection guard), or the remote or a ref
+        is not a valid git name (e.g. ``a..b``, ``@{-1}``, whitespace)
 """
 
 from __future__ import annotations
@@ -29,6 +33,36 @@ from typing import Final
 
 #: Prefix identifying an SSH-style origin URL, so the derived fork remote URL uses the same transport.
 _SSH_ORIGIN_PREFIX: Final = "git@"
+#: Fork remote name, which doubles as the fork owner in the derived URL: a GitHub login shape, never leading ``-``.
+_REMOTE_NAME_RE: Final = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]*")
+#: GitHub repository name shape for ``--fork-repo``; it lands inside the fork URL, so no ``/``, whitespace or
+#: leading ``-``. A leading ``.`` stays legal (``org/.github`` takes pull requests); bare ``.``/``..`` are refused in
+#: ``main``.
+_REPO_NAME_RE: Final = re.compile(r"[A-Za-z0-9_.][A-Za-z0-9._-]*")
+#: Characters ``git check-ref-format`` rejects anywhere in a ref name.
+_INVALID_REF_CHARS_RE: Final = re.compile(r"[\x00-\x20\x7f~^:?*\[\\]")
+
+
+def is_valid_ref_name(name: str) -> bool:
+    """Apply the core ``git check-ref-format`` rules to a branch name without spawning git.
+
+    Args:
+        name: Branch name as it would follow ``refs/heads/``.
+
+    Returns:
+        ``True`` when git would accept the name and it cannot be read as an option or revision expression.
+
+    Examples:
+        >>> is_valid_ref_name("feature/x-1")
+        True
+        >>> [is_valid_ref_name(n) for n in ("a..b", "a b", "@{-1}", "x.lock", "a/", "-x", "a/.b", "")]
+        [False, False, False, False, False, False, False, False]
+    """
+    if not name or name == "@" or _INVALID_REF_CHARS_RE.search(name):
+        return False
+    if ".." in name or "@{" in name or "//" in name or name.startswith(("/", "-")) or name.endswith(("/", ".")):
+        return False
+    return not any(part.startswith(".") or part.endswith(".lock") for part in name.split("/"))
 
 
 def _git(args: list[str], timeout: int) -> tuple[int, str]:
@@ -88,17 +122,19 @@ def fork_url(origin_url: str, fork_remote: str, repo_name: str) -> str:
     return f"https://github.com/{fork_remote}/{repo_name}.git"
 
 
-def ensure_fork_remote(fork_remote: str, timeout: int) -> None:
+def ensure_fork_remote(fork_remote: str, timeout: int, fork_repo: str = "") -> None:
     """Add the fork remote when git does not already know it.
 
     Args:
         fork_remote: Remote name, which doubles as the fork owner.
         timeout: Maximum wait in seconds per git call.
+        fork_repo: Repository name of the fork when it differs from ``origin``'s (a renamed fork); empty assumes the
+            fork keeps the upstream name.
     """
     if _git(["remote", "get-url", fork_remote], timeout)[0] == 0:
         return
     _, origin_url = _git(["remote", "get-url", "origin"], timeout)
-    url = fork_url(origin_url, fork_remote, repo_name_from_origin(origin_url))
+    url = fork_url(origin_url, fork_remote, fork_repo or repo_name_from_origin(origin_url))
     _git(["remote", "add", fork_remote, url], timeout)
     print(f"→ Added remote {fork_remote} → {url}")
 
@@ -148,6 +184,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--fork-remote", default="", help="Fork remote name (also the fork owner).")
     parser.add_argument("--head-ref", default="", help="Branch being pushed.")
     parser.add_argument("--base-ref", default="", help="Base branch on origin, used as the fallback range.")
+    parser.add_argument(
+        "--fork-repo",
+        default="",
+        help="Fork repository name when it differs from origin's (headRepository.name); default: origin's name.",
+    )
     parser.add_argument("--timeout", type=int, default=10, help="Max subprocess wait in seconds (default: 10).")
     args = parser.parse_args(argv)
 
@@ -170,7 +211,19 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
 
-    ensure_fork_remote(args.fork_remote, args.timeout)
+    # a name git rejects or reads as a revision expression (`@{-1}`, `a..b`) must not reach the push scope
+    if not _REMOTE_NAME_RE.fullmatch(args.fork_remote) or ".." in args.fork_remote:
+        print(f"⛔ Step 10: --fork-remote is not a valid remote name: {args.fork_remote!r}", file=sys.stderr)
+        return 1
+    for flag, value in (("--head-ref", args.head_ref), ("--base-ref", args.base_ref)):
+        if value and not is_valid_ref_name(value):
+            print(f"⛔ Step 10: {flag} is not a valid branch name: {value!r}", file=sys.stderr)
+            return 1
+    if args.fork_repo and (not _REPO_NAME_RE.fullmatch(args.fork_repo) or args.fork_repo in {".", ".."}):
+        print(f"⛔ Step 10: --fork-repo is not a valid repository name: {args.fork_repo!r}", file=sys.stderr)
+        return 1
+
+    ensure_fork_remote(args.fork_remote, args.timeout, args.fork_repo)
     _git(["branch", f"--set-upstream-to={args.fork_remote}/{args.head_ref}"], args.timeout)
     count, stat = push_scope(args.fork_remote, args.head_ref, args.base_ref, args.timeout)
     _, last_subject = _git(["log", "-1", "--format=%s"], args.timeout)

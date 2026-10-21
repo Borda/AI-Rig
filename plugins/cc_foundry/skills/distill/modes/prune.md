@@ -11,8 +11,9 @@ Triggered when `$ARGUMENTS == "prune"`. Locate, evaluate, and trim project memor
 <!-- Slug-divergence guard: `resolve_memory_dir.py` is the single source of truth for the memory directory and `MEMORY.md` filename. Any consumer that reads or writes project memory (e.g. distill's `memory` mode — `modes/memory.md`) MUST resolve the same path via this script — do NOT hardcode an alternate slug or filename here or elsewhere; divergence causes silent split-brain between writer and reader. -->
 
 ```bash
-# timeout: 5000
+# timeout: 15000
 FOUND=$(find "$HOME/.claude/projects" -maxdepth 3 -name "MEMORY.md" -path "*/memory/MEMORY.md" 2>/dev/null | sort)
+CUR_MEM=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_memory_dir.py" 2>/dev/null)
 if [ -z "$FOUND" ]; then
     echo "PRUNE_ABORT"
     echo "PRUNE_ABORT_REASON: no memory files found under ~/.claude/projects/"
@@ -21,26 +22,30 @@ else
     echo "$FOUND" | while IFS= read -r f; do
         slug=$(echo "$f" | sed 's|.*/projects/||;s|/memory/MEMORY.md||')
         tokens=$(( $(wc -c < "$f" 2>/dev/null || echo 0) / 3 ))
-        echo "PRUNE_ENTRY: $slug | ${tokens}k tokens | $f"
+        # -ef, not string compare: resolver slug casing can differ from on-disk dir name
+        scope=other; [ -n "$CUR_MEM" ] && [ "$f" -ef "$CUR_MEM/MEMORY.md" ] && scope=current
+        echo "PRUNE_ENTRY: $slug | ${tokens} tokens | $scope | $f"
     done
 fi
 ```
 
-**Short-circuit**: after block runs, scan for `PRUNE_ABORT` (exact-line match). If present, stop prune mode, end with Confidence block. Otherwise collect all `PRUNE_ENTRY:` lines — each has format `<slug> | <N>k tokens | <path>`.
+**Short-circuit**: after block runs, scan for `PRUNE_ABORT` (exact-line match). If present, stop prune mode, end with Confidence block. Otherwise collect all `PRUNE_ENTRY:` lines — each has format `<slug> | <N> tokens | <scope> | <path>`.
 
-**If `PROJECT_FLAG == true`** (interactive picker): call `AskUserQuestion` with `multiSelect: true`. Build options from `PRUNE_ENTRY` lines — label = `<slug> (tokens=<N>k)`, description = `prune this project's memory`. Max 4 options: more than 4 projects found, take 4 largest by token count, note in question text that remaining projects were omitted (user can re-run). Always add a final option with label `Skip`, description `exit without changes`. Checked slugs: extract matching `<path>` fields as working set.
+**CLAUDE.md overlap scope**: only the `current` entry (memory of the project in the working directory) is compared against this project's CLAUDE.md. An `other` entry belongs to a different project whose CLAUDE.md is not loaded here — never Drop or Trim its sections for duplication, judge them on their own content only.
 
-**If `PROJECT_FLAG == false`**: use all `<path>` fields from PRUNE_ENTRY lines as working set.
+**If `PROJECT_FLAG == true`** (interactive picker): call `AskUserQuestion` with `multiSelect: true`. Build options from `PRUNE_ENTRY` lines — label = `<slug> (tokens=<N>)`, description = `prune this project's memory`. Max 3 project options plus `Skip` (4-option cap): more than 3 projects found, take the `current` entry plus the largest others by token count up to 3, note in question text that remaining projects were omitted (user can re-run). Always add a final option with label `Skip`, description `exit without changes`. Checked slugs: extract matching `<path>` fields as working set.
+
+**If `PROJECT_FLAG == false`**: working set = the `<path>` of the `current` PRUNE_ENTRY only — memory of the project in the working directory. No `current` entry: print `No memory file for the current project — re-run with --project to pick another.`, stop prune mode, end with Confidence block. Never prune `other` projects without the picker.
 
 **Parallel analysis across projects** — working sets with 2+ files: spawn one analysis agent per project simultaneously. Single-file working sets: run P1–P2 inline (no spawn).
 
 Spawn one `Agent` per project with `model="sonnet"` (mechanical Drop/Trim/Keep classification — no reasoning tier needed; no schema — returns text analysis):
 
 ```text
-Read MEMORY.md at <absolute-path>.
-Also read .claude/CLAUDE.md in the current working directory (limit=40) to identify overlap — anything already there need not live in memory.
+Read MEMORY.md at <absolute-path> (scope: <current|other>).
+Scope current only: also read CLAUDE.md and .claude/CLAUDE.md in the current working directory (limit=40 each, whichever exist) to identify overlap — anything already there need not live in memory. Scope other: skip CLAUDE.md; that project's CLAUDE.md is not this one, so never cite duplication.
 Evaluate every section using these criteria:
-  Drop: stale/no-longer-accurate, fully duplicated in CLAUDE.md, resolved one-time issues
+  Drop: stale/no-longer-accurate, fully duplicated in CLAUDE.md (scope current only), resolved one-time issues
   Trim: accurate but contains rationale/history no longer needed day-to-day; keep operational facts only
   Keep: rules applied every session, project-specific facts absent from CLAUDE.md
 Return structured analysis (no prose):
@@ -112,9 +117,9 @@ Apply these prune actions (sections identified by # from scored table — only t
 Rules:
 - Drop: remove entire section including heading
 - Trim: keep operational directive only (1 line max per entry); remove rationale/backstory
-- Convert to rule: remove section from MEMORY.md; print proposed rule file content inline in response for user review before writing — do NOT write the rule file
+- Convert to rule: first Write the proposed rule content to .temp/distill/prune/rule-<slug>-<n>.md (<n> = item #) for user review; remove the section from MEMORY.md only after that Write succeeds — Write failed → keep the section, count it as not converted. Do NOT write the rule file under rules/ or into an agent file
 Write MEMORY.md changes using the Edit tool.
-Return ONLY: {"status":"done","project":"<slug>","sections_dropped":N,"sections_trimmed":N,"rule_conversions":N,"confidence":0.N}
+Return ONLY: {"status":"done","project":"<slug>","sections_dropped":N,"sections_trimmed":N,"rule_conversions":N,"rule_drafts":["<draft path>",...],"confidence":0.N}
 ```
 
 Same deadline protocol: in the spawn response Write `.temp/distill/prune/agent-watch-apply.tsv` (`<slug>\t-\t600` per curator), end the turn, run the check once per notification; a curator whose notification carried no envelope is ⏱ `timed_out` — report that project's MEMORY.md as unverified. Once every row is settled, collect results. Print consolidated summary:
@@ -125,6 +130,7 @@ Pruned MEMORY.md — <date>
   Dropped: N sections total — [project: names, ...]
   Trimmed: N sections total — [project: names, ...]
   Rule conversions proposed: N — [project: names, ...] (review and write manually or via /manage)
+  Rule drafts: [every rule_drafts path from the envelopes]
   Kept:    N sections unchanged
   Saved:   ~N lines total
 ```
@@ -139,7 +145,7 @@ rm -f .temp/state/skill-contract.md  # clear contract — skill complete (compac
 
 **Evaluate each section against these criteria:**
 
-- **Drop**: content no longer accurate (removed features, resolved one-time issues, superseded decisions), or fully duplicated in CLAUDE.md
+- **Drop**: content no longer accurate (removed features, resolved one-time issues, superseded decisions), or fully duplicated in CLAUDE.md (`current` entry only — see CLAUDE.md overlap scope above)
 - **Trim**: sections still accurate but containing implementation history or rationale no longer needed day-to-day — keep operational facts (what/where), drop why-it-was-built backstory
 - **Keep**: rules actively applied every session; project-specific facts absent from CLAUDE.md; anything model needs to act correctly
 

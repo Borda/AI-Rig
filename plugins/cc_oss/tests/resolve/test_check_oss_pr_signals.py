@@ -79,6 +79,23 @@ class TestMainArgValidation:
             cops.main([])
         assert exc.value.code == 2
 
+    def test_option_shaped_latest_tag_exits_1(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """A ``--latest-tag`` starting with ``-`` is rejected before it can reach ``git show`` as an option.
+
+        The ``=`` form slips past argparse's own dash detection, which is why the script checks it.
+        """
+        assert cops.main(["--clean-args", "42", "--latest-tag=--output=x"]) == 1
+        assert "--latest-tag" in capsys.readouterr().err
+
+    def test_output_file_symlink_exits_1(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """A symlinked ``--output-file`` is refused instead of writing through to its target."""
+        target = tmp_path / "target.json"
+        link = tmp_path / "link.json"
+        link.symlink_to(target)
+        assert cops.main(["--clean-args", "42", "--output-file", str(link)]) == 1
+        assert not target.exists()
+        assert "symlink" in capsys.readouterr().err
+
     def test_non_numeric_clean_args_exits_1(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Non-numeric PR identifier rejected before any subprocess."""
         rc = cops.main(["--clean-args", "abc; rm -rf /"])
@@ -112,18 +129,18 @@ class TestGrepSecrets:
     def test_dedupes_repeats(self) -> None:
         """Same line repeated → appears once."""
         diff = "+token=abcdef12345\n+token=abcdef12345\n"
-        assert cops._grep_secrets(diff) == ["+token=abcdef12345"]
+        assert cops._grep_secrets(diff) == ["<unknown>: token"]
 
     @pytest.mark.parametrize(
-        "line",
+        ("line", "kind"),
         [
-            pytest.param("+PASSWORD = 'longenoughval'", id="uppercase-keyword-still-matches"),
-            pytest.param("+aws_key = AKIAABCDEFGHIJKLMNOP", id="aws-access-key-id-no-key-prefix-needed"),
+            pytest.param("+PASSWORD = 'longenoughval'", "password", id="uppercase-keyword-still-matches"),
+            pytest.param("+aws_key = AKIAABCDEFGHIJKLMNOP", "aws-access-key", id="aws-access-key-id-no-key-prefix"),
         ],
     )
-    def test_secret_shaped_line_is_flagged(self, line: str) -> None:
-        """An uppercase keyword or an AWS-style access key ID (no ``key=`` prefix needed) is flagged as-is."""
-        assert cops._grep_secrets(line) == [line]
+    def test_secret_shaped_line_is_flagged(self, line: str, kind: str) -> None:
+        """An uppercase keyword or an AWS-style access key ID (no ``key=`` prefix needed) is flagged by kind."""
+        assert cops._grep_secrets(line) == [f"<unknown>: {kind}"]
 
     def test_pem_private_key_header_detected(self) -> None:
         """A PEM private-key header line is flagged.
@@ -132,8 +149,7 @@ class TestGrepSecrets:
         never trips the repo's ``detect-private-key`` pre-commit hook.
         """
         header = "-----BEGIN RSA" + " PRIVATE KEY-----"
-        line = f"+{header}"
-        assert cops._grep_secrets(line) == [line]
+        assert cops._grep_secrets(f"+{header}") == ["<unknown>: private-key-header"]
 
     def test_bare_jwt_detected_without_keyword_prefix(self) -> None:
         """A bare JWT (no ``token=``/``secret=``/etc. keyword prefix) is still flagged by its own shape.
@@ -143,8 +159,20 @@ class TestGrepSecrets:
         shape alternation — this line has no such keyword, so only the new alternation can catch it.
         """
         jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
-        line = f"+Authorization: Bearer {jwt}"
-        assert cops._grep_secrets(line) == [line]
+        assert cops._grep_secrets(f"+Authorization: Bearer {jwt}") == ["<unknown>: jwt"]
+
+    def test_output_never_contains_the_credential(self) -> None:
+        """Findings carry path, line number and kind only — the matched value must not leak into the JSON.
+
+        A diff with a file header and hunk header lets the scan name the new-side line; the credential text itself
+        flowing into reports and transcripts is the defect this guards against.
+        """
+        diff = (
+            "diff --git a/src/a.py b/src/a.py\n@@ -1,2 +1,3 @@\n x = 1\n+token = 'abcdef123456'\n-secret: oldvalue99\n"
+        )
+        found = cops._grep_secrets(diff)
+        assert found == ["src/a.py:2: token", "src/a.py (removed): secret"]
+        assert not any("abcdef123456" in f or "oldvalue99" in f for f in found)
 
 
 class TestExtractRemovedExports:
@@ -222,6 +250,29 @@ class TestCollectSignals:
             git="/fake/git",
         )
         assert any("UNRELEASED_REMOVAL: NewlyAddedThenRemoved" in f for f in signals.deprecation_findings)
+
+    def test_git_show_runs_once_for_many_removed_exports(self, fake_subprocess: dict[str, Any]) -> None:
+        """Many removed identifiers → one ``git show`` of the tag, not one per identifier.
+
+        The removed-identifier list is every token on removed ``__init__.py`` lines of an attacker-controlled PR; a
+        subprocess per token made the run time proportional to PR content while the output never changes.
+        """
+        removed = "".join(f"-Export{i}\n" for i in range(50))
+        fake_subprocess["responses"] = {"gh:pr:diff:42": removed, "git:show:v1.0.0": "Export3 = 1\n"}
+        signals = cops.collect_signals(clean_args="42", latest_tag="v1.0.0", timeout=5, gh="/fake/gh", git="/fake/git")
+        show_calls = [c for c in fake_subprocess["calls"] if c[1] == "show"]
+        assert len(show_calls) == 1
+        assert show_calls[0][2] == "--end-of-options"
+        assert "DEPRECATION_NEEDED: Export3 " in "\n".join(signals.deprecation_findings)
+        assert len(signals.deprecation_findings) == 50
+
+    def test_export_count_is_capped(self, fake_subprocess: dict[str, Any]) -> None:
+        """Past the cap only the first identifiers are checked and an ``EXPORT_CAP`` marker says so."""
+        names = [f"E{i:05d}" for i in range(cops._MAX_EXPORTS_CHECKED + 5)]
+        fake_subprocess["responses"] = {"git:show:v1": ""}
+        findings = cops._check_deprecations("/fake/git", "v1", names, timeout=5)
+        assert len(findings) == cops._MAX_EXPORTS_CHECKED + 1
+        assert findings[-1].startswith("EXPORT_CAP:")
 
 
 # --------------------------------------------------------------------------- #

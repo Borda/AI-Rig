@@ -56,7 +56,7 @@ Source rules:
 - Mark stale/unavailable source explicitly.
 - Never cite secondary summaries for high-impact claims unless independently corroborated.
 
-For `sota`, `paper`, `methodology`, or `code-fidelity`, read and apply `../../shared/specialist-orchestration.md` only when independent expertise improves correctness; otherwise never load it. Write `<run-directory>/specialist-research-plan.md` with context packs for:
+For `sota`, `paper`, `methodology`, or `code-fidelity`, read and apply `../../shared/specialist-orchestration.md` only when independent expertise improves correctness; otherwise never load it. Write `<run-directory>/specialist-research-plan.md` with context packs for the axes below; planning only here, dispatch is the end of step 04 once the codebase context exists:
 
 - `web-explorer`: current docs, release notes, API and dependency changes.
 - `scientist`: formulas, methodology, metrics, ablations, benchmark claims.
@@ -71,7 +71,9 @@ Never send full papers, repositories, or all search results to every specialist.
 
 Inspect `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/collect_diff.py --help`; collect `working-tree` scope into `<run-directory>/baseline`. Run topic scan separately; record unavailable paths/collection failures as evidence gaps.
 
-**Structural context (optional)**: for `sota`/`code-fidelity` questions naming Python module/symbol, also probe codemap-py once: `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/codemap_adapter.py context --category analysis [--target <qname>] --out <run-directory>/codemap-context.json`. Per `../../shared/codemap-contract.md`, absence/incompatibility is non-fatal — continue with codebase mapping above. Persist result once here; any specialist context pack referenced in step 03 includes `<run-directory>/codemap-context.json`, with added queries only under the contract's bounded `Specialist follow-up queries` rule — this artifact must exist before the step-03 dispatch wave fires, so produce it here in step 04 before that wave launches, not before step 03's own pack-construction text runs.
+**Structural context (optional)**: for `sota`/`code-fidelity` questions naming Python module/symbol, also probe codemap-py once: `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/codemap_adapter.py context --category analysis [--target <qname>] --out <run-directory>/codemap-context.json`. Per `../../shared/codemap-contract.md`, absence/incompatibility is non-fatal — continue with codebase mapping above. Persist result once here; any specialist context pack planned in step 03 includes `<run-directory>/codemap-context.json`, with added queries only under the contract's bounded `Specialist follow-up queries` rule.
+
+When step 03 planned specialists, dispatch that single approved wave now, before step 05, and join all handoffs before writing `research.md`.
 
 ### 05: Produce `<run-directory>/research.md` with:
 
@@ -95,7 +97,7 @@ Inspect `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/collect_diff.py --help`; coll
 
 ### 07: Run review gate
 
-Run `git diff --check` as argv command. Write its combined output to `<run-directory>/review.txt` and retain its exit status as review evidence; never erase nonzero result.
+Run `git diff --check -- <run-owned paths>` as argv command, limited to files this run edited or generated for executable validation, so unrelated caller edits never decide the result; with no such paths record that absence instead. Write its combined output to `<run-directory>/review.txt` and retain its exit status as review evidence; never erase nonzero result.
 
 ### 08: Run shared gates and write the validated result artifact
 
@@ -115,7 +117,7 @@ Replace explicit skip with relevant command when research includes executable va
 
 Required:
 
-- `review`: source table, caveats, self-review, `git diff --check`.
+- `review`: source table, caveats, `git diff --check` on run-owned paths.
 
 Conditional:
 

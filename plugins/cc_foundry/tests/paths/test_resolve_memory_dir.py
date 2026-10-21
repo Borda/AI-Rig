@@ -1,7 +1,7 @@
 """Tests for ``bin/resolve_memory_dir.py``.
 
-Pure ``slugify`` covered by doctest in the source module; this file exercises git-bound behaviour via ``monkeypatch``
-and the CLI surface via ``capsys``.
+``slugify`` is checked against Claude Code's own directory naming (doctests in the module plus the cases below); the
+rest exercises git-bound behaviour via ``monkeypatch`` and the CLI surface via ``capsys``.
 """
 
 from __future__ import annotations
@@ -30,25 +30,79 @@ def _patch_run(monkeypatch: pytest.MonkeyPatch, responder: Any) -> None:
 
 
 class TestSlugify:
-    """Slugify: canonical lowercase + non-alnum squeeze + trailing strip."""
+    """Slugify: Claude Code's project-directory naming (one hyphen per non-alphanumeric code unit, case kept)."""
 
     @pytest.mark.parametrize(
         ("raw", "expected"),
         [
-            pytest.param("MyProject", "myproject", id="myproject"),
-            pytest.param("foo_bar", "foo-bar", id="foo_bar"),
-            pytest.param("foo/bar/baz", "foo-bar-baz", id="foo-bar-baz"),
-            pytest.param("foo--bar", "foo-bar", id="foo--bar"),
-            pytest.param("trailing-", "trailing", id="single-trailing-hyphen"),
-            pytest.param("trailing---", "trailing", id="multiple-trailing-hyphens"),
-            pytest.param("/abs/path/Borda.local", "-abs-path-borda-local", id="abs-path-borda.local"),
-            pytest.param("UPPER_CASE!@#mix", "upper-case-mix", id="upper_case-mix"),
+            pytest.param("MyProject", "MyProject", id="case-kept"),
+            pytest.param("foo_bar", "foo-bar", id="underscore"),
+            pytest.param("foo/bar/baz", "foo-bar-baz", id="separators"),
+            pytest.param("foo--bar", "foo--bar", id="runs-not-collapsed"),
+            pytest.param("trailing-", "trailing-", id="single-trailing-hyphen-kept"),
+            pytest.param("trailing---", "trailing---", id="multiple-trailing-hyphens-kept"),
+            pytest.param("/abs/path/Borda.local", "-abs-path-Borda-local", id="abs-path-dot"),
+            pytest.param("UPPER_CASE!@#mix", "UPPER-CASE---mix", id="punctuation-run"),
+            pytest.param("/a b/c.d/e_f", "-a-b-c-d-e-f", id="space-dot-underscore"),
             pytest.param("", "", id="empty"),
         ],
     )
     def test_canonical_forms(self, raw: str, expected: str) -> None:
         """All edge cases map to the documented canonical slug."""
         assert resolve_memory_dir.slugify(raw) == expected
+
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            pytest.param("/Users/x/Workspace/AI-Rig", "-Users-x-Workspace-AI-Rig", id="posix-root"),
+            pytest.param(
+                "/Users/x/Workspace/repo/.claude/worktrees/oss-review-1",
+                "-Users-x-Workspace-repo--claude-worktrees-oss-review-1",
+                id="hidden-dir-gives-double-hyphen",
+            ),
+            pytest.param(
+                "/private/var/folders/ab/c_defg/T",
+                "-private-var-folders-ab-c-defg-T",
+                id="underscore-in-macos-tmp",
+            ),
+            pytest.param(
+                "/private/tmp/claude-501/-Users-x-Workspace-AI-Rig/scratchpad",
+                "-private-tmp-claude-501--Users-x-Workspace-AI-Rig-scratchpad",
+                id="leading-hyphen-segment",
+            ),
+            pytest.param("C:\\Users\\me\\proj name", "C--Users-me-proj-name", id="windows-backslash-space"),
+            pytest.param("C:/Users/me/proj.v2_x", "C--Users-me-proj-v2-x", id="windows-forward-slash"),
+            pytest.param("/tmp/\u00e9x", "-tmp--x", id="bmp-non-ascii-one-hyphen"),
+            pytest.param("/tmp/\U0001f600x", "-tmp---x", id="astral-two-hyphens"),
+        ],
+    )
+    def test_observed_claude_code_directory_names(self, raw: str, expected: str) -> None:
+        """Paths shaped like real ``~/.claude/projects`` entries and Windows/Unicode forms resolve as Claude Code names
+        them."""
+        assert resolve_memory_dir.slugify(raw) == expected
+
+    def test_length_boundary_at_200_is_verbatim(self) -> None:
+        """A 200-character slug is kept whole; 201 characters switch to cut-plus-hash."""
+        assert resolve_memory_dir.slugify("/" + "a" * 199) == "-" + "a" * 199
+        assert resolve_memory_dir.slugify("/" + "a" * 200) == "-" + "a" * 199 + "-b6ymvl"
+
+    @pytest.mark.parametrize(
+        ("raw", "expected_suffix"),
+        [
+            pytest.param("/Users/x/" + "segment-0123456789/" * 12 + "leaf", "egd9zf", id="ascii-path"),
+            pytest.param("/" + "\u00e9\U0001f600x_" * 70, "40r4i7", id="non-ascii-path"),
+        ],
+    )
+    def test_long_path_cut_to_200_with_node_reference_hash(self, raw: str, expected_suffix: str) -> None:
+        """Over-long slugs are cut to 200 characters and suffixed with Claude Code's base-36 hash.
+
+        Expected suffixes come from running the bundled JavaScript expression (``Math.abs`` of the 32-bit
+        ``(e << 5) - e + charCodeAt | 0`` fold, ``toString(36)``) under node, not from this module.
+        """
+        slug = resolve_memory_dir.slugify(raw)
+        assert len(slug) == 200 + 1 + len(expected_suffix)
+        assert slug.endswith("-" + expected_suffix)
+        assert set(slug[:200]) <= set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-")
 
 
 class TestResolveMemoryDir:
@@ -64,7 +118,7 @@ class TestResolveMemoryDir:
         _patch_run(monkeypatch, _boom)
         monkeypatch.setenv("HOME", "/home/test")
         result = resolve_memory_dir.resolve_memory_dir("/some/Project")
-        assert Path(result).as_posix() == "/home/test/.claude/projects/-some-project/memory"
+        assert Path(result).as_posix() == "/home/test/.claude/projects/-some-Project/memory"
 
     def test_git_fallback_success(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Empty arg → git rev-parse provides the root."""
@@ -76,7 +130,7 @@ class TestResolveMemoryDir:
         _patch_run(monkeypatch, _fake_run)
         monkeypatch.setenv("HOME", "/home/test")
         result = resolve_memory_dir.resolve_memory_dir(None)
-        assert Path(result).as_posix() == "/home/test/.claude/projects/-users-x-project/memory"
+        assert Path(result).as_posix() == "/home/test/.claude/projects/-Users-x-Project/memory"
 
     def test_git_fallback_no_repo(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Git fails (non-zero) → None."""
@@ -133,7 +187,7 @@ class TestMain:
         rc = resolve_memory_dir.main([])
         assert rc == 0
         out = capsys.readouterr().out.strip()
-        assert Path(out).as_posix() == "/h/.claude/projects/-users-x-repo/memory"
+        assert Path(out).as_posix() == "/h/.claude/projects/-Users-x-Repo/memory"
 
     def test_explicit_arg(
         self,
@@ -145,7 +199,7 @@ class TestMain:
         rc = resolve_memory_dir.main(["/some/Project"])
         assert rc == 0
         out = capsys.readouterr().out.strip()
-        assert Path(out).as_posix() == "/h/.claude/projects/-some-project/memory"
+        assert Path(out).as_posix() == "/h/.claude/projects/-some-Project/memory"
 
     def test_exit_1_when_no_git_root(
         self,

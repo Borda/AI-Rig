@@ -276,6 +276,44 @@ class TestWrapperFromDecorator:
             gen_wrapper_from_decorator("@my_custom_deco()", "foo")
 
 
+class TestDunderAndAttributeHardening:
+    """Names and decorator arguments that reach interpreter internals are refused before any code is generated."""
+
+    @pytest.mark.parametrize(
+        "decorator",
+        [
+            pytest.param("@deprecated(target='x'.__class__)", id="constant-rooted-dunder"),
+            pytest.param("@deprecated(target=Bar.__subclasses__)", id="name-rooted-dunder"),
+            pytest.param("@deprecated(target=a.b.c.d.e.f.g.h)", id="chain-too-deep"),
+        ],
+    )
+    def test_unsafe_attribute_argument_rejected(self, decorator):
+        """An attribute chain that runs descriptors at import (dunder segment, constant root, excessive depth) is
+        refused.
+
+        Attribute access is evaluated when the generated module is imported, so ``'x'.__class__`` or a deep chain is
+        behaviour smuggled into an argument slot that is meant to hold only a reference.
+        """
+        with pytest.raises(ValueError, match="arguments must be names, attributes, or constants only"):
+            gen_wrapper_from_decorator(decorator, "foo")
+
+    def test_dotted_class_method_target_still_accepted(self):
+        """A plain ``Class.method`` target, the documented method-rename shape, keeps working."""
+        code = gen_wrapper_from_decorator("@deprecated(target=Klass.method, deprecated_in='1.0')", "foo")
+        assert "target=Klass.method" in code
+
+    @pytest.mark.parametrize("old_name", ["__import__", "__class__"])
+    def test_dunder_old_name_rejected(self, old_name):
+        """A dunder ``--old-name`` would generate ``def __import__(...)`` and is refused."""
+        with pytest.raises(ValueError, match="dunder"):
+            _mod._check_identifier(old_name, "--old-name")
+
+    def test_dunder_method_segment_rejected_in_dotted_target(self):
+        """The ``Method`` half of a dotted ``--new-name`` is checked as well."""
+        with pytest.raises(ValueError, match="dunder"):
+            _mod._check_identifier("Klass.__class__", "--new-name", allow_dotted=True)
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------

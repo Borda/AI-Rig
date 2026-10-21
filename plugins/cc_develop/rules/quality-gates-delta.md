@@ -16,7 +16,7 @@ Governs `/develop:review` → `/develop:fix`, `/develop:debug` root-cause loops,
 
 - `<branch>` in the `.temp/output-*` filename = `$(git branch --show-current 2>/dev/null | tr '/' '-' || echo 'main')`
 - Prose paragraphs: no hard line breaks at column width
-- **Follow-up gate options**: skill-defined; minimum: (a) primary action · (b) skip. Canonical examples by skill:
-  - `develop:review` → (a) `/develop:fix` · (b) `/develop:refactor` · (c) walk through findings · (d) skip
-  - `develop:debug` → (a) `/develop:fix --diagnosis <file>` · (b) skip
-  - `develop:plan` → (a) `/develop:feature --plan <file>` · (b) `/develop:fix --plan <file>` · (c) skip
+- **Follow-up gate options**: skill-defined; minimum: (a) primary action · (b) skip. A next-step skill with `disable-model-invocation` cannot be a selectable option — the skill prints it as plain text instead. Canonical examples by skill:
+  - `develop:review` → (a) walk through findings · (b) skip; `/develop:fix` and `/develop:refactor` printed as plain-text next steps
+  - `develop:debug` → no gate; `/develop:fix --diagnosis <file>` printed as a plain-text next step
+  - `develop:plan` → (a) Proceed — print the `/develop:feature --plan <file>` or `/develop:fix --plan <file>` handoff line · (b) Revise plan

@@ -118,6 +118,42 @@ def test_golden_invocation_with_repo(captured_argv: list[list[str]]) -> None:
     assert captured_argv[0] == ["/fake/path/to/gh", "issue", "view", "42", "--comments", "--repo", "owner/repo"]
 
 
+@pytest.mark.parametrize(
+    "repo",
+    [
+        pytest.param("ghe.example.com/owner/repo", id="host-qualified"),
+        pytest.param("owner/.github", id="dot-leading-repo"),
+    ],
+)
+def test_accepts_host_and_dot_leading_repo(captured_argv: list[list[str]], repo: str) -> None:
+    """``[HOST/]OWNER/REPO`` forms ``gh --repo`` understands, including a ``.github`` repo, are forwarded unchanged."""
+    assert issue_fetch.main(["42", "--repo", repo]) == 0
+    assert captured_argv[0][-2:] == ["--repo", repo]
+
+
+@pytest.mark.parametrize(
+    "repo",
+    [
+        pytest.param("-owner/repo", id="flag-shaped-owner"),
+        pytest.param("owner/-repo", id="flag-shaped-repo"),
+        pytest.param("../repo", id="dot-dot-owner"),
+        pytest.param("owner", id="single-segment"),
+        pytest.param("a/b/c/d", id="too-many-segments"),
+        pytest.param("owner/re po", id="whitespace"),
+        pytest.param("owner/repo\nx", id="newline"),
+    ],
+)
+def test_rejects_malformed_repo(captured_argv: list[list[str]], capsys: pytest.CaptureFixture[str], repo: str) -> None:
+    """A ``--repo`` that is not ``[HOST/]OWNER/REPO`` exits 1 and gh is never started.
+
+    The override can be read from a shared-temp sentinel another local process may have planted, so a malformed value is
+    refused instead of being handed to ``gh`` as an argument.
+    """
+    assert issue_fetch.main(["42", "--repo", repo]) == 1
+    assert captured_argv == []
+    assert "invalid --repo" in capsys.readouterr().err
+
+
 def test_blob_with_dash_tokens_reaches_extraction_unmangled(captured_argv: list[list[str]]) -> None:
     """A blob whose first token is the issue number but which also carries ``--``-shaped tokens still yields the correct
     issue number — the blob is never handed to argparse."""

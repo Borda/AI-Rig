@@ -2,9 +2,9 @@
 
 # Codemap gates contract — v3
 
-Plugin-agnostic Gate A / Gate B machinery for missing-index and stale-index decisions. Consumer wrappers read this file live from the active `codemap-py` install (no local copies — the text always matches the CLI actually installed), supplying only their **skip flag** (per-plugin flag disabling gates, e.g. `CODEMAP_RAW=auto` for develop, `CODEMAP_FORCE_OFF=false` for oss).
+Plugin-agnostic Gate A / Gate B machinery for missing-index and stale-index decisions. Consumer wrappers read this file live from the active `codemap-py` install (no local copies — the text always matches the CLI actually installed), supplying only their **skip flag** (per-plugin flag that turns the gates off). Gate A fires only while the flag holds its active value — `CODEMAP_RAW=auto` for develop and research, `CODEMAP_FORCE_OFF=false` for oss; `CODEMAP_RAW=off` / `CODEMAP_FORCE_OFF=true` skips both gates.
 
-Read currency first: `IFS= read -r CODEMAP_CURRENCY < "${TMPDIR:-/tmp}/dev-codemap-currency-${CSID}" 2>/dev/null || CODEMAP_CURRENCY="no_index"` (consumers may point at own currency file; `CSID` exported by caller per `claude-config.md` TMPDIR Sentinel Scoping).
+Read currency first: `IFS= read -r CODEMAP_CURRENCY < "${TMPDIR:-/tmp}/<consumer>-codemap-currency-${CSID}" 2>/dev/null || CODEMAP_CURRENCY="no_index"` — `<consumer>` = the calling plugin's own sentinel prefix (e.g. `dev` for develop, `research` for research; oss per-skill prefix), as its wrapper states; `CSID` exported by caller per `claude-config.md` TMPDIR Sentinel Scoping.
 
 ## Gate A — missing index
 

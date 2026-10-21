@@ -44,8 +44,10 @@ def test_invalid_plugin_exits_2(capsys: pytest.CaptureFixture[str]) -> None:
 def test_source_tree_fallback(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """No env/cache, source tree present → tier 3 path with stderr warning."""
+    """No env/cache, oss source repository as cwd → tier 3 path with stderr warning."""
     (tmp_path / "plugins" / "cc_oss" / "skills" / "_shared").mkdir(parents=True)
+    (tmp_path / "plugins" / "cc_oss" / ".claude-plugin").mkdir()
+    (tmp_path / "plugins" / "cc_oss" / ".claude-plugin" / "plugin.json").write_text('{"name": "oss"}', encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", "")
     monkeypatch.setattr(resolve_shared_path.Path, "home", classmethod(lambda _cls: tmp_path))
@@ -55,3 +57,18 @@ def test_source_tree_fallback(
     assert captured.out.strip() == "plugins/cc_oss/skills/_shared"
     assert "source-tree fallback" in captured.err
     assert "\r" not in captured.out  # sys.stdout.reconfigure(newline="\n") — Windows portability
+
+
+def test_untrusted_source_tree_exits_1(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """No env/cache, cwd tree without oss's own manifest → exit 1 and no path, never the planted tree."""
+    (tmp_path / "plugins" / "cc_oss" / "skills" / "_shared").mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", "")
+    monkeypatch.setattr(resolve_shared_path.Path, "home", classmethod(lambda _cls: tmp_path))
+    rc = resolve_shared_path.main(["oss", "skills/_shared"])
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.out == ""
+    assert "not the oss plugin source repository" in captured.err

@@ -20,7 +20,7 @@ Input contract (JSON on stdin):
 
 Exit codes:
     0   success (effect size printed, or empty line for None statistic).
-    2   input error (malformed JSON, missing ``n``, non-numeric values).
+    2   input error (malformed JSON, missing ``n``, non-numeric values, stdin over ``MAX_STDIN_CHARS``).
 """
 
 from __future__ import annotations
@@ -29,6 +29,9 @@ import argparse
 import json
 import sys
 from typing import Any
+
+#: Most characters read from stdin; the input is one ``retro_analyze.py`` JSON line, far below this.
+MAX_STDIN_CHARS = 1 << 20
 
 
 def rank_biserial_r(statistic: float, n: int) -> float:
@@ -113,7 +116,13 @@ def main(argv: list[str] | None = None) -> int:
         description="Rank-biserial correlation effect size for Wilcoxon results (reads JSON from stdin).",
     )
     parser.parse_args(argv)  # no positional/flag args — enables -h/--help, rejects stray tokens (exit 2)
-    raw = sys.stdin.read()
+    # bounded read: one extra char tells an oversized input from one that exactly fills the cap
+    raw = sys.stdin.read(MAX_STDIN_CHARS + 1)
+    if len(raw) > MAX_STDIN_CHARS:
+        print(
+            f"error: stdin exceeds {MAX_STDIN_CHARS} characters — expected one retro_analyze JSON line", file=sys.stderr
+        )
+        return 2
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError as exc:

@@ -118,6 +118,59 @@ class TestWriteState:
         monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
         assert ap.write_state({"k": "v"}) == tmp_path / "audit-state-shared"
 
+    @pytest.mark.parametrize(
+        "token",
+        [
+            pytest.param("../escape", id="parent-traversal"),
+            pytest.param("a/b", id="path-separator"),
+            pytest.param("sess 1", id="space"),
+        ],
+    )
+    def test_unsafe_session_token_rejected(self, token: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A session token that could leave TMPDIR is refused, not written outside it.
+
+        Scenario: ``CSID=../escape`` would put the sentinels in a sibling of TMPDIR; the skill's bash blocks read the
+        same unsanitized ``CSID``, so falling back to another directory would silently split writer and readers.
+        """
+        monkeypatch.setenv("TMPDIR", str(tmp_path))
+        monkeypatch.setenv("CSID", token)
+        with pytest.raises(ValueError, match="unsafe session token"):
+            ap.write_state({"k": "v"})
+
+    @pytest.mark.skipif(ap.os.name != "posix", reason="Windows has no POSIX mode bits to assert")
+    def test_new_state_dir_is_private(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A freshly created state directory is readable by its owner only."""
+        monkeypatch.setenv("TMPDIR", str(tmp_path))
+        monkeypatch.setenv("CSID", "sess3")
+        state_dir = ap.write_state({"k": "v"})
+        assert state_dir.stat().st_mode & 0o077 == 0
+
+    def test_directory_owned_by_another_user_refused(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A pre-existing state directory owned by someone else is not written into.
+
+        Scenario: with TMPDIR unset on a shared ``/tmp``, another user pre-creates ``audit-state-shared``; sentinels
+        such as ``keep-items`` would land in a directory they control. The foreign owner is simulated by shifting the
+        uid.
+        """
+        monkeypatch.setenv("TMPDIR", str(tmp_path))
+        monkeypatch.setenv("CSID", "sess4")
+        (tmp_path / "audit-state-sess4").mkdir()
+        foreign_uid = (tmp_path / "audit-state-sess4").lstat().st_uid + 1
+        monkeypatch.setattr(ap.os, "getuid", lambda: foreign_uid, raising=False)
+        with pytest.raises(PermissionError, match="owned by another user"):
+            ap.write_state({"k": "v"})
+
+    def test_symlinked_state_dir_refused(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A state directory that is a symlink is not written through.
+
+        The link is simulated on the ``lstat`` mode check so the case runs on hosts that cannot create symlinks.
+        """
+        monkeypatch.setenv("TMPDIR", str(tmp_path))
+        monkeypatch.setenv("CSID", "sess5")
+        monkeypatch.setattr(ap.stat, "S_ISLNK", lambda _mode: True)
+        with pytest.raises(PermissionError, match="symlink"):
+            ap.write_state({"k": "v"})
+
 
 class TestCli:
     """Covers the command-line contract."""
@@ -178,3 +231,19 @@ class TestCli:
         monkeypatch.setattr("sys.argv", ["audit_preflight.py", "--arguments", "plugins", "--claude-dir", str(claude)])
         assert ap.main() == 1
         assert "run /foundry:setup first" in capsys.readouterr().out
+
+    def test_unsafe_session_token_exits_one(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A session token that cannot be used safely aborts with a BLOCKED line instead of a traceback."""
+        claude = tmp_path / ".claude"
+        claude.mkdir()
+        templates = tmp_path / "templates"
+        templates.mkdir()
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("TMPDIR", str(tmp_path))
+        monkeypatch.setenv("CSID", "../escape")
+        monkeypatch.setattr(ap, "resolve_subdir", lambda *_a, **_k: templates)
+        monkeypatch.setattr("sys.argv", ["audit_preflight.py", "--arguments", "plugins", "--claude-dir", str(claude)])
+        assert ap.main() == 1
+        assert "! BLOCKED — cannot prepare audit state" in capsys.readouterr().out

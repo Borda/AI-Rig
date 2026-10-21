@@ -129,3 +129,52 @@ def test_load_shared_doc_rejects_path_separator(fake_plugin: Path, capsys: pytes
     """File argument validation is shared with ``load_mode`` — no duplicated rule."""
     assert load_shared_doc.main(["foundry", "skills/_shared", "sub/doc.md"]) == 2
     assert "plain file name" in capsys.readouterr().err
+
+
+class TestOptional:
+    """``--optional`` turns every missing-doc case into one warning line with exit 0 — warn-and-skip."""
+
+    def test_present_doc_is_emitted_verbatim(
+        self, fake_plugin: Path, capsysbinary: pytest.CaptureFixture[bytes]
+    ) -> None:
+        """A doc that exists loads exactly as without the flag: bytes on stdout, nothing else."""
+        assert load_shared_doc.main(["--optional", "foundry", "skills/_shared", "doc.md"]) == 0
+        captured = capsysbinary.readouterr()
+        assert captured.out == b"shared body\n"
+        assert captured.err == b""
+
+    def test_missing_file_warns_and_exits_zero(self, fake_plugin: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """An absent file prints one warning line and no doc — the caller's skip path, not a failure."""
+        assert load_shared_doc.main(["--optional", "foundry", "skills/_shared", "absent.md"]) == 0
+        out = capsys.readouterr().out
+        assert (
+            out == f"⚠ WARNING: absent.md not found at {(fake_plugin / 'skills' / '_shared').as_posix()} — skipping\n"
+        )
+
+    @pytest.mark.parametrize(
+        ("plugin", "subdir"),
+        [
+            pytest.param("foundry", "skills/nosuchdir", id="missing-subdir"),
+            pytest.param("nosuchplugin", "skills/_shared", id="missing-plugin"),
+        ],
+    )
+    def test_missing_dir_or_plugin_warns_and_exits_zero(
+        self, fake_plugin: Path, capsys: pytest.CaptureFixture[str], plugin: str, subdir: str
+    ) -> None:
+        """An unresolvable plugin or directory prints the same single-line warning, exit 0, no doc output."""
+        assert load_shared_doc.main(["--optional", plugin, subdir, "doc.md"]) == 0
+        out = capsys.readouterr().out
+        assert out == f"⚠ WARNING: {plugin}/{subdir} not found — skipping doc.md\n"
+
+    def test_argument_errors_still_exit_two(self, fake_plugin: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """A malformed file argument is a caller bug, never softened into a skip."""
+        assert load_shared_doc.main(["--optional", "foundry", "skills/_shared", "sub/doc.md"]) == 2
+        assert "plain file name" in capsys.readouterr().err
+
+    def test_default_stays_fail_loud(self, fake_plugin: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """Without the flag a missing doc still breaks with ``!
+
+        BREAKING`` and exit 1.
+        """
+        assert load_shared_doc.main(["foundry", "skills/_shared", "absent.md"]) == 1
+        assert capsys.readouterr().out.startswith("! BREAKING: absent.md not found in ")

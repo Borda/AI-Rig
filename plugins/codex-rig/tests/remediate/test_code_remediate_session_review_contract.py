@@ -4,14 +4,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from _skill_text import read_with_references
+
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 CODE_REMEDIATE_SKILL = PLUGIN_ROOT / "skills" / "code-remediate" / "SKILL.md"
 
 
 def test_report_discussion_stays_before_source_mutation_gates() -> None:
     """Keep accepted report discussion useful without pretending source remediation completed."""
-    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
-    discussion = skill.split("### Report discussion after deferred source recovery", 1)[1].split("### 03:", 1)[0]
+    skill = read_with_references(CODE_REMEDIATE_SKILL, "source-recovery.md")
+    discussion = skill.split("## Report discussion after deferred source recovery", 1)[1].split("### 03:", 1)[0]
     for boundary in (
         "An admitted assessed report plus the user's accepted source deferral",
         "Preserve `mode=pr`",

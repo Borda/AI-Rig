@@ -608,6 +608,32 @@ def test_invalid_plugin_source_aborts_before_mutation(
     assert list((home / ".claude" / "rules").iterdir()) == []
 
 
+@pytest.mark.parametrize(
+    "name",
+    [
+        pytest.param("../x", id="parent-traversal"),
+        pytest.param("a/b", id="path-separator"),
+        pytest.param("..", id="dot-dot"),
+        pytest.param("Develop", id="uppercase"),
+        pytest.param("-develop", id="leading-hyphen"),
+        pytest.param("", id="empty"),
+    ],
+)
+def test_unsafe_plugin_name_aborts_before_any_link(tmp_path: Path, name: str) -> None:
+    """A plugin name that could leave ``rules/`` aborts even when its manifest declares the same name.
+
+    The destination is ``rules/<name>-<rule>``. A manifest declaring ``../x`` and a matching ``--plugin-name`` passed
+    the old equality check, so the link landed in ``~/.claude/`` itself; the name itself is now the gate.
+    """
+    home = _make_home(tmp_path)
+    root = _make_plugin(tmp_path / "plugin", name=name)
+
+    with pytest.raises(SourceError, match="invalid plugin name"):
+        sync(name, root, home)
+    assert [p.name for p in (home / ".claude").iterdir()] == ["rules"]
+    assert list((home / ".claude" / "rules").iterdir()) == []
+
+
 def test_symlinked_rules_dir_aborts(tmp_path: Path) -> None:
     home = _make_home(tmp_path)
     root = _installed_root(home)

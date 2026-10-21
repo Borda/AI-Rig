@@ -12,7 +12,7 @@
 
 **Team Mode directory layout**:
 
-- `<RUN_DIR>` (`.experiments/run-team-<timestamp>/`, from `make_run_dir "run-team"`) — hypothesis artifacts: `hypotheses-<axis-slug>.jsonl`, `hypothesis-analyst-<axis-slug>.md`, `team-queue.jsonl`, `team-results.jsonl`
+- `<RUN_DIR>` (`.experiments/<run-id>/`, the directory R1 created — holds the R0 `hypotheses.jsonl` queue too) — hypothesis artifacts: `hypotheses-<axis-slug>.jsonl`, `hypothesis-analyst-<axis-slug>.md`, `team-queue.jsonl`, `team-results.jsonl`
 - `.experiments/state/<run-id>/` — standard iteration artifacts: `ideation-team-<M>.md`, `diary.md`, `experiments.jsonl`
 
 **Workflow:**
@@ -23,15 +23,18 @@
 
 2. Lead identifies 2–3 distinct optimization axes from goal + codebase analysis. Example for "reduce training time": model architecture · data pipeline · compute efficiency.
 
-3. Lead creates run output directory:
+3. Lead resolves the run output directory — R1's, never a new one (a fresh directory would orphan the R0 `hypotheses.jsonl` queue that Phase B merges):
 
    ```bash
-   RUN_DIR=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/make_run_dir.py" "run-team" ".experiments")  # timeout: 5000
+   export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+   IFS= read -r _RUN_ID < "${TMPDIR:-/tmp}/research-run-id-${CSID}" 2>/dev/null || _RUN_ID=""
+   [ -n "$_RUN_ID" ] || { echo "! BLOCKED — team Phase A: research run-id sentinel missing (R1 not run)"; exit 1; }
+   echo "RUN_DIR=.experiments/${_RUN_ID}"
    ```
 
-   Store `RUN_DIR` as run-level variable — do not re-evaluate at later phases. All `<RUN_DIR>` refs in Phases B, C, D use same value.
+   Use the printed `RUN_DIR` value in Phases B, C, D — do not re-derive it. Never re-assign it from `make_run_dir.py`.
 
-   Write `phase: "A"` to `state.json` immediately after creating `RUN_DIR` — enables Phase A resume:
+   Write `phase: "A"` to `state.json` immediately — enables Phase A resume:
 
    ```json
    {"team_mode": {"phase": "A", "run_dir": "<RUN_DIR>"}}
@@ -43,7 +46,7 @@
 
    The lead then **substitutes the resulting literal paths into that agent's prompt before constructing the `Agent()` call**: the template below must reach the agent with `<RUN_DIR>` and `<axis-slug>` already replaced by concrete text (e.g. `.experiments/run-team-2026-05-13T10-00-00Z/hypotheses-data-loading-aug.jsonl`). Unsubstituted placeholder reaches agent as literal text: agent writes to wrongly-named path, liveness check below reports false ⏱ on agent that in fact succeeded. The lead **records the exact filename pair it put in each prompt** (jsonl path, md path) and checks those recorded paths — never a slug re-derived after the fact.
 
-   Each hypothesis agent's spawn prompt:
+   Each hypothesis agent's spawn prompt. The first line needs `~/.claude/TEAM_PROTOCOL.md` (installed by `/foundry:setup`): the lead checks `[ -f "$HOME/.claude/TEAM_PROTOCOL.md" ]` once and omits that line when the file is absent — an unreadable protocol file must not fail the agent:
 
    ```markdown
    Read ~/.claude/TEAM_PROTOCOL.md and use AgentSpeak v2.
@@ -80,27 +83,28 @@
    Write all hypotheses as JSONL (one JSON object per line) to `<RUN_DIR>/hypotheses-<axis-slug>.jsonl` — use the path exactly as given, do not rename it.
    Write your full analysis, reasoning, and Confidence block to `<RUN_DIR>/hypothesis-analyst-<axis-slug>.md` using the Write tool.
    Return ONLY: {"status":"done","axis":"<axis>","count":N,"file":"<jsonl path>","confidence":0.N}
-   Call TaskUpdate(in_progress) when starting; TaskUpdate(completed) when done.
+   Task tracking: do NOT call TaskCreate or TaskUpdate — lead owns all task state.
    ```
 
 **Spawn note**: hypothesis agents run in the background — issue the batch, then end the turn; no filler call, no "waiting" line, no sleep (CLAUDE.md §6). On completion notifications, check jsonl path **recorded for that agent at spawn time** (step 4's axis-slug rule) — not a freshly re-derived slug. Missing or empty → glob `<RUN_DIR>/hypotheses-*.jsonl` for a near-match first, since a mismatched name is a naming bug rather than a dead agent; still nothing → that agent timed out: read any partial output, surface with ⏱ in the Phase D report, never silently omit.
 
 5. Collect compact JSON envelopes from all hypothesis agents. Do not read `.md` analysis files into lead context — inputs to Phase B queue assembly only.
 
-   **`--researcher` / `--architect` interaction**: if R0 pre-phase ran before Team Mode, R0 hypotheses in `<RUN_DIR>/hypotheses.jsonl` included in Phase B queue assembly alongside axis hypotheses. R0 entries lacking `axis`/`agent_type`/`change_scope` backfilled: `axis: "cross-cutting"`, `agent_type` inferred from `source` field, `change_scope` inferred from `codebase_mapping` length (1–2 targets = small, 3–5 = medium, 6+ = large).
+   **`--researcher` / `--architect` / `--hypothesis` interaction**: if R0 pre-phase ran before Team Mode, its `RESEARCH_QUEUE` entries — oracle output in `<RUN_DIR>/hypotheses.jsonl`, or the user's `--hypothesis <path>` file, which is read-only and never copied into `<RUN_DIR>` — are included in Phase B queue assembly alongside axis hypotheses. R0 entries lacking `axis`/`agent_type`/`change_scope` backfilled: `axis: "cross-cutting"`, `agent_type` inferred from `source` field, `change_scope` inferred from `codebase_mapping` length (1–2 targets = small, 3–5 = medium, 6+ = large).
 
 ### Phase B: Queue Assembly + User Gate
 
-1. Read all `<RUN_DIR>/hypotheses-*.jsonl` files (and `<RUN_DIR>/hypotheses.jsonl` if present from R0).
+1. Read all `<RUN_DIR>/hypotheses-*.jsonl` files, plus R0's `RESEARCH_QUEUE` when R0 ran (`<RUN_DIR>/hypotheses.jsonl` from oracles, or the `--hypothesis <path>` file — read only, never written).
 
-2. Filter: exclude `feasible: false` (retain in file for audit). Move `confidence < 0.7` entries to queue end.
+2. Filter: exclude `feasible: false` (retain in file for audit).
 
-3. Sort combined queue:
+3. Sort combined queue, then demote — the demotion runs last so the sort cannot undo it:
 
    - Validate `change_scope` before sorting: must be one of `{small, medium, large}`; other value → warn (`⚠ Unknown change_scope '<value>' on hypothesis '<hypothesis>' — defaulting to medium`) and set to `medium`.
    - Primary: `change_scope` ascending — `small` first, then `medium`, then `large`
    - Secondary: `expected_delta` descending within scope tier (parse delta string to extract numeric midpoint, e.g., "+1–3%" → 2.0; unparsable → treat as 0, sort to end of scope tier)
    - Tertiary (tiebreaker): `confidence` descending
+   - Demotion (after the sort): move every `confidence < 0.7` entry to the queue end, keeping the sorted relative order within the demoted group
 
 4. Assign sequential `queue_position` (1-indexed) in sorted order.
 
@@ -109,7 +113,7 @@
    ```markdown
    | # | Hypothesis | Axis | Scope | Expected Delta | Conf. | Agent |
    | --- | --- | --- | --- | --- | --- | --- |
-   | 1 | Cache embeddings in forward pass | data pipeline | small | +2-4% speed | 0.90 | perf-opt |
+   | 1 | Cache embeddings in forward pass | data pipeline | small | +2-4% speed | 0.90 | foundry:perf-optimizer |
    | 2 | Fuse batch-norm + conv layers | model architecture | small | +1-2% speed | 0.85 | research:scientist |
    | ... | ... | ... | ... | ... | ... | ... |
 
@@ -135,12 +139,13 @@ Before user gate, update `state.json` `team_mode.phase` to `"B"` — lets resume
    - (b) filters to selected entries, preserving sort order
    - (c) stops; write partial report noting hypotheses generated but not tested
 
-7. Write final ordered queue to `<RUN_DIR>/team-queue.jsonl` (one JSON object per line, execution order). Add `team_mode` to `state.json`:
+7. Write final ordered queue to `<RUN_DIR>/team-queue.jsonl` (one JSON object per line, execution order). Merge into the existing `team_mode` object in `state.json` (keep `run_dir` — Phase C's results append and resume read it):
 
    ```text
    {
      "team_mode": {
        "axes": ["<axis-1>", "<axis-2>"],
+       "run_dir": "<RUN_DIR>",
        "phase": "C",
        "queue_file": "<RUN_DIR>/team-queue.jsonl",
        "current_hypothesis": 0,
@@ -153,7 +158,7 @@ Before user gate, update `state.json` `team_mode.phase` to `"B"` — lets resume
 
 For each hypothesis in `<RUN_DIR>/team-queue.jsonl` (sorted order, 1-indexed as M of N):
 
-1. **Print header**: `[→ Team Hyp M/N · axis: <axis> · scope: <change_scope> · "<hypothesis short>"]`
+1. **Print header**: `[→ Team Hyp M/N · axis: <axis> · scope: <change_scope> · "<hypothesis short>"]`. Then run `run/SKILL.md` Phase 0 iteration block — it writes the `research-run-iter` / `research-run-iter-sha` sentinels Phases 3–7a read.
 
 2. **Spawn specialist agent** matching `agent_type` from hypothesis. **On real codebase** — no worktree. Spawn prompt follows R5 Phase 2 ideation template with hypothesis pre-specified:
 
@@ -175,7 +180,7 @@ For each hypothesis in `<RUN_DIR>/team-queue.jsonl` (sorted order, 1-indexed as 
    Return ONLY: {"description":"...","files_modified":[...],"scripts":[],"confidence":0.N}
    ```
 
-3. **Run R5 Phases 3–7a identically** (verify changed files → commit → run metric → run guard → keep/rework/rollback → write diary entry). Phase 8 writes to `experiments.jsonl` and `state.json` as in standard mode; Phase 9 progress checks apply as in standard mode (stuck detection, diminishing returns, context compaction). Phase C does not duplicate this logic — uses same per-phase steps with hypothesis-driven ideation output from step 2.
+3. **Run R5 Phases 3–7a identically** (verify changed files incl. `check_iteration_scope.py` → commit → run metric → run guard → keep/rework/rollback → write diary entry; statuses `scope-violation` and `commit-failed` included). Phase 8 writes to `experiments.jsonl` and `state.json` as in standard mode; Phase 9 progress checks apply as in standard mode (diminishing returns, context compaction, stuck detection with the single stuck outcome of run `<constants>` step 3 — escalation proposals applied as iterations, both discarded → stop). Phase C does not duplicate this logic — uses same per-phase steps with hypothesis-driven ideation output from step 2.
 
 4. **Log outcome** to `<RUN_DIR>/team-results.jsonl` — one line per hypothesis, never a rewrite of the file: Write the single line below to `<RUN_DIR>/team-results.jsonl.rec` with the Write tool, then run the append block after it:
 
@@ -215,13 +220,29 @@ After all hypotheses processed (or user stops early with Ctrl-C / user abort):
 
 1. Read `<RUN_DIR>/team-results.jsonl`.
 
-2. Write full report to `.reports/research/run-team-<branch>-<YYYY-MM-DD>.md`:
+2. Write the full report — this is the run's only report; R6 skips its own report write for `--team`. Resolve a collision-free path first, then Write the report to the printed `OUT` with the Write tool:
 
    ```bash
    mkdir -p .reports/research  # timeout: 3000
+   BRANCH=$(git branch --show-current 2>/dev/null | tr '/' '-' || echo 'main')  # timeout: 3000
+   OUT=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/resolve-anti-overwrite-path.py" .reports/research "run-team-$BRANCH-$(date +%Y-%m-%d)")  # timeout: 5000
+   echo "OUT=$OUT"
    ```
 
    ```markdown
+   ---
+   Title:       Team Run — <goal>
+   Date:        <YYYY-MM-DD>
+   Scope:       <program.md path or text goal> / <total> hypotheses queued
+   Focus:       ML optimization run (team)
+   Agents:      <agents actually dispatched>
+   Outcome:     GOAL_ACHIEVED | IMPROVED | STALLED | DIVERGED
+   Best:        <metric_key> = <final> (<total delta>% improvement)
+   Confidence:  <score> — <key gaps>
+   Next steps:  /research:retro | /research:fortify | /research:run --resume
+   Path:        → <OUT>
+   ---
+
    ## Team Run: <goal>
 
    **Run ID**: <run-id>
@@ -259,7 +280,7 @@ After all hypotheses processed (or user stops early with Ctrl-C / user abort):
    Axes:     <comma-separated list>
    Baseline: <metric_key> = <baseline>
    Final:    <metric_key> = <final> (<total delta>% improvement)
-   → saved to .reports/research/run-team-<branch>-<date>.md
+   → saved to <OUT>
    ---
    ```
 

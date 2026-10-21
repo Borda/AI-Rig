@@ -30,13 +30,22 @@ Exit codes:
 from __future__ import annotations
 
 import os
+import stat
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
+from dev_run_dir import _owned_by_caller, write_atomic  # sibling bin/ script; link-safe, owner-checked writes
+
 #: Skill names this gate accepts, as a pipe-separated list that is also shown in the unknown-skill error message.
 _KNOWN_SKILLS = "debug|feature|fix|plan|refactor|review"
+
+#: Seconds the codemap resolver may run; it probes the index and codemap-py, so a hung child must not stall the skill.
+_RESOLVE_TIMEOUT_S = 60
+
+#: Basename prefix of the per-invocation plan namespace dir that plan/SKILL.md creates under the temp dir.
+_PLAN_NS_PREFIX = "dev-plan-"
 
 # Currency sentinel basename read back by skills/_shared/codemap-gates.md. Owned here
 # because codemap_resolve.py is byte-identical across plugins and cannot name one.
@@ -67,6 +76,25 @@ def _first_line(path: Path) -> str:
         return ""
 
 
+def _is_own_plan_namespace(ns_dir: Path, tmp: Path) -> bool:
+    """Tell whether ``ns_dir`` is a plan namespace this user may write into, directly under the temp dir.
+
+    plan/SKILL.md creates the namespace as ``${TMPDIR:-/tmp}/dev-plan-<pid>-<CSID>``, so that is the only shape
+    accepted. The path is resolved as a whole, not only its parent, so a symlink at the namespace name that points
+    elsewhere is caught; a symlink is refused outright either way. An existing entry must be a directory this user owns;
+    a missing one passes, since the later write then simply fails with a warning and creates nothing.
+    """
+    if not ns_dir.name.startswith(_PLAN_NS_PREFIX) or ns_dir.is_symlink():
+        return False
+    if ns_dir.resolve().parent != tmp.resolve():
+        return False
+    try:
+        status = os.lstat(ns_dir)
+    except FileNotFoundError:
+        return True
+    return stat.S_ISDIR(status.st_mode) and _owned_by_caller(status)
+
+
 def _resolve_paths(skill: str, tmp: Path, csid: str) -> tuple[Path, Path]:
     """Map *skill* to its (raw-flag input, resolved-value output) sentinel pair."""
     if skill in ("debug", "feature", "fix", "refactor"):
@@ -87,7 +115,15 @@ def _resolve_paths(skill: str, tmp: Path, csid: str) -> tuple[Path, Path]:
                 file=sys.stderr,
             )
             raise SystemExit(1)
-        return Path(plan_ns) / "codemap-raw", Path(plan_ns) / "codemap-enabled"
+        # The sentinel value becomes a write directory, so a planted or stale value must not point outside the temp dir.
+        ns_dir = Path(plan_ns)
+        if not _is_own_plan_namespace(ns_dir, tmp):
+            print(
+                f"! PLAN_NS {plan_ns!r} is not a {_PLAN_NS_PREFIX}* dir of yours under the temp dir; re-run /develop:plan",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+        return ns_dir / "codemap-raw", ns_dir / "codemap-enabled"
     print(
         f"dev_codemap_gate.py: unknown skill '{skill}' (expected {_KNOWN_SKILLS})",
         file=sys.stderr,
@@ -110,10 +146,14 @@ def _run_codemap_resolve(bin_dir: Path, raw: str) -> tuple[str, int]:
             stdout=subprocess.PIPE,
             text=True,
             check=False,
+            timeout=_RESOLVE_TIMEOUT_S,
         )
     except OSError as exc:  # mirrors the shell's 127 "no such file" path
         print(f"dev_codemap_gate.py: cannot run codemap_resolve.py: {exc}", file=sys.stderr)
         return "", 127
+    except subprocess.TimeoutExpired:  # fail closed: an unanswered resolver cannot confirm codemap is usable
+        print(f"dev_codemap_gate.py: codemap_resolve.py exceeded {_RESOLVE_TIMEOUT_S}s", file=sys.stderr)
+        return "", 124
     return proc.stdout.rstrip("\n"), proc.returncode
 
 
@@ -124,7 +164,7 @@ def _write_line(path: Path, value: str) -> None:
     exiting 0; the warning keeps that contract visible.
     """
     try:
-        path.write_text(value + "\n", encoding="utf-8")
+        write_atomic(path, value)
     except OSError as exc:
         print(f"dev_codemap_gate.py: cannot write {path}: {exc}", file=sys.stderr)
 

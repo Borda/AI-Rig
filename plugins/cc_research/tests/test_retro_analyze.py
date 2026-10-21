@@ -203,6 +203,33 @@ class TestMainCLI:
         assert exit_code == 2
         assert "malformed JSON" in out["error"]
 
+    def test_malformed_line_before_trailing_blank_line_exits_two(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A malformed line followed by a blank line is not the last line, so it is an error, not a truncation.
+
+        The streamed reader holds a malformed line back until it sees the next line; a blank line still counts, exactly
+        as the earlier whole-file ``readlines`` check did.
+        """
+        jsonl = tmp_path / "experiments.jsonl"
+        jsonl.write_text(json.dumps({"status": "baseline", "metric": 1.0}) + '\n{"status": "kep\n\n', encoding="utf-8")
+        exit_code = ra.main(["--jsonl", str(jsonl)])
+        out = json.loads(capsys.readouterr().out.strip())
+        assert exit_code == 2
+        assert "malformed JSON at line 2" in out["error"]
+
+    def test_oversized_file_exits_two_before_reading(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A file over the size cap is rejected with an input error instead of being loaded into memory."""
+        jsonl = tmp_path / "experiments.jsonl"
+        _write_jsonl(jsonl, [{"status": "baseline", "metric": 1.0}, {"status": "kept", "metric": 1.1}])
+        monkeypatch.setattr(ra, "MAX_JSONL_BYTES", 16)
+        exit_code = ra.main(["--jsonl", str(jsonl)])
+        out = json.loads(capsys.readouterr().out.strip())
+        assert exit_code == 2
+        assert "not a run ledger" in out["error"]
+
     def test_custom_baseline_label(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """Verify command-line option behavior.
 

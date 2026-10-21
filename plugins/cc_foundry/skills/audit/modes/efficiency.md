@@ -36,15 +36,15 @@ Spawn **foundry:curator** per file with efficiency-specific prompt:
 >
 >    **Performance-safety sub-check (mandatory before any downgrade recommendation)**: does agent produce quality-sensitive output? Signals: public-facing text (contributor replies, blog posts), security analysis (OWASP, exploit reasoning), adversarial reasoning, complex multi-file code design, creative original content. Any signal present → add `performance_risk: medium|high` to finding, require empirical validation note — do NOT recommend downgrade as P1/P2 without this caveat. A lower-cost model degrading output quality is not an efficiency gain.
 >
-> 2. **Effort level**: `effort: xhigh` declared? Flag if agent read-only, single-pass, or executes a fixed decision tree — xhigh planning budget has nowhere to spend. Exception: `xhigh` on sonnet acceptable only for these agent roles: adversarial reviewer (challenger, qa-specialist), multi-file code designer (sw-engineer, solution-architect), public-facing content writer (creator, shepherd). All other roles: flag regardless of quality-sensitivity claim.
+> 2. **Effort level**: `effort: xhigh` declared? Flag if agent read-only, single-pass, or executes a fixed decision tree — xhigh planning budget has nowhere to spend. Exception: `xhigh` on a sonnet-tier agent acceptable only for these roles: security/adversarial review (qa-specialist), public-facing content writer (creator, oss:shepherd). All other sonnet roles: flag regardless of quality-sensitivity claim. Opus-tier roles (challenger, sw-engineer, solution-architect) fall outside this sonnet exception — judge their `xhigh` on task depth alone.
 >
-> 3. **Missing model declaration**: no `model:` → session model inherited; flag with recommended tier (opus/sonnet/haiku based on role complexity). Applies to skill and agent files alike. `disable-model-invocation: true` is **not** an exemption: blocks only Claude-automatic invocation, subagent preloading, scheduled dispatch — skill still user-invocable via `/skill-name`, still runs a model, still inherits session model when it declares none.
+> 3. **Model declaration placement**: agents and `context: fork` skills — no `model:` → session model inherited; flag with recommended tier (opus/sonnet/haiku based on role complexity). Inline skills (no `context: fork`) — inverse: flag any `model:` declared, in every plugin in scope (cross-plugin, not only foundry; name the owning plugin in the finding). Skills docs: the override "applies for the rest of the current turn" and replaces the session model, so the cached prefix is rewritten on entry and again on the next prompt; fix = drop `model:`, keep `effort:`. `disable-model-invocation: true` changes neither case: blocks only Claude-automatic invocation, subagent preloading, scheduled dispatch — skill still user-invocable via `/skill-name` and still runs a model.
 >
 > <!-- Item 4 (dead model spec) removed: `disable-model-invocation: true` blocks only Claude-automatic invocation, subagent preloading, and scheduled dispatch — user-typed `/skill-name` still runs and `model:` still governs it. Numbering gap at 4 is intentional; items 5–9 keep their numbers because E8/E9 are named identifiers referenced across this file and the envelope schema. -->
 >
 > 5. **Token bloat**: identify inline reference blocks >40 lines loading unconditionally but applying only to a subset of invocations (e.g. ML-specific patterns for non-ML projects, hook authoring for non-hook tasks, domain CI blocks always loaded). Flag with estimated line count + suggested gate/extraction. A block "applies only to a subset" if its heading keyword doesn't appear in the skill's `description:` field or is scoped by a conditional the skill rarely enters. Curator must verify subset-applicability before flagging — do not flag always-on decision tables or check indexes.
-> 6. **Tool grant scope**: agent files — does `tools:` include `*` or tools unused in the agent's workflow prose? Skill files — does `allowed-tools:` include `*` or tools unused in the skill workflow body? Skills with `disable-model-invocation: true` have no model execution, tool grants irrelevant — skip.
-> 7. **Bin/ extraction candidates**: scan fenced code blocks of any language (bash, python, sh, perl, etc.) for self-contained patterns appearing 3+ times in this file with only constant differences (variable names, path segments, string literals). Self-contained means: block produces output to stdout, has no shell function definitions, reads no caller shell state beyond `$HOME`, `$ARGUMENTS`, `$RUN_DIR`, `$AUDIT_TPL`. Flag each candidate: block language, purpose, occurrence count, suggested `bin/<script-name>.sh` or `bin/<script-name>.py`. Skip: blocks defining bash functions, blocks mutating shell state used in later blocks. 7b. **Prose compression candidates**: scan inline fenced code blocks and bin/ call-site descriptions. Flag when: (a) inline block — `tokens(block) > tokens(equivalent prose/table/schema)` at identical precision; (b) bin/ call-site — `tokens(call-site description) >= tokens(prose equivalent)`. Exempt: examples, templates, blocks carrying exact executable syntax. Severity: low. Fix: replace with prose/table/schema (Case 1) or delete script and replace call-site with prose (Case 2). Ref: `bin-authoring-guide.md §Prose over Code (Token Compression)`.
+> 6. **Tool grant scope**: agent files — does `tools:` include `*` or tools unused in the agent's workflow prose? Skill files — does `allowed-tools:` include `*` or tools unused in the skill workflow body? `disable-model-invocation: true` is no exemption (check 3) — user-typed `/skill-name` still runs a model with these grants.
+> 7. **Bin/ extraction candidates**: scan fenced code blocks of any language (bash, python, sh, perl, etc.) for self-contained patterns appearing 3+ times in this file with only constant differences (variable names, path segments, string literals). Self-contained means: block produces output to stdout, has no shell function definitions, reads no caller shell state beyond `$HOME`, `$ARGUMENTS`, `$RUN_DIR`, `$AUDIT_TPL`. Flag each candidate: block language, purpose, occurrence count, suggested `bin/<script-name>.py` (bin/ is Python-only — `.sh` does not run on native Windows). Skip: blocks defining bash functions, blocks mutating shell state used in later blocks. 7b. **Prose compression candidates**: scan inline fenced code blocks and bin/ call-site descriptions. Flag when: (a) inline block — `tokens(block) > tokens(equivalent prose/table/schema)` at identical precision; (b) bin/ call-site — `tokens(call-site description) >= tokens(prose equivalent)`. Exempt: examples, templates, blocks carrying exact executable syntax. Severity: low. Fix: replace with prose/table/schema (Case 1) or delete script and replace call-site with prose (Case 2). Ref: `bin-authoring-guide.md §Prose over Code (Token Compression)`.
 >
 > <!-- GUARD-RAILS: never flag as E8/E9 — these look verbose but are load-bearing -->
 >
@@ -90,8 +90,20 @@ Spawn **foundry:curator** per file with efficiency-specific prompt:
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
-[ "$LOCAL_MODE" = "true" ] && _SCAN_DIR="plugins/" || _SCAN_DIR=".claude/"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/scan_efficiency_signals.py" --scan-dir "$_SCAN_DIR"  # timeout: 60000
+if [ "$LOCAL_MODE" = "true" ]; then
+  python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/scan_efficiency_signals.py" --scan-dir "plugins/"  # timeout: 60000
+else
+  # installed context: project .claude/ plus every installed plugin's current root — the plugins live there, not under .claude/
+  [ -d ".claude/" ] && python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/scan_efficiency_signals.py" --scan-dir ".claude/"  # timeout: 60000
+  _N=0
+  while IFS= read -r p; do
+    m="${p%/*}"; m="${m##*/}"
+    r=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_plugin_root.py" --plugin-name "${p##*/}" --marketplace "$m" 2>/dev/null) || continue
+    [ -n "$r" ] || continue
+    _N=$((_N + 1)); python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/scan_efficiency_signals.py" --scan-dir "$r"  # timeout: 60000
+  done < <(find "$HOME/.claude/plugins/cache" -mindepth 2 -maxdepth 2 -type d 2>/dev/null)
+  [ "$_N" -gt 0 ] || echo "⚠ Phase B: no installed plugin root resolved — plugin agents/skills NOT scanned; say so in the report"
+fi
 ```
 
 **Phase B2 — Code block purpose-grouping + extraction feasibility (Check 33, parallel with Phase A+B)**:
@@ -100,7 +112,7 @@ Scope: per plugin — compare blocks within same plugin only (cross-plugin overl
 
 **Primary signal: functional purpose, not syntactic similarity.** Syntactic line-intersection is blind to conditional-inversion and variable renaming — two blocks implementing same logic written differently have low syntactic overlap but identical purpose. Group by purpose first; syntactic overlap only as secondary confirmation and DUPLICATE label.
 
-<!-- policy-sibling: plugins/cc_foundry/skills/audit/templates/checks-skills.md (Check 33b Phase 2 — same Gate/Score spec) -->
+<!-- policy-sibling: plugins/cc_foundry/skills/audit/templates/checks-skills-duplication.md (Check 33b Phase 2 — same Gate/Score spec) -->
 
 Spawn **foundry:curator** per plugin with this prompt:
 
@@ -159,9 +171,9 @@ Spawn **foundry:curator** per plugin with this prompt:
 > | Cluster | ParamSlots | Tokens | Gate | Score | Verdict | Differs-by | Recommended extraction |
 > ```
 >
-> **Differs-by**: list the concrete `<ARG>` slot values that vary across cluster instances — these become named CLI parameters in the extracted script signature. Recommendation = concrete: e.g. `Extract → bin/find-plugin.sh <plugin-name>; N call sites become $(find-plugin.sh codex)`.
+> **Differs-by**: list the concrete `<ARG>` slot values that vary across cluster instances — these become named CLI parameters in the extracted script signature. Recommendation = concrete: e.g. `Extract → bin/find_plugin.py --plugin <name>; N call sites become python "${CLAUDE_PLUGIN_ROOT}/bin/find_plugin.py" --plugin codex`.
 >
-> **Severity**: DUPLICATE cluster (max-sim ≥ 0.90) → **high** regardless of gate/score; HIGH verdict → **medium**; MEDIUM verdict → **low**; LOW or HOLD → Table 2 only (not a finding). Python blocks with HIGH verdict → medium + note approval-prompt impact.
+> **Severity**: DUPLICATE cluster (max-sim ≥ 0.90) → **high** regardless of gate/score; HIGH verdict → **medium**; MEDIUM verdict → **low**; LOW or HOLD → Table 2 only (not a finding). Python blocks with HIGH verdict → medium; note approval-prompt impact only for capture forms (`VAR=$(python …)`), never bare `python` (allow-listed).
 >
 > Write to `<RUN_DIR>/efficiency-check33-<plugin>.md`. Return ONLY: `{"status":"done","file":"<path>","clusters":N,"findings":N,"severity":{"high":N,"medium":N,"low":N},"confidence":0.N}`
 
@@ -176,14 +188,16 @@ Spawn **foundry:curator** consolidator to merge all findings:
 > 1. **Cheapest Viable Model table** — one row per agent/skill with cost issue: `| file | current model+effort | minimum viable | rationale | estimated saving |`; saving = opus→sonnet: LARGE, xhigh→high: MEDIUM, xhigh→medium: MEDIUM (heuristic tiers — not measured against live run costs)
 > 2. **Unbounded Spawn Patterns** — list files with uncapped per-item agent dispatch; recommended cap + batch strategy
 > 3. **Token Bloat Hotspots** — top 5 files by redundant inline content; section name, line count, suggested action
-> 4. **Boilerplate Duplication + Bin/ Extraction Candidates** — pattern name × occurrence count × total redundant lines × extraction target; for each bin/ candidate from Phase A+B: block purpose, occurrence count, suggested `bin/<script-name>.sh`, estimated line reduction. Merge with Check 33 (Phase B2) similarity clusters: include Table 1 and Table 2 per plugin inline in this section, sorted by feasibility HIGH→LOW
-> 5. **Missing Model Declarations** — list files inheriting session model; recommended tier per file
+> 4. **Boilerplate Duplication + Bin/ Extraction Candidates** — pattern name × occurrence count × total redundant lines × extraction target; for each bin/ candidate from Phase A+B: block purpose, occurrence count, suggested `bin/<script-name>.py`, estimated line reduction. Merge with Check 33 (Phase B2) similarity clusters: include Table 1 and Table 2 per plugin inline in this section, sorted by feasibility HIGH→LOW
+> 5. **Model Declaration Placement** — agents and `context: fork` skills inheriting session model (recommended tier per file); inline skills declaring `model:` in any plugin, owning plugin named per row (drop it, keep `effort:`)
 > 6. **Prioritized Improvement Plan** — P1 (critical: correctness/highest cost), P2 (high: model downgrades), P3 (medium: hygiene/dedup), P4 (low: compression); each item: file + exact change + estimated saving + `performance_risk: low|medium|high`. Items with `performance_risk: high` auto-downgrade to P-HOLD (do not apply without empirical benchmarking). Items with `performance_risk: medium` stay in plan, carry a `⚠ validate first` marker.
 > 7. **Estimated Combined Savings** — rough directional reduction for most common workflows if all P1+P2 applied; savings are heuristic estimates only — no live cost measurement performed; directional guidance, not engineering targets
-> 8. **Instruction Quality Issues** — table of E8/E9 findings aggregated from per-file envelopes (`e8_complexity` + `e9_noise` fields) and detailed findings in `efficiency-*.md` reports: `| file | check | location | issue | impact | suggested simplification |`; sorted by estimated noise reduction (high→low). NON_AUTO_FIXABLE — E8 findings contribute to `medium` count; E9 findings contribute to `low` count; both enter the follow-up gate under option (c) "Fix ALL" as a separate "instruction-quality" AskUserQuestion category. Do not auto-fix instruction-quality findings via options (a) or (b). Omit section entirely when both E8 and E9 totals are zero.
+> 8. **Instruction Quality Issues** — table of E8/E9 findings aggregated from per-file envelopes (`e8_complexity` + `e9_noise` fields) and detailed findings in `efficiency-*.md` reports: `| file | check | location | issue | impact | suggested simplification |`; sorted by estimated noise reduction (high→low). NON_AUTO_FIXABLE — E8 findings contribute to `medium` count; E9 findings contribute to `low` count; both enter option (c) "Fix ALL" as an `instruction-quality` question folded into the model-tier category's `AskUserQuestion` call (its own call only when no model-tier finding exists) — never a fifth call past `fix.md`'s 4-call cap. Do not auto-fix instruction-quality findings via options (a) or (b). Omit section entirely when both E8 and E9 totals are zero.
 > 9. **Ceremony Turns** — table of E10 findings from per-file envelopes (`e10_ceremony`): `| file | check | location | issue | turns removed | suggested merge |`, sorted by turns removed (high→low), plus an `export CSID` occurrence column per file as the block-count proxy. This section ranks by **turns**, not tokens: token-bloat findings (checks 5, 7b, E8) shrink what each turn re-reads, E10 removes turns outright, and the two are additive. Findings that merge only setup blocks are auto-fixable; any finding whose merge would cross a model decision point is reported and never auto-fixed. Omit section when the E10 total is zero. Write full report to `<RUN_DIR>/efficiency-report.md`. End report with `## Confidence` block per quality-gates.md format (Score, Gaps, Refinements).
 >
-> Return ONLY: `{"status":"done","file":"<RUN_DIR>/efficiency-report.md","critical":N,"high":N,"medium":N,"low":N,"total_issues":N,"clusters":N,"extract_count":N,"recommended_count":N,"e8_complexity":N,"e9_noise":N,"e10_ceremony":N,"top_saving":"<description>","confidence":0.N}`
+> Also write the audit gate inputs (standalone `--efficiency` only — with `--adversarial` in the same invocation the Step 5 consolidator writes the merged files): `<RUN_DIR>/aggregate.md` (non-empty, findings grouped by severity) and `<RUN_DIR>/summary.jsonl` — one compact JSON object per line, one row per P1–P4 plan item (P-HOLD excluded) plus one row per finding outside the plan (e.g. section 8 E8/E9 rows, section 9 E10 rows): `{"id":"P1-1","sev":"critical|high|medium|low","file":"<repo-relative path>","category":"<model-tier|token-bloat|bin-extraction|duplication|instruction-quality|ceremony|…>","auto_fixable":true,"one_line":"<finding description>"}`. `sev` and a non-empty `one_line` are mandatory on every row — the audit follow-up gate and `Stop` hook block without `aggregate.md` and `summary.jsonl`, and reject a row missing either field. `auto_fixable` is `false` for E8/E9 rows (NON_AUTO_FIXABLE, section 8) and for any E10 merge crossing a model decision point (section 9). Zero findings: `aggregate.md` carries a one-line no-findings note, `summary.jsonl` is written empty.
+>
+> Return ONLY: `{"status":"done","file":"<RUN_DIR>/efficiency-report.md","critical":N,"high":N,"medium":N,"low":N,"total_issues":N,"clusters":N,"extract_count":N,"recommended_count":N,"e8_complexity":N,"e9_noise":N,"e10_ceremony":N,"top_saving":"<description>","findings":N,"summary_file":"<RUN_DIR>/summary.jsonl","confidence":0.N}` — `findings` = `summary.jsonl` row count.
 
 **Report format** (terminal summary):
 
@@ -201,9 +215,11 @@ Estimated savings (P1+P2): ~X%
 
 Omit `code-blocks:` line when no clusters found (all HOLD verdicts or no Check 33 data available). Omit `instruction-quality:` line when both complexity and noise zero. Omit `ceremony:` line when the E10 total is zero.
 
-Efficiency findings feed into standard fix pipeline (Steps 7–10). **Step 8 override**: model-tier mismatch findings NOT subject to Step 8's "report-only" bypass — user opted into auto-fix by invoking `--efficiency`. Fix agents apply model-tier changes.
+**Step 7 Audit Report**: efficiency skips Steps 3–6, so the Step 7 Audit Report is built from `<RUN_DIR>/summary.jsonl` — `Total: N` is its row count and the report lists every row's `one_line`. The follow-up gate and `Stop` hook block until both appear.
 
-**Extraction routing**: when Phase C envelope `extract_count > 0` (HIGH or MEDIUM verdict clusters), follow-up gate replaces option (d) with a `/distill executables` choice — user selects from gate; do NOT auto-run. Gate substitution logic in main SKILL.md follow-up gate section.
+Efficiency findings feed into standard fix pipeline (Steps 7–10). **Model-tier findings stay NON_AUTO_FIXABLE** (`fix.md`, Check 19): report only under options (a)/(b), applied only on explicit per-category user selection under (c) — invoking `--efficiency` is not that selection. A tier downgrade additionally needs `/foundry:calibrate <agent> --full --ab-test` evidence before it lands (`agents/curator.md` model policy).
+
+**Extraction routing**: when Phase C envelope `extract_count > 0` (HIGH or MEDIUM verdict clusters), Step 11 final report prints `/distill executables (N HIGH, M MEDIUM candidates)` as plain text — no follow-up gate option (`/distill` is `disable-model-invocation`); user runs it; do NOT auto-run.
 
 **Post-extraction orphan check**: after `/distill executables` completes, run `python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_orphaned_bin.py"` — must exit 0. New orphan introduced (bin/ script created without consumer rewire) = HIGH finding; abort extraction phase, require wire-in before commit.
 

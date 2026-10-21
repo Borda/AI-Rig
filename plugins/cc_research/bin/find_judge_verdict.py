@@ -18,7 +18,8 @@ Sentinels written (newline-terminated — the ``IFS= read -r`` reload contract n
 
 Exit codes:
     0 — verdict and program resolved, sentinels written
-    1 — BLOCKED: no verdict file, no Program field, program mismatch, or program missing on disk
+    1 — BLOCKED: no verdict file, no Program field, source run without program_file, program mismatch,
+        or program missing on disk
     2 — argument error (argparse default)
 """
 
@@ -31,6 +32,14 @@ import re
 import sys
 import tempfile
 from pathlib import Path
+
+#: Sibling import: bin/ is not a package. Putting it on the path resolves the private writer whether this file runs as
+#: a script, under the test conftest, or as a doctest module.
+_BIN_DIR = str(Path(__file__).resolve().parent)
+if _BIN_DIR not in sys.path:
+    sys.path.insert(0, _BIN_DIR)
+
+from _sentinel_io import write_private_text  # noqa: E402
 
 #: Matches a judge report line that starts with a Verdict label, allowing Markdown bold markers and any letter case.
 _VERDICT_LINE_RE = re.compile(r"^\**verdict\**:", re.IGNORECASE)
@@ -129,8 +138,20 @@ def _session_token() -> str:
 
 
 def _check_program_match(program_file: str, state_program: str) -> int:
-    """Return 0 when the verdict's program matches the current experiment, else 1 after reporting."""
-    if state_program and _real_or_raw(program_file) != _real_or_raw(state_program):
+    """Return 0 when the verdict's program matches the current experiment, else 1 after reporting.
+
+    An empty ``state_program`` (text-goal run with ``program_file: null``, or an unreadable
+    ``state.json``) blocks: with nothing to cross-match, the newest judge report of any other
+    program would otherwise satisfy the approval gate.
+    """
+    if not state_program:
+        print(
+            f"! BLOCKED — source run records no program_file (text-goal run or unreadable state.json); "
+            f"cannot confirm judge verdict for '{program_file}' applies to it"
+        )
+        print("Fortify needs a program-file run: /research:run <program.md>, then /research:judge <program.md>")
+        return 1
+    if _real_or_raw(program_file) != _real_or_raw(state_program):
         print(
             f"! BLOCKED — judge verdict references program '{program_file}' "
             f"but current experiment is for '{state_program}'"
@@ -160,6 +181,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--run-id", default="", help="Source run id being fortified.")
     parser.add_argument("--reports-dir", default=str(_REPORTS_DIR), help="Directory holding judge-*.md reports.")
     args = parser.parse_args(argv)
+    csid = _session_token()
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", csid) or ".." in csid:
+        print("find_judge_verdict: invalid sentinel session identity", file=sys.stderr)
+        return 2
 
     verdict_file = newest_verdict_file(Path(args.reports_dir))
     if verdict_file is None:
@@ -184,10 +209,9 @@ def main(argv: list[str] | None = None) -> int:
         return blocked
 
     tmp = _sentinel_dir()
-    csid = _session_token()
     try:
-        (tmp / f"fortify-program-file-{csid}").write_text(program_file + "\n", encoding="utf-8", newline="\n")
-        (tmp / f"fortify-judge-verdict-{csid}").write_text(verdict + "\n", encoding="utf-8", newline="\n")
+        write_private_text(tmp / f"fortify-program-file-{csid}", program_file + "\n")
+        write_private_text(tmp / f"fortify-judge-verdict-{csid}", verdict + "\n")
     except OSError as exc:
         print(f"find_judge_verdict: cannot write sentinel: {exc}", file=sys.stderr)
         return 1

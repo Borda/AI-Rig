@@ -10,6 +10,7 @@ Covers:
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -27,7 +28,7 @@ def test_build_explore_command_strips_leading_dotslash() -> None:
     assert cmd[0:3] == ["docker", "run", "--rm"]
     assert "--network" in cmd
     assert "none" in cmd
-    assert "/proj:/workspace:ro" in cmd
+    assert f"type=bind,source={Path('/proj').resolve()},target=/workspace,readonly" in cmd
     assert "--tmpfs" in cmd
 
 
@@ -39,8 +40,8 @@ def test_build_explore_command_preserves_path_without_dotslash() -> None:
 def test_build_verify_command_mounts_experiments_rw() -> None:
     cmd = ds.build_verify_command("pytest -q", "bridge", "/proj")
     # Must contain both read-only project mount and read-write .experiments mount.
-    assert "/proj:/workspace:ro" in cmd
-    assert "/proj/.experiments:/workspace/.experiments:rw" in cmd
+    assert f"type=bind,source={Path('/proj').resolve()},target=/workspace,readonly" in cmd
+    assert f"type=bind,source={Path('/proj').resolve() / '.experiments'},target=/workspace/.experiments" in cmd
     # Command suffix: sh -c <metric-cmd>
     assert cmd[-3:] == ["sh", "-c", "pytest -q"]
 
@@ -209,8 +210,9 @@ def test_golden_explore_invocation_constructs_expected_docker_argv(captured_run:
         "2g",
         "--pids-limit",
         "512",
-        "-v",
-        "/proj:/workspace:ro",
+        *(("--user", f"{os.getuid()}:{os.getgid()}") if hasattr(os, "getuid") else ()),
+        "--mount",
+        f"type=bind,source={Path('/proj').resolve()},target=/workspace,readonly",
         "--tmpfs",
         ds.TMPFS_MOUNT,
         "-w",
@@ -221,9 +223,11 @@ def test_golden_explore_invocation_constructs_expected_docker_argv(captured_run:
     ]
 
 
-def test_golden_verify_invocation_constructs_expected_docker_argv(captured_run: list[list[str]]) -> None:
+def test_golden_verify_invocation_constructs_expected_docker_argv(
+    captured_run: list[list[str]], tmp_path: Path
+) -> None:
     """Exact phase5-metric.md verify call-site argv → pre-argparse baseline plus the timeout kill handle."""
-    rc = ds.main(["--mode", "verify", "pytest -q metric.py"], env={}, cwd="/proj")
+    rc = ds.main(["--mode", "verify", "pytest -q metric.py"], env={}, cwd=str(tmp_path))
     assert rc == 0
     assert len(captured_run) == 1
     argv, cidfile = _split_cidfile(captured_run[0])
@@ -243,10 +247,11 @@ def test_golden_verify_invocation_constructs_expected_docker_argv(captured_run: 
         "2g",
         "--pids-limit",
         "512",
-        "-v",
-        "/proj:/workspace:ro",
-        "-v",
-        "/proj/.experiments:/workspace/.experiments:rw",
+        *(("--user", f"{os.getuid()}:{os.getgid()}") if hasattr(os, "getuid") else ()),
+        "--mount",
+        f"type=bind,source={tmp_path.resolve()},target=/workspace,readonly",
+        "--mount",
+        f"type=bind,source={tmp_path.resolve() / '.experiments'},target=/workspace/.experiments",
         "--tmpfs",
         ds.TMPFS_MOUNT,
         "-w",
@@ -290,12 +295,18 @@ def test_main_explore_mode_equals_form(captured_run: list[list[str]]) -> None:
     assert captured_run[0][-1] == "/workspace/scripts/x.py"
 
 
-def test_main_verify_mode_dispatches_correctly(captured_run: list[list[str]]) -> None:
-    rc = ds.main(["--mode", "verify", "pytest -q"], env={}, cwd="/proj")
+def test_main_verify_mode_dispatches_correctly(captured_run: list[list[str]], tmp_path: Path) -> None:
+    """Verify mode binds ``.experiments`` read-write and creates it first.
+
+    ``--mount type=bind`` refuses a missing source, unlike the ``-v`` form it replaced, so a fresh project without
+    ``.experiments`` would fail every verify run.
+    """
+    rc = ds.main(["--mode", "verify", "pytest -q"], env={}, cwd=str(tmp_path))
     assert rc == 0
     cmd = captured_run[0]
     assert cmd[-3:] == ["sh", "-c", "pytest -q"]
-    assert "/proj/.experiments:/workspace/.experiments:rw" in cmd
+    assert f"type=bind,source={tmp_path.resolve() / '.experiments'},target=/workspace/.experiments" in cmd
+    assert (tmp_path / ".experiments").is_dir()
 
 
 def test_main_verify_rejects_destructive_command_before_docker(
@@ -383,7 +394,7 @@ def test_main_caps_docker_run_with_resolved_timeout(
 
 
 def test_main_timeout_kills_container_and_returns_124(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     """A hung container is killed via its cidfile, the cidfile removed, and exit 124 returned."""
     calls: list[list[str]] = []
@@ -398,7 +409,7 @@ def test_main_timeout_kills_container_and_returns_124(
         return _FakeCompleted(returncode=0)
 
     monkeypatch.setattr(ds.subprocess, "run", _fake_run)
-    rc = ds.main(["--mode", "verify", "pytest -q"], env={"SANDBOX_TIMEOUT_SEC": "1"}, cwd="/proj")
+    rc = ds.main(["--mode", "verify", "pytest -q"], env={"SANDBOX_TIMEOUT_SEC": "1"}, cwd=str(tmp_path))
     assert rc == 124
     assert calls[1] == ["docker", "kill", "c0ffee"]
     assert not Path(calls[0][calls[0].index("--cidfile") + 1]).exists()
@@ -424,14 +435,14 @@ def test_main_timeout_without_cidfile_content_still_returns_124(
 
 
 @pytest.mark.parametrize("mode", ["explore", "verify"])
-def test_main_applies_quota_env_overrides(captured_run: list[list[str]], mode: str) -> None:
+def test_main_applies_quota_env_overrides(captured_run: list[list[str]], mode: str, tmp_path: Path) -> None:
     """The ``SANDBOX_*`` quota overrides reach the docker argv in both modes.
 
     A caller running several sandboxes at once needs to shrink each one's share; this is the path that lets them, and it
     must work identically for explore and verify.
     """
     env = {"SANDBOX_CPUS": "1", "SANDBOX_MEMORY": "512m", "SANDBOX_PIDS_LIMIT": "128"}
-    rc = ds.main(["--mode", mode, "x.py"], env=env, cwd="/proj")
+    rc = ds.main(["--mode", mode, "x.py"], env=env, cwd=str(tmp_path))
     assert rc == 0
     cmd = captured_run[0]
     assert cmd[cmd.index("--cpus") + 1] == "1"

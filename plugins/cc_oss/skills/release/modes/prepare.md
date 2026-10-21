@@ -11,11 +11,12 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # fresh shell loses vars; Mode Detection persists REST to tmpdir
 IFS= read -r REST < "${TMPDIR:-/tmp}/release-rest-${CSID}" 2>/dev/null || REST=""
 IFS= read -r LAST_TAG < "${TMPDIR:-/tmp}/release-setup-${CSID}/LAST_TAG" 2>/dev/null || LAST_TAG=""
-VERSION="${REST%% *}"
-[[ "$VERSION" != v* ]] && VERSION="v$VERSION"
+VERSION="${REST%% *}"; VERSION="${VERSION#v}"
+case "$VERSION" in ""|-*|*/*) echo "! BLOCKED — prepare needs a release version, e.g. /release prepare v1.3.0" >&2; exit 1;; esac
+VERSION="v$VERSION"
 RANGE="${RANGE:-$LAST_TAG..HEAD}"
 echo "$VERSION" > "${TMPDIR:-/tmp}/release-prepare-version-${CSID}"  # persist for later blocks (Check 41)
-echo "$RANGE" > "${TMPDIR:-/tmp}/release-range-${CSID}"  # reuses the shared sentinel written by release/SKILL.md:256, read at :125,:442 and classify-truth-check.md:84
+echo "$RANGE" > "${TMPDIR:-/tmp}/release-range-${CSID}"  # reuses the shared sentinel written by Gather changes in release/SKILL.md
 echo "range: $RANGE"
 # BRANCH, DATE, REPO_ROOT, SKILL_DIR from Shared setup above
 ```
@@ -37,6 +38,7 @@ Run all checks from **Mode: audit** with `$VERSION` as target. `| Check | Status
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r VERSION < "${TMPDIR:-/tmp}/release-prepare-version-${CSID}" 2>/dev/null || VERSION=""
+IFS= read -r CHANGELOG_FILE < "${TMPDIR:-/tmp}/release-changelog-file-${CSID}" 2>/dev/null || CHANGELOG_FILE=""
 [ -n "$VERSION" ] && [ -n "$CHANGELOG_FILE" ] || { echo "Error: release version or changelog path missing" >&2; exit 1; }
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/setup_release_dir.py" --validate-only "releases/$VERSION" "$CHANGELOG_FILE" || exit 1
 ```
@@ -54,7 +56,7 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r VERSION < "${TMPDIR:-/tmp}/release-prepare-version-${CSID}" 2>/dev/null || VERSION=""  # reload (Check 41)
 IFS= read -r CHANGELOG_FILE < "${TMPDIR:-/tmp}/release-changelog-file-${CSID}" 2>/dev/null || CHANGELOG_FILE=""  # written by Phase 2b's changelog-audit envelope
 IFS= read -r REPO_ROOT < "${TMPDIR:-/tmp}/release-setup-${CSID}/REPO_ROOT" 2>/dev/null || REPO_ROOT="."
-[ -n "$CHANGELOG_FILE" ] || CHANGELOG_FILE=$(find "$REPO_ROOT" -maxdepth 2 -name "CHANGELOG.md" 2>/dev/null | head -1)  # audit.md search order
+[ -n "$CHANGELOG_FILE" ] || CHANGELOG_FILE=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/resolve_changelog_file.py" --repo-root "$REPO_ROOT")  # same resolver as notes and audit
 RELEASE_DIR="releases/$VERSION"
 # Hard-fail: this script's .bak backup loop is the only thing standing between a re-run and silent
 # loss of hand-edited HIGHLIGHTS/MIGRATION/SUMMARY/DRAFT, which Phases 3a-5 overwrite unconditionally.

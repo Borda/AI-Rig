@@ -48,8 +48,10 @@ import json
 import os
 import re
 import secrets
+import stat
 import sys
 from pathlib import Path
+from typing import TextIO
 
 #: Default directory for anonymized ``-anon.jsonl`` output. Deliberately distinct
 #: from the log/salt directory so anonymized shards are never written next to the
@@ -60,6 +62,9 @@ DEFAULT_OUT_DIR = ".cache/codemap/export"
 #: Writing anonymized output beside this file would let a recipient of both the
 #: output and the salt reverse every pseudonym — so it is refused.
 SALT_FILENAME = ".salt"
+
+#: Length in bytes of a valid salt; a shorter stored salt makes pseudonyms brute-forceable.
+_SALT_BYTES = 32
 
 #: Maximum accepted input log size — the 50 MB value ``scan-stats.py`` and
 #: ``smoke_test_index.py`` already use for ``MAX_INDEX_SIZE`` (CWE-400: DoS guard).
@@ -173,6 +178,48 @@ _MIN_IDENTIFYING_LEN = 3
 _SHARD_STEM_RE = re.compile(r"^(cli|tools|skills)_(.+)$")
 
 
+def _read_existing_salt(salt_file: Path) -> bytes:
+    """Return the salt stored in an existing file, refusing any file that could weaken it.
+
+    A salt that is short, planted by another user, or readable beyond the owner would make
+    every pseudonym guessable, so the file is opened without following a symlink and checked
+    through the open descriptor before its content is trusted.
+
+    Args:
+        salt_file: Path to an existing salt file.
+
+    Returns:
+        The 32-byte salt.
+
+    Raises:
+        ValueError: When the file is a symlink or not a regular file, is owned by another
+            user or open to group/other access (POSIX), or does not hold exactly 32 bytes of hex.
+    """
+    try:
+        fd = os.open(salt_file, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except OSError as exc:
+        raise ValueError(f"salt file {salt_file} cannot be opened (symlink or unreadable): {exc}") from exc
+    with os.fdopen(fd, "r", encoding="ascii") as handle:
+        info = os.fstat(handle.fileno())
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError(f"salt file {salt_file} is not a regular file")
+        if hasattr(os, "getuid") and (info.st_uid != os.getuid() or info.st_mode & 0o077):
+            raise ValueError(
+                f"salt file {salt_file} must be owned by the current user with mode 0600 (no group/other access); "
+                "fix the owner and mode, or delete it to mint a new salt"
+            )
+        text = handle.read().strip()
+    try:
+        salt = bytes.fromhex(text)
+    except ValueError as exc:
+        raise ValueError(f"salt file {salt_file} does not hold hex text; delete it to mint a new salt") from exc
+    if len(salt) != _SALT_BYTES:
+        raise ValueError(
+            f"salt file {salt_file} holds {len(salt)} bytes, expected {_SALT_BYTES}; delete it to mint a new salt"
+        )
+    return salt
+
+
 def _load_salt(salt_file: Path) -> bytes:
     """Load salt from file, creating it with a fresh random value if absent.
 
@@ -184,9 +231,13 @@ def _load_salt(salt_file: Path) -> bytes:
     salt on a multi-user host or shared CI runner would let any local user reverse
     every pseudonym. ``O_CREAT | O_EXCL`` also closes the exists→create race — a
     concurrent writer that wins the create is deferred to by re-reading the file.
+    An existing file is trusted only after :func:`_read_existing_salt` validates it.
 
     Returns:
         32-byte salt as raw bytes.
+
+    Raises:
+        ValueError: When an existing salt file fails :func:`_read_existing_salt` validation.
 
     Examples:
         >>> import tempfile, pathlib
@@ -195,17 +246,17 @@ def _load_salt(salt_file: Path) -> bytes:
         ...     len(s) == 32 and s == _load_salt(pathlib.Path(d) / ".salt")
         True
     """
-    if salt_file.exists():
-        return bytes.fromhex(salt_file.read_text().strip())
-    salt = secrets.token_bytes(32)
+    if salt_file.exists() or salt_file.is_symlink():
+        return _read_existing_salt(salt_file)
+    salt = secrets.token_bytes(_SALT_BYTES)
     salt_file.parent.mkdir(parents=True, exist_ok=True)
     try:
         fd = os.open(salt_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     except FileExistsError:
         # A concurrent writer created the salt between our exists-check and open;
         # defer to it rather than overwrite so both processes share one salt.
-        return bytes.fromhex(salt_file.read_text().strip())
-    with os.fdopen(fd, "w") as f:
+        return _read_existing_salt(salt_file)
+    with os.fdopen(fd, "w", encoding="ascii") as f:
         if hasattr(os, "fchmod"):
             os.fchmod(f.fileno(), 0o600)  # exact 0o600 regardless of the process umask
         f.write(salt.hex())
@@ -648,9 +699,10 @@ def _directory_inputs(input_dir: Path, exclude_root: Path | None = None) -> list
     """Return every JSONL file below a directory input in deterministic order.
 
     Files under *exclude_root* (the export destination) are skipped so a re-run whose export root sits inside the input
-    tree never re-ingests its own prior anonymized exports.
+    tree never re-ingests its own prior anonymized exports. Symlinked files are skipped too: following one would export
+    a ``.jsonl`` that lives outside the input tree.
     """
-    paths = (path for path in input_dir.rglob("*.jsonl") if path.is_file())
+    paths = (path for path in input_dir.rglob("*.jsonl") if path.is_file() and not path.is_symlink())
     if exclude_root is not None:
         resolved = exclude_root.resolve()
         paths = (path for path in paths if not path.resolve().is_relative_to(resolved))
@@ -706,16 +758,37 @@ def _process_inputs(inputs: list[Path], output_paths: list[Path], salt: bytes) -
     return processed, skipped, oversized
 
 
+def _open_output(output_path: Path) -> TextIO:
+    """Open the export file for writing without following a symlink at its final component.
+
+    A plain ``open(..., "w")`` writes through a symlink planted in the export tree and truncates its target.
+
+    Args:
+        output_path: Destination file; created with the default umask-masked mode, truncated if present.
+
+    Returns:
+        A text-mode handle the caller must close.
+
+    Raises:
+        OSError: When ``output_path`` is a symlink or cannot be opened.
+    """
+    fd = os.open(output_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o666)
+    return os.fdopen(fd, "w", encoding="utf-8", newline="\n")
+
+
 def process(input_path: Path, output_path: Path, salt: bytes) -> tuple[int, int]:
     """Anonymize all records in input_path and write to output_path.
 
     Args:
         input_path: Source JSONL file.
-        output_path: Destination JSONL file (overwritten if exists).
+        output_path: Destination JSONL file (overwritten if exists, never through a symlink).
         salt: Per-project salt bytes.
 
     Returns:
         ``(records_processed, records_skipped)`` tuple.
+
+    Raises:
+        OSError: When the input cannot be read or the output is a symlink or cannot be opened.
 
     Examples:
         >>> import tempfile, pathlib
@@ -728,7 +801,7 @@ def process(input_path: Path, output_path: Path, salt: bytes) -> tuple[int, int]
         >>> out.unlink(); tmp.unlink()
     """
     processed = skipped = 0
-    with input_path.open() as fin, output_path.open("w") as fout:
+    with input_path.open(encoding="utf-8") as fin, _open_output(output_path) as fout:
         for line in fin:
             line = line.strip()
             if not line:
@@ -768,6 +841,40 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _input_error(input_path: Path, output: str | None) -> int | None:
+    """Report why ``input_path`` cannot be processed, or return ``None`` when it can.
+
+    Args:
+        input_path: The ``--input`` file or directory.
+        output: The ``--output`` value, which only a file input accepts.
+
+    Returns:
+        1 for a missing or oversized file input, ``_EXIT_DIRECTORY_OUTPUT`` for ``--output`` with a directory input,
+        otherwise ``None``. The reason is printed to stderr.
+
+    Examples:
+        >>> _input_error(Path("/nonexistent/anonymize-input.jsonl"), None)
+        1
+    """
+    if not input_path.exists():
+        print(f"anonymize: input not found: {input_path}", file=sys.stderr)
+        return 1
+    if input_path.is_dir():
+        if output is None:
+            return None
+        print(
+            "anonymize: --output is only valid for a file --input; use --out-dir for directory input", file=sys.stderr
+        )
+        return _EXIT_DIRECTORY_OUTPUT
+    if input_path.stat().st_size > MAX_LOG_SIZE:
+        print(
+            f"anonymize: input too large ({input_path.stat().st_size} bytes; max {MAX_LOG_SIZE}): {input_path}",
+            file=sys.stderr,
+        )
+        return 1
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     """Entry point for the anonymize CLI.
 
@@ -780,27 +887,20 @@ def main(argv: list[str] | None = None) -> int:
         salt file, or ``--output`` is combined with a directory input.
     """
     args = _build_parser().parse_args(argv)
+    # The summary line prints "→" and input paths may be non-ASCII; a Windows console code page cannot encode
+    # them, and the resulting crash made every debrief export fall back to the raw dataset.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", newline="\n")
 
     input_path = Path(args.input)
-    if not input_path.exists():
-        print(f"anonymize: input not found: {input_path}", file=sys.stderr)
-        return 1
+    input_error = _input_error(input_path, args.output)
+    if input_error is not None:
+        return input_error
 
     is_directory = input_path.is_dir()
-    if is_directory and args.output is not None:
-        print(
-            "anonymize: --output is only valid for a file --input; use --out-dir for directory input", file=sys.stderr
-        )
-        return _EXIT_DIRECTORY_OUTPUT
-
     export_root = Path(args.out_dir) if args.out_dir is not None else Path(DEFAULT_OUT_DIR)
     inputs = _directory_inputs(input_path, export_root) if is_directory else [input_path]
-    if not is_directory and input_path.stat().st_size > MAX_LOG_SIZE:
-        print(
-            f"anonymize: input too large ({input_path.stat().st_size} bytes; max {MAX_LOG_SIZE}): {input_path}",
-            file=sys.stderr,
-        )
-        return 1
 
     salt_path = Path(args.salt)
     output_paths = _output_paths(input_path, inputs, args.out_dir, args.output)
@@ -813,7 +913,11 @@ def main(argv: list[str] | None = None) -> int:
         )
         return _EXIT_UNSAFE_OUT_DIR
 
-    salt = _load_salt(salt_path)
+    try:
+        salt = _load_salt(salt_path)
+    except ValueError as exc:
+        print(f"anonymize: {exc}", file=sys.stderr)
+        return 1
     output_paths = _output_paths(input_path, inputs, args.out_dir, args.output, salt)
     unsafe_path = _unsafe_output_path(output_paths, salt_path)
     if unsafe_path is not None:

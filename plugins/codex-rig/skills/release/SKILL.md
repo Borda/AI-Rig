@@ -32,7 +32,7 @@ Prepare substantial, source-grounded release communication and SemVer readiness 
 
 For allowed GitHub reads, run the direct reader under current effective network and filesystem grants or request runtime approval for the complete owning command when required capability is unavailable. No separate workflow consent is needed. Apply [GitHub Read Execution](../../shared/native-skill-contract.md#github-read-execution); an explicit runtime denial or non-overridable restriction stops the attempt.
 
-When runtime permissions show network access enabled and the helper's required paths writable, omit `sandbox_permissions` and `justification` on the direct helper call; give no approval brief. Apply GitHub Read Execution even when the active profile name is omitted. A missing label or failed lookup does not mean disabled access; do not run `codex execpolicy list` to detect a profile. Preserve explicit destination restrictions and check report, `.git`, and checkout paths separately where applicable. Use the ordinary approval boundary only for unavailable required capability, and stop on denial.
+When runtime permissions show network access enabled and the helper's required paths writable, omit `sandbox_permissions` and `justification` on the direct helper call; give no approval brief. Apply GitHub Read Execution even when the active profile name is omitted. A missing label or failed lookup does not mean disabled access; do not run `codex execpolicy list` to detect a profile. Preserve explicit destination restrictions and check report, `.git`, and checkout paths separately where applicable.
 
 ### 01: Create run directory
 
@@ -57,7 +57,7 @@ Use [GitHub Reader Runtime Boundary](../../shared/native-skill-contract.md#githu
 
 Follow `release-evidence.md`: pin the release head, select a channel-appropriate baseline, inventory the release branch, and subtract changes already shipped to that release line using ancestry and patch evidence. A nearest tag, same subject, PR number, merge label, or default-branch listing alone cannot establish membership. Save the full candidate log to `<run-directory>/commits.txt` and the scope decision to `release-scope.md`. Initial releases include the root commit; empty or unavailable evidence is never a successful empty release.
 
-When current GitHub release metadata is required, use `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/github_read.py --out <run-directory>/github-release.json -- gh release view <tag-or-url> --json <fields>` directly under current effective grants per GitHub Read Execution or with runtime approval for unavailable required capability. It prefers `gh`; public HTTPS fallback is only for public REST resources and cannot supply private evidence. Never invoke `gh` directly. An explicit denial or non-overridable restriction stops the attempt; record current release metadata as unavailable evidence.
+When current GitHub release metadata is required, use `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/github_read.py --out <run-directory>/github-release.json -- gh release view <tag-or-url> --json <fields>` directly per GitHub Read Execution. It prefers `gh`; public HTTPS fallback is only for public REST resources and cannot supply private evidence. Never invoke `gh` directly. When that rule stops the attempt, record current release metadata as unavailable evidence.
 
 Inspect `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/collect_diff.py --help`; collect `commit` scope for retained release range into `<run-directory>/range`. Collection failure is evidence gap, not empty release.
 
@@ -110,6 +110,8 @@ Inspect `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/run_gates.py --help`; run eve
 
 The runner records each executable check's expected head and observed Git head/status before and after execution. A mismatch, dirty state or failed inspection blocks the gate, even if its command exits zero. Do not remove the flag, substitute a fabricated receipt, or downgrade this failure to a warning. Skipped checks retain explicit reasons and need no execution receipt. Record source location, environment/import verification and observed receipts in `draft-review.md`; unavailable execution remains blocked where required.
 
+The clean snapshot excludes deliverables written to project destinations and any authorized version stamps. Run the project's configured format/lint checks scoped to those written paths in the caller checkout, and record each command and result in `draft-review.md`. A failure there blocks a release-ready verdict like any other required gate.
+
 ### 07: Classify blockers and warnings
 
 - `critical`: publish would ship known security/data-loss/API breakage without mitigation.
@@ -123,7 +125,7 @@ Follow `../../shared/helper-cli-contract.md` and authoritative help. Write `RELE
 
 ## Fail-Fast Rules
 
-01. Missing or invalid target range for notes/prepare/demo => fail.
+01. Range still unresolved after baseline inference (`release-evidence.md`), or an invalid or ambiguous supplied range, for notes/prepare/demo => fail.
 02. Invalid SemVer target for prepare/audit => fail.
 03. Breaking change without migration decision => fail.
 04. Release blocker presented as warning => fail.

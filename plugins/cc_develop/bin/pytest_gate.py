@@ -45,15 +45,21 @@ _PYTEST_ALLOWLIST: frozenset[str] = frozenset(
 
 
 def _validate_target_in_cwd(target: str) -> None:
-    """Reject targets that resolve outside the current working directory.
+    """Reject option-shaped targets and targets that resolve outside the current working directory.
+
+    A target starting with ``-`` is refused outright: ``Path("-p")`` resolves under the working directory, so
+    containment alone lets an option-shaped token such as ``-p``, ``-c`` or ``--rootdir=...`` reach pytest's argv.
 
     Args:
         target: Raw target string from argv (file/dir path or pytest node id).
 
     Raises:
-        SystemExit: With exit code 1 if the resolved target escapes ``Path.cwd()``.
+        SystemExit: With exit code 1 if the target starts with ``-`` or its resolved path escapes ``Path.cwd()``.
             Pytest node ids (``path::nodeid``) have the path portion validated.
     """
+    if target.startswith("-"):
+        print(f"pytest-gate: rejected option-shaped target: {target}", file=sys.stderr)
+        sys.exit(1)
     # Strip pytest node-id suffix (e.g. "tests/foo.py::test_bar") — only the
     # path portion is filesystem-resolvable; the nodeid is opaque to the OS.
     path_part = target.split("::", 1)[0]

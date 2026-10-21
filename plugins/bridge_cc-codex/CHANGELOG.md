@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.12.0
+
+- Resolve peer CLIs and subprocess utilities to absolute paths from PATH, skipping empty and dot entries and honoring Windows PATHEXT, so a planted executable in the checkout cannot receive child credentials through implicit current-directory lookup.
+- ! BREAKING — non-interactive consent grants now need operator proof: `bridge_consent.py grant --approve` runs only in the operator's terminal or with a one-time token (valid 5 minutes, consumed by one grant) passed as `BRIDGE_OPERATOR_TOKEN`; otherwise it exits 2 and writes nothing. Add `bridge_consent.py issue-token` (terminal only) to mint the token and `$bridge:setup --approve-claude-consent --consent-token <token>` to pass it. Setup's `--approve <digest>` likewise executes only from the operator terminal.
+- Make `make sync` skip the consent stage with a notice (exit 0) when there is no terminal and no token; an invalid token still exits 2.
+- Split the peer child's environment allowlist per host, so a Codex child no longer receives Claude provider variables and the reverse; `BRIDGE_CHILD_ENV_EXTRA` still names extra variables.
+- Keep the task text out of the detached supervisor's argv, so other local users can no longer read task content, which may carry repository context, from the process list.
+- Create artifacts with `0700` directories and `0600` files, so other local users can no longer read job transcripts and results.
+- Run the post-write `git status` with `core.fsmonitor` disabled so a write-capable child cannot execute a repository hook through it.
+- Bound `--task-file` reads at 16 KiB and refuse anything but a regular file, so a huge file, FIFO or device can no longer hang or flood a call.
+- Validate model, session and run identifiers before they reach child argv, so a crafted value cannot smuggle an extra option into the peer command.
+- Refuse workspaces inside user credential directories (`~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.kube`, `~/.docker`) and, outside Windows, `/etc`.
+- Surface a failed detached job's error in `status` and `result` instead of a bare state.
+- Report a terminal failed state even when a cancel marker exists, so a job that failed while a cancel was pending no longer shows `cancel_requested` and keeps a caller polling forever.
+- Stop sending a second `SIGKILL` once the cleanup grace finds the process group empty, avoiding a signal to a recycled group id.
+- Require a fresh `all` setup plan with no pending operations before `verify-live` counts as evidence, so a stale or half-configured setup can no longer pass as live-verified.
+- Add `effort` frontmatter to the seven Claude skills, so each runs at its declared reasoning effort instead of inheriting the session's.
+- Add `[--workspace PATH]` hints to the `cancel`, `status`, `result`, `advise`, `review` and `implement` skills, and document the lifecycle states (`queued`, `running`, `cancel_requested`, `finished`, `cancelled`, `failed`, `stalled`, `missing`).
+- Document the foreground timeout: worst case is `--timeout-seconds` × 2.4 (hard cutoff × 1.2, plus one lower-effort retry), so foreground calls set a Bash `timeout` above it.
+- Route `--task-file` for text containing a backtick, `$`, double quote or backslash, and report a `status=error` object (exit 2) as a refused invocation.
+- Grant the Claude `setup` skill the `Write` and `AskUserQuestion` tools it already uses, for its operations report and approval gates.
+- Require a project marker (such as `.git` or `pyproject.toml`) in the bound folder or an ancestor below the home before `bridge_implement` runs, so a write-capable Claude run can no longer be rooted in an arbitrary non-project folder; advise and review are unchanged.
+- Refuse a root, home, agent-configuration or credential folder as `bridge_setup.py --workspace` for every action except `check`, so approvals and the live probe's artifacts can no longer land there.
+- Apply the CLI's identifier rule to the MCP `model` and `run_id` arguments, so a dash-led or free-text value is refused before it reaches the Claude child.
+- Read job records and cancel markers without following a symlink and up to 1 MiB, so a swapped-in link, FIFO or huge file can no longer steer or stall a supervisor.
+- Report a running job as `stalled` when `ps` shows its recorded PID now owned by another user or younger than the supervisor, so a recycled PID no longer keeps a dead job polling as `running` (POSIX; Windows keeps the existence check).
+- Send no group signal for a child whose leader is reaped and whose group is gone, and never repeat one after an output-limit stop, so cleanup cannot reach a recycled process group.
+- Name any change to `.git/hooks`, `.git/config`, `.gitattributes`, `.claude`, `.mcp.json` or `.codex` in an `implement` result's findings, so a planted hook or host setting is visible even when the peer does not report it.
+- Carry the Claude `setup` approval in the question text (action, operation count, full digest and the operations file path) instead of option previews, so the approved digest stays visible when reply text before the question arrives empty.
+- Treat a setup mutation lock older than one hour as abandoned by a crashed or killed setup run and replace it, so the next approved setup of that host setting proceeds instead of reporting `mutation-locked-or-repeat-fault` forever; the lock now records its holder's PID and start time.
+- Read only the newest 8 MiB of the per-user setup journals instead of refusing a larger file, so approvals and mutations keep working after long use rather than failing permanently once a journal outgrows the bound.
+- Make `bridge_diagnose.py` skip a `health.jsonl` that is a symlink, hard link or other non-regular file and tolerate undecodable bytes, so a planted link can no longer pull another file's records into the health summary or stall diagnosis.
+- Split `config.toml` into statements in one pass when granting or revoking consent, so a config with a long multi-line array or string no longer takes minutes (a 20,000-line array took over three minutes).
+
 ## 0.11.1
 
 - Keep review coverage and confidence gaps as factual limitations; require a specific user decision for additional review and omit declined requests from findings and final actions.

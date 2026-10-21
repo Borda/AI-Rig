@@ -2,6 +2,8 @@
 
 Fetch + parse GitHub Actions failed-job logs from a run ID or URL. Used by skills accepting `--ci-run <run-id-or-url>` to substitute CI logs for local pytest evidence.
 
+> Each bash block below reloads its own state from `dev-ci-run-id-${CSID}` — shell variables do not survive between Bash calls. `CI_LOG_EVIDENCE` below means the log text the §Log Fetching block prints (also saved at `${TMPDIR:-/tmp}/dev-ci-log-${CSID}`), never a shell variable.
+
 ## §URL Normalization
 
 Accept any of:
@@ -11,26 +13,40 @@ Accept any of:
 - Job-specific URL: `https://github.com/owner/repo/actions/runs/12345678/jobs/98765432`
 
 ```bash
-if echo "$CI_RUN_ID" | grep -q 'github\.com'; then
-  _RAW_CI="$CI_RUN_ID"
-  CI_RUN_ID=$(echo "$CI_RUN_ID" | grep -oE '/runs/[0-9]+' | grep -oE '[0-9]+' | head -1)
-  [ -z "$CI_RUN_ID" ] && { printf "! --ci-run URL could not be parsed to a run ID: %s\n" "$_RAW_CI"; exit 1; }
-fi
+# timeout: 5000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r CI_RUN_ID < "${TMPDIR:-/tmp}/dev-ci-run-id-${CSID}" 2>/dev/null || CI_RUN_ID=""
+_RAW_CI="$CI_RUN_ID"
+case "$CI_RUN_ID" in *github.com*/runs/*) CI_RUN_ID="${CI_RUN_ID#*/runs/}"; CI_RUN_ID="${CI_RUN_ID%%[!0-9]*}";; esac
+# digits-only gate: the value reaches gh argv, so an option-shaped value must fail here
+case "$CI_RUN_ID" in ''|*[!0-9]*) printf "! --ci-run is neither a run ID nor an Actions run URL with /runs/<digits>: %s\n" "$_RAW_CI"; exit 1;; esac
+echo "$CI_RUN_ID" > "${TMPDIR:-/tmp}/dev-ci-run-id-${CSID}"
 ```
 
-After normalization `CI_RUN_ID` is a bare integer. Fail fast if URL present but no `/runs/<digits>` segment found.
+After normalization the sentinel holds a bare integer; every later block reloads it. Fail fast if the value is neither digits nor a URL with a `/runs/<digits>` segment.
 
 ## §Log Fetching
 
-```bash
-CI_LOG_EVIDENCE=$(gh run view "$CI_RUN_ID" --log-failed 2>&1)  # timeout: 15000
-GH_EXIT=$?
-if [ $GH_EXIT -ne 0 ]; then
-  printf "⚠ gh run view exited %s — continuing with partial log\n" "$GH_EXIT"
-fi
-```
+One self-contained block: fetch, strip noise, fall back, print. Non-zero `gh` exit warns and continues with the partial log; a log with no failure signal triggers §Re-fetch Fallback inside the same block.
 
-Non-zero exit: print warning, continue. Empty or metadata-only result → §Re-fetch Fallback below.
+```bash
+# timeout: 45000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r CI_RUN_ID < "${TMPDIR:-/tmp}/dev-ci-run-id-${CSID}" 2>/dev/null || CI_RUN_ID=""
+[ -n "$CI_RUN_ID" ] || { echo "! dev-ci-run-id missing — run §URL Normalization first"; exit 1; }
+CI_LOG="${TMPDIR:-/tmp}/dev-ci-log-${CSID}"
+CI_RAW="${TMPDIR:-/tmp}/dev-ci-log-raw-${CSID}"
+CI_FALLBACK="${TMPDIR:-/tmp}/dev-ci-log-fallback-${CSID}"
+gh run view "$CI_RUN_ID" --log-failed > "$CI_RAW" 2>&1 || printf "⚠ gh run view exited %s — continuing with partial log\n" "$?"
+grep -v '::set-output\|##\[group\]\|##\[endgroup\]' "$CI_RAW" > "$CI_LOG"
+if ! grep -qE 'FAILED|ERROR|error:|Traceback' "$CI_LOG"; then
+  gh run view "$CI_RUN_ID" --log 2>&1 | grep -A 40 'FAILED\|ERROR\|Traceback' > "$CI_FALLBACK"
+  [ -s "$CI_FALLBACK" ] && cat "$CI_FALLBACK" > "$CI_LOG"
+fi
+[ -s "$CI_LOG" ] || echo "! CI log unavailable for run $CI_RUN_ID — fall back to local pytest if possible"
+wc -l "$CI_LOG"
+head -200 "$CI_LOG"
+```
 
 ## §Log Parsing
 
@@ -38,10 +54,9 @@ Non-zero exit: print warning, continue. Empty or metadata-only result → §Re-f
 
 - Each failed job opens with header line: `<job-name>  <step-name>  <timestamp>`
 - Test output follows, indented or prefixed with job/step name
-- GitHub Actions metadata lines — filter as noise:
-  - `::set-output`, `##[group]`, `##[endgroup]`, lines starting with `Run ` (step runner echo)
+- GitHub Actions metadata lines (`::set-output`, `##[group]`, `##[endgroup]`) are already stripped by the §Log Fetching block; lines starting with `Run ` (step runner echo) are noise — ignore them
 
-**Signals to extract** (scan full log; surface each distinct failure mode separately):
+**Signals to extract** (scan the printed log; surface each distinct failure mode separately):
 
 | Signal | Pattern |
 | -- | -- |
@@ -55,36 +70,25 @@ Non-zero exit: print warning, continue. Empty or metadata-only result → §Re-f
 
 **Multiple failing jobs**: process each job block independently. Surface distinct failure modes as separate bullets — never merge unrelated failures into one summary.
 
-**Set evidence variable**:
-
-```bash
-CI_LOG_EVIDENCE=$(echo "$CI_LOG_EVIDENCE" | grep -v '::set-output\|##\[group\]\|##\[endgroup\]')
-```
+The printed log is the evidence. The block prints the full line count and the saved path before the first 200 lines: count above 200 → Read the remainder from that path (offset 200) before concluding, so later failing jobs are never missed.
 
 ## §Re-fetch Fallback
 
-If `CI_LOG_EVIDENCE` empty or contains only metadata lines after §Log Fetching:
-
-```bash
-CI_LOG_EVIDENCE=$(gh run view "$CI_RUN_ID" --log 2>&1 \
-  | grep -A 40 'FAILED\|ERROR\|Traceback')  # timeout: 15000
-```
-
-Full log fetch is larger — grep limits to failure-adjacent context. Still empty after fallback: note "CI log unavailable for run $CI_RUN_ID" in Final Report, fall back to local pytest if possible.
+Runs inside the §Log Fetching block when the stripped `--log-failed` output has no `FAILED`, `ERROR`, `error:` or `Traceback` line: full-log fetch (`gh run view --log`), grep limited to failure-adjacent context (full log is larger). Still empty after fallback: the block prints `CI log unavailable for run <id>`; note "CI log unavailable for run $CI_RUN_ID" in Final Report, fall back to local pytest if possible.
 
 ## §Integration Pattern
 
 Skills use extracted evidence as follows:
 
-1. Set `CI_LOG_EVIDENCE` via §Log Fetching + §Log Parsing above.
-2. Use `CI_LOG_EVIDENCE` as evidence source in Step 1 instead of running `$PYTEST_CMD` locally — skip local test run.
+1. Run §URL Normalization, then §Log Fetching; the printed log is `CI_LOG_EVIDENCE`.
+2. Use `CI_LOG_EVIDENCE` as evidence source in Step 1 instead of running `$PYTEST_CMD` locally — skip local test run when `dev-ci-run-id-${CSID}` is non-empty and the log was printed.
 3. Note in Final Report: `Diagnosed from CI run $CI_RUN_ID — local reproduction not attempted`.
 
 Evidence handoff to agent spawn prompt:
 
 ```
 CI evidence (run $CI_RUN_ID):
-<paste $CI_LOG_EVIDENCE — truncate to 200 lines if longer>
+<paste the printed log — already capped at 200 lines>
 ```
 
 Truncate at 200 lines to avoid context flood — leading lines (job headers + first tracebacks) carry most signal.

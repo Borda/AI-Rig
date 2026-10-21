@@ -36,10 +36,7 @@ NOT for: interactive planning (use `/research:plan`); methodology review only (u
 ```bash
 # loads: compaction-contract.md
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-_RESEARCH_SHARED=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/resolve_shared.py" 2>/dev/null)  # timeout: 5000
-[ -z "$_RESEARCH_SHARED" ] && { echo "! Plugin path resolution failed — ensure research plugin installed and CLAUDE_PLUGIN_ROOT set, or invoke from project root."; exit 1; }
-echo "$_RESEARCH_SHARED" > "${TMPDIR:-/tmp}/research-shared-${CSID}"  # cold resolve — every later site (including the judge/run steps this skill runs inline) reads this sentinel
-cat "$_RESEARCH_SHARED/agent-resolution.md"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/resolve_shared.py" --persist research-shared --emit agent-resolution.md || exit 1  # timeout: 5000 — cold resolve; every later site (including the judge/run steps this skill runs inline) reads the research-shared sentinel
 ```
 
 Sweep delegates to plan (S2), judge (S3), run (S5) — see each skill's Agent Resolution for fallback handling.
@@ -80,12 +77,12 @@ Extract `<goal>` — first positional argument (quoted or unquoted string descri
 
 Extract flags:
 
-- `--colab[=HW]` — passed to plan (Config.compute) and run; if `=HW` present, extract `colab_hw`
+- `--colab[=HW]` — passed to plan (Config.compute) and run; if `=HW` present, extract `colab_hw` <!-- policy-sibling: plugins/cc_research/skills/judge/SKILL.md, plugins/cc_research/skills/run/SKILL.md, plugins/cc_research/skills/run/modes/colab-setup.md, plugins/cc_research/skills/plan/SKILL.md — canonical colab_hw known-set {H100, L4, T4, A100}; this skill's argument-hint restates it, keep in sync (plugins/CLAUDE.md §Policy Duplication Marker). -->
 - `--compute=local|colab|docker` — passed through
 - `--team` — passed through to run
 - `--codex` — passed through to run
-- `--researcher` — passed through to run; combine with `--architect` for dual-agent SOTA + architectural hypothesis pipeline
-- `--architect` — passed through to run; enables architectural hypothesis pass via `foundry:solution-architect`
+- `--researcher` — passed through to run; combine with `--architect` for dual-agent SOTA + architectural hypothesis pipeline; controls run's R0 hypothesis pass only, never sets `agent_strategy`
+- `--architect` — passed through to run; enables architectural hypothesis pass via `foundry:solution-architect`; controls R0 only, never sets `agent_strategy`
 - `--journal` — passed through to run when present; preserves per-iteration journal entries (requires `--researcher` or `--architect` — enforced by run R2)
 - `--hypothesis <path>` — passed through to run when present; preloads hypothesis queue from the given file
 - `--skip-validation` — passed to judge step (S3)
@@ -124,15 +121,30 @@ If extracted `<goal>` starts with `--`, treat as flag misparse — stop with `! 
 
 ### Step S2: Non-interactive plan
 
-First, load plan mode step definitions below, then execute steps **P-P1, P-P2, P-P2b and P-P3** from the same file (P-P0 skipped — `<goal>` always text string) with overrides:
+First, load plan mode step definitions below — only the **P-P1 through P-P3** range (P-P0, P-P4, agent resolution and notes are not used by sweep) — then execute steps **P-P1, P-P2, P-P2b and P-P3** with overrides (P-P0 skipped — `<goal>` always text string):
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _RESEARCH_SHARED < "${TMPDIR:-/tmp}/research-shared-${CSID}" 2>/dev/null || _RESEARCH_SHARED=""  # warm read (Check 41)
 _RESEARCH_SKILLS="${_RESEARCH_SHARED%/_shared}"
 [ -z "$_RESEARCH_SKILLS" ] && _RESEARCH_SKILLS="${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/skills"
-cat "$_RESEARCH_SKILLS/plan/SKILL.md"
+sed -n '/^### Step P-P1:/,/^### Step P-P4:/{/^### Step P-P4:/!p;}' "$_RESEARCH_SKILLS/plan/SKILL.md"
 ```
+
+Load prints nothing → resolution failed or plan step headings renamed; stop with `! sweep: cannot load plan/SKILL.md P-P1–P-P3 — research plugin path unresolved.` Never improvise P-P1–P-P3.
+
+**Out-path handoff** — P-P0 (skipped) is the only writer of the sentinel P-P2b reads for its overwrite check; without it P-P2b tests `program.md` even when `--out` redirects the write. Write it from the S1 `--out` value first:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r _OUT < "${TMPDIR:-/tmp}/sweep-out-path-${CSID}" 2>/dev/null || _OUT=""
+echo "$_OUT" > "${TMPDIR:-/tmp}/research-plan-out-arg-${CSID}"  # empty = P-P2b default program.md, same as P-P0
+```
+
+**Gates overridden in sweep** — the inlined plan steps ask these questions; sweep is non-interactive and S1 owns the single overwrite decision:
+
+- **P-P1 scope guard**: goal not an optimization goal → stop with `! sweep: goal does not look like an optimization goal (expects "Reduce X" / "Increase Y"). Rephrase and re-run.` — no question.
+- **P-P2b overwrite and advisor questions**: treat `OUTPUT_EXISTS` as false. An advisor `ok: false` → print `sweep: advisor note → <headline>` with the suggestions path and continue to P-P3; the S3 judge gate checks the written program.
 
 > Include P-P2b analysis in S2 synthesis — P-P2b findings are scoped hypotheses needing consolidation into program.md written by P-P3; skipping P-P2b drops hypothesis context from generated program.
 
@@ -140,12 +152,11 @@ cat "$_RESEARCH_SKILLS/plan/SKILL.md"
 
 - **P-P2 (config presentation)**: Accept all auto-detected defaults without prompting. Print proposed config as informational block prefixed `sweep: auto-config →` — do NOT wait for confirmation.
 - `--colab[=HW]` or `--compute=colab` passed → write `compute: colab` (and `colab_hw: <HW>` if provided) into Config block.
-- **scope_files**: derive from goal string — extract domain-relevant file patterns (e.g. goal mentioning "neural network" → `["*.py", "models/**", "train*.py"]`; goal mentioning "config" or "YAML" → `["*.yaml", "*.yml", "*.json"]`). Default `["**/*.py"]` only when goal gives no domain signals. **Multiple keyword matches**: merge (union) all matched patterns. Always include derived `scope_files` in `sweep: auto-config →` printout — users can't correct silently wrong scope without seeing it.
-- **agent_strategy**: set to value accepted by judge C9 (`auto` / `perf` / `code` / `ml` / `arch`). Map flags to strategy matching **primary ideation agent** run will dispatch (per run/SKILL.md constants table). Resolve in this order — first match wins:
-  - (1) `--researcher` present (regardless of `--team`) → `"ml"` (`research:scientist` is primary ideation agent for paper-rooted hypotheses).
-  - (2) else `--architect` present (no `--researcher`, regardless of `--team`) → `"arch"` (`foundry:solution-architect`).
-  - (3) else `--team` present (no `--researcher`/`--architect`) → `"auto"` (team mode generates per-axis hypotheses).
-  - (4) else (no flags) → `"auto"`.
+- **scope_files**: derive from goal string — extract domain-relevant file patterns (e.g. goal mentioning "neural network" → `["*.py", "models/**", "train*.py"]`; goal mentioning "config" or "YAML" → `["*.yaml", "*.yml", "*.json"]`). Default `["**/*.py"]` only when goal gives no domain signals, and never when it would cover an evaluator script (a file named by the derived `metric_cmd`/`guard_cmd`): scope has no exclusion syntax and run's Phase 3 rejects any iteration touching an evaluator file, so narrow the patterns to directories that omit it (e.g. `src/**/*.py`). **Multiple keyword matches**: merge (union) all matched patterns. Always include derived `scope_files` in `sweep: auto-config →` printout — users can't correct silently wrong scope without seeing it.
+- **agent_strategy**: set to value accepted by judge C9 (`auto` / `perf` / `code` / `ml` / `arch`). `--researcher`/`--architect`/`--team` control only run's R0 hypothesis passes and team dispatch — they never force a strategy (a non-ML goal with `--researcher` must not become `ml`; `arch` implementation is not a solution-architect task). Resolve from the goal and derived `metric_cmd` text, first match wins:
+  - (1) goal/metric names coupling, cohesion or modularity → `"arch"`.
+  - (2) else any other unambiguous run/SKILL.md keyword-heuristics class (`ml` / `perf` / `code`) → that value.
+  - (3) else → `"auto"` (run infers from metric_cmd keywords).
   - Never write `"dual-agent: ..."`, `"team"`, `"researcher"`, or `"default"` — those values fail C9.
   - Record flag combination + dual-agent dispatch intent separately in `## Notes` (e.g. `dispatch: dual-agent (researcher primary + architect feasibility filter)`) so orchestration intent preserved without overriding validated `agent_strategy` field.
 - **P-P3 (write program.md)**: Write to `<--out path>` if provided; else `program.md` at project root.
@@ -159,22 +170,35 @@ sweep: plan → <output path> ✓
 
 ### Step S3: Judge + refinement loop
 
-Load judge mode step definitions — `$_RESEARCH_SKILLS` from S2 is gone (fresh shell per Bash call), so re-resolve it here rather than dereferencing it bare; same call writes the boundary-1 compaction contract first — no decision sits between "program written" and "load judge", so they ride one turn:
+Load judge mode step definitions — `$_RESEARCH_SKILLS` from S2 is gone (fresh shell per Bash call), so re-resolve it here rather than dereferencing it bare; same call writes the boundary-1 compaction contract first — no decision sits between "program written" and "load judge", so they ride one turn. The load starts at the `## Judge Mode` heading and runs to the end of the file (J1–J6 and notes); the frontmatter, objective, compaction and Agent Resolution sections are not used — sweep's own Agent Resolution already wrote the `research-shared` sentinel:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # boundary 1: after S2 plan written (compaction-contract.md)
 IFS= read -r _OUT < "${TMPDIR:-/tmp}/sweep-out-path-${CSID}" 2>/dev/null || _OUT="program.md"
-IFS= read -r _KEEP < "${TMPDIR:-/tmp}/sweep-keep-items-${CSID}" 2>/dev/null || _KEEP=""
-_KEEP_APPEND=""; [ -n "$_KEEP" ] && _KEEP_APPEND="; user-keep: $_KEEP"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/write_skill_contract.py" "research:sweep" "judge-gate (after S2 plan written)" "n/a" "program-path=${_OUT}${_KEEP_APPEND}" "S3 judge+refinement loop against ${_OUT}"  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/write_skill_contract.py" --keep-sentinel sweep-keep-items "research:sweep" "judge-gate (after S2 plan written)" "n/a" "program-path=${_OUT}" "S3 judge+refinement loop against ${_OUT}" -- calls_ahead=60 "drop=S1 probe output and S2 plan drafting"  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/compaction_boundary.py"  # timeout: 60000 — prints the Boundary step, then the foundry gate decision; follow it
 IFS= read -r _RESEARCH_SHARED < "${TMPDIR:-/tmp}/research-shared-${CSID}" 2>/dev/null || _RESEARCH_SHARED=""  # warm read (Check 41)
 _RESEARCH_SKILLS="${_RESEARCH_SHARED%/_shared}"
 [ -z "$_RESEARCH_SKILLS" ] && _RESEARCH_SKILLS="${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/skills"
-cat "$_RESEARCH_SKILLS/judge/SKILL.md"
+sed -n '/^## Judge Mode/,$p' "$_RESEARCH_SKILLS/judge/SKILL.md"
 ```
 
 Load prints nothing / "No such file or directory" → resolution failed; stop with `! sweep: cannot load judge/SKILL.md — research plugin path unresolved.` Never improvise J1–J6: the judge gate is the only check between an auto-generated program and the S5 campaign.
+
+**Inlined judge under `cat`**: `$ARGUMENTS` is empty in the loaded blocks, and J1's `parse-skill-flags.py --keep-state judge` would clear sweep's compaction contract. Skip J1's **Flag parsing** and **Unsupported flag check** blocks (S1 ran both) and persist the validation flag with the one block matching S1. J3's boundary block self-skips here (`sweep-out-path` sentinel present), so sweep's own contract stays live. `--skip-validation` given:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+echo true > "${TMPDIR:-/tmp}/judge-skip-validation-${CSID}"
+```
+
+Not given:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+echo false > "${TMPDIR:-/tmp}/judge-skip-validation-${CSID}"
+```
 
 Initialize `REFINE_ITER = 0`, `MAX_REFINE = 3`, `NO_FIXES_ITER = 0`.
 
@@ -205,13 +229,15 @@ Repeat up to `MAX_REFINE` times:
        - After all fixes attempted: `N_FAILS > 0` → print `⚠ N_FAILS edit(s) failed — file may have changed since judge run; re-judging with partial fixes (N_FIXES applied)`. `N_FIXES == 0` AND `N_FAILS > 0` → print `! All edits failed — re-judging without changes (edit conflict; check program file manually)`.
        - Print: `sweep: applied N_FIXES fix(es) to <program path> — re-judging`
 
-     - **Refresh compaction contract now** — fixes for this iteration applied, so contract can truthfully assert them. Substitute literal `REFINE_ITER`, `NO_FIXES_ITER`, `VERDICT`, `JUDGE_REPORT` values tracked (fill-in template like judge-report tokens, not verbatim-run block — counters are prose loop state, not shell vars):
+     - **Refresh compaction contract now** — fixes for this iteration applied, so contract can truthfully assert them. Substitute literal `REFINE_ITER`, `MAX_REFINE`, `NO_FIXES_ITER`, `VERDICT`, `JUDGE_REPORT` values tracked (fill-in template like judge-report tokens, not verbatim-run block — counters are prose loop state, not shell vars):
 
        ```bash
        # WHY: no post-fix refresh → compaction here resumes boundary-1 (pre-loop), re-judges from iter 1. Placed after fixes so "applied through iteration N" holds.
        export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+       case "<REFINE_ITER>|<MAX_REFINE>|<NO_FIXES_ITER>|<VERDICT>|<JUDGE_REPORT>" in *'<'*'>'*) echo "! BLOCKED — contract placeholders not substituted"; exit 1;; esac
        IFS= read -r _OUT < "${TMPDIR:-/tmp}/sweep-out-path-${CSID}" 2>/dev/null || _OUT="program.md"
-       python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/write_skill_contract.py" "research:sweep" "judge+refinement loop (S3, iteration <REFINE_ITER>/<MAX_REFINE> — fixes applied)" "n/a" "program-path=${_OUT}, refine-iter=<REFINE_ITER>, no-fixes-iter=<NO_FIXES_ITER>, last-verdict=<VERDICT>, judge-report=<JUDGE_REPORT>" "re-judge ${_OUT} (it carries the fixes applied through iteration <REFINE_ITER>) → continue loop; do NOT reset REFINE_ITER. Exit on APPROVED/BLOCKED or REFINE_ITER==MAX_REFINE."
+       python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/write_skill_contract.py" --keep-sentinel sweep-keep-items "research:sweep" "judge+refinement loop (S3, iteration <REFINE_ITER>/<MAX_REFINE> — fixes applied)" "n/a" "program-path=${_OUT}, refine-iter=<REFINE_ITER>, no-fixes-iter=<NO_FIXES_ITER>, last-verdict=<VERDICT>, judge-report=<JUDGE_REPORT>" "re-judge ${_OUT} (it carries the fixes applied through iteration <REFINE_ITER>) → continue loop; do NOT reset REFINE_ITER. Exit on APPROVED/BLOCKED or REFINE_ITER==MAX_REFINE." -- calls_ahead=30 "drop=judge prompts and agent output"  # timeout: 5000
+       python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/compaction_boundary.py"  # timeout: 60000 — prints the Boundary step, then the foundry gate decision; follow it
        ```
 
      - Continue next iteration (loop item 1 will re-judge).
@@ -219,18 +245,18 @@ Repeat up to `MAX_REFINE` times:
 
 > **Safety net**: loop edits modify `<program path>` in place; the S1 overwrite gate (P-P3's own gate is bypassed for sweep, see S2 P-P3 note) already secured user authorization before S2 wrote the file. Recover prior file from git if needed.
 
-Substitute literal `VERDICT` and `JUDGE_REPORT` values tracked by the loop (fill-in template, same convention as the mid-loop block above — counters and verdict are prose loop state, never shell vars; `${_OUT}`/`${_KEEP_APPEND}` stay shell-expanded):
+Substitute literal `VERDICT` and `JUDGE_REPORT` values tracked by the loop (fill-in template, same convention as the mid-loop block above — counters and verdict are prose loop state, never shell vars; `${_OUT}` stays shell-expanded):
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # boundary 2: after S3 judge loop settles verdict (compaction-contract.md)
+case "<VERDICT>|<JUDGE_REPORT>" in *'<'*'>'*) echo "! BLOCKED — contract placeholders not substituted"; exit 1;; esac
 IFS= read -r _OUT < "${TMPDIR:-/tmp}/sweep-out-path-${CSID}" 2>/dev/null || _OUT="program.md"
-IFS= read -r _KEEP < "${TMPDIR:-/tmp}/sweep-keep-items-${CSID}" 2>/dev/null || _KEEP=""
-_KEEP_APPEND=""; [ -n "$_KEEP" ] && _KEEP_APPEND="; user-keep: $_KEEP"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/write_skill_contract.py" "research:sweep" "run-gate (after S3 judge+refinement)" "n/a" "program-path=${_OUT}, judge-verdict=<VERDICT>, judge-report=<JUDGE_REPORT>${_KEEP_APPEND}" "S4 gate on verdict → S5 run program if approved"  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/write_skill_contract.py" --keep-sentinel sweep-keep-items "research:sweep" "run-gate (after S3 judge+refinement)" "n/a" "program-path=${_OUT}, judge-verdict=<VERDICT>, judge-report=<JUDGE_REPORT>" "S4 gate on verdict → S5 run program if approved" -- calls_ahead=20 "drop=judge loop prompts, fixes and agent output"  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/compaction_boundary.py"  # timeout: 60000 — prints the Boundary step, then the foundry gate decision; follow it
 ```
 
-> A `<VERDICT>` or `<JUDGE_REPORT>` placeholder surviving verbatim into the written contract means substitution was skipped — treat the resumed verdict as unsettled and re-judge; never read it as `approved`.
+> A `<REFINE_ITER>`, `<MAX_REFINE>`, `<NO_FIXES_ITER>`, `<VERDICT>` or `<JUDGE_REPORT>` placeholder surviving into either contract block aborts it with `! BLOCKED` before anything is written — substitute and re-run the block; a missing contract means the verdict is unsettled, never `approved`.
 
 ### Step S4: Gate on loop outcome
 
@@ -252,21 +278,30 @@ Fix the issues above in <program path>, then:
 
 ### Step S5: Run
 
-Load run mode step definitions — re-resolve rather than dereferencing the S2/S3 variable, which died with its shell:
+Load run mode step definitions — re-resolve rather than dereferencing the S2/S3 variable, which died with its shell. The load drops only the frontmatter and objective (everything through the `</objective>` line); constants, Agent Resolution, R0–R7, the mode sections and notes all stay. Execute run's Agent Resolution block first: it writes the `research-run-skill-dir` sentinel that every `modes/` load in the steps below reads:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _RESEARCH_SHARED < "${TMPDIR:-/tmp}/research-shared-${CSID}" 2>/dev/null || _RESEARCH_SHARED=""  # warm read (Check 41)
 _RESEARCH_SKILLS="${_RESEARCH_SHARED%/_shared}"
 [ -z "$_RESEARCH_SKILLS" ] && _RESEARCH_SKILLS="${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/skills"
-cat "$_RESEARCH_SKILLS/run/SKILL.md"
+sed '1,/^<\/objective>$/d' "$_RESEARCH_SKILLS/run/SKILL.md"
 ```
 
 Load fails → stop with `! sweep: cannot load run/SKILL.md — research plugin path unresolved.` Never improvise R1–R7: S5 executes and commits against the user's repo.
 
 Run Default Mode (R1–R7 from the `run/SKILL.md` loaded above) passing program file from S2 as the first positional argument, plus all flags.
 
-> Forward same flags accepted at Step S1 (`--colab[=HW]`, `--compute`, `--team`, `--codex`, `--researcher`, `--architect`, `--journal`, `--hypothesis <path>`).
+**Run-args handoff** — run's R1 flag blocks read `$ARGUMENTS`, which here holds sweep's goal text. Write run's argument string (program path + forwarded flags, `--keep "<items>"` verbatim) to the sentinel those blocks read first, before executing R1; run's final blocks never delete it, so the sweep completion block below does:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+cat > "${TMPDIR:-/tmp}/sweep-run-args-${CSID}" <<'EOF'
+<program path> <forwarded flags verbatim>
+EOF
+```
+
+> Forward same flags accepted at Step S1 (`--colab[=HW]`, `--compute`, `--team`, `--codex`, `--researcher`, `--architect`, `--journal`, `--hypothesis <path>`, `--keep "<items>"`).
 
 > **Flag-forwarding invariant**: any of `--journal` / `--hypothesis` set at sweep entry MUST appear in S5 run invocation. Dropping them silently breaks resume continuity and hypothesis queue.
 
@@ -279,7 +314,8 @@ sweep: complete — plan → judge → run pipeline finished
 ```
 
 ```bash
-rm -f .temp/state/skill-contract.md  # clear contract — sweep pipeline complete (compaction-contract.md §Lifecycle)  # timeout: 5000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+rm -f .temp/state/skill-contract.md "${TMPDIR:-/tmp}/sweep-run-args-${CSID}"  # clear contract — sweep pipeline complete (compaction-contract.md §Lifecycle); handoff sentinel must not leak into a later direct run  # timeout: 5000
 ```
 
 </workflow>

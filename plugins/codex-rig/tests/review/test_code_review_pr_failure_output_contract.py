@@ -6,10 +6,13 @@ import json
 from pathlib import Path
 
 import pytest
+from _skill_text import read_reference_body, read_with_references
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 CODE_REVIEW_SKILL = PLUGIN_ROOT / "skills" / "code-review" / "SKILL.md"
 CODE_REMEDIATE_SKILL = PLUGIN_ROOT / "skills" / "code-remediate" / "SKILL.md"
+#: Gate moved out of SKILL.md and loaded only when PR evidence collection fails.
+COLLECTION_FAILURE = CODE_REVIEW_SKILL.parent / "references" / "collection-failure.md"
 BEHAVIORAL_CASES = PLUGIN_ROOT / "runtime" / "calibration" / "behavioral-cases.json"
 
 
@@ -20,10 +23,12 @@ def _terminal_failure_gate() -> str:
         >>> "Terminal review-unavailable output gate:" in _terminal_failure_gate()
         True
     """
-    skill = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
-    start = skill.index("**Terminal review-unavailable output gate:**")
-    end = skill.index("\n\nFor retryable `github-network`", start)
-    return skill[start:end]
+    reference = read_reference_body(
+        COLLECTION_FAILURE, "Terminal review-unavailable output gate and collection-failure recovery"
+    )
+    start = reference.index("**Terminal review-unavailable output gate:**")
+    end = reference.index("\n\nFor retryable `github-network`", start)
+    return reference[start:end]
 
 
 def test_terminal_pr_collection_failure_is_review_unavailable_not_merge_decision() -> None:
@@ -32,7 +37,8 @@ def test_terminal_pr_collection_failure_is_review_unavailable_not_merge_decision
     A T0 failure means no source review occurred. The user therefore needs a plain operational diagnostic, not a
     ``needs-more-work`` recommendation or any table that could be mistaken for PR findings.
     """
-    skill = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(CODE_REVIEW_SKILL, "collection-failure.md")
+    assert "references/collection-failure.md" in CODE_REVIEW_SKILL.read_text(encoding="utf-8")
     terminal_gate = _terminal_failure_gate()
     normalized = terminal_gate.lower()
 
@@ -85,9 +91,10 @@ def test_pr_workflow_uses_effective_grants_before_terminal_network_failure(
     skill = skill_path.read_text(encoding="utf-8")
 
     assert (
-        "Run the direct owning collector under current effective grants per GitHub Read Execution or with runtime approval"
-        in skill
-    )
+        "run the direct collector under current effective network and filesystem grants or request runtime approval "
+        "for the complete owning command when required capability is unavailable"
+    ) in skill
+    assert "Run the direct owning collector per GitHub Read Execution." in skill
     assert denial_stop in skill
     assert "without broadening access or retrying the denied command" in skill
     assert skill.index("Run the direct owning collector") < skill.index(later_section)

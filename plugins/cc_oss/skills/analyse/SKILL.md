@@ -5,7 +5,7 @@ description: |
   TRIGGER when: user provides GitHub issue number (#N), PR number, or github.com URL with issue/PR/discussion path AND asks to analyze, summarize, understand, or triage it; user asks for repo vitality stats or "is this repo healthy".
   SKIP: user already pasted full thread text inline; oss:resolve already active on same PR; user wants code review (use oss:review); user phrasing is "review PR" meaning code quality assessment, not thread triage (route to oss:review).
 argument-hint: <N|vitality [<owner>/<repo>|github-url]|ecosystem|path/to/report.md> [--reply] [--quick] [--keep "<items>"]
-allowed-tools: Read, Bash, Write, Edit, Agent, AskUserQuestion, TaskList, TaskCreate, TaskUpdate
+allowed-tools: Read, Bash, Write, Edit, Agent, Skill, AskUserQuestion, TaskList, TaskCreate, TaskUpdate
 model: sonnet
 effort: high
 ---
@@ -57,8 +57,20 @@ AGENT_DEADLINE_S=1800  # per spawned agent, from its spawn; covers the former 90
 
 ## Agent Resolution
 
+Resolved in Step 1's setup block — the `--reply` hard-fail branch needs `REPLY_MODE` parsed first.
+
+> loads: oss-shared-resolver.md
+
+## Step 1: Flag parsing
+
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+# flags: --reply, --quick (vitality fast-path: skips codex review + adversarial rework; ignored for N/ecosystem), --keep
+# shared flag/--keep parser (C5; also resolve/review SKILL.md); --keep-state: no eval, writes analyse-{reply,quick,clean-args,keep-items}-${CSID} (compaction-contract.md §keep: semantics), owner-safe clear of a crashed run's stale contract (§Lifecycle)
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/parse-skill-flags.py" --flags reply,quick --keep-state analyse "$ARGUMENTS" >/dev/null  # timeout: 5000
+IFS= read -r REPLY_MODE < "${TMPDIR:-/tmp}/analyse-reply-${CSID}" 2>/dev/null || REPLY_MODE=false
+IFS= read -r QUICK_MODE < "${TMPDIR:-/tmp}/analyse-quick-${CSID}" 2>/dev/null || QUICK_MODE=false
+IFS= read -r CLEAN_ARGS < "${TMPDIR:-/tmp}/analyse-clean-args-${CSID}" 2>/dev/null || CLEAN_ARGS=""
 # loads: compaction-contract.md
 # cold-start fallback
 _OSS_SHARED=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/resolve_shared_path.py" oss skills/_shared 2>/dev/null)  # timeout: 5000
@@ -79,53 +91,18 @@ echo "${_OSS_SHARED:-}" > "${TMPDIR:-/tmp}/analyse-oss-shared-${CSID}"
 _OSS_ANALYSE=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/resolve_shared_path.py" oss skills/analyse 2>/dev/null)  # timeout: 5000
 [ -z "$_OSS_ANALYSE" ] && _OSS_ANALYSE="plugins/cc_oss/skills/analyse"
 echo "$_OSS_ANALYSE" > "${TMPDIR:-/tmp}/analyse-oss-analyse-${CSID}"
-```
-
-> loads: oss-shared-resolver.md
-
-## Step 1: Flag parsing
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-# flags: --reply, --quick (vitality fast-path: skips codex review + adversarial rework; ignored for N/ecosystem), --keep
-# shared flag/--keep parser (C5; also resolve/review SKILL.md)
-eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/parse-skill-flags.py" --flags reply,quick "$ARGUMENTS")"  # timeout: 5000
-REPLY_MODE="$FLAG_REPLY"
-QUICK_MODE="$FLAG_QUICK"
-echo "${KEEP_ITEMS:-}" > "${TMPDIR:-/tmp}/analyse-keep-items-${CSID}"  # timeout: 5000 (compaction-contract.md §keep: semantics)
-# stale contract, crashed prior run (compaction-contract.md §Lifecycle)
-rm -f .temp/state/skill-contract.md  # timeout: 5000
-# persist REPLY_MODE/QUICK_MODE/CLEAN_ARGS (Check 41)
+# persist REPLY_MODE/QUICK_MODE/CLEAN_ARGS (Check 41); CLEAN_ARGS stored with leading '#' stripped
+CLEAN_ARGS="${CLEAN_ARGS#\#}"
 echo "$REPLY_MODE" > "${TMPDIR:-/tmp}/analyse-reply-mode-${CSID}"
 echo "$QUICK_MODE" > "${TMPDIR:-/tmp}/analyse-quick-mode-${CSID}"
-echo "$CLEAN_ARGS" > "${TMPDIR:-/tmp}/analyse-clean-args-${CSID}" # timeout: 5000
-```
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-# reload CLEAN_ARGS (Check 41)
-IFS= read -r CLEAN_ARGS < "${TMPDIR:-/tmp}/analyse-clean-args-${CSID}" 2>/dev/null || CLEAN_ARGS=""
-CLEAN_ARGS="${CLEAN_ARGS#\#}"
 echo "$CLEAN_ARGS" > "${TMPDIR:-/tmp}/analyse-clean-args-${CSID}"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/parse_analyse_args.py" --mode classify --args "$CLEAN_ARGS"  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/parse_analyse_args.py" --args "$CLEAN_ARGS"  # timeout: 15000
 ```
 
 `REPLY_MODE` only meaningful when `$CLEAN_ARGS` is number — silently ignored for `vitality` and `ecosystem`.
 
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-# reload CLEAN_ARGS (Check 41)
-IFS= read -r CLEAN_ARGS < "${TMPDIR:-/tmp}/analyse-clean-args-${CSID}" 2>/dev/null || CLEAN_ARGS=""
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/parse_analyse_args.py" --mode classify --args "$CLEAN_ARGS"  # timeout: 5000
-```
-
 `DIRECT_PATH_MODE=true` only valid when `REPLY_MODE=true` — if combined without `--reply`, Step 2 prints plain-text error and stops; execution never reaches Step 5 mode dispatch.
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-# reload CLEAN_ARGS (Check 41)
-IFS= read -r CLEAN_ARGS < "${TMPDIR:-/tmp}/analyse-clean-args-${CSID}" 2>/dev/null || CLEAN_ARGS=""
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/parse_analyse_args.py" --args "$CLEAN_ARGS"  # timeout: 15000
-```
 
 **Unsupported flag check** — after all supported flags extracted, scan `$ARGUMENTS` for any remaining `--<token>` tokens. If found: invoke `AskUserQuestion` with:
 
@@ -205,17 +182,20 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/build_analyse_paths.py" --mode
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # reload drift state (Check 41)
+IFS= read -r CLEAN_ARGS < "${TMPDIR:-/tmp}/analyse-clean-args-${CSID}" 2>/dev/null || CLEAN_ARGS=""
 IFS= read -r DRIFT < "${TMPDIR:-/tmp}/analyse-drift-${CSID}" 2>/dev/null || DRIFT="false"
-IFS= read -r FAST_PATH < "${TMPDIR:-/tmp}/analyse-fast-path-${CSID}" 2>/dev/null || FAST_PATH="false"
+IFS= read -r FAST_PATH <  "${TMPDIR:-/tmp}/analyse-fast-path-${CSID}" 2>/dev/null || FAST_PATH="false"
 IFS= read -r FAST_PATH_TENTATIVE < "${TMPDIR:-/tmp}/analyse-fast-path-tentative-${CSID}" 2>/dev/null || FAST_PATH_TENTATIVE="false"
 IFS= read -r REPORT_MTIME < "${TMPDIR:-/tmp}/analyse-report-mtime-${CSID}" 2>/dev/null || REPORT_MTIME="0"
+IFS= read -r CACHE_FILE < "${TMPDIR:-/tmp}/analyse-cache-file-${CSID}" 2>/dev/null || CACHE_FILE=""
+TYPE=$(jq -r '.type // empty' "$CACHE_FILE" 2>/dev/null)
 # Corrupt cache guard — validate TYPE before use
 [ "$TYPE" = "pr" ] || [ "$TYPE" = "issue" ] || [ "$TYPE" = "discussion" ] || { echo "! Error: corrupt cache — invalid type \"$TYPE\" for #$CLEAN_ARGS; delete .cache/gh/ to reset"; exit 1; }
 # Cache hit + FAST_PATH_TENTATIVE: lightweight updatedAt call; UPDATED_TS > REPORT_MTIME → DRIFT=true
 if [ "$TYPE" = "discussion" ]; then
     UPDATED_AT=$(gh api graphql \
         -f query='query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){discussion(number:$number){updatedAt}}}' \
-        -f owner='{owner}' -f repo='{repo}' -F number=$CLEAN_ARGS \
+        -F owner='{owner}' -F repo='{repo}' -F number=$CLEAN_ARGS \
         --jq '.data.repository.discussion.updatedAt' 2>/dev/null)  # timeout: 6000
 else
     UPDATED_AT=$(gh api "repos/{owner}/{repo}/issues/$CLEAN_ARGS" --jq '.updated_at' 2>/dev/null)  # timeout: 6000
@@ -225,25 +205,32 @@ UPDATED_TS=$(date -d "$UPDATED_AT" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M
 [ -z "$UPDATED_TS" ] && DRIFT=true
 [ "$UPDATED_TS" -gt "$REPORT_MTIME" ] && DRIFT=true
 [ "$DRIFT" = "false" ] && FAST_PATH=true && echo "[resume] reusing existing report for #$CLEAN_ARGS"
+# persist for Step 4/7 and the mode file (Check 41); oss-detect-type is Step 4's TYPE sentinel
+printf '%s\n' "$TYPE" > "${TMPDIR:-/tmp}/oss-detect-type-${CSID}"
+printf '%s\n' "$DRIFT" > "${TMPDIR:-/tmp}/analyse-drift-${CSID}"
+printf '%s\n' "$FAST_PATH" > "${TMPDIR:-/tmp}/analyse-fast-path-${CSID}"
 ```
 
 `FAST_PATH=true` → skip to Step 7. `DRIFT=true` → continue (full re-analysis from cached data).
 
-**Cache miss** — after fetching in `modes/thread.md`, write:
+**Cache miss** — after fetching in `modes/thread.md`, save the primary fetch's `--json` output (the item) with the Write tool to `${TMPDIR:-/tmp}/analyse-item-${CSID}` and the `--comments` text to `${TMPDIR:-/tmp}/analyse-comments-${CSID}` (the fetch results are tool output, not shell variables), then write:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # reload vars (Check 41)
 IFS= read -r CLEAN_ARGS < "${TMPDIR:-/tmp}/analyse-clean-args-${CSID}" 2>/dev/null || CLEAN_ARGS=""
 IFS= read -r CACHE_FILE < "${TMPDIR:-/tmp}/analyse-cache-file-${CSID}" 2>/dev/null || CACHE_FILE=""
-[ -n "$ITEM" ] && [ -n "$CACHE_FILE" ] && jq -n \
+IFS= read -r TYPE < "${TMPDIR:-/tmp}/oss-detect-type-${CSID}" 2>/dev/null || TYPE=""
+ITEM_FILE="${TMPDIR:-/tmp}/analyse-item-${CSID}"; COMMENTS_FILE="${TMPDIR:-/tmp}/analyse-comments-${CSID}"
+# temp + mv — a failed jq must not leave a truncated cache that later passes as a hit
+[ -s "$ITEM_FILE" ] && [ -f "$COMMENTS_FILE" ] && [ -n "$CACHE_FILE" ] && [ -n "$TYPE" ] && jq -n \
     --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --arg type "$TYPE" \
     --argjson number "$CLEAN_ARGS" \
-    --argjson item "$ITEM" \
-    --arg comments "$COMMENTS" \
-    '{"ts":$ts,"type":$type,"number":$number,"item":$item,"comments":$comments}' \
-    >"$CACHE_FILE" || echo "⚠ cache write skipped — empty or malformed API response" # timeout: 5000
+    --slurpfile item "$ITEM_FILE" \
+    --rawfile comments "$COMMENTS_FILE" \
+    '{"ts":$ts,"type":$type,"number":$number,"item":$item[0],"comments":$comments}' \
+    >"$CACHE_FILE.tmp" && mv "$CACHE_FILE.tmp" "$CACHE_FILE" || echo "⚠ cache write skipped — empty or malformed API response" # timeout: 5000
 ```
 
 **Stale cache** — file for same number but earlier date ignored. Old files left — small, provide audit history.
@@ -296,16 +283,16 @@ Read and execute the mode file from `${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/skill
 
 > loads: vitality-report.md (used by modes/vitality.md as REPORT_TPL)
 
+Run the boundary block below after the mode file's gather/fetch finishes, before synthesis — not before dispatch:
+
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # boundary: post-gather/fetch (Step5), pre-synthesis gate (compaction-contract.md §Lifecycle)
 IFS= read -r _CLEAN_ARGS < "${TMPDIR:-/tmp}/analyse-clean-args-${CSID}" 2>/dev/null || _CLEAN_ARGS=""
 IFS= read -r _REPORT_FILE < "${TMPDIR:-/tmp}/analyse-report-file-${CSID}" 2>/dev/null || _REPORT_FILE="pending"
 IFS= read -r _REPLY_MODE < "${TMPDIR:-/tmp}/analyse-reply-mode-${CSID}" 2>/dev/null || _REPLY_MODE="false"
-IFS= read -r _KEEP < "${TMPDIR:-/tmp}/analyse-keep-items-${CSID}" 2>/dev/null || _KEEP=""
 _PRESERVE="target=#${_CLEAN_ARGS}, cache-dir=.cache/gh, report=${_REPORT_FILE}, reply-mode=${_REPLY_MODE}"
-[ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:analyse" "synthesis (after gather/fetch)" ".cache/gh" "${_PRESERVE}" "reply gate (Step 6) or shepherd reply (Step 7)"  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" --keep-sentinel analyse-keep-items "oss:analyse" "synthesis (after gather/fetch)" ".cache/gh" "${_PRESERVE}" "reply gate (Step 6) or shepherd reply (Step 7)"  # timeout: 5000
 ```
 
 ## Step 6: Reply gate — STOP CHECK
@@ -326,21 +313,28 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:
 
 Invoke `AskUserQuestion`. In both menus, the question text carries at most 6 plain lines (target 600 characters, hard cap 1,500), no table, pipe layout or code fence. Options carry a label and a one-line description only, no `preview`:
 
-**Thread mode** (`$CLEAN_ARGS` is a number):
+**Thread mode** (`$CLEAN_ARGS` is a number; `TYPE` from `oss-detect-type-${CSID}`):
 
 - header: `oss-analyse`
 - question: `Title: <report Title>`; `Outcome: <report Outcome>`; finding counts and blockers where present; `→ <REPORT_FILE>`; `What next?`; "Long wait? `/compact` now — report saved, resume lossless." Use short plain lines, not a table.
-- (a) label: `/develop:fix` — description: diagnose and fix the reported issue (requires `develop` plugin)
-- (b) label: `/develop:feature` — description: implement as new feature (requires `develop` plugin)
-- (c) label: `draft reply` — description: run `/oss:analyse $CLEAN_ARGS --reply` to shepherd a contributor-facing reply
-- (d) label: `skip` — description: no action
+- `TYPE=issue` or `discussion`:
+  - (a) label: `/develop:fix` — description: diagnose and fix the reported issue (requires `develop` plugin)
+  - (b) label: `/develop:feature` — description: implement as new feature (requires `develop` plugin)
+  - (c) label: `draft reply` — description: run `/oss:analyse $CLEAN_ARGS --reply` to shepherd a contributor-facing reply
+  - (d) label: `skip` — description: no action
+- `TYPE=pr` (PR thread — the follow-ups are review and resolve, not new implementation):
+  - (a) label: `/oss:review $CLEAN_ARGS` — description: full multi-agent code review of this PR (requires `oss` plugin)
+  - (b) label: `/oss:resolve $CLEAN_ARGS` — description: apply the PR's review action items (requires `oss` plugin)
+  - (c) label: `draft reply` — description: run `/oss:analyse $CLEAN_ARGS --reply` to shepherd a contributor-facing reply
+  - (d) label: `skip` — description: no action
 
 **Vitality / ecosystem mode** (`$CLEAN_ARGS` is `vitality` or `ecosystem`):
 
 - header: `oss-analyse`
 - question: `Title: <report Title>`; `Outcome: <report Outcome>`; finding counts and blockers where present; `→ <REPORT_FILE>`; `What next?`; "Long wait? `/compact` now — report saved, resume lossless." Use short plain lines, not a table.
-- (a) label: `/oss:analyse <N> --reply` — description: draft reply for specific thread
-- (b) label: `/oss:review <N>` — description: full code review for specific PR (requires `oss` plugin)
+- `<N>` below = the highest-priority thread or PR number named in the report, substituted before asking; the report names none → omit options (a) and (b)
+- (a) label: `/oss:analyse <N> --reply` — description: draft reply for that thread
+- (b) label: `/oss:review <N>` — description: full code review of that PR (requires `oss` plugin; only when `<N>` is a PR)
 - (c) label: `skip` — description: no action
 
 ### 6b — Confidence block (REPLY_MODE=false only)
@@ -353,30 +347,29 @@ rm -f .temp/state/skill-contract.md  # skill complete (compaction-contract.md §
 
 ## Step 7: Draft contributor reply (only when --reply, thread mode only)
 
+Report at `$REPORT_FILE` guaranteed to exist — either reused via fast-path (Step 2, `FAST_PATH=true`) or freshly written by Step 5.
+
+One block reloads the vars, loads `shepherd-reply-protocol.md` (apply its invocation pattern and terminal summary format) and creates the watch directory; echo-backs give the spawn its runtime values. The spawn response then writes `<WATCH_DIR>/agent-watch-reply.tsv` with the Write tool (health monitoring below):
+
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # reload vars (Check 41)
 IFS= read -r _OSS_SHARED < "${TMPDIR:-/tmp}/analyse-oss-shared-${CSID}" 2>/dev/null || _OSS_SHARED=""
 IFS= read -r CLEAN_ARGS < "${TMPDIR:-/tmp}/analyse-clean-args-${CSID}" 2>/dev/null || CLEAN_ARGS=""
 IFS= read -r TODAY < "${TMPDIR:-/tmp}/analyse-today-${CSID}" 2>/dev/null || TODAY=$(date +%Y-%m-%d)
-```
-
-Report at `$REPORT_FILE` guaranteed to exist — either reused via fast-path (Step 2, `FAST_PATH=true`) or freshly written by Step 5.
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-# reload _OSS_SHARED (Check 41)
-IFS= read -r _OSS_SHARED < "${TMPDIR:-/tmp}/analyse-oss-shared-${CSID}" 2>/dev/null || _OSS_SHARED=""
 cat "$_OSS_SHARED/shepherd-reply-protocol.md"  # timeout: 5000
+WATCH_DIR="${TMPDIR:-/tmp}/oss-analyse-watch-${CSID}"
+mkdir -p "$WATCH_DIR"  # timeout: 5000
+echo "_OSS_SHARED=$_OSS_SHARED CLEAN_ARGS=$CLEAN_ARGS TODAY=$TODAY"
+echo "WATCH_DIR=$WATCH_DIR"
 ```
-
-`shepherd-reply-protocol.md` (loaded above) — apply invocation pattern and terminal summary format.
 
 ```text
 Agent(
   subagent_type="oss:shepherd",
+  name="reply-shepherd",
   description="Draft contributor reply for thread #<CLEAN_ARGS>",
-  prompt="Read <_OSS_SHARED>/shepherd-reply-protocol.md and follow its invocation pattern. Report: <REPORT_FILE>. Thread #<CLEAN_ARGS>. Fetch thread context via `gh issue view <CLEAN_ARGS> --comments` (or GraphQL for discussions) if not already in report. Write full reply draft to .reports/analyse/thread/output-reply-thread-<CLEAN_ARGS>-<TODAY>.md using the Write tool. Return ONLY: {\"status\":\"done\",\"file\":\"<OUTPUT_PATH>\",\"confidence\":0.N}"
+  prompt="Draft contributor reply for thread #<CLEAN_ARGS>: read <_OSS_SHARED>/shepherd-reply-protocol.md and follow its invocation pattern. Report: <REPORT_FILE>. Fetch thread context via `gh issue view <CLEAN_ARGS> --comments` (or GraphQL for discussions) if not already in report. Write full reply draft to .reports/analyse/thread/output-reply-thread-<CLEAN_ARGS>-<TODAY>.md using the Write tool. Return ONLY: {\"status\":\"done\",\"file\":\"<OUTPUT_PATH>\",\"confidence\":0.N}"
 )
 ```
 
@@ -386,14 +379,11 @@ Verify output file exists and is non-empty after spawn: `[ -s "<OUTPUT_PATH>" ] 
 
 If `DRIFT=true`: append `[analysis refreshed — new activity since last report]` to terminal summary.
 
-**Health monitoring** (CLAUDE.md §6) — every spawn in this skill and its modes: agent spawns run in the background — spawn, end the turn, resume on the completion notification (shared rule: `rules/task-lifecycle.md` §After spawning); no filler call, no "waiting" line, no sleep, and never `ScheduleWakeup`, `ListAgents` or a `Monitor` loop. Run the block below once before the first spawn (it prints the watch directory) and in each spawn response write `<WATCH_DIR>/agent-watch-<batch>.tsv` with the Write tool — one row per agent, `<name><TAB><expected output path, or - for an envelope-only agent><TAB>1800`. At every wake-up run the block once before reading agent output: `done` → consume; `timed_out`, or a notification that arrived without the deliverable → read `tail -100` of the expected path; if none, use `{"verdict":"timed_out"}`; surface with ⏱ now. Never silently omit, and a ⏱ never skips a user question.
+**Health monitoring** (CLAUDE.md §6) — every spawn in this skill and its modes: agent spawns run in the background — spawn, end the turn, resume on the completion notification (shared rule: `rules/task-lifecycle.md` §After spawning); no filler call, no "waiting" line, no sleep, and never `ScheduleWakeup`, `ListAgents` or a `Monitor` loop. Create the watch directory before the first spawn (block above for the reply; mode files do the same for theirs) and in each spawn response write `<WATCH_DIR>/agent-watch-<batch>.tsv` with the Write tool — one row per agent, `<name><TAB><expected output path, or - for an envelope-only agent><TAB>1800`. At every wake-up run the block below once before reading agent output: `done` → consume; `timed_out`, or a notification that arrived without the deliverable → read `tail -100` of the expected path; if none, use `{"verdict":"timed_out"}`; surface with ⏱ now. Never silently omit, and a ⏱ never skips a user question.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-WATCH_DIR="${TMPDIR:-/tmp}/oss-analyse-watch-${CSID}"
-mkdir -p "$WATCH_DIR"
-echo "WATCH_DIR=$WATCH_DIR"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/agent_watch.py" --state-dir "$WATCH_DIR"  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/agent_watch.py" --state-dir "${TMPDIR:-/tmp}/oss-analyse-watch-${CSID}"  # timeout: 5000
 ```
 
 End response with `## Confidence` block per CLAUDE.md — always **absolute last thing**.
@@ -420,7 +410,7 @@ Scenarios:
 
 - **Thread analysis output schema** (canonical section order, defined in `modes/thread.md`): `## Thread #[number]: [title]`, `### Summary`, `### Thread Verdict`, `### Related Items`, `### Analysis`, `### Suggested Labels`, `### Suggested Response`, `### Priority` (omit for discussions). Use these exact headings — consistent section names enable downstream parsing, diff-based change detection across runs. `## Confidence` is not a report-file heading — it is appended to the chat response per CLAUDE.md output standards (SKILL.md Step 6b/7), always last in the response; omitting it triggers calibration failure (confidence defaults to 0.5, producing large negative bias).
 - **Precision guidance**: flag issues, don't solve them; flag blockers, don't design solutions. Reference `/develop:fix` and `/develop:feature` (requires `develop` plugin) for implementation work. Verbose implementation sketches in triage output dilute signal-to-noise ratio. Each flagged item (duplicate, blocker, next step) must carry explicit severity/priority label (high/medium/low) inline — enables downstream triage, satisfies format scoring.
-- **Vitality mode repo resolution**: `GH_OWNER` and `GH_REPO` set in Step 1 from: (1) explicit URL/owner-repo arg, (2) `gh repo view`, (3) `git remote origin`. vitality.md uses `-R "$GH_OWNER/$GH_REPO"` on all gh commands and literal `$GH_OWNER/$GH_REPO` in all `gh api` paths — never `{owner}/{repo}` template substitution in vitality mode.
+- **Vitality mode repo resolution**: `GH_OWNER` and `GH_REPO` are written to the `analyse-gh-owner`/`analyse-gh-repo` sentinels by Step 1's full-args `parse_analyse_args.py` call (modes/vitality.md Step 1 reloads them) from: (1) explicit URL/owner-repo arg, (2) `gh repo view`, (3) `git remote origin`. vitality.md uses `-R "$GH_OWNER/$GH_REPO"` on all gh commands and literal `$GH_OWNER/$GH_REPO` in all `gh api` paths — never `{owner}/{repo}` template substitution in vitality mode.
 - Mode files live in `${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/skills/analyse/modes/` — one file per mode, fully self-contained
 - `modes/thread.md` handles all three thread types (issue, PR, discussion) via internal branching
 - Always use `gh` CLI — never hardcode repo URLs
@@ -430,7 +420,7 @@ Scenarios:
 - **Out-of-scope early-exit — hard stop, zero partial review**: when input clearly outside skill's domain (e.g. CI pipeline diagnosis, code review of unrelated source/script content pasted alongside the actual target), print scope note + redirect (e.g. "use oss:cicd-steward (requires `oss` plugin)") and stop immediately — zero bugs, zero code-quality observations, zero line-level findings on the out-of-scope portion, even when it arrives embedded inside otherwise in-scope material (e.g. a script pasted alongside a draft report or rubric-scoring JSON).
   - Flag then stop; flag then analyze = precision cost with no recall benefit. Producing any partial review before the redirect (even framed as "quick notes") is itself the violation — the redirect must be the entire response for that content, not a preamble to it.
   - **Does not apply to content that IS the thread's own subject** — a PR diff (review mode), or an issue's reproduction script that `modes/thread.md`'s Reproduction Check (R1-R4) is built to execute and score — that content stays in scope and gets analyzed normally; the guard targets unrelated material riding along with in-scope input, not the input itself.
-- **Inline context**: skill runs in the caller's session, never `context: fork` — a fork runs as a hidden background agent, so its phase tasks are invisible to the caller's `TaskList` and its progress is not shown. `Agent` is declared in `allowed-tools` — do NOT skip Steps 5–6 adversarial review assuming Agent unavailable; those steps are mandatory.
+- **Inline context**: skill runs in the caller's session, never `context: fork` — a fork runs as a hidden background agent, so its phase tasks are invisible to the caller's `TaskList` and its progress is not shown. `Agent` is declared in `allowed-tools` — do NOT skip the vitality adversarial review (`modes/vitality.md` Steps 5–6) assuming Agent unavailable; those steps are mandatory in full mode.
 - **`--reply` drafts only** — shepherd produces draft file; does NOT auto-post to GitHub. User posts manually. Write access to repo not required for `--reply`; required only if user subsequently posts draft via `gh issue comment` or `gh pr comment`.
 - Follow-up chains:
   - Issue with confirmed bug → `/develop:fix` to diagnose, reproduce with test, apply targeted fix (requires `develop` plugin)

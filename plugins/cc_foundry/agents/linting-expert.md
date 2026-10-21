@@ -124,22 +124,12 @@ module = [
 ignore_missing_imports = true
 ```
 
-```bash
-mypy src/ --ignore-missing-imports  # use `mypy .` if no src/ directory
-mypy src/ --strict
-```
-
 **Path detection rule** — before invoking `mypy`, verify the path exists:
 
 ```bash
-if [ -d src ]; then
-  mypy_target="src/"
-elif [ -f pyproject.toml ] && grep -qE '^\s*(files|packages)\s*=' pyproject.toml; then
-  mypy_target="."   # pyproject.toml [tool.mypy] specifies files/packages; let mypy resolve
-else
-  mypy_target="."
-fi
-mypy "$mypy_target"
+mypy_target="."   # no src/: "." — pyproject.toml [tool.mypy] files/packages, when set, lets mypy resolve
+[ -d src ] && mypy_target="src/"
+mypy "$mypy_target" --ignore-missing-imports  # --strict is an opt-in alternative to this call, not an addition
 ```
 
 > **Alternative type checkers**:
@@ -151,7 +141,7 @@ mypy "$mypy_target"
 
 <precommit-config>
 
-For pre-commit configuration and version-pinning workflow (`.pre-commit-config.yaml` setup, `rev:` placeholder discipline, `pre-commit autoupdate`, version verification against pypi.org/GitHub releases): run `cat "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/references/linting-expert/precommit-patterns.md"` via the Bash tool. Skip for ruff-only or mypy-only tasks.
+For pre-commit configuration and version-pinning workflow (`.pre-commit-config.yaml` setup, `rev:` placeholder discipline, `pre-commit autoupdate`, version verification against pypi.org/GitHub releases): run `cat "${CLAUDE_PLUGIN_ROOT}/references/linting-expert/precommit-patterns.md"` via the Bash tool. Skip for ruff-only or mypy-only tasks.
 
 </precommit-config>
 
@@ -248,17 +238,18 @@ Group findings by severity tier (based on Rule Selection Rationale progression):
 
 For targeted reviews, scope primary findings to requested categories; list other violations in clearly labelled secondary section. Prefix secondary section with: `> Note: findings below are outside the requested scope and carry no action weight unless a broader review was requested.`
 
-**Annotation scope rule**: when task requests ruff violations, style checks, or a specific rule category, ANN001/ANN201/ANN202 gaps are **secondary**, not primary — move to secondary block unless annotation review is explicitly requested. Listing them as primary in ruff/style-focused reviews inflates false-positive counts and dilutes primary findings.
+**Annotation placement by task scope** (classify per workflow step 1; first matching row wins):
 
-For general reviews, apply same discipline: report direct violations (parameter annotations, return types, unused imports, type errors) as primary (ANN001 missing param annotation, ANN201/ANN202 missing return, unannotated public API); report inferred-scope findings (instance variable `var-annotated`, `__init__ -> None`, Callable precision, `no-untyped-def` for `__init__`) in clearly labelled secondary block:
+| Task scope | ANN / annotation findings go to |
+| -- | -- |
+| Annotation-scoped — task explicitly requests annotation review (e.g. "annotation gaps", "mypy type errors") | **Primary**: ANN202 and other missing-annotation findings, including `__init__ -> None` |
+| Combined — "full quality pass", both ruff and mypy required | **Primary**, as annotation-scoped — not the inferred-scope block. Combined scope explicitly runs mypy, so annotation gaps are in-scope findings, not incidental noise |
+| Ruff/style-scoped — ruff violations, style checks, or a specific rule category; mypy not part of requested scope | **Secondary**: ANN001/ANN201/ANN202 gaps → out-of-scope secondary section (`> Note:` prefix above). Listing them as primary inflates false-positive counts and dilutes primary findings |
+| General review | **Primary**: direct violations — ANN001 missing param annotation, ANN201/ANN202 missing return, unannotated public API, unused imports, type errors. **Secondary**: inferred-scope findings — instance variable `var-annotated`, `__init__ -> None`, Callable precision, `no-untyped-def` for `__init__` — in the labelled block below |
 
 ```text
 > Additional findings (inferred scope — valid but beyond direct callsite analysis):
 ```
-
-**Exception — annotation-scoped tasks**: when task explicitly requests annotation review (e.g. "annotation gaps", "mypy type errors"), promote ANN202 and other missing-annotation findings — including `__init__ -> None` — to **primary**; the secondary demotion rule above is for ruff/style-focused tasks only.
-
-**Precedence — combined tasks**: a "full quality pass" (workflow step 1 combined classification, both ruff and mypy required) is distinct from all three registers above — not the ruff-scoped demotion (251), not the general-review direct/inferred split (253), not the annotation-scoped promotion (259) alone. Resolve it as annotation-scoped: the promotion exception (259) governs, so `__init__ -> None` and other missing-annotation findings report as **primary** — not the inferred-scope secondary block from 253. Combined scope explicitly runs mypy, so annotation gaps are in-scope findings, not incidental noise; the ruff-scoped demotion rule (251) applies only when mypy is not part of the requested scope.
 
 </output-format>
 
@@ -315,9 +306,7 @@ For general reviews, apply same discipline: report direct violations (parameter 
 
 **Model note**: frontmatter is `sonnet`; callers may override to `haiku` for mechanical fixes. If annotation-gap detection is incomplete or misses complex type-inference gaps, flag unresolved files in the Confidence block Gaps for caller re-invocation with narrowed scope.
 
-**Re-invocation on incomplete results**: dispatched with "add annotations"/"annotate" and initial results incomplete (files processed < files in scope, type-inference gaps remain after first pass) — name unresolved files in Confidence block Gaps; caller re-invokes with narrower scope if N+ findings remain.
-
-**Full-codebase scope advisory**: for full-codebase annotation audits or mypy strict passes, consider scope-narrowing to stay within a single invocation — same Gaps-naming remedy as above applies to any leftover files.
+**Incomplete results**: dispatched with "add annotations"/"annotate" and initial results incomplete (files processed < files in scope, type-inference gaps remain after first pass), or leftover files from a full-codebase annotation audit / mypy strict pass (consider scope-narrowing to stay within one invocation) — name unresolved files in Confidence block Gaps; caller re-invokes with narrower scope if N+ findings remain.
 
 **Confidence calibration**: tier by finding type — thresholds align with `quality-gates.md` (`high ≥0.90 | moderate 0.85–0.90 | low <0.85`):
 

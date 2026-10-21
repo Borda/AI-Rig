@@ -6,7 +6,7 @@ Triggered by `/audit --upgrade`. Read+executed by `/audit` when `--upgrade` flag
 
 **Trigger**: `/audit --upgrade`
 
-**Purpose**: apply documented Claude Code improvements that passed genuine-value filter. Config changes applied + correctness-checked immediately. Capability changes A/B tested via mini calibrate pipeline — accepted only if Δrecall ≥ 0 and ΔF1 ≥ 0.
+**Purpose**: apply documented Claude Code improvements that passed genuine-value filter. Config changes applied + correctness-checked immediately. Capability changes A/B tested via mini calibrate pipeline against source files (`--local` only) — accepted only if neither delta is negative and at least one clears the noise floor (Phase 4 Step d).
 
 **Task tracking**: TaskCreate "Fetch upgrade proposals", "Apply config proposals", "A/B test capability proposals". Mark in_progress/completed throughout.
 
@@ -41,26 +41,30 @@ Mark "Apply config proposals" in_progress. Each **config** proposal, in sequence
 2. Correctness check:
    ```bash
    jq empty .claude/settings.json && echo "✓ valid JSON" || echo "✗ invalid JSON" # timeout: 5000
-   node --check .claude/hooks/*.js 2>&1 | grep -v '^$' || true # timeout: 5000
+   for f in .claude/hooks/*.js; do [ -e "$f" ] || continue; node --check "$f" && echo "✓ $f" || echo "✗ $f"; done # timeout: 5000
    ```
-3. Accept (✓) if check passes; revert + mark rejected (✗) with reason if fails
+   `node --check` parses only its first file argument, hence one call per hook.
+3. Accept (✓) if every check line is ✓; any ✗ line → revert + mark rejected (✗) with reason
 
 Mark "Apply config proposals" completed.
 
 ### Phase 4: A/B test capability proposals
 
-Mark "A/B test capability proposals" in_progress. Each **capability** proposal (max 3), in sequence:
+Mark "A/B test capability proposals" in_progress.
 
-**Step a — Baseline calibration**: Load the calibrate pipeline template via `cat` (not the Read tool — `Bash(cat:*)` grant is version-proof):
+**Source-only gate**: `LOCAL_MODE` not `true` → skip this phase; report each capability proposal as `skipped — re-run /audit --upgrade --local to A/B test against plugins/*/ source`. Without `--local` the target agent file is the installed cache copy — an edit there is overwritten by the next plugin update and never reaches source.
+
+Each **capability** proposal (max 3), in sequence:
+
+**Step a — Baseline calibration**: Load the calibrate pipeline template via Bash (not the Read tool — Bash grant is version-proof):
 
 ```bash
-CALIB_TPL=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_skill_subdir.py" calibrate templates 2>/dev/null || echo "plugins/cc_foundry/skills/calibrate/templates")  # timeout: 5000
-cat "$CALIB_TPL/pipeline-prompt.md"  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" calibrate templates pipeline-prompt.md --fallback-source  # timeout: 5000
 ```
 
 Spawn `general-purpose` subagent with that template, target agent name, domain, N=3, MODE=fast, AB_MODE=false. Capture `recall_before` and `f1_before` from returned JSON.
 
-**Step b — Apply change**: Edit target agent file per proposal spec.
+**Step b — Apply change**: Edit target agent source file (`plugins/<plugin>/agents/<name>.md`) per proposal spec.
 
 **Step c — Post calibration**: Spawn same pipeline subagent, identical params. Capture `recall_after` and `f1_after`.
 
@@ -68,8 +72,9 @@ Spawn `general-purpose` subagent with that template, target agent name, domain, 
 
 - `Δrecall = recall_after − recall_before`
 - `ΔF1 = f1_after − f1_before`
-- **Accept** (✓) if Δrecall ≥ 0 AND ΔF1 ≥ 0 → keep change
-- **Revert** (✗) if either delta negative → restore file, record deltas
+- Noise floor 0.05 — calibrate's `none` band (`templates/pipeline-prompt.md` A/B verdict); one N=3 baseline cannot separate a smaller delta from run-to-run noise
+- **Accept** (✓) if Δrecall ≥ 0 AND ΔF1 ≥ 0 AND (Δrecall ≥ 0.05 OR ΔF1 ≥ 0.05) → keep change
+- **Revert** (✗) if either delta negative, or both below the noise floor (`no measurable lift`) → restore file, record deltas
 
 Mark "A/B test capability proposals" completed.
 
@@ -93,9 +98,9 @@ Mark "A/B test capability proposals" completed.
 | 2 | ... | agents/sw-engineer.md | −0.02 | +0.01 | ✗ reverted |
 
 ### Next Steps
-- `/foundry:setup` — propagate accepted changes to ~/.claude/
+- Accepted plugin-source edits reach `~/.claude/` only via plugin update/reinstall; `/foundry:setup` afterwards re-merges plugin settings/rules only
 - `/audit` — confirm clean baseline after upgrades
 - Reverted items: run `/calibrate <agent> full` for deeper A/B signal (N=10 vs N=3 used here)
 ```
 
-Propose `/foundry:setup` after upgrade completes — no auto-execute. Print: `` → Run `/foundry:setup` to propagate accepted changes to ~/.claude/ ``
+Propose reinstall after upgrade completes — no auto-execute. Print: `` → Update/reinstall the plugin to deliver accepted changes to ~/.claude/, then run `/foundry:setup` to re-merge plugin settings/rules ``

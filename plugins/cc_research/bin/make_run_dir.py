@@ -71,10 +71,10 @@ def main(argv: list[str] | None = None) -> int:
         parser.print_usage(sys.stderr)
         return 1
     skill_slug, base_dir = ns.skill_slug, ns.base_dir
-    if not _SLUG_RE.match(skill_slug):
+    if not _SLUG_RE.fullmatch(skill_slug):
         print(f"make_run_dir: invalid SKILL_SLUG: {skill_slug!r}", file=sys.stderr)
         return 2
-    if not _BASE_RE.match(base_dir) or ".." in base_dir or os.path.isabs(base_dir):
+    if not _BASE_RE.fullmatch(base_dir) or ".." in base_dir or os.path.isabs(base_dir):
         print(f"make_run_dir: invalid BASE_DIR: {base_dir!r}", file=sys.stderr)
         return 2
     sys.stdout.write(str(make_run_dir(skill_slug, base_dir)) + "\n")

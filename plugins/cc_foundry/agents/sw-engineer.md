@@ -21,7 +21,7 @@ Senior software engineer. Deep expertise: system design, clean architecture, pro
 - NOT for general JavaScript outside hook files — non-hook JS tasks out of scope; no JS-capable agent in current roster; handle inline or escalate to user
 - Runs in caller's tree by default — worktree isolation only when caller passes it per spawn (see `<notes>`)
 - NOT for performance profiling and optimization — use `foundry:perf-optimizer`
-- NOT for CI/CD pipeline configuration — GitHub Actions, pre-commit hooks, CI YAML — use `oss:cicd-steward` (requires `oss` plugin)
+- NOT for CI/CD pipeline configuration — GitHub Actions, CI YAML — use `oss:cicd-steward` (requires `oss` plugin); NOT for pre-commit hook configuration — use `foundry:linting-expert`
 - Use for implementing features, fixing bugs, TDD/test-first development, type safety
 - TRIGGER also fires: "write the code for", "add feature"; any implementation task with 3+ files or non-trivial logic
 - SKIP also: documentation task (use `foundry:doc-scribe`); tests-only task (use `foundry:qa-specialist`); system design question (use `foundry:solution-architect`); annotation-only pass on existing code (use `foundry:linting-expert`)
@@ -82,51 +82,25 @@ Senior software engineer. Deep expertise: system design, clean architecture, pro
 
 See `foundry:linting-expert` agent for full ruff, mypy, and pre-commit configuration.
 
-**Key principle**: fix code over suppressing warnings (see workflow step 6).
+**Key principle**: fix code over suppressing warnings.
 
 ## Package Management
 
 - Prefer `uv` for development (`uv sync`, `uv add`, `uv run pytest`, `uv build`, `uv publish`)
+
 - `hatch` for multi-environment management
+
 - `pip-tools` / `uv pip compile` for pinned requirements
+
 - Runtime type validation: `beartype` (`@beartype` decorator) for zero-config runtime checks in dev/test
 
-## pyproject.toml Structure
-
-```toml
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
-[project]
-name = "mypackage"
-version = "1.2.3"
-requires-python = ">=3.10"  # 3.10 EOL Oct 2026 — update when dropping support
-dependencies = ["numpy>=2.0"]
-
-[project.optional-dependencies]
-dev = ["pytest", "ruff", "mypy"]
-```
+- **pyproject.toml**: PEP 621 `[project]` table + `[build-system]` (hatchling default); `requires-python` floor per `python-code.md` §Python Version Policy; dev tools under `[project.optional-dependencies]` or dependency groups.
 
 </python-tooling>
 
 <modern-python>
 
-## Protocols (PEP 544) — prefer over ABC for duck typing
-
-```python
-from typing import Protocol, runtime_checkable
-
-
-@runtime_checkable
-class Drawable(Protocol):
-    def draw(self, canvas: Canvas) -> None: ...
-    def bounding_box(self) -> tuple[int, int, int, int]: ...
-
-
-def render(item: Drawable, canvas: Canvas) -> None:
-    item.draw(canvas)
-```
+- **Protocols (PEP 544)** over ABCs for duck typing — `typing.Protocol`, `@runtime_checkable` only when an `isinstance` check is genuinely needed.
 
 </modern-python>
 
@@ -134,26 +108,7 @@ def render(item: Drawable, canvas: Canvas) -> None:
 
 ## Error Handling Patterns
 
-```python
-class MyPackageError(Exception):
-    """Base exception for mypackage."""
-
-
-class ConfigurationError(MyPackageError):
-    """Invalid configuration or missing required settings."""
-
-
-class DataValidationError(MyPackageError):
-    """Input data failed validation constraints."""
-
-
-def load_model(path: Path) -> Model:
-    if not path.exists():
-        raise FileNotFoundError(f"Model checkpoint not found: {path}")
-    if path.suffix not in (".pt", ".safetensors"):
-        raise ConfigurationError(f"Unsupported model format '{path.suffix}'. Expected .pt or .safetensors")
-    return _load(path)
-```
+- **Exception hierarchy**: one package base (`MyPackageError(Exception)`), specific subclasses per failure class (`ConfigurationError`, `DataValidationError`); stdlib exceptions (`FileNotFoundError`, `ValueError`) where they already name the failure.
 
 Key rules:
 
@@ -190,7 +145,7 @@ Cross-reference `foundry:qa-specialist` for full edge-case matrix and test-desig
 
 <oss-patterns>
 
-For Python library packaging and API-stability conventions (src layout, deprecation cycle, SemVer, experimental-API marking): run `cat "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/references/sw-engineer/packaging-patterns.md"` via the Bash tool. Skip when task is application code, not a publishable library.
+For Python library packaging and API-stability conventions (src layout, deprecation cycle, SemVer, experimental-API marking): run `cat "${CLAUDE_PLUGIN_ROOT}/references/sw-engineer/packaging-patterns.md"` via the Bash tool. Skip when task is application code, not a publishable library.
 
 </oss-patterns>
 
@@ -212,10 +167,8 @@ if command -v codemap-py >/dev/null 2>&1 && [ -f "${_IDX}/${PROJ}.json" ]; then
         [ -n "$TARGET_FN" ] && codemap-py query symbol "${TARGET_MODULE}::${TARGET_FN}" 2>/dev/null
     else
         # review/worktree — skip grep-based caller walk
-        _BASE=$(git merge-base HEAD origin/main 2>/dev/null || git rev-parse HEAD~1 2>/dev/null)
         # module names from index `name` field, never sed: `pkg/__init__.py` → `pkg`, not `pkg.__init__`. Unindexed files resolve to nothing, never a guessed name.
-        _CHANGED_PY=$(git diff "${_BASE}..HEAD" --name-only 2>/dev/null | grep '\.py$' | paste -sd, -)
-        for _MOD in $(codemap-py query --timeout 10 central --top 100000 2>/dev/null | python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_centrality.py" --files "$_CHANGED_PY" --modules-only 2>/dev/null | head -10); do
+        for _MOD in $(python "${CLAUDE_PLUGIN_ROOT}/bin/codemap_changed_modules.py"); do
             codemap-py query rdeps "$_MOD" 2>/dev/null
         done
     fi
@@ -286,11 +239,10 @@ fi
 
 - Complete, runnable code (not pseudocode or stubs)
 - Type annotations on all function signatures
-- Google-style docstrings for all public APIs — run `cat "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/rules/python-code.md" 2>/dev/null` via the Bash tool for style rules; if absent (foundry not initialized), apply Google-style docstring conventions directly.
+- Google-style docstrings for all public APIs — run `cat "${CLAUDE_PLUGIN_ROOT}/rules/python-code.md" 2>/dev/null` via the Bash tool for style rules; if absent (foundry not initialized), apply Google-style docstring conventions directly.
 - Flag assumptions about codebase or requirements
 - **Doc claims verified**: any factual statement in docstrings or inline docs about behavior, return values, raised exceptions, or constraints must be confirmed by reading source or running tests before writing — memory and inference are not evidence; undocumented assumption ≠ verified claim
 - Highlight design trade-offs made
-- Run ruff + mypy mentally before presenting code
 - Bug/issue list: separate **correctness bugs** (definite errors, data races, incorrect logic) from **improvement suggestions** (style, typing improvements, deprecation warnings); lead with correctness bugs, include suggestions only when the prompt explicitly requests them. Each correctness bug must name a concrete triggering input or call sequence producing incorrect behavior — a speculative "could fail if..." item with no demonstrated trigger goes under Suggestions, not Bugs, never dropped outright. When unsure whether an observation is a bug or a suggestion, file it under Suggestions rather than omitting it.
 - Per-finding write-up: 1–3 sentences stating the trigger and impact — don't restate context already visible in shown code or repeat same point across multiple bullets.
 - Within correctness bugs, distinguish **direct bugs** (always trigger on given code path) from **latent bugs** (only surface under specific inputs or missing keys) — list direct bugs first, latent bugs last, each clearly labelled. Helps readers triage fix priority.
@@ -301,7 +253,7 @@ fi
 
 <hook-authoring>
 
-For hook authoring tasks (JavaScript hook files under `.claude/hooks/`, hook registrations in `settings.json`, `PostToolUse`/`PreToolUse`/`SubagentStop` event handlers): run `cat "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/references/sw-engineer/hook-authoring.md"` via the Bash tool for specialized hook patterns — file header, exit codes, stdin pattern, decision output. Skip when implementing Python.
+For hook authoring tasks (JavaScript hook files under `.claude/hooks/`, hook registrations in `settings.json`, `PostToolUse`/`PreToolUse`/`SubagentStop` event handlers): run `cat "${CLAUDE_PLUGIN_ROOT}/references/sw-engineer/hook-authoring.md"` via the Bash tool for specialized hook patterns — file header, exit codes, stdin pattern, decision output. Skip when implementing Python.
 
 </hook-authoring>
 

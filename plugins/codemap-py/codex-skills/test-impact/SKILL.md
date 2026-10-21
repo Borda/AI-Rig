@@ -36,7 +36,7 @@ If index missing and `SCAN_NO_AUTOBUILD=1`, report `codemap index missing and SC
 
 ### 2. Parse
 
-Read JSON from CLI stdout; never assume first line is JSON — logs can surround it. Treat `test_files` as the authoritative argv list. `pytest_cmd` is quoted for a POSIX shell on POSIX hosts and PowerShell on native Windows; for another shell, build its command from `test_files` with that shell's quoting, never reuse incompatible escaping. Use `test_files`, `pytest_cmd`, `via_call`, `via_mock`, `index.not_covered`, `index.hint`.
+Read JSON from CLI stdout; never assume first line is JSON — logs can surround it. Treat `test_files` as the authoritative argv list. `pytest_cmd` is quoted for a POSIX shell on POSIX hosts and PowerShell on native Windows; for another shell, build its command from `test_files` with that shell's quoting, never reuse incompatible escaping. Use `test_files`, `pytest_cmd`, `via_call`, `via_mock`, `index.not_covered`, `index.hint`. Non-zero exit is never an empty result: error JSON is on stdout. With `rejected_target` (typo, ambiguous name, module not indexed) report `error` plus every `candidates`/`suggestions` entry and ask for one exact target — no rebuild advice. Exit 2 without it is a rejected argument. Only other failures (missing/corrupt index) get rebuild advice.
 
 ### 3. Output
 
@@ -56,4 +56,4 @@ For `total > 0`, print:
 **Caveat:** dynamic-dispatch / hook-callback callers are not in the static graph — <hint>.
 ```
 
-Include Caveat only for non-empty `not_covered`. With `total >= 5`, write the same content to `.reports/codex/codemap-py/test-impact-<branch>-<YYYY-MM-DD>.md` and print it. `<branch>` is `git branch --show-current | tr '/' '-'` (`main` if empty/detached). Never overwrite: append `-2`, `-3`, … until free.
+Include Caveat only for non-empty `not_covered`. With `total >= 5`, write a YAML `---` block (`Title`, `Date`, `Scope`, `Focus`, `Agents`, `Outcome`, `Confidence`, `Next steps`, `Path`) followed by the same content to `.reports/codex/codemap-py/test-impact-<branch>-<YYYY-MM-DD>.md` and print it. `<branch>` is `git branch --show-current | tr '/' '-'` (`main` if empty/detached). Never overwrite: append `-2`, `-3`, … until free.
