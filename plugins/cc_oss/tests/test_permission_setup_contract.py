@@ -22,14 +22,14 @@ _TRIMMED_ALLOWS = {
     "Bash(git tag:*)",
 }
 
-RETIRED_SHELL_ALLOWS = {"Bash(find:*)", "Bash(node:*)", "Bash(claude:*)", "Bash(sed:*)"}
+RETIRED_SHELL_ALLOWS = {"Bash(find:*)", "Bash(node:*)", "Bash(claude:*)", "Bash(sed:*)", "Bash(eval:*)"}
 
 
 def test_standalone_allow_list_omits_broad_write_matches() -> None:
     """Fresh OSS installs must not pre-approve API writes or local branch/tag deletion."""
     allow = json.loads((_PLUGIN / ".claude-plugin/permissions-allow.json").read_text(encoding="utf-8"))
     assert (_TRIMMED_ALLOWS | RETIRED_SHELL_ALLOWS).isdisjoint(allow)
-    assert {"Bash(eval:*)", "Bash(python:*)", "Bash(node --check:*)", "Bash(find .temp*)"} <= set(allow)
+    assert {"Bash(python:*)", "Bash(node --check:*)", "Bash(find .temp*)"} <= set(allow)
     assert "Bash(gh api search/*)" in allow
 
 

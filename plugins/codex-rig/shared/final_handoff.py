@@ -154,6 +154,8 @@ def review_commit_sha(run: Path, scope: str) -> str:
         sources.extend([("pr-routing.json", ("head_oid",)), ("local-checkout.json", ("expected_head",))])
     elif scope in {"working-tree", "path"}:
         sources.append(("local-source/source-snapshot.json", ("revision",)))
+    else:
+        sources.append(("gates.json", ()))
     commits: set[str] = set()
     for name, keys in sources:
         path = run / name
@@ -163,15 +165,48 @@ def review_commit_sha(run: Path, scope: str) -> str:
             continue
         try:
             value = path.read_text(encoding="utf-8").strip()
-            if keys:
+            if name == "gates.json":
+                gates = json.loads(value)
+                if not isinstance(gates, dict) or not isinstance(gates.get("checks"), list):
+                    raise HandoffError("review-commit-source-invalid")
+                values = []
+                for check in gates["checks"]:
+                    if not isinstance(check, dict):
+                        raise HandoffError("review-commit-source-invalid")
+                    source = check.get("source")
+                    if source is None:
+                        continue
+                    if not isinstance(source, dict):
+                        raise HandoffError("review-commit-source-invalid")
+                    expected = source.get("expected_head")
+                    # Optional reviewer routes share gate observations; an expected SHA alone proves no source read.
+                    for phase in ("before", "after"):
+                        observed = source.get(phase)
+                        if (
+                            not isinstance(observed, dict)
+                            or "error" in observed
+                            or observed.get("head") != expected
+                            or observed.get("status") != ""
+                        ):
+                            raise HandoffError("review-commit-source-unverified")
+                    values.append(expected)
+                if values and "source" in gates:
+                    declared = gates["source"]
+                    if not isinstance(declared, dict) or any(declared.get("expected_head") != sha for sha in values):
+                        raise HandoffError("review-commit-conflict")
+            elif keys:
                 value = json.loads(value)
                 for key in keys:
                     value = value[key]
+                values = [value]
+            else:
+                values = [value]
         except (OSError, ValueError, KeyError, TypeError) as error:
             raise HandoffError("review-commit-source-invalid") from error
-        if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", value) is None:
-            raise HandoffError("review-commit-sha-invalid")
-        commits.add(value)
+        for value in values:
+            if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", value) is None:
+                raise HandoffError("review-commit-sha-invalid")
+            commits.add(value)
     if len(commits) != 1:
         raise HandoffError("review-commit-missing" if not commits else "review-commit-conflict")
     return commits.pop()

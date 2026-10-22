@@ -43,16 +43,15 @@ All entries merged from `plugins/cc_foundry/.claude-plugin/permissions-allow.jso
 <details>
 <summary><strong>Show pre-approved entries</strong></summary>
 
-| Entry                     | What it covers                         | Why                                                                                     |
-| ------------------------- | -------------------------------------- | --------------------------------------------------------------------------------------- |
-| `Bash(python:*)`          | Broad Python execution stays by design | Plugin helpers and `python -m` recipes depend on it                                     |
-| `Bash(eval:*)`            | Broad shell evaluation stays by design | Existing state reload and flag-parsing recipes depend on it; eval migration is separate |
-| `Bash(git *:*)` (various) | Read-only git operations               | Standard dev workflow                                                                   |
-| `Bash(gh *:*)` (various)  | GitHub CLI read operations             | OSS plugin workflows                                                                    |
+| Entry                     | What it covers                         | Why                                                 |
+| ------------------------- | -------------------------------------- | --------------------------------------------------- |
+| `Bash(python:*)`          | Broad Python execution stays by design | Plugin helpers and `python -m` recipes depend on it |
+| `Bash(git *:*)` (various) | Read-only git operations               | Standard dev workflow                               |
+| `Bash(gh *:*)` (various)  | GitHub CLI read operations             | OSS plugin workflows                                |
 
 </details>
 
-Ad-hoc `find`, `node`, `claude`, and `sed` commands outside shipped blueprint blocks prompt unless a scoped read-only rule covers them. Setup retires the four former broad entries, including identical rules added by hand; Codemap provides the equivalent manual merge in its README.
+Ad-hoc `find`, `node`, `claude`, `sed`, and `eval` commands outside shipped blueprint blocks prompt unless a scoped read-only rule covers them. No shipped skill runs `eval`: runner commands expand through a closed `case` into an array, test commands go through `dev_run_tests.py`, and script output reaches later blocks through per-session sentinel files read with `IFS= read -r`. Setup retires the five former broad entries, including identical rules added by hand; Codemap provides the equivalent manual merge in its README.
 
 ### What deliberately prompts
 

@@ -20,14 +20,14 @@ TRIMMED_ALLOWS = {
     "Bash(git tag:*)",
 }
 
-RETIRED_SHELL_ALLOWS = {"Bash(find:*)", "Bash(node:*)", "Bash(claude:*)", "Bash(sed:*)"}
+RETIRED_SHELL_ALLOWS = {"Bash(find:*)", "Bash(node:*)", "Bash(claude:*)", "Bash(sed:*)", "Bash(eval:*)"}
 
 
 def test_shipped_permissions_omit_broad_api_branch_and_tag_allows() -> None:
     """New installs must not auto-allow writes through the four broad rules."""
     allow = json.loads((PLUGIN / ".claude-plugin/permissions-allow.json").read_text(encoding="utf-8"))
     assert not (TRIMMED_ALLOWS | RETIRED_SHELL_ALLOWS).intersection(allow)
-    assert {"Bash(eval:*)", "Bash(python:*)", "Bash(node --check:*)", "Bash(claude plugin list)"} <= set(allow)
+    assert {"Bash(python:*)", "Bash(node --check:*)", "Bash(claude plugin list)"} <= set(allow)
     assert "Bash(gh api search/*)" in allow
     assert "Bash(git status:*)" in allow
 

@@ -552,6 +552,7 @@
       "including zero findings and all checks passing",
       "reviewed_commit_sha",
       "reviewed-commit.txt",
+      "matching clean before/after source observations",
       "working-tree base",
       "qualified source judgment",
       "review_validation",

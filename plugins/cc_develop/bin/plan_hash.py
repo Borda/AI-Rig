@@ -34,7 +34,8 @@ _SEP = "  "
 def _sentinel() -> Path:
     """Return the session sentinel path, ``$TMPDIR/dev-plan-sha-<session>``."""
     csid = os.environ.get("CSID") or os.environ.get("CLAUDE_CODE_SESSION_ID") or "shared"
-    return Path(os.environ.get("TMPDIR") or tempfile.gettempdir()) / f"dev-plan-sha-{csid}"
+    tmp_fallback = tempfile.gettempdir() if os.name == "nt" else "/tmp"  # noqa: S108 - shell default of ${TMPDIR:-/tmp}
+    return Path(os.environ.get("TMPDIR") or tmp_fallback) / f"dev-plan-sha-{csid}"
 
 
 def _digest(path: Path) -> str | None:

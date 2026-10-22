@@ -235,7 +235,7 @@ Use Glob tool (pattern `**/test_*.py` or `**/*_test.py`), then Grep tool (patter
 
 > (Use Glob tool — `pattern: **/test_*.py` — to discover test files; check `pyproject.toml` `[tool.pytest.ini_options] testpaths` for configured paths)
 
-`<module_name>`, `<target_module>` (below) and `<test_file>` (Step 3) are **substitution tokens** — replace each with the real value from Step 1 scope before running; inside `eval` an unsubstituted `<…>` parses as a shell redirect, not text.
+`<module_name>`, `<target_module>` (below) and `<test_file>` (Step 3) are **substitution tokens** — replace each with the real value from Step 1 scope before running; an unquoted, unsubstituted `<…>` parses as a shell redirect, not text.
 
 ```bash
 # timeout: 600000
@@ -243,17 +243,19 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r PYTEST_CMD < "${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}" 2>/dev/null || PYTEST_CMD=""
 [ -n "$PYTEST_CMD" ] || { echo "! BLOCKED — PYTEST_CMD unresolved; re-run Project Detection (an empty runner would classify every function uncovered)"; exit 1; }
 # ONE collection pass feeds head-5 sanity print, cov-plugin probe, and module grep — three separate --co runs re-collect the whole suite each time
-_CO_OUT=$(eval "$PYTEST_CMD --co -q --cov=." 2>&1)  # eval: $PYTEST_CMD ("uv run pytest") doesn't word-split bare under zsh
+_CO_OUT=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_tests.py" pytest -- --co -q --cov=. 2>&1)
+[ $? -ne 64 ] || { echo "! BLOCKED — test runner refused to start (exit 64): $_CO_OUT"; exit 1; }  # 64 = no test command ran, never "No tests found"
 SKIP_COV=0
 if echo "$_CO_OUT" | grep -q "ModuleNotFoundError\|No module named.*cov\|unrecognized arguments.*--cov"; then
     echo "⚠ coverage tool not found — coverage gate skipped"
     SKIP_COV=1
-    _CO_OUT=$(eval "$PYTEST_CMD --co -q" 2>&1)   # cov-less re-collect — the probe run errored before listing tests
+    _CO_OUT=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_tests.py" pytest -- --co -q 2>&1)   # cov-less re-collect — the probe run errored before listing tests
+    [ $? -ne 64 ] || { echo "! BLOCKED — test runner refused to start (exit 64): $_CO_OUT"; exit 1; }
 fi
 echo "$_CO_OUT" | head -5
 echo "$_CO_OUT" | grep -i "<module_name>" || echo "No tests found for <module_name>"
 
-[ "${SKIP_COV}" -eq 0 ] && { eval "$PYTEST_CMD --cov=<target_module> -q --cov-report=term-missing" || true; }
+[ "${SKIP_COV}" -eq 0 ] && { python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_tests.py" pytest -- --cov=<target_module> -q --cov-report=term-missing || true; }
 ```
 
 `SKIP_COV=1` → skip coverage classification entirely — don't classify any function as UNCOVERED; note "coverage tool absent — coverage audit skipped" in audit output. **Step 3 qa-specialist spawn behavior when `SKIP_COV=1`**: spawn qa-specialist with all public functions listed as `coverage: unknown`, instructed to write characterization tests for every public function (can't prioritize uncovered functions when coverage unknown — test all for safety net). Proceed to Step 3 with unknown coverage state.
@@ -320,14 +322,13 @@ Spawn with context:
 ```bash
 # timeout: 600000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r PYTEST_CMD < "${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}" 2>/dev/null || PYTEST_CMD=""
-[ -n "$PYTEST_CMD" ] || { echo "! BLOCKED — PYTEST_CMD unresolved; re-run Project Detection"; exit 1; }
-# eval: $PYTEST_CMD ("uv run pytest") doesn't word-split bare under zsh
-eval "$PYTEST_CMD <test_file> -v"; GATE_EXIT=$?
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_tests.py" pytest -- <test_file> -v; GATE_EXIT=$?
 echo "$GATE_EXIT" > ${TMPDIR:-/tmp}/dev-refactor-gate-exit-${CSID}
 # Gate: all characterization tests must pass before proceeding — verdict in the same call as the run
 if [ "${GATE_EXIT}" -eq 5 ]; then
     echo "GATE FAIL: no tests collected (exit 5) — characterization test file missing or not detected by pytest; cannot proceed to Step 4 without a safety net"
+elif [ "$GATE_EXIT" -eq 64 ]; then
+    echo "! GATE ERROR: test runner refused to start (exit 64) — no test ran; re-run Project Detection, do not fix the test"
 elif [ "$GATE_EXIT" -ne 0 ]; then
     echo "GATE FAIL: characterization test(s) failed (exit $GATE_EXIT) — fix the test, not the code"
 else
@@ -471,9 +472,7 @@ Not found → skip quality stack entirely, note the message above in Final Repor
 ```bash
 # timeout: 600000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r TEST_CMD < "${TMPDIR:-/tmp}/dev-test-cmd-${CSID}" 2>/dev/null || TEST_CMD=""
-[ -n "$TEST_CMD" ] || { echo "! BLOCKED — TEST_CMD sentinel missing; re-run Project Detection"; exit 1; }
-eval "$TEST_CMD"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_tests.py" suite
 ```
 
 ## Final Report

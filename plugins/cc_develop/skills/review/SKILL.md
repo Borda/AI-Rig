@@ -196,9 +196,7 @@ IFS= read -r REVIEW_ARGS < "${TMPDIR:-/tmp}/dev-review-clean-args-${CSID}" 2>/de
 REVIEW_SOURCE_DIR="."
 if [ -d "$REVIEW_ARGS" ]; then REVIEW_SOURCE_DIR="$REVIEW_ARGS"; elif [ -f "$REVIEW_ARGS" ]; then REVIEW_SOURCE_DIR=$(dirname -- "$REVIEW_ARGS"); fi
 REVIEWED_COMMIT_SHA=$(git -C "$REVIEW_SOURCE_DIR" rev-parse --verify HEAD 2>/dev/null) || REVIEWED_COMMIT_SHA="unavailable (non-Git directory or unborn HEAD)"
-IFS= read -r WORKTREE_ENABLED < "${TMPDIR:-/tmp}/dev-review-worktree-${CSID}" 2>/dev/null || WORKTREE_ENABLED=false
 REVIEWED_COMMIT_KIND="working-tree base; reviewed files may include uncommitted changes"
-[ "$WORKTREE_ENABLED" = "true" ] && REVIEWED_COMMIT_KIND="committed worktree source"
 printf '%s\n' "$REVIEWED_COMMIT_SHA" > "${TMPDIR:-/tmp}/dev-review-commit-sha-${CSID}"
 printf '%s\n' "$REVIEWED_COMMIT_KIND" > "${TMPDIR:-/tmp}/dev-review-commit-kind-${CSID}"
 printf 'Commit SHA: %s (%s)\n' "$REVIEWED_COMMIT_SHA" "$REVIEWED_COMMIT_KIND"

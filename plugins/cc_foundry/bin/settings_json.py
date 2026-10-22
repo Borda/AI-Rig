@@ -49,7 +49,13 @@ def _validate_path(path: Path, *, source: bool = False) -> None:
     lexical = Path(os.path.abspath(path))
     if not source and lexical.parent == claude and lexical.suffix == ".json":
         return
-    roots = [Path.cwd().resolve(), Path(os.environ.get("TMPDIR") or tempfile.gettempdir()).resolve()]
+    tmp_fallback = tempfile.gettempdir() if os.name == "nt" else "/tmp"  # noqa: S108 - shell default of ${TMPDIR:-/tmp}
+    # Both temp spellings stay roots: the shell's ${TMPDIR:-/tmp} and the platform dir that TEMP/TMP may name.
+    roots = [
+        Path.cwd().resolve(),
+        Path(os.environ.get("TMPDIR") or tmp_fallback).resolve(),
+        Path(os.environ.get("TMPDIR") or tempfile.gettempdir()).resolve(),
+    ]
     if source:
         roots.append(claude.resolve())
     resolved = path.resolve()

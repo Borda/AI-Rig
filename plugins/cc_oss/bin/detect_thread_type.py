@@ -350,7 +350,8 @@ def _emit(type_: ThreadType, updated_at: str, drift: bool) -> None:
     import tempfile
 
     csid = os.environ.get("CSID") or os.environ.get("CLAUDE_CODE_SESSION_ID") or "shared"
-    tmpdir = os.environ.get("TMPDIR") or tempfile.gettempdir()
+    tmp_fallback = tempfile.gettempdir() if os.name == "nt" else "/tmp"  # noqa: S108 - shell default of ${TMPDIR:-/tmp}
+    tmpdir = os.environ.get("TMPDIR") or tmp_fallback
     drift_str = "true" if drift else "false"
     for key, val in (("type", type_.value), ("updated-at", updated_at), ("drift", drift_str)):
         write_private_text(Path(tmpdir) / f"oss-detect-{key}-{csid}", val)

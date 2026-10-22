@@ -13,7 +13,6 @@
   "Bash(diff:*)",
   "Bash(dirname:*)",
   "Bash(echo:*)",
-  "Bash(eval:*)",
   "Bash(find \"$INDEX\" -mmin +60 -print)",
   "Bash(find \"$_ROOT\" -path \"*/agents/*.md\")",
   "Bash(find \"$_ROOT\" -path \"*/rules/*.md\")",

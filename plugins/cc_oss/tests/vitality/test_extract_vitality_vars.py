@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import json
 import shlex
+import shutil
+import stat
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -144,8 +148,8 @@ class TestMain:
     def test_golden_invocation_stdout_is_eval_safe(self, tmp_path: Path, capsys) -> None:
         """Documented call site ``extract_vitality_vars.py SCORES_FILE`` — stdout is ONLY VAR=value lines.
 
-        The caller runs ``eval "$(... extract_vitality_vars.py "$SCORES_FILE")"`` so any stray argparse banner on stdout
-        would corrupt the eval; every line must be an assignment.
+        Legacy consumers parse shell assignments, so a stray argparse banner would corrupt the output contract; every
+        line must be an assignment. Session-file consumers use --keep-state instead.
         """
         f = tmp_path / "scores.json"
         f.write_text(json.dumps(_scores()))
@@ -154,3 +158,77 @@ class TestMain:
         lines = capsys.readouterr().out.strip().splitlines()
         assert lines
         assert all("=" in ln for ln in lines)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param("$(touch pwned); 'quoted' \\backslash", id="shell-metacharacters"),
+        pytest.param("", id="empty-clears-stale-value"),
+    ],
+)
+def test_keep_state_private_values(tmp_path, monkeypatch, capsys, value):
+    """State mode emits no shell source, overwrites stale values, and stores literal UTF-8 privately."""
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    monkeypatch.setenv("CSID", "vitality-test")
+    scores = _scores({"axes": {"1": {"signal": value}}})
+    path = tmp_path / "scores.json"
+    path.write_text(json.dumps(scores), encoding="utf-8")
+    target = tmp_path / "vars-axis1-signal-vitality-test"
+    target.write_text("stale\n", encoding="utf-8")
+    assert main(["--keep-state", "vars", str(path)]) == 0
+    assert capsys.readouterr().out == ""
+    for key, expected in extract_vars(scores).items():
+        sentinel = tmp_path / f"vars-{key.lower().replace('_', '-')}-vitality-test"
+        assert sentinel.read_bytes() == (expected + "\n").encode()
+        if sys.platform != "win32":
+            assert stat.S_IMODE(sentinel.stat().st_mode) == 0o600
+    assert not (tmp_path / "pwned").exists()
+
+
+def test_keep_state_folds_multiline_signal(tmp_path, monkeypatch):
+    """A multi-line signal is stored on one line, because the documented `IFS= read -r` keeps only the first line.
+
+    The agent writes axis signals as free prose; the removed `eval` path kept embedded newlines, but a one-line sentinel
+    would silently truncate the report text at the first break.
+    """
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    monkeypatch.setenv("CSID", "vitality-test")
+    path = tmp_path / "scores.json"
+    path.write_text(
+        json.dumps(_scores({"axes": {"1": {"signal": "first line\nsecond line\r\nthird"}}})), encoding="utf-8"
+    )
+    assert main(["--keep-state", "vars", str(path)]) == 0
+    assert (tmp_path / "vars-axis1-signal-vitality-test").read_text(
+        encoding="utf-8"
+    ) == "first line second line third\n"
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash required for the documented sentinel reader")
+@pytest.mark.parametrize(
+    "value",
+    [pytest.param("$(touch pwned); \\ literal", id="metacharacters"), pytest.param("", id="empty")],
+)
+def test_keep_state_bash_read_round_trip(tmp_path, monkeypatch, value):
+    """The documented read command never evaluates shell syntax in a score field."""
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    monkeypatch.setenv("CSID", "vitality-test")
+    path = tmp_path / "scores.json"
+    path.write_text(json.dumps(_scores({"confidence_history": value})), encoding="utf-8")
+    assert main(["--keep-state", "vars", str(path)]) == 0
+    result = subprocess.run(
+        [
+            shutil.which("bash"),
+            "-c",
+            'VAR=stale; IFS= read -r VAR < "$1" 2>/dev/null || VAR=""; printf "%s" "$VAR"',
+            "reader",
+            str(tmp_path / "vars-confidence-history-vitality-test"),
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert (result.returncode, result.stdout) == (0, value)
+    assert not (tmp_path / "pwned").exists()

@@ -161,6 +161,15 @@ _VISIBLE_EQUIVALENTS = {
         **_keep_sentinel_equivalents("debug"),
     },
     "skills/feature/SKILL.md": {
+        # Python helpers preserve the output/state artifacts of the retired shell commands.
+        'echo "$TARGET_MODULE" > ${TMPDIR:-/tmp}/dev-feature-target-module-${CSID}   # persist — reloaded by': (
+            'bin/derive_codemap_target.py" --keep-state dev-feature',
+            'IFS= read -r TARGET_MODULE < "${TMPDIR:-/tmp}/dev-feature-target-module-${CSID}"',
+        ),
+        'echo "$TARGET_FN"     > ${TMPDIR:-/tmp}/dev-feature-target-fn-${CSID}': (
+            'bin/derive_codemap_target.py" --keep-state dev-feature',
+            'IFS= read -r TARGET_FN < "${TMPDIR:-/tmp}/dev-feature-target-fn-${CSID}"',
+        ),
         **_run_dir_persist_equivalents("feature"),
         **_batch_gate_equivalents("feature"),
         **_SHARED_INIT_EQUIVALENTS,
@@ -180,6 +189,13 @@ _VISIBLE_EQUIVALENTS = {
         ),
     },
     "skills/fix/SKILL.md": {
+        # Python helpers preserve the output/state artifacts of the retired shell commands.
+        'echo "! Cannot run reproduction: PYTEST_CMD or TEST_PATH unresolved — resolve TEST_PATH from': (
+            'echo "! Cannot run reproduction: TEST_PATH unresolved — resolve TEST_PATH from',
+        ),
+        'eval "$PYTEST_CMD --tb=long \\"\\$TEST_PATH\\" -v" >"${TMPDIR:-/tmp}/pytest-out.txt-${CSID}" 2>&1;': (
+            'python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_tests.py" pytest -- --tb=long "$TEST_PATH" -v >"${TMPDIR:-/tmp}/pytest-out.txt-${CSID}" 2>&1;',
+        ),
         **_run_dir_persist_equivalents("fix"),
         **_FIX_GATE_EQUIVALENTS,
         **_SHARED_INIT_EQUIVALENTS,

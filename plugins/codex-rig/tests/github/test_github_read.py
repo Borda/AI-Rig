@@ -122,6 +122,137 @@ def test_run_gh_read_allows_rest_get_commands(argv: list[str]) -> None:
     assert module.run_gh_read(_runner, argv, timeout=5, label="rest-get") == b"{}"
 
 
+@pytest.mark.parametrize("escape_guard", [False, True])
+def test_job_logs_recover_cli_escape_guard_and_remove_terminal_controls(escape_guard: bool) -> None:
+    """Read colored job logs on old and new gh versions without returning executable terminal controls."""
+    module = _load_reader()
+    argv = ["gh", "api", "/repos/example/project/actions/jobs/17/logs"]
+    calls: list[list[str]] = []
+
+    def runner(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        """Model gh's observed output refusal followed by the same successful GET."""
+        calls.append(command)
+        if escape_guard and "--allow-escape-sequences" not in command:
+            return subprocess.CompletedProcess(
+                command,
+                1,
+                stdout=b"discard partial output",
+                stderr=b"the response contains terminal escape sequences; "
+                b"pass --allow-escape-sequences to output it anyway\n",
+            )
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=(
+                b"\x1b[31mFAILED\x1b[0m\r\n"
+                b"\x1b]8;;https://example.invalid\x1b\\trace\x1b]8;;\x1b\\\n"
+                b"\x1b]52;c;clipboard\x07safe\n\x1bunfinished\x08\r"
+            ),
+            stderr=b"",
+        )
+
+    payload = module.run_gh_read(runner, argv, timeout=5, label="job-log")
+
+    assert payload == b"FAILED\ntrace\nsafe\n\\u001bunfinished\\u0008\\u000d"
+    assert calls == ([argv, [*argv, "--allow-escape-sequences"]] if escape_guard else [argv])
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "arguments"),
+    [
+        pytest.param("/repos/example/project/issues/17", [], id="non-log-resource"),
+        pytest.param("/repos/example/project/actions/runs/17/logs", [], id="binary-run-archive"),
+        pytest.param("/repos/example/project/actions/jobs/17/logs?query=1", [], id="noncanonical-endpoint"),
+        pytest.param("/repos/example/project/actions/jobs/17/logs", ["--method", "DELETE"], id="delete-job-log"),
+    ],
+)
+def test_escape_output_flag_remains_restricted_to_job_log_gets(endpoint: str, arguments: list[str]) -> None:
+    """The display compatibility flag cannot widen endpoints or enable mutations."""
+    module = _load_reader()
+
+    def runner(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        """Reject any invocation that crossed the validation boundary."""
+        raise AssertionError("unsafe command executed")
+
+    with pytest.raises(module.GitHubReadError, match="unsafe-gh-command"):
+        module.run_gh_read(
+            runner, ["gh", "api", endpoint, *arguments, "--allow-escape-sequences"], timeout=5, label="unsafe"
+        )
+
+
+@pytest.mark.parametrize(
+    "endpoint", ["/repos/example/project/actions/jobs/17/logs", "/repos/example/project/issues/17"]
+)
+def test_escape_guard_recovery_is_bounded_and_keeps_failure_output_private(endpoint: str) -> None:
+    """A persistent refusal yields a safe reason, with one retry only for job logs and no public fallback."""
+    module = _load_reader()
+    calls: list[list[str]] = []
+
+    def runner(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        """Return the observed refusal with unrelated confidential diagnostic content."""
+        calls.append(command)
+        return subprocess.CompletedProcess(
+            command,
+            1,
+            stdout=b"private-output",
+            stderr=b"the response contains terminal escape sequences\nsecret-token",
+        )
+
+    def public_fallback(*args: Any, **kwargs: Any) -> None:
+        """Reject switching authorization routes after an output-format refusal."""
+        raise AssertionError("public fallback called")
+
+    with pytest.raises(module.GitHubReadError, match="github-command-failed:log") as error:
+        module.read_with_fallback(
+            runner,
+            ["gh", "api", endpoint],
+            timeout=5,
+            label="log",
+            fallback_url="https://api.github.com" + endpoint,
+            open_url=public_fallback,
+        )
+
+    assert len(calls) == (2 if endpoint.endswith("/logs") else 1)
+    assert error.value.diagnostics["failure_reason"] == "terminal-escape-sequences-refused"
+    assert "secret-token" not in str(error.value.diagnostics)
+    assert "private-output" not in str(error.value.diagnostics)
+
+
+def test_job_log_cli_writes_safe_text_without_printing_response(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Save sanitized Unicode log text only to the requested file, retaining non-log response bytes."""
+    module = _load_reader()
+    payload = "\x1b[31méchec\x1b[0m\n\u009b31m".encode()
+
+    def runner(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        """Supply a colored response through the captured subprocess boundary."""
+        assert kwargs["stdout"] == subprocess.PIPE
+        assert kwargs["stderr"] == subprocess.PIPE
+        assert kwargs["shell"] is False
+        return subprocess.CompletedProcess(command, 0, stdout=payload, stderr=b"")
+
+    monkeypatch.setattr(module.subprocess, "run", runner)
+    output = tmp_path / "job.log"
+    assert module.main(["--out", str(output), "--", "gh", "api", "/repos/example/project/actions/jobs/17/logs"]) == 0
+    assert output.read_bytes() == "échec\n\\u009b31m".encode()
+    assert capsys.readouterr() == ("", "")
+    assert module.run_gh_read(runner, ["gh", "api", "/repos/example/project"], timeout=5, label="repo") == payload
+
+
+def test_job_log_sanitization_cannot_expand_output_beyond_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Enforce the output bound after escaping controls as well as before decoding."""
+    module = _load_reader()
+    monkeypatch.setattr(module, "MAX_OUTPUT_BYTES", 8)
+
+    def runner(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        """Return small raw bytes whose safe representation would exceed the bound."""
+        return subprocess.CompletedProcess(command, 0, stdout=b"\x00\x00", stderr=b"")
+
+    with pytest.raises(module.GitHubReadError, match="command-output-oversized:log"):
+        module.run_gh_read(runner, ["gh", "api", "/repos/example/project/actions/jobs/17/logs"], timeout=5, label="log")
+
+
 def test_read_with_fallback_uses_public_https_get_after_eligible_network_failure() -> None:
     """Use the public API only after the preferred GitHub CLI has a classified network failure."""
     module = _load_reader()

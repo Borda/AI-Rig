@@ -31,18 +31,19 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 if command -v uv >/dev/null 2>&1 && [ -f uv.lock ]; then RUNNER="uv run"
 elif command -v poetry >/dev/null 2>&1 && [ -f poetry.lock ]; then RUNNER="poetry run"
 else RUNNER="python -m"; fi
+case "$RUNNER" in "uv run") R=(uv run);; "poetry run") R=(poetry run);; "python -m") R=(python -m);; *) echo "! BLOCKED — runner state missing or not one of: uv run, poetry run, python -m (re-run Tool detection)"; exit 1;; esac
 # ruff pinned in pre-commit → run the pinned hooks, never bare ruff (version/config drift vs CI)
 USE_PRECOMMIT=0
 [ -f .pre-commit-config.yaml ] && grep -q "ruff" .pre-commit-config.yaml && command -v pre-commit >/dev/null 2>&1 && USE_PRECOMMIT=1
 
 SKIP_RUFF=0
-if ! eval "$RUNNER ruff --version" >/dev/null 2>&1; then
+if ! "${R[@]}" ruff --version >/dev/null 2>&1; then
     echo "WARNING: ruff not available — skipping lint/format steps"
     SKIP_RUFF=1
 fi
 
 SKIP_MYPY=0
-if ! eval "$RUNNER mypy --version" >/dev/null 2>&1; then
+if ! "${R[@]}" mypy --version >/dev/null 2>&1; then
     echo "WARNING: mypy not available — skipping type check step"
     SKIP_MYPY=1
 fi
@@ -54,30 +55,28 @@ echo "$SKIP_MYPY" > "${TMPDIR:-/tmp}/quality-stack-skip-mypy-${CSID}"
 echo "$USE_PRECOMMIT" > "${TMPDIR:-/tmp}/quality-stack-precommit-${CSID}"
 ```
 
-- `$RUNNER` (`"uv run"`, `"poetry run"`, `"python -m"`) is a two-token string — a bare `$RUNNER <cmd>` does not word-split under zsh (Claude Code's Bash tool login shell on macOS: no word-splitting on a bare `"$VAR"`, only on unquoted command substitution).
-- Every invocation below routes through `eval "$RUNNER ..."`, safe here because `$RUNNER` is drawn from the three literal values set above, never external input.
+- `$RUNNER` (`"uv run"`, `"poetry run"`, `"python -m"`) is a two-token string — a bare `$RUNNER <cmd>` does not word-split under zsh (Claude Code's Bash tool login shell on macOS: no word-splitting on a bare `"$VAR"`, only on unquoted command substitution). Every fence therefore maps the saved string to the array `R` through a closed `case` and calls `"${R[@]}" <tool> …`; `"${R[@]}"` expands to separate words in bash and zsh alike.
+- No shell re-parse of any string: a sentinel is a lookup key into the closed `case`, never a command. A value outside the three literals (stale, planted, or corrupted session file) prints `! BLOCKED` and exits 1 — nothing runs.
 - `set -o pipefail` (bash/zsh/ksh extension, absent from POSIX `sh`/`dash` — present in both shells this Bash tool resolves to) replaces `${PIPESTATUS[0]}` — zsh has no bash-style `PIPESTATUS`, only a differently-indexed lowercase `$pipestatus`.
-- Every fence below that uses `$RUNNER`, `$SKIP_RUFF`, or `$SKIP_MYPY` re-reads its sentinel first — a fresh `Bash()` call never inherits this block's shell state.
-
-**Data operands inside `eval` must stay quoted at eval-parse time**, never interpolated bare — `eval` re-parses its argument as fresh shell input, so a bare data value becomes glob-eligible (zsh `NOMATCH` aborts on an unmatched `[...]`, which every pytest parametrized node-id contains) and, unescaped, re-opens command/variable substitution.
-
-- `$RUNNER`/`$PYTEST_CMD`/`$TEST_CMD` are exempt — drawn from a small closed set of literal, non-user-controlled strings.
-- Every other operand (`<test_dir>`/`<target_module>` placeholders are literal template text, safe as-is; a *variable* holding a test id, module path, or other repo-derived value is not) is wrapped `\"\$VAR\"` inside the eval string, deferring expansion to eval time **inside quotes** — single argument, no re-splitting, no globbing, no substitution.
+- Every fence below that uses `R`, `$SKIP_RUFF`, or `$SKIP_MYPY` re-reads its sentinel first — a fresh `Bash()` call never inherits this block's shell state.
+- Optional multi-word arguments (`XDIST`, `_QS_DOCTEST_ARGS`, `RETRY`) are arrays too, expanded as `"${NAME[@]}"` (an empty array expands to nothing). Never enable `set -u` in these fences: bash 3.2 (macOS `/bin/bash`) aborts on `"${EMPTY[@]}"` under it.
+- Data operands (a test id, module path, or other repo-derived value) are ordinary quoted arguments — `"$VAR"` — one argument each, no re-splitting, no globbing (a bare `[...]` in a pytest parametrized node-id aborts zsh with `NOMATCH` only when the word is unquoted). `<test_dir>`/`<target_module>` are literal template text, safe as-is.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r RUNNER < "${TMPDIR:-/tmp}/quality-stack-runner-${CSID}" 2>/dev/null || RUNNER="python -m"
+IFS= read -r RUNNER < "${TMPDIR:-/tmp}/quality-stack-runner-${CSID}" 2>/dev/null || RUNNER=""
+case "$RUNNER" in "uv run") R=(uv run);; "poetry run") R=(poetry run);; "python -m") R=(python -m);; *) echo "! BLOCKED — runner state missing or not one of: uv run, poetry run, python -m (re-run Tool detection)"; exit 1;; esac
 IFS= read -r SKIP_RUFF < "${TMPDIR:-/tmp}/quality-stack-skip-ruff-${CSID}" 2>/dev/null || SKIP_RUFF=0
 IFS= read -r SKIP_MYPY < "${TMPDIR:-/tmp}/quality-stack-skip-mypy-${CSID}" 2>/dev/null || SKIP_MYPY=0
 IFS= read -r USE_PRECOMMIT < "${TMPDIR:-/tmp}/quality-stack-precommit-${CSID}" 2>/dev/null || USE_PRECOMMIT=0
 set -o pipefail
 if [ "${USE_PRECOMMIT:-0}" -eq 1 ]; then pre-commit run --files <changed_files>  # timeout: 120000
 else
-    [ "${SKIP_RUFF:-0}" -ne 1 ] && eval "$RUNNER ruff check <changed_files> --fix"  # timeout: 30000
-    [ "${SKIP_RUFF:-0}" -ne 1 ] && eval "$RUNNER ruff format <changed_files>"  # timeout: 30000
+    [ "${SKIP_RUFF:-0}" -ne 1 ] && "${R[@]}" ruff check <changed_files> --fix  # timeout: 30000
+    [ "${SKIP_RUFF:-0}" -ne 1 ] && "${R[@]}" ruff format <changed_files>  # timeout: 30000
 fi
 MYPY_EXIT=skipped
-[ "${SKIP_MYPY:-0}" -ne 1 ] && { eval "$RUNNER mypy <changed_files> --no-error-summary" 2>&1 | head -30; MYPY_EXIT=$?; }  # timeout: 30000
+[ "${SKIP_MYPY:-0}" -ne 1 ] && { "${R[@]}" mypy <changed_files> --no-error-summary 2>&1 | head -30; MYPY_EXIT=$?; }  # timeout: 30000
 echo "MYPY_EXIT=$MYPY_EXIT"
 ```
 
@@ -88,9 +87,10 @@ echo "MYPY_EXIT=$MYPY_EXIT"
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r RUNNER < "${TMPDIR:-/tmp}/quality-stack-runner-${CSID}" 2>/dev/null || RUNNER="python -m"
+IFS= read -r RUNNER < "${TMPDIR:-/tmp}/quality-stack-runner-${CSID}" 2>/dev/null || RUNNER=""
+case "$RUNNER" in "uv run") R=(uv run);; "poetry run") R=(poetry run);; "python -m") R=(python -m);; *) echo "! BLOCKED — runner state missing or not one of: uv run, poetry run, python -m (re-run Tool detection)"; exit 1;; esac
 XDIST_ARGS=""
-eval "$RUNNER pytest --help" 2>/dev/null | grep -qi numprocesses && XDIST_ARGS="-n auto"
+"${R[@]}" pytest --help 2>/dev/null | grep -qi numprocesses && XDIST_ARGS="-n auto"
 echo "$XDIST_ARGS" > "${TMPDIR:-/tmp}/quality-stack-xdist-args-${CSID}"
 ```
 
@@ -98,28 +98,32 @@ echo "$XDIST_ARGS" > "${TMPDIR:-/tmp}/quality-stack-xdist-args-${CSID}"
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r RUNNER < "${TMPDIR:-/tmp}/quality-stack-runner-${CSID}" 2>/dev/null || RUNNER="python -m"
+IFS= read -r RUNNER < "${TMPDIR:-/tmp}/quality-stack-runner-${CSID}" 2>/dev/null || RUNNER=""
+case "$RUNNER" in "uv run") R=(uv run);; "poetry run") R=(poetry run);; "python -m") R=(python -m);; *) echo "! BLOCKED — runner state missing or not one of: uv run, poetry run, python -m (re-run Tool detection)"; exit 1;; esac
 DOCTEST_MERGED=false
 _QS_COLLECT_LOG="${TMPDIR:-/tmp}/quality-stack-doctest-collect-${CSID}.log"
-if eval "$RUNNER pytest <test_dir> --doctest-modules <target_module> --collect-only -q" >"$_QS_COLLECT_LOG" 2>&1; then
+if "${R[@]}" pytest <test_dir> --doctest-modules <target_module> --collect-only -q >"$_QS_COLLECT_LOG" 2>&1; then
     DOCTEST_MERGED=true
 fi
 echo "$DOCTEST_MERGED" > "${TMPDIR:-/tmp}/quality-stack-doctest-merged-${CSID}"
 ```
 
-No `rm -f` in this fence — a fence containing `rm -f` is flagged `is_dangerous` by `blueprint-allow.js`, which declines the *whole* submitted block before any manifest lookup regardless of what else shares it (same defect class R2 fixed on the wide-run fence below). Cleanup for this log lives in the isolated one-line fence below, alongside the wide-run log — same cost, already paid. Collection fails (exit non-zero — malformed `>>>` prompt, import error, etc.) → `DOCTEST_MERGED` stays `false`; the cause is on disk at `$_QS_COLLECT_LOG` either way now (previously kept only on the failure branch); doctests run as the separate pass below. `$RUNNER` here is a sentinel read-back from the detection fence, not shell state — a `tox`/`make test` runner never reaches this block at all; those degrade via `runner-detection.md`'s own unwrapped-`PYTEST_CMD` fallback instead. This is a graceful degrade, not a halt — report status becomes `not-merged`, nothing more.
+No `rm -f` in this fence — a fence containing `rm -f` is flagged `is_dangerous` by `blueprint-allow.js`, which declines the *whole* submitted block before any manifest lookup regardless of what else shares it (same defect class R2 fixed on the wide-run fence below). Cleanup for this log lives in the isolated one-line fence below, alongside the wide-run log — same cost, already paid. Collection fails (exit non-zero — malformed `>>>` prompt, import error, etc.) → `DOCTEST_MERGED` stays `false`; the cause is on disk at `$_QS_COLLECT_LOG` either way now (previously kept only on the failure branch); doctests run as the separate pass below. `$RUNNER` here is a sentinel read-back from the detection fence (mapped to `R` by the closed `case`), not shell state — a `tox`/`make test` runner never reaches this block at all; those degrade via `runner-detection.md`'s own unwrapped-`PYTEST_CMD` fallback instead. This is a graceful degrade, not a halt — report status becomes `not-merged`, nothing more.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r RUNNER < "${TMPDIR:-/tmp}/quality-stack-runner-${CSID}" 2>/dev/null || RUNNER="python -m"
+IFS= read -r RUNNER < "${TMPDIR:-/tmp}/quality-stack-runner-${CSID}" 2>/dev/null || RUNNER=""
+case "$RUNNER" in "uv run") R=(uv run);; "poetry run") R=(poetry run);; "python -m") R=(python -m);; *) echo "! BLOCKED — runner state missing or not one of: uv run, poetry run, python -m (re-run Tool detection)"; exit 1;; esac
 IFS= read -r XDIST_ARGS < "${TMPDIR:-/tmp}/quality-stack-xdist-args-${CSID}" 2>/dev/null || XDIST_ARGS=""
 IFS= read -r DOCTEST_MERGED < "${TMPDIR:-/tmp}/quality-stack-doctest-merged-${CSID}" 2>/dev/null || DOCTEST_MERGED=false
 _QS_LOG="${TMPDIR:-/tmp}/quality-stack-run1-${CSID}.log"
-_QS_DOCTEST_ARGS=""
-[ "$DOCTEST_MERGED" = "true" ] && _QS_DOCTEST_ARGS="--doctest-modules <target_module>"
+_QS_DOCTEST_ARGS=()
+[ "$DOCTEST_MERGED" = "true" ] && _QS_DOCTEST_ARGS=(--doctest-modules <target_module>)
+XDIST=()
+[ "$XDIST_ARGS" = "-n auto" ] && XDIST=(-n auto)
 # Redirect to log, not pipe: pytest exit stays in $? (tee failure on unwritable $TMPDIR can't mask real exit-5 config error);
 # log complete on disk before next line greps it (`> >(tee ...)` runs async in bash and zsh — grep would race a flushing tee).
-eval "$RUNNER pytest <test_dir> $_QS_DOCTEST_ARGS -v --tb=short -rfE $XDIST_ARGS" > "$_QS_LOG" 2>&1  # timeout: 600000
+"${R[@]}" pytest <test_dir> "${_QS_DOCTEST_ARGS[@]}" -v --tb=short -rfE "${XDIST[@]}" > "$_QS_LOG" 2>&1  # timeout: 600000
 SUITE_EXIT=$?
 tail -20 "$_QS_LOG"
 
@@ -131,9 +135,9 @@ fi
 
 if [ $SUITE_EXIT -ne 0 ]; then
     # Full untruncated log, not tail-capped — safe to grep every FAILED/ERROR line. -rfE reports fixture/collection ERRORs too: ERROR-only exit must still retry, never hit empty-set halt below.
-    # sed captures id by pytest node-id grammar (whitespace-free prefix + at most one [bracket] group; params only part with spaces/dashes), never a " - " split — reason text may contain " - " and over-capture.
+    # sed captures id by pytest node-id grammar (whitespace-free prefix + at most one [bracket] group holding at most one nested [..] level; params only part with spaces/dashes), never a " - " split — reason text may contain " - " and over-capture.
     # [^[:space:]] not \S — BSD sed (macOS) has no \S. No awk '{print $2}' — truncates at first whitespace, breaks on space inside bracket params.
-    FAILED_IDS=$(grep -E '^(FAILED|ERROR) ' "$_QS_LOG" | sed -E 's/^(FAILED|ERROR) ([^[:space:]]+(\[[^]]*\])?).*$/\2/' | sort -u)
+    FAILED_IDS=$(grep -E '^(FAILED|ERROR) ' "$_QS_LOG" | sed -E 's/^(FAILED|ERROR) ([^[:space:]]+(\[([^][]|\[[^]]*\])*\])?).*$/\2/' | sort -u)
 
     if [ -z "$FAILED_IDS" ]; then
         # Degenerate empty set — never invoke pytest with zero node-id args (widens scope to rootdir).
@@ -142,8 +146,7 @@ if [ $SUITE_EXIT -ne 0 ]; then
         exit 1
     fi
 
-    # No arrays/mapfile — zsh (Bash tool login shell on macOS) lacks mapfile and bare-"$VAR" word-splitting; only unquoted
-    # command substitution word-splits in both shells, so every multi-id use routes through printf | while-read inside $(...).
+    # No mapfile (absent in zsh and bash 3.2) — ids go into an array with a while-read loop; each is one argument.
 
     # Doctest node-id file part matches neither default python_files pattern (test_*.py, *_test.py); custom python_files
     # degrades safely (worst case: real test misclassified as doctest, never the reverse).
@@ -165,18 +168,14 @@ if [ $SUITE_EXIT -ne 0 ]; then
     fi
 
     # Retry A: exactly the failing node-ids, serial (never -n while reading a failure).
-    # Each id double-quoted *inside* the eval string → one argument, never re-split or glob-eligible (zsh NOMATCH aborts
-    # on bare "[...]", which every parametrized id contains); $, `, \ escaped first so a quoted id can't reopen substitution.
-    # Command substitution, not heredoc: heredoc breaks fence parsing in list-item context and drops whole fence from blueprint manifest.
-    _RETRY_ARGS=$(printf '%s\n' "$FAILED_IDS" | while IFS= read -r _id; do
-        [ -z "$_id" ] && continue
-        _esc="${_id//\\/\\\\}"
-        _esc="${_esc//\"/\\\"}"
-        _esc="${_esc//\$/\\\$}"
-        _esc="${_esc//\`/\\\`}"
-        printf ' "%s"' "$_esc"
-    done)
-    eval "$RUNNER pytest --tb=short -v$_RETRY_ARGS"  # timeout: 600000
+    # Each id is one array element → one argument, never re-split or glob-eligible (zsh NOMATCH aborts on bare "[...]",
+    # which every parametrized id contains). Process substitution, not a pipe: a piped loop runs in a subshell and loses the array;
+    # not a heredoc: heredoc breaks fence parsing in list-item context and drops whole fence from blueprint manifest.
+    RETRY=()
+    while IFS= read -r _id; do
+        [ -n "$_id" ] && RETRY+=("$_id")
+    done < <(printf '%s\n' "$FAILED_IDS")
+    "${R[@]}" pytest --tb=short -v "${RETRY[@]}"  # timeout: 600000
     RETRY_A_EXIT=$?
     if [ $RETRY_A_EXIT -ne 0 ]; then
         echo "✗ GENUINE FAILURE: failing node-id(s) fail again on isolated re-run"
@@ -185,7 +184,7 @@ if [ $SUITE_EXIT -ne 0 ]; then
     fi
 
     # Retry B: full-dir, serial — rules out order-dependency without conflating it with xdist contention.
-    eval "$RUNNER pytest <test_dir> -v --tb=short"  # timeout: 600000
+    "${R[@]}" pytest <test_dir> -v --tb=short  # timeout: 600000
     RETRY_B_EXIT=$?
     if [ $RETRY_B_EXIT -ne 0 ]; then
         echo "✗ GENUINE FAILURE: order-dependent — passes isolated, fails in full-dir serial re-run"
@@ -209,7 +208,7 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 rm -f "${TMPDIR:-/tmp}/quality-stack-run1-${CSID}.log" "${TMPDIR:-/tmp}/quality-stack-doctest-collect-${CSID}.log"
 ```
 
-Deviation from the plan's stated `--junitxml` mechanism, noted explicitly: `--junitxml` was proposed to fix `run_pytest_short.py`'s lossy `tail -20` wrapper capture — that lossiness doesn't apply here, since this block calls `eval "$RUNNER pytest ..."` directly and captures full untruncated output to a session-scoped log file. `-rfE`'s `FAILED <node-id>`/`ERROR <node-id>` lines are already valid pytest node-id syntax, needing no `classname`/`name` → node-id reconstruction that XML parsing would require. Simpler, same non-lossy guarantee.
+Deviation from the plan's stated `--junitxml` mechanism, noted explicitly: `--junitxml` was proposed to fix `run_pytest_short.py`'s lossy `tail -20` wrapper capture — that lossiness doesn't apply here, since this block calls `"${R[@]}" pytest ...` directly and captures full untruncated output to a session-scoped log file. `-rfE`'s `FAILED <node-id>`/`ERROR <node-id>` lines are already valid pytest node-id syntax, needing no `classname`/`name` → node-id reconstruction that XML parsing would require. Simpler, same non-lossy guarantee.
 
 `FLAKY_DETECTED` is reachable only when run 1 was serial — a genuinely flaky test under `-n auto` takes the `PARALLEL_FAIL_SERIAL_PASS` branch above and halts as a suspected isolation bug instead, per the plan's stated design; no serial-re-run offer before that halt in this revision.
 
@@ -224,11 +223,12 @@ Deviation from the plan's stated `--junitxml` mechanism, noted explicitly: `--ju
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r RUNNER < "${TMPDIR:-/tmp}/quality-stack-runner-${CSID}" 2>/dev/null || RUNNER="python -m"
+IFS= read -r RUNNER < "${TMPDIR:-/tmp}/quality-stack-runner-${CSID}" 2>/dev/null || RUNNER=""
+case "$RUNNER" in "uv run") R=(uv run);; "poetry run") R=(poetry run);; "python -m") R=(python -m);; *) echo "! BLOCKED — runner state missing or not one of: uv run, poetry run, python -m (re-run Tool detection)"; exit 1;; esac
 IFS= read -r DOCTEST_MERGED < "${TMPDIR:-/tmp}/quality-stack-doctest-merged-${CSID}" 2>/dev/null || DOCTEST_MERGED=false
 set -o pipefail
 if [ "$DOCTEST_MERGED" != "true" ]; then
-    eval "$RUNNER pytest --doctest-modules <target_module> -v" 2>&1 | tail -20  # timeout: 600000
+    "${R[@]}" pytest --doctest-modules <target_module> -v 2>&1 | tail -20  # timeout: 600000
     DOCTEST_EXIT=$?  # pipefail: pytest's exit, not tail's
     # 5 = no doctests in module, not a failure; doctests deterministic → never retried
     case $DOCTEST_EXIT in

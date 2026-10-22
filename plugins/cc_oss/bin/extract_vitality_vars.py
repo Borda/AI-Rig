@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""extract_vitality_vars.py — emit shell variable assignments from a vitality scores JSON.
+"""Extract vitality score variables as shell assignments or private session files.
 
 Usage:
-    eval "$(python "${CLAUDE_PLUGIN_ROOT}/bin/extract_vitality_vars.py" SCORES_FILE)"
+    python "${CLAUDE_PLUGIN_ROOT}/bin/extract_vitality_vars.py" [--keep-state PREFIX] SCORES_FILE
 
 Replaces 45+ separate ``python -c`` subprocess calls per oss:analyse vitality
 invocation (one call per axis × 5 fields + 6 top-level fields) with a single
 JSON pass.  Emits newline-separated shell-quoted ``VAR=value`` assignments
-suitable for ``eval``.
+suitable for legacy shell consumers. With ``--keep-state PREFIX``, stdout stays empty and each value is written to
+``<TMPDIR>/<prefix>-<lowercase-hyphenated-variable>-<CSID>`` using the plugin's private sentinel writer. Empty values
+are written too, so ``IFS= read -r`` clears stale shell variables. ``TMPDIR`` falls back to the platform temp directory;
+``CSID`` falls back to ``CLAUDE_CODE_SESSION_ID``, then ``shared``.
 
 Variables emitted:
     ANALYSIS_NOW, OVERALL_CONFIDENCE, HEALTH_SCORE_PCT, AXIS3_202_PENDING,
@@ -16,16 +19,22 @@ Variables emitted:
 
 Exit codes:
     0 — on success
-    1 — missing argument, I/O error, or JSON parse error
+    1 — missing argument, I/O error, JSON parse error, or invalid state identity
+    2 — CLI usage error
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
+import re
 import shlex
 import sys
+import tempfile
 from pathlib import Path
+
+from _sentinel_io import write_private_text
 
 _MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB guard against runaway reads
 
@@ -165,8 +174,8 @@ def main(argv: list[str] | None = None) -> int:
         prog="extract_vitality_vars.py",
         description="Emit shell variable assignments from a vitality scores JSON.",
     )
-    # nargs="*" keeps the legacy exit-1-on-missing-arg contract and guarantees argparse
-    # writes nothing to stdout on the success path — the caller ``eval``s our stdout.
+    # nargs="*" preserves the legacy exit-1-on-missing-arg contract.
+    parser.add_argument("--keep-state", metavar="PREFIX", help="Write private session values instead of assignments.")
     parser.add_argument("paths", nargs="*", help="SCORES_FILE (1 path).")
     args = parser.parse_args(argv)
 
@@ -181,8 +190,29 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Error reading {scores_file}: {e}", file=sys.stderr)
         return 1
 
-    print(emit(extract_vars(scores)))
+    variables = extract_vars(scores)
+    if args.keep_state is not None:
+        try:
+            _write_state(args.keep_state, variables)
+        except (OSError, ValueError) as exc:
+            print(f"extract_vitality_vars: cannot write state: {exc}", file=sys.stderr)
+            return 1
+    else:
+        print(emit(variables))
     return 0
+
+
+def _write_state(prefix: str, variables: dict[str, str]) -> None:
+    """Persist literal values under validated session filenames, including empty values to replace stale state."""
+    csid = os.environ.get("CSID") or os.environ.get("CLAUDE_CODE_SESSION_ID") or "shared"
+    if any(not re.fullmatch(r"[A-Za-z0-9_.-]+", value) or ".." in value for value in (prefix, csid)):
+        raise ValueError("--keep-state prefix and CSID must be plain filename components without '..'")
+    tmp_fallback = tempfile.gettempdir() if os.name == "nt" else "/tmp"  # noqa: S108 - shell default of ${TMPDIR:-/tmp}
+    tmpdir = Path(os.environ.get("TMPDIR") or tmp_fallback)
+    for key, value in variables.items():
+        suffix = key.lower().replace("_", "-")
+        # one value per line: the caller's `IFS= read -r` keeps only the first line, so fold a multi-line signal
+        write_private_text(tmpdir / f"{prefix}-{suffix}-{csid}", " ".join(value.splitlines()) + "\n")
 
 
 if __name__ == "__main__":

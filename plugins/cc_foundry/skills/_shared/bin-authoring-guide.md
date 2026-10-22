@@ -175,15 +175,15 @@ RESULT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/<script-name>.py" arg1 arg2)
 | Shell command arg (`"$VAR"`) | `${TMPDIR:-/tmp}/<skill>-<name>-${CSID}` file | `IFS= read -r VAR < "${TMPDIR:-/tmp}/<skill>-<name>-${CSID}"` |
 | Prose condition / display only | `${TMPDIR:-/tmp}/<skill>-<name>-${CSID}` file | Read tool or plain prose |
 | Single value, same bash block | stdout | `VAR=$(python script.py ...)` |
-| Several values across later blocks | `bin/state.py set <ns> K=V …` | `eval "$(python … bin/state.py load <ns>)"` |
+| Several values across later blocks | script option `--keep-state <prefix>`: one sentinel per value | `IFS= read -r VAR < "${TMPDIR:-/tmp}/<prefix>-<name>-${CSID}"` per value |
 
 **Multi-value DATA output: write to TMPDIR files — never `eval` stdout.**
 
 Shell variables set in one Bash tool call don't persist to next separate call — survive only within single invocation. TMPDIR files survive across all invocations. Script returning 2+ values (e.g. `PROJ` + `INDEX`) must write each to own file, exit 0/1. Skill checks exit code; downstream steps `cat` what they need.
 
-**Preferred idiom for cross-block persistence: `bin/state.py`.** Instead of hand-rolling per-skill temp file + reload, use tested helper — `python "${CLAUDE_PLUGIN_ROOT}/bin/state.py" set <namespace> RUN_DIR="$RUN_DIR" SCOPE="$SCOPE"` in producing block, then `eval "$(python "${CLAUDE_PLUGIN_ROOT}/bin/state.py" load <namespace>)"` at top of each consuming block. Values single-quote-escaped, keys must be shell identifiers matching `^[A-Za-z_][A-Za-z0-9_]*$` (`set` exits 2 on unsafe key; `load` skips one) — `eval` injection-safe. Include run-unique component in `<namespace>` (timestamp/run-id) when concurrent sessions of same skill could collide. `check_bash_persistence` recognizes this as valid reload — `eval "$(…)"` form suppresses cross-block-loss finding.
+**Preferred idiom for cross-block persistence: a `--keep-state <prefix>` option.** The script writes each value to its own `${TMPDIR:-/tmp}/<prefix>-<name>-${CSID}` file (`_sentinel_io.write_private_text`: exclusive create, no symlink follow, mode 0600) and each consuming block reads it back with `IFS= read -r VAR < "…" 2>/dev/null || VAR=""`. Reference implementations: `parse-skill-flags.py --keep-state`, `derive_codemap_target.py --keep-state`, `extract_vitality_vars.py --keep-state`. Include run-unique component in `<prefix>` (timestamp/run-id) when concurrent runs of same skill in one session could collide.
 
-> **Scope**: rule applies to DATA output (returning computed values to skill). Shell-setup eval — e.g. `eval "$(python parse-skill-flags.py ...)"` injecting `FLAG_*=...` assignments into calling shell — different pattern, remains valid.
+> **Scope**: `bin/state.py load` still prints `KEY='VALUE'` lines meant for `eval`. `Bash(eval:*)` is no longer pre-approved, so a shipped block that evals a script's stdout prompts on every run and audit Check 23c flags it — use `eval` of `state.py` for manual, interactive work only.
 
 **Naming convention**: `${TMPDIR:-/tmp}/<plugin>-<script-slug>-<value-name>-${CSID}` (terminal session-scope suffix — see `rules/claude-config.md` §TMPDIR Sentinel Scoping). Script with more than one consumer (e.g. shared `resolve-shared.py`) — calling skill passes unique prefix: `--out-prefix <skill>-<run-id>`; script writes `<prefix>-proj-${_CSID}`, `<prefix>-index-${_CSID}`. Never hardcode prefix in shared script — consumers collide.
 
@@ -193,7 +193,7 @@ import os, sys, tempfile
 from pathlib import Path
 
 _CSID = os.environ.get("CSID") or os.environ.get("CLAUDE_CODE_SESSION_ID") or "shared"
-tmpdir = os.environ.get("TMPDIR") or tempfile.gettempdir()
+tmpdir = os.environ.get("TMPDIR") or (tempfile.gettempdir() if os.name == "nt" else "/tmp")  # = shell ${TMPDIR:-/tmp}
 prefix = sys.argv[1]  # e.g. "codemap-integration"
 Path(f"{tmpdir}/{prefix}-proj-{_CSID}").write_text(proj)
 Path(f"{tmpdir}/{prefix}-index-{_CSID}").write_text(index)
@@ -221,8 +221,7 @@ Read ${TMPDIR:-/tmp}/myplugin-resolve-index-${CSID}. If empty: print ✗ and sto
 **Anti-patterns — data output:**
 
 ```bash
-# ✗ eval for data — fragile, needs shlex discipline; vars die at next Bash call anyway
-eval "$(python resolve.py ...)"
+# ✗ eval "$(python resolve.py ...)" for data — fragile, needs shlex discipline, vars die at next Bash call anyway, and no longer pre-approved
 
 # ✗ tab-delimited read — vars die at next Bash tool call
 IFS=$'\t' read -r PROJ INDEX < <(python resolve.py ...)

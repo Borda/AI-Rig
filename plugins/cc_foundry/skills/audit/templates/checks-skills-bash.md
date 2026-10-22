@@ -93,25 +93,28 @@ After scan, apply model reasoning — exclude lines inside illustration/example 
 
 ### Sub-check 23c — `eval` for multi-value data output
 
-Skill uses `eval "$(...)"` or `eval "$(python ...)"` to capture data values from a bin/ script, rather than writing to TMPDIR files. Distinct from shell-setup eval (ssh-agent) — those exempt.
+Skill runs `eval "$(...)"`, `eval "$(python ...)"`, or `eval "$VAR ..."` on a script's stdout or a session-file value, instead of writing to TMPDIR files or running an allowlisted runner. `Bash(eval:*)` is no longer pre-approved, so every such block prompts — and an `eval` of a session file runs whatever a planted file holds. Distinct from shell-setup eval (ssh-agent) — those exempt.
 
 ```bash
 # timeout: 10000
 printf "=== Check 23c: eval for data output ===\n"
 { find plugins -mindepth 4 -maxdepth 4 -path 'plugins/*/skills/*/SKILL.md' -type f -print0
+  find plugins -mindepth 4 -maxdepth 4 -path 'plugins/*/skills/_shared/*.md' -type f -print0
+  find plugins -mindepth 5 -path 'plugins/*/skills/*/*' -name '*.md' -type f -print0
   find .claude/skills -mindepth 2 -maxdepth 2 -name SKILL.md -type f -print0; } 2>/dev/null |
-  xargs -0 -r grep -Hn 'eval.*"\$.*python\|eval.*"\$.*bin/' |
-  grep -v 'ssh-agent\|direnv\|rbenv\|pyenv\|nvm\|# shell-setup\|parse-skill-flags\|derive_codemap_target' |
-  grep -v '^\s*#' | head -20
+  xargs -0 -r awk 'BEGIN { tick = sprintf("%c", 96); open = "^(" tick tick tick tick "*|~~~~*)" } FNR == 1 { fence = "" } { line = $0; sub(/^([[:space:]]*>)*[[:space:]]*/, "", line); run = match(line, open) ? substr(line, 1, RLENGTH) : "" } fence == "" && run != "" { fence = run; next } fence != "" && run != "" && substr(run, 1, 1) == substr(fence, 1, 1) && length(run) >= length(fence) && substr(line, length(run) + 1) ~ /^[[:space:]]*$/ { fence = ""; next } fence != "" { print FILENAME ":" FNR ":" line }' |
+  grep -E '(^|[^[:alnum:]_])eval[[:space:]]+(--[[:space:]]+)?["'"'"'$]' |
+  grep -v 'ssh-agent\|direnv\|rbenv\|pyenv\|nvm\|# shell-setup' |
+  grep -Ev '^[^:]*:[0-9]+:[[:space:]]*#' | head -20
 ```
 
-False-positive exemption: eval whose stdout is `VAR=val` shell assignments for the calling shell — argument parsing (`parse-skill-flags.py`), target derivation (`derive_codemap_target.py`). Finding = eval used to capture a script's **data output** into variables, where a TMPDIR file is the correct channel. Cross-block persistence is Sub-check 23d, not this one.
+No false-positive exemption for `parse-skill-flags.py` or `derive_codemap_target.py`: both write per-session sentinels with `--keep-state` and the caller reads them with `IFS= read -r`. Finding = any `eval "$…"` in a shipped block; fix = sentinel files for data (`bin-authoring-guide.md §Script Output Routing`), a closed `case` that maps a saved runner string to an array (`"${R[@]}" tool …`), or an allowlisted bin runner. Cross-block persistence is Sub-check 23d, not this one.
 
 **Sub-check 23d** — shell variable used for state across separate Bash tool calls. **Not grep-detectable** (requires cross-block analysis of Bash call boundaries, which are runtime not lexical). Flag during curator per-file review only: when auditing a skill, scan for `VAR=$(...)` pattern in one fenced block and `"$VAR"` or `[ -z "$VAR" ]` in a later fenced block with no `cat "${TMPDIR:-/tmp}/...-${CSID}"` supplying `VAR` between them.
 
 | Sub-check | Pattern | Severity | Auto-fix |
 | -- | -- | -- | -- |
-| 23c — eval for data output | `eval "$(python ...)` capturing data output | medium | no — replace with TMPDIR-file pattern per `bin-authoring-guide.md §Script Output Routing` |
+| 23c — eval in a shipped block | `eval "$…"` of script output or a session-file value | high | no — replace with TMPDIR-file pattern per `bin-authoring-guide.md §Script Output Routing`, a closed-`case` runner array, or an allowlisted bin runner |
 | 23d — cross-call shell var | `$VAR` in block N, set in earlier block M, no TMPDIR bridge | medium | no — curator flag only |
 
 **Report only** — never auto-fix; replacement requires understanding the script's full output contract.
@@ -156,9 +159,9 @@ done
 printf "✓: Check 30b scan complete\n"  # timeout: 5000
 ```
 
-Severity: **critical** — `SKIP_RUFF=1` set by tool detection, but `$RUNNER ruff check` runs unconditionally; detection is cosmetic.
+Severity: **critical** — `SKIP_RUFF=1` set by tool detection, but the runner call (`"${R[@]}" ruff check`) runs unconditionally; detection is cosmetic.
 
-Fix pattern: `[ "${SKIP_RUFF:-0}" -ne 1 ] && eval "$RUNNER ruff check ..."` — `eval`, not a bare `$RUNNER` prefix: a multi-token runner ("uv run") does not word-split under zsh (Claude Code's Bash tool login shell on macOS).
+Fix pattern: `[ "${SKIP_RUFF:-0}" -ne 1 ] && "${R[@]}" ruff check ...` — `R` is the array a closed `case` maps the saved runner string to (`R=(uv run)`); never `eval`, and never a bare `$RUNNER` prefix: a multi-token runner ("uv run") does not word-split under zsh (Claude Code's Bash tool login shell on macOS).
 
 ### 30c — Agent filename convention mismatch (model reasoning)
 

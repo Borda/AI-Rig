@@ -239,6 +239,8 @@ DEFERRING_COMMANDS: frozenset[str] = frozenset(
         "watch",
         "trap",
         "find",
+        "uv",
+        "poetry",
         "bash",
         "sh",
         "zsh",
@@ -1112,11 +1114,85 @@ def _head_is_expansion(words: list[str]) -> bool:
     return head.rsplit("/", 1)[-1].startswith(("$", "`"))
 
 
+def _hash_rebinds(tokens: list[str]) -> bool:
+    """Report whether a ``hash`` segment rebinds a command name to another path (``hash name=/p``, ``hash -p /p name``).
+
+    Any option word carrying ``p`` counts, so the attached (``-p/bin/rm``) and bundled (``-rp``) spellings are caught;
+    the lookup-only options ``-l``, ``-r``, ``-d`` and ``-t`` never rebind.
+
+    Examples:
+        >>> _hash_rebinds(["hash", "ruff=/bin/rm"])
+        True
+        >>> _hash_rebinds(["hash", "-p", "/bin/rm", "ruff"])
+        True
+        >>> _hash_rebinds(["hash", "-p/bin/rm", "ruff"])
+        True
+        >>> _hash_rebinds(["hash", "-rp", "/bin/rm", "ruff"])
+        True
+        >>> _hash_rebinds(["hash", "-r"])
+        False
+        >>> _hash_rebinds(["hash", "uv"])
+        False
+    """
+    return any((word.startswith("-") and "p" in word) or "=" in word for word in tokens[1:])
+
+
+def _builtin_rebinds(tokens: list[str]) -> bool:
+    """Report whether ``builtin hash …`` rebinds a command name, the same as a bare ``hash`` segment.
+
+    Examples:
+        >>> _builtin_rebinds(["builtin", "hash", "ruff=/bin/rm"])
+        True
+        >>> _builtin_rebinds(["builtin", "hash", "uv"])
+        False
+        >>> _builtin_rebinds(["builtin", "echo", "a=b"])
+        False
+    """
+    return len(tokens) > 1 and tokens[1] == "hash" and _hash_rebinds(tokens[1:])
+
+
+#: A pure read of the zsh ``commands`` or bash 4 ``BASH_CMDS`` table (``${commands[x]}``, ``${+commands[x]}``,
+#: ``$commands``), which looks a path up and never rebinds a name. ``${commands[x]:=/p}`` is not a pure read, and
+#: neither is a subscript that can run code (``${commands[$(…)]}``): only a literal word or a plain ``$name`` /
+#: ``${name}`` subscript is stripped, so anything else keeps its table mention in view of the write check.
+_COMMAND_TABLE_READ = re.compile(
+    r"\$\{[+#]?(?:commands|BASH_CMDS)"
+    r"(?:\[(?:[A-Za-z0-9_.-]+|\$[A-Za-z_][A-Za-z0-9_]*|\$\{[A-Za-z_][A-Za-z0-9_]*\})\])?\}"
+    r"|\$(?:commands|BASH_CMDS)\b"
+)
+#: Any other mention of either table name. Those tables map a command name to the path it runs, and they can be
+#: written in many spellings (``commands[x]=``, ``commands=(…)``, ``+=``, ``${…:=…}``, ``printf -v``, ``read -A``,
+#: ``set -A``), so every mention outside a pure read is treated as a rebind.
+_COMMAND_TABLE_USE = re.compile(r"(?<![A-Za-z0-9_./-])(?:commands|BASH_CMDS)(?![A-Za-z0-9_./-])")
+
+
+def _writes_command_table(command: str) -> bool:
+    """Report whether a command may write the zsh ``commands`` or bash 4 ``BASH_CMDS`` table.
+
+    Examples:
+        >>> _writes_command_table("commands=(ruff /bin/rm)")
+        True
+        >>> _writes_command_table(": ${commands[ruff]:=/bin/rm}")
+        True
+        >>> _writes_command_table('printf "%s\\n" "${commands[cat]}"')
+        False
+        >>> _writes_command_table('echo "${commands[$tool]}"')
+        False
+        >>> _writes_command_table(': "${commands[$(set -A commands ls /bin/echo)]}"')
+        True
+        >>> _writes_command_table("ls docs/commands.md")
+        False
+    """
+    return bool(_COMMAND_TABLE_USE.search(_COMMAND_TABLE_READ.sub("", command)))
+
+
 #: Command-specific destructive-use checks, keyed by command word and fed the segment's tokens.
 _TOOL_CHECKS: dict[str, Callable[[list[str]], bool]] = {
     "git": _git_is_dangerous,
     "sed": _sed_edits_in_place,
     "gh": _gh_api_deletes,
+    "hash": _hash_rebinds,
+    "builtin": _builtin_rebinds,
 }
 
 
@@ -1294,6 +1370,8 @@ def is_dangerous(command: str) -> bool:
         >>> is_dangerous("echo '$(rm -rf /)'")
         False
     """
+    if _writes_command_table(command):
+        return True
     return any(_segment_is_dangerous(segment) for segment in split_segments(command))
 
 
@@ -1398,6 +1476,14 @@ _ENV_VALUE_OPTIONS: frozenset[str] = frozenset({"-u", "-C", "-S"})
 _UV_RUN_VALUE_OPTIONS: frozenset[str] = frozenset(
     {"--with", "--python", "-p", "--project", "--directory", "--extra", "--group", "--package", "--env-file"}
 )
+#: Options of ``uv run`` that take no value and cannot change which command runs.
+_UV_RUN_FLAGS: frozenset[str] = frozenset(
+    {
+        "--frozen", "--locked", "--no-sync", "--isolated", "--active", "--no-project", "--offline",
+        "--quiet", "-q", "--verbose", "-v", "--no-dev", "--all-extras", "--all-groups", "--no-default-groups",
+        "--exact", "--no-editable", "--no-env-file",
+    }
+)  # fmt: skip
 
 
 def _unquote_leading(text: str) -> str:
@@ -1929,6 +2015,32 @@ def _plain_wrapper_use(args: list[str], known: frozenset[str]) -> str | None:
     return _words_unlisted(args[_skip_options(args, frozenset()) :], known)
 
 
+def _run_wrapper_rest(args: list[str], values: frozenset[str], flags: frozenset[str]) -> tuple[list[str], str | None]:
+    """Split ``<tool> run`` arguments into the wrapped command and the first option the check does not know.
+
+    An option outside ``values`` and ``flags`` may take a value of its own (``-C ruff``), so the word after it cannot
+    be told from the wrapped command; the caller reports the option instead of guessing.
+
+    Examples:
+        >>> _run_wrapper_rest(["--frozen", "pytest"], frozenset(), frozenset({"--frozen"}))
+        (['pytest'], None)
+        >>> _run_wrapper_rest(["-C", "ruff", "rm"], frozenset(), frozenset())
+        (['-C', 'ruff', 'rm'], '-C')
+        >>> _run_wrapper_rest(["--python=3.12", "pytest"], frozenset({"--python"}), frozenset())
+        (['pytest'], None)
+    """
+    index = 0
+    while index < len(args) and args[index].startswith("-") and args[index] != "--":
+        option = args[index].split("=", 1)[0]
+        if option in values:
+            index += 1 if "=" in args[index] else 2
+        elif option in flags:
+            index += 1
+        else:
+            return args, args[index]
+    return args[index + 1 if index < len(args) and args[index] == "--" else index :], None
+
+
 def _uv_use(args: list[str], known: frozenset[str]) -> str | None:
     """Judge ``uv``: a version query, or ``uv run`` of an allowlisted command; never installs or syncs.
 
@@ -1937,6 +2049,8 @@ def _uv_use(args: list[str], known: frozenset[str]) -> str | None:
         True
         >>> _uv_use(["run", "--with", "x", "perl", "-e", "'1'"], frozenset())
         'perl'
+        >>> _uv_use(["run", "-f", "ruff", "rm", "-rf", "x"], frozenset())
+        'uv run -f'
         >>> _uv_use(["add", "--dev", "pkg"], frozenset())
         'uv add'
     """
@@ -1945,8 +2059,8 @@ def _uv_use(args: list[str], known: frozenset[str]) -> str | None:
         return None
     if sub != "run":
         return f"uv {sub}".rstrip()
-    rest = args[1:]
-    return _words_unlisted(rest[_skip_options(rest, _UV_RUN_VALUE_OPTIONS) :], known)
+    rest, unknown = _run_wrapper_rest(args[1:], _UV_RUN_VALUE_OPTIONS, _UV_RUN_FLAGS)
+    return f"uv run {unknown}" if unknown else _words_unlisted(rest, known)
 
 
 def _eval_use(args: list[str], known: frozenset[str]) -> str | None:

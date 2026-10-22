@@ -113,12 +113,13 @@ def _plugin_only_tree(tmp_path: Path) -> Path:
     """Create a checkout holding one plugin skill that evals a script's output and no ``.claude/skills/`` directory."""
     skill = tmp_path / "plugins" / "demo" / "skills" / "probe" / "SKILL.md"
     skill.parent.mkdir(parents=True)
-    skill.write_text('VALUES="$(true)"\neval "$(python "$ROOT/bin/emit_values.py")"\n', encoding="utf-8")
+    # Check 23c scans only fenced code, where a skill's executable lines live
+    skill.write_text('```bash\nVALUES="$(true)"\neval "$(python "$ROOT/bin/emit_values.py")"\n```\n', encoding="utf-8")
     (tmp_path / ".claude").mkdir()
     return tmp_path
 
 
-@pytest.mark.parametrize(
+_both_shells = pytest.mark.parametrize(
     "shell",
     [
         pytest.param(
@@ -130,6 +131,52 @@ def _plugin_only_tree(tmp_path: Path) -> Path:
         ),
     ],
 )
+
+
+@_both_shells
+def test_check_23c_scans_tilde_and_blockquoted_fences_but_not_prose(shell: str, tmp_path: Path) -> None:
+    """Check 23c reads ``~~~`` and ``> ```` fences as code and leaves prose that quotes ``eval`` alone.
+
+    Scanning only fenced code keeps prose such as ``Skill runs `eval "$(…)"` `` out of the findings; a fence parser that
+    knows only backtick fences at the line start would miss the other valid code blocks entirely.
+    """
+    skill = tmp_path / "plugins" / "demo" / "skills" / "probe" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text(
+        'Prose: `eval "$(python /bin/prose.py)"`\n'
+        '~~~bash\neval "$(python /bin/tilde.py)"\n~~~\n'
+        '> ```bash\n> eval "$(python /bin/quoted.py)"\n> ```\n',
+        encoding="utf-8",
+    )
+    (tmp_path / ".claude").mkdir()
+    proc = subprocess.run(
+        [shell, "-c", _check_23c_block()], cwd=tmp_path, capture_output=True, encoding="utf-8", timeout=30
+    )
+    assert ("tilde.py" in proc.stdout, "quoted.py" in proc.stdout, "prose.py" in proc.stdout) == (True, True, False)
+
+
+@_both_shells
+def test_check_23c_keeps_long_fences_open_and_drops_blockquoted_comments(shell: str, tmp_path: Path) -> None:
+    """Check 23c closes a fence only on a marker at least as long as its opener, and skips ``> #`` comment lines.
+
+    A four-backtick block may hold a bare three-backtick line inside a quoted string; ending the fence there would hide
+    every later line of the block. A comment inside a blockquoted fence is still a comment once its ``>`` is removed.
+    """
+    skill = tmp_path / "plugins" / "demo" / "skills" / "probe" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text(
+        '````bash\nNOTE="\n```\n"\neval "$(python /bin/long.py)"\n````\n'
+        '> ```bash\n> # eval "$(python /bin/comment.py)"\n> ```\n',
+        encoding="utf-8",
+    )
+    (tmp_path / ".claude").mkdir()
+    proc = subprocess.run(
+        [shell, "-c", _check_23c_block()], cwd=tmp_path, capture_output=True, encoding="utf-8", timeout=30
+    )
+    assert ("long.py" in proc.stdout, "comment.py" in proc.stdout) == (True, False), proc.stderr
+
+
+@_both_shells
 def test_check_23c_reports_plugin_finding_without_project_skills(shell: str, plugin_only_tree: Path) -> None:
     """Check 23c reports a plugin skill's eval finding in a checkout that has no ``.claude/skills/`` directory.
 
@@ -143,4 +190,4 @@ def test_check_23c_reports_plugin_finding_without_project_skills(shell: str, plu
         encoding="utf-8",
         timeout=30,
     )
-    assert "plugins/demo/skills/probe/SKILL.md:2:" in proc.stdout, proc.stderr
+    assert "plugins/demo/skills/probe/SKILL.md:3:" in proc.stdout, proc.stderr

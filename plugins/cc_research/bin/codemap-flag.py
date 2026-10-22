@@ -108,7 +108,8 @@ def main(argv: list[str]) -> int:
             return 1
         enabled = "false"
 
-    tmp = Path(os.environ.get("TMPDIR") or tempfile.gettempdir())
+    tmp_fallback = tempfile.gettempdir() if os.name == "nt" else "/tmp"  # noqa: S108 - shell default of ${TMPDIR:-/tmp}
+    tmp = Path(os.environ.get("TMPDIR") or tmp_fallback)
     sentinel = tmp / f"{slug}-codemap-enabled-{csid}"
     try:
         write_private_text(sentinel, enabled + "\n")

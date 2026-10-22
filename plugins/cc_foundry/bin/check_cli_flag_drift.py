@@ -74,8 +74,9 @@ _MAX_FILE_SIZE = 10 * 1024 * 1024
 #: short option is rare and not worth that noise; long flags carry the real signal.
 _FLAG_RE = re.compile(r"(?<![\w-])--[a-z][a-z0-9-]*\b")
 #: Shell boundaries that end the command owning the flags — a piped/chained command
-#: (grep, printf, git) past one of these contributes its own flags, not the script's.
-_CMD_BOUNDARY_RE = re.compile(r"\||;|&&|\|\||\$\(|`|>&|2>")
+#: (grep, printf, git) past one of these contributes its own flags, not the script's. A standalone ``--`` ends the
+#: script's own options: what follows is the wrapped command's arguments (``dev_run_tests.py pytest -- --tb=short``).
+_CMD_BOUNDARY_RE = re.compile(r"\||;|&&|\|\||\$\(|`|>&|2>|(?<=\s)--(?=\s)")
 #: Default plugins root used by the command line when none is given.
 _DEFAULT_PLUGINS_DIR = "plugins"
 #: Opens a module docstring's invocation block. Everything until the block dedents is
@@ -131,6 +132,9 @@ def extract_argparse_flags(source: str) -> set[str] | None:
     script is not argparse-based and should be skipped, distinct from an empty set.
     Also returns None when a ``nargs=argparse.REMAINDER`` passthrough positional is
     present, since such a script accepts arbitrary trailing flags and cannot drift.
+    The ``-h`` / ``--help`` pair argparse registers on its own is included unless every parser the
+    script builds passes ``add_help=False``: a help-less parent parser shared through ``parents=[…]``
+    does not take ``--help`` away from the parser that uses it.
 
     Args:
         source: Python source text of a bin/ script.
@@ -142,21 +146,27 @@ def extract_argparse_flags(source: str) -> set[str] | None:
     Examples:
         >>> src = 'p.add_argument("--foo"); p.add_argument("-b", "--bar")'
         >>> sorted(extract_argparse_flags(src))
-        ['--bar', '--foo', '-b']
+        ['--bar', '--foo', '--help', '-b', '-h']
         >>> extract_argparse_flags("x = 1") is None
         True
         >>> extract_argparse_flags('p.add_argument("x", nargs=argparse.REMAINDER)') is None
         True
-        >>> sorted(extract_argparse_flags('p.add_argument("pos"); p.add_argument("--f")'))
+        >>> sorted(extract_argparse_flags('p = P(add_help=False); p.add_argument("pos"); p.add_argument("--f")'))
         ['--f']
+        >>> src = 'c = ArgumentParser(add_help=False); p = ArgumentParser(parents=[c]); c.add_argument("--f")'
+        >>> sorted(extract_argparse_flags(src))
+        ['--f', '--help', '-h']
     """
     tree = ast.parse(source)
     flags: set[str] = set()
     saw_add_argument = False
+    parsers_with_help: list[bool] = []
     for node in ast.walk(tree):
-        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+        if not isinstance(node, ast.Call):
             continue
-        if node.func.attr != "add_argument":
+        if _builds_parser(node):
+            parsers_with_help.append(not _disables_help(node))
+        if not (isinstance(node.func, ast.Attribute) and node.func.attr == "add_argument"):
             continue
         saw_add_argument = True
         if _accepts_passthrough(node):
@@ -164,7 +174,37 @@ def extract_argparse_flags(source: str) -> set[str] | None:
         for arg in node.args:
             if isinstance(arg, ast.Constant) and isinstance(arg.value, str) and arg.value.startswith("-"):
                 flags.add(arg.value)
-    return flags if saw_add_argument else None
+    if not saw_add_argument:
+        return None
+    help_defined = any(parsers_with_help) if parsers_with_help else True
+    return flags | {"-h", "--help"} if help_defined else flags
+
+
+#: Calls that build an argparse parser: the class itself and ``add_subparsers().add_parser``.
+_PARSER_FACTORIES = frozenset({"ArgumentParser", "add_parser"})
+
+
+def _disables_help(node: ast.Call) -> bool:
+    """Return True when the call passes ``add_help=False``."""
+    return any(
+        kw.arg == "add_help" and isinstance(kw.value, ast.Constant) and kw.value.value is False for kw in node.keywords
+    )
+
+
+def _builds_parser(node: ast.Call) -> bool:
+    """Return True for a call that builds a parser: a known factory, or any call (a subclass) passing ``add_help``.
+
+    Examples:
+        >>> _builds_parser(ast.parse("argparse.ArgumentParser()").body[0].value)
+        True
+        >>> _builds_parser(ast.parse("_Parser(add_help=False)").body[0].value)
+        True
+        >>> _builds_parser(ast.parse("p.add_argument('--x')").body[0].value)
+        False
+    """
+    func = node.func
+    name = func.attr if isinstance(func, ast.Attribute) else func.id if isinstance(func, ast.Name) else ""
+    return name in _PARSER_FACTORIES or any(kw.arg == "add_help" for kw in node.keywords)
 
 
 def iter_argparse_script_sources(plugins_dir: Path) -> list[tuple[Path, str, set[str]]]:
@@ -353,12 +393,93 @@ def _invocation_pattern(script: str) -> re.Pattern[str]:
     return re.compile(rf"/bin/{re.escape(script)}(?![\w.-])")
 
 
+def _shell_quotes(text: str) -> tuple[str, list[tuple[int, int, str]]]:
+    """Read ``text`` the way a POSIX shell pairs quotes, returning the escape-masked text and the quoted spans.
+
+    Outside quotes and inside double quotes a backslash escapes the next character; both are masked with ``_`` so an
+    escaped quote, space or ``$`` is never read as syntax. Inside single quotes a backslash is a literal character and
+    only the next single quote closes the value. An ANSI-C ``$'…'`` value is single-quoted but honours backslash
+    escapes, so ``$'it\\'s'`` closes at its last quote. A quote left open at the end of ``text`` starts no span.
+
+    Args:
+        text: One logical command line.
+
+    Returns:
+        ``(masked, spans)`` where ``masked`` has the same length as ``text`` and each span is
+        ``(start, end, quote_char)`` with ``end`` just past the closing quote.
+
+    Examples:
+        >>> _shell_quotes("a 'C:" + chr(92) + "' b")
+        ("a 'C:\\\\' b", [(2, 7, "'")])
+        >>> _shell_quotes('x ' + chr(92) + '"y" "z"')
+        ('x __y" "z"', [(5, 8, '"')])
+        >>> _shell_quotes("$'it" + chr(92) + "'s -- t' b")[1]
+        [(0, 13, "'")]
+    """
+    masked = list(text)
+    spans: list[tuple[int, int, str]] = []
+    quote, opened, index = "", 0, 0
+    while index < len(text):
+        char = text[index]
+        if quote == "'":
+            if char == "'":
+                spans.append((opened, index + 1, quote))
+                quote = ""
+        elif char == "\\" and index + 1 < len(text):
+            masked[index] = masked[index + 1] = "_"
+            index += 2
+            continue
+        elif quote:
+            # a double quote, or the single quote closing an ANSI-C ``$'…'`` value
+            if char == quote[-1]:
+                spans.append((opened, index + 1, quote[-1]))
+                quote = ""
+        elif char == "$" and text[index + 1 : index + 2] == "'":
+            quote, opened = "$'", index
+            index += 2
+            continue
+        elif char in "'\"":
+            quote, opened = char, index
+        index += 1
+    return "".join(masked), spans
+
+
+def _first_boundary(text: str, start: int = 0) -> int | None:
+    """Return the offset of the first shell boundary at or after ``start``, or None.
+
+    A boundary inside a quoted value is part of the value, except ``$(`` and a backtick inside double quotes, which
+    still start a command substitution. Quoted values are found over the whole of ``text``, so a scan that starts
+    inside a quoted path pairs its quotes correctly. Quotes and escapes are read the way the shell reads them (see
+    :func:`_shell_quotes`): an escaped quote opens or closes nothing, an escaped space is not whitespace, and a
+    backslash inside single quotes is a literal character.
+
+    Examples:
+        >>> _first_boundary(" --a | grep")
+        5
+        >>> _first_boundary(' --label "a -- b" --c')
+        >>> _first_boundary(' --label "a -- b" -- --c')
+        18
+        >>> _first_boundary('"/bin/x.py" --a -- --b', 10)
+        16
+        >>> _first_boundary(' --label "$(probe --child)" --valid')
+        10
+        >>> _first_boundary(" --label a" + chr(92) + " -- --phantom")
+        >>> _first_boundary(" --root 'C:" + chr(92) + "' --label 'a -- b' --phantom")
+    """
+    masked, quoted = _shell_quotes(text)
+    for boundary in _CMD_BOUNDARY_RE.finditer(masked, start):
+        quote = next((char for left, right, char in quoted if left <= boundary.start() < right), None)
+        if quote is None or (quote == '"' and boundary.group() in ("$(", "`")):
+            return boundary.start()
+    return None
+
+
 def command_scope(lines: list[str], start_idx: int, match_end: int) -> str:
     """Return the shell-command text owning the flags after an invocation match.
 
     Starts at ``match_end`` on line ``start_idx`` and follows ``\\`` line-continuations
-    onto subsequent lines. Truncates at the first shell boundary (pipe, ``;``, ``&&``,
-    ``$(``, backtick, redirect) so flags from a chained command are not captured.
+    onto subsequent lines. Truncates at the first shell boundary outside a quoted value (pipe, ``;``, ``&&``,
+    ``$(``, backtick, redirect, standalone ``--``) so flags from a chained command are not captured.
 
     Args:
         lines: All lines of the SKILL.md.
@@ -373,23 +494,21 @@ def command_scope(lines: list[str], start_idx: int, match_end: int) -> str:
         ' --a    --b '
         >>> command_scope(['x --a', 'unrelated --b'], 0, 1)
         ' --a'
+        >>> command_scope(['x --a -- --tb=short -v'], 0, 1)
+        ' --a '
+        >>> command_scope(['x --label "a \\\\', '  -- b" --phantom'], 0, 1)
+        ' --label "a    -- b" --phantom'
     """
-    segments: list[str] = []
-    idx = start_idx
-    tail = lines[idx][match_end:]
-    while True:
-        continued = tail.rstrip().endswith("\\")
-        body = tail.rstrip()[:-1] if continued else tail
-        boundary = _CMD_BOUNDARY_RE.search(body)
-        if boundary:
-            segments.append(body[: boundary.start()])
+    # Join the continued lines before looking for a boundary: a quoted value may open on one physical line and close
+    # on the next, and a per-line scan would read a ``--`` inside it as the end of the command.
+    bodies: list[str] = []
+    for line in lines[start_idx:]:
+        continued = line.rstrip().endswith("\\")
+        bodies.append(line.rstrip()[:-1] if continued else line)
+        if not continued:
             break
-        segments.append(body)
-        if not continued or idx + 1 >= len(lines):
-            break
-        idx += 1
-        tail = lines[idx]
-    return " ".join(segments) if len(segments) > 1 else segments[0]
+    joined = " ".join(bodies)
+    return joined[match_end : _first_boundary(joined, match_end)]
 
 
 def find_drift(plugins_dir: Path) -> list[DriftFinding]:

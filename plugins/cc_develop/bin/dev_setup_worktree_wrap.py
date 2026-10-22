@@ -46,7 +46,8 @@ _SETUP_TIMEOUT_S = 30
 
 def _tmp_dir() -> Path:
     """Session temp dir; never a hardcoded /tmp, which is absent on native Windows Python."""
-    return Path(os.environ.get("TMPDIR") or tempfile.gettempdir())
+    tmp_fallback = tempfile.gettempdir() if os.name == "nt" else "/tmp"  # noqa: S108 - shell default of ${TMPDIR:-/tmp}
+    return Path(os.environ.get("TMPDIR") or tmp_fallback)
 
 
 def _csid() -> str:

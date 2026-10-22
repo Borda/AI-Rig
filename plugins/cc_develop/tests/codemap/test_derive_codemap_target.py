@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import shutil
+import stat
+import subprocess
+import sys
+
 import derive_codemap_target
 import parse_target_qname
 import pytest
@@ -44,7 +49,7 @@ class TestDeriveTarget:
 
 
 class TestMain:
-    """Main emits shell assignments for eval."""
+    """Main preserves the legacy shell-assignment interface alongside session state."""
 
     @pytest.mark.parametrize(
         ("argv", "expected_out"),
@@ -56,8 +61,7 @@ class TestMain:
             ),
             # an unrecognised goal still emits both assignments, so eval leaves no stale value
             pytest.param(["fix the login timeout"], "TARGET_MODULE=''\nTARGET_FN=''\n", id="empty-target-empty-values"),
-            # callers wrap this script in ``eval "$(...)"``: argparse help on stdout would be executed as shell source
-            # and leave both variables unset
+            # Legacy shell-assignment consumers require --help to remain goal text, without a help banner.
             pytest.param(["--help"], "TARGET_MODULE=''\nTARGET_FN=''\n", id="help-blob-is-goal-text"),
             # the assertion is on exact stdout rather than on the module name alone. The regexes cannot carry ``;`` or a
             # space into a captured name, so any assertion about the module half holds whether or not ``shlex.quote``
@@ -84,6 +88,19 @@ class TestMain:
         assert "TARGET_MODULE=pkg.mod" in capsys.readouterr().out
 
 
+def test_abbreviated_keep_state_stays_goal_text(tmp_path, monkeypatch, capsys):
+    """`--keep` is goal text, not an abbreviation of `--keep-state`, so no session value is written for it.
+
+    A goal that happens to start with those characters must not silently switch the script from printing assignments to
+    writing sentinel files under an attacker- or typo-chosen prefix.
+    """
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    monkeypatch.setenv("CSID", "abbrev-test")
+    assert main(["--keep", "x", "pkg.a::b"]) == 0
+    assert "TARGET_MODULE=" in capsys.readouterr().out
+    assert not list(tmp_path.glob("x-*"))
+
+
 def test_qualified_regex_matches_sibling():
     """Verify the ``module::function`` pattern stays identical to parse_target_qname.py's.
 
@@ -92,3 +109,51 @@ def test_qualified_regex_matches_sibling():
     not mirrored in the other would silently split the spelling in two.
     """
     assert derive_codemap_target._QUALIFIED.pattern == parse_target_qname._QNAME_RE.pattern
+
+
+@pytest.mark.parametrize(
+    ("goal", "expected"),
+    [
+        pytest.param("extend pkg.mod::run", ("pkg.mod", "run"), id="qualified-state"),
+        pytest.param("$(touch pwned)", ("", ""), id="inert-no-target"),
+    ],
+)
+def test_keep_state_writes_private_values(tmp_path, monkeypatch, capsys, goal, expected):
+    """State mode writes both values, including empty values that clear stale state, without shell source."""
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    monkeypatch.setenv("CSID", "codemap-test")
+    for name in ("target-module", "target-fn"):
+        (tmp_path / f"target-{name}-codemap-test").write_text("stale\n", encoding="utf-8")
+    assert main(["--keep-state", "target", goal]) == 0
+    assert capsys.readouterr().out == ""
+    for name, value in zip(("target-module", "target-fn"), expected, strict=True):
+        path = tmp_path / f"target-{name}-codemap-test"
+        assert path.read_bytes() == (value + "\n").encode()
+        if sys.platform != "win32":
+            assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert not (tmp_path / "pwned").exists()
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash required for the documented sentinel reader")
+def test_keep_state_bash_read_round_trip(tmp_path, monkeypatch):
+    """Real shell reads preserve values and clear an empty function instead of retaining stale state."""
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    monkeypatch.setenv("CSID", "codemap-test")
+    assert main(["--keep-state", "target", "pkg.mod $(touch pwned)"]) == 0
+    result = subprocess.run(
+        [
+            shutil.which("bash"),
+            "-c",
+            'IFS= read -r MOD < "$1" || MOD=""; IFS= read -r FN < "$2" || FN=""; printf "%s\\n%s\\n" "$MOD" "$FN"',
+            "reader",
+            str(tmp_path / "target-target-module-codemap-test"),
+            str(tmp_path / "target-target-fn-codemap-test"),
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert (result.returncode, result.stdout) == (0, "pkg.mod\n\n")
+    assert not (tmp_path / "pwned").exists()

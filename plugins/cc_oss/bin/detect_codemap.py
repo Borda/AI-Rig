@@ -327,7 +327,8 @@ def main(argv: list[str] | None = None) -> int:
     force_off, strict = _apply_arguments_flags(arguments, force_off, strict)
 
     csid = os.environ.get("CSID") or os.environ.get("CLAUDE_CODE_SESSION_ID") or "shared"
-    tmpdir = os.environ.get("TMPDIR") or tempfile.gettempdir()
+    tmp_fallback = tempfile.gettempdir() if os.name == "nt" else "/tmp"  # noqa: S108 - shell default of ${TMPDIR:-/tmp}
+    tmpdir = os.environ.get("TMPDIR") or tmp_fallback
     out_file = Path(tmpdir) / f"{prefix}-codemap-enabled-{csid}"
     currency_file = Path(tmpdir) / f"{prefix}-codemap-currency-{csid}"
     # Distinct from `enabled`: the user asking for --no-codemap is not the same as codemap

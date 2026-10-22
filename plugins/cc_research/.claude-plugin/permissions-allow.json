@@ -9,7 +9,6 @@
   "Bash(date:*)",
   "Bash(diff:*)",
   "Bash(echo:*)",
-  "Bash(eval:*)",
   "Bash(find .cache*)",
   "Bash(find .experiments*)",
   "Bash(find .notes*)",

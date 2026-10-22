@@ -109,7 +109,7 @@ Writes merged `permissions.allow` and `permissions.deny` arrays via `merge_setti
 
 ```bash
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/merge_settings_permissions.py" --allow "$PLUGIN_ROOT/.claude-plugin/permissions-allow.json" --drop-allow 'Bash(gh api repos/*:*)' --drop-allow 'Bash(claude:*)' --drop-allow 'Bash(find:*)' --drop-allow 'Bash(node:*)' --drop-allow 'Bash(sed:*)' --deny "$PLUGIN_ROOT/.claude-plugin/permissions-deny.json" || { printf "! permissions merge failed — settings.json unchanged\n"; exit 1; }  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/merge_settings_permissions.py" --allow "$PLUGIN_ROOT/.claude-plugin/permissions-allow.json" --drop-allow 'Bash(gh api repos/*:*)' --drop-allow 'Bash(claude:*)' --drop-allow 'Bash(find:*)' --drop-allow 'Bash(node:*)' --drop-allow 'Bash(sed:*)' --drop-allow 'Bash(eval:*)' --deny "$PLUGIN_ROOT/.claude-plugin/permissions-deny.json" || { printf "! permissions merge failed — settings.json unchanged\n"; exit 1; }  # timeout: 5000
 ```
 
 Writeback happens in-bash above (atomic rename). Report from the script's two output lines: "Added N new permissions.allow entries (M already present)." plus whether the exact obsolete repository API rule was removed (`dropped`), and "Added N new permissions.deny entries (M already present)."

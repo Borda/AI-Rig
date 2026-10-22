@@ -343,5 +343,6 @@ def test_foundry_setup_passes_the_retirement_flags() -> None:
         "Bash(find:*)",
         "Bash(node:*)",
         "Bash(sed:*)",
+        "Bash(eval:*)",
     ]
     assert '--retire-deny-file "$PLUGIN_ROOT/.claude-plugin/permissions-deny-retired.json"' in calls[0]

@@ -162,8 +162,8 @@ def test_final_gate_reruns_in_full_after_any_fix(skill: str, start: str) -> None
     a full run; a green full suite must be the last test evidence, and the cap never reports green.
     """
     gate = _section(f"{skill}/SKILL.md", start, "## Final Report")
-    assert 'IFS= read -r TEST_CMD < "${TMPDIR:-/tmp}/dev-test-cmd-${CSID}"' in gate
-    assert gate.count('eval "$TEST_CMD"') == 1
+    assert gate.count('python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_tests.py" suite') == 1
+    assert 'eval "$TEST_CMD"' not in gate
     assert "any fix to a full-suite failure" in gate
     assert "then rerun this block in full" in gate
     assert "Max 3 gate iterations" in gate

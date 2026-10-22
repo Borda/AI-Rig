@@ -208,6 +208,34 @@ def test_report_occurrences_preserved_before_scope(tmp_path: Path, capsys: pytes
         VALIDATOR._validate_code_remediate_report_coverage(historical, tmp_path, occurrence_contract=True)
 
 
+def test_current_clean_review_shape_yields_no_remediation_obligations(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Admit a clean current review report whose optional fields use null and empty-list forms."""
+    report = {
+        "schema_version": 3,
+        "artifact_path": ".reports/codex/code-review/pr-1/run-001/result.json",
+        "checks_failed": [],
+        "follow_up": [],
+        "metadata": {
+            "review_status": None,
+            "review_decision": {"required_next_work": None},
+            "review_validation": {"schema_version": 1, "candidates": []},
+            "source_findings": [],
+            "source_finding_mapping": [],
+            "confidence_recovery": {"remaining_limits": []},
+        },
+    }
+    (tmp_path / "findings-input.txt").write_text(json.dumps(report), encoding="utf-8", newline="\n")
+
+    assert HELPER.main(["obligations", "--run", str(tmp_path)]) == 0
+    capsys.readouterr()
+    assert json.loads((tmp_path / "report-obligations.json").read_text(encoding="utf-8")) == {
+        "schema_version": 1,
+        "sources": [],
+    }
+
+
 def test_review_context_does_not_require_action_items(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """Keep repeated reviewer limitations out of selection while retaining their original evidence."""
     report = {

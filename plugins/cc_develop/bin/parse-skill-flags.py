@@ -419,12 +419,12 @@ def _keep_path(prefix: str, csid: str, out_file: str | None, tmp: Path) -> Path:
         # Falling back to the prefix path here would exit 0 while writing somewhere the caller does not read, losing
         # the keep value silently. A caller that names the option owes a value.
         raise _StateError("--out-file given without a value", 2)
-    # Callers spell the same directory `${TMPDIR:-/tmp}`, which is not what this process sees when TMPDIR is unset:
-    # tempfile.gettempdir() answers TEMP/TMP on native Windows and may answer a private per-session dir on macOS.
-    # Accepting the shell's spelling as a root too keeps a caller-computed --out-file from being rejected.
-    shell_tmp = Path(os.environ.get("TMPDIR") or "/tmp")  # noqa: S108 - POSIX fallback when TMPDIR is unset
+    # `tmp` is the shell's `${TMPDIR:-/tmp}`. With TMPDIR unset, tempfile.gettempdir() answers TEMP/TMP instead (on
+    # native Windows, and on POSIX when either is set); accepting that platform dir as a root too keeps an --out-file
+    # computed there, such as one under pytest's tmp_path, from being rejected.
+    platform_tmp = Path(os.environ.get("TMPDIR") or tempfile.gettempdir())
     sentinel = Path(out_file)
-    if not _within(sentinel, (tmp, shell_tmp, Path.cwd())):
+    if not _within(sentinel, (tmp, platform_tmp, Path.cwd())):
         # This script creates parent directories, so an unconstrained path would let a caller — or a blob that
         # reached argv — build a tree anywhere the process can write.
         raise _StateError(f"--out-file {sentinel} is outside the temp dir and the working directory", 2)
@@ -461,7 +461,8 @@ def _persist_state(prefix: str, values: dict[str, str], keep_items: str, out_fil
             _CONTRACT.unlink(missing_ok=True)
         except OSError as exc:
             raise _StateError(f"cannot clear {_CONTRACT}: {exc}", 1) from exc
-    tmp = Path(os.environ.get("TMPDIR") or tempfile.gettempdir())
+    tmp_fallback = tempfile.gettempdir() if os.name == "nt" else "/tmp"  # noqa: S108 - shell default of ${TMPDIR:-/tmp}
+    tmp = Path(os.environ.get("TMPDIR") or tmp_fallback)
     targets = {tmp / f"{prefix}-{suffix}-{csid}": value for suffix, value in values.items()}
     for path, value in targets.items():
         _write_sentinel(path, value)

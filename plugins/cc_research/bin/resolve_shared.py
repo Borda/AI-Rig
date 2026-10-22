@@ -217,7 +217,8 @@ def _emit_docs(shared: Path, docs: list[str]) -> int:
 def _persist(slug: str, path: str) -> int:
     """Write ``path`` to ``<tmp>/<slug>-<CSID>`` and return ``0``, or ``1`` when the write fails."""
     csid = os.environ.get("CSID") or os.environ.get("CLAUDE_CODE_SESSION_ID") or "shared"
-    sentinel = Path(os.environ.get("TMPDIR") or tempfile.gettempdir()) / f"{slug}-{csid}"
+    tmp_fallback = tempfile.gettempdir() if os.name == "nt" else "/tmp"  # noqa: S108 - shell default of ${TMPDIR:-/tmp}
+    sentinel = Path(os.environ.get("TMPDIR") or tmp_fallback) / f"{slug}-{csid}"
     try:
         # Never write through a pre-planted symlink at the sentinel path; the private writer replaces it.
         write_private_text(sentinel, path + "\n")

@@ -962,6 +962,8 @@ def derive_handoff(
                             if (run / "batch-inventory.json").is_file()
                             else ("pr-routing.json" if (run / "pr-routing.json").is_file() else "local-checkout.json")
                             if metadata["scope"] == "pr"
+                            else "gates.json"
+                            if metadata["scope"] == "commit"
                             else "local-source/source-snapshot.json"
                         )
                         rows.insert(
@@ -980,7 +982,9 @@ def derive_handoff(
                 notes = report.read_text(encoding="utf-8")
                 source = f"## Reviewed Source\n\nReviewed commit: {value}"
                 if "## Reviewed Source" not in notes:
-                    report.write_text(notes + "\n\n" + source + "\n", encoding="utf-8", newline="\n")
+                    # Append without rewriting authored bytes through universal-newline translation.
+                    with report.open("ab") as stream:
+                        stream.write(("\n\n" + source + "\n").encode("utf-8"))
                 elif source not in notes:
                     raise DeriveError("review-commit-report-mismatch")
             except (OSError, UnicodeError) as error:
@@ -1313,7 +1317,10 @@ def _obligations_action(arguments: argparse.Namespace) -> dict[str, Any]:
     run = arguments.run.resolve()
     validator = _load_module("codex_rig_validate_artifacts", "validate-artifacts.py")
     report = _load(run / "findings-input.txt")
-    if report.get("schema_version") != 3 or report.get("metadata", {}).get("review_status", "assessed") != "assessed":
+    if report.get("schema_version") != 3 or report.get("metadata", {}).get("review_status", "assessed") not in {
+        None,
+        "assessed",
+    }:
         raise DeriveError("code-remediate-report-input-not-assessed")
     payload = {
         "schema_version": 1,

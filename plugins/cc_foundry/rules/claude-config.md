@@ -81,7 +81,7 @@ RUN_DIR=$(cat "${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}" 2>/dev/null || echo "
 `read` takes the first line only, exits non-zero on a file without trailing newline — safe here since sentinel writes use `echo` (single line + newline); always append `|| VAR=<default>` for the missing-file case. Multi-line payloads (JSON blobs, report content) aren't sentinels — keep `$(cat ...)` there, expect the prompt.
 
 - `export` (not plain assignment) — python/node children invoked in the same block must see `CSID`
-- Python scripts: `_CSID = os.environ.get("CSID") or os.environ.get("CLAUDE_CODE_SESSION_ID") or "shared"` — never `os.getppid()`; temp base via `os.environ.get("TMPDIR") or tempfile.gettempdir()`, never hardcoded `/tmp`
+- Python scripts: `_CSID = os.environ.get("CSID") or os.environ.get("CLAUDE_CODE_SESSION_ID") or "shared"` — never `os.getppid()`; temp base via `os.environ.get("TMPDIR") or (tempfile.gettempdir() if os.name == "nt" else "/tmp")` (= shell `${TMPDIR:-/tmp}`)
 - Applies to every new sentinel added to any skill, hook, or bin script
 - Args-derived suffixes alone (e.g. `${CLEAN_ARGS}`, a PR number) are not sufficient — two sessions in two *different* projects invoking the same skill with the same args still collide; `-${CSID}` is still required alongside them, not instead of them
 - Cleanup (`rm -f`) at skill completion must target the exact session-scoped filename, never a glob that could match another session's sentinel of the same base name

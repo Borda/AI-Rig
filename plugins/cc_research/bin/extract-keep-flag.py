@@ -247,13 +247,13 @@ def _resolve_sentinel_path(slug: str, csid: str, out_file: str, out_file_named: 
         return None
     if not out_file:
         return tmp / f"{slug}-keep-items-{csid}"
-    # Callers spell the same directory `${TMPDIR:-/tmp}`, which is not what this process sees
-    # when TMPDIR is unset: tempfile.gettempdir() answers TEMP/TMP on native Windows and may
-    # answer a private per-session dir on macOS. Accepting the shell's spelling as a root too
-    # keeps a caller-computed --out-file from being rejected as "outside the temp dir".
-    shell_tmp = Path(os.environ.get("TMPDIR") or "/tmp")  # noqa: S108 - POSIX fallback when TMPDIR is unset
+    # `tmp` is the shell's `${TMPDIR:-/tmp}`. With TMPDIR unset, tempfile.gettempdir() answers
+    # TEMP/TMP instead (on native Windows, and on POSIX when either is set); accepting that
+    # platform dir as a root too keeps an --out-file computed there, such as one under
+    # pytest's tmp_path, from being rejected as "outside the temp dir".
+    platform_tmp = Path(os.environ.get("TMPDIR") or tempfile.gettempdir())
     sentinel = Path(out_file)
-    if not _within(sentinel, (tmp, shell_tmp, Path.cwd())):
+    if not _within(sentinel, (tmp, platform_tmp, Path.cwd())):
         # Every real caller writes into the session temp dir or the project it runs in. The
         # value is fixed skill text today, but this script creates parent directories, so an
         # unconstrained path would let a future caller — or a blob that reached argv — build
@@ -317,7 +317,8 @@ def main(argv: list[str]) -> int:
             print(f"extract-keep-flag: cannot clear {_CONTRACT}: {exc}", file=sys.stderr)
             return 1
 
-    tmp = Path(os.environ.get("TMPDIR") or tempfile.gettempdir())
+    tmp_fallback = tempfile.gettempdir() if os.name == "nt" else "/tmp"  # noqa: S108 - shell default of ${TMPDIR:-/tmp}
+    tmp = Path(os.environ.get("TMPDIR") or tmp_fallback)
     sentinel = _resolve_sentinel_path(slug, csid, out_file, "--out-file" in argv[3:], tmp)
     if sentinel is None:
         return 2

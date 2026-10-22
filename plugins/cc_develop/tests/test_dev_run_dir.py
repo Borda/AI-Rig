@@ -59,8 +59,21 @@ class TestSentinelDirResolution:
         monkeypatch.setenv("TMPDIR", str(tmp_path))
         assert dev_run_dir._sentinel_dir() == tmp_path
 
-    def test_falls_back_when_tmpdir_unset(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Use the platform temporary directory when no override is configured."""
+    @pytest.mark.skipif(os.name == "nt", reason="native Windows has no shell /tmp; it keeps tempfile.gettempdir()")
+    def test_falls_back_to_shell_tmp_when_tmpdir_unset(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Use ``/tmp``, the shell's ``${TMPDIR:-/tmp}`` default, even when ``TEMP`` or ``TMP`` is set.
+
+        ``tempfile.gettempdir()`` honours ``TEMP`` and ``TMP`` before ``/tmp``; a skill block that wrote the runner
+        sentinel under ``/tmp`` would then never be found by this script, and the test wrapper would report no run.
+        """
+        monkeypatch.delenv("TMPDIR", raising=False)
+        monkeypatch.setenv("TEMP", str(tmp_path))
+        monkeypatch.setenv("TMP", str(tmp_path))
+        assert dev_run_dir._sentinel_dir() == Path("/tmp")
+
+    @pytest.mark.skipif(os.name != "nt", reason="the gettempdir() fallback applies on native Windows only")
+    def test_falls_back_to_platform_temp_on_windows(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Use the platform temporary directory on native Windows when no override is configured."""
         monkeypatch.delenv("TMPDIR", raising=False)
         assert dev_run_dir._sentinel_dir() == Path(tempfile.gettempdir())
 

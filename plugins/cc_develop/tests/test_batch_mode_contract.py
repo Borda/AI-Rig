@@ -48,7 +48,7 @@ def _bash_fences(text: str) -> list[str]:
 # Session-level vars established once by runner-detection.md / the calling skill's own earlier
 # steps, out of scope for this fence-local check — never sentinel-tracked by design, and never the
 # signature this check targets (H3/M1/M2/M8/N9: "fence consumes a var nothing assigns or reads back
-# IN THAT FENCE"). CSID/TMPDIR/IFS are shell/env builtins, not skill-derived state. RUNNER
+# IN THAT FENCE"). CSID/TMPDIR/IFS/RANDOM are shell/env builtins, not skill-derived state. RUNNER
 # deliberately NOT here (round-5 F2/F3 — same fix as the foundry copy): it now carries its own
 # sentinel and every consuming fence reads it back locally. ARGUMENTS is Claude Code's own
 # skill-invocation substitution — the harness splices the literal argument text into every fence
@@ -61,6 +61,7 @@ _FENCE_LOCAL_SAFE_VARS = frozenset(
         "CSID",
         "TMPDIR",
         "PPID",
+        "RANDOM",
         "CLAUDE_CODE_SESSION_ID",
         "IFS",
         "PYTEST_CMD",

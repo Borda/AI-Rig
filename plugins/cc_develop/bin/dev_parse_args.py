@@ -539,7 +539,8 @@ def _tmp_dir() -> Path:
 
     Per-file session suffixing happens in ``_per_skill_filename``/``write_skill_files``, not here.
     """
-    return Path(os.environ.get("TMPDIR") or tempfile.gettempdir())
+    tmp_fallback = tempfile.gettempdir() if os.name == "nt" else "/tmp"  # noqa: S108 - shell default of ${TMPDIR:-/tmp}
+    return Path(os.environ.get("TMPDIR") or tmp_fallback)
 
 
 def write_skill_files(skill: str, arguments: str, tmp_dir: Path | None = None) -> dict[str, str]:

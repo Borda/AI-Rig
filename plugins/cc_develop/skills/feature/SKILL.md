@@ -200,10 +200,10 @@ If free-text description provided: use Grep tool (pattern `<keyword>`, glob `**/
 # timeout: 5000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r CLEAN_ARGS < "${TMPDIR:-/tmp}/dev-feature-clean-args-${CSID}" 2>/dev/null || CLEAN_ARGS=""  # all declared flags stripped — a flag value like `--plan x.md` would otherwise outrank the goal's module
-eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/derive_codemap_target.py" "$CLEAN_ARGS")"  # timeout: 5000 — module.path or module.path::fn; both empty for net-new, so only central baseline runs
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/derive_codemap_target.py" --keep-state dev-feature -- "$CLEAN_ARGS" || exit $?  # timeout: 5000 — module.path or module.path::fn; both empty for net-new, so only central baseline runs
+IFS= read -r TARGET_MODULE < "${TMPDIR:-/tmp}/dev-feature-target-module-${CSID}" 2>/dev/null || TARGET_MODULE=""
+IFS= read -r TARGET_FN < "${TMPDIR:-/tmp}/dev-feature-target-fn-${CSID}" 2>/dev/null || TARGET_FN=""
 export TARGET_MODULE TARGET_FN
-echo "$TARGET_MODULE" > ${TMPDIR:-/tmp}/dev-feature-target-module-${CSID}   # persist — reloaded by rdeps block (bash state lost between Bash() calls)
-echo "$TARGET_FN"     > ${TMPDIR:-/tmp}/dev-feature-target-fn-${CSID}
 ```
 
 > Pure net-new feature (no existing module/function named) → both empty → only `central` baseline runs, correct: nothing to compute caller impact against yet.
@@ -374,11 +374,12 @@ if [ -n "$DEMO_SCRIPT" ]; then
 else
     [ -n "$PYTEST_CMD" ] && [ -n "$MODULE_PATH" ] || { echo "! BLOCKED — PYTEST_CMD or MODULE_PATH empty; re-run Project Detection and resolve MODULE_PATH"; exit 1; }
     echo "$MODULE_PATH" > ${TMPDIR:-/tmp}/dev-feature-module-path-${CSID}  # later blocks reload it — bash state is lost between calls
-    eval "$PYTEST_CMD --collect-only --doctest-modules \"\$MODULE_PATH\" -q" 2>&1 | tail -5; COLLECT_EXIT=$?
+    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_tests.py" pytest --tail 5 -- --collect-only --doctest-modules "$MODULE_PATH" -q; COLLECT_EXIT=$?
     if [ "$COLLECT_EXIT" -eq 5 ]; then
         echo "⚠ GATE FAIL: no demo tests collected — demo file missing or doctest malformed"
         GATE_EXIT=1
     elif [ "$COLLECT_EXIT" -ne 0 ]; then
+        [ "$COLLECT_EXIT" -eq 64 ] && echo "! test runner refused to start (exit 64) — no test ran; re-run Project Detection"
         echo "⚠ Cannot collect doctests — check module for import errors (collect exit $COLLECT_EXIT)"
         GATE_EXIT=1
     fi
@@ -388,9 +389,14 @@ else
 fi
 # run — doctest form needs COLLECT_EXIT=0; example-script form has DEMO_SCRIPT set, COLLECT_EXIT=5 by design
 if [ "${COLLECT_EXIT:-1}" -eq 0 ]; then
-    eval "$PYTEST_CMD --doctest-modules \"\$MODULE_PATH\" -v" 2>&1 | tail -10; GATE_EXIT=$?
-    # 127 = runner missing, 4 = usage/bad node: neither is a red demo — fail closed, never fall to GATE OK
-    case "$GATE_EXIT" in 127|4) echo "! GATE ERROR: runner exit $GATE_EXIT (command not found / usage error) — not a red demo; fix PYTEST_CMD/MODULE_PATH"; echo "$GATE_EXIT" > ${TMPDIR:-/tmp}/dev-feature-gate-exit-${CSID}; exit 1;; esac
+    VERDICT_FILE="${TMPDIR:-/tmp}/dev-tests-verdict-${CSID}"
+    export DEV_TESTS_VERDICT_NONCE="$$.$RANDOM.$RANDOM"
+    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_tests.py" pytest --tail 10 -- --doctest-modules "$MODULE_PATH" -v; GATE_EXIT=$?
+    VERDICT=""; [ -f "$VERDICT_FILE" ] && [ ! -L "$VERDICT_FILE" ] && [ -O "$VERDICT_FILE" ] && IFS= read -r VERDICT < "$VERDICT_FILE"
+    # wrapper writes failed NONCE only for a pytest failure with a summary: exit 1 without it = interpreter died first, 70 = never a red demo
+    [ "$GATE_EXIT" -eq 1 ] && [ "$VERDICT" != "failed $DEV_TESTS_VERDICT_NONCE" ] && { echo "! exit 1 but no failed verdict from the wrapper — no test ran"; GATE_EXIT=70; }
+    # only 0 (passed) and 1 (failed = red) are verdicts; 64 runner refused, 2/3 interrupted/internal, 4 usage, 5 none collected are not a red demo — fail closed, never fall to GATE OK
+    case "$GATE_EXIT" in 0|1) ;; *) echo "! GATE ERROR: runner exit $GATE_EXIT (refused to start, interrupted, internal or usage error) — not a red demo; fix PYTEST_CMD/MODULE_PATH"; echo "$GATE_EXIT" > ${TMPDIR:-/tmp}/dev-feature-gate-exit-${CSID}; exit 1;; esac
     if [ "${GATE_EXIT:-0}" -eq 0 ]; then
         echo "⚠ GATE FAIL: demo passed (exit 0) — feature may already exist; revisit Step 1"
     else
@@ -398,7 +404,12 @@ if [ "${COLLECT_EXIT:-1}" -eq 0 ]; then
     fi
     echo "$GATE_EXIT" > ${TMPDIR:-/tmp}/dev-feature-gate-exit-${CSID}
 elif [ -n "$DEMO_SCRIPT" ]; then
+    # a broken interpreter exits 1 before the demo starts — prove python runs a script so exit 1 can only come from the demo
+    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_dir.py" --help > /dev/null 2>&1 || { echo "! GATE ERROR: python cannot start — demo not run; fix the interpreter"; exit 1; }
+    # pipefail (set above) keeps the status of the demo, not of tail, and no log file is written under TMPDIR
     python "$DEMO_SCRIPT" 2>&1 | tail -5; GATE_EXIT=$?
+    # only 0 (passed) and 1 (failed = red) are verdicts; a missing script (2), usage error or signal is not a red demo
+    case "$GATE_EXIT" in 0|1) ;; *) echo "! GATE ERROR: demo script exit $GATE_EXIT (missing, interrupted or usage error) — not a red demo; fix DEMO_SCRIPT"; echo "$GATE_EXIT" > ${TMPDIR:-/tmp}/dev-feature-gate-exit-${CSID}; exit 1;; esac
     if [ "${GATE_EXIT:-0}" -eq 0 ]; then
         echo "⚠ GATE FAIL: demo passed (exit 0) — feature may already exist; revisit Step 1"
     else
@@ -470,10 +481,11 @@ Start from Step 2 demo — already failing, becomes first target. For each piece
 
    ```bash
    # timeout: 600000
+   export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
    set -o pipefail  # PIPESTATUS is bash-only, absent under zsh (Claude Code's Bash tool login shell on macOS)
-   eval "$PYTEST_CMD --doctest-modules <module>.py -v --tb=short" 2>&1 | tail -10
+   python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_tests.py" pytest --tail 10 -- --doctest-modules <module>.py -v --tb=short
    GATE_EXIT=$?
-   eval "$PYTEST_CMD --tb=short <test_file>::<test_name> -v"
+   python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_tests.py" pytest -- --tb=short <test_file>::<test_name> -v
    python examples/demo_<feature>.py 2>&1 | tail -5
    ```
 
@@ -602,10 +614,8 @@ Agent must Read each affected source file before writing docstrings — never wr
 ```bash
 # timeout: 600000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r PYTEST_CMD < "${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}" 2>/dev/null || PYTEST_CMD=""
-[ -n "$PYTEST_CMD" ] || { echo "! BLOCKED — PYTEST_CMD unresolved; re-run Project Detection"; exit 1; }
 set -o pipefail  # PIPESTATUS is bash-only, absent under zsh (Claude Code's Bash tool login shell on macOS)
-eval "$PYTEST_CMD --doctest-modules <target_module> -v" 2>&1 | tail -20
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_tests.py" pytest --tail 20 -- --doctest-modules <target_module> -v
 GATE_EXIT=$?
 ```
 
@@ -625,12 +635,10 @@ Execute Branch Safety Guard, Quality Stack, Codex Pre-pass, Progressive Review L
 ```bash
 # timeout: 600000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r TEST_CMD < "${TMPDIR:-/tmp}/dev-test-cmd-${CSID}" 2>/dev/null || TEST_CMD=""
-[ -n "$TEST_CMD" ] || { echo "! BLOCKED — TEST_CMD sentinel missing; re-run Project Detection"; exit 1; }
-eval "$TEST_CMD"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_tests.py" suite
 ```
 
-**Branch Safety Guard — no test suite**: no test suite found (the full-suite run above exits 5 — pytest collected 0 tests; a missing `$TEST_CMD` is the `! BLOCKED` above, never this branch) → log `⚠ No test suite detected — Branch Safety Guard weakened`, require explicit user confirmation before proceeding past guard.
+**Branch Safety Guard — no test suite**: no test suite found (the full-suite run above exits 5 — pytest collected 0 tests; a missing test-command sentinel produces the unresolved notice above, never this branch) → log `⚠ No test suite detected — Branch Safety Guard weakened`, require explicit user confirmation before proceeding past guard.
 
 ## Final Report
 

@@ -30,7 +30,7 @@ RETIRED_DENY_PLUGINS = ["cc_foundry"]
 TRIMMED_ALLOW_PLUGINS = ["cc_oss", "cc_develop", "cc_research"]
 GUARDED_ALLOW_RULES = {NEW_RULE, "Bash(gh api graphql:*)", "Bash(git branch:*)", "Bash(git tag:*)"}
 #: Exact allow rules each plugin's setup removes from user settings before merging its own list.
-RETIRED_SHELL_RULES = {"Bash(find:*)", "Bash(node:*)", "Bash(claude:*)", "Bash(sed:*)"}
+RETIRED_SHELL_RULES = {"Bash(find:*)", "Bash(node:*)", "Bash(claude:*)", "Bash(sed:*)", "Bash(eval:*)"}
 RETIRED_RULES = {plugin: {OLD_RULE, *RETIRED_SHELL_RULES} for plugin in PLUGINS}
 RETIRED_RULES["cc_oss"].add(OVERLAY_INSTALL_RULE)
 NARROWED_SHELL_RULES = {
@@ -169,13 +169,13 @@ def test_shipped_allow_rules_preserve_the_foundry_only_guard_boundary(plugin: st
 
 @pytest.mark.parametrize("plugin", PLUGINS)
 def test_shell_permissions_keep_only_scoped_commands(plugin: str) -> None:
-    """Retired command families must prompt while Python, eval and scoped utilities stay available."""
+    """Retired command families, eval included, must prompt while Python and scoped utilities stay available."""
     rules = set(_plugin_json(plugin, "permissions-allow.json"))
     assert rules.isdisjoint(RETIRED_SHELL_RULES)
     assert {rule for rule in rules if rule.startswith(("Bash(find", "Bash(node", "Bash(claude", "Bash(sed"))} == set(
         NARROWED_SHELL_RULES[plugin]
     )
-    assert {"Bash(eval:*)", "Bash(python:*)", "Bash(node --check:*)", "Bash(find .temp*)"} <= rules
+    assert {"Bash(python:*)", "Bash(node --check:*)", "Bash(find .temp*)"} <= rules
     assert not any(
         "sed -i" in rule or ("find " in rule and any(flag in rule for flag in ["-delete", "-exec"])) for rule in rules
     )
@@ -348,7 +348,6 @@ def _apply_setup_merge(
                         "Bash(node --check:*)",
                         "Bash(sed -n custom)",
                         "Bash(claude plugin list)",
-                        "Bash(eval:*)",
                         "Bash(python:*)",
                     ]
                 },

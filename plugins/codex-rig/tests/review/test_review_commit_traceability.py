@@ -8,9 +8,85 @@ from pathlib import Path
 import pytest
 from _platform import FILE_SYMLINKS_AVAILABLE
 from test_final_handoff import _load_finalizer, _load_shared_validator
+from test_gate_source import _git, _initialize_repository, _python_command, _run_lint_gate
 from test_remediation_finalize import _load_helper
 from test_review_batches import _batch_inputs, _prepare_batches_in_process
 from test_review_completion_gate import _assessed_pr
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("gate_route", ["explicit-worktree", "current-directory", "failed-command"])
+def test_commit_finalization_uses_observed_gate_source(tmp_path: Path, gate_route: str) -> None:
+    """Finalize a commit review without optional native or batched reviewer receipts."""
+    run = _assessed_pr.__wrapped__(tmp_path)
+    repository = tmp_path / "committed-source"
+    repository.mkdir()
+    head = _initialize_repository(repository)
+    _git(repository, "checkout", "--detach", head)
+    checked = _run_lint_gate(
+        repository,
+        run,
+        head,
+        _python_command("raise SystemExit(1)" if gate_route == "failed-command" else "pass"),
+        worktree=repository if gate_route != "current-directory" else None,
+    )
+    assert checked.returncode == (1 if gate_route == "failed-command" else 0), checked.stderr
+    assert not (run / "reviewed-commit.txt").exists()
+    assert not (run / "batch-inventory.json").exists()
+    result = json.loads((run / "result.json").read_text(encoding="utf-8"))
+    handoff = json.loads((run / "final-handoff.json").read_text(encoding="utf-8"))
+    metadata = result["metadata"]
+    metadata["scope"] = "commit"
+    metadata.pop("reviewed_commit_sha")
+    snapshot = handoff["tables"][0]
+    snapshot["heading"] = "Review Snapshot"
+    removed = next(row for row in snapshot["rows"] if row["cells"][0] == "Commit")
+    snapshot["rows"].remove(removed)
+    snapshot["rows"][0]["cells"] = ["Scope", "commit"]
+    snapshot["rows"][1]["cells"] = ["Revision", f"diff sha256:{metadata['review_input_sha256']}"]
+    snapshot["rows"][2]["cells"] = ["CI", "unavailable"]
+    handoff["source_records"] = [
+        record for record in handoff["source_records"] if record["id"] not in removed["source_ids"]
+    ]
+    count = len(handoff["source_records"])
+    handoff["source_coverage"].update(source_records_total=count, represented_source_records_total=count)
+    derived = _load_helper().derive_handoff(run, metadata, handoff, result["confidence"], result["artifact_path"])
+    assert metadata["reviewed_commit_sha"] == head
+    assert snapshot["rows"][-2]["cells"] == ["Commit", head]
+    assert (
+        next(record for record in derived["source_records"] if record["id"] == "reviewed-commit")["evidence"]
+        == "gates.json"
+    )
+    assert f"Reviewed commit: {head}" in (run / "review-notes.md").read_text(encoding="utf-8")
+    assert f"| Commit | {head} |" in _load_finalizer().render_handoff(derived, report_root=run)
+    _load_shared_validator()._validate_code_review_final_handoff(
+        result, derived, candidate=True, fresh_candidate=True, out_dir=run
+    )
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("damage", ["wrong-expected", "dirty-source", "no-observations", "conflicting-sidecar"])
+def test_commit_identity_rejects_unverified_gate_requests(tmp_path: Path, damage: str) -> None:
+    """An expected SHA alone must never stand in for observed clean committed source."""
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    head = _initialize_repository(repository)
+    run = tmp_path / "run"
+    if damage == "dirty-source":
+        (repository / "tracked.txt").write_text("dirty\n", encoding="utf-8")
+    checked = _run_lint_gate(
+        repository, run, "0" * 40 if damage == "wrong-expected" else head, _python_command("pass"), repository
+    )
+    assert checked.returncode == (1 if damage in {"wrong-expected", "dirty-source"} else 0), checked.stderr
+    if damage == "no-observations":
+        gates = json.loads((run / "gates.json").read_text(encoding="utf-8"))
+        for check in gates["checks"]:
+            check.pop("source", None)
+        (run / "gates.json").write_text(json.dumps(gates), encoding="utf-8")
+    if damage == "conflicting-sidecar":
+        (run / "reviewed-commit.txt").write_text("0" * 40 + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="review-commit-"):
+        _load_finalizer().review_commit_sha(run, "commit")
 
 
 @pytest.mark.parametrize(

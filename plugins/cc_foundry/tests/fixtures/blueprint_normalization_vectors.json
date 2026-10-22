@@ -440,6 +440,106 @@
       "expected": false,
       "id": "function-with-safe-body",
       "input": "_q() { codemap-py query \"$@\"; }"
+    },
+    {
+      "expected": true,
+      "id": "zsh-commands-table-rebind",
+      "input": "commands[ruff]=/usr/bin/true\nruff x"
+    },
+    {
+      "expected": true,
+      "id": "builtin-hash-rebinds-name",
+      "input": "builtin hash ruff=/bin/rm\nruff x"
+    },
+    {
+      "expected": true,
+      "id": "hash-rebinds-name-zsh",
+      "input": "hash ruff=/bin/rm\nruff -rf build"
+    },
+    {
+      "expected": true,
+      "id": "hash-rebinds-name-bash",
+      "input": "hash -p /bin/rm ruff\nruff -rf build"
+    },
+    {
+      "expected": true,
+      "id": "uv-run-carries-destructive-command",
+      "input": "uv run rm -rf build"
+    },
+    {
+      "expected": true,
+      "id": "poetry-run-carries-destructive-command",
+      "input": "poetry run rm -rf build"
+    },
+    {
+      "expected": false,
+      "id": "hash-lookup-only-is-safe",
+      "input": "hash uv 2>/dev/null"
+    },
+    {
+      "expected": true,
+      "id": "hash-attached-path-rebinds-name",
+      "input": "hash -p/bin/rm ruff; ruff -rf x"
+    },
+    {
+      "expected": true,
+      "id": "hash-bundled-path-option-rebinds-name",
+      "input": "hash -rp /bin/rm ruff; ruff -rf x"
+    },
+    {
+      "expected": false,
+      "id": "hash-reset-is-safe",
+      "input": "hash -r"
+    },
+    {
+      "expected": true,
+      "id": "zsh-commands-whole-table-assignment",
+      "input": "commands=(ruff /bin/rm); ruff -rf x"
+    },
+    {
+      "expected": true,
+      "id": "zsh-commands-table-append",
+      "input": "commands+=(ruff /bin/rm); ruff -rf x"
+    },
+    {
+      "expected": true,
+      "id": "commands-table-assign-default-expansion",
+      "input": ": ${commands[ruff]:=/bin/rm}; ruff -rf x"
+    },
+    {
+      "expected": true,
+      "id": "bash-cmds-written-by-printf-v",
+      "input": "printf -v 'BASH_CMDS[ruff]' %s /bin/rm; ruff -rf x"
+    },
+    {
+      "expected": true,
+      "id": "zsh-commands-written-by-read",
+      "input": "read -A commands <<< 'ruff /bin/rm'; ruff -rf x"
+    },
+    {
+      "expected": false,
+      "id": "commands-table-read-is-safe",
+      "input": "printf '%s\\n' \"${commands[cat]}\""
+    },
+    {
+      "expected": true,
+      "id": "commands-table-write-nested-in-read-subscript",
+      "input": ": \"${commands[$(set -A commands ls /bin/echo; ls x)]}\""
+    },
+    {
+      "expected": false,
+      "id": "commands-table-variable-subscript-read-is-safe",
+      "input": "echo \"${commands[$tool]}\""
+    },
+    {
+      "expected": false,
+      "id": "commands-table-presence-check-is-safe",
+      "input": "[ -n \"${+commands[uv]}\" ] && echo yes"
+    },
+    {
+      "expected": false,
+      "id": "uv-run-allowlisted-tool-is-safe",
+      "input": "uv run pytest -q tests"
     }
   ],
   "needs_bailout": [

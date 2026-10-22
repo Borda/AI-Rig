@@ -30,7 +30,10 @@ credentials or transport fallback policy itself.
 ## Outputs
 
 Write requested response bytes on success or emit a classified, credential-opaque failure with command label and exit
-metadata. The CLI writes successful bytes exactly to ``--out``. On failure it emits the stable code followed by
+metadata. The CLI writes successful bytes exactly to ``--out``, except Actions job logs: those are UTF-8 text with
+ANSI formatting removed, CRLF normalized, and remaining terminal controls escaped. A job-log GET rejected by gh's
+escape-sequence guard retries once with its output compatibility flag, always through captured streams. On failure it
+emits the stable code followed by
 available safe JSON diagnostics, including a reason for organization policies forbidding classic personal access tokens;
 it never includes tokens or raw command output. A policy refusal remains terminal and cannot activate public fallback.
 
@@ -64,6 +67,8 @@ MAX_OUTPUT_BYTES = 16 * 1024 * 1024
 PUBLIC_GITHUB_API_HOST = "api.github.com"
 #: `gh` subcommands whose `view` action is a read-only resource lookup and therefore allowed.
 VIEW_RESOURCE_COMMANDS = frozenset({"gist", "issue", "pr", "project", "release", "repo", "ruleset", "run", "workflow"})
+#: Job logs are text; workflow-run log endpoints instead return binary ZIP archives.
+JOB_LOG_ENDPOINT = re.compile(r"/repos/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/actions/jobs/[1-9][0-9]*/logs")
 #: Lowercase URL query keys that signal credentials; a URL carrying one is ineligible for the public fallback.
 SENSITIVE_QUERY_KEYS = frozenset({"access_token", "auth", "authorization", "client_secret", "password", "token"})
 #: Well-known system CA bundle locations searched for TLS verification, in priority order.
@@ -120,6 +125,9 @@ def _is_read_only_rest_api(arguments: list[str]) -> bool:
     while index < len(arguments):
         argument = arguments[index]
         if argument in {"--paginate", "--slurp", "--include"}:
+            index += 1
+            continue
+        if argument == "--allow-escape-sequences" and JOB_LOG_ENDPOINT.fullmatch(arguments[0]):
             index += 1
             continue
         if argument in {"--method", "-X"}:
@@ -280,6 +288,8 @@ def github_failure_reason(stderr: bytes, failure_class: str) -> str:
     if failure_class == "github-not-found":
         return "not-found"
     if failure_class == "github-command-failed":
+        if "the response contains terminal escape sequences" in text:
+            return "terminal-escape-sequences-refused"
         # Match Git's local diagnostic grammar, never branch names or arbitrary prose alone.
         local_reasons = (
             (r"^fatal: a branch named '[^\n]+' already exists$", "local-branch-exists"),
@@ -300,6 +310,19 @@ def github_failure_reason(stderr: bytes, failure_class: str) -> str:
             if re.search(pattern, text, flags=re.MULTILINE):
                 return reason
     return "unclassified"
+
+
+def _safe_job_log(payload: bytes) -> bytes:
+    """Make captured UTF-8 job logs readable without emitting terminal control sequences."""
+    text = payload.decode("utf-8", errors="replace").replace("\r\n", "\n")
+    # Strip complete CSI and OSC sequences, including hyperlinks and clipboard commands. Escape everything
+    # else non-printable so malformed or unsupported sequences cannot regain terminal effects on display.
+    text = re.sub(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\))", "", text)
+    safe = "".join(char if char in "\n\t" or char.isprintable() else f"\\u{ord(char):04x}" for char in text)
+    encoded = safe.encode("utf-8")
+    if len(encoded) > MAX_OUTPUT_BYTES:
+        raise GitHubReadError("command-output-oversized")
+    return encoded
 
 
 def _run_default_gh_command(argv: list[str], timeout: int) -> subprocess.CompletedProcess[bytes]:
@@ -357,17 +380,26 @@ def run_gh_read(run: RunCommand, argv: list[str], *, timeout: int, label: str) -
         raise
     if len(completed.stdout) > MAX_OUTPUT_BYTES or len(completed.stderr) > MAX_OUTPUT_BYTES:
         raise GitHubReadError(f"command-output-oversized:{label}")
+    job_log = argv[:2] == ["gh", "api"] and JOB_LOG_ENDPOINT.fullmatch(argv[2]) is not None
     if completed.returncode != 0:
         failure_class = github_failure_class(completed.stderr)
+        failure_reason = github_failure_reason(completed.stderr, failure_class)
+        if job_log and failure_reason == "terminal-escape-sequences-refused" and "--allow-escape-sequences" not in argv:
+            return run_gh_read(run, [*argv, "--allow-escape-sequences"], timeout=timeout, label=label)
         raise GitHubReadError(
             f"{failure_class}:{label}",
             diagnostics={
                 "exit_code": completed.returncode,
                 "failure_class": failure_class,
-                "failure_reason": github_failure_reason(completed.stderr, failure_class),
+                "failure_reason": failure_reason,
                 "label": label,
             },
         )
+    if job_log:
+        try:
+            return _safe_job_log(completed.stdout)
+        except GitHubReadError as error:
+            raise GitHubReadError(f"command-output-oversized:{label}") from error
     return completed.stdout
 
 

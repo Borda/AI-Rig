@@ -88,7 +88,8 @@ def _sentinel_path(name: str) -> Path:
         True
     """
     csid = os.environ.get("CSID") or os.environ.get("CLAUDE_CODE_SESSION_ID") or "shared"
-    tmpdir = os.environ.get("TMPDIR") or tempfile.gettempdir()
+    tmp_fallback = tempfile.gettempdir() if os.name == "nt" else "/tmp"  # noqa: S108 - shell default of ${TMPDIR:-/tmp}
+    tmpdir = os.environ.get("TMPDIR") or tmp_fallback
     return Path(tmpdir) / f"{name}-{csid}"
 
 

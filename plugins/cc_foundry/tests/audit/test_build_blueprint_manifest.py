@@ -250,6 +250,7 @@ class TestAllowlistGate:
             pytest.param("timeout 5 curl -sS https://example.com", id="timeout-wraps-curl-get"),
             pytest.param('eval "$(python "$ROOT/bin/parse.py" "$ARGS")"', id="eval-of-plugin-script-output"),
             pytest.param("uv run pytest tests/ -q", id="uv-run-listed-command"),
+            pytest.param("uv run --frozen --python=3.12 pytest -q", id="uv-run-known-options"),
             pytest.param('ARGS+=(--output "$F")', id="array-append"),
             pytest.param('mv "$_NOW" "$_NOW.done"', id="consume-marker-rename"),
             pytest.param(
@@ -344,6 +345,8 @@ class TestAllowlistGate:
             pytest.param('bash "$DIR/run.sh"', "shell script $DIR/run.sh", id="shell-script-operand"),
             pytest.param("trap 'mv a b' EXIT", "mv", id="trap-handler"),
             pytest.param("uv add --dev pkg", "uv add", id="uv-add"),
+            pytest.param("uv run -f ruff rm -rf build", "uv run -f", id="uv-run-unknown-option"),
+            pytest.param("uv run --python 3.12 ln -sf a b", "ln", id="uv-run-known-option-then-unlisted"),
         ],
     )
     def test_unlisted_commands_are_excluded(self, text: str, offender: str) -> None:

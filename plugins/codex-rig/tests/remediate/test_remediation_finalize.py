@@ -488,8 +488,9 @@ def test_skill_routes_bookkeeping_through_the_derivation_helper() -> None:
     assert "`--all-errors`" in contract
 
 
+@pytest.mark.parametrize("newline", [pytest.param(b"\n", id="lf"), pytest.param(b"\r\n", id="crlf")])
 def test_review_finalize_derives_shared_fields_and_runs_both_validators(
-    assessed_pr: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    assessed_pr: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], newline: bytes
 ) -> None:
     """Finalize an assessed PR review in one call: shared handoff fields, render, write, both validators, promote.
 
@@ -497,7 +498,9 @@ def test_review_finalize_derives_shared_fields_and_runs_both_validators(
     promoted result must still complete through the review finder, which reruns both validators.
     """
     run = assessed_pr
-    full_report = (run / "review-notes.md").read_bytes()
+    report = run / "review-notes.md"
+    full_report = report.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", newline)
+    report.write_bytes(full_report)
     result_path = run / "result.json"
     result = json.loads(result_path.read_text(encoding="utf-8"))
     result_path.unlink()
@@ -534,6 +537,9 @@ def test_review_finalize_derives_shared_fields_and_runs_both_validators(
     assert f"Reviewed commit: {reviewed_head}" in (run / "review-notes.md").read_text()
     assert b"- Report: " in finished.stdout
     assert b"| Report |" not in finished.stdout
+    finalized_report = report.read_bytes()
+    assert HELPER.main(argv) == 0
+    assert report.read_bytes() == finalized_report
 
 
 def test_review_finalize_stops_on_review_validator_failure(

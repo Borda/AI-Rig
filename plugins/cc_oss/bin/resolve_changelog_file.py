@@ -55,7 +55,8 @@ def resolve_changelog(repo_root: Path) -> str:
 def _sentinel_path() -> Path:
     """Return the session-scoped sentinel path later release steps reload the changelog path from."""
     session = os.environ.get("CSID") or os.environ.get("CLAUDE_CODE_SESSION_ID") or "shared"
-    return Path(os.environ.get("TMPDIR") or tempfile.gettempdir()) / f"release-changelog-file-{session}"
+    tmp_fallback = tempfile.gettempdir() if os.name == "nt" else "/tmp"  # noqa: S108 - shell default of ${TMPDIR:-/tmp}
+    return Path(os.environ.get("TMPDIR") or tmp_fallback) / f"release-changelog-file-{session}"
 
 
 def main(argv: list[str] | None = None) -> int:

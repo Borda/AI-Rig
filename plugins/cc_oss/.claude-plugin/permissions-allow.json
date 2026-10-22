@@ -11,7 +11,6 @@
   "Bash(diff:*)",
   "Bash(dirname:*)",
   "Bash(echo:*)",
-  "Bash(eval:*)",
   "Bash(find .cache*)",
   "Bash(find .notes*)",
   "Bash(find .plans*)",

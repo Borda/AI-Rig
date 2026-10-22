@@ -83,7 +83,8 @@ def _sentinel_path(name: str) -> Path:
         >>> _sentinel_path("fix-keep-items").name.startswith("fix-keep-items-")
         True
     """
-    tmp_root = os.environ.get("TMPDIR") or tempfile.gettempdir()
+    tmp_fallback = tempfile.gettempdir() if os.name == "nt" else "/tmp"  # noqa: S108 - shell default of ${TMPDIR:-/tmp}
+    tmp_root = os.environ.get("TMPDIR") or tmp_fallback
     csid = os.environ.get("CSID") or os.environ.get("CLAUDE_CODE_SESSION_ID") or "shared"
     return Path(tmp_root) / f"{name}-{csid}"
 

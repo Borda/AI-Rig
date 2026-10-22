@@ -363,6 +363,23 @@ class TestSettingsWriteSupport:
         assert rc == 4
         assert target.read_text(encoding="utf-8") == "{}"
 
+    def test_slurpfile_under_platform_temp_accepted_when_tmpdir_unset(
+        self, roots: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A slurped source under the ``TEMP``/``TMP`` directory stays readable when ``TMPDIR`` is unset.
+
+        The sentinel fallback follows the shell's ``${TMPDIR:-/tmp}``, but the read roots must still admit the platform
+        temp dir that ``tempfile.gettempdir()`` names, as the write-target check does; narrowing it broke JSON merges
+        staged there.
+        """
+        monkeypatch.delenv("TMPDIR")
+        monkeypatch.setenv("TEMP", str(roots["tmp"]))
+        monkeypatch.setenv("TMP", str(roots["tmp"]))
+        monkeypatch.setattr(tempfile, "tempdir", None)
+        source = roots["tmp"] / "src.json"
+        source.write_text("{}", encoding="utf-8")
+        assert jq_write._validate_slurp_sources(["--slurpfile", "s", str(source)]) is None
+
     def test_plugin_cache_below_claude_returns_4(self, roots: dict[str, Path]) -> None:
         """Only files directly in ``~/.claude`` are writable; the plugin cache deeper down stays refused."""
         target = roots["home"] / ".claude" / "plugins" / "cache" / "hooks.json"

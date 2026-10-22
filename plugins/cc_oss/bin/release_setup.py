@@ -100,7 +100,8 @@ def _native_temp_dir() -> Path:
     """Resolve a Git Bash temporary path for the native Python process on Windows."""
     configured = os.environ.get("TMPDIR")
     if not configured:
-        return Path(tempfile.gettempdir())
+        # the shell spells this ${TMPDIR:-/tmp}; gettempdir() would honour TEMP/TMP first and disagree on POSIX
+        return Path(tempfile.gettempdir() if sys.platform == "win32" else "/tmp")  # noqa: S108 - shell default
     if sys.platform != "win32" or PureWindowsPath(configured).is_absolute():
         return Path(configured)
     converted = subprocess.run(["cygpath", "-w", configured], capture_output=True, text=True, check=True, timeout=5)  # noqa: S603, S607 - argv list, no shell; cygpath resolved via PATH on purpose

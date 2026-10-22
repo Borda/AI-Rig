@@ -1,19 +1,21 @@
 # Changelog
 
+## 0.52.0
+
+- Helper scripts that write or read a session sentinel (`parse-skill-flags.py`, `resolve_preflight.py`, `release_setup.py`, `extract_vitality_vars.py`, `detect_codemap.py` and the other `bin/` sentinel helpers) fall back to `/tmp` on POSIX when `TMPDIR` is unset, the directory a skill's `${TMPDIR:-/tmp}` names, instead of `tempfile.gettempdir()`, which picks `TEMP` or `TMP` first; with either set, script and skill read different files. Native Windows keeps `gettempdir()`.
+- Keep supported review source judgments separate from blocked verification and include the reviewed full commit SHA in report headers; retain explicit unavailable identity for unversioned or historical abbreviated sources.
+- The runtime `blueprint-allow.js` hook treats `uv run` and `poetry run` as carrying their wrapped command and flags `hash name=/path`, `hash -p /path name` (also the attached `-p/path` and bundled `-rp` spellings), `builtin hash …` and any write to the zsh `commands` / bash 4 `BASH_CMDS` tables (`commands[x]=`, `commands=(…)`, `+=`, `${…:=…}`, `printf -v`, `read -A`, or a write nested in a lookup subscript such as `${commands[$(…)]}`; a plain `${commands[x]}` or `${commands[$name]}` lookup stays allowed), so a destructive command behind one of those, or a rebound command name, is refused even on a manifest hit.
+- `extract_vitality_vars.py --keep-state` stores a multi-line axis signal on one line, because the sentinel reader keeps only the first line; the whole signal reaches the report.
+- `/oss:analyse` vitality mode reads the extracted scores, confidences and weights from per-session sentinel files written by `extract_vitality_vars.py --keep-state` instead of running `eval` on the script's output; the script's default shell-assignment output is unchanged.
+- `Bash(eval:*)` is no longer in the shipped allow list and `/oss:setup` removes it from `settings.json`, including an identical entry added by hand: ad-hoc `eval` commands now prompt, while shipped blocks no longer use `eval`.
+
 ## 0.51.1
 
-- Keep supported review source judgments separate from blocked verification and include the reviewed full commit SHA in report headers; retain explicit unavailable identity for unversioned or historical abbreviated sources.
-
 - `/oss:resolve` treats every finding in a review's `### [blocking] Critical` section as required work at any severity, and `/oss:review` places `[blocking]`-tagged findings (such as Block-tier test gaps) there at their own severity, so they no longer drop to optional `[suggest]` items.
-
 - `/oss:resolve` folds root-cause-merged review rows (`merged_into`) into the survivor's action item: the item lists `merged_finding_ids` and every symptom, takes the group's highest severity and `[req]` routing, matches a GitHub comment on any symptom's line, and gets one `resolution.jsonl` record per folded finding; a `merged_into` naming no single survivor keeps the row as its own item with a `⚠` warning, so no confirmed finding is dropped or dispatched twice.
-
 - The `/oss:review` publication gate refuses a non-text `merged_into`, so a malformed report fails at review time instead of hard-blocking `/oss:resolve`; the review consolidator keeps each merged row's own severity and section.
-
 - `oss:cicd-steward` rates findings on a consequence-based severity table and reports `ubuntu-latest` drift only when the prompt names runner reproducibility; `oss:gh-scraper` and `oss:repo-warden` stop on off-shape input with a single error or `declined` envelope, and `/oss:analyse` vitality surfaces the decline reason instead of a timeout.
-
 - `oss:shepherd` applies absent-from-input checks only to partial input and rates a feature shipped in a patch as its own medium finding; `/oss:release` lowers classification confidence when the Truth check is skipped with any Removed or Breaking Changes item.
-
 - The review checklist anchors documented-contract violations at MEDIUM, and the shared file-handoff protocol adds the `unsupported` decline status.
 
 ## 0.51.0

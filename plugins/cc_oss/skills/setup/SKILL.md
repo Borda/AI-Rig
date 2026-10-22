@@ -112,7 +112,7 @@ SETUP_BAK_TS=$(date -u +%Y-%m-%dT%H-%M-%SZ)
 cp ~/.claude/settings.json "$HOME/.claude/settings.json.bak-${SETUP_BAK_TS}"  # timeout: 5000
 printf "Backed up ~/.claude/settings.json → ~/.claude/settings.json.bak-%s\n" "$SETUP_BAK_TS"
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/merge_settings_permissions.py" --allow "$PLUGIN_ROOT/.claude-plugin/permissions-allow.json" --drop-allow 'Bash(gh api repos/*:*)' --drop-allow 'Bash(uv pip install:*)' --drop-allow 'Bash(claude:*)' --drop-allow 'Bash(find:*)' --drop-allow 'Bash(node:*)' --drop-allow 'Bash(sed:*)' --deny "$PLUGIN_ROOT/.claude-plugin/permissions-deny.json" || { printf "! permissions merge failed — settings.json unchanged\n"; exit 1; }  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/merge_settings_permissions.py" --allow "$PLUGIN_ROOT/.claude-plugin/permissions-allow.json" --drop-allow 'Bash(gh api repos/*:*)' --drop-allow 'Bash(uv pip install:*)' --drop-allow 'Bash(claude:*)' --drop-allow 'Bash(find:*)' --drop-allow 'Bash(node:*)' --drop-allow 'Bash(sed:*)' --drop-allow 'Bash(eval:*)' --deny "$PLUGIN_ROOT/.claude-plugin/permissions-deny.json" || { printf "! permissions merge failed — settings.json unchanged\n"; exit 1; }  # timeout: 5000
 python -m json.tool ~/.claude/settings.json > /dev/null || { cp "$HOME/.claude/settings.json.bak-${SETUP_BAK_TS}" ~/.claude/settings.json; printf "! settings.json no longer parses — restored from backup\n"; exit 1; }  # timeout: 5000 — Step 1 guarantees python; jq may be absent (native Windows), and its exit 127 would restore the backup over a good merge
 ```
 

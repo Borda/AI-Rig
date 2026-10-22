@@ -1624,11 +1624,14 @@ def report_obligation_sources(report: dict[str, Any], report_path: str | None = 
     recovery = original.get("confidence_recovery", {})
     if not isinstance(decision, dict) or not isinstance(recovery, dict):
         raise SystemExit("code-remediate-report-input-invalid")
+    required_next_work = decision.get("required_next_work", [])
+    if required_next_work is None:
+        required_next_work = []
     fields = {
         "/checks_failed": report.get("checks_failed", []),
         "/follow_up": report.get("follow_up", []),
         "/metadata/confidence_gaps": original.get("confidence_gaps", []),
-        "/metadata/review_decision/required_next_work": decision.get("required_next_work", []),
+        "/metadata/review_decision/required_next_work": required_next_work,
         "/metadata/confidence_recovery/remaining_limits": recovery.get("remaining_limits", []),
     }
     validation = original.get("review_validation")
@@ -1637,6 +1640,8 @@ def report_obligation_sources(report: dict[str, Any], report_path: str | None = 
             raise SystemExit("code-remediate-review-validation-upgrade-required")
         origins = original.get("source_findings", [])
         mapping = original.get("source_finding_mapping", {})
+        if mapping == [] and origins == []:
+            mapping = {}
         if not isinstance(origins, list) or not isinstance(mapping, dict):
             raise SystemExit("code-remediate-report-input-invalid")
         for index, candidate in enumerate(validation.get("candidates", [])):
@@ -1692,7 +1697,7 @@ def _validate_code_remediate_report_coverage(
     if (
         report.get("schema_version") != 3
         or not isinstance(original, dict)
-        or original.get("review_status", "assessed") != "assessed"
+        or original.get("review_status", "assessed") not in {None, "assessed"}
     ):
         raise SystemExit("code-remediate-report-input-not-assessed")
     items = metadata["final_resolution_table"]["items"]

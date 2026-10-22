@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.43.0
+
+- `Bash(eval:*)` is no longer in the shipped allow list, and the README's manual settings merge now removes an existing entry as well: ad-hoc `eval` commands prompt, while no Codemap skill uses `eval` (`resolve_index_env.py` hands values over through session files).
+
 ## 0.42.1
 
 - `/codemap-py:rename-refs` routes every stop by edit state on both hosts: a stop before the first source write ends the run, a stop after a write finishes the remaining verification and reports `⚠ Rename incomplete` with the changed files, and a stopped rename is never finished by hand.

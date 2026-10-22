@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.30.0
+
+- Helper scripts that write or read a session sentinel (`parse-skill-flags.py`, `codemap_resolve.py`, `find_judge_verdict.py`, `resolve_shared.py` and the other `bin/` sentinel helpers) fall back to `/tmp` on POSIX when `TMPDIR` is unset, the directory a skill's `${TMPDIR:-/tmp}` names, instead of `tempfile.gettempdir()`, which picks `TEMP` or `TMP` first; with either set, script and skill read different files. Native Windows keeps `gettempdir()`. `codex_state.py --state` accepts both directories.
+- The runtime `blueprint-allow.js` hook treats `uv run` and `poetry run` as carrying their wrapped command and flags `hash name=/path`, `hash -p /path name` (also the attached `-p/path` and bundled `-rp` spellings), `builtin hash …` and any write to the zsh `commands` / bash 4 `BASH_CMDS` tables (`commands[x]=`, `commands=(…)`, `+=`, `${…:=…}`, `printf -v`, `read -A`, or a write nested in a lookup subscript such as `${commands[$(…)]}`; a plain `${commands[x]}` or `${commands[$name]}` lookup stays allowed), so a destructive command behind one of those, or a rebound command name, is refused even on a manifest hit.
+- `Bash(eval:*)` is no longer in the shipped allow list and `/research:setup` removes it from `settings.json`, including an identical entry added by hand: ad-hoc `eval` commands now prompt, while no shipped research block uses `eval`.
+
 ## 0.29.1
 
 - `/research:verify` rates a changed training budget or schedule duration as a HIGH protocol mismatch and judges setting differences by their effect rather than numeric ratio; MATCH rows leave Severity blank.

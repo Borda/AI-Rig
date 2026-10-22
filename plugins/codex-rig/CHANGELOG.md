@@ -1,13 +1,18 @@
 # Changelog
 
+## 0.37.4
+
+- Preserve existing review report bytes, including Windows line endings, when finalization appends the reviewed commit identity.
+- Recover GitHub CLI's terminal-escape refusal when fetching Actions job logs, retaining read-only checks and returning text safe to display instead of an unclassified error.
+- Let remediation retain clean review reports whose optional finding and follow-up fields are empty or null.
+- Finalize commit reviews without native reviewer receipts by using matching clean source observations from their gate runs; reject missing observations and conflicting commit identities.
+- Direct new handoff writers to presentation 11 so terminal status tables remain visible while historical versions keep their original rendering.
+
 ## 0.37.3
 
 - Keep table anchors across every skill and workflow, including clean results and blocked handoffs; render compact terminal review status tables while preserving historical report bytes and exact caller output.
-
 - Preserve supported source judgments through reviewer/check recovery and qualify clean source approval when verification is blocked; retain actual failed gates and unresolved source concerns.
-
 - Include the full reviewed commit SHA in every new assessed Git review snapshot and report, label dirty-review base commits, and reject missing or conflicting source identity during promotion.
-
 - Attempt feasible authorized recovery before deferring confidence gaps: recover eligible reviewer receipts and run pinned autofixing checks on disposable review copies; retain authentic independence evidence, remote CI uncertainty and existing retry limits.
 
 ## 0.37.2

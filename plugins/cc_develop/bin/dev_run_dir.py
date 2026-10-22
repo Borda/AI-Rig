@@ -8,7 +8,7 @@ With ``--persist <skill>``, also writes the run-dir path to ``<sentinel-dir>/dev
 every later block of that skill reads back with ``IFS= read -r DEV_DIR`` — so the caller needs no ``echo`` of its own.
 ``CSID`` is ``$CSID``, else ``$CLAUDE_CODE_SESSION_ID``, else ``shared``.
 
-Sentinel dir honors ``$TMPDIR`` when set, else ``tempfile.gettempdir()`` — the Python
+Sentinel dir honors ``$TMPDIR`` when set, else ``/tmp`` (``tempfile.gettempdir()`` on native Windows) — the Python
 equivalent of the shell ``${TMPDIR:-/tmp}`` idiom callers use to poll the sentinel.
 
 Usage:
@@ -39,13 +39,16 @@ _SAFE_NAME_RE = re.compile(r"[^a-zA-Z0-9_-]")
 
 
 def _sentinel_dir() -> Path:
-    """Return ``$TMPDIR`` when set, else ``tempfile.gettempdir()``.
+    """Return ``$TMPDIR`` when set, else ``/tmp``, or ``tempfile.gettempdir()`` on native Windows.
 
     Matches the shell ``${TMPDIR:-/tmp}`` idiom used by callers that poll this sentinel, so both sides resolve to the
-    same directory on every platform. ``os.environ`` is read first because ``tempfile.gettempdir()`` caches its result
-    on first call and would not observe a later ``TMPDIR`` change.
+    same directory. ``tempfile.gettempdir()`` is not that fallback on POSIX: it honours ``TEMP`` and ``TMP`` before
+    ``/tmp``, so with ``TMPDIR`` unset and ``TEMP`` set the script and the shell would read different files. The hooks'
+    ``getSentinelDir()`` already uses ``/tmp`` on POSIX. ``os.environ`` is read first because ``tempfile.gettempdir()``
+    caches its result on first call and would not observe a later ``TMPDIR`` change.
     """
-    return Path(os.environ.get("TMPDIR") or tempfile.gettempdir())
+    tmp_fallback = tempfile.gettempdir() if os.name == "nt" else "/tmp"  # noqa: S108 - shell default of ${TMPDIR:-/tmp}
+    return Path(os.environ.get("TMPDIR") or tmp_fallback)
 
 
 def sentinel_path(name: str) -> Path:

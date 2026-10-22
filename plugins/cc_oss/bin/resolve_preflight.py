@@ -254,7 +254,8 @@ def _write_preflight_outputs(codex_available: bool) -> None:
     # whatever drive the process happens to run on.
     native = PureWindowsPath if sys.platform == "win32" else PurePosixPath
     env_tmpdir = os.environ.get("TMPDIR")
-    tmpdir = Path(env_tmpdir if env_tmpdir and native(env_tmpdir).is_absolute() else tempfile.gettempdir())
+    tmp_fallback = tempfile.gettempdir() if sys.platform == "win32" else "/tmp"  # noqa: S108 - shell default of ${TMPDIR:-/tmp}
+    tmpdir = Path(env_tmpdir if env_tmpdir and native(env_tmpdir).is_absolute() else tmp_fallback)
     write_private_text(tmpdir / f"resolve-preflight-CODEX_AVAILABLE-{csid}", f"{str(codex_available).lower()}\n")
     write_private_text(tmpdir / f"resolve-preflight-GH_OK-{csid}", "true\n")
 

@@ -67,8 +67,23 @@ _ARGPARSE_BODY = (
 
 class TestExtractArgparseFlags:
     def test_collects_long_and_short_flags(self) -> None:
+        """Registered flags plus the ``-h``/``--help`` pair argparse adds by default are all defined."""
         flags = extract_argparse_flags(_ARGPARSE_BODY)
-        assert flags == {"--real", "-r", "--recurse"}
+        assert flags == {"--real", "-r", "--recurse", "-h", "--help"}
+
+    def test_help_less_parent_parser_keeps_help_on_the_main_parser(self) -> None:
+        """A shared ``add_help=False`` parent does not take ``--help`` away from the parser built with ``parents=``."""
+        source = (
+            "common = argparse.ArgumentParser(add_help=False)\n"
+            "common.add_argument('--real')\n"
+            "parser = argparse.ArgumentParser(parents=[common])\n"
+        )
+        assert extract_argparse_flags(source) == {"--real", "-h", "--help"}
+
+    def test_add_help_false_drops_the_implicit_help_flags(self) -> None:
+        """A parser built with ``add_help=False`` does not accept ``--help``, so documenting it is drift."""
+        source = "p = argparse.ArgumentParser(add_help=False)\np.add_argument('--real')\n"
+        assert extract_argparse_flags(source) == {"--real"}
 
     @pytest.mark.parametrize(
         "source",
@@ -86,8 +101,9 @@ class TestExtractArgparseFlags:
         """
         assert extract_argparse_flags(source) is None
 
-    def test_positional_only_yields_empty_set(self) -> None:
-        assert extract_argparse_flags("p.add_argument('target')\n") == set()
+    def test_positional_only_yields_only_the_implicit_help_flags(self) -> None:
+        """A positional-only parser still accepts the ``-h``/``--help`` pair argparse registers by default."""
+        assert extract_argparse_flags("p.add_argument('target')\n") == {"-h", "--help"}
 
 
 # ---------------------------------------------------------------------------
@@ -96,6 +112,24 @@ class TestExtractArgparseFlags:
 
 
 class TestCommandScope:
+    def test_ansi_c_quoted_value_with_escaped_quote_keeps_later_flags(self) -> None:
+        """``$'it\\'s -- text'`` is one value in both shells, so ``--phantom`` after it stays in scope.
+
+        ANSI-C quoting honours backslash escapes, unlike plain single quotes; reading ``\\'`` as the closing quote put
+        the quoted ``--`` outside the value and ended the scope before ``--phantom``.
+        """
+        scope = command_scope(["x --label $'it\\'s -- text' --phantom"], 0, 1)
+        assert scope.endswith("--phantom")
+
+    def test_backslash_inside_single_quotes_is_literal(self) -> None:
+        """``'C:\\'`` closes at its second quote, so a later quoted ``--`` stays in its value and ``--phantom`` stays.
+
+        The shell reads a backslash inside single quotes as a plain character; masking it as an escape used to swallow
+        the closing quote and end the scope at the quoted ``--``, hiding a genuinely undefined flag.
+        """
+        scope = command_scope(["x --root 'C:\\' --label 'a -- b' --phantom"], 0, 1)
+        assert scope.endswith("--phantom")
+
     def test_single_line_flags(self) -> None:
         scope = command_scope(["x --a --b"], 0, 1)
         assert "--a" in scope
@@ -116,6 +150,59 @@ class TestCommandScope:
         assert "--a" in scope
         assert "--b" not in scope
 
+    def test_truncates_at_end_of_options_separator(self) -> None:
+        """Flags after a standalone ``--`` belong to the wrapped command, not the documented script."""
+        scope = command_scope(["x --a -- --tb=short -v"], 0, 1)
+        assert "--a" in scope
+        assert "--tb" not in scope
+
+    def test_separator_inside_a_quoted_value_does_not_end_the_scope(self) -> None:
+        """A ``--`` inside a quoted option value is part of the value, so later flags stay in scope.
+
+        ``tool.py --label "a -- b" --phantom`` has no standalone separator; cutting at the quoted one would hide
+        ``--phantom`` from the drift check.
+        """
+        scope = command_scope(['x --label "a -- b" --phantom'], 0, 1)
+        assert "--phantom" in scope
+
+    def test_escaped_quote_inside_a_quoted_value_keeps_the_value_open(self) -> None:
+        """A backslash-escaped quote does not close a quoted value, so the ``--`` after it is still inside the value.
+
+        ``--label "a \\" -- b" --bogus`` is one quoted value followed by a flag; treating the escaped quote as a closing
+        quote would read the inner ``--`` as the separator and hide ``--bogus``.
+        """
+        scope = command_scope(['x --label "a \\" -- b" --bogus'], 0, 1)
+        assert "--bogus" in scope
+
+    def test_escaped_quote_outside_quotes_does_not_open_a_value(self) -> None:
+        """A backslash-escaped quote outside any quotes is a literal character, so the ``--`` after it still ends the
+        scope.
+
+        ``--label \\" -- --child`` passes a literal quote and then the separator; reading the escaped quote as an
+        opening quote would keep the forwarded ``--child`` in scope and report it as drift.
+        """
+        scope = command_scope(['x --label \\" -- --child "value"'], 0, 1)
+        assert "--child" not in scope
+
+    def test_command_substitution_inside_double_quotes_still_ends_the_scope(self) -> None:
+        """A ``$(…)`` inside double quotes runs its own command, so the flags inside it are not the script's own.
+
+        ``--label "$(probe --child)" --valid`` keeps ``--valid`` for the documented script and leaves ``--child`` to
+        ``probe``.
+        """
+        scope = command_scope(['x --label "$(probe --child)" --valid'], 0, 1)
+        assert "--child" not in scope
+
+    def test_escaped_space_before_double_dash_is_not_a_separator(self) -> None:
+        """A ``--`` after an escaped space belongs to the same word group, so the flag after it stays in scope."""
+        scope = command_scope(["x --label a\\ -- --phantom"], 0, 1)
+        assert "--phantom" in scope
+
+    def test_flag_with_dashes_inside_is_not_a_separator(self) -> None:
+        """A ``--`` glued to a word is a flag prefix, never the separator."""
+        scope = command_scope(["x --a --b-c"], 0, 1)
+        assert "--b-c" in scope
+
 
 # ---------------------------------------------------------------------------
 # iter_argparse_scripts
@@ -126,7 +213,7 @@ class TestIterArgparseScripts:
     def test_maps_basename_to_flags(self, tmp_path: Path) -> None:
         _make_script(tmp_path, "myplugin", "tool.py", _ARGPARSE_BODY)
         scripts = iter_argparse_scripts(tmp_path)
-        assert scripts == {"tool.py": {"--real", "-r", "--recurse"}}
+        assert scripts == {"tool.py": {"--real", "-r", "--recurse", "-h", "--help"}}
 
     def test_skips_underscore_private(self, tmp_path: Path) -> None:
         _make_script(tmp_path, "myplugin", "_helper.py", _ARGPARSE_BODY)

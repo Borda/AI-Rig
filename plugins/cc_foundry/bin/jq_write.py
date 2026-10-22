@@ -154,8 +154,11 @@ def _validate_slurp_sources(extras: list[str]) -> None:
     Raises:
         ValueError: If a source file resolves outside the read roots.
     """
-    tmpdir = Path(os.environ.get("TMPDIR") or tempfile.gettempdir()).resolve()
-    roots = [Path.cwd().resolve(), tmpdir, _user_claude_dir().resolve()]
+    tmp_fallback = tempfile.gettempdir() if os.name == "nt" else "/tmp"  # noqa: S108 - shell default of ${TMPDIR:-/tmp}
+    tmpdir = Path(os.environ.get("TMPDIR") or tmp_fallback).resolve()
+    # The platform temp dir stays a read root: callers keep JSON under it (pytest's tmp_path too) when TEMP/TMP is set.
+    platform_tmp = Path(os.environ.get("TMPDIR") or tempfile.gettempdir()).resolve()
+    roots = [Path.cwd().resolve(), tmpdir, platform_tmp, _user_claude_dir().resolve()]
     # Walk groups exactly as _parse_jq_args does, so an `--arg` value spelled "--slurpfile" is not taken for the flag.
     sources: list[str] = []
     i = 0

@@ -55,6 +55,7 @@ def _gnu_make() -> str | None:
 
 
 GNU_MAKE = _gnu_make()
+BASH = shutil.which("bash")
 JQ = shutil.which("jq")
 
 
@@ -71,6 +72,7 @@ def available_rtk(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.integration
 @pytest.mark.skipif(GNU_MAKE is None, reason="GNU make is not available on this host")
+@pytest.mark.skipif(BASH is None, reason="Bash is required for the Makefile recipes")
 @pytest.mark.parametrize("target", ["sync-all", "sync-claude", "sync-codex", "default"])
 @pytest.mark.parametrize("keep_going", [False, True])
 @pytest.mark.parametrize("rtk_available", [False, True])
@@ -80,23 +82,22 @@ def test_sync_requires_rtk_before_any_mutation(
     """Every sync entrypoint stops before mutation without RTK, including GNU make's keep-going mode."""
     bin_dir = tmp_path / "isolated-bin"
     bin_dir.mkdir()
-    # GNU make may execute simple recipes directly instead of using shell builtins.
-    for command in ("printf", "echo"):
-        executable = bin_dir / command
-        executable.write_text(f'#!/bin/bash\n{command} "$@"\n', encoding="utf-8")
-        executable.chmod(0o755)
     if rtk_available:
         rtk = bin_dir / "rtk"
-        rtk.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        # Preflight only discovers this sentinel; tests must never need a working RTK executable.
+        rtk.write_text("#!/bin/sh\nexit 99\n", encoding="utf-8")
         rtk.chmod(0o755)
     stages = (
         "migrate-marketplace uninstall-claude-plugins refresh-ext-marketplace update-ext-plugins "
         "register-marketplace install-claude-plugins verify-claude-plugins prune-claude-cache "
         "warn-stale-claude-sessions install-codex-plugins sync-codex-home-policy sync-codex-bridge-consent"
     )
-    # Retain real recursive sync recipes; replace only stages that could touch native installation state.
+    # Isolate RTK lookup only: native make needs the host toolchain for direct printf/echo execution.
+    # Retain real recursive sync recipes and require their harmless stage replacements to retain Bash discovery.
     (tmp_path / "Makefile").write_text(
-        MAKEFILE.read_text(encoding="utf-8") + f"\n{stages}:\n\t@echo stage >> stages.log\n",
+        MAKEFILE.read_text(encoding="utf-8")
+        + f"\npreflight-sync: export PATH := {bin_dir.as_posix()}\n"
+        + f"\n{stages}:\n\t@command -v bash >/dev/null && echo stage >> stages.log\n",
         encoding="utf-8",
     )
     result = subprocess.run(
@@ -104,12 +105,14 @@ def test_sync_requires_rtk_before_any_mutation(
             GNU_MAKE,
             *(["-k"] if keep_going else []),
             *([] if target == "default" else [target]),
+            # Resolve the recipe shell before preflight restricts PATH; recursive make inherits this override.
+            f"SHELL={Path(BASH).as_posix()}",
             "MARKETPLACE=fixture",
             f"PROJECT_DIR={tmp_path.as_posix()}",
             "MARKETPLACE_REMOTE=unused",
         ],
         cwd=tmp_path,
-        env={**os.environ, "PATH": str(bin_dir), "MAKEFLAGS": "", "MAKEFILES": ""},
+        env={**os.environ, "MAKEFLAGS": "", "MAKEFILES": ""},
         capture_output=True,
         text=True,
         encoding="utf-8",

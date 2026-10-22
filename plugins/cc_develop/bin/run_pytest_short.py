@@ -107,7 +107,13 @@ def within_workspace(path: str) -> bool:
         True
     """
     resolved = Path(path).resolve()
-    roots = (Path.cwd(), Path(os.environ.get("TMPDIR") or tempfile.gettempdir()))
+    tmp_fallback = tempfile.gettempdir() if os.name == "nt" else "/tmp"  # noqa: S108 - shell default of ${TMPDIR:-/tmp}
+    # Both temp spellings stay roots: the shell's ${TMPDIR:-/tmp} and the platform dir that TEMP/TMP may name.
+    roots = (
+        Path.cwd(),
+        Path(os.environ.get("TMPDIR") or tmp_fallback),
+        Path(os.environ.get("TMPDIR") or tempfile.gettempdir()),
+    )
     return any(resolved.is_relative_to(root.resolve()) for root in roots)
 
 

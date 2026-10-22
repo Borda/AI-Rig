@@ -87,7 +87,9 @@ IFS= read -r PLAN_NS < "${TMPDIR:-/tmp}/dev-plan-ns-current-${CSID}" 2>/dev/null
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/parse-skill-flags.py" --flags no-challenge,codemap,no-codemap --value-flags max-depth --keep-state dev-plan-args --inlined "$ARGUMENTS" >/dev/null  # timeout: 5000 — no eval; --inlined: Flag parsing's extract-keep-flag.py already cleared
 IFS= read -r CLEAN_ARGS < "${TMPDIR:-/tmp}/dev-plan-args-clean-args-${CSID}" 2>/dev/null || CLEAN_ARGS=""  # CLEAN_ARGS only; a dotted flag value would otherwise outrank the goal's module
 printf '%s\n' "$CLEAN_ARGS" | tr '\n' ' ' > "$PLAN_NS/clean-args"  # Step 2 slug source; tr keeps a multi-line goal readable by `read -r`
-eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/derive_codemap_target.py" "$CLEAN_ARGS")"  # timeout: 5000 — module.path or module.path::fn; both empty when goal names none
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/derive_codemap_target.py" --keep-state dev-plan -- "$CLEAN_ARGS" || exit $?  # timeout: 5000 — module.path or module.path::fn; both empty when goal names none
+IFS= read -r TARGET_MODULE < "${TMPDIR:-/tmp}/dev-plan-target-module-${CSID}" 2>/dev/null || TARGET_MODULE=""
+IFS= read -r TARGET_FN < "${TMPDIR:-/tmp}/dev-plan-target-fn-${CSID}" 2>/dev/null || TARGET_FN=""
 export TARGET_MODULE TARGET_FN
 echo "$TARGET_MODULE" > "$PLAN_NS/target-module"   # persist — bash resets between calls
 echo "$TARGET_FN"     > "$PLAN_NS/target-fn"

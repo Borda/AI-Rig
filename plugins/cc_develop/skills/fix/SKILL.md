@@ -191,12 +191,11 @@ If error message or pattern provided: use Grep tool (pattern `<error_pattern>`, 
 ```bash
 # timeout: 600000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r PYTEST_CMD < "${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}" 2>/dev/null || PYTEST_CMD=""
 TEST_PATH=""   # REPLACE with the resolved failing test file/node before running this block — do not leave empty
-if [ -z "$PYTEST_CMD" ] || [ -z "$TEST_PATH" ]; then
-    echo "! Cannot run reproduction: PYTEST_CMD or TEST_PATH unresolved — resolve TEST_PATH from \$ARGUMENTS/issue before running"
+if [ -z "$TEST_PATH" ]; then
+    echo "! Cannot run reproduction: TEST_PATH unresolved — resolve TEST_PATH from \$ARGUMENTS/issue before running"
 else
-    eval "$PYTEST_CMD --tb=long \"\$TEST_PATH\" -v" >"${TMPDIR:-/tmp}/pytest-out.txt-${CSID}" 2>&1; PYTEST_EXIT=$?; tail -40 "${TMPDIR:-/tmp}/pytest-out.txt-${CSID}"; [ $PYTEST_EXIT -ne 0 ] && echo "PYTEST FAILED (exit $PYTEST_EXIT)"
+    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_tests.py" pytest -- --tb=long "$TEST_PATH" -v >"${TMPDIR:-/tmp}/pytest-out.txt-${CSID}" 2>&1; PYTEST_EXIT=$?; tail -40 "${TMPDIR:-/tmp}/pytest-out.txt-${CSID}"; if [ $PYTEST_EXIT -eq 64 ]; then echo "! runner refused to start — no test ran; re-run Project Detection"; elif [ $PYTEST_EXIT -ne 0 ]; then echo "PYTEST FAILED (exit $PYTEST_EXIT)"; fi
 fi
 ```
 
@@ -385,19 +384,27 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 echo missing > "${TMPDIR:-/tmp}/dev-fix-gate-p1-${CSID}"; echo missing > "${TMPDIR:-/tmp}/dev-fix-gate-p2-${CSID}"  # reset — a stale or never-written value must block the stop gate
 IFS= read -r PYTEST_CMD < "${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}" 2>/dev/null || PYTEST_CMD=""  # reload (Check 41)
 [ -n "$PYTEST_CMD" ] || { echo "! BLOCKED — PYTEST_CMD sentinel missing; re-run Project Detection"; exit 1; }
-eval "$PYTEST_CMD --tb=short tests/integration/<test_file>::test_<bug>_user_flow -v"
+VERDICT_FILE="${TMPDIR:-/tmp}/dev-tests-verdict-${CSID}"
+export DEV_TESTS_VERDICT_NONCE="$$.$RANDOM.$RANDOM"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_tests.py" pytest -- --tb=short tests/integration/<test_file>::test_<bug>_user_flow -v
 GATE_P1=$?
+VERDICT=""; [ -f "$VERDICT_FILE" ] && [ ! -L "$VERDICT_FILE" ] && [ -O "$VERDICT_FILE" ] && IFS= read -r VERDICT < "$VERDICT_FILE"
+# wrapper writes failed NONCE only for a pytest failure with a summary: exit 1 without it = interpreter died first, 70 = never a reproduction
+[ "$GATE_P1" -eq 1 ] && [ "$VERDICT" != "failed $DEV_TESTS_VERDICT_NONCE" ] && { echo "! exit 1 but no failed verdict from the wrapper — no test ran"; GATE_P1=70; }
 case $GATE_P1 in 0) echo "GATE FAIL (Path 1): test passed — bug not captured";; 1) echo "GATE OK (Path 1): failed as expected (exit 1)";; *) echo "! GATE ERROR (Path 1): pytest could not run (exit $GATE_P1) — not a reproduction";; esac
 
-eval "$PYTEST_CMD --tb=short <unit_test_file>::test_<bug>_unit -v"
+export DEV_TESTS_VERDICT_NONCE="$$.$RANDOM.$RANDOM"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_tests.py" pytest -- --tb=short <unit_test_file>::test_<bug>_unit -v
 GATE_P2=$?
+VERDICT=""; [ -f "$VERDICT_FILE" ] && [ ! -L "$VERDICT_FILE" ] && [ -O "$VERDICT_FILE" ] && IFS= read -r VERDICT < "$VERDICT_FILE"
+[ "$GATE_P2" -eq 1 ] && [ "$VERDICT" != "failed $DEV_TESTS_VERDICT_NONCE" ] && { echo "! exit 1 but no failed verdict from the wrapper — no test ran"; GATE_P2=70; }
 case $GATE_P2 in 0) echo "GATE FAIL (Path 2): test passed — bug not captured";; 1) echo "GATE OK (Path 2): failed as expected (exit 1)";; *) echo "! GATE ERROR (Path 2): pytest could not run (exit $GATE_P2) — not a reproduction";; esac
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 echo "${GATE_P1:-1}" > ${TMPDIR:-/tmp}/dev-fix-gate-p1-${CSID}  # 1 = failed as expected; a skipped Path 1 must not read as a pass
 echo "${GATE_P2:-1}" > ${TMPDIR:-/tmp}/dev-fix-gate-p2-${CSID}
 ```
 
-Either gate exit is 0 → stop. Bug not reproduced on that path. Do not apply fix. Only exit 1 counts as reproduced — any other exit (pytest usage error, no tests collected, runner not found) is a gate error, not a reproduction. DMI skill — stop enforced via bash gate check:
+Either gate exit is 0 → stop. Bug not reproduced on that path. Do not apply fix. Only exit 1 with the wrapper's `failed` verdict counts as reproduced — any other exit (pytest usage error, no tests collected, runner not found, or exit 1 from an interpreter that never reached the wrapper, recorded as 70) is a gate error, not a reproduction. DMI skill — stop enforced via bash gate check:
 
 ```bash
 # timeout: 3000
@@ -421,7 +428,12 @@ set -o pipefail  # PIPESTATUS is bash-only, absent under zsh (Claude Code's Bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r PYTEST_CMD < "${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}" 2>/dev/null || PYTEST_CMD=""  # reload (Check 41)
 [ -n "$PYTEST_CMD" ] || { echo "! BLOCKED — PYTEST_CMD sentinel missing; re-run Project Detection"; exit 1; }
-eval "$PYTEST_CMD --tb=long <existing_test_file>::<existing_test_name> -v" 2>&1 | tail -30; GATE_EXIT=$?  # timeout: 30000
+VERDICT_FILE="${TMPDIR:-/tmp}/dev-tests-verdict-${CSID}"
+export DEV_TESTS_VERDICT_NONCE="$$.$RANDOM.$RANDOM"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_tests.py" pytest --tail 30 -- --tb=long <existing_test_file>::<existing_test_name> -v; GATE_EXIT=$?  # timeout: 30000
+VERDICT=""; [ -f "$VERDICT_FILE" ] && [ ! -L "$VERDICT_FILE" ] && [ -O "$VERDICT_FILE" ] && IFS= read -r VERDICT < "$VERDICT_FILE"
+# wrapper writes failed NONCE only for a pytest failure with a summary: exit 1 without it = interpreter died first, 70 = never a reproduction
+[ "$GATE_EXIT" -eq 1 ] && [ "$VERDICT" != "failed $DEV_TESTS_VERDICT_NONCE" ] && { echo "! exit 1 but no failed verdict from the wrapper — no test ran"; GATE_EXIT=70; }
 case $GATE_EXIT in 0) echo "GATE FAIL: fixed test still passes — weak test not corrected; revisit";; 1) echo "GATE OK: fixed test fails as expected (exit 1)";; *) echo "! GATE ERROR: pytest could not run (exit $GATE_EXIT) — not a reproduction";; esac
 [ $GATE_EXIT -eq 1 ] || { echo "! GATE STOP: Outcome B gate not satisfied (exit $GATE_EXIT) — correct the test or fix the runner, rerun this block; do not apply the fix"; exit 1; }
 ```
@@ -476,9 +488,7 @@ Make minimal change to fix root cause:
    ```bash
    # timeout: 600000
    export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-   IFS= read -r PYTEST_CMD < "${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}" 2>/dev/null || PYTEST_CMD=""  # reload (Check 41)
-   [ -n "$PYTEST_CMD" ] || { echo "! BLOCKED — PYTEST_CMD sentinel missing; re-run Project Detection"; exit 1; }
-   eval "$PYTEST_CMD --tb=short <test_file>::<test_name> -v"
+   python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_tests.py" pytest -- --tb=short <test_file>::<test_name> -v
    ```
 
 3. Run affected tests — targeted only (Test-run policy):
@@ -611,9 +621,7 @@ Execute Branch Safety Guard, Quality Stack, Codex Pre-pass, Progressive Review L
 ```bash
 # timeout: 600000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r TEST_CMD < "${TMPDIR:-/tmp}/dev-test-cmd-${CSID}" 2>/dev/null || TEST_CMD=""
-[ -n "$TEST_CMD" ] || { echo "! BLOCKED — TEST_CMD sentinel missing; re-run Project Detection"; exit 1; }
-eval "$TEST_CMD"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_tests.py" suite
 ```
 
 ## Final Report

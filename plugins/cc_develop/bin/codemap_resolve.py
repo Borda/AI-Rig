@@ -56,7 +56,8 @@ _CURRENCY_TIMEOUT_S = 15  # currency check may walk the tree (tier 2); bounded, 
 def _currency_file(prefix: str) -> Path:
     """Return the session-scoped currency sentinel path for *prefix*."""
     csid = os.environ.get("CSID") or os.environ.get("CLAUDE_CODE_SESSION_ID") or "shared"
-    tmp = os.environ.get("TMPDIR") or tempfile.gettempdir()
+    tmp_fallback = tempfile.gettempdir() if os.name == "nt" else "/tmp"  # noqa: S108 - shell default of ${TMPDIR:-/tmp}
+    tmp = os.environ.get("TMPDIR") or tmp_fallback
     return Path(tmp) / f"{prefix}-{csid}"
 
 

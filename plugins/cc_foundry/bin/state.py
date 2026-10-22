@@ -135,7 +135,8 @@ def state_path(namespace: str) -> Path:
         >>> _ = os.environ.setdefault("CSID", _prev) if _prev else None
     """
     safe = _NS_SAFE.sub("_", namespace)
-    base = os.environ.get("TMPDIR") or tempfile.gettempdir()
+    tmp_fallback = tempfile.gettempdir() if os.name == "nt" else "/tmp"  # noqa: S108 - shell default of ${TMPDIR:-/tmp}
+    base = os.environ.get("TMPDIR") or tmp_fallback
     return Path(base) / f"claude-state-{safe}-{_csid()}.env"
 
 

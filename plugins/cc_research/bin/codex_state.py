@@ -143,7 +143,13 @@ def main(argv: list[str] | None = None) -> int:
 
     # A write target, so confine it: the project the run executes in, or the session temp dir.
     state = Path(args.state)
-    roots = (Path.cwd(), Path(os.environ.get("TMPDIR") or tempfile.gettempdir()))
+    tmp_fallback = tempfile.gettempdir() if os.name == "nt" else "/tmp"  # noqa: S108 - shell default of ${TMPDIR:-/tmp}
+    # Both temp spellings stay roots: the shell's ${TMPDIR:-/tmp} and the platform dir that TEMP/TMP may name.
+    roots = (
+        Path.cwd(),
+        Path(os.environ.get("TMPDIR") or tmp_fallback),
+        Path(os.environ.get("TMPDIR") or tempfile.gettempdir()),
+    )
     if not _within(state, roots):
         print(f"codex_state: --state {state} is outside the working directory and temp dir", file=sys.stderr)
         return 2

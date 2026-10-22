@@ -9,7 +9,13 @@ blind double-retry, or drops the degenerate-empty-set guard, fails collection he
 from __future__ import annotations
 
 import re
+import shlex
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
+from _hook_env import _bash_runs_posix_script
 
 _FOUNDRY = Path(__file__).resolve().parent.parent.parent
 _QUALITY_STACK = _FOUNDRY / "skills" / "_shared" / "quality-stack.md"
@@ -54,14 +60,15 @@ class TestFlakyRetryRedesign:
         ``awk '{print $2}'`` truncated at the first whitespace. A first fix (greedy ``(.*) - .*$``, rightmost split)
         over-captured whenever the *reason* itself contained `` - `` (e.g. ``assert 1 == 2 - extra``) — verified: it
         swallowed the reason's own dash into the id. The id is structurally a whitespace-free prefix plus at most one
-        bracket group (``path::name[params]`` — only ``params`` may contain spaces/dashes); anchoring there is
+        bracket group that may hold one nested level (``path::name[params]`` or ``name[[a] b]`` — only ``params`` may
+        contain spaces/dashes); anchoring there is
         correct regardless of what the free-text reason contains, including a reason that itself has brackets.
         ``[^[:space:]]`` not ``\\S`` — BSD sed (macOS) has no ``\\S``.
         """
         text = _text()
         assert "| awk '{print $2}'" not in text
         assert "(.*) - .*$/\\2/" not in text  # the rejected greedy-dash-search form
-        assert "sed -E 's/^(FAILED|ERROR) ([^[:space:]]+(\\[[^]]*\\])?).*$/\\2/'" in text
+        assert "sed -E 's/^(FAILED|ERROR) ([^[:space:]]+(\\[([^][]|\\[[^]]*\\])*\\])?).*$/\\2/'" in text
 
     def test_error_lines_retried_alongside_failed(self) -> None:
         """Fixture/collection ``ERROR`` lines feed the same retry path as ``FAILED`` lines.
@@ -108,40 +115,46 @@ class TestFlakyRetryRedesign:
         text = _text()
         retry_a_start = text.index("# Retry A: exactly the failing node-ids")
         retry_a_block = text[retry_a_start : retry_a_start + 1400]
-        retry_a_line = next(
-            line for line in retry_a_block.splitlines() if line.strip().startswith('eval "$RUNNER pytest')
-        )
+        retry_a_line = next(line for line in retry_a_block.splitlines() if line.strip().startswith('"${R[@]}" pytest'))
         retry_b_start = text.index("Retry B: full-dir, serial")
         retry_b_line = text[retry_b_start : retry_b_start + 300].splitlines()[1]
-        assert "XDIST_ARGS" not in retry_a_line
-        assert "XDIST_ARGS" not in retry_b_line
+        assert "XDIST" not in retry_a_line
+        assert "XDIST" not in retry_b_line
 
-    def test_retry_a_quotes_each_node_id_inside_eval(self) -> None:
-        """Retry A quotes every failing node-id *inside* the eval string, per id.
+    def test_retry_a_passes_each_node_id_as_one_array_element(self) -> None:
+        """Retry A collects every failing node-id into an array, one argument per id.
 
-        A bare ``eval "$RUNNER pytest --tb=short -v $_FAILED_IDS_SP"`` re-parses each id as a fresh glob pattern under
-        zsh — every parametrized node-id contains ``[...]``, so ``NOMATCH`` aborts the whole eval and the failure is
-        misread as GENUINE FAILURE (never even runs pytest). Quoting the id inside the eval string, with
-        ``$``/backtick/backslash escaped first, keeps it one non-glob-eligible argument.
+        A bare word-split of the id list would re-parse each id as a fresh glob pattern under zsh — every parametrized
+        node-id contains ``[...]``, so ``NOMATCH`` aborts the command and the failure is misread as GENUINE FAILURE
+        (pytest never runs). Array elements expand quoted, so no id is split or globbed. The loop reads through process
+        substitution because a piped ``while`` runs in a subshell and would lose the array.
         """
         text = _text()
         retry_a_start = text.index("# Retry A: exactly the failing node-ids")
         retry_a_block = text[retry_a_start : retry_a_start + 1400]
-        assert 'eval "$RUNNER pytest --tb=short -v$_RETRY_ARGS"' in retry_a_block
-        assert "_RETRY_ARGS=$(printf '%s\\n' \"$FAILED_IDS\" | while IFS= read -r _id; do" in retry_a_block
-        assert 'printf \' "%s"\' "$_esc"' in retry_a_block
-        assert '_esc="${_esc//\\$/\\\\\\$}"' in retry_a_block
+        assert '"${R[@]}" pytest --tb=short -v "${RETRY[@]}"' in retry_a_block
+        assert 'RETRY+=("$_id")' in retry_a_block
+        assert "done < <(printf '%s\\n' \"$FAILED_IDS\")" in retry_a_block
+        assert "eval" not in retry_a_block
 
-    def test_runner_invocations_use_eval_for_word_splitting(self) -> None:
-        """``$RUNNER`` (a two-token string like "uv run") is never invoked bare.
+    def test_runner_invocations_use_the_closed_case_array(self) -> None:
+        """``$RUNNER`` (a two-token string like "uv run") is mapped to an array and never run as a string.
 
         Claude Code's Bash tool runs under zsh on macOS (the user's login shell) — zsh does not word-split a bare
-        ``"$VAR"``, only unquoted command substitution. A bare ``$RUNNER pytest`` fails with "command not found: uv run
-        pytest". Confirmed empirically this session.
+        ``"$VAR"``, so a bare ``$RUNNER pytest`` fails with "command not found: uv run pytest". ``eval`` would work but
+        runs whatever a planted session file holds; the closed ``case`` accepts only the three detected literals.
         """
         text = _text()
-        assert re.search(r"(?<!eval \")\$RUNNER pytest", text) is None
-        assert re.search(r"(?<!eval \")\$RUNNER (ruff|mypy)", text) is None
+        assert re.search(r"\beval\b", text) is None
+        assert re.search(r"\$RUNNER (pytest|ruff|mypy)", text) is None
+        case_line = (
+            'case "$RUNNER" in "uv run") R=(uv run);; "poetry run") R=(poetry run);; "python -m") R=(python -m);; '
+            '*) echo "! BLOCKED — runner state missing or not one of: uv run, poetry run, python -m (re-run Tool detection)"; '
+            "exit 1;; esac"
+        )
+        runner_fences = [f for f in _bash_fences(text) if '"${R[@]}"' in f]
+        assert len(runner_fences) >= 6
+        assert all(case_line in f for f in runner_fences)
 
     def test_pipefail_replaces_pipestatus(self) -> None:
         """``set -o pipefail`` + ``$?`` replaces ``${PIPESTATUS[0]}`` code usage — absent under zsh (which has a
@@ -167,7 +180,7 @@ class TestFlakyRetryRedesign:
         """
         text = _text()
         assert (
-            'eval "$RUNNER pytest <test_dir> $_QS_DOCTEST_ARGS -v --tb=short -rfE $XDIST_ARGS" > "$_QS_LOG" 2>&1'
+            '"${R[@]}" pytest <test_dir> "${_QS_DOCTEST_ARGS[@]}" -v --tb=short -rfE "${XDIST[@]}" > "$_QS_LOG" 2>&1'
             in text
         )
         # The async process-substitution form survives only as the explanatory-comment mention
@@ -206,6 +219,71 @@ class TestFlakyRetryRedesign:
         assert "rm -f" not in wide_run_fence
 
 
+_requires_bash = pytest.mark.skipif(not _bash_runs_posix_script(), reason="Bash cannot execute POSIX scripts")
+_requires_zsh = pytest.mark.skipif(shutil.which("zsh") is None, reason="zsh not installed")
+
+
+def _runner_case_line() -> str:
+    """Return the closed ``case`` line every runner fence carries, exactly as shipped."""
+    return next(line for line in _text().splitlines() if line.startswith('case "$RUNNER" in'))
+
+
+class TestRunnerCaseExecution:
+    """Runs the shipped ``case`` line in a real shell: a planted runner value never reaches a command."""
+
+    @staticmethod
+    def _run(shell: str, runner: str, workdir: Path) -> subprocess.CompletedProcess[str]:
+        """Run the shipped case line, then the array call, in ``workdir`` with ``RUNNER`` preset."""
+        script = f'RUNNER={shlex.quote(runner)}\n{_runner_case_line()}\nprintf "[%s]" "${{R[@]}}"\n'
+        return subprocess.run(
+            [shell, "-c", script], capture_output=True, text=True, timeout=30, check=False, cwd=workdir
+        )
+
+    @pytest.mark.parametrize(
+        "shell",
+        [
+            pytest.param("bash", marks=_requires_bash, id="bash"),
+            pytest.param("zsh", marks=_requires_zsh, id="zsh"),
+        ],
+    )
+    @pytest.mark.parametrize(
+        ("runner", "expected"),
+        [
+            pytest.param("uv run", "[uv][run]", id="uv"),
+            pytest.param("poetry run", "[poetry][run]", id="poetry"),
+            pytest.param("python -m", "[python][-m]", id="python"),
+        ],
+    )
+    def test_detected_runner_becomes_separate_words(self, shell: str, runner: str, expected: str, tmp_path: Path):
+        """Each detected runner expands to one array element per word in bash and zsh alike."""
+        proc = self._run(shell, runner, tmp_path)
+
+        assert (proc.returncode, proc.stdout) == (0, expected)
+
+    @pytest.mark.parametrize(
+        "shell",
+        [
+            pytest.param("bash", marks=_requires_bash, id="bash"),
+            pytest.param("zsh", marks=_requires_zsh, id="zsh"),
+        ],
+    )
+    @pytest.mark.parametrize(
+        "planted",
+        [
+            pytest.param("uv run; touch pwned", id="semicolon"),
+            pytest.param("uv run $(touch pwned)", id="substitution"),
+            pytest.param("", id="empty"),
+        ],
+    )
+    def test_planted_runner_is_blocked_and_runs_nothing(self, shell: str, planted: str, tmp_path: Path):
+        """A session file holding anything but the three literals exits 1 and executes nothing."""
+        proc = self._run(shell, planted, tmp_path)
+
+        assert proc.returncode == 1
+        assert "! BLOCKED" in proc.stdout
+        assert not (tmp_path / "pwned").exists()
+
+
 class TestXdistProbe:
     """Pins the runner-agnostic probe contract — see plan blocker 3, concern 2."""
 
@@ -240,15 +318,16 @@ class TestDoctestFold:
         """The clean-collection check precedes the merge, not the other way round."""
         text = _text()
         check_idx = text.index("--collect-only -q")
-        merge_flag_idx = text.index('_QS_DOCTEST_ARGS="--doctest-modules')
+        merge_flag_idx = text.index("_QS_DOCTEST_ARGS=(--doctest-modules")
         assert check_idx < merge_flag_idx
 
     def test_failed_collection_degrades_to_not_merged_not_a_halt(self) -> None:
         """A failed collection check degrades gracefully — it never exits the stack."""
         text = _text()
         check_block_start = text.index("DOCTEST_MERGED=false")
-        check_block_end = text.index('_QS_DOCTEST_ARGS=""')
-        check_block = text[check_block_start:check_block_end]
+        check_block_end = text.index("_QS_DOCTEST_ARGS=()")
+        # the closed runner `case` legitimately exits 1 on a planted runner; only the collection outcome must not
+        check_block = text[check_block_start:check_block_end].replace(_runner_case_line(), "")
         assert "exit 1" not in check_block
 
     def test_doctest_failure_never_enters_flaky_retry(self) -> None:
@@ -310,9 +389,9 @@ class TestDoctestFold:
         """The doctest-fold collection check never ``rm -f``s its own log inline.
 
         Post-round-4 review found this exact fence — never named by any of the four challenger rounds, only found by
-        re-scanning every fence for the same shape — combined ``rm -f "$_QS_COLLECT_LOG"`` with the ``eval`` that needs
-        manifest coverage: the same class R2 was filed against on the wide-run fence below it in this file. The log's
-        path is CSID-deterministic and is simply overwritten by the next run.
+        re-scanning every fence for the same shape — combined ``rm -f "$_QS_COLLECT_LOG"`` with the runner call that
+        needs manifest coverage: the same class R2 was filed against on the wide-run fence below it in this file. The
+        log's path is CSID-deterministic and is simply overwritten by the next run.
         """
         text = _text()
         assert 'rm -f "$_QS_COLLECT_LOG"' not in text

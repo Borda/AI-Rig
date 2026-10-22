@@ -9,7 +9,9 @@ Covers:
 
 from __future__ import annotations
 
+import subprocess
 import sys
+import time
 from pathlib import Path
 
 import dev_run_repro
@@ -45,11 +47,19 @@ class TestVerdict:
     """The run's exit code decides the verdict line; the code itself lands in the gate sentinel."""
 
     @pytest.mark.parametrize(
-        ("code", "verdict"),
+        ("code", "tail", "verdict"),
         [
-            pytest.param(1, "Bug reproduced — tests fail. Proceed to fix.", id="failing-run"),
             pytest.param(
-                0, "Tests pass — bug may not be reproducible via pytest; check symptom directly.", id="passing-run"
+                1,
+                ["last line", "1 failed in 0.01s"],
+                "Bug reproduced — tests fail. Proceed to fix.",
+                id="failing-run",
+            ),
+            pytest.param(
+                0,
+                ["last line"],
+                "Tests pass — bug may not be reproducible via pytest; check symptom directly.",
+                id="passing-run",
             ),
         ],
     )
@@ -59,6 +69,7 @@ class TestVerdict:
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
         code: int,
+        tail: list[str],
         verdict: str,
     ) -> None:
         """Print the tail, then the verdict; record the runner's exit code for later blocks.
@@ -66,13 +77,40 @@ class TestVerdict:
         Only pytest exit 1 (tests ran and failed) reads as "reproduced"; exit 0 is a pass.
         """
         _seed(session, "uv run pytest", "tests/test_a.py::test_x")
-        monkeypatch.setattr(dev_run_repro, "run_tail", lambda argv: (code, ["last line"]))
+        monkeypatch.setattr(dev_run_repro, "run_tail", lambda argv: (code, tail))
         rc = dev_run_repro.main([])
         assert (rc, capsys.readouterr().out, read_sentinel("dev-gate-exit")) == (
             0,
-            f"last line\n{verdict}\n",
+            "\n".join(tail) + f"\n{verdict}\n",
             str(code),
         )
+
+    @pytest.mark.parametrize(
+        "tail",
+        [
+            pytest.param(["/usr/bin/python3: No module named pytest"], id="pytest-missing"),
+            pytest.param(["startup compiler: 1 error generated."], id="startup-noise-with-an-error-count"),
+            pytest.param(
+                ["FAILED preflight: required test environment is unavailable"], id="startup-failed-line-without-node-id"
+            ),
+        ],
+    )
+    def test_exit_one_without_a_failure_summary_is_not_a_reproduction(
+        self,
+        session: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        tail: list[str],
+    ) -> None:
+        """Pytest exit 1 with no failure summary means the runner never started, so the gate errors instead.
+
+        The run printed a module error or unrelated tool noise and exited 1 before any test executed; reading that as a
+        reproduced bug would unlock the fix step with nothing proven.
+        """
+        _seed(session, "python -m pytest", "tests/test_a.py::test_x")
+        monkeypatch.setattr(dev_run_repro, "run_tail", lambda argv: (1, tail))
+        rc = dev_run_repro.main([])
+        assert (rc, "GATE ERROR" in capsys.readouterr().out) == (1, True)
 
     @pytest.mark.parametrize(
         "code",
@@ -200,3 +238,15 @@ class TestRunTail:
         """Pytest writes failures to stderr in some runners; the tail must show them like ``2>&1 | tail``."""
         code, lines = dev_run_repro.run_tail([sys.executable, "-c", "import sys; sys.stderr.write('boom\\n')"])
         assert (code, lines) == (0, ["boom"])
+
+    def test_child_holding_stdout_open_is_killed_at_the_deadline(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The wall-clock cap covers reading the output, not only waiting after it ends.
+
+        The child keeps its stdout open for 30 s; the cap is 0.5 s. Before the read ran on a helper thread, the cap
+        started only after the child closed its output, so the run lasted the full 30 s.
+        """
+        monkeypatch.setattr(dev_run_repro, "_RUN_TIMEOUT_S", 0.5)
+        started = time.monotonic()
+        with pytest.raises(subprocess.TimeoutExpired):
+            dev_run_repro.run_tail([sys.executable, "-c", "import time; print('start', flush=True); time.sleep(30)"])
+        assert time.monotonic() - started < 10

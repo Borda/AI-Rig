@@ -126,7 +126,8 @@ def _read_sentinel(name: str) -> str:
         The stripped first line, or an empty string when the sentinel is absent or empty.
     """
     csid = os.environ.get("CSID") or os.environ.get("CLAUDE_CODE_SESSION_ID") or "shared"
-    path = Path(os.environ.get("TMPDIR") or tempfile.gettempdir()) / f"{name}-{csid}"
+    tmp_fallback = tempfile.gettempdir() if os.name == "nt" else "/tmp"  # noqa: S108 - shell default of ${TMPDIR:-/tmp}
+    path = Path(os.environ.get("TMPDIR") or tmp_fallback) / f"{name}-{csid}"
     try:
         return next(iter(path.read_text(encoding="utf-8").splitlines()), "").strip()
     except OSError:

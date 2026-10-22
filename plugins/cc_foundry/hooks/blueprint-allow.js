@@ -382,6 +382,8 @@ const DEFERRING_COMMANDS = new Set([
   "watch",
   "trap",
   "find",
+  "uv",
+  "poetry",
   "bash",
   "sh",
   "zsh",
@@ -439,6 +441,31 @@ function sedEditsInPlace(tokens) {
   return hasShortFlag(tokens, "i") || tokens.some((token) => token.startsWith("--in-place"));
 }
 
+/**
+ * True when a `hash` segment rebinds a command name to another path (`hash name=/p`, `hash -p /p name`).
+ * Any option word carrying `p` counts (attached `-p/bin/rm`, bundled `-rp`); `-l`, `-r`, `-d`, `-t` only look up.
+ */
+function hashRebinds(tokens) {
+  return tokens.slice(1).some((word) => (word.startsWith("-") && word.includes("p")) || word.includes("="));
+}
+
+/** True when `builtin hash …` rebinds a command name, the same as a bare `hash` segment. */
+function builtinRebinds(tokens) {
+  return tokens.length > 1 && tokens[1] === "hash" && hashRebinds(tokens.slice(1));
+}
+
+// A pure read of the zsh `commands` / bash 4 `BASH_CMDS` table (`${commands[x]}`, `${+commands[x]}`, `$commands`).
+// Only a literal word or plain `$name` / `${name}` subscript is a pure read; `${commands[$(…)]}` can run a write.
+const COMMAND_TABLE_READ_RE =
+  /\$\{[+#]?(?:commands|BASH_CMDS)(?:\[(?:[A-Za-z0-9_.-]+|\$[A-Za-z_][A-Za-z0-9_]*|\$\{[A-Za-z_][A-Za-z0-9_]*\})\])?\}|\$(?:commands|BASH_CMDS)\b/g;
+// Any other mention of either table name: writable in many spellings, so treated as a rebind.
+const COMMAND_TABLE_USE_RE = /(?<![A-Za-z0-9_./-])(?:commands|BASH_CMDS)(?![A-Za-z0-9_./-])/;
+
+/** True when `command` may write the zsh `commands` or bash 4 `BASH_CMDS` table. */
+function writesCommandTable(command) {
+  return COMMAND_TABLE_USE_RE.test(command.replace(COMMAND_TABLE_READ_RE, ""));
+}
+
 /** True when a `gh api` segment issues an HTTP DELETE. */
 function ghApiDeletes(tokens) {
   if (tokens.indexOf("api") === -1) return false;
@@ -467,6 +494,8 @@ const TOOL_CHECKS = new Map([
   ["git", gitIsDangerous],
   ["sed", sedEditsInPlace],
   ["gh", ghApiDeletes],
+  ["hash", hashRebinds],
+  ["builtin", builtinRebinds],
 ]);
 
 /**
@@ -614,6 +643,7 @@ function commandIsDangerous(segment) {
 
 /** True when any segment of `command` is destructive. */
 function isDangerous(command) {
+  if (writesCommandTable(command)) return true;
   return splitSegments(command).some(segmentIsDangerous);
 }
 
