@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.43.3
+
+- Adversarial review loops treat a `foundry:challenger` round that returns no deliverable or a `blocked` envelope as an agent failure, never a silent `not-run`: the cause is recorded and the round re-dispatched once. Security-filter reviews keep Codex enabled, so the challenger runs the bypass search through its Codex cross-check and needs no separate Codex row.
+- The file-handoff protocol lists the report names Claude Code refuses for a subagent Write (`findings.md`, `report.md`, `summary.md`, `analysis.md` and suffixed `findings-*.md`), so an agent names its file after itself and the report is no longer lost.
+
 ## 0.43.2
 
 - The runtime `blueprint-allow.js` hook refuses, even on a manifest hit, every command that can point a command name at another program: `hash`, `builtin`, `alias`, `enable`, `functions`, `eval` and their kin; any mention of the zsh `commands`/`functions`/`aliases` or bash `BASH_CMDS`/`BASH_ALIASES` tables, attached option prefixes included (`set -Acommands`); `set -A`, `read -a`, `printf -v`, name references and indirect expansions. Spellings that slipped past the earlier per-spelling checks, such as `set -Acommands ruff /bin/echo` and `builtin -- hash -p …`, are now refused.

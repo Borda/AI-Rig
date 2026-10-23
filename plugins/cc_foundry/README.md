@@ -674,6 +674,8 @@ ______________________________________________________________________
 
 When `bridge@borda-ai-rig` is installed and enabled, challenger calls the read-only Codex adversarial review track for the same target and aggregates its findings. Pass `--no-codex` to skip. An absent or disabled bridge is surfaced rather than silently falling back.
 
+Inside an adversarial review → fix loop, challenger labels findings in the loop's six tiers (security to nit) so each round can be scored, and delivers its findings in its final reply rather than through a report file or a message. It runs only the evidence commands the caller's brief names, always in the foreground. For a security filter it reviews the filter logic first, runs the open-ended bypass search through its Codex cross-check, checks Codex's candidates (and any generator the caller supplies) against the filter's own functions, and counts the reproduced ones in its own findings; it never writes bypass candidates itself, and `--no-codex` does not apply to such a review. A search that could not run returns `status: blocked` with its reason, never a clean verdict. The Codex Cross-Check section is always present, stating a skip or failure rather than omitting it.
+
 **Model**: `opus`
 
 **Not for**: designing plans or ADRs (`foundry:solution-architect`), writing tests or coverage review (`foundry:qa-specialist`), config file quality review (`foundry:curator`).
@@ -809,7 +811,7 @@ Run `/foundry:investigate "hooks not firing on Save"`. Most common cause: `hooks
 
 **`/foundry:calibrate` times out**
 
-Each pipeline subagent has 10-minute hard cutoff (15 minutes when Codex active). Target consistently times out: run in isolation: `/foundry:calibrate foundry:sw-engineer --fast`. Persistent: `/foundry:investigate "/calibrate times out every run"`.
+Each pipeline subagent has 10-minute hard cutoff (15 minutes when Codex active, 60 minutes with `--full` or `--ab-test`). Target consistently times out: run in isolation: `/foundry:calibrate foundry:sw-engineer --fast`. Persistent: `/foundry:investigate "/calibrate times out every run"`.
 
 **`/foundry:manage create` picks wrong model tier**
 

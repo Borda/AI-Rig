@@ -30,6 +30,8 @@ The helper reads Claude's installed-plugin registry, marketplace cache, and enab
 
 Codex integration active only for `agents` and `skills` modes. Pipeline spawned for `routing`, `communication`, or `rules`: treat `CODEX_AVAILABLE=false` — those modes test Claude-specific internals Codex lacks context for.
 
+Every Codex call in this pipeline (Phase 1a generation, Phase 3b scoring) runs in the foreground inside your turn: never a background job, never end the turn waiting on Codex — nothing re-invokes the pipeline, so a run that does idles until its deadline.
+
 ### Pre-flight — local file resolution
 
 When `LOCAL_MODE=true`, resolve target file from source tree before Phase 2:
@@ -92,7 +94,9 @@ Split `<N>` in-scope problems between two generators. Claude always owns 1 out-o
 
 `bridge:advise`/`bridge:review` are read-only — they return their answer in the call's own envelope, never writing to the run dir. The public envelope omits `details`, so the payload must travel in `findings[]` (array of strings). Capture it from the call result, then write the target file yourself.
 
-Skill(skill="bridge:advise", args="Generate \<N_CODEX> synthetic calibration problems for domain: '<DOMAIN>'.
+No independent work runs beside this call: Step 2 starts only after it returns.
+
+Skill(skill="bridge:advise", args="--timeout-seconds 120 Generate \<N_CODEX> synthetic calibration problems for domain: '<DOMAIN>'.
 
 Each problem must be JSON object with these exact fields:
 
@@ -112,10 +116,14 @@ Difficulty tiers:
 - **medium**: requires reading 2-3 related functions or sections; non-obvious but unambiguous
 - **high**: requires cross-function or cross-module reasoning; subtle but detectable by reading
 - **extreme**: intentionally adversarial or near-unsolvable from reading alone — use ONE of these patterns:
-  1. adversarial/misleading: code looks like common anti-pattern but actually correct in context (tests false-positive discipline); issue description in ground_truth explains why it IS problem despite appearance
+  1. adversarial/misleading decoy: code looks like common anti-pattern but is correct in context (tests false-positive discipline); the decoy stays out of ground_truth and the problem also carries a separate real issue
   2. deep cross-function control flow: issue only visible by tracing state across 4+ functions
   3. subtle concurrency or ordering bug: requires reasoning about interleaved execution or init order
   4. incomplete detectability: issue real but only partially diagnosable from reading (e.g., depends on runtime config); ground_truth includes what IS detectable statically
+
+Extreme bar: a reviewer who reads once and reports what stands out must miss ≥1 ground-truth issue. Every extreme problem needs ≥1 issue whose evidence is split across two sections (visible only when both are read together) and ≥1 construct that looks defective but is correct (a decoy; decoys never enter ground_truth). Before returning, skim your own input: every ground-truth issue visible on a first pass → harden it.
+
+Signposting ban (medium and above): nothing in `input` or `task_prompt` names, labels or hints at an issue — no 'Risk:' headers, no comments flagging the flaw, no task_prompt wording that points at it.
 
 Distribution rules for N_CODEX problems (fast=2, full=5):
 
@@ -144,6 +152,7 @@ Rules:
 - Issues must be unambiguous — domain expert would confirm them
 - Distribution for N_CLAUDE in-scope problems: fast (N_CLAUDE=1): 1 medium or high — no extreme in fast mode; when N_CLAUDE=1, use medium or high; full (N_CLAUDE=5): exactly 1 problem at each tier — trivial, low, medium, high, extreme
 - Extreme problems may have 1–3 known issues (fewer fine if issue inherently hard to detect)
+- Apply Step 1's extreme bar and signposting ban
 - Each non-extreme in-scope problem has 2–5 known issues; no runtime-only-detectable issues
 - **Include exactly 1 out-of-scope problem** (difficulty: `"scope"`): input clearly outside agent's domain (e.g., for `foundry:linting-expert`, natural-language question; for `oss:cicd-steward`, plain Python data script). Set `ground_truth: []`. Correct response declines, redirects, or reports no findings. Any findings = false positives (scope failure).
 - Return valid JSON array only (no prose)
@@ -245,9 +254,11 @@ Each scorer receives this prompt (substitute `<PROBLEM_ID>`, `<GROUND_TRUTH_JSON
 
 For each problem, call the read-only Codex bridge skill. Run **sequentially** (not parallel — scoring writes shared result files).
 
+Each call passes `--timeout-seconds 180` (worst case 432 s, under the foreground Bash cap), so the bridge skill itself stays foreground.
+
 `bridge:review` is read-only — it returns its answer in the call envelope, never writing a file. The public envelope omits `details`, so the score travels as one JSON-object string in `findings[0]`. Call fails or `findings[0]` unparsable: retry once, then fall back to Claude's score alone for that problem (`scorer_mode: "single"`, per Phase 3c below) rather than looping.
 
-Skill(skill="bridge:review", args="Score a calibration response against ground truth.
+Skill(skill="bridge:review", args="--timeout-seconds 180 --effort medium Score a calibration response against ground truth.
 
 ```text
 Problem ID: \<PROBLEM_ID>
@@ -304,7 +315,7 @@ Write all merged scores to `.reports/calibrate/<TIMESTAMP>/<TARGET>/scores.json`
 Compute aggregates (exclude out-of-scope problem from recall/F1/severity/format averages; include in FP count):
 
 - `mean_recall` = mean of `recall` values for in-scope, **non-extreme** problems only (trivial through high included; extreme excluded — reported separately as `extreme_recall`)
-- `extreme_recall` = mean of `recall` values for extreme problems only (null if none present); partial performance (0.4–0.7) informative, not alarming
+- `extreme_recall` = mean of `recall` values for extreme problems only (null if none present); partial performance (0.4–0.7) informative, not alarming; `extreme_recall` ≥ 0.95 with ≥2 extreme problems → add gap `"extreme tier saturated (extreme_recall <X>): problems did not discriminate"`; with fewer → gap `"extreme tier single-problem signal (extreme_recall <X>)"`
 - `mean_confidence` = mean of `confidence` over the same problems as `mean_recall` (in-scope, non-extreme) — mixing in extreme/scope problems whose recall is excluded biases `calibration_bias` toward overconfident
 - `calibration_bias` = `mean_confidence − mean_recall` (same problem set; extreme problems don't affect verdict)
 - `mean_f1` = mean of `f1` values for in-scope, non-extreme problems only
@@ -358,7 +369,7 @@ Source: dual (claude+codex) | Scorer: dual | Scorer agreement: X.XX [consistent 
 | Disputed severities | N    | excluded from SevAcc (scorers disagreed >1 tier) |
 
 Recall by difficulty: trivial=X.XX | low=X.XX | medium=X.XX | high=X.XX (omit levels with 0 problems)
-Extreme recall: X.XX (extreme problems excluded from mean_recall and verdict — partial performance 0.4–0.7 is expected)
+Extreme recall: X.XX (extreme problems excluded from mean_recall and verdict — partial performance 0.4–0.7 is expected; ≥0.95 with ≥2 extreme problems → saturated, gap recorded)
 
 ### Recall by Problem Source (dual source mode only)
 | Source | Problems | Mean Recall |

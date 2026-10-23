@@ -81,6 +81,7 @@ NOT for: static routing overlap analysis (use /foundry:audit); manually reviewin
 - SCORER_AGREEMENT_WARN: 0.70 (scorer agreement below this → flag ambiguous ground truth ⚠)
 - CODEX_MODES: ["agents", "skills"] (modes where Codex is active; routing/communication/rules excluded — test Claude-specific internals)
 - PIPELINE_TIMEOUT_MIN_DUAL: 15 (deadline `900` when Codex active — replaces PIPELINE_TIMEOUT_MIN=10 for dual-source runs)
+- PIPELINE_TIMEOUT_MIN_FULL: 60 (deadline `3600` when `--full` or `--ab-test` — replaces the two above; one dual `--full --ab-test` run took 985 s with Codex scoring skipped, and 11 sequential Codex calls at a 180 s budget add up to 1980 s)
 - APPLY_TIMEOUT_S: 600 (Step 6 apply-subagent deadline)
 
 Domain tables per mode: see `modes/agents.md`, `modes/skills.md`, `modes/routing.md`, `modes/communication.md`, `modes/rules.md`.
@@ -219,7 +220,7 @@ For each target mode in resolved target list, load corresponding mode file (bloc
 5. Mark each mode's task `completed` in the response that consumes its last result
 6. Only then start the next pair — after the deadline check below has resolved every row of both modes (`done` or ⏱)
 
-**Batch deadline** (`_shared/agent-spawn-protocol.md` §Deadlines): every spawn response Writes `<RUN_DIR>/agent-watch-<mode>-<batch-number>.tsv` (`<RUN_DIR>` = `.reports/calibrate/<TIMESTAMP>`), one row per pipeline: `<target>\t<that target's result.jsonl path from its mode file>\t<600, or 900 when Codex active>`. On every completion notification run once, before reading any result:
+**Batch deadline** (`_shared/agent-spawn-protocol.md` §Deadlines): every spawn response Writes `<RUN_DIR>/agent-watch-<mode>-<batch-number>.tsv` (`<RUN_DIR>` = `.reports/calibrate/<TIMESTAMP>`), one row per pipeline: `<target>\t<that target's result.jsonl path from its mode file>\t<600; 900 when Codex active; 3600 when --full or --ab-test (overrides 600 and 900)>`. On every completion notification run once, before reading any result:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"

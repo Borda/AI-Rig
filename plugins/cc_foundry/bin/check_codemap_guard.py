@@ -157,8 +157,14 @@ REGISTRY: dict[str, Guard] = {
     "plugins/cc_oss/skills/resolve/modes/dispatch-phase1.md": Guard(
         "inline-index-path", "index file path built inline for the codemap_cache.py read call"
     ),
-    "plugins/cc_oss/skills/review/modes/codemap-context.md": Guard(
-        "bash-preamble", "review pre-flight; fragment, and gated on CODEMAP_ENABLED"
+    # --- codex-rig: sets the provider's public index override; never derives the index path ---
+    "plugins/codex-rig/shared/codemap-contract.md": Guard(
+        "doc-prose", "describes the adapter's CODEMAP_INDEX_DIR run-directory default, not executable"
+    ),
+    "plugins/codex-rig/shared/codemap_adapter.py": Guard(
+        "provider-env",
+        "points the provider's public CODEMAP_INDEX_DIR override at the review run directory; the provider "
+        "CLI still resolves the index, so no path is derived here",
     ),
 }
 

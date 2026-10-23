@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.70.2
+
+- `/foundry:calibrate` arms a 60-minute pipeline deadline when `--full` or `--ab-test` is set (previously 10 minutes, 15 with Codex), so a full A/B calibration with Codex scoring is no longer cut off at 15 minutes.
+- The calibrate pipeline runs every Codex call, problem generation and scoring, in the foreground, and gives each scoring call a 180-second budget at medium effort and the generation call a 120-second budget. Before, a pipeline that waited on a background Codex job went idle and returned nothing.
+- Calibration problem generation asks for harder extreme problems (evidence split across two sections, plus a construct that looks defective but is correct, kept out of the ground truth) and bans labels or hints that give the flaw away in medium and harder problems. The result records a gap when `extreme_recall` is 0.95 or higher (marked a single-problem signal when fewer than two extreme problems exist), so a saturated tier is no longer read as proof of capability.
+- `foundry:challenger` keeps its report short: one quote or citation as the target reference, an attack of at most three sentences, a single required change and one-line Refuted Challenges entries. It compresses wording only, so no finding, field or refutation is dropped, and over-budget triage compresses wording and then lets the report run over instead of dropping Nitpicks.
+- `foundry:challenger` delivers its findings in its final reply instead of a report file or SendMessage, labels them in the adversarial loop's six tiers (security to nit) so each round can be scored, always states its Codex cross-check result, and in a security-filter review runs the bypass search through Codex and classifies the candidates statically instead of writing bypass strings itself.
+- The always-loaded quality-gates rule points at a new Challenger Rounds section in its full rule, which holds the round-failure and Codex procedure.
+- The file-handoff protocol lists the report names Claude Code refuses for a subagent Write (`findings.md`, `report.md`, `summary.md`, `analysis.md` and suffixed `findings-*.md`), so an agent names its file after itself and the report is no longer lost.
+- `check_codemap_guard.py` registers the Codex Rig adapter's run-directory index override and drops the stale entry for the oss review codemap mode, so the pre-commit check no longer fails on every commit.
+
 ## 0.70.1
 
 - The runtime `blueprint-allow.js` hook refuses, even on a manifest hit, every command that can point a command name at another program: `hash`, `builtin`, `alias`, `enable`, `functions`, `eval` and their kin; any mention of the zsh `commands`/`functions`/`aliases` or bash `BASH_CMDS`/`BASH_ALIASES` tables, attached option prefixes included (`set -Acommands`); `set -A`, `read -a`, `printf -v`, name references and indirect expansions. Spellings that slipped past the earlier per-spelling checks, such as `set -Acommands ruff /bin/echo` and `builtin -- hash -p …`, are now refused.
