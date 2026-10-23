@@ -197,7 +197,9 @@ Collect all signals before forming any hypothesis.
 ```bash
 # timeout: 10000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r CODEMAP_ENABLED < "${TMPDIR:-/tmp}/dev-debug-codemap-enabled-${CSID}" 2>/dev/null || CODEMAP_ENABLED="false"
+IFS= read -r CODEMAP_CURRENCY  2>/dev/null < "${TMPDIR:-/tmp}/dev-codemap-currency-${CSID}" || CODEMAP_CURRENCY="no_index"
+if [ "$CODEMAP_CURRENCY" = "stale" ]; then export SCAN_NO_AUTOBUILD=1; fi
+IFS= read -r CODEMAP_ENABLED  2>/dev/null < "${TMPDIR:-/tmp}/dev-debug-codemap-enabled-${CSID}" || CODEMAP_ENABLED="false"
 if [ "$CODEMAP_ENABLED" = "true" ]; then
     codemap-py query central --top 5 2>/dev/null
 fi
@@ -206,6 +208,11 @@ fi
 After reading traceback or `$ARGUMENTS`, derive `TARGET_MODULE`: strip `src/`, `.py` suffix, replace `/` with `.` (e.g. `src/mypackage/auth.py` → `mypackage.auth`); capture the failing function name too, if known, as `FAILING_FN`. Both are substitution tokens (Step 1 head):
 
 ```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r CODEMAP_CURRENCY  2>/dev/null < "${TMPDIR:-/tmp}/dev-codemap-currency-${CSID}" || CODEMAP_CURRENCY="no_index"
+if [ "$CODEMAP_CURRENCY" = "stale" ]; then export SCAN_NO_AUTOBUILD=1; fi
+IFS= read -r CODEMAP_ENABLED  2>/dev/null < "${TMPDIR:-/tmp}/dev-debug-codemap-enabled-${CSID}" || CODEMAP_ENABLED="false"
+[ "$CODEMAP_ENABLED" = "true" ] || exit 0
 # resolve TARGET_MODULE/FAILING_FN first, e.g. TARGET_MODULE=mypackage.auth; FAILING_FN=validate
 # timeout: 10000
 if [ -z "$TARGET_MODULE" ]; then
@@ -410,7 +417,9 @@ If confidence low: propose targeted probe (minimal script, added log statement, 
 ```bash
 # timeout: 8000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r CODEMAP_ENABLED < "${TMPDIR:-/tmp}/dev-debug-codemap-enabled-${CSID}" 2>/dev/null || CODEMAP_ENABLED="false"
+IFS= read -r CODEMAP_CURRENCY  2>/dev/null < "${TMPDIR:-/tmp}/dev-codemap-currency-${CSID}" || CODEMAP_CURRENCY="no_index"
+if [ "$CODEMAP_CURRENCY" = "stale" ]; then export SCAN_NO_AUTOBUILD=1; fi
+IFS= read -r CODEMAP_ENABLED  2>/dev/null < "${TMPDIR:-/tmp}/dev-debug-codemap-enabled-${CSID}" || CODEMAP_ENABLED="false"
 SUSPECT=""  # set to confirmed Step 3 hypothesis as module.path::function (fn known) or bare module.path — same shape as TARGET_MODULE
 if [ -z "$SUSPECT" ]; then
     echo "⚠ SUSPECT not resolved — skipping Test Impact query and section"

@@ -213,10 +213,12 @@ export TARGET_MODULE TARGET_FN
 ```bash
 # timeout: 6000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r CODEMAP_ENABLED < "${TMPDIR:-/tmp}/dev-feature-codemap-enabled-${CSID}" 2>/dev/null || CODEMAP_ENABLED="false"
+IFS= read -r CODEMAP_CURRENCY  2>/dev/null < "${TMPDIR:-/tmp}/dev-codemap-currency-${CSID}" || CODEMAP_CURRENCY="no_index"
+if [ "$CODEMAP_CURRENCY" = "stale" ]; then export SCAN_NO_AUTOBUILD=1; fi
+IFS= read -r CODEMAP_ENABLED  2>/dev/null < "${TMPDIR:-/tmp}/dev-feature-codemap-enabled-${CSID}" || CODEMAP_ENABLED="false"
 IFS= read -r TARGET_MODULE < "${TMPDIR:-/tmp}/dev-feature-target-module-${CSID}" 2>/dev/null || TARGET_MODULE=""   # re-derive — bash state lost between Bash() calls
 if [ "$CODEMAP_ENABLED" = "true" ] && [ -n "$TARGET_MODULE" ] && command -v codemap-py >/dev/null 2>&1; then
-    codemap-py query --timeout 5 rdeps "$TARGET_MODULE" --top 10 --exclude-tests 2>/dev/null || true
+    codemap-py query --timeout 5 rdeps "$TARGET_MODULE" --limit 10 --exclude-tests 2>/dev/null || true
 fi
 ```
 
@@ -224,7 +226,7 @@ fi
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r CODEMAP_ENABLED < "${TMPDIR:-/tmp}/dev-feature-codemap-enabled-${CSID}" 2>/dev/null || CODEMAP_ENABLED="false"
+IFS= read -r CODEMAP_ENABLED  2>/dev/null < "${TMPDIR:-/tmp}/dev-feature-codemap-enabled-${CSID}" || CODEMAP_ENABLED="false"
 if [ "$CODEMAP_ENABLED" = "true" ]; then python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" codemap-context.md; fi  # timeout: 5000
 ```
 
@@ -501,6 +503,8 @@ Start from Step 2 demo — already failing, becomes first target. For each piece
    ```bash
    # timeout: 600000
    export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+   IFS= read -r CODEMAP_CURRENCY  2>/dev/null < "${TMPDIR:-/tmp}/dev-codemap-currency-${CSID}" || CODEMAP_CURRENCY="no_index"
+   if [ "$CODEMAP_CURRENCY" = "stale" ]; then export SCAN_NO_AUTOBUILD=1; fi
    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_test_targets.py" --skill feature --run
    ```
 
@@ -579,6 +583,8 @@ Use scan to prioritize which criteria below get deepest scrutiny.
    ```bash
    # timeout: 600000
    export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+   IFS= read -r CODEMAP_CURRENCY  2>/dev/null < "${TMPDIR:-/tmp}/dev-codemap-currency-${CSID}" || CODEMAP_CURRENCY="no_index"
+   if [ "$CODEMAP_CURRENCY" = "stale" ]; then export SCAN_NO_AUTOBUILD=1; fi
    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_test_targets.py" --skill feature --run
    ```
 

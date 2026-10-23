@@ -5,11 +5,8 @@ Pinned failure modes:
 * Research's gates were an unversioned inline copy: no contract resolution block, no
   ``cat`` of the shipped contract, no version marker, so the provider could move to v3 with
   research silently frozen at its transcribed v2 text.
-* The wrappers named a build command their own loaded contract does not use, inside
-  the same sentence that says "apply verbatim".
-* The shipped contract now names the gated ``codemap-py index`` launcher itself, so
-  the former override clause announced a deviation from text it already agrees with
-  and kept the retired alias alive in a wrapper that never invokes it.
+* The wrapper preserves the gated ``codemap-py index`` preparation boundary and stays aligned with the provider's
+  automatic-default, confirm-first opt-in, and frozen-mode rules.
 * ``PROJ=$(basename "$(git rev-parse ...)") || PROJ=$(basename "$PWD")`` never fired its
   fallback: ``basename ""`` exits 0, so in a non-git project PROJ was empty and codemap was
   silently off.
@@ -124,6 +121,58 @@ def test_query_wrapper_preserves_failure_vs_empty_answer(
         assert "unavailable" in result.stderr
 
 
+@pytest.mark.skipif(_POSIX_BASH is None, reason="requires a working POSIX bash")
+@pytest.mark.parametrize(
+    ("enabled", "currency", "expected_no_heal"),
+    [
+        pytest.param("true", "stale", True, id="continue-stale-persists-into-later-query"),
+        pytest.param("true", "current", False, id="fresh-index-allows-normal-query"),
+        pytest.param("false", "stale", None, id="persisted-skip-blocks-query-before-preflight"),
+    ],
+)
+def test_context_reloads_consumer_sentinels_before_fake_query(
+    tmp_path: Path, enabled: str, currency: str, expected_no_heal: bool | None
+) -> None:
+    """The real shared query block obeys the persisted enabled/currency state on a later shell call."""
+    block = next(b for b in _bash_blocks(_CONTEXT) if "CODEMAP_SENTINEL_SLUG" in b)
+    temp_dir = tmp_path / "tmp"
+    temp_dir.mkdir()
+    (temp_dir / "research-run-codemap-enabled-session").write_text(f"{enabled}\n", encoding="utf-8")
+    (temp_dir / "research-codemap-currency-session").write_text(f"{currency}\n", encoding="utf-8")
+    trace = tmp_path / "queries.txt"
+    stub = (
+        'codemap-py() { [ "$1" = query ] || return 0; shift; '
+        'printf "%s\\n" "$*" >> "$TRACE"; printf \'%s\\n\' \'{"query_complete":true}\'; }\n'
+    )
+    env = os.environ | {
+        "CSID": "session",
+        "CODEMAP_SENTINEL_SLUG": "research-run",
+        "TMPDIR": temp_dir.as_posix(),
+        "TRACE": trace.as_posix(),
+        "TARGET_MODULE": "pkg.mod",
+        "TARGET_FN": "",
+        "SCAN_NO_AUTOBUILD": "0",
+    }
+    subprocess.run(
+        [_POSIX_BASH, "-c", stub + block],
+        cwd=tmp_path,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    queries = trace.read_text(encoding="utf-8").splitlines() if trace.exists() else []
+    if expected_no_heal is None:
+        assert queries == []
+    else:
+        assert len(queries) == 3
+        assert all(("--no-heal" in query) is expected_no_heal for query in queries)
+        assert queries[0].endswith("central --top 5")
+        assert queries[1].endswith("rdeps pkg.mod --limit 10")
+        assert queries[2].endswith("uncovered --top 20 pkg.mod")
+
+
 def _bash_blocks(path: Path) -> list[str]:
     """Return the bodies of every ```bash fenced block in *path*.
 
@@ -169,16 +218,14 @@ def test_gates_do_not_transcribe_the_contract_body():
     assert "Continue with stale data" not in text
 
 
-def test_build_command_is_applied_from_the_contract_without_an_override():
-    """Ensure the contract names the gated dispatcher without claiming an override.
-
-    An earlier contract required the override to be stated because it genuinely named a different command. With the
-    contract aligned, "with one override" describes a disagreement that no longer exists, and the retired alias must not
-    survive in the wrapper.
-    """
+def test_gate_wrapper_preserves_provider_preparation_contract():
+    """The wrapper states default preparation, opt-in confirmation, and the gated launcher boundary."""
     text = _GATES.read_text(encoding="utf-8")
 
-    assert "codemap-py index" in text
+    assert "Gate A prepares automatically by default" in text
+    assert "`LAZY_CODEMAP` is the explicit confirm-first preference" in text
+    assert "Inherited `SCAN_NO_AUTOBUILD=1` freezes both gates" in text
+    assert "contract's own build/rebuild action is the gated `codemap-py index` launcher" in text
     assert "apply verbatim, with one override" not in text, "the contract no longer disagrees"
     assert "scan-index" not in text, "the retired alias has no reason to appear in a wrapper"
 

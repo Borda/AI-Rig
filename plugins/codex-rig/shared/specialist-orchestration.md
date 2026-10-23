@@ -108,6 +108,8 @@ A probe request states hypothesis, exact command or code, working directory, req
 
 Parent may execute probes before dispatch and include evidence in frozen context, or after joining wave and record its own assessment. Preserve original specialist output and distinguish parent-run evidence from independently evaluated evidence. If closure needs another independent pass, stop and re-plan under existing dispatch-wave rule; parent-run test does not retroactively complete independent specialist's unresolved conclusion.
 
+For missing declared project dependencies, the parent follows [Project Dependency Preparation](native-skill-contract.md#project-dependency-preparation) before returning a missing-package limitation from an authorized check. Coordinate shared-environment changes centrally; read-only specialists return the missing declaration, interpreter and affected check rather than installing packages themselves. This applies across role names and preserves each pass's existing execution and approval boundaries.
+
 Missing child controls block only strict child route that requires them, not safe parent-owned investigation or Code Review's instruction-bounded inspection route. Continue authorized serial probes where workflow permits; never downgrade mandatory independence, bypass approval, or claim completed independent review from unavailable provenance. Scratch-write child routes are not supported by current portable validator; keep those executions parent-owned instead of relabelling writable child read-only.
 
 Before spawning/simulating pass, write/describe context pack:

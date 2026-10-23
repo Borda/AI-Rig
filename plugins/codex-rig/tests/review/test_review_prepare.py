@@ -2506,27 +2506,99 @@ def test_prepare_rejects_unrelated_source_selection(tmp_path: Path) -> None:
     assert not (run / "inspection-plan.json").exists()
 
 
-def test_prepare_pages_context_larger_than_old_limit(tmp_path: Path) -> None:
-    """Admit a complete large context through the bounded native page reader."""
+@pytest.mark.parametrize("evidence_lines", [5000, 18000])
+def test_prepare_automatically_batches_large_context(tmp_path: Path, evidence_lines: int) -> None:
+    """Route an oversized role without losing its evidence or the smaller role's responsibility."""
     run = _review_inputs(tmp_path)
-    (run / "challenger-evidence.md").write_text("bounded evidence\n" * 5000, encoding="utf-8", newline="\n")
+    (run / "challenger-evidence.md").write_text("bounded evidence\n" * evidence_lines, encoding="utf-8", newline="\n")
     result = _prepare(run)
     assert result.returncode == 0, result.stderr
-    context = (run / "specialists/challenger-context.md").read_bytes()
+    context = (run / "source-contexts/challenger.md").read_bytes()
     assert len(context) > 65536
-    assert context.count(b"bounded evidence\n") == 5000
-    assert (run / "inspection-plan.json").exists()
-
-
-def test_prepare_rejects_oversized_context_before_freezing_wave(tmp_path: Path) -> None:
-    """Keep a context above the bounded native read ceiling out of the frozen wave."""
-    run = _review_inputs(tmp_path)
-    (run / "challenger-evidence.md").write_text("bounded evidence\n" * 18000, encoding="utf-8", newline="\n")
-    result = _prepare(run)
-    assert result.returncode != 0
-    assert "review-context-capacity-exceeded:challenger:262144-bytes" in result.stderr
+    assert context.count(b"bounded evidence\n") == evidence_lines
+    schedule = json.loads((run / "batch-dispatch.json").read_bytes())
+    assert {call["role"] for wave in schedule["waves"] for call in wave["calls"]} == {"challenger", "qa-specialist"}
     assert not (run / "inspection-plan.json").exists()
     assert not (run / "specialists").exists()
+
+
+def test_prepare_checks_later_secret_before_automatic_batch_freeze(tmp_path: Path) -> None:
+    """An oversized first role must not freeze evidence before a later role's secret is rejected."""
+    run = _review_inputs(tmp_path)
+    (run / "challenger-evidence.md").write_text("bounded evidence\n" * 18000, encoding="utf-8", newline="\n")
+    (run / "qa-specialist-evidence.md").write_text(
+        "Authorization: Bearer do-not-retain", encoding="utf-8", newline="\n"
+    )
+    result = _prepare(run)
+    assert result.returncode != 0
+    assert "review-context-sensitive-material:qa-specialist" in result.stderr
+    assert not (run / "inspection-plan.json").exists()
+    assert not (run / "batch-inventory.json").exists()
+    assert not (run / "source-contexts").exists()
+    assert not (run / "specialists").exists()
+
+
+@pytest.mark.parametrize("context_bytes", [65536, 65537])
+def test_prepare_routes_by_each_complete_context_utf8_bytes(tmp_path: Path, context_bytes: int) -> None:
+    """Use the byte boundary per role, not aggregate wave size or Unicode character count."""
+    baseline_dir, target_dir = tmp_path / "baseline", tmp_path / "target"
+    baseline_dir.mkdir()
+    target_dir.mkdir()
+    baseline = _review_inputs(baseline_dir)
+    assert _prepare(baseline).returncode == 0
+    run = _review_inputs(target_dir)
+    for role in ("challenger", "qa-specialist"):
+        padding = context_bytes - len((baseline / f"specialists/{role}-context.md").read_bytes())
+        assert padding > 0
+        evidence = run / f"{role}-evidence.md"
+        evidence.write_bytes(evidence.read_bytes() + ("é" * (padding // 2) + "x" * (padding % 2)).encode())
+
+    result = _prepare(run)
+
+    assert result.returncode == 0, result.stderr
+    summary = json.loads(result.stdout)
+    assert summary["roles"] == 2
+    if context_bytes == 65536:
+        assert Path(summary["dispatch_path"]) == run / "dispatch.json"
+        assert summary["context_bytes"] == 2 * context_bytes
+    else:
+        assert Path(summary["dispatch_path"]) == run / "batch-dispatch.json"
+
+
+def test_prepare_retains_frozen_ordinary_route_above_new_batch_threshold(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Resume an already frozen historical ordinary wave without changing its bytes or route."""
+    run = _review_inputs(tmp_path)
+    (run / "challenger-evidence.md").write_text("bounded evidence\n" * 5000, encoding="utf-8", newline="\n")
+    producer = runpy.run_path(str(HELPER))
+    source = Path(json.loads((run / "local-source/review-worktree.json").read_bytes())["review_worktree"])
+    # Model the historical producer's ordinary context allowance only while issuing the frozen fixture.
+    with monkeypatch.context() as historical:
+        historical.setattr(producer["review_batches"], "CONTEXT_LIMIT", 262144)
+        producer["prepare"](run, "bounded-review", "parent", source)
+    frozen = {p: p.read_bytes() for p in run.rglob("*") if p.is_file()}
+
+    result = _prepare(run)
+
+    assert result.returncode == 0, result.stderr
+    assert Path(json.loads(result.stdout)["dispatch_path"]) == run / "dispatch.json"
+    assert {p: p.read_bytes() for p in run.rglob("*") if p.is_file()} == frozen
+    assert not (run / "batch-inventory.json").exists()
+
+
+def test_prepare_rejects_mixed_frozen_routes(tmp_path: Path) -> None:
+    """Ambiguous ordinary and batch artifacts must not select a route or overwrite frozen evidence."""
+    run = _review_inputs(tmp_path)
+    assert _prepare(run).returncode == 0
+    (run / "batch-dispatch.json").write_text("{}\n", encoding="utf-8", newline="\n")
+    frozen = {p: p.read_bytes() for p in run.rglob("*") if p.is_file()}
+
+    result = _prepare(run)
+
+    assert result.returncode != 0
+    assert "review-preparation-route-conflict" in result.stderr
+    assert {p: p.read_bytes() for p in run.rglob("*") if p.is_file()} == frozen
 
 
 @pytest.mark.parametrize("problem", ["changed-brief", "sensitive-evidence"])
@@ -3501,6 +3573,84 @@ def test_native_assembly_scopes_refill_checks_to_current_wave_dispatch(tmp_path:
     result = _assemble(run, home)
     if wait == "prior-wave":
         assert result.returncode == 0, result.stderr
+    else:
+        assert result.returncode != 0
+        assert "review-inspection-schedule-wait-invalid" in result.stderr
+        assert not (run / "specialist-manifest.json").exists()
+    assert parent_path.read_bytes() == original
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "case", ["rejected", "successful", "extra-text", "missing-retry", "changed-timeout", "custom-transport"]
+)
+def test_native_assembly_recovers_only_preexecution_rejected_wait_calls(tmp_path: Path, case: str) -> None:
+    """Keep a rejected schema call from discarding real reviewers without admitting an executed malformed wait."""
+    run, home, _children = _assembly_evidence(tmp_path)
+    parent_path = home / "sessions/rollout-parent.jsonl"
+    rows = [json.loads(line) for line in parent_path.read_text(encoding="utf-8").splitlines()]
+    rows[5:5] = [
+        {
+            "type": "response_item",
+            "timestamp": "2026-01-01T10:00:00.400Z",
+            "payload": {
+                "type": "function_call",
+                "name": "wait_agent",
+                "call_id": "valid-wait",
+                "arguments": '{"timeout_ms":10000}',
+            },
+        },
+        {
+            "type": "response_item",
+            "timestamp": "2026-01-01T10:00:11Z",
+            "payload": {
+                "type": "function_call_output",
+                "call_id": "valid-wait",
+                "output": '{"message":"Wait completed.","timed_out":false}',
+            },
+        },
+    ]
+    wait_index = next(i for i, row in enumerate(rows) if row.get("payload", {}).get("name") == "wait_agent")
+    retry = rows[wait_index]
+    timeout = json.loads(retry["payload"]["arguments"])["timeout_ms"]
+    diagnostic = "failed to parse function arguments: unknown field `target`, expected `timeout_ms` at line 1 column 9"
+    rejected = {
+        "type": "response_item",
+        "timestamp": "2026-01-01T10:00:00.350Z",
+        "payload": {
+            "type": "function_call",
+            "name": "wait_agent",
+            "call_id": "rejected-wait",
+            "arguments": json.dumps({"target": "reviewer", "timeout_ms": timeout}),
+        },
+    }
+    receipt = {
+        "type": "response_item",
+        "timestamp": "2026-01-01T10:00:00.360Z",
+        "payload": {
+            "type": "function_call_output",
+            "call_id": "rejected-wait",
+            "output": "Wait completed."
+            if case == "successful"
+            else diagnostic + (" extra" if case == "extra-text" else ""),
+        },
+    }
+    if case == "missing-retry":
+        retry["payload"]["name"] = "other_tool"
+    elif case == "changed-timeout":
+        retry["payload"]["arguments"] = json.dumps({"timeout_ms": timeout + 1})
+    elif case == "custom-transport":
+        retry["payload"]["type"] = "custom_tool_call"
+    rows[wait_index:wait_index] = [rejected, receipt]
+    _write_jsonl(parent_path, rows)
+    original = parent_path.read_bytes()
+
+    result = _assemble(run, home)
+
+    if case == "rejected":
+        assert result.returncode == 0, result.stderr
+        manifest = json.loads((run / "specialist-manifest.json").read_bytes())
+        assert {item["role"] for item in manifest["passes"]} == {"challenger", "qa-specialist"}
     else:
         assert result.returncode != 0
         assert "review-inspection-schedule-wait-invalid" in result.stderr

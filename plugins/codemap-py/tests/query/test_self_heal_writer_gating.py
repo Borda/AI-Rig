@@ -98,7 +98,7 @@ def test_gate_is_not_consulted_when_the_index_is_fresh(tmp_path: Path, monkeypat
     monkeypatch.setattr(_query_mod.index_io, "_changed_py_files", lambda index: [])
     monkeypatch.setattr(_query_mod.rwgate, "writer_active", lambda path: probed.append(path) or False)
 
-    maybe_self_heal({"file_shas": {}}, tmp_path / "idx.json", tmp_path)
+    maybe_self_heal({"file_shas": {}, "source_fingerprint": "0" * 64}, tmp_path / "idx.json", tmp_path)
 
     assert probed == []
 
@@ -110,6 +110,6 @@ def test_gate_is_not_consulted_when_the_change_set_exceeds_the_cap(tmp_path: Pat
     monkeypatch.setattr(_query_mod.index_io, "_changed_py_files", lambda index: oversized)
     monkeypatch.setattr(_query_mod.rwgate, "writer_active", lambda path: probed.append(path) or False)
 
-    maybe_self_heal({"file_shas": {}}, tmp_path / "idx.json", tmp_path)
+    maybe_self_heal({"file_shas": {}, "source_fingerprint": "0" * 64}, tmp_path / "idx.json", tmp_path)
 
     assert probed == []

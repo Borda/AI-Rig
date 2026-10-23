@@ -138,16 +138,19 @@ class TestContextContract:
 
     @pytest.mark.skipif(_POSIX_BASH is None, reason="no working POSIX bash on this host")
     @pytest.mark.parametrize(
-        ("query_kind", "expected_queries"),
+        ("query_kind", "expected_queries", "index_present"),
         [
-            pytest.param("skip", [], id="localized-skip"),
+            pytest.param("skip", [], True, id="localized-skip"),
             pytest.param(
                 "callers",
                 ["--timeout 5 fn-rdeps package.module::target --exclude-tests"],
+                True,
                 id="direct-callers",
             ),
-            pytest.param("test-impact", ["--timeout 5 test-impact package.module::target"], id="targeted-test-impact"),
-            pytest.param("coupling", ["--timeout 5 coupled"], id="targetless-coupling"),
+            pytest.param(
+                "test-impact", ["--timeout 5 test-impact package.module::target"], True, id="targeted-test-impact"
+            ),
+            pytest.param("coupling", ["--timeout 5 coupled"], True, id="targetless-coupling"),
             pytest.param(
                 "imports",
                 [
@@ -156,7 +159,11 @@ class TestContextContract:
                     "--timeout 5 fn-blast package.module::target",
                     "--timeout 5 symbol --with-imports target",
                 ],
+                True,
                 id="removed-symbol-route-falls-back-to-standard",
+            ),
+            pytest.param(
+                "central", ["--timeout 5 central --top 5"], False, id="missing-index-reaches-auto-preparing-query"
             ),
         ],
     )
@@ -165,6 +172,7 @@ class TestContextContract:
         tmp_path: Path,
         query_kind: str,
         expected_queries: list[str],
+        index_present: bool,
     ) -> None:
         """The executable guard must skip retrieval or issue only the mapped compact query."""
         contract = _CONTEXT_CONTRACT.read_text(encoding="utf-8")
@@ -192,7 +200,8 @@ class TestContextContract:
 
         index_dir = tmp_path / ".cache" / "codemap"
         index_dir.mkdir(parents=True)
-        (index_dir / f"{tmp_path.name}.json").write_text("{}\n", encoding="utf-8")
+        if index_present:
+            (index_dir / f"{tmp_path.name}.json").write_text("{}\n", encoding="utf-8")
         env = os.environ | {
             "CODEMAP_QUERY_KIND": query_kind,
             # Values the *shell* reads, so both are spelled the way it reads them: `basename`
@@ -216,6 +225,65 @@ class TestContextContract:
 
         queries = trace.read_text(encoding="utf-8").splitlines() if trace.exists() else []
         assert queries == expected_queries
+
+    @pytest.mark.skipif(_POSIX_BASH is None, reason="no working POSIX bash on this host")
+    @pytest.mark.parametrize(
+        ("currency", "freeze", "lazy", "enabled"),
+        [
+            pytest.param("stale", "0", "", "true", id="persisted-continue-stale-choice"),
+            pytest.param("current", "1", "", "true", id="inherited-autobuild-freeze"),
+            pytest.param("current", "0", "1", "true", id="lazy-preference-alone-allows-query-heal"),
+            pytest.param("current", "0", "", "false", id="persisted-skip-blocks-later-query"),
+            pytest.param("current", "0", "", None, id="unset-enabled-preserves-auto-query"),
+        ],
+    )
+    def test_stale_or_frozen_queries_reach_cli_with_no_heal(
+        self, tmp_path: Path, currency: str, freeze: str, lazy: str, enabled: str | None
+    ) -> None:
+        """A persisted stale choice reaches the CLI as ``--no-heal``; LAZY alone does not freeze queries."""
+        contract = _CONTEXT_CONTRACT.read_text(encoding="utf-8")
+        batch = contract.split("## Batch pre-flight pattern", 1)[1].split("```bash", 1)[1].split("```", 1)[0]
+        trace = tmp_path / "queries.txt"
+        stubs = "\n".join(
+            (
+                'git() { printf "%s\\n" "$FAKE_REPO"; }',
+                _codemap_py_stubs(
+                    'case "$1" in --help) printf "%s\\n" "usage: codemap-py query"; return 0;; esac; '
+                    'printf "%s\\n" "$*" >> "$TRACE"; printf \'%s\\n\' \'{"query_complete":true}\';'
+                ),
+                "",
+            )
+        )
+        env = os.environ.copy()
+        env.pop("CODEMAP_ENABLED", None)
+        env.update(
+            {
+                "CODEMAP_QUERY_KIND": "central",
+                "CODEMAP_CURRENCY": currency,
+                "SCAN_NO_AUTOBUILD": freeze,
+                "LAZY_CODEMAP": lazy,
+                "FAKE_REPO": tmp_path.as_posix(),
+                "TRACE": trace.as_posix(),
+            }
+        )
+        if enabled is not None:
+            env["CODEMAP_ENABLED"] = enabled
+        subprocess.run(
+            [_POSIX_BASH, "-c", stubs + batch],
+            cwd=tmp_path,
+            env=env,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        queries = trace.read_text(encoding="utf-8").splitlines() if trace.exists() else []
+        if enabled == "false":
+            assert queries == []
+            return
+        assert len(queries) == 1
+        assert ("--no-heal" in queries[0]) is (currency == "stale" or freeze == "1")
+        assert queries[0].endswith("central --top 5")
 
     @pytest.mark.skipif(_POSIX_BASH is None, reason="no working POSIX bash on this host")
     @pytest.mark.parametrize(
@@ -500,15 +568,18 @@ class TestGatesContract:
             "Rebuild now",
             "Continue with stale data",
             "Skip codemap",
-            # The former bare `scan-index` alias had already been replaced by every skill
-            # and consumer wrapper, which otherwise needed an explicit override.
-            "run `codemap-py index` in the foreground",
-            # v3 Gate B: auto-rebuild is the default, the confirm-first prompt is the opt-in —
-            # a revert of the default flip must fail here, not only in a consumer's behaviour.
+            "By default, run `codemap-py index` in the foreground",
+            "Set `CODEMAP_ENABLED=true` only after successful preparation",
+            "On failure, report the provider's actual error",
+            "After success, rerun the consumer's normal gate-state helper",
+            "Every later query in this skill must pass `--no-heal`",
+            "use the consumer wrapper's own skip-state helper",
+            "If inherited `SCAN_NO_AUTOBUILD=1`, do not build, refresh, or ask to override the freeze",
             "**`LAZY_CODEMAP` unset (default)**: rebuild without asking",
             "No `AskUserQuestion` in either case",
             "**`LAZY_CODEMAP` set** (any non-empty value): ask before rebuilding",
             "print `! codemap index busy — continuing with stale data`",
+            "30 s default, `CODEMAP_GATE_TIMEOUT` overrides",
         ],
     )
     def test_carries_gate_machinery(self, marker: str):
@@ -642,7 +713,7 @@ class TestRequiredPhrases:
             # Gates contract carries its version header and a cross-plugin consumer declaration.
             pytest.param(
                 _GATES_CONTRACT,
-                "# Codemap gates contract — v3",
+                "# Codemap gates contract — v4",
                 "<!-- file: codemap-gates.md",
                 id="gates-version-header-and-consumer-declaration",
             ),

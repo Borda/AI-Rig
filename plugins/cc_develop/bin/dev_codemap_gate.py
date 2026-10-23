@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""dev_codemap_gate.py — CODEMAP_ENABLED normalization shared by all six develop skills.
+"""Persist the Codemap availability decision shared by all six develop skills.
 
-Consolidates the six near-identical gate blocks: read the skill's raw codemap flag,
+Purpose: Consolidate the six near-identical gate blocks: read the skill's raw codemap flag,
 normalize it through bin/codemap_resolve.py, abort when strict mode cannot be satisfied,
 and persist the resolved true/false to the skill's own sentinel.
 
-Usage: python dev_codemap_gate.py <debug|feature|fix|plan|refactor|review>
+Scope: Local flag normalization and gate-choice persistence; no source edits or index builds.
 
-Output: resolved "true"/"false" on stdout (also persisted to the skill's sentinel).
+Usage: python dev_codemap_gate.py <debug|feature|fix|plan|refactor|review> [--skip]
+
+Outputs: Resolved "true"/"false" on stdout (also persisted to the skill's sentinel).
+``--skip`` records the gate's explicit skip choice as disabled/off without changing the original mode flag.
 
 Single failure policy across all six skills is behaviour-preserving, not a
 unification of differing semantics: codemap_resolve.py exits non-zero *only* when
@@ -22,9 +25,14 @@ CSID is inherited from the caller's exported environment and never re-derived fr
 the parent process id: inside a script that id is the invoking shell's, which changes on
 every Bash tool call, so a locally derived CSID would name a different sentinel each time.
 
+Failure: Strict resolver failures, invalid skill or plan namespace, and failed skip persistence exit 1.
+Ordinary sentinel-write failures retain the existing warning-only behavior.
+
+Used by: The six develop skill entrypoints and their shared Codemap gates.
+
 Exit codes:
   0 — resolved; value written to the skill's sentinel
-  1 — unknown skill, missing plan namespace, or strict mode with codemap unavailable
+  1 — invalid skill/namespace, failed skip persistence, or strict mode with codemap unavailable
 """
 
 from __future__ import annotations
@@ -98,16 +106,12 @@ def _is_own_plan_namespace(ns_dir: Path, tmp: Path) -> bool:
 
 def _resolve_paths(skill: str, tmp: Path, csid: str) -> tuple[Path, Path]:
     """Map *skill* to its (raw-flag input, resolved-value output) sentinel pair."""
-    if skill in ("debug", "feature", "fix", "refactor"):
-        # All four read the per-skill sentinel dev_parse_args.py writes from its CODEMAP spec.
+    if skill in ("debug", "feature", "fix", "refactor", "review"):
+        # Read the parser's raw sentinel so re-resolution after an index build cannot confuse prior false with off.
         # refactor used to name a `-raw` variant that only an inline shell block in its
         # SKILL.md ever wrote, so the skill had to re-parse the flag the parser had already
         # parsed. Reading the same file as its siblings removes that second parse.
         return tmp / f"dev-{skill}-codemap-{csid}", tmp / f"dev-{skill}-codemap-enabled-{csid}"
-    if skill == "review":
-        # review round-trips one file: raw flag in, resolved value out
-        round_trip = tmp / f"dev-review-codemap-enabled-{csid}"
-        return round_trip, round_trip
     if skill == "plan":
         plan_ns = _first_line(tmp / f"dev-plan-ns-current-{csid}")
         if not plan_ns:
@@ -158,7 +162,7 @@ def _run_codemap_resolve(bin_dir: Path, raw: str) -> tuple[str, int]:
     return proc.stdout.rstrip("\n"), proc.returncode
 
 
-def _write_line(path: Path, value: str) -> None:
+def _write_line(path: Path, value: str) -> bool:
     """Persist `value` + newline, warning instead of aborting when the target dir is missing.
 
     A failed `> file` redirect under `set -u` (no `-e`) left the shell original still printing its stdout line and
@@ -168,6 +172,8 @@ def _write_line(path: Path, value: str) -> None:
         write_atomic(path, value)
     except OSError as exc:
         print(f"dev_codemap_gate.py: cannot write {path}: {exc}", file=sys.stderr)
+        return False
+    return True
 
 
 def main(argv: list[str]) -> int:
@@ -175,6 +181,13 @@ def main(argv: list[str]) -> int:
     skill = argv[1] if len(argv) > 1 else ""
     bin_dir = Path(__file__).resolve().parent
     in_file, out_file = _resolve_paths(skill, _tmp_dir(), _csid())
+
+    if "--skip" in argv[2:]:
+        # The next tool call reloads these files; changing only this process's environment would lose the choice.
+        if not _write_line(out_file, "false") or not _write_line(_tmp_dir() / f"{CURRENCY_PREFIX}-{_csid()}", "off"):
+            return 1
+        print("false")
+        return 0
 
     codemap_raw = _first_line(in_file) or "auto"
     enabled, resolve_exit = _run_codemap_resolve(bin_dir, codemap_raw)

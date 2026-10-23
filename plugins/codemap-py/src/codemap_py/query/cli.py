@@ -28,6 +28,7 @@ if str(_BIN) not in sys.path:
 from codemap_py.schema import EntityType  # noqa: E402
 from codemap_py.telemetry import CliInvocation  # noqa: E402
 
+from . import index_io  # noqa: E402
 from .callgraph import (  # noqa: E402
     cmd_fn_blast,
     cmd_fn_central,
@@ -46,6 +47,7 @@ from .index_io import (  # noqa: E402
     _load_index_leased,
     _resolve_project_root,
     find_index,
+    maybe_bootstrap,
     maybe_self_heal,
     warn_if_stale,
 )
@@ -537,7 +539,7 @@ def _resolve_index_path(args: argparse.Namespace) -> Path:
         args: parsed top-level namespace (``args.index`` may be ``None``).
     """
     if not args.index:
-        return find_index()
+        return index_paths.resolve_index(root=args.root).index_path if args.root is not None else find_index()
     resolved = Path(args.index).resolve()
     cwd = Path.cwd().resolve()
     try:
@@ -634,10 +636,23 @@ def _run_query(argv: Sequence[str]) -> None:
         signal.alarm(args.timeout)
 
     index_path = _resolve_index_path(args)
+    source_identity = index_paths.resolve_index(root=args.root)
+    index_io._fingerprint_root = source_identity.root
+    index_io._file_shas_cache = None
+    index_io._exclusions_resolved = False
+    index_io._exclusions_cache = None
+    index_io._current_sha_resolved = False
+    if not args.no_heal:
+        maybe_bootstrap(index_path, source_identity.root)
     index = _load_index_leased(index_path)
     if state._invocation is not None:
         state._invocation.root = _resolve_project_root(args.root, index)
-    if not _autobuild_disabled() and not args.no_heal:
+    if (
+        not _autobuild_disabled()
+        and not args.no_heal
+        and not _detect_root_mismatch(args.root, index)
+        and index_path.resolve() == source_identity.index_path.resolve()
+    ):
         # refresh a stale index inline (bounded) so the answer reflects the
         # current tree — e.g. an edge added by a just-committed change is visible.
         index = maybe_self_heal(index, index_path, _resolve_project_root(args.root, index))

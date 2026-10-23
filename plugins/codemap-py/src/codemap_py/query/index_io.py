@@ -17,6 +17,7 @@ from typing import NamedTuple
 from codemap_py import index_paths, rwgate
 from codemap_py import query_state as state
 from codemap_py.scanner import INDEXED_PATHSPEC
+from codemap_py.scanner.discovery import get_file_hashes
 
 # Transitional seam: exclusion rules live in codemap_py.scanner, but this
 # module still reaches them through the old bare-name ``_exclusions`` import
@@ -110,7 +111,7 @@ def _get_exclusions_cached() -> Exclusions:
     """
     global _exclusions_cache, _exclusions_resolved
     if not _exclusions_resolved:
-        root = _get_git_root_cached() or Path.cwd()
+        root = _fingerprint_root or _get_git_root_cached() or Path.cwd()
         _exclusions_cache = _load_exclusions(root)
         _exclusions_resolved = True
     return _exclusions_cache
@@ -210,7 +211,7 @@ def find_index() -> Path:
        writer (:func:`codemap_py.graph.main`), the RW gate, and ``codemap-py doctor``
        also use. Deriving it here independently is what let reader and writer
        normalize the project root differently and disagree on the file name.
-    1. Git root — checks .cache/codemap/ then .cache/scan/ (backward compat)
+    1. Git root — checks its own .cache/codemap/ then .cache/scan/; a missing own index never uses an ancestor
     2. Walk up from CWD — finds index in ZIP exports and non-git repos
     3. Fallback — CWD convention; produces a clear error if missing
 
@@ -227,6 +228,8 @@ def find_index() -> Path:
         found = _find_index_via_git_root(git_root)
         if found is not None:
             return found
+        # A nested checkout owns its missing index; an ancestor cache describes a different source tree.
+        return identity.index_path
 
     found = _find_index_via_cwd_walk()
     if found is not None:
@@ -295,6 +298,20 @@ _SELF_CHECK_DETAIL = {
 }
 
 
+def _missing_index(path: Path) -> None:
+    """Report a missing index without opening or creating any index resources."""
+    if _autobuild_disabled():
+        _die_json(
+            {
+                "error": "Index not found while SCAN_NO_AUTOBUILD=1 requires an existing frozen index.",
+                "path": str(path),
+                "fix": "Run /codemap-py:scan-codebase before querying, then retry.",
+            },
+            _EXIT_NOT_INDEXED,
+        )
+    _exit_error(f"Index not found at {path}. Run /codemap-py:scan-codebase first.")
+
+
 def load_index(path: Path) -> dict:
     """Load, self-check, and return the JSON index from path; exit clearly on any failure.
 
@@ -309,16 +326,7 @@ def load_index(path: Path) -> dict:
         path: filesystem path to the index JSON file.
     """
     if not path.exists():
-        if _autobuild_disabled():
-            _die_json(
-                {
-                    "error": "Index not found while SCAN_NO_AUTOBUILD=1 requires an existing frozen index.",
-                    "path": str(path),
-                    "fix": "Run /codemap-py:scan-codebase before querying, then retry.",
-                },
-                _EXIT_NOT_INDEXED,
-            )
-        _exit_error(f"Index not found at {path}. Run /codemap-py:scan-codebase first.")
+        _missing_index(path)
     index_size = path.stat().st_size
     if index_size > _MAX_INDEX_SIZE_BYTES:
         _exit_error(
@@ -405,6 +413,11 @@ def _load_index_leased(index_path: Path) -> dict:
     Returns:
         The parsed, structurally self-checked index dict.
     """
+    # A never-built frozen checkout must remain untouched. Existing coordination may belong to a writer publishing
+    # its first index, so retain the normal lease in that case. This check only refuses a read; it never opens data
+    # outside the lease, even if a writer starts immediately after the missing-path checks.
+    if not index_path.exists() and not index_paths.coordination_root(index_path.parent).exists():
+        _missing_index(index_path)
     try:
         with rwgate.read_lease(index_path, **_gate_timeout_kwargs()):
             index = load_index(index_path)
@@ -423,14 +436,9 @@ def _load_index_leased(index_path: Path) -> dict:
 _GIT_TIMEOUT_S = 10  # max seconds for any git subprocess (H78: hung process guard)
 
 
-# The single file-set contract shared by the index writer and BOTH staleness readers.
-# scan-index records ``file_shas`` for exactly these patterns, so any reader that
-# narrows the set reports "fresh" for a change it simply never looked at — the v2
-# timestamp fallback used to watch ``*.py`` alone, so editing a ``.pyi`` or a doc file
-# left a file_shas-less index claiming freshness. Spelled ONCE here and consumed by
-# :func:`_resolve_current_file_shas` and :func:`check_staleness` so the two paths
-# cannot drift apart again.
-#: Git pathspec of every tracked file type that can change index content, shared by the staleness checks.
+# Legacy indexes without file_shas still use Git commit timestamps. Keep their pathspec aligned with all indexed
+# source/doc kinds; current indexes use the scanner's actual discovered working-tree bytes instead.
+#: Source/doc pathspec for the legacy timestamp fallback.
 _INDEXED_PATHSPEC = INDEXED_PATHSPEC
 
 
@@ -450,8 +458,8 @@ def _git_cwd_kwargs() -> dict[str, str]:
         ``{"cwd": <git root>}`` inside a repository, else ``{}`` — with no repository
         there is nothing to anchor to and the caller's CWD is the only root available.
     """
-    git_root = _get_git_root_cached()
-    return {"cwd": str(git_root)} if git_root is not None else {}
+    source_root = _fingerprint_root or _get_git_root_cached()
+    return {"cwd": str(source_root)} if source_root is not None else {}
 
 
 # Self-heal bounds: when the index is stale at query time we run
@@ -476,17 +484,13 @@ def _autobuild_disabled() -> bool:
 
 
 class _FileShas(NamedTuple):
-    """Tracked blob SHAs plus how confidently they were obtained.
-
-    ``status`` is what separates "git says nothing changed" from "git never answered". Collapsing the two — the previous
-    behaviour, an empty dict for both — let a git failure be read as proof of a fresh index.
-    """
+    """Working-tree hashes and whether discovery succeeded, including a valid empty result."""
 
     shas: dict[str, str]
     status: str
 
 
-#: git answered; ``shas`` is authoritative.
+#: Source discovery and hashing succeeded; ``shas`` may legitimately be empty.
 _SHAS_OK = "ok"
 
 
@@ -495,25 +499,21 @@ _SHAS_OK = "ok"
 _SHAS_NO_REPO = "no_repo"
 
 
-#: Inside a repository but git failed. Staleness is UNDETERMINED, not "fresh".
+#: Source discovery, hashing or its Git format probe failed; freshness is undetermined.
 _SHAS_GIT_ERROR = "git_error"
 
 
 _file_shas_cache: _FileShas | None = None
 
+#: Explicit query source root, set by the CLI before checking freshness.
+_fingerprint_root: Path | None = None
+
 
 def _parse_ls_files_stage(output: str) -> dict[str, str]:
-    """Return ``{path: blob_sha}`` parsed from ``git ls-files -s -z`` output.
+    """Parse legacy staged-blob records for compatibility callers, applying user exclusions.
 
-    Drops user-excluded paths so the result matches the ``file_shas`` written by
-    scan-index. Uses ``_match_exclusion`` only (NOT SKIP_DIRS): scan-index's git-blob
-    ``file_shas`` path (``_git_file_hashes``) filters solely by user exclusions and
-    keeps SKIP_DIR files that git tracks. Applying SKIP_DIRS here would drop those,
-    making them show as "deleted" and re-introducing a false stale. Matching the
-    writer exactly is the point — including its NUL-separated records: without ``-z``,
-    git C-quotes a non-ASCII path (``"pkg/mod\\303\\251.py"``), which matched no key the
-    writer recorded, so every such file read as deleted and the index never turned
-    fresh however often it self-healed.
+    Current query freshness uses scanner discovery rather than these staged-only records. Keep the old helper available
+    for callers of the compatibility query module, including its NUL-separated Unicode-path handling.
 
     Args:
         output: decoded stdout of ``git ls-files -s -z``, one
@@ -539,60 +539,30 @@ def _parse_ls_files_stage(output: str) -> dict[str, str]:
 
 
 def _warn_staleness_undetermined(exc: BaseException) -> None:
-    """Report that git failed *inside* a repository, so staleness could not be decided.
-
-    Deliberately distinct from the no-repository case: here git was expected to answer
-    and did not, so treating the empty result as "no files changed" would assert a
-    fresh index as fact on no evidence. The query still answers — it simply stops
-    claiming the answer is current.
-
-    Args:
-        exc: the failure raised by the git subprocess, named in the diagnostic so the
-            cause (missing binary, timeout, non-zero exit) is visible to the caller.
-    """
+    """Report failed source fingerprinting without presenting an empty map as freshness evidence."""
     _print(
-        f"⚠ codemap: git could not be queried ({type(exc).__name__}) — index staleness is UNDETERMINED. "
+        f"⚠ codemap: source fingerprints could not be read ({type(exc).__name__}) — index staleness is UNDETERMINED. "
         "This answer may reflect an out-of-date scan; re-run /codemap-py:scan-codebase to be sure.",
         file=sys.stderr,
     )
 
 
 def _resolve_current_file_shas() -> _FileShas:
-    """Read tracked source blob SHAs from git once, classifying any failure.
-
-    Includes ``.py``, ``.pyi``, ``.rst``, and ``docs/**/*.md`` via :data:`_INDEXED_PATHSPEC` because each can affect the
-    index.
-    """
-    git_root = _get_git_root_cached()
-    if git_root is None:
+    """Read scanner-owned working-tree fingerprints once, retaining failure honesty."""
+    root = _fingerprint_root or _get_git_root_cached()
+    if root is None:
         return _FileShas({}, _SHAS_NO_REPO)
     try:
-        # UTF-8 with replacement, never the locale codec: the writer decodes the same bytes that way, so a path
-        # decoded differently here would match no recorded key.
-        output = subprocess.check_output(  # noqa: S603 - argv list, no shell; tool resolved via PATH on purpose
-            ["git", "ls-files", "-s", "-z", "--", *_INDEXED_PATHSPEC],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
-            encoding="utf-8",
-            errors="replace",
-            stderr=subprocess.DEVNULL,
-            timeout=_GIT_TIMEOUT_S,
-            cwd=str(git_root),
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        # Narrow by design: OSError covers a missing/unexecutable git binary,
-        # SubprocessError covers non-zero exit and timeout. Anything else is a real
-        # defect in this module and must surface rather than masquerade as "fresh".
+        return _FileShas(get_file_hashes(root, _load_exclusions(root)), _SHAS_OK)
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
         _warn_staleness_undetermined(exc)
         return _FileShas({}, _SHAS_GIT_ERROR)
-    return _FileShas(_parse_ls_files_stage(output), _SHAS_OK)
 
 
 def _current_file_shas() -> _FileShas:
-    """Return the memoized tracked-blob SHAs (and their status) for this invocation.
+    """Share one source snapshot between the heal decision and coverage diagnostics.
 
-    Memoized because two independent consumers ask the same question on every query — :func:`_changed_py_files` for the
-    self-heal decision and :func:`_coverage` for the honesty block. Without this memo, each query spawned two identical
-    subprocesses running ``git ls-files``. The working tree cannot change under a single query, so one call is both
-    cheaper and guaranteed self-consistent.
+    The snapshot is invalidated after a successful writer so subsequent freshness reports inspect current bytes.
     """
     global _file_shas_cache
     if _file_shas_cache is None:
@@ -601,7 +571,7 @@ def _current_file_shas() -> _FileShas:
 
 
 def _get_current_file_shas() -> dict[str, str]:
-    """Return tracked source blob SHAs using the scanner's exact file-set contract.
+    """Return working-tree source hashes using the scanner's exact file-set contract.
 
     Thin accessor over :func:`_current_file_shas` for callers that only need the mapping; callers that must distinguish
     "nothing changed" from "git never answered" read ``.status`` instead.
@@ -644,25 +614,35 @@ def check_staleness(scanned_at: str) -> bool:
 
 
 def _changed_py_files(index: dict) -> list[str] | None:
-    """Return the list of tracked ``.py`` paths that differ from the index, or None.
+    """Return unique changed source/doc paths, or None when freshness cannot be measured.
 
-    Uses the v3 ``file_shas`` blob diff (git-based). Returns None when the index
-    predates ``file_shas`` or git is unavailable — callers fall back to the
-    timestamp check. An empty list means "fresh"; a populated list means "stale".
-
-    Args:
-        index: parsed codemap index dict.
+    A successful empty discovery detects deletion of the last indexed file. The coverage stamp is annotation metadata,
+    deliberately outside source freshness; additions count once toward the bounded self-heal limit.
     """
     stored_shas = index.get("file_shas")
-    if not stored_shas:
+    if not isinstance(stored_shas, dict):
         return None
-    current_shas = _get_current_file_shas()
-    if not current_shas:
+    current = _current_file_shas()
+    if current.status != _SHAS_OK:
         return None
-    changed = [p for p in current_shas if stored_shas.get(p) != current_shas[p]]
-    added = [p for p in current_shas if p not in stored_shas]
-    deleted = [p for p in stored_shas if p not in current_shas]
-    return changed + added + deleted
+    paths = (stored_shas.keys() | current.shas.keys()) - {"__coverage_mtime__"}
+    return sorted(path for path in paths if stored_shas.get(path) != current.shas.get(path))
+
+
+def maybe_bootstrap(index_path: Path, root: Path) -> None:
+    """Build a missing canonical index outside a read lease, bounded by the normal writer timeout.
+
+    Explicit custom/foreign paths are read-only query inputs. A concurrently active writer owns publication; the
+    subsequent leased load waits for it using the existing coordination contract.
+    """
+    if _autobuild_disabled() or index_path.exists():
+        return
+    if index_path.resolve() != index_paths.resolve_index(root=root).index_path.resolve():
+        return
+    if rwgate.writer_active(index_path):
+        return
+    if _run_incremental_scan(_BIN / "scan-index", root, 0):
+        _print("codemap: built missing index for the queried source root.", file=sys.stderr)
 
 
 def maybe_self_heal(index: dict, index_path: Path, scan_root: Path | None) -> dict:
@@ -684,9 +664,12 @@ def maybe_self_heal(index: dict, index_path: Path, scan_root: Path | None) -> di
         The reloaded fresh index on a successful heal, else the original index.
     """
     changed = _changed_py_files(index)
-    if not changed:  # None (no file_shas → can't bound safely) or [] (already fresh)
+    legacy_fingerprints = not index.get("source_fingerprint")
+    if changed is None or (not changed and not legacy_fingerprints):
         return index
-    if len(changed) > _HEAL_MAX_CHANGED_FILES:
+    # Legacy staged-only maps cannot separate real edits from CRLF normalization, formerly pruned paths or already
+    # indexed untracked files. Give their one-time migration the writer's time bound, not a misleading path-count cap.
+    if len(changed) > _HEAL_MAX_CHANGED_FILES and not legacy_fingerprints:
         _print(
             f"⚠ codemap: {len(changed)} files changed (> {_HEAL_MAX_CHANGED_FILES} heal cap) — "
             "answering from the stale index. Run /codemap-py:scan-codebase --incremental to refresh.",
@@ -718,6 +701,8 @@ def maybe_self_heal(index: dict, index_path: Path, scan_root: Path | None) -> di
         # A corrupt or momentarily unavailable reload must not abort a query that
         # already has a usable (if stale) answer in hand — heal is best-effort.
         return index
+    global _file_shas_cache
+    _file_shas_cache = None
     _print(f"codemap: self-healed index ({len(changed)} file(s) re-scanned).", file=sys.stderr)
     return healed
 
@@ -761,24 +746,15 @@ def warn_if_stale(index: dict) -> None:
     Args:
         index: parsed codemap index dict containing ``file_shas`` or ``scanned_at``.
     """
-    stored_shas = index.get("file_shas")
-    if stored_shas:
-        # v3 index: precise SHA-based comparison
-        current_shas = _get_current_file_shas()
-        if current_shas:
-            changed = [p for p in current_shas if stored_shas.get(p) != current_shas[p]]
-            added = [p for p in current_shas if p not in stored_shas]
-            deleted = [p for p in stored_shas if p not in current_shas]
-            stale_files = changed + added + deleted
-            if stale_files:
-                n = len(stale_files)
-                _print(
-                    f"⚠ codemap index stale — {n} file(s) changed since last scan."
-                    " Run /codemap-py:scan-codebase --incremental to update.",
-                    file=sys.stderr,
-                )
-            return
-    # v2 index fallback: timestamp-based check
+    changed = _changed_py_files(index)
+    if changed is not None:
+        if changed:
+            _print(
+                f"⚠ codemap index stale — {len(changed)} file(s) changed since last scan."
+                " Run /codemap-py:scan-codebase --incremental to update.",
+                file=sys.stderr,
+            )
+        return
     scanned_at = index.get("scanned_at", "")
     if scanned_at and check_staleness(scanned_at):
         _print(
@@ -1089,35 +1065,17 @@ def _current_git_sha() -> str | None:
             text=True,
             stderr=subprocess.DEVNULL,
             timeout=_GIT_TIMEOUT_S,
+            **_git_cwd_kwargs(),
         ).strip()
     except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
         return None
 
 
 def _untracked_py_files() -> list[str]:
-    """Return new, git-untracked ``.py`` files, or [] if git is unavailable.
+    """List Git-untracked Python paths for the legacy unindexed-source coverage diagnostic.
 
-    Documented blind spot: ``file_shas`` is git-blob based, so a brand-new
-    ``.py`` file that has never been ``git add``-ed is invisible to the
-    staleness diff. Surface it in the coverage block so a whole-graph/global-in
-    query never claims completeness while such a file exists.
-
-    F4: untracked files inside an excluded dir (e.g. a vendored tree or ``.claude/``)
-    are dropped — scan-index would never have indexed them, so they must not poison
-    ``query_complete`` either.
-
-    Paths come back relative to the git root (see :func:`_git_cwd_kwargs`) so they can
-    be compared directly against the index's module paths. Left unanchored, a query
-    from a subdirectory got subdirectory-relative paths that matched no indexed path,
-    so every untracked file registered as an unindexed blind spot and vetoed
-    ``query_complete`` for the whole session.
-
-    Scope note: the pathspec stays ``*.py`` rather than :data:`_INDEXED_PATHSPEC`
-    because this list feeds the *blind-spot* veto, which is about graph nodes. A
-    stray untracked ``.rst`` or doc file cannot hide an import edge, and widening the
-    set here would veto completeness for documentation churn.
-
-    ``-z`` keeps a non-ASCII path verbatim; the default listing C-quotes it, so it could never equal an indexed path.
+    Working-tree fingerprints already detect these files and their edits. This supplemental list identifies graph
+    inputs absent from a frozen or unmeasurable index. Paths remain Git-root relative and scanner exclusions apply.
     """
     try:
         output = subprocess.check_output(
@@ -1135,24 +1093,14 @@ def _untracked_py_files() -> list[str]:
 
 
 def _indexed_untracked_modified(paths: list[str], scanned_at: str) -> bool:
-    """Return True when any indexed-but-untracked file was modified after the scan.
+    """Retain timestamp freshness for legacy indexes without a working-tree hash map.
 
-    Untracked files have no git blob, so the SHA-based staleness diff cannot see
-    their edits; the file mtime against the index ``scanned_at`` timestamp is the
-    only signal. Unparsable timestamps or unstatable paths are skipped (fail-open
-    to "not modified" — the file is still surfaced via the index itself).
-
-    Args:
-        paths: indexed-but-git-untracked ``.py`` paths, relative to the git root
-            (:func:`_untracked_py_files` anchors them there), so they are resolved
-            against that root rather than the process CWD — statting them CWD-relative
-            silently found nothing whenever a query ran from a subdirectory, and a
-            missing path fails open to "not modified".
-        scanned_at: the index's ISO-8601 ``scanned_at`` timestamp.
+    Paths are Git-root relative. Current indexes compare content hashes instead, including untracked files, so merely
+    touching an indexed file does not make those indexes stale.
     """
     if not paths or not scanned_at:
         return False
-    root = _get_git_root_cached() or Path.cwd()
+    root = _fingerprint_root or _get_git_root_cached() or Path.cwd()
     try:
         # scanned_at is UTC (scan-index: datetime.now(timezone.utc).isoformat()) —
         # timegm keeps the comparison in UTC; mktime would shift by the local offset.

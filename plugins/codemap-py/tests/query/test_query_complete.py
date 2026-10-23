@@ -238,7 +238,7 @@ class TestUntrackedFileVeto:
         """Sanity: an uncommitted new .py file is reported in the coverage `untracked_py` list."""
         root, index_path = git_project
         (root / "orphan.py").write_text("x = 1\n")  # present but never `git add`-ed
-        data = _query(scan_query, root, index_path, "deps", "consumer")
+        data = _query(scan_query, root, index_path, "--no-heal", "deps", "consumer")
         assert any("orphan.py" in p for p in data["index"]["untracked_py"])
 
     def test_untracked_does_not_veto_local(self, git_project, scan_query):
@@ -258,7 +258,7 @@ class TestUntrackedFileVeto:
         """
         root, index_path = git_project
         (root / "orphan.py").write_text("x = 1\n")
-        data = _query(scan_query, root, index_path, "rdeps", "leaf")
+        data = _query(scan_query, root, index_path, "--no-heal", "rdeps", "leaf")
         assert data["index"]["query_complete"] is False
         assert "This result is complete" not in data["index"]["note"]
         assert "incomplete" in data["index"]["note"]
@@ -392,12 +392,12 @@ class TestUntrackedCompleteness:
     """Untracked files veto wide queries only while the index does not cover them."""
 
     def test_new_untracked_file_vetoes_wide_query(self, git_project, scan_query):
-        """A brand-new untracked importer is invisible to the SHA diff → rdeps must not claim complete."""
+        """A frozen query reports a newly discovered untracked importer as stale and incomplete."""
         root, index_path = git_project
         (root / "scratch.py").write_text("import leaf\n")
         data = _query(scan_query, root, index_path, "--no-heal", "rdeps", "leaf")
         assert data["index"]["query_complete"] is False
-        assert data["index"]["completeness_reason"] == "untracked"
+        assert data["index"]["completeness_reason"] == "stale"
         assert "scratch.py" in data["index"]["untracked_py"]
 
     def test_indexed_untracked_does_not_veto(self, git_project, scan_query):
@@ -412,16 +412,12 @@ class TestUntrackedCompleteness:
         assert data["index"]["completeness_reason"] == "ok"
 
     def test_indexed_untracked_edit_marks_stale(self, git_project, scan_query):
-        """Editing an indexed-but-untracked file after the scan flips staleness (mtime signal)."""
-        import os as _os
-        import time as _time
-
+        """Editing indexed untracked source marks a frozen query stale even within the same timestamp second."""
         root, index_path = git_project
         scratch = root / "scratch.py"
         scratch.write_text("import leaf\n")
         _scan(_self_scan_index(scan_query), root)
-        future = _time.time() + 30
-        _os.utime(scratch, (future, future))
+        scratch.write_text("import consumer\n")
         data = _query(scan_query, root, index_path, "--no-heal", "rdeps", "leaf")
         assert data["index"]["stale"] is True
         assert data["index"]["query_complete"] is False

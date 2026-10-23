@@ -1284,15 +1284,32 @@ def main(argv: list[str] | None = None) -> int:
     if arguments.mode == "probe":
         _write_output(probe_codemap(timeout=arguments.timeout, provider_root=arguments.provider_root).to_dict(), None)
         return 0
-    context = gather_structural_context(
-        category=arguments.category,
-        target=arguments.target,
-        root=arguments.root,
-        timeout=arguments.timeout,
-        query_kind=arguments.query_kind,
-        provider_root=arguments.provider_root,
-        diff_file=arguments.diff_file,
-    )
+    # Review source receipts include untracked files. Keep cache and telemetry writes in the run through the public
+    # environment contract. Coordination stays beside the chosen index so existing readers and writers share a gate.
+    defaults: dict[str, str] = {}
+    if arguments.category == "review" and arguments.out is not None and arguments.query_kind != "skip":
+        run = arguments.out.resolve().parent
+        defaults = {"CODEMAP_LOG_DIR": str(run / "codemap-logs")}
+        if os.environ.get("SCAN_NO_AUTOBUILD") != "1":
+            defaults["CODEMAP_INDEX_DIR"] = str(run / "codemap-index")
+    previous = {key: os.environ.get(key) for key in defaults if not os.environ.get(key)}
+    os.environ.update({key: defaults[key] for key in previous})
+    try:
+        context = gather_structural_context(
+            category=arguments.category,
+            target=arguments.target,
+            root=arguments.root,
+            timeout=arguments.timeout,
+            query_kind=arguments.query_kind,
+            provider_root=arguments.provider_root,
+            diff_file=arguments.diff_file,
+        )
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
     _write_output(context.to_dict(), arguments.out)
     return 0
 

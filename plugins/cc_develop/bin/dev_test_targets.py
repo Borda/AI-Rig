@@ -1,5 +1,12 @@
 #!/usr/bin/env python
-"""dev_test_targets.py — pick the tests a change actually touches, so fix and refactor loops never rerun the full suite.
+"""Pick targeted tests while preserving required verification when optional Codemap lookup is disabled.
+
+Purpose: Select tests affected by source changes, without widening targeted loops to the full suite.
+
+Scope: CLI `CODEMAP_ENABLED=false` disables only optional provider lookup; selection and test execution remain required.
+Without explicit invocation state, standalone helper calls retain ordinary provider defaults.
+`--skill` additionally reads its own enabled sentinel; false or absent selects heuristically.
+Batch callers pass their existing skill identity.
 
 ``/develop:fix`` and ``/develop:refactor`` used to fall back to the whole test directory whenever ``codemap-py`` was
 absent or returned nothing, and their review loops re-ran the full suite every cycle — measured at up to seven full
@@ -29,7 +36,7 @@ Usage:
 ``dev-pytest-cmd`` sentinel (runner detection) and records into the directory the ``dev-NAME-dev-dir`` sentinel holds,
 else ``.developments`` — what each skill's shell block used to read and pass. An explicit ``--record-dir`` still wins.
 
-Output: one JSON object on stdout — ``changed``, ``tests``, ``sources`` (test → codemap/heuristic/changed),
+Outputs: One JSON object on stdout — ``changed``, ``tests``, ``sources`` (test → codemap/heuristic/changed),
 ``codemap`` usage counts, ``command`` (``$PYTEST_CMD`` plus the selected tests, or ``null``) and ``note``. With
 ``--run`` the selection then runs through ``run_pytest_short.py`` (same runner allowlist, ``--tb=short``, last 20
 lines), so a loop cycle costs one tool call instead of a select call plus a run call.
@@ -38,6 +45,10 @@ lines), so a loop cycle costs one tool call instead of a select call plus a run 
 ``DIR/test-targets.jsonl`` (UTC time, changed files, selected tests, why each was selected — codemap, heuristic, or
 changed — codemap usage and fallbacks, codemap's ``not_covered`` caveats, exit code, log path), and with ``--run``
 the full runner output goes to ``DIR/test-targets-<UTC time>.log`` while the terminal shows its last 40 lines.
+
+Failure: Invalid command inputs fail before execution; selection failures never imply successful tests.
+
+Used by: Develop feature, fix, refactor and shared batch test loops.
 
 Exit codes:
     0 — plan printed (an empty ``tests`` list is a valid result and says so in ``note``); with ``--run``, the selected
@@ -50,6 +61,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shlex
 import shutil
@@ -276,9 +288,9 @@ def heuristic_tests(path: str, corpus: SuiteFiles) -> list[str]:
     ]
 
 
-def _select_for_source(path: str, repo: Path, corpus: SuiteFiles, plan: TargetPlan) -> None:
+def _select_for_source(path: str, repo: Path, corpus: SuiteFiles, plan: TargetPlan, codemap_enabled: bool) -> None:
     """Add the tests one changed source file impacts to the plan, recording where each came from."""
-    answer = codemap_tests(module_name(path), repo)
+    answer = codemap_tests(module_name(path), repo) if codemap_enabled else None
     if answer is not None and answer.not_covered:
         plan.not_covered[path] = answer.not_covered
     if answer is not None:
@@ -288,18 +300,19 @@ def _select_for_source(path: str, repo: Path, corpus: SuiteFiles, plan: TargetPl
             plan.codemap_used += 1
             return
         plan.codemap_partial += 1
-    elif shutil.which("codemap-py") is not None:
+    elif codemap_enabled and shutil.which("codemap-py") is not None:
         plan.codemap_fell_back += 1
     for test in heuristic_tests(path, corpus):
         plan.sources.setdefault(test, "heuristic")
 
 
-def plan_targeted(repo: Path, files: list[str]) -> TargetPlan:
+def plan_targeted(repo: Path, files: list[str], *, codemap_enabled: bool = True) -> TargetPlan:
     """Build the targeted test plan for a set of changed files.
 
     Args:
         repo: Repository root.
         files: Changed files, POSIX paths relative to the repository root.
+        codemap_enabled: Allow optional provider lookup; false retains heuristic selection and required tests.
 
     Returns:
         The plan; tests that no longer exist on disk are dropped.
@@ -310,7 +323,7 @@ def plan_targeted(repo: Path, files: list[str]) -> TargetPlan:
         if is_test_file(path):
             plan.sources.setdefault(path, "changed")
         elif path.endswith(".py"):
-            _select_for_source(path, repo, corpus, plan)
+            _select_for_source(path, repo, corpus, plan, codemap_enabled)
     plan.sources = {test: origin for test, origin in sorted(plan.sources.items()) if (repo / test).is_file()}
     return plan
 
@@ -388,11 +401,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--run", action="store_true", help="run the selected tests after printing the plan")
     parser.add_argument("--record-dir", help="append a selection record (and keep the full run log) in this dir")
     args = parser.parse_args(argv)
+    codemap_enabled = os.environ.get("CODEMAP_ENABLED") != "false"
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", newline="\n")  # type: ignore[union-attr]
     if args.skill:
         args.pytest_cmd = read_sentinel("dev-pytest-cmd")
         args.record_dir = args.record_dir or read_sentinel(f"dev-{args.skill}-dev-dir") or _DEFAULT_RECORD_DIR
+        # A skill's optional structural lookup may be disabled; the required test selector must still run.
+        codemap_enabled = codemap_enabled and read_sentinel(f"dev-{args.skill}-codemap-enabled") == "true"
     if not args.pytest_cmd.strip():
         return _error(
             "! PYTEST_CMD unresolved — re-run §Project Detection (runner-detection.md); "
@@ -412,7 +428,7 @@ def main(argv: list[str] | None = None) -> int:
     if repo is None:
         return _error("not inside a git work tree")
     files = sorted({Path(f).as_posix() for f in args.files}) if args.files else changed_files(repo, args.base)
-    payload = render(plan_targeted(repo, files), args.pytest_cmd.strip())
+    payload = render(plan_targeted(repo, files, codemap_enabled=codemap_enabled), args.pytest_cmd.strip())
     record_dir = Path(args.record_dir) if args.record_dir else None
     log = record_dir / f"test-targets-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}.log" if record_dir else None
     if log:

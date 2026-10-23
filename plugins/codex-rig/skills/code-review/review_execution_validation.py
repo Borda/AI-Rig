@@ -1540,6 +1540,42 @@ def _validate_native_schedule(
         if wait_arguments not in ({}, {"timeout_ms": timeout}) or (
             "timeout_ms" in wait_arguments and (type(timeout) is not int or not 10000 <= timeout <= 3600000)
         ):
+            # A host schema rejection executes no wait. Preserve its receipt, but only an immediate exact correction
+            # can proceed; it supplies neither source coverage nor a scheduling/refill opportunity.
+            call_index = parent_rows.index(row)
+            output_index = parent_rows.index(matching[0])
+            next_call = next(
+                (
+                    candidate
+                    for candidate in parent_rows[output_index + 1 :]
+                    if candidate.get("type") == "response_item"
+                    and candidate.get("payload", {}).get("type") in {"function_call", "custom_tool_call"}
+                ),
+                None,
+            )
+            corrected = next_call.get("payload", {}) if next_call is not None else {}
+            if (
+                isinstance(wait_arguments, dict)
+                and set(wait_arguments) == {"target", "timeout_ms"}
+                and isinstance(wait_arguments["target"], str)
+                and type(timeout) is int
+                and 10000 <= timeout <= 3600000
+                and re.fullmatch(
+                    r"failed to parse function arguments: unknown field `target`, expected `timeout_ms` "
+                    r"at line [1-9][0-9]* column [1-9][0-9]*",
+                    str(matching[0]["payload"]["output"]),
+                )
+                and call_index < output_index
+                and corrected.get("type") == "function_call"
+                and corrected.get("name") == "wait_agent"
+                and corrected.get("arguments") is not None
+                and _parent_timestamp(row) < _parent_timestamp(matching[0]) < _parent_timestamp(next_call)
+            ):
+                try:
+                    if json.loads(corrected["arguments"]) == {"timeout_ms": timeout}:
+                        continue
+                except (TypeError, json.JSONDecodeError):
+                    pass
             raise SystemExit("review-inspection-schedule-wait-invalid")
         started, returned = _parent_timestamp(row), _parent_timestamp(matching[0])
         if started >= returned:

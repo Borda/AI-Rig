@@ -22,7 +22,7 @@ def test_generated_pages_execute_from_unrelated_cwd_with_exact_context(tmp_path:
     nested.mkdir(parents=True)
     run = preparation._review_inputs(nested)
     (run / "qa-specialist-evidence.md").write_text(
-        "Scope: widget.py at frozen revision.\nQuestion: boundary behavior.\n" + "Boundary checked: café π.\n" * 2500,
+        "Scope: widget.py at frozen revision.\nQuestion: boundary behavior.\n" + "Boundary checked: café π.\n" * 2000,
         encoding="utf-8",
         newline="\n",
     )
@@ -33,6 +33,8 @@ def test_generated_pages_execute_from_unrelated_cwd_with_exact_context(tmp_path:
     role = "qa-specialist"
     entry = next(item for item in plan["contexts"] if item["role_id"] == role)
     context = (run / entry["context_path"]).read_bytes()
+    # This case exercises multi-page ordinary dispatch; oversized auto-batches have their own reconstruction test.
+    assert len(context) <= 65536
     call = next(
         item for item in dispatch["calls"] if item["arguments"]["task_name"].startswith("review_qa_specialist_")
     )

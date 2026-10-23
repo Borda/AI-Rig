@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.43.1
+
+- Refresh from actual working-tree source, documentation and consumed configuration bytes, including unstaged edits, new files and final-file deletion; prompt refreshes and query freshness share the same inputs.
+- Restore automatic missing-index preparation for ordinary queries, keep nested review worktrees on their own canonical index, and preserve frozen and explicit custom-index boundaries without reporting an unperformed refresh.
+- Make enabled consumer gates prepare missing indexes automatically by default, with explicit confirm-first and frozen preferences preserved.
+- Keep gate currency consistent with actual indexed bytes, migrate legacy fingerprints within the existing time bound, and restore a shadowed stub when its implementation is deleted.
+- Count actual graph modules in prompt summaries and compare configuration/document inputs consistently in refresh telemetry.
+
 ## 0.43.0
 
 - `Bash(eval:*)` is no longer in the shipped allow list, and the README's manual settings merge now removes an existing entry as well: ad-hoc `eval` commands prompt, while no Codemap skill uses `eval` (`resolve_index_env.py` hands values over through session files).

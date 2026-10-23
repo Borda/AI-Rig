@@ -55,7 +55,7 @@ cp "${TMPDIR:-/tmp}/dev-codemap-raw-${CSID}"        "$PLAN_NS/codemap-raw"      
 cp "${TMPDIR:-/tmp}/dev-plan-max-depth-${CSID}"     "$PLAN_NS/max-depth"         2>/dev/null || echo "3"     > "$PLAN_NS/max-depth"
 ```
 
-Downstream blocks recover namespace then read back, e.g. `IFS= read -r PLAN_NS < "${TMPDIR:-/tmp}/dev-plan-ns-current-${CSID}" 2>/dev/null || PLAN_NS=""; IFS= read -r CODEMAP_ENABLED < "$PLAN_NS/codemap-enabled" 2>/dev/null || CODEMAP_ENABLED=false`.
+Downstream blocks recover namespace then read back, e.g. `IFS= read -r PLAN_NS < "${TMPDIR:-/tmp}/dev-plan-ns-current-${CSID}" 2>/dev/null || PLAN_NS=""; IFS= read -r CODEMAP_ENABLED  2>/dev/null < "$PLAN_NS/codemap-enabled" || CODEMAP_ENABLED=false`.
 
 **Unsupported flag check** — after all supported flags extracted, scan `$ARGUMENTS` for remaining `--<token>` tokens not in the supported list below. If found: invoke `AskUserQuestion` with question text `` ! Unknown flag(s): `--<token>`. Supported: `--no-challenge`, `--codemap`, `--no-codemap`, `--max-depth`. `` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
 
@@ -93,7 +93,7 @@ IFS= read -r TARGET_FN < "${TMPDIR:-/tmp}/dev-plan-target-fn-${CSID}" 2>/dev/nul
 export TARGET_MODULE TARGET_FN
 echo "$TARGET_MODULE" > "$PLAN_NS/target-module"   # persist — bash resets between calls
 echo "$TARGET_FN"     > "$PLAN_NS/target-fn"
-IFS= read -r CODEMAP_ENABLED < "$PLAN_NS/codemap-enabled" 2>/dev/null || CODEMAP_ENABLED=false
+IFS= read -r CODEMAP_ENABLED  2>/dev/null < "$PLAN_NS/codemap-enabled" || CODEMAP_ENABLED=false
 echo "CODEMAP_ENABLED=$CODEMAP_ENABLED"
 if [ "$CODEMAP_ENABLED" = "true" ]; then
     python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" codemap-context.md
@@ -109,13 +109,15 @@ Follow the codemap block per the value echoed. Nothing printed beyond the skip l
 ```bash
 # timeout: 15000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r CODEMAP_CURRENCY  2>/dev/null < "${TMPDIR:-/tmp}/dev-codemap-currency-${CSID}" || CODEMAP_CURRENCY="no_index"
+if [ "$CODEMAP_CURRENCY" = "stale" ]; then export SCAN_NO_AUTOBUILD=1; fi
 IFS= read -r PLAN_NS < "${TMPDIR:-/tmp}/dev-plan-ns-current-${CSID}" 2>/dev/null || PLAN_NS=""
 [ -n "$PLAN_NS" ] || { echo "! BLOCKED — plan namespace sentinel missing; re-run Flag parsing"; exit 1; }
-IFS= read -r CODEMAP_ENABLED < "$PLAN_NS/codemap-enabled" 2>/dev/null || CODEMAP_ENABLED=false
+IFS= read -r CODEMAP_ENABLED  2>/dev/null < "$PLAN_NS/codemap-enabled" || CODEMAP_ENABLED=false
 IFS= read -r TARGET_MODULE < "$PLAN_NS/target-module" 2>/dev/null || TARGET_MODULE=""
 if [ "$CODEMAP_ENABLED" = "true" ] && command -v codemap-py >/dev/null 2>&1; then
     if [ -n "$TARGET_MODULE" ]; then
-        codemap-py query --timeout 5 rdeps "$TARGET_MODULE" --top 10 --exclude-tests > "$PLAN_NS/sizing-rdeps" 2>/dev/null || true
+        codemap-py query --timeout 5 rdeps "$TARGET_MODULE" --limit 10 --exclude-tests > "$PLAN_NS/sizing-rdeps" 2>/dev/null || true
         codemap-py query --timeout 5 coupled --top 10 >> "$PLAN_NS/sizing-rdeps" 2>/dev/null || true
     elif [ -n "$(git diff HEAD --name-only 2>/dev/null | grep '\.py$')" ]; then
         python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/codemap_scan.py" --source=diff > "$PLAN_NS/sizing-rdeps" 2>/dev/null || true

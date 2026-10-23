@@ -56,7 +56,9 @@ _PROSE_ASKS = [
 #: Shared docs whose own questions this skill reaches only by loading them.
 _SHARED_ASKS = [
     pytest.param("runner-detection.md", "Non-Python project detected", id="language-preflight"),
-    pytest.param("codemap-gates.md", "Gate A always asks (`AskUserQuestion`)", id="codemap-gate-a"),
+    pytest.param(
+        "codemap-gates.md", "`LAZY_CODEMAP` is the explicit confirm-first preference", id="codemap-gate-a-lazy-opt-in"
+    ),
     pytest.param("premise-grounding.md", "has no verified source", id="premise-grounding"),
     pytest.param("plan-inline.md", "(a) **Proceed**", id="plan-inline"),
     pytest.param("foundry--quality-stack.md", "AskUserQuestion", id="quality-stack"),
@@ -90,10 +92,14 @@ def test_baseline_prose_ask_still_happens(section_start: str, section_end: str, 
 
 @pytest.mark.parametrize(("doc", "marker"), _SHARED_ASKS)
 def test_shared_doc_ask_is_still_loaded(doc: str, marker: str) -> None:
-    """The skill still loads each shared doc that carries a question, and the doc still asks it."""
+    """The skill still loads each shared doc that carries a question, including Codemap's opt-in prompt policy."""
     skill = (_FIX / "SKILL.md").read_text(encoding="utf-8")
     assert f'bin/dev_load_shared.py" {doc}' in skill
-    assert marker in (_SHARED / doc).read_text(encoding="utf-8")
+    text = (_SHARED / doc).read_text(encoding="utf-8")
+    assert marker in text
+    if doc == "codemap-gates.md":
+        assert "Gate A prepares automatically by default" in text
+        assert "SCAN_NO_AUTOBUILD=1" in text
 
 
 def test_language_preflight_gate_still_applied() -> None:

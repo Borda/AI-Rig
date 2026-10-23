@@ -130,7 +130,7 @@ IFS= read -r CHALLENGE_ENABLED < "${TMPDIR:-/tmp}/dev-review-challenge-enabled-$
 IFS= read -r CHALLENGE_FORCED < "${TMPDIR:-/tmp}/dev-review-challenge-forced-${CSID}" 2>/dev/null || CHALLENGE_FORCED="false"  # --challenge: no-op, challenger always runs
 # fail-safe impact default — codemap block overrides with review_impact_tier.py verdict; codemap off keeps FULL
 echo "FULL · impact unknown: codemap unavailable" > "${TMPDIR:-/tmp}/dev-review-impact-${CSID}"
-IFS= read -r CODEMAP_RAW < "${TMPDIR:-/tmp}/dev-review-codemap-enabled-${CSID}" 2>/dev/null || CODEMAP_RAW="auto"
+IFS= read -r CODEMAP_RAW < "${TMPDIR:-/tmp}/dev-review-codemap-${CSID}" 2>/dev/null || CODEMAP_RAW="auto"
 IFS= read -r FANOUT_FULL < "${TMPDIR:-/tmp}/dev-review-fanout-full-${CSID}" 2>/dev/null || FANOUT_FULL="false"
 FANOUT_CAP=3  # runtime form of FANOUT_MAX (<constants> block) — keep both in sync manually if either changes
 [ "$FANOUT_FULL" = "true" ] && FANOUT_CAP=0  # 0 = no cap: all preselected dimensions
@@ -173,7 +173,6 @@ if [ "$WORKTREE_ENABLED" = "true" ]; then python "${CLAUDE_PLUGIN_ROOT:-plugins/
 ```bash
 # CODEMAP_RAW → true/false; strict exits on unavailability  # timeout: 5000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-# round-trips one sentinel: raw flag in, resolved value out
 CODEMAP_ENABLED=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_codemap_gate.py" review) || exit 1
 # codemap: integrated-via-shared
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" codemap-gates.md
@@ -273,8 +272,10 @@ Extended scan for changed modules — runs v5 pre-flight queries per module, per
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r CODEMAP_CURRENCY  2>/dev/null < "${TMPDIR:-/tmp}/dev-codemap-currency-${CSID}" || CODEMAP_CURRENCY="no_index"
+if [ "$CODEMAP_CURRENCY" = "stale" ]; then export SCAN_NO_AUTOBUILD=1; fi
 codemap_available=false
-IFS= read -r CODEMAP_ENABLED < "${TMPDIR:-/tmp}/dev-review-codemap-enabled-${CSID}" 2>/dev/null || CODEMAP_ENABLED="false"
+IFS= read -r CODEMAP_ENABLED  2>/dev/null < "${TMPDIR:-/tmp}/dev-review-codemap-enabled-${CSID}" || CODEMAP_ENABLED="false"
 if [ "$CODEMAP_ENABLED" = "true" ]; then
     codemap_available=true
     # RUN_DIR not made yet (Step 2) — stage here, copy after mkdir. codemap-py on PATH guaranteed (codemap_resolve.py confirmed)
@@ -310,7 +311,7 @@ Codemap context propagation in Step 3:
 
   > Reuse gate: reuse a supplied answer only for the same project, current index, target, query and flags; skip its duplicate pre-flight call. Require success and direction-complete metadata. For batch children require `ok: true` and inspect `result.index`; `ok: false` is a failure, never an empty answer. Missing metadata, `stale`, root mismatch, degraded or incomplete results need targeted fallback. Use legacy `exhaustive: true` only when `query_complete` is absent. A valid empty list settles that scoped query; truncation does not enumerate all matches. Necessary source-body reads, test-quality checks, dynamic behavior and required independent verification remain allowed.
 
-  **Bounded call budget**: symbol not covered by the batch above → up to 3 additional `codemap-py query` calls this review pass. **Hard stop on `query_complete: true`** (legacy `exhaustive: true` only when `query_complete` is absent): a result passing the reuse gate is final for its direction — no follow-up Grep/Read/query to re-confirm it.
+  **Query choice inheritance**: the orchestrator supplies the invocation’s exact enabled/currency sentinel paths in this prompt. Before every fresh shell that queries Codemap or runs a querying helper, reload those files; disabled means no queries, stale means `export SCAN_NO_AUTOBUILD=1` before the command. Retain an inherited freeze. This also applies to fallback and impact/test-selection helpers. **Bounded call budget**: symbol not covered by the batch above → up to 3 additional `codemap-py query` calls this review pass. **Hard stop on `query_complete: true`** (legacy `exhaustive: true` only when `query_complete` is absent): a result passing the reuse gate is final for its direction — no follow-up Grep/Read/query to re-confirm it.
 
   Per-agent priority (skip redundant reads for symbols the listed query already covers):
   - qa-specialist (Agent 2): `uncovered` + `mock-rdeps` first

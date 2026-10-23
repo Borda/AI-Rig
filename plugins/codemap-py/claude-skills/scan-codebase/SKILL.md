@@ -74,7 +74,7 @@ fi
 printf 'ok\n' > "${TMPDIR:-/tmp}/codemap-scan-ok-${_CM_PROJ_SLUG}-${CSID}"
 ```
 
-**`--root` naming**: index uses `basename(<path>)`, unlike default git-root basename. After a custom-root scan, retain exact path printed by scanner as `<emitted-index-path>`; later query must use `--index <emitted-index-path> --root <same-root>`. `--root` is path resolution only, doesn't select the index. After custom-root scan, verify path via `resolve_index_env.py`. `--root .` handled specially — `setup_scan_env.py` falls back to git-root basename, same as omitting `--root`.
+**`--root` naming**: index uses `basename(<path>)`, unlike default git-root basename. After a custom-root scan, retain exact path printed by scanner as `<emitted-index-path>`. A later query may pass `--root <same-root>` to select that root's canonical index; pass `--index <emitted-index-path> --root <same-root>` to pin the emitted file. `--root` also sets query path resolution and the accepted custom-index boundary. After custom-root scan, verify path via `resolve_index_env.py`. `--root .` handled specially — `setup_scan_env.py` falls back to git-root basename, same as omitting `--root`.
 
 Writes `<root>/.cache/codemap/<project>.json`, or `$CODEMAP_INDEX_DIR/<project>.json` when set; prints:
 

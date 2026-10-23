@@ -125,6 +125,8 @@ def _stage(work: Path, modules: str) -> Path:
     work.mkdir()
     stage = work / "stage.md"
     stage.write_text("## Structural Context\n", encoding="utf-8", newline="\n")
+    (work / "review-codemap-enabled-t").write_text("true\n", encoding="utf-8", newline="\n")
+    (work / "review-codemap-currency-t").write_text("current\n", encoding="utf-8", newline="\n")
     (work / "oss-review-pr-tag-t").write_text("pr7\n", encoding="utf-8", newline="\n")
     (work / "oss-review-codemap-context-stage-pr7-t").write_text(
         f"{stage.as_posix()}\n", encoding="utf-8", newline="\n"
@@ -242,6 +244,29 @@ def test_complete_batch_issues_no_single_query(tmp_path: Path, family: str) -> N
     _run(_new_block(family), stage.parent, shim)
 
     assert _calls(stage.parent) == [_BATCH_CALL]
+
+
+@_skip_shell_unavailable
+@pytest.mark.integration
+@pytest.mark.parametrize("family", ["qa", "docs"])
+@pytest.mark.parametrize("enabled", ["false", None])
+def test_disabled_or_unresolved_gate_does_not_run_supplement(tmp_path: Path, family: str, enabled: str | None) -> None:
+    """Healthy fixture defaults cannot hide a production regression that queries despite disabled or absent state."""
+    shim = tmp_path / "shim.py"
+    shim.write_text(_SHIM, encoding="utf-8", newline="\n")
+    stage = _stage(tmp_path / "new", "pkg.alpha\npkg.beta\n")
+    before = stage.read_bytes()
+    sentinel = stage.parent / "review-codemap-enabled-t"
+    if enabled is None:
+        sentinel.unlink()
+    else:
+        sentinel.write_text(enabled + "\n", encoding="utf-8", newline="\n")
+    (stage.parent / "review-codemap-currency-t").write_text("off\n", encoding="utf-8", newline="\n")
+
+    _run(_new_block(family), stage.parent, shim)
+
+    assert _calls(stage.parent) == []
+    assert stage.read_bytes() == before
 
 
 @_skip_shell_unavailable

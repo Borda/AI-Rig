@@ -62,7 +62,9 @@ Require:
 
 Dry-run both before edit:
 
-Execute configured `metric_cmd` and `guard_cmd` separately with host-native command runner. Write complete combined output to `<run-directory>/metric-baseline.txt` and `<run-directory>/guard-baseline.txt`; retain both exit codes and stop before editing if either command cannot run.
+Execute configured `metric_cmd` and `guard_cmd` separately with host-native command runner. Write complete combined output to `<run-directory>/metric-baseline.txt` and `<run-directory>/guard-baseline.txt`; retain both exit codes. If a missing declared project dependency prevents a command from running, apply [Project Dependency Preparation](../../shared/native-skill-contract.md#project-dependency-preparation), preserve the earlier attempts separately, and rerun both baseline commands in the resulting environment before accepting the baseline or editing source. Stop before editing while either baseline remains unavailable.
+
+Dependency preparation changes a measurement input: invalidate earlier measurements from the previous environment, including when preparation occurs during an iteration or resume. Recapture the baseline on its original source under the owning workflow's source-state and measurement-integrity rules before comparing results. If equivalent recapture is unavailable, retain an inconclusive result with no improvement claim; never attribute an environment change to a source optimization.
 
 ### 03: Record baseline and hypothesis
 

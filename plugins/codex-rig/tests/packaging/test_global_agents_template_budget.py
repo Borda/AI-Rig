@@ -25,7 +25,9 @@ NATIVE_CONTRACT = PLUGIN_ROOT / "shared" / "native-skill-contract.md"
 # loading a skill contract, so pending roles and empty-return evidence limits must stay visible in the global rule.
 # Raised by 464 bytes for the user-required table/path display rule: it applies to all terminal messages, including
 # sessions that load no workflow skill, so a skill-local pointer cannot establish the requested default.
-TEMPLATE_BYTE_BUDGET = 39022
+# Raised by 420 bytes for the dependency-preparation trigger: skills and roles can report blocked checks before
+# loading the shared workflow contract, so the parent-owned preparation rule must remain always-loaded.
+TEMPLATE_BYTE_BUDGET = 39442
 
 
 @pytest.mark.packaging

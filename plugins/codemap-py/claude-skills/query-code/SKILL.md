@@ -30,7 +30,7 @@ Skip Codemap when exact file + symbol localize edit and no caller, dependency, b
 codemap-py query --compact <subcommand> [arguments]
 ```
 
-For a custom-root index, pass `--index <emitted-index-path> --root <same-root>`; `--root` is path resolution only and does not select the index. An `--index` path outside the current directory and git root is accepted only when it is exactly the index that the scan's `CODEMAP_INDEX_DIR`, still set to the same value, or the default layout resolves for that `--root`; otherwise the CLI exits with `index path outside project root`.
+For another project root, pass `--root <root>` to select that root's canonical index. Use `--index <emitted-index-path> --root <same-root>` when querying a specific index file; `--index` selects the file, while `--root` sets query path resolution and establishes the root boundary. An `--index` path outside the current directory and git root is accepted only when it is exactly the index that the scan's `CODEMAP_INDEX_DIR`, still set to the same value, or the default layout resolves for that `--root`; otherwise the CLI exits with `index path outside project root`.
 
 Enabled plugin adds version-matched `bin/` to Bash `PATH`. If unavailable interactively, invoke installed plugin's absolute `bin/codemap-py` launcher as one standalone command and accept normal host permission prompt. Prepend no `cd`, `export`, or other shell command.
 
@@ -78,12 +78,11 @@ Table is a routing shortlist, not the parser's full surface. If the operation is
 
 ## Index and completeness contract
 
-Resolve the installed launcher once and retain its literal in reasoning; shell variables do not persist between tool calls. Run selected queries first; no unconditional pre-scan/freshness call. Independent read-only queries may run concurrently as separate tool commands only against a prepared stable index with no self-heal (`SCAN_NO_AUTOBUILD=1`); dependent queries wait for their inputs, and refresh, self-heal, or index writes run serially. `SCAN_NO_AUTOBUILD` comes only from the inherited environment: this skill's allowed tools run `codemap-py query` with no env prefix or `export`, so it never sets the flag itself; without it, run queries one at a time. Keep independent queries standalone, not `batch`, until its per-item completeness contract is verified. Use `test-impact` for test choice, not direct test-module import.
+Resolve the installed launcher once and retain its literal in reasoning; shell variables do not persist between tool calls. Run selected queries directly; no preliminary scan, index-file check, or freshness query. An ordinary `codemap-py query` prepares the canonical project index before answering, including when no index exists yet, so run queries one at a time while that preparation may occur. With inherited `SCAN_NO_AUTOBUILD=1`, queries leave the existing index unchanged and independent read-only queries may run concurrently against that frozen index; dependent queries wait for their inputs. This skill's allowed tools run `codemap-py query` without an environment prefix or export, so it never sets the opt-out itself. Keep independent queries standalone, not `batch`, until its per-item completeness contract is verified. Use `test-impact` for test choice, not direct test-module import.
 
-- Normal mode may perform the CLI's bounded incremental self-heal.
-- With `SCAN_NO_AUTOBUILD=1`, never run freshness query, incremental refresh, or automatic full build. Query existing index unchanged.
-- Missing frozen index = hard stop. Report structured error; ask for `/codemap-py:scan-codebase`.
-- Explicit user-requested `codemap-py index` remains allowed; flag blocks only implicit writes.
+- Normal mode automatically prepares the canonical index for the query; this includes a bounded working-tree refresh and creating a missing index.
+- With `SCAN_NO_AUTOBUILD=1`, the query does not refresh or build. It reads the existing index unchanged; a missing frozen index returns a structured error.
+- Report query and preparation errors accurately. Do not claim the index is enabled or ready after a failed preparation. The user may explicitly invoke `/codemap-py:scan-codebase` to create an index while the opt-out is active; never invoke it autonomously to repair an ordinary query.
 
 Interpret `index`:
 

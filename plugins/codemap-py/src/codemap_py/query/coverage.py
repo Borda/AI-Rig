@@ -96,22 +96,11 @@ def _coverage(index: dict) -> dict:
 
     stored_shas = index.get("file_shas")
     undetermined = False
-    if stored_shas:
-        # v3 index: precise file-SHA comparison (works correctly for subdirectory repos
-        # that share a host repo git history — avoids false-positive stale on unrelated commits)
+    if isinstance(stored_shas, dict):
         current = _current_file_shas()
-        if current.shas:
-            changed = [p for p in current.shas if stored_shas.get(p) != current.shas[p]]
-            added = [p for p in current.shas if p not in stored_shas]
-            deleted = [p for p in stored_shas if p not in current.shas]
-            stale = bool(changed + added + deleted)
-        else:
-            # Nothing came back. Only a git failure *inside* a repository is an anomaly:
-            # with no repository at all there was never an answer to get, so that stays
-            # silent. Either way `stale` is not evidence of freshness, and the
-            # git-failure case says so out loud rather than defaulting to "current".
-            stale = False
-            undetermined = current.status == _SHAS_GIT_ERROR
+        changed = index_io._changed_py_files(index)
+        stale = bool(changed)
+        undetermined = current.status == _SHAS_GIT_ERROR
     else:
         # v2 index fallback: timestamp-based check (mirrors warn_if_stale behaviour; avoids
         # false-positive stale when index lives in a subdirectory of a larger host repo whose
@@ -119,18 +108,12 @@ def _coverage(index: dict) -> dict:
         scanned_at: str = index.get("scanned_at", "")
         stale = bool(scanned_at and check_staleness(scanned_at))
 
-    # Blind spot: brand-new untracked .py files are invisible to the git-blob SHA diff,
-    # so they never register as "stale". A whole-graph / global-in query must not claim
-    # completeness while one exists — surfaced here, consumed by _query_complete.
-    # Files that ARE in the index despite being git-untracked (scan-index walks the
-    # filesystem, not git) are covered by the graph, so they must not veto — the
-    # 2026-07 usage audit found permanently-untracked scratch files (demo/*.py)
-    # vetoing completeness forever. Their residual blind spot — an edit after the
-    # scan is invisible to the SHA diff — is closed by the mtime check below.
+    # Retain the legacy unindexed-source diagnostic for frozen or unmeasurable indexes. Working-tree hashes now
+    # drive freshness; the old timestamp heuristic is needed only for indexes without a file hash map.
     untracked_all = index_io._untracked_py_files()
     indexed_paths = {m.get("path", "") for m in modules}
     untracked = [p for p in untracked_all if p not in indexed_paths]
-    if not stale:
+    if not stale and not isinstance(stored_shas, dict):
         stale = _indexed_untracked_modified(
             [p for p in untracked_all if p in indexed_paths], index.get("scanned_at", "")
         )
@@ -359,16 +342,16 @@ def _coverage_note(
         return f"All {total} indexed modules were searched. This result is complete — grep/bash verification is not needed."
     prefix = f"All {total} indexed modules were searched. ⚠ This result may be incomplete — "
     detail = {
-        "stale": "the index is stale (source files changed since last scan); a bounded self-heal was attempted. "
+        "stale": "the index is stale (source files changed since last scan). "
         "Re-run /codemap-py:scan-codebase to update.",
-        "stale_undetermined": "git could not be queried, so whether the index is stale is UNKNOWN — "
+        "stale_undetermined": "source fingerprints could not be read, so whether the index is stale is UNKNOWN — "
         "this answer may describe an out-of-date tree. Re-run /codemap-py:scan-codebase, "
         "or verify with grep.",
         "module_degraded": "the queried module failed to parse and was skipped; verify with grep.",
         "degraded": f"{base['degraded']} module(s) failed to parse and were skipped — "
         "see the degraded_files list (each with its parse error) for the files that may hide an edge into this result.",
-        "untracked": f"{len(base['untracked_py'])} new .py file(s) are untracked and invisible to the staleness "
-        "diff — they may hide an edge; git add them and re-scan, or verify with grep.",
+        "untracked": f"{len(base['untracked_py'])} new .py file(s) are not represented in the index "
+        "and may hide an edge; re-scan or verify with grep.",
         "collision": f"{base['collision_count']} qualname collision(s) in the index dropped a module — "
         "it may hide an edge; verify with grep.",
         "root_mismatch": "the index was built for a different project root than the one queried "
@@ -420,7 +403,7 @@ def _read_session_marker() -> str | None:
     Returns:
         The marker's ``session_id`` when present and fresh, else None.
     """
-    git_root = index_io._get_git_root_cached()
+    git_root = index_io._fingerprint_root or index_io._get_git_root_cached()
     if git_root is None:
         return None
     runtime = runtime_id()

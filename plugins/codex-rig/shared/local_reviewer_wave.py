@@ -1769,6 +1769,7 @@ def _require_allowlisted_event_method(method: object) -> None:
         "item/started",
         "item/completed",
         "turn/completed",
+        "turn/moderationMetadata",
         *ALLOWED_STREAM_METHODS,
         *PLAN_NOTIFICATION_METHODS,
     }:
@@ -1897,6 +1898,11 @@ def _handle_review_event(
     _require_allowlisted_event_method(method)
     params = _mapping(message.get("params"), "app-server-event-params")
     role_id, state = _match_event_target(params, active, pending)
+    if method == "turn/moderationMetadata":
+        # The CLI emits opaque JSON metadata during a turn; it grants no execution capability and stays out of evidence.
+        if set(params) != {"threadId", "turnId", "metadata"}:
+            raise ReviewRouteError("app-server-moderation-notification-invalid")
+        return
     if method in PLAN_NOTIFICATION_METHODS:
         _validate_plan_notification(method, params)
         return

@@ -51,6 +51,7 @@ from codemap_py.scanner import (
     scan_mkdocs_xrefs,
     scan_rst_xrefs,
 )
+from codemap_py.scanner.discovery import fingerprint_file_hashes
 from codemap_py.schema import SCAN_VERSION
 from codemap_py.telemetry import CliInvocation
 
@@ -495,6 +496,7 @@ def _apply_config_refs(root: Path, modules: list[dict]) -> None:
     refs = scan_config_refs(root, module_names)
     for m in modules:
         name = m.get("name", "")
+        m.pop("config_refs", None)
         if name in refs:
             m["config_refs"] = refs[name]
 
@@ -1153,6 +1155,8 @@ def _resolve_src_roots(root: Path) -> _SrcRootContext:
     Args:
         root: project root to resolve source roots for.
     """
+    # In-process callers can edit configuration between scans; source-root memoization must not outlive one scan.
+    detect_src_root.cache_clear()
     return _SrcRootContext(configured=tuple(load_src_roots(root)), default=detect_src_root(root))
 
 
@@ -1239,6 +1243,7 @@ def scan(root: Path, coverage_path: Path | None = None) -> dict:
 
     index = {
         "scan_version": SCAN_VERSION,
+        "source_fingerprint": fingerprint_file_hashes(file_shas),
         "scanned_at": datetime.now(timezone.utc).isoformat(),
         "git_sha": get_git_sha(root),
         "project": root.name,
@@ -1319,6 +1324,9 @@ def incremental_scan(root: Path, old_index: dict, coverage_path: Path | None = N
             forces re-annotation even when no source file changed (v5.4).
     """
     src_ctx = _resolve_src_roots(root)
+    if src_ctx.meta(root) != old_index.get("src_roots", []):
+        print("[codemap] Source roots changed — rebuilding module names with a full scan.", file=sys.stderr)
+        return scan(root, coverage_path=coverage_path)
     exclusions = _load_exclusions(root)
     current_shas = get_file_hashes(root, exclusions)
     _maybe_stamp_coverage_mtime(current_shas, coverage_path)
@@ -1345,15 +1353,19 @@ def incremental_scan(root: Path, old_index: dict, coverage_path: Path | None = N
         # that left every staged indexed blob unchanged kept the index "behind HEAD" for the prompt hook,
         # check-index-currency and the integration audit, so each prompt spawned another no-op refresh until the next
         # staged edit. ``scanned_at`` stays: the content itself was parsed then.
-        return {**old_index, "git_sha": get_git_sha(root)}
+        return {**old_index, "git_sha": get_git_sha(root), "source_fingerprint": fingerprint_file_hashes(current_shas)}
 
     # Freshness tracks documentation too, but only Python sources belong in the module graph.
     # Filtering the carried index also repairs indexes produced by the former parse-all path.
+    source_paths = {path.relative_to(root).as_posix() for path in _iter_python_files(root, exclusions)[0]}
     modules_by_path: dict[str, dict] = {
         module["path"]: module
         for module in stored_modules
-        if isinstance(module, dict) and isinstance(module.get("path"), str) and module["path"].endswith((".py", ".pyi"))
+        if isinstance(module, dict) and isinstance(module.get("path"), str) and module["path"] in source_paths
     }
+    # Suppressed stubs and colliding modules are absent from the carried graph. Reconsider their still-discovered
+    # inputs when rebuilding, so deleting a winner restores the unchanged candidate just as a full scan would.
+    changed.update(source_paths - modules_by_path.keys())
     for path in sorted(legacy_non_python):
         print(f"[codemap]   - removed non-Python module {path}", file=sys.stderr)
 
@@ -1362,7 +1374,7 @@ def incremental_scan(root: Path, old_index: dict, coverage_path: Path | None = N
         print(f"[codemap]   - removed {path}", file=sys.stderr)
 
     for rel_path_str in sorted(changed):
-        if not rel_path_str.endswith((".py", ".pyi")):
+        if rel_path_str not in source_paths:
             print(f"[codemap]   refreshed {rel_path_str}", file=sys.stderr)
             continue
         filepath = root / rel_path_str
@@ -1402,6 +1414,7 @@ def incremental_scan(root: Path, old_index: dict, coverage_path: Path | None = N
     index = {
         **old_index,
         "scan_version": SCAN_VERSION,
+        "source_fingerprint": fingerprint_file_hashes(current_shas),
         "scanned_at": datetime.now(timezone.utc).isoformat(),
         "git_sha": get_git_sha(root),
         "project": root.name,
@@ -1437,7 +1450,7 @@ def _build_index(args: argparse.Namespace, root: Path, out_path: Path) -> dict:
     if args.incremental and out_path.exists():
         with out_path.open() as f:
             old_index = json.load(f)
-        if int(old_index.get("scan_version", 0)) >= SCAN_VERSION and old_index.get("file_shas"):
+        if int(old_index.get("scan_version", 0)) >= SCAN_VERSION and isinstance(old_index.get("file_shas"), dict):
             print(f"[codemap] Incremental scan {root} ...", file=sys.stderr)
             return incremental_scan(root, old_index, coverage_path=coverage_path)
         print("[codemap] pre-v13 index found — falling back to full scan ...", file=sys.stderr)
@@ -1497,7 +1510,9 @@ def _build_and_publish(args: argparse.Namespace, root: Path, out_path: Path) -> 
     """
     index = _build_index(args, root, out_path)
     with rwgate.publish_stream(out_path) as fh:
-        json.dump(index, fh, separators=(",", ":"))
+        # Header readers inspect a bounded prefix, including for an upgraded legacy index whose dict order differs.
+        published = {"source_fingerprint": index["source_fingerprint"], **index}
+        json.dump(published, fh, separators=(",", ":"))
     return index
 
 

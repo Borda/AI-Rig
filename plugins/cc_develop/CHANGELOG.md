@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.43.1
+
+- Follow the active Codemap provider’s automatic missing/stale-index preparation contract, preserving explicit confirm-first and frozen preferences across later tool calls and nested query helpers.
+- Disabling Codemap now disables only structural lookup: feature, fix, refactor and batch loops still select heuristic tests, execute them and propagate failures.
+
 ## 0.43.0
 
 - Helper scripts that write or read a session sentinel (`dev_run_dir.py`, `dev_parse_args.py`, `dev_codemap_gate.py`, `codemap_resolve.py` and the other `bin/` sentinel helpers) fall back to `/tmp` on POSIX when `TMPDIR` is unset, the directory a skill's `${TMPDIR:-/tmp}` names, instead of `tempfile.gettempdir()`, which picks `TEMP` or `TMP` first. With either set, `dev_run_tests.py` reported an unresolved runner (exit 64) and the red gates could not see its verdict file. Native Windows keeps `gettempdir()`.

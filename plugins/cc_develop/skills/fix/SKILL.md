@@ -211,7 +211,8 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/parse_target_qname.py" --q
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r CODEMAP_ENABLED < "${TMPDIR:-/tmp}/dev-fix-codemap-enabled-${CSID}" 2>/dev/null || CODEMAP_ENABLED="false"
+IFS= read -r CODEMAP_ENABLED  2>/dev/null < "${TMPDIR:-/tmp}/dev-fix-codemap-enabled-${CSID}" || CODEMAP_ENABLED="false"
+IFS= read -r CODEMAP_CURRENCY  2>/dev/null < "${TMPDIR:-/tmp}/dev-codemap-currency-${CSID}" || CODEMAP_CURRENCY="no_index"
 if [ "$CODEMAP_ENABLED" = "true" ]; then python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" codemap-context.md; fi  # timeout: 5000
 ```
 
@@ -233,10 +234,14 @@ Spawn **foundry:sw-engineer** agent to analyze failing code path — Arm batch `
 # timeout: 6000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r CODEMAP_ENABLED  < "${TMPDIR:-/tmp}/dev-fix-codemap-enabled-${CSID}"  2>/dev/null || CODEMAP_ENABLED="false"
+IFS= read -r CODEMAP_CURRENCY  2>/dev/null < "${TMPDIR:-/tmp}/dev-codemap-currency-${CSID}" || CODEMAP_CURRENCY="no_index"
+if [ "$CODEMAP_CURRENCY" = "stale" ]; then export SCAN_NO_AUTOBUILD=1; fi
 IFS= read -r TARGET_FN        < "${TMPDIR:-/tmp}/dev-fix-target-fn-${CSID}"        2>/dev/null || TARGET_FN=""
 IFS= read -r TARGET_MODULE    < "${TMPDIR:-/tmp}/dev-fix-target-module-${CSID}"    2>/dev/null || TARGET_MODULE=""
 IFS= read -r TARGET_QUALIFIED < "${TMPDIR:-/tmp}/dev-fix-target-qualified-${CSID}" 2>/dev/null || TARGET_QUALIFIED=""
 IFS= read -r DEV_DIR          < "${TMPDIR:-/tmp}/dev-fix-dev-dir-${CSID}"          2>/dev/null || DEV_DIR=""
+_CODEMAP_NO_HEAL=""
+if [ "$CODEMAP_CURRENCY" = "stale" ] || [ "${SCAN_NO_AUTOBUILD:-0}" = "1" ]; then _CODEMAP_NO_HEAL="--no-heal"; fi
 [ -n "$DEV_DIR" ] && python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/append_ledger.py" "$DEV_DIR/checkpoint.md"
 if [ "$CODEMAP_ENABLED" = "true" ] && [ -z "$TARGET_FN" ] && command -v codemap-py >/dev/null 2>&1; then
     DERIVED_FN=$(grep -oE '[A-Za-z_][A-Za-z0-9_.]*::[A-Za-z_][A-Za-z0-9_]*' "$DEV_DIR/checkpoint.md" 2>/dev/null | head -1)
@@ -245,7 +250,7 @@ if [ "$CODEMAP_ENABLED" = "true" ] && [ -z "$TARGET_FN" ] && command -v codemap-
         TARGET_MODULE="${DERIVED_FN%%::*}"
         TARGET_FN="${DERIVED_FN##*::}"    # bare fn — keep consistent with the arg-supplied path
         export TARGET_FN TARGET_MODULE TARGET_QUALIFIED
-        codemap-py query --timeout 5 fn-rdeps "$TARGET_QUALIFIED" --exclude-tests 2>/dev/null \
+        codemap-py query --timeout 5 $_CODEMAP_NO_HEAL fn-rdeps "$TARGET_QUALIFIED" --exclude-tests 2>/dev/null \
             | tee "$DEV_DIR/fn-rdeps-output.txt" || true
     fi
 fi
@@ -525,6 +530,8 @@ Make minimal change to fix root cause:
    ```bash
    # timeout: 600000
    export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+   IFS= read -r CODEMAP_CURRENCY  2>/dev/null < "${TMPDIR:-/tmp}/dev-codemap-currency-${CSID}" || CODEMAP_CURRENCY="no_index"
+   if [ "$CODEMAP_CURRENCY" = "stale" ]; then export SCAN_NO_AUTOBUILD=1; fi
    IFS= read -r PYTEST_CMD < "${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}" 2>/dev/null || PYTEST_CMD=""
    IFS= read -r REUSED_PYTEST_CMD < "${TMPDIR:-/tmp}/dev-fix-reused-pytest-cmd-${CSID}" 2>/dev/null || REUSED_PYTEST_CMD=""
    _REUSED_TESTS=""
@@ -590,6 +597,8 @@ Use scan to prioritize which criteria below get deepest scrutiny.
    ```bash
    # timeout: 600000
    export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+   IFS= read -r CODEMAP_CURRENCY  2>/dev/null < "${TMPDIR:-/tmp}/dev-codemap-currency-${CSID}" || CODEMAP_CURRENCY="no_index"
+   if [ "$CODEMAP_CURRENCY" = "stale" ]; then export SCAN_NO_AUTOBUILD=1; fi
    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_test_targets.py" --skill fix --run
    ```
 

@@ -631,9 +631,9 @@ class TestOldVsNewBinParity:
         assert old.stderr == new.stderr
 
     def test_missing_index_matches_golden(self, old_scan_query: Path, tmp_path: Path) -> None:
-        """A project with no built index produces the same ``_die_json`` error old-vs-new."""
-        old = _run_old(old_scan_query, ["list"], tmp_path)
-        new = _run_new_bin(["list"], tmp_path)
+        """Explicitly frozen missing-index queries retain the golden error contract."""
+        old = _run_old(old_scan_query, ["--no-heal", "list"], tmp_path)
+        new = _run_new_bin(["--no-heal", "list"], tmp_path)
         assert old.returncode == new.returncode == 1
         assert old.stdout == new.stdout
         assert old.stderr == new.stderr
@@ -684,13 +684,13 @@ class TestCrossPathParity:
         assert new_bin.stderr == cli.stderr
 
     def test_missing_index_matches_module_dispatch(self, tmp_path: Path) -> None:
-        """A missing index produces the same ``_die_json`` error bin-vs-module-dispatch.
+        """A frozen missing index produces the same ``_die_json`` error bin-vs-module-dispatch.
 
         No argparse usage banner is involved (this is a plain JSON error object), so full byte identity holds including
         stderr.
         """
-        new_bin = _run_new_bin(["list"], tmp_path)
-        cli = _run_cli_module(["list"], tmp_path)
+        new_bin = _run_new_bin(["--no-heal", "list"], tmp_path)
+        cli = _run_cli_module(["--no-heal", "list"], tmp_path)
         assert new_bin.returncode == cli.returncode == 1
         assert new_bin.stdout == cli.stdout
         assert new_bin.stderr == cli.stderr
@@ -702,6 +702,25 @@ class TestCrossPathParity:
         assert new_bin.returncode == cli.returncode == 2
         assert new_bin.stdout == cli.stdout == ""
         assert _error_suffix(new_bin.stderr) == _error_suffix(cli.stderr)
+
+
+@pytest.mark.parametrize("runner", [pytest.param(_run_new_bin, id="bin"), pytest.param(_run_cli_module, id="module")])
+def test_missing_index_is_prepared_before_ordinary_query(tmp_path: Path, runner: object) -> None:
+    """Both launch routes prepare their canonical index and answer real source graph facts."""
+    (tmp_path / "leaf.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (tmp_path / "caller.py").write_text("import leaf\n", encoding="utf-8")
+    index_path = tmp_path / ".cache" / "codemap" / f"{tmp_path.name}.json"
+    assert not index_path.exists()
+    result = runner(["rdeps", "leaf"], tmp_path)  # type: ignore[operator]
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["imported_by"] == ["caller"]
+    assert payload["index"]["stale"] is False
+    assert payload["index"]["query_complete"] is True
+    index = json.loads(index_path.read_text(encoding="utf-8"))
+    assert index["scan_root"] == str(tmp_path.resolve())
+    assert {module["name"] for module in index["modules"]} == {"leaf", "caller"}
+    assert "built missing index for the queried source root" in result.stderr
 
 
 @pytest.mark.parametrize("runner", [pytest.param(_run_new_bin, id="bin"), pytest.param(_run_cli_module, id="module")])
@@ -774,16 +793,36 @@ class TestDiffImpactParity:
     """
 
     def test_diff_impact_matches_golden(self, old_scan_query: Path, diff_impact_project: Path) -> None:
-        """Match both query engines over a real working-tree edit."""
-        old = _run_old(old_scan_query, ["diff-impact", "--base", "HEAD"], diff_impact_project)
-        new = _run_new_bin(["diff-impact", "--base", "HEAD"], diff_impact_project)
+        """Match graph answers on the same frozen index despite a real working-tree edit."""
+        old = _run_old(old_scan_query, ["--no-heal", "diff-impact", "--base", "HEAD"], diff_impact_project)
+        new = _run_new_bin(["--no-heal", "diff-impact", "--base", "HEAD"], diff_impact_project)
         assert old.returncode == new.returncode == 0
-        _assert_golden_query_parity(old, new, ["diff-impact"])
+        assert old.stderr == ""
+        assert new.stderr == (
+            "⚠ codemap index stale — 1 file(s) changed since last scan."
+            " Run /codemap-py:scan-codebase --incremental to update.\n"
+        )
+        legacy = json.loads(old.stdout)
+        current = _drop_loaded_index_path(json.loads(new.stdout))
+        # The golden fingerprints only staged blobs; the current frozen query also notices the unstaged edit.
+        assert legacy["index"]["stale"] is False
+        assert "the index is stale (source files changed since last scan)" in current["index"]["note"]
+        assert current["index"] == {
+            **legacy["index"],
+            "stale": True,
+            "query_complete": False,
+            "exhaustive": False,
+            "completeness_reason": "stale",
+            "note": current["index"]["note"],
+        }
+        current["index"] = legacy["index"]
+        _restore_legacy_impact_command(legacy["test_impact"], current["test_impact"])
+        assert current == legacy
 
     def test_diff_impact_matches_module_dispatch(self, diff_impact_project: Path) -> None:
         """Match bin-vs-module-dispatch."""
-        new_bin = _run_new_bin(["diff-impact", "--base", "HEAD"], diff_impact_project)
-        cli = _run_cli_module(["diff-impact", "--base", "HEAD"], diff_impact_project)
+        new_bin = _run_new_bin(["--no-heal", "diff-impact", "--base", "HEAD"], diff_impact_project)
+        cli = _run_cli_module(["--no-heal", "diff-impact", "--base", "HEAD"], diff_impact_project)
         assert new_bin.returncode == cli.returncode == 0
         assert new_bin.stdout == cli.stdout
         assert new_bin.stderr == cli.stderr

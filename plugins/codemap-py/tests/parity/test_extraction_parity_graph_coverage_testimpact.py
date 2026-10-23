@@ -38,6 +38,7 @@ them into ``conftest.py`` — see that file's matching note for why.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -136,9 +137,13 @@ def _legacy_index(index: dict) -> dict:
     legacy = {
         key: value
         for key, value in index.items()
-        if key not in _VOLATILE_KEYS and key not in _V12_ROOT_ADDITIONS and key != "scan_version"
+        if key not in _VOLATILE_KEYS
+        and key not in _V12_ROOT_ADDITIONS
+        and key not in {"scan_version", "source_fingerprint"}
     }
     legacy["modules"] = modules
+    if "file_shas" in legacy:
+        legacy["file_shas"] = {key: value for key, value in legacy["file_shas"].items() if key != ".codemapignore"}
     return legacy
 
 
@@ -155,7 +160,16 @@ def _assert_v13_index_delta(old: dict, new: dict) -> None:
     """Prove frozen v11 content is identical except declared v12/v13 graph semantics."""
     assert old["scan_version"] == 11
     assert new["scan_version"] == 13
-    assert set(new) == set(old) | _V12_ROOT_ADDITIONS
+    assert set(new) == set(old) | _V12_ROOT_ADDITIONS | {"source_fingerprint"}
+    # These non-Git fixtures retain every historical digest, plus the newly consumed ignore-policy input.
+    expected_hashes = dict(old["file_shas"])
+    ignore_file = Path(new["scan_root"]) / ".codemapignore"
+    if ignore_file.exists():
+        expected_hashes[".codemapignore"] = hashlib.md5(ignore_file.read_bytes(), usedforsecurity=False).hexdigest()
+    assert new["file_shas"] == expected_hashes
+    sources = {key: value for key, value in expected_hashes.items() if key != "__coverage_mtime__"}
+    payload = json.dumps([13, sources], sort_keys=True, separators=(",", ":")).encode("utf-8")
+    assert new["source_fingerprint"] == hashlib.sha256(payload).hexdigest()
     assert len(old["modules"]) == len(new["modules"])
     for legacy_module, current_module in zip(old["modules"], new["modules"], strict=True):
         additions = _V12_MODULE_ADDITIONS | _V13_MODULE_ADDITIONS if current_module["status"] == "ok" else frozenset()
@@ -175,17 +189,28 @@ def _assert_v13_index_delta(old: dict, new: dict) -> None:
     assert _canonical(_legacy_index(old)) == _canonical(_legacy_index(new))
 
 
-def test_v13_normalization_rejects_unrelated_legacy_change() -> None:
-    """The v13 allowance cannot mask a changed pre-v12 field."""
-    old = {"scan_version": 11, "project": "legacy", "modules": [{"name": "mod", "status": "ok"}]}
-    new = {
-        "scan_version": 13,
-        "project": "changed",
-        "modules": [{"name": "mod", "status": "ok", "symbol_aliases": {}, "symbol_alias_limitations": []}],
-        "symbol_aliases": {},
-        "symbol_alias_limitations": [],
-    }
-
+@pytest.mark.parametrize(
+    "field",
+    [
+        pytest.param("project", id="legacy-content"),
+        pytest.param("file_shas", id="input-hash"),
+        pytest.param("source_fingerprint", id="fingerprint"),
+    ],
+)
+def test_v13_normalization_rejects_unrelated_legacy_change(tmp_path: Path, old_scan_index: Path, field: str) -> None:
+    """The declared metadata delta cannot hide content, input-hash or fingerprint corruption."""
+    root = tmp_path / "project"
+    root.mkdir()
+    _build_fixture_project(root)
+    _, old = _run_scan(old_scan_index, root, tmp_path / "index")
+    _, new = _run_scan(_NEW_SCAN_INDEX, root, tmp_path / "index")
+    assert old is not None
+    assert new is not None
+    _assert_v13_index_delta(old, new)
+    if field == "file_shas":
+        new[field]["pkg/leaf.py"] = "0" * 32
+    else:
+        new[field] = "corrupt"
     with pytest.raises(AssertionError):
         _assert_v13_index_delta(old, new)
 

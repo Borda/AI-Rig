@@ -1,5 +1,13 @@
 #!/usr/bin/env python
-"""resolve_test_plan.py — pick the targeted tests for a change, and find the repository's own full-suite command.
+"""Select targeted tests and locate the repository's own full-suite command.
+
+Purpose: Keep optional Codemap lookup separate from required heuristic test selection.
+
+Scope: CLI `CODEMAP_ENABLED=false` disables only optional provider lookup; selection and test execution remain required.
+Without explicit invocation state, standalone helper calls retain ordinary provider defaults.
+The owning review/resolve caller reloads its own enabled sentinel into the command environment.
+
+Usage: python resolve_test_plan.py targeted --files <changed files>, or full-command.
 
 ``oss:resolve`` used to let every implementation and QA agent run the whole test suite after each fix — measured at
 ~10 minutes per run on a large repository, several times per resolve run. The contract now is: targeted tests inside
@@ -16,7 +24,11 @@ Targeted selection uses ``codemap-py query test-impact <module>`` per changed mo
 usable, and falls back per module to path heuristics (``test_<name>.py`` / ``<name>_test.py`` files, and test files
 that import the module). A codemap failure is never read as "no affected tests" — that module falls back instead.
 
-Output: one JSON object on stdout.
+Outputs: One JSON object on stdout.
+
+Failure: Invalid command inputs fail before execution; selection failures never imply successful tests.
+
+Used by: OSS review, remediation implementation and QA test selection.
 
 Exit codes:
     0 — plan printed (an empty ``tests`` list is a valid result and says so in ``note``)
@@ -225,12 +237,13 @@ def heuristic_tests(path: str, all_tests: list[str], repo: Path) -> list[str]:
     return hits
 
 
-def plan_targeted(repo: Path, files: list[str]) -> dict[str, object]:
+def plan_targeted(repo: Path, files: list[str], *, codemap_enabled: bool = True) -> dict[str, object]:
     """Build the targeted test plan for a set of changed files.
 
     Args:
         repo: Repository root.
         files: Changed files, POSIX paths relative to the repository root.
+        codemap_enabled: Allow optional provider lookup; false preserves heuristic selection.
 
     Returns:
         ``changed``, ``tests``, ``sources`` (test → codemap/heuristic/changed), ``codemap`` usage and ``note``.
@@ -243,9 +256,9 @@ def plan_targeted(repo: Path, files: list[str]) -> dict[str, object]:
         if is_test_file(path):
             sources.setdefault(path, "changed")
             continue
-        found = codemap_tests(module_name(path), repo) if path.endswith(".py") else None
+        found = codemap_tests(module_name(path), repo) if codemap_enabled and path.endswith(".py") else None
         if found is None:
-            codemap_failed += shutil.which("codemap-py") is not None
+            codemap_failed += codemap_enabled and shutil.which("codemap-py") is not None
             found, origin = heuristic_tests(path, all_tests, repo), "heuristic"
         else:
             codemap_used += 1
@@ -465,7 +478,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"error": "a ref or file argument starts with '-'"}))
         return 1
     files = changed_files(repo, args.base) if args.base else sorted({PurePosixPath(f).as_posix() for f in args.files})
-    plan = plan_targeted(repo, files)
+    plan = plan_targeted(repo, files, codemap_enabled=os.environ.get("CODEMAP_ENABLED") != "false")
     runner = full_command(repo)["runner"]
     plan["command"] = f"{runner} {shlex.join(plan['tests'])}" if plan["tests"] else None  # type: ignore[arg-type]
     print(json.dumps(plan))

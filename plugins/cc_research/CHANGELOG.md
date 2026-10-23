@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.30.1
+
+- Follow the active Codemap provider’s automatic missing/stale-index preparation contract, preserving explicit confirm-first and frozen preferences across later tool calls and nested query helpers.
+
 ## 0.30.0
 
 - Helper scripts that write or read a session sentinel (`parse-skill-flags.py`, `codemap_resolve.py`, `find_judge_verdict.py`, `resolve_shared.py` and the other `bin/` sentinel helpers) fall back to `/tmp` on POSIX when `TMPDIR` is unset, the directory a skill's `${TMPDIR:-/tmp}` names, instead of `tempfile.gettempdir()`, which picks `TEMP` or `TMP` first; with either set, script and skill read different files. Native Windows keeps `gettempdir()`. `codex_state.py --state` accepts both directories.

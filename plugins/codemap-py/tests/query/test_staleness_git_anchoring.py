@@ -295,55 +295,52 @@ class TestNonAsciiPathParity:
 class TestFileShaMemoization:
     """The tracked-blob read costs one git subprocess per invocation, not one per consumer."""
 
-    def test_repeated_reads_spawn_one_subprocess(self, reset_query_caches, monkeypatch) -> None:
+    def test_repeated_reads_spawn_one_subprocess(self, reset_query_caches, monkeypatch, tmp_path) -> None:
         """Both staleness consumers share a single resolved result."""
         calls: list[list[str]] = []
 
         def _fake_check_output(cmd, **kwargs):
             """Return empty tracked-blob output while recording the git command."""
             calls.append(list(cmd))
-            return ""
+            return "sha1"
 
-        monkeypatch.setattr(query.index_io, "_get_git_root_cached", lambda: Path("/repo"))
+        monkeypatch.setattr(query.index_io, "_get_git_root_cached", lambda: tmp_path)
         monkeypatch.setattr(query.subprocess, "check_output", _fake_check_output)
         query._get_current_file_shas()
         query._get_current_file_shas()
         query._current_file_shas()
         assert len(calls) == 1
 
-    def test_memoized_call_is_the_anchored_ls_files(self, reset_query_caches, monkeypatch) -> None:
-        """The single subprocess is the root-anchored ``git ls-files -s -z`` read.
-
-        ``-z`` matches the scanner's writer: the default listing C-quotes a non-ASCII path, which then matched no key
-        the writer recorded and kept the index stale forever.
-        """
+    def test_memoized_call_is_the_anchored_object_format(self, reset_query_caches, monkeypatch, tmp_path) -> None:
+        """The scanner reads the root's Git object format once before hashing actual source bytes."""
         seen: dict[str, object] = {}
 
         def _fake_check_output(cmd, **kwargs):
             """Return empty tracked-blob output and retain subprocess arguments."""
             seen["cmd"] = list(cmd)
             seen["cwd"] = kwargs.get("cwd")
-            return ""
+            return "sha1"
 
-        monkeypatch.setattr(query.index_io, "_get_git_root_cached", lambda: Path("/repo"))
+        monkeypatch.setattr(query.index_io, "_get_git_root_cached", lambda: tmp_path)
         monkeypatch.setattr(query.subprocess, "check_output", _fake_check_output)
         query._get_current_file_shas()
-        assert seen["cmd"][:5] == ["git", "ls-files", "-s", "-z", "--"]
-        assert seen["cwd"] == str(Path("/repo"))
+        assert seen["cmd"] == ["git", "rev-parse", "--show-object-format"]
+        assert seen["cwd"] == str(tmp_path)
 
 
 class TestGitFailureIsUndetermined:
     """A git failure inside a repository is reported, never read as a fresh index."""
 
     @staticmethod
-    def _fail_git(monkeypatch, exc: Exception) -> None:
+    def _fail_git(monkeypatch, exc: Exception, root: Path) -> None:
         """Make the tracked-blob git read fail while a repository root still resolves."""
 
         def _raise(cmd, **kwargs):
             """Raise the injected failure from the tracked-blob lookup."""
             raise exc
 
-        monkeypatch.setattr(query.index_io, "_get_git_root_cached", lambda: Path("/repo"))
+        (root / ".git").mkdir()
+        monkeypatch.setattr(query.index_io, "_get_git_root_cached", lambda: root)
         monkeypatch.setattr(query.subprocess, "check_output", _raise)
 
     @pytest.mark.parametrize(
@@ -354,40 +351,40 @@ class TestGitFailureIsUndetermined:
             pytest.param(subprocess.TimeoutExpired("git", 10), id="git-timeout"),
         ],
     )
-    def test_failure_classifies_as_git_error(self, reset_query_caches, monkeypatch, exc) -> None:
+    def test_failure_classifies_as_git_error(self, reset_query_caches, monkeypatch, exc, tmp_path) -> None:
         """Every git failure mode inside a repo resolves to the git_error status."""
-        self._fail_git(monkeypatch, exc)
+        self._fail_git(monkeypatch, exc, tmp_path)
         assert query._current_file_shas().status == query._SHAS_GIT_ERROR
 
-    def test_failure_emits_a_diagnostic(self, reset_query_caches, monkeypatch, capsys) -> None:
+    def test_failure_emits_a_diagnostic(self, reset_query_caches, monkeypatch, capsys, tmp_path) -> None:
         """The failure is surfaced on stderr rather than swallowed silently."""
-        self._fail_git(monkeypatch, FileNotFoundError("git"))
+        self._fail_git(monkeypatch, FileNotFoundError("git"), tmp_path)
         query._current_file_shas()
         assert "UNDETERMINED" in capsys.readouterr().err
 
-    def test_absent_repository_is_not_an_error(self, reset_query_caches, monkeypatch, capsys) -> None:
+    def test_absent_repository_is_not_an_error(self, reset_query_caches, monkeypatch, capsys, tmp_path) -> None:
         """Outside a repository there is no git failure to report — the path stays quiet."""
         monkeypatch.setattr(query.index_io, "_get_git_root_cached", lambda: None)
         resolved = query._current_file_shas()
         assert resolved.status == query._SHAS_NO_REPO
         assert capsys.readouterr().err == ""
 
-    def test_coverage_marks_staleness_undetermined(self, reset_query_caches, monkeypatch) -> None:
+    def test_coverage_marks_staleness_undetermined(self, reset_query_caches, monkeypatch, tmp_path) -> None:
         """The coverage block carries the undetermined flag instead of a bare stale=False."""
-        self._fail_git(monkeypatch, FileNotFoundError("git"))
+        self._fail_git(monkeypatch, FileNotFoundError("git"), tmp_path)
         monkeypatch.setattr(query.index_io, "_untracked_py_files", lambda: [])
         base = query._coverage({"modules": [], "file_shas": {"a.py": "deadbeef"}})
         assert base["stale_undetermined"] is True
 
-    def test_undetermined_staleness_vetoes_completeness(self, reset_query_caches, monkeypatch) -> None:
+    def test_undetermined_staleness_vetoes_completeness(self, reset_query_caches, monkeypatch, tmp_path) -> None:
         """An unmeasurable index cannot yield a complete answer."""
-        self._fail_git(monkeypatch, FileNotFoundError("git"))
+        self._fail_git(monkeypatch, FileNotFoundError("git"), tmp_path)
         monkeypatch.setattr(query.index_io, "_untracked_py_files", lambda: [])
         base = query._coverage({"modules": [], "file_shas": {"a.py": "deadbeef"}})
         verdict = query._query_complete(base, command="central", module_status=None, module_name=None)
         assert verdict == (False, "stale_undetermined")
 
-    def test_absent_repository_keeps_the_legacy_block(self, reset_query_caches, monkeypatch) -> None:
+    def test_absent_repository_keeps_the_legacy_block(self, reset_query_caches, monkeypatch, tmp_path) -> None:
         """Without a repository the coverage block gains no new key (non-git trees unchanged)."""
         monkeypatch.setattr(query.index_io, "_get_git_root_cached", lambda: None)
         monkeypatch.setattr(query.index_io, "_untracked_py_files", lambda: [])
@@ -403,19 +400,24 @@ class TestWriterReaderFileSetParity:
         """Every file kind scan-index records a SHA for is watched for staleness."""
         assert pattern in query._INDEXED_PATHSPEC
 
-    def test_blob_reader_passes_the_shared_pathspec(self, reset_query_caches, monkeypatch) -> None:
-        """The v3 blob diff asks git for exactly the shared file set."""
-        seen: list[str] = []
+    def test_blob_reader_uses_scanner_discovery(self, reset_query_caches, monkeypatch, tmp_path) -> None:
+        """Query freshness sees discovered untracked source and docs, and respects scanner exclusions."""
+        from codemap_py.scanner.discovery import get_file_hashes
+        from codemap_py.scanner.exclusions import _load_exclusions
 
-        def _fake_check_output(cmd, **kwargs):
-            """Return empty tracked-blob output while recording command tokens."""
-            seen.extend(cmd)
-            return ""
-
-        monkeypatch.setattr(query.index_io, "_get_git_root_cached", lambda: Path("/repo"))
-        monkeypatch.setattr(query.subprocess, "check_output", _fake_check_output)
-        query._get_current_file_shas()
-        assert seen[seen.index("--") + 1 :] == list(query._INDEXED_PATHSPEC)
+        _git(tmp_path, "init", "-q")
+        (tmp_path / "mod.py").write_bytes(b"value = 1\n")
+        (tmp_path / "mod.pyi").write_bytes(b"value: int\n")
+        (tmp_path / "guide.rst").write_bytes(b":func:`mod.value`\n")
+        (tmp_path / "docs").mkdir()
+        (tmp_path / "docs" / "api.md").write_bytes(b"[value][mod.value]\n")
+        (tmp_path / "README.md").write_bytes(b"Not indexed\n")
+        (tmp_path / ".hidden").mkdir()
+        (tmp_path / ".hidden" / "skip.py").write_bytes(b"value = 2\n")
+        monkeypatch.setattr(query.index_io, "_get_git_root_cached", lambda: tmp_path)
+        actual = query._get_current_file_shas()
+        assert set(actual) == {"mod.py", "mod.pyi", "guide.rst", "docs/api.md"}
+        assert actual == get_file_hashes(tmp_path, _load_exclusions(tmp_path))
 
     def test_timestamp_fallback_passes_the_shared_pathspec(self, reset_query_caches, monkeypatch) -> None:
         """The v2 fallback asks git for the same file set, not a narrower hand-written one."""

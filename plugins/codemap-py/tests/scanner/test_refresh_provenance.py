@@ -35,23 +35,18 @@ def _symbols(index: dict) -> list[str]:
 
 
 class TestIncrementalScanInputs:
-    """An incremental refresh keys on staged blobs and HEAD only; the prompt hook's skip rule depends on this.
+    """Incremental refresh observes source bytes regardless of Git staging state."""
 
-    Mirrors a real dirty-repository probe: unstaged and untracked edits never reach the index, a staged edit is
-    re-parsed, and a commit that leaves staged blobs unchanged re-parses nothing but must still move ``git_sha``.
-    """
-
-    def test_unstaged_and_untracked_edits_change_nothing(self, scanned_repo, monkeypatch) -> None:
-        """Working-tree-only edits are invisible to the scanner, so refreshing for them is pure cost."""
+    def test_unstaged_and_untracked_edits_are_reparsed(self, scanned_repo) -> None:
+        """The requested automatic freshness includes modified and newly discovered source files."""
         root, index = scanned_repo
         (root / "a.py").write_text("def f():\n    return 1\n\n\ndef g():\n    return 2\n")
         (root / "new.py").write_text("def h():\n    return 3\n")
-        monkeypatch.setattr(graph, "_parse_file", lambda *a: pytest.fail("no file may be re-parsed"))
 
         refreshed = graph.incremental_scan(root, index)
 
-        assert _symbols(refreshed) == ["f"]
-        assert refreshed["file_shas"] == index["file_shas"]
+        assert _symbols(refreshed) == ["f", "g", "h"]
+        assert refreshed["file_shas"] != index["file_shas"]
         assert refreshed["git_sha"] == index["git_sha"]
 
     def test_staged_edit_is_reparsed(self, scanned_repo) -> None:
@@ -150,3 +145,31 @@ class TestMarkRefreshPublished:
         graph._mark_refresh_published()
 
         assert not target.exists()
+
+
+@pytest.mark.parametrize("kind", ["source", "documentation"])
+def test_unreadable_discovery_never_becomes_an_empty_fresh_map(
+    scanned_repo, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    """A denied directory traversal preserves the prior index and surfaces an unknown-freshness failure."""
+    import os
+
+    from codemap_py.scanner.discovery import get_file_hashes
+    from codemap_py.scanner.docs_xrefs import _iter_doc_files
+
+    root, _ = scanned_repo
+    unreadable = root / ("pkg" if kind == "source" else "docs")
+    unreadable.mkdir()
+    (unreadable / ("mod.py" if kind == "source" else "api.rst")).write_bytes(b"content\n")
+    scan_dir = os.scandir
+
+    def denied_scan(path):
+        """Simulate a filesystem refusing traversal without depending on host privilege or mode bits."""
+        if Path(path) == unreadable:
+            raise PermissionError("directory cannot be read")
+        return scan_dir(path)
+
+    monkeypatch.setattr(os, "scandir", denied_scan)
+    discover = get_file_hashes if kind == "source" else _iter_doc_files
+    with pytest.raises(PermissionError, match="directory cannot be read"):
+        discover(root)

@@ -8,7 +8,7 @@ Plugin-agnostic structural-context contract. Consumers read this file live from 
 
 ## Target derivation — pluggable (consumer supplies)
 
-`TARGET_MODULE` (dotted), `TARGET_FN` (bare name), `CODEMAP_QUERY_KIND` = **consumer-supplied inputs** — contract doesn't derive them. Consumer wrapper/SKILL sets them from `$ARGUMENTS`, review diff, or finding before reading this file. `CODEMAP_QUERY_KIND=skip` = executable zero-query route for a fully localized edit. Safe adaptive vocabulary: `skip`, `central`, `callers`, `blast`, `dependencies`, `test-impact`, `coupling`, `standard`; unset/unknown value preserves legacy `standard` batch. Optional `TARGET_QUALIFIED` (`module::function`) = consumer-supplied target of the `test-impact` route; unset → that route falls back to `TARGET_MODULE`.
+`TARGET_MODULE` (dotted), `TARGET_FN` (bare name), `CODEMAP_QUERY_KIND`, `CODEMAP_ENABLED`, and `CODEMAP_CURRENCY` = **consumer-supplied inputs** — contract doesn't derive them. Consumer wrapper/SKILL reloads enabled and currency values from its own sentinels before each batch, then sets query targets from `$ARGUMENTS`, review diff, or finding. Explicit `CODEMAP_ENABLED=false` prevents the batch; an unset value preserves optional legacy callers. `CODEMAP_QUERY_KIND=skip` = executable zero-query route for a fully localized edit. Safe adaptive vocabulary: `skip`, `central`, `callers`, `blast`, `dependencies`, `test-impact`, `coupling`, `standard`; unset/unknown value preserves legacy `standard` batch. Optional `TARGET_QUALIFIED` (`module::function`) = consumer-supplied target of the `test-impact` route; unset → that route falls back to `TARGET_MODULE`.
 
 - explicit `module.path` or `module.path::function` in args → split into `TARGET_MODULE` / `TARGET_FN`
 - module-only known → set `TARGET_MODULE`, leave `TARGET_FN` empty
@@ -37,9 +37,9 @@ _ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || _ROOT="$PWD"
 PROJ=$(basename "$_ROOT")
 _IDX="${CODEMAP_INDEX_DIR:-$_ROOT/.cache/codemap}"
 _CM_ROUTE="${CODEMAP_QUERY_KIND:-standard}"
-if [ "$_CM_ROUTE" != "skip" ] && command -v codemap-py >/dev/null 2>&1 && [ -f "${_IDX}/${PROJ}.json" ]; then
-    # refresh SHA-changed files only; never full-build mid-task
-    [ "${SCAN_NO_AUTOBUILD:-0}" = "1" ] || codemap-py index --incremental 2>/dev/null || true
+_CM_NO_HEAL=""
+if [ "${CODEMAP_CURRENCY:-}" = "stale" ] || [ "${SCAN_NO_AUTOBUILD:-0}" = "1" ]; then _CM_NO_HEAL="--no-heal"; fi
+if [ "${CODEMAP_ENABLED:-true}" != "false" ] && [ "$_CM_ROUTE" != "skip" ] && command -v codemap-py >/dev/null 2>&1; then
     _CM_N=0 _CM_H=0 _CM_STALE=0 _CM_NONEXH=0
     # tsv only for flat wide tables: rdeps/test-impact exit 1 "format_not_tabular", symbol = 1 row.
     # --format is codemap-py 0.37.0+; older builds exit 2 with empty stdout, so probe once.
@@ -49,8 +49,8 @@ if [ "$_CM_ROUTE" != "skip" ] && command -v codemap-py >/dev/null 2>&1 && [ -f "
         local out err envelope fmt=json rc=0; _CM_N=$((_CM_N+1))
         err=$(mktemp "${TMPDIR:-/tmp}/codemap-envelope-XXXXXX")
         case "${_CM_TSV}:$1" in
-            1:central|1:coupled|1:fn-rdeps|1:fn-blast) fmt=tsv; out=$(codemap-py query --timeout 5 --format tsv "$@" 2>"$err") || rc=$? ;;
-            *)                                        out=$(codemap-py query --timeout 5 "$@" 2>"$err") || rc=$? ;;
+            1:central|1:coupled|1:fn-rdeps|1:fn-blast) fmt=tsv; out=$(codemap-py query --timeout 5 $_CM_NO_HEAL --format tsv "$@" 2>"$err") || rc=$? ;;
+            *)                                        out=$(codemap-py query --timeout 5 $_CM_NO_HEAL "$@" 2>"$err") || rc=$? ;;
         esac
         envelope=$(cat "$err" 2>/dev/null); rm -f "$err"
         if [ "$rc" -ne 0 ]; then printf 'codemap query unavailable: %s\n' "$1" >&2; return 0; fi
@@ -96,7 +96,7 @@ if [ "$_CM_ROUTE" != "skip" ] && command -v codemap-py >/dev/null 2>&1 && [ -f "
 fi
 ```
 
-> Consumer wrappers run this batch pattern (or a shorter inline variant — `central --top 3` + one derived query — for quick tasks), pointing here for full map. `codemap-py` not found or index missing → pre-flight emits nothing, callers fall back to normal exploration path.
+> Consumer wrappers run this batch pattern (or a shorter inline variant — `central --top 3` + one derived query — for quick tasks), pointing here for full map. Before each batch, callers load their own currency sentinel into `CODEMAP_CURRENCY`; when it says `stale`, every query carries `--no-heal`, preserving a Gate B "continue with stale" choice even if the query runs in a later tool call. Inherited `SCAN_NO_AUTOBUILD=1` also adds `--no-heal`. No index-file preflight or separate index command is needed: the first ordinary query prepares the canonical index. Queries run serially while preparation may occur. With inherited `SCAN_NO_AUTOBUILD=1`, queries leave the existing index unchanged and a missing index is reported as unavailable evidence. `codemap-py` not found → pre-flight emits nothing; callers fall back to normal exploration path.
 
 ## Evidence-line contract
 

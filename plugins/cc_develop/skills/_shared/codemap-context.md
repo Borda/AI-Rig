@@ -1,6 +1,6 @@
 <!-- file: codemap-context.md — consumers: plugins/cc_develop/skills/{plan,fix,feature,refactor,review}/SKILL.md, plugins/cc_oss/skills/review/SKILL.md -->
 
-**Structural context (codemap-py)** — run only when caller sets `CODEMAP_ENABLED=true`; skip if flag absent. Callers pre-set `TARGET_MODULE` (dotted), `TARGET_FN` (bare function name), `CODEMAP_QUERY_KIND`. Use `skip` for a fully localized edit, a task-fit kind for one unresolved structural fact, `standard` only when broader context is justified.
+**Structural context (codemap-py)** — callers reload their own persisted `CODEMAP_ENABLED` and currency sentinels before each query batch; skip the batch if disabled. Callers also pre-set `TARGET_MODULE` (dotted), `TARGET_FN` (bare function name), `CODEMAP_QUERY_KIND`, and `CODEMAP_CURRENCY`; the provider batch passes `--no-heal` while currency is stale or inherited `SCAN_NO_AUTOBUILD=1` is set. Use `skip` for a fully localized edit, a task-fit kind for one unresolved structural fact, `standard` only when broader context is justified.
 
 **Wrapper** — query mechanics, batch pre-flight bash, evidence-line contract, completeness/staleness semantics, coverage-metadata rules, targeted-edit pattern, and effort tiers live in codemap-shipped contract. Resolve the active `codemap-py` install (registry first, never a newer orphaned cache dir) and read its contract — no local copy, so the text always matches the CLI actually installed:
 
@@ -27,7 +27,7 @@ Extends contract core map with develop's dimension queries:
 
 > Reuse gate: reuse a supplied answer only for the same project, current index, target, query and flags; skip its duplicate pre-flight call. Require success and direction-complete metadata. For batch children require `ok: true` and inspect `result.index`; `ok: false` is a failure, never an empty answer. Missing metadata, `stale`, root mismatch, degraded or incomplete results need targeted fallback. Use legacy `exhaustive: true` only when `query_complete` is absent. A valid empty list settles that scoped query; truncation does not enumerate all matches. Necessary source-body reads, test-quality checks, dynamic behavior and required independent verification remain allowed.
 
-Results returned: prepend `## Structural Context (codemap-py)` block to foundry:sw-engineer spawn prompt with hotspot JSON + per-query output, followed by the reuse gate above verbatim and this **codemap-first protocol** (own copy — self-contained, no cross-plugin reference): (1) **Skill-first** — use the block above before any Grep/Glob/Read aimed at imports, callers, or symbol contracts for a symbol already listed there. (2) **Bounded call budget** — symbol not listed → up to 3 additional `codemap-py query` calls this task. (3) **Hard stop on `query_complete: true`** (legacy `exhaustive: true` only when `query_complete` is absent) — a result passing the reuse gate is final for its direction, no follow-up Grep/Read/query to re-confirm it. `codemap-py` not found or index missing: emit ⚠ warning to stderr (`>&2 echo "⚠ codemap-py: codemap-py unavailable or index missing — context reduced to central --top 5"`), omit the protocol paragraph, proceed.
+Results returned: prepend `## Structural Context (codemap-py)` block to foundry:sw-engineer spawn prompt with hotspot JSON + per-query output, followed by the reuse gate above verbatim and this **codemap-first protocol** (own copy — self-contained, no cross-plugin reference): (1) **Skill-first** — use the block above before any Grep/Glob/Read aimed at imports, callers, or symbol contracts for a symbol already listed there. (2) **Query choice inheritance**: the orchestrator supplies the invocation’s exact enabled/currency sentinel paths in this prompt. Before every fresh shell that queries Codemap or runs a querying helper, reload those files; disabled means no queries, stale means `export SCAN_NO_AUTOBUILD=1` before the command. Retain an inherited freeze. This also applies to fallback and impact/test-selection helpers. **Bounded call budget** — symbol not listed → up to 3 additional `codemap-py query` calls this task. (3) **Hard stop on `query_complete: true`** (legacy `exhaustive: true` only when `query_complete` is absent) — a result passing the reuse gate is final for its direction, no follow-up Grep/Read/query to re-confirm it. `codemap-py` not found or index missing: emit ⚠ warning to stderr (`>&2 echo "⚠ codemap-py: codemap-py unavailable or index missing — context reduced to central --top 5"`), omit the protocol paragraph, proceed.
 
 Note: `foundry:sw-engineer` also carries its own `<codemap_context>` pre-flight (workflow step 00), reuses supplied answers passing the reuse gate and queries only missing directions — protocol above governs the query output this wrapper hands the agent inline; sw-engineer's own step 00 governs what remains unanswered on spawn.
 
@@ -36,18 +36,24 @@ Note: `foundry:sw-engineer` also carries its own `<codemap_context>` pre-flight 
 Contract §Extended scan defines risk tiers (`>=5` HIGH, `1–4` MODERATE, `0` LOW). Develop's batch producer:
 
 ```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r CODEMAP_CURRENCY  2>/dev/null < "${TMPDIR:-/tmp}/dev-codemap-currency-${CSID}" || CODEMAP_CURRENCY="no_index"
+if [ "$CODEMAP_CURRENCY" = "stale" ]; then export SCAN_NO_AUTOBUILD=1; fi
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/codemap_scan.py" --source=diff  # timeout: 15000
 ```
 
 > Interpret: `rdeps` output = external callers affected; `coupled` output = co-change pairs.
 >
-> Fallback (specific known module): `codemap-py query rdeps <mod> --top 10 2>/dev/null || true`.
+> Fallback (specific known module): `codemap-py query rdeps <mod> --limit 10 2>/dev/null || true`.
 
 ## Review-pipeline injection (oss:review, develop:review)
 
 Review orchestrators run v5 pre-flight queries **per changed module** before spawning dimension agents, persist structured output, pass to each agent as `CODEMAP_CONTEXT` so agents skip only equivalent structural retrieval. Pre-flight queries (module-level only — a name-only changed-files list can't supply the `module::fn` qnames `fn-rdeps`/`fn-blast` need; bare-module fn-\* calls failed 100% in production, usage audit F1; fn-level returns once diff-hunk qname derivation lands — audit plan P1.2b):
 
 ```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r CODEMAP_CURRENCY  2>/dev/null < "${TMPDIR:-/tmp}/dev-codemap-currency-${CSID}" || CODEMAP_CURRENCY="no_index"
+if [ "$CODEMAP_CURRENCY" = "stale" ]; then export SCAN_NO_AUTOBUILD=1; fi
 codemap-py query --timeout 5 rdeps       "$MODULE"            2>/dev/null  # importer count → risk tier
 codemap-py query --timeout 5 mock-rdeps  "$MODULE"            2>/dev/null  # mock coverage (v4.1)
 codemap-py query --timeout 5 uncovered   --top 20 "$MODULE"   2>/dev/null  # test gaps (v4.2)

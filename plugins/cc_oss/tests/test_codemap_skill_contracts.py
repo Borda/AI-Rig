@@ -47,7 +47,7 @@ def _split_call(args: str) -> tuple[str, list[str]]:
         >>> _split_call(" --timeout 5 central --top 5 ")
         ('central', [])
     """
-    tokens = [t for t in args.split() if not t.startswith("-") and not t.lstrip("-").isdigit()]
+    tokens = [t for t in args.split() if not t.startswith(("-", "$")) and not t.lstrip("-").isdigit()]
     if not tokens:
         return "", []
     return tokens[0], tokens[1:]
@@ -159,17 +159,16 @@ class TestSkillPrefixes:
         assert offenders == [], f"retired `codemap:` skill prefix in: {offenders}"
 
     @pytest.mark.parametrize("skill", ["review", "resolve"])
-    def test_build_path_is_the_gated_launcher(self, skill: str) -> None:
-        """Gate wrappers name the gated binary and forbid model-invoking the skill.
-
-        The former contract named ``scan-index`` while consumers used the gated launcher, so the wrapper once had to
-        bind the reader to ``codemap-py index``. The contract now names the launcher itself; claiming a binding would
-        describe a disagreement that no longer exists. The launcher assertion stays and the retired alias is asserted
-        absent.
-        """
+    def test_gate_preparation_is_defaulted_and_bound_to_the_gated_launcher(self, skill: str) -> None:
+        """The wrapper keeps the provider's automatic-default, explicit ask, and gated-launcher contract."""
         gates = _OSS_ROOT.joinpath("skills/_shared/codemap-gates.md").read_text(encoding="utf-8")
-        assert "codemap-py index" in gates
+        assert "Gate A prepares automatically by default" in gates
+        assert "`LAZY_CODEMAP` is the explicit confirm-first preference" in gates
+        assert "Inherited `SCAN_NO_AUTOBUILD=1` freezes both gates" in gates
+        assert "detect_codemap.py --prefix <current-skill> --force-off" in gates
+        assert "pass `--no-heal` to every later query" in gates
+        assert "contract's own build/rebuild action is the gated `codemap-py index` launcher" in gates
         assert "scan-index" not in gates, "the retired alias has no reason to appear in a wrapper"
-        assert "with one binding" not in gates, "the contract no longer disagrees"
+        assert "without consumer overrides" in gates
         text = _OSS_ROOT.joinpath(f"skills/{skill}/SKILL.md").read_text(encoding="utf-8")
         assert "disable-model-invocation" in text, f"{skill}: build path must state the skill is not invocable"

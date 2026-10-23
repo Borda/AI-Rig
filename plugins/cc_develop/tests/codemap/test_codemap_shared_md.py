@@ -6,12 +6,8 @@ Pinned failure modes:
   while the provider anchors on the git toplevel, so a skill invoked from a subdirectory
   reported a false ``no_index``. The sweep below is tree-wide on purpose: the guard is
   hand-copied, so a per-file assertion would let the next copy drift in unnoticed.
-* The gates wrapper previously named a build command that disagreed with its loaded contract,
-  even though the same sentence instructed the reader to apply that contract verbatim.
-* The shipped contract now names the gated ``codemap-py index`` launcher itself. The wrapper's
-  former "apply verbatim, with one override" clause therefore described a disagreement that no
-  longer exists. Claiming an override where the wrapper and contract agree would leave the
-  reader unable to tell which command wins.
+* The gates wrapper preserves the gated ``codemap-py index`` preparation boundary and stays aligned with the provider's
+  automatic-default, confirm-first opt-in, and frozen-mode rules.
 * The retired ``codemap:`` skill prefix.
 """
 
@@ -131,19 +127,26 @@ def test_gates_resolve_and_read_the_shipped_contract():
     assert "Fallback when codemap-py plugin absent" in text
 
 
-def test_build_command_is_applied_from_the_contract_without_an_override():
-    """Ensure the wrapper uses the build command named by the contract without claiming an override.
-
-    An earlier assertion required the wrapper to state its override because the contract named ``scan-index`` while
-    consumers ran ``codemap-py index``. The corrected contract now agrees with its consumers, so override language would
-    announce a nonexistent deviation and reintroduce an alias the wrapper never invokes. This test keeps the command
-    explicit while ensuring both the obsolete override language and retired alias remain absent.
-    """
+def test_gate_wrapper_preserves_provider_preparation_contract():
+    """The wrapper states default preparation, opt-in confirmation, and the gated launcher boundary."""
     text = _GATES.read_text(encoding="utf-8")
 
-    assert "codemap-py index" in text
+    assert "Gate A prepares automatically by default" in text
+    assert "`LAZY_CODEMAP` is the explicit confirm-first preference" in text
+    assert "Inherited `SCAN_NO_AUTOBUILD=1` freezes both gates" in text
+    assert "dev_codemap_gate.py <current-skill> --skip" in text
+    assert "pass `--no-heal` to every later query" in text
+    assert "contract's own build/rebuild action is the gated `codemap-py index` launcher" in text
     assert "apply verbatim, with one override" not in text, "the contract no longer disagrees"
     assert "scan-index" not in text, "the retired alias has no reason to appear in a wrapper"
+
+
+def test_fix_later_query_reloads_enabled_and_currency_state():
+    """Persisted Gate B choices govern both the shared batch and later direct-caller query."""
+    skill = (_DEVELOP / "skills" / "fix" / "SKILL.md").read_text(encoding="utf-8")
+    assert 'IFS= read -r CODEMAP_ENABLED  < "${TMPDIR:-/tmp}/dev-fix-codemap-enabled-${CSID}"' in skill
+    assert 'IFS= read -r CODEMAP_CURRENCY  2>/dev/null < "${TMPDIR:-/tmp}/dev-codemap-currency-${CSID}"' in skill
+    assert "codemap-py query --timeout 5 $_CODEMAP_NO_HEAL fn-rdeps" in skill
 
 
 def test_gates_read_the_sentinel_the_resolver_writes():

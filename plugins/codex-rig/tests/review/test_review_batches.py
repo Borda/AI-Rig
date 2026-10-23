@@ -645,13 +645,24 @@ def test_inventory_validation_detects_source_drift_after_preparation(tmp_path: P
         batches.validate_inventory(run)
 
 
-def test_source_only_review_reaches_ordinary_intake_without_report_review(tmp_path: Path) -> None:
+@pytest.mark.parametrize("automatic", [True, False])
+def test_source_only_review_reaches_ordinary_intake_without_report_review(tmp_path: Path, automatic: bool) -> None:
     """Complete all source parts, preserving judgments at the next ordinary report consumer.
 
     Every source-only phase runs through the shipped command line here, so the plain source-only preparation and wave
     commands stay proven end to end while other tests build the same run in-process.
     """
-    run, home = _completed_source_only(tmp_path, step=_command_step)
+
+    def step(run: Path, operation: str, home: Path | None = None, *, source_only: bool = False) -> None:
+        """Exercise automatic or explicit preparation followed by the same real batch-consumer commands."""
+        if automatic and operation == "prepare":
+            result = preparation._prepare(run)
+            assert result.returncode == 0, result.stderr
+            assert Path(json.loads(result.stdout)["dispatch_path"]) == run / "batch-dispatch.json"
+        else:
+            _command_step(run, operation, home, source_only=source_only)
+
+    run, home = _completed_source_only(tmp_path, step=step)
     assembled = _batch_command(run, "assemble-batches", home)
     assert assembled.returncode == 0, assembled.stderr
     manifest = json.loads((run / "specialist-manifest.json").read_bytes())
@@ -1379,15 +1390,16 @@ def test_historical_batch_prefix_rejects_unproved_or_mixed_templates(tmp_path: P
 
 
 def test_batches_reconstruct_large_complete_unicode_source(tmp_path: Path) -> None:
-    """Full source beyond the old limit is delivered, including unchanged caller bytes."""
+    """Ordinary preparation routes full oversized source to usable batches, including unchanged callers."""
     run = _batch_inputs(tmp_path, large=True)
-    before = preparation._prepare(run)
-    assert before.returncode != 0
-    assert "review-context-capacity-exceeded" in before.stderr
-
-    result = _batch_command(run, "prepare")
+    result = preparation._prepare(run)
 
     assert result.returncode == 0, result.stderr
+    summary = json.loads(result.stdout)
+    assert Path(summary["dispatch_path"]) == run / "batch-dispatch.json"
+    assert summary["roles"] == 2
+    assert not (run / "inspection-plan.json").exists()
+    assert not (run / "dispatch.json").exists()
     inventory = json.loads((run / "batch-inventory.json").read_text(encoding="utf-8"))
     assert inventory["wave_count"] > 4
     for role, entries in inventory["segments"].items():
@@ -1421,6 +1433,12 @@ def test_batches_reconstruct_large_complete_unicode_source(tmp_path: Path) -> No
     for wave in json.loads((run / "batch-dispatch.json").read_text(encoding="utf-8"))["waves"]:
         assert 1 <= len(wave["calls"]) <= 4
         assert len({call["role"] for call in wave["calls"]}) == len(wave["calls"])
+
+    original = _tree_bytes(run)
+    repeated = preparation._prepare(run)
+    assert repeated.returncode == 0, repeated.stderr
+    assert json.loads(repeated.stdout) == summary
+    assert _tree_bytes(run) == original
 
 
 @pytest.mark.parametrize("route", ["deletion", "untracked"])

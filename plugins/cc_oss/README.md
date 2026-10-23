@@ -16,9 +16,11 @@ Adversarial workflow reviews include unchanged downstream consumers and the next
 
 Each round challenges and collects findings, reports the cumulative old/new table, resolves feasible authorized findings, escalates unfixable `security`/`critical`/`high` findings, then repeats until clean or plateau/non-convergence, subject to authority, evidence, recurrence and stricter caller budgets. The table is `Iteration | Critical | High | Medium | Low | Nits | Weighted score`; open and fixed-pending-verification signatures split into old and new, while verified-fixed and rejected findings stay excluded. Security and critical combine only for display; score weights remain `20/10/6/4/2/1`. Empty rounds print no progress table. A 1,500-output-token reviewer target is hard only when the runtime supports it; findings are never dropped to meet it.
 
-Optional Codemap index-gate guidance ships with oss, so loading it does not depend on another plugin's private shared directory. Structural queries still require the `codemap-py` plugin; an unavailable CLI or local contract retains the file-read fallback.
+Optional Codemap index-gate guidance ships with oss, so loading it does not depend on another plugin's private shared directory. Structural queries still require the `codemap-py` plugin; an unavailable CLI or local contract retains the file-read fallback. Enabled missing/stale-index preparation follows the active provider contract automatically by default; explicit `LAZY_CODEMAP` confirm-first and `SCAN_NO_AUTOBUILD=1` frozen preferences remain controlling. Later query blocks reload saved gate choices and pass a stale-data freeze to nested query helpers and retries.
 
 Review prompts require fresh, successful, matching answers before skipping duplicate structural retrieval, retain each batch child's metadata, and distinguish static test/mock links from measured coverage. Source and test-quality review remains required.
+
+Review and resolve test selection reload the owning invocation’s Codemap choice. Disabling structural lookup retains heuristic test plans and required verification; standalone helper calls retain ordinary provider defaults.
 
 Resolve's evidence recheck resolves Git Bash verifier paths before native Windows file checks, preserving the recorded pointer. Conversion failures block without rewriting the item ledger; missing evidence or a changed source head disables confirmation.
 

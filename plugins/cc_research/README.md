@@ -14,7 +14,7 @@ Adversarial workflow reviews include unchanged downstream consumers and the next
 
 Each round challenges and collects findings, reports the cumulative old/new table, resolves feasible authorized findings, escalates unfixable `security`/`critical`/`high` findings, then repeats until clean or plateau/non-convergence, subject to authority, evidence, recurrence and stricter caller budgets. The table is `Iteration | Critical | High | Medium | Low | Nits | Weighted score`; open and fixed-pending-verification signatures split into old and new, while verified-fixed and rejected findings stay excluded. Security and critical combine only for display; score weights remain `20/10/6/4/2/1`. Empty rounds print no progress table. A 1,500-output-token reviewer target is hard only when the runtime supports it; findings are never dropped to meet it.
 
-Optional Codemap index-gate guidance ships with research, so loading it does not depend on another plugin's private shared directory. The host-provided active installation takes precedence over other cached versions. Structural queries still require the `codemap-py` plugin; an unavailable CLI or local contract retains the file-read fallback.
+Optional Codemap index-gate guidance ships with research, so loading it does not depend on another plugin's private shared directory. The host-provided active installation takes precedence over other cached versions. Structural queries still require the `codemap-py` plugin; an unavailable CLI or local contract retains the file-read fallback. Enabled missing/stale-index preparation follows the active provider contract automatically by default; explicit `LAZY_CODEMAP` confirm-first and `SCAN_NO_AUTOBUILD=1` frozen preferences remain controlling. Later query blocks reload saved gate choices and preserve the stale-data freeze in their subprocesses.
 
 Research-topic and run reports and experiment journals use short descriptive fields, with writing rules kept outside the output shape. Completed artifacts replace those fields with observed values and omit template instructions.
 
@@ -646,7 +646,7 @@ These are current constraints, not promises about future releases:
 - Research does not provide datasets, GPU capacity, Kaggle credentials, Colab runtimes, Codex, or specialist companion plugins; those remain user-managed prerequisites.
 - `fortify` executes ablations locally. Worktree isolation protects the main worktree, but it does not make arbitrary metric or guard commands safe.
 - Statistical conclusions are limited by run history, baseline design, data quality, and independence assumptions. `retro` reports what it computed; it does not establish causal validity.
-- A missing or stale Codemap index reduces structural context, and an unavailable optional specialist falls back or stops according to the specific skill contract.
+- A Codemap index still missing or stale after permitted automatic preparation reduces structural context, and an unavailable optional specialist falls back or stops according to the specific skill contract.
 - `--colab`, `--compute=docker`, `--codex`, `--researcher`, and `--architect` are explicit requirements when requested; the workflow reports missing capability instead of pretending it ran.
 - Rule links can outlive plugin uninstall because Claude Code has no uninstall cleanup hook; ownership must be checked before manual removal.
 

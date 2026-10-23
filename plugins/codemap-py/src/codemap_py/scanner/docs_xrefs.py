@@ -354,6 +354,16 @@ def scan_mkdocs_xrefs(md_path: Path, root: Path) -> list[dict]:
     return results
 
 
+def _raise_walk_error(error: OSError) -> None:
+    """Reject incomplete discovery instead of mistaking an unreadable directory for deleted source."""
+    raise error
+
+
+def _iter_config_files(root: Path) -> list[Path]:
+    """Discover the root configuration files consumed by reference and source-root scanning."""
+    return sorted({path for pattern in _CONFIG_SCAN_PATTERNS for path in root.glob(pattern) if path.is_file()})
+
+
 def _iter_doc_files(root: Path) -> tuple[list[Path], list[Path]]:
     """Walk *root* and return ``(.rst files, docs/**/*.md files)``.
 
@@ -369,7 +379,7 @@ def _iter_doc_files(root: Path) -> tuple[list[Path], list[Path]]:
     """
     rst_files: list[Path] = []
     md_files: list[Path] = []
-    for dirpath, dirnames, filenames in os.walk(root, topdown=True):
+    for dirpath, dirnames, filenames in os.walk(root, topdown=True, onerror=_raise_walk_error):
         dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
         rel_dir = Path(dirpath).relative_to(root).as_posix() if Path(dirpath) != root else ""
         in_docs = rel_dir == "docs" or rel_dir.startswith("docs/")
@@ -400,10 +410,7 @@ def scan_config_refs(root: Path, module_names: set[str]) -> dict[str, list[dict]
         Dict mapping module name → list of ``{"file": str, "line": int, "context": str}``.
     """
     refs: dict[str, list[dict]] = {}
-    config_files: list[Path] = []
-    for pattern in _CONFIG_SCAN_PATTERNS:
-        config_files.extend(root.glob(pattern))
-    for cfg_path in sorted(config_files):
+    for cfg_path in _iter_config_files(root):
         rel = cfg_path.relative_to(root).as_posix()
         try:
             lines = cfg_path.read_text(encoding="utf-8", errors="replace").splitlines()

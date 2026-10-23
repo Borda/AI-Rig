@@ -1118,6 +1118,92 @@ def test_root_scoped_query_runs_against_real_cli(monkeypatch: pytest.MonkeyPatch
     assert outcome.error is None
 
 
+@pytest.mark.skipif(not REAL_CLI_READY, reason="real codemap-py CLI unavailable")
+@pytest.mark.parametrize("override", [None, "", "explicit"])
+def test_review_cli_preparation_preserves_source_status(tmp_path: Path, override: str | None) -> None:
+    """Automatic cache preparation must not invalidate a review checkout lacking a cache ignore rule."""
+    source = tmp_path / "source"
+    source.mkdir()
+    for args in (("init", "-q"), ("config", "user.name", "Test"), ("config", "user.email", "test@example.invalid")):
+        subprocess.run(["git", "-C", str(source), *args], check=True, capture_output=True)
+    (source / "leaf.py").write_text("def leaf():\n    return 0\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(source), "add", "leaf.py"], check=True)
+    subprocess.run(["git", "-C", str(source), "commit", "-qm", "fixture"], check=True)
+    (source / "leaf.py").write_text("def leaf():\n    return 1\n", encoding="utf-8")
+    status_command = ["git", "-C", str(source), "status", "--porcelain=v1", "--untracked-files=all"]
+    before = subprocess.check_output(status_command)
+    run = tmp_path / "review"
+    run.mkdir()
+    diff = run / "diff.patch"
+    diff.write_bytes(subprocess.check_output(["git", "-C", str(source), "diff", "HEAD"]))
+    env = dict(os.environ, PATH=f"{_CODEMAP_BIN_DIR}{os.pathsep}{os.environ.get('PATH', '')}")
+    env.pop("CODEMAP_BIN", None)
+    env.pop("SCAN_NO_AUTOBUILD", None)
+    env.pop("CODEMAP_INDEX_DIR", None)
+    env.pop("CODEMAP_LOG_DIR", None)
+    env.pop("CODEMAP_COORDINATION_DIR", None)
+    expected_cache = run / "codemap-index"
+    if override is not None:
+        expected_cache = tmp_path / "explicit-cache" if override else expected_cache
+        env["CODEMAP_INDEX_DIR"] = str(expected_cache) if override else ""
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ADAPTER_PATH),
+            "context",
+            "--category",
+            "review",
+            "--root",
+            str(source),
+            "--diff-file",
+            str(diff),
+            "--out",
+            str(run / "codemap-context.json"),
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    payload = json.loads(result.stdout)
+    assert payload["queries"][0]["exit_code"] == 0, payload
+    assert payload["queries"][0]["query_complete"] is True
+    assert subprocess.check_output(status_command) == before
+    assert not (source / ".cache").exists()
+    assert Path(payload["probe"]["doctor"]["index_path"]) == expected_cache / "source.json"
+    assert payload["index_path_divergence"] == []
+
+
+def test_review_cli_restores_provider_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Process-local review destinations must not leak into the caller or replace explicit frozen evidence."""
+    adapter = _load_adapter()
+    monkeypatch.setenv("CODEMAP_INDEX_DIR", "")
+    monkeypatch.delenv("CODEMAP_LOG_DIR", raising=False)
+    monkeypatch.setenv("CODEMAP_COORDINATION_DIR", str(tmp_path / "explicit-coordination"))
+    monkeypatch.setenv("SCAN_NO_AUTOBUILD", "1")
+    observed = []
+
+    def unavailable_provider(*args, **kwargs):
+        observed.append(
+            {key: os.environ.get(key) for key in ("CODEMAP_INDEX_DIR", "CODEMAP_LOG_DIR", "CODEMAP_COORDINATION_DIR")}
+        )
+        raise RuntimeError("provider failed")
+
+    monkeypatch.setattr(adapter, "gather_structural_context", unavailable_provider)
+    with pytest.raises(RuntimeError, match="provider failed"):
+        adapter.main(["context", "--category", "review", "--out", str(tmp_path / "run" / "context.json")])
+    assert observed == [
+        {
+            "CODEMAP_INDEX_DIR": "",
+            "CODEMAP_LOG_DIR": str(tmp_path / "run" / "codemap-logs"),
+            "CODEMAP_COORDINATION_DIR": str(tmp_path / "explicit-coordination"),
+        }
+    ]
+    assert os.environ["CODEMAP_INDEX_DIR"] == ""
+    assert "CODEMAP_LOG_DIR" not in os.environ
+    assert os.environ["CODEMAP_COORDINATION_DIR"] == str(tmp_path / "explicit-coordination")
+
+
 _PYTHON_CHANGE_DIFF = "diff --git a/leaf.py b/leaf.py\n--- a/leaf.py\n+++ b/leaf.py\n@@ -1,2 +1,2 @@\n def leaf():\n-    return 0\n+    return 1\n"
 _NEW_MODULE_DIFF = (
     "diff --git a/new_mod.py b/new_mod.py\nnew file mode 100644\n--- /dev/null\n+++ b/new_mod.py\n"
@@ -1791,9 +1877,9 @@ def _indexed_real_fixture(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Pa
             "proj/nested",
             _PYTHON_CHANGE_DIFF,
             "degraded",
-            ["diff-impact: incomplete: root_mismatch", "diff-impact: root_mismatch: index built for another root"],
+            ["diff-impact: all 1 changed Python files unmapped by the index"],
             1,
-            id="nested-root-walks-up-to-parent-index",
+            id="explicit-nested-root-owns-its-empty-index",
         ),
         pytest.param(
             "proj",

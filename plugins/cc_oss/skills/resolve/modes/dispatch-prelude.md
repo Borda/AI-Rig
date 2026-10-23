@@ -171,6 +171,11 @@ Group selected items by canonical module before querying: one `rdeps` answer per
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r CODEMAP_ENABLED  2>/dev/null < "${TMPDIR:-/tmp}/resolve-codemap-enabled-${CSID}" || CODEMAP_ENABLED="false"
+IFS= read -r CODEMAP_CURRENCY  2>/dev/null < "${TMPDIR:-/tmp}/resolve-codemap-currency-${CSID}" || CODEMAP_CURRENCY="no_index"
+if [ "$CODEMAP_CURRENCY" = "stale" ]; then export SCAN_NO_AUTOBUILD=1; fi
+_CODEMAP_NO_HEAL=""
+if [ "$CODEMAP_CURRENCY" = "stale" ] || [ "${SCAN_NO_AUTOBUILD:-0}" = "1" ]; then _CODEMAP_NO_HEAL="--no-heal"; fi
 [ -f "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" ] && IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" || IMPL_DIR=""  # prelude's mktemp path
 [ -f "$IMPL_DIR/selected-items.txt" ] && IFS= read -r SELECTED_ITEMS < "$IMPL_DIR/selected-items.txt" || SELECTED_ITEMS=""
 # pre-loop; BLAST_RADIUS_CONTEXT shared with impl agents
@@ -180,14 +185,14 @@ BLAST_RADIUS_CONTEXT=""
 _ROOT=$(git rev-parse --show-toplevel 2>/dev/null); [ -n "$_ROOT" ] || _ROOT="$PWD"
 _IDX_FILE="${CODEMAP_INDEX_DIR:-$_ROOT/.cache/codemap}/$(basename "$_ROOT").json"
 _CACHE_BIN="${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/codemap_cache.py"
-if command -v codemap-py >/dev/null 2>&1 && [ -f "$IMPL_DIR/action-items.jsonl" ]; then
+if [ "$CODEMAP_ENABLED" = "true" ] && command -v codemap-py >/dev/null 2>&1 && [ -f "$IMPL_DIR/action-items.jsonl" ]; then
     echo "→ Codemap pre-scan — caller context for selected action items:"
     # file→module from the index's own `name` field (same source as §Structural prep, and as the cache keys). A sed transform names pkg/__init__.py `pkg.__init__` while codemap calls it `pkg` — every package-init item then missed its cache entry AND errored on the live query.
     _MODMAP="$IMPL_DIR/codemap-maps.json"
     _MAP_STAMP=$(python -c 'import pathlib,sys; p=pathlib.Path(sys.argv[1]); s=p.stat(); sys.stdout.write(f"{p.resolve().as_posix()}:{s.st_size}:{s.st_mtime_ns}")' "$_IDX_FILE" 2>/dev/null)
     # Native Windows jq must emit LF: CR would become part of shell IDs, paths, and module names.
     _ALL_PY=$(jq -b -r '.file // empty' "$IMPL_DIR/action-items.jsonl" | grep '\.py$' | paste -sd, -)  # timeout: 5000
-    codemap-py query --timeout 15 central --top 100000 2>/dev/null \
+    codemap-py query --timeout 15 $_CODEMAP_NO_HEAL central --top 100000 2>/dev/null \
         | python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/resolve_centrality.py" --files "$_ALL_PY" > "$_MODMAP" 2>/dev/null || : > "$_MODMAP"  # timeout: 20000
     printf '%s\n' "$_MAP_STAMP" > "$IMPL_DIR/codemap-maps.stamp"
     _MODULE_ITEMS=$(jq -s --arg ids "$SELECTED_ITEMS" --slurpfile maps "$_MODMAP" '
@@ -219,7 +224,7 @@ if command -v codemap-py >/dev/null 2>&1 && [ -f "$IMPL_DIR/action-items.jsonl" 
                 [ -f "$_ART" ] && python -c "import json,sys; p=sys.argv[1]; d=json.load(open(p)); d['delta']['notes'].append('reused'); json.dump(d,open(p,'w'))" "$_ART" 2>/dev/null || true
             fi
         fi
-        [ "$_CACHE_HIT" = true ] || _c=$(codemap-py query rdeps "$_m" 2>/dev/null)  # timeout: 10000
+        [ "$_CACHE_HIT" = true ] || _c=$(codemap-py query $_CODEMAP_NO_HEAL rdeps "$_m" 2>/dev/null)  # timeout: 10000
         if [ -n "$_c" ]; then
             for _id in $(printf '%s' "$_MODULE_ITEMS" | jq -b -r --arg module "$_m" '.[$module][]'); do
                 printf "  #%s %s ← callers: %s\n" "$_id" "$_m" "$(echo "$_c" | tr '\n' ' ')"

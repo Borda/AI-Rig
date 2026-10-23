@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.37.5
+
+- Prepare Codemap context from the verified reviewed checkout and include structural lookup in Python challenge scopes; reuse current evidence and retain provider limitations.
+- Automatically batch oversized new native reviewer contexts and continue required reviews and later GitHub-read recovery instead of returning a premature preliminary snapshot.
+- Recover independent reviewer admission after a host-rejected wait is immediately corrected, without rewriting the original receipts or relaxing real scheduling checks.
+- Accept documented turn-bound moderation metadata in isolated review sessions without retaining its payload or permitting execution.
+- Apply parent-owned dependency preparation across authorized verification workflows, and close specific structural-coverage questions through direct evidence while retaining degraded Codemap diagnostics.
+- Prepare missing declared project dependencies during remediation, request any needed installation capability, and rerun the canonical gates at the recorded revision instead of stopping at a missing-package collection failure. Preserve Code Review’s separate read-only overlay boundary.
+
 ## 0.37.4
 
 - Preserve existing review report bytes, including Windows line endings, when finalization appends the reviewed commit identity.

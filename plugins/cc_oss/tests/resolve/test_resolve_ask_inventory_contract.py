@@ -118,12 +118,25 @@ def test_baseline_ask_still_happens(relative: str, section_start: str, section_e
     assert "AskUserQuestion" in section
 
 
-def test_codemap_gate_still_asks() -> None:
-    """The codemap index gate is delegated to the shared contract, which must still ask before building."""
+def test_codemap_gate_asks_only_for_the_lazy_preference() -> None:
+    """Gate A prepares by default and retains a confirm-first question only when requested."""
     skill = (_RESOLVE / "SKILL.md").read_text(encoding="utf-8")
     gates = (_SHARED / "codemap-gates.md").read_text(encoding="utf-8")
     assert 'cat "$_OSS_SHARED/codemap-gates.md"' in skill
-    assert "Gate A always asks (`AskUserQuestion`)" in gates
+    assert "Gate A prepares automatically by default" in gates
+    assert "`LAZY_CODEMAP` is the explicit confirm-first preference" in gates
+    assert "SCAN_NO_AUTOBUILD=1" in gates
+    assert "detect_codemap.py --prefix <current-skill> --force-off" in gates
+
+
+def test_preloop_codemap_scan_reloads_disabled_and_stale_state() -> None:
+    """The next resolve consumer read suppresses queries after Skip and freezes accepted stale data."""
+    prelude = (_RESOLVE / "modes" / "dispatch-prelude.md").read_text(encoding="utf-8")
+    assert 'IFS= read -r CODEMAP_ENABLED  2>/dev/null < "${TMPDIR:-/tmp}/resolve-codemap-enabled-${CSID}"' in prelude
+    assert 'IFS= read -r CODEMAP_CURRENCY  2>/dev/null < "${TMPDIR:-/tmp}/resolve-codemap-currency-${CSID}"' in prelude
+    assert 'if [ "$CODEMAP_ENABLED" = "true" ] && command -v codemap-py' in prelude
+    assert "codemap-py query --timeout 15 $_CODEMAP_NO_HEAL central" in prelude
+    assert "codemap-py query $_CODEMAP_NO_HEAL rdeps" in prelude
 
 
 @pytest.mark.parametrize(

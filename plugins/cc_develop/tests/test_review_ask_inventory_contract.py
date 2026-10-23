@@ -48,8 +48,11 @@ def test_baseline_tool_ask_still_happens(section_start: str, section_end: str, m
     assert "AskUserQuestion" in section
 
 
-def test_codemap_gate_still_asks() -> None:
-    """The codemap index gate is delegated to the shared contract, which must still ask before building."""
+def test_codemap_gate_asks_only_for_the_lazy_preference() -> None:
+    """Gate A prepares by default and retains a confirm-first question only when requested."""
     skill = (_REVIEW / "SKILL.md").read_text(encoding="utf-8")
+    gates = (_SHARED / "codemap-gates.md").read_text(encoding="utf-8")
     assert 'bin/dev_load_shared.py" codemap-gates.md' in skill
-    assert "Gate A always asks (`AskUserQuestion`)" in (_SHARED / "codemap-gates.md").read_text(encoding="utf-8")
+    assert "Gate A prepares automatically by default" in gates
+    assert "`LAZY_CODEMAP` is the explicit confirm-first preference" in gates
+    assert "SCAN_NO_AUTOBUILD=1" in gates

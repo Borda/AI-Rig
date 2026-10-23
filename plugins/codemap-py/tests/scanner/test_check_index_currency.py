@@ -264,15 +264,16 @@ class TestCheckCurrencyTier1:
         _write_index(p, _minimal_index(git_sha=SHA_A))
         return p
 
-    def test_current_when_sha_matches_no_dirty(
+    def test_legacy_matching_head_requires_migration(
         self, index_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """SHA matches HEAD and no dirty .py files → current."""
+        """A matching legacy HEAD does not establish complete working-tree input freshness."""
         monkeypatch.setattr(cic, "_git_head", lambda root: SHA_A)
         monkeypatch.setattr(cic, "_git_dirty_py_count", lambda root: 0)
         r, code = cic.check_currency(index_file, tmp_path)
-        assert r["status"] == "current"
-        assert code == 0
+        assert r["status"] == "stale"
+        assert "migration" in r["reason"]
+        assert code == 1
 
     def test_stale_when_sha_differs(self, index_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """HEAD SHA differs from stored git_sha → stale."""
@@ -335,14 +336,15 @@ class TestCheckCurrencyTier2:
         p.write_text(content)
         return cic._md5_file(p)
 
-    def test_current_all_match(self, tmp_path: Path) -> None:
-        """All .py files match stored file_shas → current."""
+    def test_legacy_matching_hashes_require_migration(self, tmp_path: Path) -> None:
+        """Legacy Python-only hashes cannot prove that all consumed configuration inputs are current."""
         sha = self._write_py(tmp_path, "mod.py")
         p = tmp_path / "idx.json"
         _write_index(p, _minimal_index(file_shas={"mod.py": sha}, scanned_at="2025-01-01T00:00:00Z"))
         r, code = cic.check_currency(p, tmp_path)
-        assert r["status"] == "current"
-        assert code == 0
+        assert r["status"] == "stale"
+        assert "migration" in r["reason"]
+        assert code == 1
 
     def test_stale_new_py_file(self, tmp_path: Path) -> None:
         """New .py file not present in file_shas → stale."""
@@ -379,8 +381,8 @@ class TestCheckCurrencyTier2:
         assert r["status"] == "stale"
         assert r["changed_count"] >= 1
 
-    def test_current_mtime_prefilter(self, tmp_path: Path) -> None:
-        """File whose mtime predates scan is not content-checked even when content differs."""
+    def test_legacy_mtime_prefilter_cannot_claim_freshness(self, tmp_path: Path) -> None:
+        """A legacy timestamp heuristic cannot turn changed bytes into a confirmed-current result."""
         py = tmp_path / "old.py"
         py.write_text("content A")
         old_sha = cic._md5_file(py)
@@ -397,7 +399,8 @@ class TestCheckCurrencyTier2:
             _minimal_index(file_shas={"old.py": old_sha}, scanned_at="2025-06-01T00:00:00Z"),
         )
         r, _ = cic.check_currency(p, tmp_path)
-        assert r["status"] == "current"
+        assert r["status"] == "stale"
+        assert "migration" in r["reason"]
 
     def test_stale_no_file_shas_in_index(self, tmp_path: Path) -> None:
         """Index with no file_shas field at all → stale (rebuild required)."""
@@ -429,12 +432,15 @@ class TestCheckCurrencyTier2GitBlobs:
         _write_index(p, _minimal_index(file_shas={"one.py": self.BLOB_ONE, "two.py": self.BLOB_TWO}))
         return p
 
-    def test_current_when_blobs_match(self, index_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Every stored blob SHA still reported by git → current."""
+    def test_legacy_matching_blobs_require_migration(
+        self, index_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Matching staged blobs cannot prove actual working-tree freshness."""
         blobs = {"one.py": self.BLOB_ONE, "two.py": self.BLOB_TWO}
         monkeypatch.setattr(cic, "_git_blob_shas", lambda root: blobs)
         r, code = cic.check_currency(index_file, tmp_path)
-        assert (r["status"], code) == ("current", 0)
+        assert (r["status"], code) == ("stale", 1)
+        assert "migration" in r["reason"]
 
     @pytest.mark.parametrize(
         ("blobs", "expected_count"),
@@ -478,7 +484,9 @@ class TestCLI:
         py.write_text("x = 1")
         sha = cic._md5_file(py)
         idx = tmp_path / "idx.json"
-        _write_index(idx, _minimal_index(file_shas={"m.py": sha}, scanned_at="2020-01-01T00:00:00Z"))
+        _write_index(
+            idx, _minimal_index(file_shas={"m.py": sha}, source_fingerprint=cic.fingerprint_file_hashes({"m.py": sha}))
+        )
         monkeypatch.setattr(cic, "_git_head", lambda root: None)
         import os
 
@@ -524,7 +532,13 @@ class TestCLI:
         py = tmp_path / "m.py"
         py.write_text("x = 1")
         idx = tmp_path / "idx.json"
-        _write_index(idx, _minimal_index(git_sha=SHA_A))
+        _write_index(
+            idx,
+            _minimal_index(
+                file_shas={"m.py": cic._md5_file(py)},
+                source_fingerprint=cic.fingerprint_file_hashes({"m.py": cic._md5_file(py)}),
+            ),
+        )
         monkeypatch.setattr(cic, "_git_toplevel", lambda: tmp_path)
         monkeypatch.setattr(cic, "_git_head", lambda root: SHA_A)
         monkeypatch.setattr(cic, "_git_dirty_py_count", lambda root: 0)
@@ -609,7 +623,7 @@ class TestIndexReadIsLeased:
     ) -> None:
         """A whole ``check_currency`` pass takes one reader lease and reports current."""
         p = tmp_path / "idx.json"
-        _write_index(p, _minimal_index(git_sha=SHA_A))
+        _write_index(p, _minimal_index(file_shas={}, source_fingerprint=cic.fingerprint_file_hashes({})))
         monkeypatch.setattr(cic, "_git_head", lambda root: SHA_A)
         monkeypatch.setattr(cic, "_git_dirty_py_count", lambda root: 0)
         r, code = cic.check_currency(p, tmp_path)
@@ -643,3 +657,32 @@ class TestIndexReadIsLeased:
         r, code = cic.check_currency(p, tmp_path)
         assert (r["status"], code) == ("no_index", 2)
         assert "gate unavailable" in r["reason"]
+
+
+@pytest.mark.integration
+def test_real_dirty_scan_is_current_until_consumed_inputs_change(tmp_path: Path, scan_index: Path) -> None:
+    """Currency follows scanned bytes, including dirty sources and config, while remaining strictly read-only."""
+    import subprocess
+    import sys
+
+    root = tmp_path / "dirty-project"
+    root.mkdir()
+    for args in (("init", "-q"), ("config", "user.name", "Test"), ("config", "user.email", "test@example.invalid")):
+        subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)
+    (root / "mod.py").write_bytes(b"VALUE = 1\n")
+    subprocess.run(["git", "add", "mod.py"], cwd=root, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-qm", "initial"], cwd=root, check=True, capture_output=True)
+    (root / "mod.py").write_bytes(b"VALUE = 2\n")
+    subprocess.run([sys.executable, str(scan_index), "--root", str(root)], check=True, capture_output=True)
+    index_path = root / ".cache" / "codemap" / "dirty-project.json"
+    before = index_path.read_bytes()
+    result, code = cic.check_currency(index_path, root)
+    assert (result["status"], code) == ("current", 0)
+    (root / "service.yaml").write_bytes(b"target: package.module\n")
+    result, code = cic.check_currency(index_path, root)
+    assert (result["status"], code, result["changed_count"]) == ("stale", 1, 1)
+    assert index_path.read_bytes() == before
+    result, code = cic.check_currency(index_path, tmp_path)
+    assert (result["status"], code) == ("stale", 1)
+    assert "root" in result["reason"]
+    assert index_path.read_bytes() == before

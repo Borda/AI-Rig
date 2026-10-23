@@ -23,11 +23,64 @@ def test_remediation_recovers_late_baseline_from_retained_pre_edit_evidence_only
 def test_remediation_classifies_confidence_and_prepares_backend_evidence() -> None:
     """Keep real coverage actionable without making statistical disclaimers impossible chores."""
     skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
-    assert "Ephemeral Dependency Evidence" in skill
+    assert "Project Dependency Preparation" in skill
     assert "before closing a missing-backend item as environment-blocked" in skill
     assert "A statistical-confidence disclaimer requires no invented calibration experiment" in skill
     assert "An explicitly required calibration experiment remains actionable" in skill
     assert "resume ledger, workplan, finalization, validation and promotion" in skill
+
+
+def test_remediation_prepares_declared_dependencies_and_reruns_canonical_gates() -> None:
+    """Prevent missing test packages from ending remediation before permitted environment recovery."""
+    shared = (PLUGIN_ROOT / "shared" / "native-skill-contract.md").read_text(encoding="utf-8")
+    preparation = shared.split("## Project Dependency Preparation", 1)[1].split("\n## ", 1)[0]
+    assert "project's declared bootstrap command" in preparation
+    assert "request the specific missing permission" in preparation
+    assert "rerun the required source-bound canonical gate bundle" in preparation
+    assert "same recorded source revision" in preparation
+    assert "Never skip tests, weaken assertions" in preparation
+    assert "Code Review retains its read-only" in preparation
+    assert "missing package alone is not a terminal blocker" in preparation
+
+
+def test_dependency_preparation_reaches_other_workflows_and_read_only_agents() -> None:
+    """Require shared preparation ownership without giving read-only reviewers installation authority."""
+    shared = (PLUGIN_ROOT / "shared" / "native-skill-contract.md").read_text(encoding="utf-8")
+    preparation = shared.split("## Project Dependency Preparation", 1)[1].split("\n## ", 1)[0]
+    assert "any workflow authorized to execute project code" in preparation
+    assert "investigation, optimization, and delegated test/check work" in preparation
+    assert "does not expand the workflow's write or execution authority" in preparation
+    for name in ("quality-gates.md", "specialist-orchestration.md"):
+        consumer = (PLUGIN_ROOT / "shared" / name).read_text(encoding="utf-8")
+        assert "Project Dependency Preparation" in consumer
+        assert "parent" in consumer
+        assert "read-only" in consumer
+
+
+def test_early_execution_paths_load_dependency_preparation_before_closeout() -> None:
+    """Prevent early skill paths from bypassing shared preparation rules they have not loaded."""
+    baseline = (PLUGIN_ROOT / "assets" / "AGENTS.md").read_text(encoding="utf-8")
+    assert 'shared/native-skill-contract.md` §"Project Dependency Preparation"' in baseline
+    routes = {
+        "implement": ("## Lightweight Local Work", "## Execution Route Selection"),
+        "optimize": ("### 02:", "### 03:"),
+        "investigate": ("### 06:", "### 07:"),
+    }
+    for skill, (start, end) in routes.items():
+        source = (PLUGIN_ROOT / "skills" / skill / "SKILL.md").read_text(encoding="utf-8")
+        route = source.split(start, 1)[1].split(end, 1)[0]
+        assert "Project Dependency Preparation" in route, skill
+        assert "project-dependency-preparation" in route, skill
+
+
+def test_optimization_rebaselines_both_commands_after_dependency_preparation() -> None:
+    """Prevent environment preparation from appearing as a source-level optimization improvement."""
+    source = (PLUGIN_ROOT / "skills" / "optimize" / "SKILL.md").read_text(encoding="utf-8")
+    baseline = source.split("### 02:", 1)[1].split("### 03:", 1)[0]
+    assert "rerun both baseline commands in the resulting environment" in baseline
+    assert "invalidate earlier measurements" in baseline
+    assert "iteration or resume" in baseline
+    assert "no improvement claim" in baseline
 
 
 def test_review_and_remediation_require_explicit_convergence_authorization() -> None:

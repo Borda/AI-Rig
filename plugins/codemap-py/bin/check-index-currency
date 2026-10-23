@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """check-index-currency — verify codemap index matches current source tree.
 
-Two-tier check (prefer false-stale over missed-stale):
+Current indexes compare the scanner's complete working-tree source/config fingerprint. Legacy indexes retain the
+two-tier diagnostics below, but heuristic success requests migration rather than claiming complete-input freshness:
   Tier 1 (git repo): compare stored git_sha vs HEAD; flag dirty .py files.
-  Tier 2 (no git / git_sha absent): compare stored file_shas vs current
-      content using mtime pre-filter then git blob SHA-1 or MD5 verify.
+  Tier 2 (no git / git_sha absent): compare stored file_shas vs current content.
 
 The index itself is read under a shared read lease
 (:func:`codemap_py.rwgate.read_lease`), never with a bare ``json.load``: the gate's
@@ -50,6 +50,8 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from codemap_py import rwgate  # noqa: E402  (needs the sys.path insert above)
+from codemap_py.scanner.discovery import fingerprint_file_hashes, get_file_hashes  # noqa: E402
+from codemap_py.scanner.exclusions import _load_exclusions  # noqa: E402
 
 _GIT_TIMEOUT = 5
 # DoS guard, held at the query engine's own ceiling (``query._MAX_INDEX_SIZE_BYTES``).
@@ -532,11 +534,25 @@ def _tier2_result(index: dict, root: Path) -> tuple[dict, int]:
     return _result("current", "all source files match index")
 
 
+def _source_fingerprint_result(index: dict, root: Path) -> tuple[dict, int]:
+    """Compare all scanner inputs after releasing the index lease, retaining explicit hashing-failure diagnostics."""
+    try:
+        current_shas = get_file_hashes(root, _load_exclusions(root))
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        return _result("stale", f"source fingerprints unavailable: {type(exc).__name__}: {exc}")
+    if fingerprint_file_hashes(current_shas) == index["source_fingerprint"]:
+        return _result("current", "all scanner source and configuration inputs match index")
+    stored_shas = index.get("file_shas", {})
+    paths = (stored_shas.keys() | current_shas.keys()) - {"__coverage_mtime__"}
+    count = sum(stored_shas.get(path) != current_shas.get(path) for path in paths)
+    return _result("stale", "scanner source or configuration inputs changed", count)
+
+
 def check_currency(index_path: Path, root: Path) -> tuple[dict, int]:
     """Check whether the codemap index is current with the source tree.
 
-    Tier 1 answers from git when both the index and the working tree carry a HEAD SHA;
-    otherwise Tier 2 falls back to comparing stored content hashes.
+    Current indexes compare actual scanner inputs, independent of Git dirty state. Legacy tiers retain useful stale
+    diagnostics, but cannot prove the complete input contract and therefore require an automatic migration refresh.
 
     Args:
         index_path: Path to the index JSON file.
@@ -549,13 +565,22 @@ def check_currency(index_path: Path, root: Path) -> tuple[dict, int]:
     if failure is not None:
         return failure
 
+    stored_root = index.get("scan_root")
+    if isinstance(stored_root, str) and Path(stored_root).resolve() != root.resolve():
+        return _result("stale", "index scan_root differs from the requested source root")
+    if index.get("source_fingerprint"):
+        return _source_fingerprint_result(index, root)
+
     stored_git_sha: str | None = index.get("git_sha")
     current_git_sha = _git_head(root)
 
     if current_git_sha is not None and stored_git_sha is not None:
-        return _tier1_result(root, stored_git_sha, current_git_sha)
-
-    return _tier2_result(index, root)
+        result, code = _tier1_result(root, stored_git_sha, current_git_sha)
+    else:
+        result, code = _tier2_result(index, root)
+    if code == 0:
+        return _result("stale", "legacy source fingerprints require migration before freshness can be established")
+    return result, code
 
 
 # ---------------------------------------------------------------------------

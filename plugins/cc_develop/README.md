@@ -668,12 +668,14 @@ Fix: drop `--semble` from saved invocations; Codemap-py auto mode (below) suppli
 
 ### Codemap-py behavior
 
-In auto mode, Codemap-py is used when the plugin and a project index are available; no flag is needed for that default experience.
+In auto mode, Codemap-py prepares a missing or stale project index under the active provider contract; no flag is needed. Explicit confirm-first, frozen and skip preferences remain controlling. Each gate persists its result before later consumers reload it, including stale continuation without query-time refresh.
+
+Disabling Codemap disables structural lookup only. Feature, fix, refactor and batch test loops still select tests with path/import heuristics, execute the selection and propagate failures.
 
 | State                                 | Behavior                                                                                                                                        |
 | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | Installed + current index + auto mode | Use Codemap context                                                                                                                             |
-| Installed + no index + auto mode      | Gate A asks whether to build or continue                                                                                                        |
+| Installed + no index + auto mode      | Gate A follows the active provider: automatic preparation by default, explicit confirm-first/frozen preferences preserved                       |
 | Installed + stale index + auto mode   | Gate B per the installed contract: `codemap-py` ≥ 0.39.0 refreshes automatically (asks only if `LAZY_CODEMAP` is set); older installs ask first |
 | Not installed + auto mode             | Continue without Codemap                                                                                                                        |
 | Any unavailable state + `--codemap`   | Stop and report strict-mode failure                                                                                                             |
@@ -751,7 +753,7 @@ Skills never poll a background agent; they resume on its completion notification
 
 ### codemap-py query warnings appearing in output
 
-`codemap-py` optional. `codemap-py` not on PATH → all codemap-py steps silently skipped. The gate and context contracts are read live from the installed `codemap-py` plugin (`bin/resolve_shared_path.py codemap-py claude-skills/_shared`, install record first) — no local copy, so upgrading `codemap-py` upgrades the contract develop follows. Plugin installed but index missing → default (auto) mode prompts build (Gate A). Index stale → Gate B follows the installed contract: `codemap-py` ≥ 0.39.0 rebuilds automatically, no prompt unless `LAZY_CODEMAP` is set; older installs ask first. `--no-codemap` skips silently either way. Skill works fully without it. To enable codemap-py context, install the `codemap-py` plugin, then run `/codemap-py:scan-codebase` (requires `codemap-py` plugin).
+`codemap-py` optional. `codemap-py` not on PATH → all codemap-py steps silently skipped. The gate and context contracts are read live from the installed `codemap-py` plugin (`bin/resolve_shared_path.py codemap-py claude-skills/_shared`, install record first) — no local copy, so upgrading `codemap-py` upgrades the contract develop follows. Plugin installed but index missing → Gate A follows the installed provider contract: current providers prepare automatically, while explicit `LAZY_CODEMAP` and `SCAN_NO_AUTOBUILD=1` preferences remain controlling. Index stale → Gate B follows the installed contract: `codemap-py` ≥ 0.39.0 rebuilds automatically, no prompt unless `LAZY_CODEMAP` is set; older installs ask first. `--no-codemap` skips silently either way. Skill works fully without it. To enable Codemap context, install the `codemap-py` plugin; current providers prepare the index on ordinary structural lookup (requires `codemap-py` plugin).
 
 ______________________________________________________________________
 

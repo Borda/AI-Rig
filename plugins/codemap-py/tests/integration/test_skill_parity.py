@@ -127,14 +127,15 @@ _QUERY_PATH_BASE_SNIPPETS = (
 _CUSTOM_ROOT_INDEX_SNIPPETS = (
     "--index <emitted-index-path>",
     "--root <same-root>",
-    "path resolution only",
+    "`--root <same-root>` to select that root's canonical index",
+    "`--root` also sets query path resolution and the accepted custom-index boundary",
 )
 _QUERY_EXECUTION_CONTRACT_SNIPPETS = (
     "resolve the installed launcher once",
     "independent read-only queries may run concurrently",
-    "prepared stable index",
+    "prepares the canonical project index before answering",
     "dependent queries wait",
-    "index writes run serially",
+    "while that preparation may occur",
     "no arbitrary total-call cap",
     "bounded targeted correction retries",
     "same correction failure recurs",
@@ -482,6 +483,18 @@ def test_claude_query_code_limits_bash_to_the_query_cli() -> None:
     skill_text = (_CLAUDE_SKILLS_DIR / "query-code" / "SKILL.md").read_text(encoding="utf-8")
 
     assert _claude_query_frontmatter_violations(skill_text) == []
+
+
+def test_query_skills_distinguish_canonical_root_from_explicit_index() -> None:
+    """Both hosts document that --root selects a canonical index unless --index overrides it."""
+    claude = (_CLAUDE_SKILLS_DIR / "query-code" / "SKILL.md").read_text(encoding="utf-8")
+    codex = (_CODEX_SKILLS_DIR / "query-code" / "SKILL.md").read_text(encoding="utf-8")
+    for text in (claude, codex):
+        assert "--root <root>" in text
+        assert "canonical index" in text
+        assert "--index <" in text
+        assert "file" in text
+        assert "`--root` is path resolution only" not in text
 
 
 @pytest.mark.parametrize(

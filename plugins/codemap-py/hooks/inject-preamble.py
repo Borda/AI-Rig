@@ -29,6 +29,7 @@ Used by:
 
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import json
 import os
@@ -55,7 +56,8 @@ if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 
 from codemap_py import scanner  # noqa: E402  (resolve from the installed plugin)
-from codemap_py.schema import SCAN_VERSION  # noqa: E402  (resolve from the installed plugin)
+from codemap_py.scanner.discovery import fingerprint_file_hashes  # noqa: E402
+from codemap_py.scanner.docs_xrefs import _CONFIG_SCAN_PATTERNS  # noqa: E402
 
 #: Largest index file, in bytes, the hook fully parses to count modules; a larger index reports a placeholder instead.
 MAX_PARSE_BYTES = 10 * 1024 * 1024
@@ -76,7 +78,7 @@ _INDEXED_PATHSPEC: tuple[str, ...] = ("*.py", "*.pyi", "*.rst", "docs/**/*.md")
 #: on-disk, unauthenticated input; a value that is not a hex object name never reaches a subprocess.
 _HEX_OBJECT_RE = re.compile(r"[0-9a-fA-F]{7,64}")
 #: Note for a stale index whose refresh inputs have not changed since the last completed refresh.
-UNCHANGED_NOTE = " - unchanged since last refresh (only staged files are indexed)"
+UNCHANGED_NOTE = " - unchanged since last refresh"
 #: Note returned by :func:`start_refresh` when it actually spawned a background scan.
 STARTED_NOTE = " - refresh started"
 
@@ -86,7 +88,8 @@ STARTED_NOTE = " - refresh started"
 #: The value alternation consumes `\"` as one unit so an embedded quote does not end the match
 #: early; whatever it captures is still a JSON string body, so `_json_unescape` decodes it.
 _HEADER_FIELD_RES = {
-    name: re.compile(rf'"{name}"\s*:\s*"((?:[^"\\]|\\.)*)"') for name in ("git_sha", "scanned_at", "scan_root")
+    name: re.compile(rf'"{name}"\s*:\s*"((?:[^"\\]|\\.)*)"')
+    for name in ("git_sha", "scanned_at", "scan_root", "source_fingerprint")
 }
 
 
@@ -191,13 +194,15 @@ def handle_missing_index(root: Path, project: str, session: str) -> None:
     if within_ttl(flag, NOINDEX_TTL_MS):
         return
     write_timestamp(flag)
-    ask = "call AskUserQuestion - ask the user" if _hookutil.runtime() == "claude" else "ask the user"
+    preparation = (
+        "Automatic preparation is disabled by SCAN_NO_AUTOBUILD=1; queries require an existing frozen index."
+        if os.environ.get("SCAN_NO_AUTOBUILD") == "1"
+        else "Use `codemap-py query` from this source checkout: an ordinary query automatically prepares its own-root index."
+    )
     emit_preamble(
-        f'[codemap] No structural index for "{project}" (.cache/codemap/{project}.json missing) - blast-radius / coupling queries unavailable.\n'
-        f"ACTION (ask once): {ask} whether to build the codemap index now.\n"
-        "  - yes -> run `codemap-py index` in the FOREGROUND and WAIT until it finishes, then continue using `codemap-py query`.\n"
-        "    (bare command resolves through the plugin's bin/ PATH entry; where unavailable, invoke the active plugin root's bin/codemap-py launcher.)\n"
-        "  - no -> proceed without codemap; do not raise again this session."
+        f'[codemap] No structural index for "{project}" (.cache/codemap/{project}.json missing).\n'
+        f"{preparation}\n"
+        "`--no-heal` and SCAN_NO_AUTOBUILD=1 retain explicit frozen-query behavior."
     )
 
 
@@ -280,7 +285,8 @@ def header_fields(index_path: Path) -> dict[str, str]:
         prefix or unreadable.
     """
     try:
-        header = index_path.read_bytes()[:HEADER_PEEK_BYTES].decode("utf-8", errors="replace")
+        with index_path.open("rb") as handle:
+            header = handle.read(HEADER_PEEK_BYTES).decode("utf-8", errors="replace")
     except OSError:
         return dict.fromkeys(_HEADER_FIELD_RES, "")
     fields = {}
@@ -295,84 +301,73 @@ def module_count(index_path: Path, size: int) -> int | str:
     if size > MAX_PARSE_BYTES:
         return "?"
     try:
-        shas = json.loads(index_path.read_text(encoding="utf-8")).get("file_shas", {})
+        modules = json.loads(index_path.read_text(encoding="utf-8")).get("modules")
     except (OSError, ValueError, AttributeError):
         return "?"
-    return len(shas) if isinstance(shas, dict) else "?"
-
-
-def resolve_currency(head: str, git_sha: str, dirty: str) -> str:
-    """Return ``current``/``stale``/``unknown`` for the index against the working tree."""
-    if not head or not git_sha:
-        return "unknown"
-    return "stale" if head != git_sha or dirty else "current"
+    return len(modules) if isinstance(modules, list) else "?"
 
 
 def changed_file_count(root: Path, git_sha: str) -> int | None:
-    """Count staged indexed files whose blob differs from the index's commit.
+    """Count eligible working-tree differences from the index commit, or report unknown.
 
-    The scanner keys its file set on staged blobs (``git ls-files -s`` in ``scanner._git_file_hashes``), and the self-
-    heal path compares staged hashes, so this count uses ``git diff --cached`` against the index commit, filtered
-    through scanner exclusions. It retains the indexed documentation pathspec. This is an eligible staged-path delta,
-    not a measured count of files actually reparsed. Unstaged edits and untracked files can mark currency stale but are
-    outside this count.
-
-    ``git_sha`` comes from the index header on disk, so it is validated as a hex object name before it reaches git;
-    anything else — including an option-shaped value — yields ``None`` without a subprocess. An unreachable commit
-    yields ``None`` too, so the refresh record reports the count as unknown rather than a guess.
+    This is a consumed-input delta against the recorded commit, not a measured reparse count. Configuration and
+    documentation remain inputs even when Python discovery excludes their paths. The commit tree supplies preimages
+    for deletions. Invalid commits, unreadable inputs, and historical symlink configs remain unknown.
     """
     if not _HEX_OBJECT_RE.fullmatch(git_sha or ""):
         return None
     try:
-        diff = subprocess.run(  # noqa: S603 - argv list, no shell; tool resolved via PATH on purpose
-            ["git", "diff", "--cached", "--name-only", "-z", git_sha, "--", *_INDEXED_PATHSPEC],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
+        tree = subprocess.run(  # noqa: S603 - explicit argv, validated revision
+            ["git", "ls-tree", "-r", "-z", git_sha],  # noqa: S607 - Git intentionally resolved via PATH
             cwd=root,
             stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             encoding="utf-8",
-            errors="replace",  # `-z` emits raw bytes; a non-UTF-8 name must not raise past the refresh lock
+            errors="replace",
             timeout=3,
             check=True,
         ).stdout
         exclusions = scanner._load_exclusions(root)
+        current = scanner.get_file_hashes(root, exclusions)
+        before = {}
+        for entry in tree.split("\0"):
+            meta, separator, path = entry.partition("\t")
+            fields = meta.split()
+            if not separator or len(fields) != 3 or fields[1] != "blob":
+                continue
+            parts = path.split("/")
+            config_input = len(parts) == 1 and (
+                path == ".codemapignore" or any(fnmatch.fnmatch(path, pattern) for pattern in _CONFIG_SCAN_PATTERNS)
+            )
+            if fields[0] == "120000":
+                if config_input:
+                    # The historical blob stores a link target, not the configuration bytes the scanner consumed.
+                    return None
+                continue
+            python_input = scanner._is_python_source(path) and not scanner.is_excluded(path, exclusions)
+            doc_input = (path.endswith(".rst") or (path.startswith("docs/") and path.endswith(".md"))) and not any(
+                part in scanner.SKIP_DIRS for part in parts[:-1]
+            )
+            if config_input or python_input or doc_input:
+                before[path] = fields[2]
+        return sum(before.get(path) != current.get(path) for path in before.keys() | current.keys())
     except (OSError, ValueError, subprocess.SubprocessError):
         return None
-    return sum(1 for entry in diff.split("\0") if entry and not scanner.is_excluded(entry, exclusions))
 
 
-def staged_fingerprint(root: Path, head: str) -> str | None:
-    """Fingerprint every input an incremental refresh reads: scanner version, HEAD, and staged indexed blobs.
+def refresh_fingerprint(root: Path, head: str, source_fingerprint: str | None = None) -> str | None:
+    """Identify a refresh's actual discovered inputs and commit without requiring staging.
 
-    The scanner keys solely on ``git ls-files -s`` blob SHAs (``scanner._git_file_hashes``) and stamps HEAD as
-    ``git_sha``; unstaged and untracked edits never reach the index. Two prompts with one fingerprint therefore cannot
-    get different results from a refresh, which is what lets a dirty tree stop spawning one no-op scan per prompt.
-
-    Read as bytes: a non-UTF-8 tracked path must not raise past ``main`` and silence the whole preamble.
-
-    Args:
-        root: repository root used as the git working directory.
-        head: current HEAD commit; empty when git could not resolve it.
-
-    Returns:
-        A hex digest, or ``None`` when git cannot answer — the caller then refreshes as before.
+    The optional source fingerprint reuses the main hook's already-computed value. Missing HEAD is valid for a
+    non-Git project; an unreadable source cannot establish an unchanged input set.
     """
-    if not head:
-        return None
     try:
-        staged = subprocess.run(  # noqa: S603 - argv list, no shell; tool resolved via PATH on purpose
-            ["git", "ls-files", "-s", "-z", "--", *_INDEXED_PATHSPEC],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
-            cwd=root,
-            stdin=subprocess.DEVNULL,
-            capture_output=True,
-            timeout=3,
-            check=True,
-        ).stdout
-    except (OSError, subprocess.SubprocessError):
+        if source_fingerprint is None:
+            source_fingerprint = fingerprint_file_hashes(scanner.get_file_hashes(root, scanner._load_exclusions(root)))
+    except (OSError, ValueError, subprocess.SubprocessError):
         return None
-    digest = hashlib.sha256(f"{SCAN_VERSION}\0{head}\0".encode())
-    digest.update(staged)
-    return digest.hexdigest()
+    return hashlib.sha256(f"{head}\0{source_fingerprint}".encode()).hexdigest()
 
 
 def refresh_record_path(project: str, index_path: PurePath) -> Path:
@@ -402,7 +397,7 @@ def refresh_settled(record: Path, fingerprint: str) -> bool:
 
     Args:
         record: path from :func:`refresh_record_path`.
-        fingerprint: current :func:`staged_fingerprint`.
+        fingerprint: current :func:`refresh_fingerprint`.
 
     Examples:
         >>> import tempfile
@@ -486,12 +481,12 @@ def spawn_refresh(
         # The scan marks this record published after its own publish; see refresh_settled.
         kwargs["env"]["CODEMAP_REFRESH_RECORD"] = str(record[0])
         kwargs["env"]["CODEMAP_REFRESH_FINGERPRINT"] = record[1]
+    # The hook already runs in the selected runtime; executing the script's shebang again can pick an older Python.
+    command = [os.environ.get("CODEMAP_PYTHON") or sys.executable, str(scan_bin), *scan_args]
     if os.name == "nt":
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
-        command = [os.environ.get("CODEMAP_PYTHON", sys.executable), str(scan_bin), *scan_args]
     else:
         kwargs["start_new_session"] = True
-        command = [str(scan_bin), *scan_args]
     try:
         subprocess.Popen(command, **kwargs)  # noqa: S603 - argv list, no shell; tool resolved via PATH on purpose
     except OSError:
@@ -516,7 +511,7 @@ def start_refresh(
 
     ``record`` (record path, fingerprint) is written as ``spawned`` only once this call holds the lock, just before the
     spawn, and handed to the scan, which alone marks it ``published``. Writing it while another refresh holds the
-    lock would let that older scan's publish settle a newer staged state; writing it after the spawn could overwrite
+    lock would let that older scan's publish settle newer source inputs; writing it after the spawn could overwrite
     a fast scan's ``published`` line.
     """
     lock = tmp_dir() / f"codemap-refresh-{project}"
@@ -553,25 +548,33 @@ def stale_refresh_note(
     head: str,
     index_path: Path,
     start: Callable[[tuple[Path, str] | None], str],
+    source_fingerprint: str | None = None,
 ) -> str:
     """Skip the refresh when its inputs are unchanged since the last completed one; otherwise call *start*.
 
-    A dirty tree stays ``stale`` (unstaged and untracked edits are genuinely not indexed), but refreshing cannot fix
-    that: before this guard every prompt on such a tree spawned another no-op scan once the lock expired.
+    Repeat suppression requires the scanner's publication acknowledgement and a matching current index header.
+    A historical publication cannot suppress repair after older index bytes are restored to the same cache path.
 
     Args:
         project: project basename keying the record beside the refresh lock.
-        root: repository root for the staged-blob fingerprint.
+        root: source root for the working-tree fingerprint.
         head: current HEAD commit.
         index_path: index file the refresh would publish.
         start: spawns the refresh given the record it hands the scan; returns the preamble note.
     """
-    fingerprint = staged_fingerprint(root, head)
+    fingerprint = refresh_fingerprint(root, head, source_fingerprint)
     if fingerprint is None:
         return start(None)
     record = refresh_record_path(project, index_path)
     if refresh_settled(record, fingerprint):
-        return UNCHANGED_NOTE
+        fields = header_fields(index_path)
+        if (
+            fields["scan_root"] == str(root.resolve())
+            and fields["git_sha"] == head
+            and fields["source_fingerprint"]
+            and refresh_fingerprint(root, head, fields["source_fingerprint"]) == fingerprint
+        ):
+            return UNCHANGED_NOTE
     return start((record, fingerprint))
 
 
@@ -622,33 +625,43 @@ def main() -> int:
         session = _hookutil.runtime_session(payload)
         session_token = _hookutil.UNSAFE_KEY.sub("_", session) or SHARED_SESSION
         write_session_marker(root, session)
-        if not has_python_source(root):
-            return 0
         index_dir = Path(os.environ.get("CODEMAP_INDEX_DIR", root / ".cache" / "codemap"))
         index_path = index_dir / f"{project}.json"
         index_stat = regular_file_stat(index_path)
         if index_stat is None:
+            if not has_python_source(root):
+                return 0
             handle_missing_index(root, project, session_token)
             return 0
         fields = header_fields(index_path)
         git_sha = fields["git_sha"]
         raw_root = fields["scan_root"]
-        scan_root = Path(raw_root).resolve() if raw_root and Path(raw_root).is_absolute() else cwd
-        head = git_output(["rev-parse", "HEAD"], cwd)
-        dirty = (
-            git_output(["status", "--porcelain", "--", *_INDEXED_PATHSPEC], root) if head and git_sha == head else ""
+        same_root = bool(raw_root) and Path(raw_root).is_absolute() and Path(raw_root).resolve() == root.resolve()
+        head = git_output(["rev-parse", "HEAD"], root)
+        source_fingerprint = fingerprint_file_hashes(scanner.get_file_hashes(root, scanner._load_exclusions(root)))
+        # Header provenance follows the same bytes the scanner parsed; Git dirtiness alone cannot say whether a
+        # working-tree index is fresh. Legacy headers get one automatic refresh to establish this evidence.
+        currency = (
+            "current"
+            if same_root and source_fingerprint == fields["source_fingerprint"] and head == git_sha
+            else "stale"
         )
-        currency = resolve_currency(head, git_sha, dirty)
         refresh_note = ""
-        if currency == "stale":
+        if currency == "stale" and os.environ.get("SCAN_NO_AUTOBUILD") == "1":
+            refresh_note = " - automatic refresh disabled by SCAN_NO_AUTOBUILD=1"
+        elif currency == "stale" and not same_root:
+            # A settled refresh record cannot vouch for a foreign index copied over its publication.
+            refresh_note = start_refresh(project, root, cwd, session)
+        elif currency == "stale":
             refresh_note = stale_refresh_note(
                 project,
                 root,
                 head,
                 index_path,
                 lambda record: start_refresh(
-                    project, scan_root, cwd, session, lambda: changed_file_count(root, git_sha), record=record
+                    project, root, cwd, session, lambda: changed_file_count(root, git_sha), record=record
                 ),
+                source_fingerprint,
             )
         session_flag = tmp_dir() / f"codemap-preamble-{project}-{_hookutil.runtime()}-{session_token}"
         if currency == "current":
@@ -667,10 +680,10 @@ def main() -> int:
             "Prefer `codemap-py query` over file reads: rdeps, fn-rdeps, fn-blast, xrefs, symbol.\n"
             # Telemetry: one session re-ran the same query 21 times. A full ranking piped into a filter (as the
             # foundry agents' pre-flight does) never enters context, so only output read directly is bounded here.
-            "Reuse an earlier answer to the same query instead of re-running it; keep `--top` small when the output"
-            " enters context."
+            "Reuse an earlier answer only while source inputs are unchanged; rerun after edits. Keep `--top` small"
+            " when the output enters context."
         )
-    except (OSError, TypeError, ValueError):
+    except (OSError, TypeError, ValueError, subprocess.SubprocessError):
         pass
     return 0
 

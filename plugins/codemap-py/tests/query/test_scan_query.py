@@ -558,7 +558,7 @@ class TestSymbolStaleAndImports:
         index_path = root / ".cache" / "codemap" / f"{root.name}.json"
         (root / "myfunc.py").unlink()
         result = subprocess.run(
-            [sys.executable, str(scan_query), "--index", str(index_path), "symbol", "myfunc"],
+            [sys.executable, str(scan_query), "--no-heal", "--index", str(index_path), "symbol", "myfunc"],
             capture_output=True,
             text=True,
             cwd=str(root),
@@ -588,7 +588,7 @@ class TestSymbolStaleAndImports:
         index_path = root / ".cache" / "codemap" / f"{root.name}.json"
         (root / "big.py").write_text("# truncated\n")
         result = subprocess.run(
-            [sys.executable, str(scan_query), "--index", str(index_path), "symbol", "bigfunc"],
+            [sys.executable, str(scan_query), "--no-heal", "--index", str(index_path), "symbol", "bigfunc"],
             capture_output=True,
             text=True,
             cwd=str(root),
@@ -3933,7 +3933,7 @@ class TestErrorSemantics:
         index_path = root / ".cache" / "codemap" / f"{root.name}.json"
         (root / "mover.py").write_text("def mover_renamed(x):\n    return x\n")
         result = subprocess.run(
-            [sys.executable, str(scan_query), "--index", str(index_path), "symbol", "mover"],
+            [sys.executable, str(scan_query), "--no-heal", "--index", str(index_path), "symbol", "mover"],
             capture_output=True,
             text=True,
             cwd=str(root),

@@ -58,7 +58,9 @@ def test_top_level_no_arguments_remain_a_syntax_error(capsys: pytest.CaptureFixt
 # 5200 -> 5250: a protocol (dunder) method's zero-caller `hint` names no search, because Python
 # calls it implicitly; read as "the method hint's grep came back empty", that licensed deleting a
 # method in active use. The clause was compressed to 42 bytes against 5 bytes of headroom.
-_CODEX_QUERY_SKILL_MAX_BYTES = 5250
+# 5250 -> 5711: mandatory automatic preparation, frozen missing-index handling and canonical/custom root selection
+# add exactly 461 bytes over the committed 5237-byte skill; preserve the existing 13-byte headroom.
+_CODEX_QUERY_SKILL_MAX_BYTES = 5711
 
 
 def test_codex_query_skill_is_compact_required_and_oriented_to_the_smallest_complete_query_set() -> None:
@@ -78,7 +80,13 @@ def test_codex_query_skill_is_compact_required_and_oriented_to_the_smallest_comp
             "shell persistence",
             "retain its literal",
             "SCAN_NO_AUTOBUILD=1",
-            "--index <emitted-index-path> --root <same-root>",
+            "An ordinary query prepares the canonical project index",
+            "including when no index exists yet",
+            "--root <root>",
+            "--index <path>",
+            "--root <same-root>",
+            "If frozen mode reports a missing index",
+            "Never invoke that skill to repair an ordinary query",
             "symbol <name> --with-imports",
             "source-body implementation/runtime detail",
         )

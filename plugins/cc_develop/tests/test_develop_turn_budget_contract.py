@@ -175,7 +175,8 @@ def test_final_gate_reruns_in_full_after_any_fix(skill: str, start: str) -> None
 def test_batch_mode_union_run_uses_the_selector() -> None:
     """Batch mode's single union run is the selector's run, and its line-number references are gone."""
     batch = _read("_shared/batch-mode.md")
-    assert '`dev_test_targets.py --pytest-cmd "$PYTEST_CMD" --run` is that invocation' in batch
+    assert '`dev_test_targets.py --skill "$_SKILL" --run` is that invocation' in batch
+    assert 'dev_test_targets.py" --skill "$_SKILL" --run --record-dir "${DEV_DIR:-.developments}"' in batch
     assert re.search(r"SKILL\.md:\d+", batch) is None
 
 

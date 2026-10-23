@@ -75,7 +75,16 @@ def test_standard_batch_skills_are_the_documented_majority_choice() -> None:
 
     adaptive = sorted(skill for skill, selection in documented.items() if selection.startswith("adaptive"))
 
-    assert adaptive == ["implement", "investigate", "optimize"]
+    assert adaptive == ["challenge-resolve", "implement", "investigate", "optimize"]
+
+
+def test_challenge_resolve_prepares_structural_evidence_before_freezing_review() -> None:
+    """Prevent independent challenges from omitting unresolved Python caller and test scope."""
+    skill = (SKILLS_ROOT / "challenge-resolve" / "SKILL.md").read_text(encoding="utf-8")
+    assert "codemap_adapter.py context --category implementation --query-kind" in skill
+    assert "codemap-context.json" in skill
+    assert "Reuse still-current caller evidence" in skill
+    assert skill.index("codemap_adapter.py context") < skill.index("Before any remediation")
 
 
 def test_codemap_contract_caps_only_specialist_follow_ups_and_keeps_metadata_limits() -> None:
@@ -135,6 +144,48 @@ def test_python_scope_probe_is_required_in_change_producing_skills() -> None:
         assert code in contract
 
 
+def test_review_queries_verified_source_and_keeps_the_collected_diff() -> None:
+    """Reject invoking-checkout evidence when a collected review has a different source tree."""
+    invocation = _skills_invoking_adapter()["code-review"]
+    contract = CONTRACT_PATH.read_text(encoding="utf-8")
+
+    assert "--root <reviewed-source-root> --diff-file <run-directory>/diff.patch" in invocation
+    for receipt in ("local-checkout.json.worktree", "review-worktree.json", "review_worktree"):
+        assert receipt in invocation
+    assert "Never substitute the invoking checkout's index" in contract
+    assert "verified reviewed source root" in contract
+    assert "never nested review worktree" not in contract
+    assert "never the nested review worktree" not in invocation
+    assert "never re-runs adapter retroactively" in contract
+
+
+def test_automatic_provider_preparation_preserves_source_and_serial_ownership() -> None:
+    """Permit provider cache bootstrap without turning review into source editing or parallel index writes."""
+    contract = CONTRACT_PATH.read_text(encoding="utf-8")
+
+    for phrase in (
+        "parent runs the initial query serially",
+        "automatically creates or refreshes its own canonical index",
+        "working-tree bytes, including unstaged edits and eligible untracked files",
+        "Never stage or commit source",
+        "never mechanically invoke `scan-codebase`",
+        "SCAN_NO_AUTOBUILD=1",
+        "index writes are always serialized",
+    ):
+        assert phrase in contract
+
+
+def test_older_provider_failure_does_not_switch_review_source_or_retry_incompatibility() -> None:
+    """Keep missing-index and wrong-root outcomes honest when the provider lacks automatic preparation."""
+    contract = CONTRACT_PATH.read_text(encoding="utf-8")
+
+    assert "older provider" in contract
+    assert "missing-index" in contract
+    assert "Any residual `root_mismatch` stays `degraded`" in contract
+    assert "incompatible provider is never retried within same run" in contract
+    assert "Never substitute the invoking checkout's index" in contract
+
+
 def _load_adapter() -> ModuleType:
     """Load the shipped adapter by file path to read its public follow-up limits."""
     spec = importlib.util.spec_from_file_location(
@@ -147,3 +198,14 @@ def _load_adapter() -> ModuleType:
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def test_provider_degradation_requires_task_specific_coverage_recovery() -> None:
+    """Keep static-tool limitations factual without making them permanent review confidence gaps."""
+    contract = CONTRACT_PATH.read_text(encoding="utf-8")
+    recovery = (PLUGIN_ROOT / "shared" / "quality-gates.md").read_text(encoding="utf-8")
+    assert "inspect unmapped new files and relevant dynamic references directly" in contract
+    assert "Keep the provider artifact degraded" in contract
+    assert "a provider limitation alone is not an unresolved review obligation" in recovery
+    assert "a required fact remains unproved" in recovery
+    assert "Never claim exhaustive dynamic-call coverage" in recovery

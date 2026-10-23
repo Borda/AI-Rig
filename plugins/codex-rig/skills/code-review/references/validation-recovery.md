@@ -1,5 +1,7 @@
 # Reviewer validation recovery
 
+For `review-inspection-schedule-wait-invalid`, distinguish a real malformed wait from a host-rejected call that never executed. Current schedule validation admits a call with only the extra `target` argument when its matched receipt is the exact host unknown-field parse rejection and its next tool call is the canonical `wait_agent` retry with the same valid timeout. The rejected call supplies no scheduling opportunity or reviewer coverage; real waits, launch order, context delivery, joins and every required pass still need normal proof. Preserve both calls and outputs unchanged and reassemble authentic evidence with the compatible validator. A corrected reader can admit previously rejected valid provenance without rewriting history; an executed malformed wait, missing or changed retry, unknown error, denial or actual schedule mismatch remains rejected. Finish remaining authorized passes and producer completion rather than treating this deterministic admission defect as permanently missing independent coverage.
+
 For `review-inspection-dispatch-order-mismatch`:
 
 1. Compare the generated queue and actual first-spawn order, preserve the rejected wave, and revalidate the retained source receipts. Historical launch order cannot be repaired by rewriting dispatch or provenance; this is not a supported `prepare-repair` kind.

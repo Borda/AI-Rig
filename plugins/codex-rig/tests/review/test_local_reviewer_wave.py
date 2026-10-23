@@ -1976,6 +1976,39 @@ def test_run_review_classifies_rejected_event_without_retaining_its_content(
     assert secret not in evidence_text
 
 
+@pytest.mark.parametrize("case", ["valid", "missing-metadata", "other-turn", "extra-field"])
+def test_run_review_accepts_only_turn_bound_moderation_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    """Ignore documented moderation metadata without accepting malformed or cross-turn events or retaining payloads."""
+    plan_path, _ = review_evidence_files(tmp_path)
+    launches = _launches_for_plan(plan_path)
+    first_final = next(index for index, frame in enumerate(launches[1]) if frame.get("method") == "item/completed")
+    metadata_text = "private-metadata-not-for-evidence"
+    params = {"threadId": "thread-0", "turnId": "turn-0", "metadata": {"opaque": metadata_text}}
+    if case == "missing-metadata":
+        del params["metadata"]
+    elif case == "other-turn":
+        params["turnId"] = "other-turn"
+    elif case == "extra-field":
+        params["command"] = metadata_text
+    launches[1].insert(first_final, {"jsonrpc": "2.0", "method": "turn/moderationMetadata", "params": params})
+    _fake_public_processes(monkeypatch, launches)
+
+    if case == "valid":
+        evidence_path = _adapter().run_review(plan_path, tmp_path / "review-output", Path("codex"), 10)
+    else:
+        error = (
+            "app-server-thread-or-turn-mismatch"
+            if case == "other-turn"
+            else "app-server-moderation-notification-invalid"
+        )
+        with pytest.raises(_adapter().ReviewRouteError, match=error):
+            _adapter().run_review(plan_path, tmp_path / "review-output", Path("codex"), 10)
+        evidence_path = tmp_path / "review-output/evidence.json"
+    assert metadata_text not in evidence_path.read_text(encoding="utf-8")
+
+
 def test_run_review_accepts_schema_planning_events_bound_to_active_turn(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

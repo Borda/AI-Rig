@@ -62,10 +62,28 @@ def test_baseline_ask_still_happens(section_start: str, section_end: str, marker
     assert "AskUserQuestion" in section
 
 
-def test_codemap_gate_still_asks() -> None:
-    """The codemap index gate is delegated to the shared contract, which must still ask before building."""
+def test_codemap_gate_asks_only_for_the_lazy_preference() -> None:
+    """Gate A prepares by default and retains a confirm-first question only when requested."""
     assert 'cat "$_OSS_SHARED/codemap-gates.md"' in _skill()
-    assert "Gate A always asks (`AskUserQuestion`)" in (_SHARED / "codemap-gates.md").read_text(encoding="utf-8")
+    gates = (_SHARED / "codemap-gates.md").read_text(encoding="utf-8")
+    assert "Gate A prepares automatically by default" in gates
+    assert "`LAZY_CODEMAP` is the explicit confirm-first preference" in gates
+    assert "SCAN_NO_AUTOBUILD=1" in gates
+    assert "detect_codemap.py --prefix <current-skill> --force-off" in gates
+
+
+def test_review_preflight_reloads_gate_state_and_freezes_stale_queries() -> None:
+    """The review query block sees persisted gate decisions before running any batch."""
+    context = (_REVIEW / "modes" / "codemap-context.md").read_text(encoding="utf-8")
+    assert 'IFS= read -r CODEMAP_ENABLED  2>/dev/null < "${TMPDIR:-/tmp}/review-codemap-enabled-${CSID}"' in context
+    assert 'IFS= read -r CODEMAP_CURRENCY  2>/dev/null < "${TMPDIR:-/tmp}/review-codemap-currency-${CSID}"' in context
+    assert '[ "$CODEMAP_ENABLED" = "true" ] && command -v codemap-py' in context
+    assert '[ -f "${_IDX}/${PROJ}.json" ]' not in context
+    query_lines = [
+        line for line in context.splitlines() if "codemap-py query" in line and not line.lstrip().startswith("#")
+    ]
+    assert query_lines
+    assert all("$_CODEMAP_NO_HEAL" in line for line in query_lines)
 
 
 class TestNoPolling:

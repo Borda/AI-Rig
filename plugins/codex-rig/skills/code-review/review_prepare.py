@@ -75,7 +75,7 @@ if str(SHARED_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(SHARED_DIRECTORY))
 import collect_diff  # noqa: E402
 
-#: Largest unbatched review context, in bytes, before preparation fails with a capacity error.
+#: Historical ordinary and challenge context ceiling; new oversized ordinary contexts use bounded batches.
 MAX_REVIEW_CONTEXT_BYTES = 262144
 
 
@@ -328,6 +328,11 @@ def prepare(
 ) -> dict[str, Any]:
     """Freeze all selected reviewers together and emit small, exact native dispatch arguments."""
     out = out.resolve()
+    ordinary_frozen = any((out / name).exists() for name in ("inspection-plan.json", "dispatch.json"))
+    batches_frozen = any((out / name).exists() for name in ("batch-inventory.json", "batch-dispatch.json"))
+    if ordinary_frozen and (batches or batches_frozen):
+        raise ValueError("review-preparation-route-conflict")
+    batches = batches or batches_frozen
     if not run_id.strip() or not parent_thread_id.strip():
         raise ValueError("review-identity-empty")
     if challenge_only and batches:
@@ -474,9 +479,6 @@ def prepare(
                 b"with unavailable prerequisite, owner, next check and closure condition. Feasible unperformed checks mean incomplete. "
                 b"Use null only for a returned but undecidable assessment with blocked readiness, never for a missing response.\n"
             )
-        # The page reader transports larger contexts without dropping source; cap total work at 256 KiB.
-        if not batches and len(context) > MAX_REVIEW_CONTEXT_BYTES:
-            raise ValueError(f"review-context-capacity-exceeded:{role}:{MAX_REVIEW_CONTEXT_BYTES}-bytes")
         if any(pattern.search(context.decode("utf-8")) for pattern in validator._SECRET_PATTERNS):
             raise ValueError(f"review-context-sensitive-material:{role}")
         context_path = f"specialists/{role}-context.md"
@@ -490,6 +492,28 @@ def prepare(
             }
         )
         cards[role] = validator._load_role_card(validator.PLUGIN_ROOT / "roles", role)
+    if not batches:
+        oversized = any(
+            len(files[out / entry["context_path"]]) > review_batches.CONTEXT_LIMIT for entry in plan["contexts"]
+        )
+        if oversized and not challenge_only and not ordinary_frozen:
+            # Validate every role before selecting a route, then rebuild once with the canonical batch template.
+            # No context has been frozen, and batches=True makes this re-entry bounded and repeatable.
+            return prepare(
+                out,
+                run_id,
+                parent_thread_id,
+                source_root,
+                expected_head,
+                expected_diff_base,
+                scope_path,
+                batches=True,
+            )
+        for entry in plan["contexts"]:
+            if len(files[out / entry["context_path"]]) > MAX_REVIEW_CONTEXT_BYTES:
+                raise ValueError(
+                    f"review-context-capacity-exceeded:{entry['role_id']}:{MAX_REVIEW_CONTEXT_BYTES}-bytes"
+                )
     if batches:
         plan["review_topology"] = "source-only"
         return review_batches.prepare_source_batches(
@@ -1094,11 +1118,13 @@ def main() -> int:
                 args.batches,
                 args.challenge_only,
             )
+            batched = result.get("mode") == "serial-waves"
+            calls = [call for wave in result["waves"] for call in wave["calls"]] if batched else result["calls"]
             print(
                 json.dumps(
                     {
-                        "dispatch_path": str(args.out / ("batch-dispatch.json" if args.batches else "dispatch.json")),
-                        "roles": len(result.get("calls", [])),
+                        "dispatch_path": str(args.out / ("batch-dispatch.json" if batched else "dispatch.json")),
+                        "roles": len({call["role"] for call in calls}),
                         "context_bytes": result["context_bytes"],
                         "dispatch_bytes": result["dispatch_bytes"],
                     }

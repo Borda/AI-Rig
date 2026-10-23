@@ -9,6 +9,9 @@ that leaves the no-batch path untouched.
 from __future__ import annotations
 
 import re
+import shlex
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -72,7 +75,8 @@ _FENCE_LOCAL_SAFE_VARS = frozenset(
     }
 )
 _ASSIGN_RE = re.compile(r"^[ \t]*(?:export[ \t]+)?([A-Za-z_][A-Za-z0-9_]*)=")
-_READ_RE = re.compile(r"^[ \t]*IFS=\s*read\s+-r\s+([A-Za-z_][A-Za-z0-9_]*)\s*<")
+# The variable is assigned by read itself; shell redirections can follow it in either order.
+_READ_RE = re.compile(r"^[ \t]*IFS=\s*read\s+-r\s+([A-Za-z_][A-Za-z0-9_]*)(?=\s|<|$)")
 # `while IFS= read -r VAR; do` (reading a piped stream, not a sentinel file — no trailing `<`). Not
 # anchored to line start: the common shape is `VAR=$(... | while IFS= read -r _x; do`.
 _WHILE_READ_RE = re.compile(r"while\s+IFS=\s*read\s+-r\s+([A-Za-z_][A-Za-z0-9_]*)\b")
@@ -175,6 +179,37 @@ def _fence_unassigned_var_refs(fence_body: str) -> set[str]:
             if assign_match := _ASSIGN_RE.match(anchor_segment):
                 available.add(assign_match.group(1))
     return violations
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(shutil.which("bash") is None, reason="read-redirection semantics require Bash")
+@pytest.mark.parametrize("redirects", ['< "$INPUT_FILE" 2>/dev/null', '2>/dev/null < "$INPUT_FILE"'])
+def test_fence_checker_recognizes_shell_read_redirect_orders(tmp_path: Path, redirects: str) -> None:
+    """A real successful read establishes the value regardless of stderr/stdin redirection order."""
+    sentinel = tmp_path / "input state"
+    sentinel.write_text("resolved\n", encoding="utf-8", newline="\n")
+    block = (
+        f'INPUT_FILE={shlex.quote(sentinel.as_posix())}\nIFS= read -r RESOLVED {redirects}\nprintf "%s" "$RESOLVED"\n'
+    )
+    completed = subprocess.run([shutil.which("bash"), "-c", block], capture_output=True, text=True, check=False)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout == "resolved"
+    assert _fence_unassigned_var_refs(block) == set()
+
+
+@pytest.mark.parametrize(
+    ("block", "unassigned"),
+    [
+        pytest.param('IFS= read -r OTHER 2>/dev/null < input\necho "$MISSING"', "MISSING", id="unread-variable"),
+        pytest.param('echo "$LATER"\nIFS= read -r LATER 2>/dev/null < input', "LATER", id="reference-before-read"),
+        pytest.param(
+            'IFS= read -r VALUE_SUFFIX 2>/dev/null < input\necho "$VALUE"', "VALUE", id="distinct-name-prefix"
+        ),
+    ],
+)
+def test_fence_checker_still_rejects_unassigned_references(block: str, unassigned: str) -> None:
+    """Recognizing redirected reads must not exempt unrelated or not-yet-initialized variables."""
+    assert _fence_unassigned_var_refs(block) == {unassigned}
 
 
 class TestBatchModeDesign:

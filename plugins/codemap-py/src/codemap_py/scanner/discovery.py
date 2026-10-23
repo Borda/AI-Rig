@@ -4,16 +4,17 @@ from __future__ import annotations
 
 import fnmatch
 import functools
+import hashlib
+import json
 import os
 import re
 import subprocess
-import sys
 from pathlib import Path
 
-from codemap_py.schema import EntityType
+from codemap_py.schema import SCAN_VERSION, EntityType
 
-from .docs_xrefs import _iter_doc_files
-from .exclusions import INDEXED_PATHSPEC, SKIP_DIRS, Exclusions, _load_exclusions, _match_exclusion
+from .docs_xrefs import _iter_config_files, _iter_doc_files, _raise_walk_error
+from .exclusions import SKIP_DIRS, Exclusions, _load_exclusions, _match_exclusion
 
 #: Matches posix paths that denote test code (tests directories, test_*.py, *_test.py, conftest.py).
 _TEST_PATH_RE = re.compile(r"(^|/)tests?/|/test_[^/]+\.py$|/[^/]+_test\.py$|/conftest\.py$")
@@ -58,7 +59,7 @@ def _iter_python_files(root: Path, exclusions: Exclusions | None = None) -> tupl
     skip_dirs = SKIP_DIRS | exclusions.dirs
     counts: dict[str, int] = {}
     result: list[Path] = []
-    for dirpath, dirnames, filenames in os.walk(root, topdown=True):
+    for dirpath, dirnames, filenames in os.walk(root, topdown=True, onerror=_raise_walk_error):
         pruned = [d for d in dirnames if d in exclusions.dirs]
         for d in pruned:
             counts[d] = counts.get(d, 0) + _count_py_files(Path(dirpath) / d)
@@ -171,86 +172,78 @@ def get_git_sha(root: Path) -> str | None:
         return None
 
 
-def _git_file_hashes(root: Path, exclusions: Exclusions) -> dict[str, str]:
-    """Return git blob SHAs for all tracked ``.py``/``.pyi``/``.rst``/``docs/**/*.md`` files.
+def _working_tree_file_hashes(root: Path, exclusions: Exclusions, algorithm: str, *, git_blob: bool) -> dict[str, str]:
+    """Hash the actual source and documentation bytes the scanner discovers.
 
-    Hashes Python sources (implementation ``.py`` and ``.pyi`` stubs) plus documentation
-    files that participate in v4.5 xref scanning. ``.pyi`` joins the hash set so a stub
-    edit invalidates the index like any source change. Markdown files outside
-    ``docs/`` are excluded — README.md and other top-level notes do not feed mkdocstrings
-    autorefs, so adding them would cause spurious incremental rebuilds.
-
-    Args:
-        root: repository root used as cwd.
-        exclusions: paths matching these are dropped so git-tracked-but-excluded files
-            (e.g. a vendored copy named in ``.codemapignore``) never enter the index.
+    Read failures propagate rather than publishing an incomplete map that looks like deleted files. Git blob headers
+    preserve the hashes of unchanged legacy indexes while unstaged and untracked inputs now participate equally.
     """
-    output = subprocess.check_output(  # noqa: S603 - argv list, no shell; tool resolved via PATH on purpose
-        ["git", "ls-files", "-s", "-z", "--", *INDEXED_PATHSPEC],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
+    py_files, _counts = _iter_python_files(root, exclusions)
+    rst_files, md_files = _iter_doc_files(root)
+    # Python discovery applies module exclusions. Documentation and configuration collectors still consume excluded
+    # paths, so their bytes must remain in the fingerprint to keep incremental results equal to a full scan.
+    config_files = set(_iter_config_files(root))
+    ignore_file = root / ".codemapignore"
+    if ignore_file.exists():
+        config_files.add(ignore_file)
+    hashes: dict[str, str] = {}
+    for path in sorted({*py_files, *rst_files, *md_files, *config_files}):
+        rel = path.relative_to(root).as_posix()
+        content = path.read_bytes()
+        digest = hashlib.new(algorithm, usedforsecurity=False)
+        if git_blob:
+            digest.update(f"blob {len(content)}\0".encode("ascii"))
+        digest.update(content)
+        hashes[rel] = digest.hexdigest()
+    return hashes
+
+
+def _git_file_hashes(root: Path, exclusions: Exclusions) -> dict[str, str]:
+    """Return Git-compatible blob hashes of discovered working-tree source/doc bytes."""
+    algorithm = subprocess.check_output(
+        ["git", "rev-parse", "--show-object-format"],  # noqa: S607 - explicit argv, Git intentionally resolved via PATH
         cwd=str(root),
         stderr=subprocess.DEVNULL,
+        text=True,
         timeout=_GIT_TIMEOUT_S,
-    )
-    hashes: dict[str, str] = {}
-    for entry in output.split(b"\0"):
-        line = entry.decode("utf-8", errors="replace").strip()
-        if not line:
-            continue
-        tab_idx = line.index("\t")
-        rel_path = line[tab_idx + 1 :]
-        if _match_exclusion(rel_path, exclusions) is not None:
-            continue
-        sha = line.split()[1]
-        hashes[rel_path] = sha
-    return hashes
+    ).strip()
+    if algorithm not in {"sha1", "sha256"}:
+        raise ValueError(f"Unsupported Git object format: {algorithm!r}")
+    return _working_tree_file_hashes(root, exclusions, algorithm, git_blob=True)
 
 
 def _md5_file_hashes(root: Path, exclusions: Exclusions) -> dict[str, str]:
-    """Return MD5 digests for ``.py``/``.rst``/``docs/**/*.md`` files (non-git fallback).
-
-    Args:
-        root: directory to search recursively.
-        exclusions: dir-name/glob exclusions applied to both ``.py`` and doc files.
-    """
-    import hashlib
-
-    hashes: dict[str, str] = {}
-    py_files, _counts = _iter_python_files(root, exclusions)
-    for py_file in py_files:
-        try:
-            hashes[py_file.relative_to(root).as_posix()] = hashlib.md5(
-                py_file.read_bytes(), usedforsecurity=False
-            ).hexdigest()
-        except OSError as exc:
-            print(f"[codemap] ⚠ could not hash {py_file}: {exc} — treating as unchanged", file=sys.stderr)
-    rst_files, md_files = _iter_doc_files(root)
-    for doc_file in rst_files + md_files:
-        rel = doc_file.relative_to(root).as_posix()
-        if _match_exclusion(rel, exclusions) is not None:
-            continue
-        try:
-            hashes[rel] = hashlib.md5(doc_file.read_bytes(), usedforsecurity=False).hexdigest()
-        except OSError as exc:
-            print(f"[codemap] ⚠ could not hash {doc_file}: {exc} — treating as unchanged", file=sys.stderr)
-    return hashes
+    """Keep legacy non-Git digests while hashing the same discovered working-tree inputs."""
+    return _working_tree_file_hashes(root, exclusions, "md5", git_blob=False)
 
 
 def get_file_hashes(root: Path, exclusions: Exclusions | None = None) -> dict[str, str]:
-    """Git blob SHAs for tracked source/doc files; falls back to MD5 for non-git projects.
+    """Hash discovered source/doc bytes, including unstaged edits, additions and deletions.
 
-    Includes ``.py``, ``.rst``, and ``docs/**/*.md`` so doc-only edits invalidate
-    the index and trigger a re-scan of the xref tables.
-
-    Args:
-        root: project root path.
-        exclusions: dir-name/glob exclusions; excluded paths are omitted so the hash
-            set stays consistent with the walked module list. ``None`` = no extra exclusions.
+    Git projects retain compatible blob digests, non-Git projects retain their existing MD5 digests. An empty map is
+    a successful empty discovery. Repository probe or file-read failures propagate so callers cannot mistake them
+    for freshness or delete valid indexed nodes on incomplete evidence.
     """
+    if not root.is_dir():
+        raise FileNotFoundError(f"Source root is not a directory: {root}")
     exclusions = exclusions or Exclusions(frozenset(), (), {})
     try:
         return _git_file_hashes(root, exclusions)
-    except Exception:
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        if any((parent / ".git").exists() for parent in (root, *root.parents)):
+            raise
         return _md5_file_hashes(root, exclusions)
+
+
+def fingerprint_file_hashes(file_hashes: dict[str, str]) -> str:
+    """Summarize source hashes and scanner schema for inexpensive published-header freshness checks.
+
+    Coverage timestamps describe optional annotations rather than scanner source input and deliberately do not affect
+    this fingerprint. Sorting and JSON encoding make Unicode paths and mapping insertion order deterministic.
+    """
+    sources = {path: digest for path, digest in file_hashes.items() if path != "__coverage_mtime__"}
+    payload = json.dumps([SCAN_VERSION, sources], sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
 
 
 def _detect_src_root_from_config(root: Path) -> Path | None:
@@ -305,7 +298,7 @@ def _detect_src_root_from_init(root: Path) -> Path | None:
     exclusions = _load_exclusions(root)
     skip_dirs = SKIP_DIRS | exclusions.dirs
     source_roots: set[Path] = set()
-    for dirpath, dirnames, filenames in os.walk(root, topdown=True):
+    for dirpath, dirnames, filenames in os.walk(root, topdown=True, onerror=_raise_walk_error):
         dirnames[:] = [d for d in dirnames if d not in skip_dirs and not d.startswith(".")]
         present = [name for name in _INIT_NAMES if name in filenames]
         if not present:
