@@ -1,5 +1,52 @@
 {
   "_comment": "Cross-language contract vectors. Consumed by test_build_blueprint_manifest.py (Python: build_blueprint_manifest) and test_blueprint_allow_js.py (JS: hooks/blueprint-allow.js). Both suites must run every array; a vector added here must pass in both languages or the manifest hash space has diverged.",
+  "aliases_escaped_blank": [
+    {
+      "expected": true,
+      "id": "backslash-space-line-end",
+      "input": "ls \\ \necho x"
+    },
+    {
+      "expected": true,
+      "id": "backslash-tab-line-end",
+      "input": "ls \\\t\necho x"
+    },
+    {
+      "expected": true,
+      "id": "continuation-into-variable-word",
+      "input": "printf '%s\\n' \\ \n  \"$PARTIAL_A\""
+    },
+    {
+      "expected": true,
+      "id": "odd-backslash-run-then-space",
+      "input": "ls \\\\\\ \necho x"
+    },
+    {
+      "expected": false,
+      "id": "real-continuation",
+      "input": "ls \\\necho x"
+    },
+    {
+      "expected": false,
+      "id": "escaped-backslash-then-space",
+      "input": "ls \\\\ \necho x"
+    },
+    {
+      "expected": true,
+      "id": "escaped-blank-before-hash",
+      "input": "echo a\\ #b"
+    },
+    {
+      "expected": false,
+      "id": "escaped-backslash-before-comment",
+      "input": "echo a\\\\ #note"
+    },
+    {
+      "expected": false,
+      "id": "plain-comment",
+      "input": "echo a  # note\necho b   "
+    }
+  ],
   "is_dangerous": [
     {
       "expected": false,
@@ -127,8 +174,8 @@
       "input": "eval rm -rf /"
     },
     {
-      "expected": false,
-      "id": "eval-safe-argument",
+      "expected": true,
+      "id": "eval-denied-by-name",
       "input": "eval echo hi"
     },
     {
@@ -472,8 +519,8 @@
       "input": "poetry run rm -rf build"
     },
     {
-      "expected": false,
-      "id": "hash-lookup-only-is-safe",
+      "expected": true,
+      "id": "hash-lookup-denied-by-name",
       "input": "hash uv 2>/dev/null"
     },
     {
@@ -487,8 +534,8 @@
       "input": "hash -rp /bin/rm ruff; ruff -rf x"
     },
     {
-      "expected": false,
-      "id": "hash-reset-is-safe",
+      "expected": true,
+      "id": "hash-reset-denied-by-name",
       "input": "hash -r"
     },
     {
@@ -517,8 +564,8 @@
       "input": "read -A commands <<< 'ruff /bin/rm'; ruff -rf x"
     },
     {
-      "expected": false,
-      "id": "commands-table-read-is-safe",
+      "expected": true,
+      "id": "commands-table-read-denied-by-name",
       "input": "printf '%s\\n' \"${commands[cat]}\""
     },
     {
@@ -527,19 +574,619 @@
       "input": ": \"${commands[$(set -A commands ls /bin/echo; ls x)]}\""
     },
     {
-      "expected": false,
-      "id": "commands-table-variable-subscript-read-is-safe",
+      "expected": true,
+      "id": "commands-table-variable-subscript-read-denied-by-name",
       "input": "echo \"${commands[$tool]}\""
     },
     {
-      "expected": false,
-      "id": "commands-table-presence-check-is-safe",
+      "expected": true,
+      "id": "commands-table-presence-check-denied-by-name",
       "input": "[ -n \"${+commands[uv]}\" ] && echo yes"
     },
     {
       "expected": false,
       "id": "uv-run-allowlisted-tool-is-safe",
       "input": "uv run pytest -q tests"
+    },
+    {
+      "expected": true,
+      "id": "set-attached-array-option-writes-commands-table",
+      "input": "set -Acommands ruff /bin/echo; ruff PROBE"
+    },
+    {
+      "expected": true,
+      "id": "set-array-with-expansion-name",
+      "input": "set -A $n ruff /bin/rm; ruff -rf x"
+    },
+    {
+      "expected": true,
+      "id": "set-plus-array-option",
+      "input": "set +A commands ruff /bin/rm"
+    },
+    {
+      "expected": true,
+      "id": "builtin-double-dash-hash-rebinds-name",
+      "input": "builtin -- hash -p /bin/echo probe"
+    },
+    {
+      "expected": true,
+      "id": "builtin-builtin-hash-rebinds-name",
+      "input": "builtin builtin hash -p /bin/echo probe"
+    },
+    {
+      "expected": true,
+      "id": "command-prefix-hash-rebinds-name",
+      "input": "command hash -p /bin/rm ruff; ruff -rf x"
+    },
+    {
+      "expected": true,
+      "id": "noglob-prefix-hash-rebinds-name",
+      "input": "noglob hash -p /bin/rm ruff; ruff -rf x"
+    },
+    {
+      "expected": true,
+      "id": "enable-loads-builtin",
+      "input": "enable -f ./x.so hash"
+    },
+    {
+      "expected": true,
+      "id": "alias-rebinds-name",
+      "input": "alias ruff='rm -rf'; ruff x"
+    },
+    {
+      "expected": true,
+      "id": "zsh-functions-table-defines-function",
+      "input": "functions[ruff]='rm -rf x'; ruff"
+    },
+    {
+      "expected": true,
+      "id": "bash-aliases-table-write",
+      "input": "BASH_ALIASES[ruff]=rm"
+    },
+    {
+      "expected": true,
+      "id": "typeset-attached-associative-option",
+      "input": "typeset -Acommands"
+    },
+    {
+      "expected": true,
+      "id": "printf-attached-v-writes-bash-cmds",
+      "input": "printf -vBASH_CMDS[ruff] %s /bin/rm"
+    },
+    {
+      "expected": true,
+      "id": "printf-v-with-expansion-name",
+      "input": "printf -v \"$n\" %s /bin/rm"
+    },
+    {
+      "expected": true,
+      "id": "zsh-print-v-assigns-variable",
+      "input": "print -rv \"$n\" /bin/rm"
+    },
+    {
+      "expected": true,
+      "id": "read-into-expansion-name",
+      "input": "read -r \"$n\" <<< /bin/rm"
+    },
+    {
+      "expected": true,
+      "id": "bash-read-array-option",
+      "input": "read -a \"$n\" <<< 'x y'"
+    },
+    {
+      "expected": true,
+      "id": "declare-name-reference",
+      "input": "declare -n ref=$n; ref[ruff]=/bin/rm"
+    },
+    {
+      "expected": true,
+      "id": "typeset-expansion-built-name",
+      "input": "typeset \"$n=/bin/rm\""
+    },
+    {
+      "expected": true,
+      "id": "zsh-indirect-expansion-assigns",
+      "input": ": ${(P)n::=/bin/rm}"
+    },
+    {
+      "expected": true,
+      "id": "bash-indirect-expansion",
+      "input": "echo \"${!n}\""
+    },
+    {
+      "expected": true,
+      "id": "backslash-escaped-head",
+      "input": "\\rm -rf x"
+    },
+    {
+      "expected": true,
+      "id": "quote-split-head",
+      "input": "r\"\"m -rf x"
+    },
+    {
+      "expected": true,
+      "id": "zsh-noglob-precommand-modifier",
+      "input": "noglob rm -rf x"
+    },
+    {
+      "expected": true,
+      "id": "zsh-dash-precommand-modifier",
+      "input": "- rm -rf x"
+    },
+    {
+      "expected": false,
+      "id": "command-v-lookup-is-safe",
+      "input": "command -v uv >/dev/null 2>&1"
+    },
+    {
+      "expected": false,
+      "id": "commands-path-segment-is-safe",
+      "input": "ls docs/commands.md .claude/commands/x.md"
+    },
+    {
+      "expected": false,
+      "id": "commands-word-in-prose-is-safe",
+      "input": "echo \"needs the real metric and guard commands.\""
+    },
+    {
+      "expected": false,
+      "id": "set-shell-options-are-safe",
+      "input": "set -euo pipefail"
+    },
+    {
+      "expected": false,
+      "id": "set-allexport-is-safe",
+      "input": "set -a"
+    },
+    {
+      "expected": false,
+      "id": "sentinel-read-is-safe",
+      "input": "IFS= read -r RUN_DIR < \"${TMPDIR:-/tmp}/r-${CSID}\" 2>/dev/null || RUN_DIR=\"\""
+    },
+    {
+      "expected": false,
+      "id": "printf-format-mentioning-v-is-safe",
+      "input": "printf '%s -v\\n' \"$X\""
+    },
+    {
+      "expected": false,
+      "id": "local-literal-name-is-safe",
+      "input": "local x=\"$1\""
+    },
+    {
+      "expected": false,
+      "id": "source-state-file-is-safe",
+      "input": ". \"${TMPDIR:-/tmp}/flags-${CSID}\""
+    },
+    {
+      "expected": true,
+      "id": "table-name-split-by-quotes-denied",
+      "input": "typeset \"co\"\"mmands[ruff]=/bin/echo\"; ruff PROBE"
+    },
+    {
+      "expected": true,
+      "id": "set-array-option-after-option-argument",
+      "input": "set -o noglob -A \"$n\" ruff /bin/echo; ruff PROBE"
+    },
+    {
+      "expected": true,
+      "id": "shell-c-string-judged-as-command",
+      "input": "zsh -c 'set -A \"$n\" ruff /bin/echo; ruff PROBE'"
+    },
+    {
+      "expected": true,
+      "id": "shell-c-string-with-glued-separator",
+      "input": "sudo zsh -ec 'x=1;set -A \"$n\" ruff /bin/echo'"
+    },
+    {
+      "expected": true,
+      "id": "leading-redirection-before-command",
+      "input": "2>/dev/null set -A \"$n\" ruff /bin/echo"
+    },
+    {
+      "expected": true,
+      "id": "bare-redirection-before-command",
+      "input": "> /dev/null set -A \"$n\" ruff /bin/echo"
+    },
+    {
+      "expected": true,
+      "id": "wrapper-argument-before-carried-command",
+      "input": "timeout 5 set -A \"$n\" ruff /bin/echo"
+    },
+    {
+      "expected": true,
+      "id": "read-array-after-option-argument",
+      "input": "read -r -t 5 -a arr"
+    },
+    {
+      "expected": true,
+      "id": "print-variable-after-value-option",
+      "input": "print -u 2 -v \"$n\" /bin/echo"
+    },
+    {
+      "expected": false,
+      "id": "printf-argument-mentioning-v-is-safe",
+      "input": "printf \"  Python: %s\\n\" \"$(python --version 2>&1)\""
+    },
+    {
+      "expected": false,
+      "id": "printf-long-option-text-is-safe",
+      "input": "printf \"! --approve requires git repository\\n\""
+    },
+    {
+      "expected": false,
+      "id": "shell-c-lone-variable-left-to-allowlist",
+      "input": "bash -c \"$METRIC_CMD\""
+    },
+    {
+      "expected": false,
+      "id": "redirection-before-safe-command",
+      "input": "2>/dev/null git status --short"
+    },
+    {
+      "expected": true,
+      "id": "escaped-option-dash-read-as-option",
+      "input": "printf \\-v \"$n[ruff]\" %s /bin/echo; ruff PROBE"
+    },
+    {
+      "expected": true,
+      "id": "escaped-array-option-read-as-option",
+      "input": "set \\-A \"$n\" ruff /bin/echo"
+    },
+    {
+      "expected": true,
+      "id": "redirection-before-printf-option-dropped",
+      "input": "printf 2>/dev/null -v \"$n[ruff]\" %s /bin/echo"
+    },
+    {
+      "expected": true,
+      "id": "quoted-redirection-target-kept-whole",
+      "input": "2>\"a echo\" set -A \"$n\" ruff /bin/echo"
+    },
+    {
+      "expected": true,
+      "id": "redirection-glued-to-command-word",
+      "input": "hash>/dev/null -p /bin/echo ruff"
+    },
+    {
+      "expected": true,
+      "id": "print-quoted-format-consumed-whole",
+      "input": "print -f '%s %s' -v \"$n\" /bin/echo"
+    },
+    {
+      "expected": true,
+      "id": "shell-c-after-option-value",
+      "input": "command -- zsh -o shwordsplit -c 'x=1;set -A \"$n\" ruff /bin/echo'"
+    },
+    {
+      "expected": true,
+      "id": "ansi-c-quoting-joins-command-word",
+      "input": "h$'a'sh -p /bin/echo ruff"
+    },
+    {
+      "expected": true,
+      "id": "ansi-c-hex-escape-joins-command-word",
+      "input": "h$'\\x61'sh -p /bin/echo ruff"
+    },
+    {
+      "expected": true,
+      "id": "backslash-newline-joins-command-word",
+      "input": "ha\\\nsh -p /bin/echo ruff"
+    },
+    {
+      "expected": true,
+      "id": "ansi-c-quoting-joins-table-name",
+      "input": "typeset BASH_C$''MDS[ruff]=/bin/echo"
+    },
+    {
+      "expected": true,
+      "id": "glob-command-word-can-match-refused-name",
+      "input": "/bin/r? -rf x"
+    },
+    {
+      "expected": true,
+      "id": "brace-expansion-command-word",
+      "input": "{ha,}sh -p /bin/echo ruff"
+    },
+    {
+      "expected": true,
+      "id": "env-split-string-judged-as-command",
+      "input": "env -S 'hash -p /bin/echo ruff'"
+    },
+    {
+      "expected": true,
+      "id": "trap-action-judged-as-command",
+      "input": "trap 'rm -f \"$tmp\"' EXIT"
+    },
+    {
+      "expected": false,
+      "id": "case-alternative-pattern-is-safe",
+      "input": "case $x in tox*|\"make test\") echo hi;; esac"
+    },
+    {
+      "expected": false,
+      "id": "grep-pattern-argument-not-judged-as-command",
+      "input": "xargs -0 -r grep -Hn \"a\\|b\""
+    },
+    {
+      "expected": false,
+      "id": "array-assignment-before-command-is-safe",
+      "input": "ARGS=(--output \"$F\") && echo hi"
+    },
+    {
+      "expected": false,
+      "id": "out-of-order-class-in-command-word-is-safe",
+      "input": "[YYYY-MM-DD] x"
+    },
+    {
+      "expected": true,
+      "id": "redirect-ampersand-keeps-printf-v",
+      "input": "n=BASH_C; n+=MDS; printf 2>&1 -v \"$n[ruff]\" %s /bin/echo; ruff PROBE"
+    },
+    {
+      "expected": true,
+      "id": "ansi-c-escaped-quote-keeps-tail",
+      "input": "echo $'\\''; hash -p /bin/echo ruff; ruff PROBE"
+    },
+    {
+      "expected": true,
+      "id": "ansi-c-octal-nul-in-table-name",
+      "input": "typeset BASH_C$'\\0'MDS[ruff]=/bin/echo; ruff PROBE"
+    },
+    {
+      "expected": true,
+      "id": "ansi-c-hex-nul-in-table-name",
+      "input": "typeset BASH_C$'\\x00'MDS[ruff]=/bin/echo; ruff PROBE"
+    },
+    {
+      "expected": true,
+      "id": "ansi-c-unicode-nul-in-table-name",
+      "input": "typeset BASH_C$'\\u0000'MDS[ruff]=/bin/echo; ruff PROBE"
+    },
+    {
+      "expected": true,
+      "id": "ansi-c-control-nul-in-table-name",
+      "input": "typeset BASH_C$'\\c@'MDS[ruff]=/bin/echo; ruff PROBE"
+    },
+    {
+      "expected": true,
+      "id": "pattern-behind-wrapper",
+      "input": "command h[a]sh -p /bin/echo ruff"
+    },
+    {
+      "expected": true,
+      "id": "fd-allocation-redirect-before-command",
+      "input": "{fd}>/dev/null set -A \"$n\" ruff /bin/echo"
+    },
+    {
+      "expected": true,
+      "id": "unclosed-quote-refused",
+      "input": "echo 'a; rm -rf x"
+    },
+    {
+      "expected": false,
+      "id": "quoted-paren-in-substitution-is-safe",
+      "input": "X=$(jq -r '\"\\(.a)|x\"' f); echo \"$X\""
+    },
+    {
+      "expected": false,
+      "id": "redirect-ampersand-is-safe",
+      "input": "echo hi >/dev/null 2>&1 && echo ok"
+    },
+    {
+      "expected": true,
+      "id": "ansi-c-opener-across-continuation",
+      "input": "echo $\\\n'\\''; hash -p /bin/echo ruff; ruff PROBE"
+    },
+    {
+      "expected": true,
+      "id": "ansi-c-octal-above-byte",
+      "input": "typeset BASH_C$'\\400'MDS[ruff]=/bin/echo; ruff PROBE"
+    },
+    {
+      "expected": true,
+      "id": "ansi-c-unknown-escape-in-table-name",
+      "input": "typeset co$'\\m'mands[ruff]=/bin/echo; ruff PROBE"
+    },
+    {
+      "expected": true,
+      "id": "ansi-c-unicode-escape-unsettled",
+      "input": "typeset BASH_C$'\\u004d'DS[ruff]=/bin/echo; ruff PROBE"
+    },
+    {
+      "expected": true,
+      "id": "ansi-c-control-escape-unsettled",
+      "input": "echo $'\\c\ud83d\ude00'"
+    },
+    {
+      "expected": true,
+      "id": "expansion-inside-command-word",
+      "input": "x=a; h${x}sh -p /bin/echo ruff"
+    },
+    {
+      "expected": true,
+      "id": "posix-class-behind-wrapper",
+      "input": "command h[[:alpha:]]sh -p /bin/echo ruff"
+    },
+    {
+      "expected": true,
+      "id": "posix-class-command-word",
+      "input": "/bin/r[[:lower:]] -rf x"
+    },
+    {
+      "expected": true,
+      "id": "shell-c-after-option-terminator",
+      "input": "bash -c -- 'hash -p /bin/echo ruff'"
+    },
+    {
+      "expected": true,
+      "id": "nul-in-assignment-word",
+      "input": "X=$'\\0' echo hi"
+    },
+    {
+      "expected": true,
+      "id": "nul-in-redirection-target",
+      "input": "echo >$'\\0'"
+    },
+    {
+      "expected": false,
+      "id": "single-quoted-dollar-behind-wrapper-is-safe",
+      "input": "find . -name '*.md' -exec grep -Hn '\\$TEST_CMD.*--tb' {} +"
+    },
+    {
+      "expected": false,
+      "id": "array-append-is-safe",
+      "input": "RETRY+=(\"$_id\")"
+    },
+    {
+      "expected": false,
+      "id": "ansi-c-newline-escape-is-safe",
+      "input": "BLAST+=\"a:\"$'\\n'\"x\""
+    },
+    {
+      "expected": true,
+      "id": "slash-inside-expansion-hides-command",
+      "input": "x=a; command h${x:-/}sh -p /bin/echo -- ruff -v; ruff PROBE"
+    },
+    {
+      "expected": true,
+      "id": "slash-inside-expansion-command-word",
+      "input": "x=a; h${x:-/}sh -p /bin/echo ruff"
+    },
+    {
+      "expected": true,
+      "id": "shell-option-cluster-hides-script",
+      "input": "command zsh -co shwordsplit 'hash ruff=/bin/echo; ruff PROBE' -v"
+    },
+    {
+      "expected": true,
+      "id": "shell-option-cluster-before-c",
+      "input": "zsh -xo shwordsplit -c 'hash ruff=/bin/echo'"
+    },
+    {
+      "expected": true,
+      "id": "env-option-cluster-hides-split-string",
+      "input": "command env -iS 'zsh -c \"hash ruff=/bin/echo; ruff PROBE\"' -v"
+    },
+    {
+      "expected": true,
+      "id": "bom-before-carried-variable",
+      "input": "bash -c '\ufeff$METRIC_CMD'"
+    },
+    {
+      "expected": true,
+      "id": "nel-before-carried-variable",
+      "input": "bash -c '\u0085$METRIC_CMD'"
+    },
+    {
+      "expected": true,
+      "id": "file-separator-before-carried-variable",
+      "input": "bash -c '\u001c$METRIC_CMD'"
+    },
+    {
+      "expected": true,
+      "id": "unset-removes-function",
+      "input": "unset -f ruff"
+    },
+    {
+      "expected": true,
+      "id": "unset-pattern",
+      "input": "unset -m 'co*'"
+    },
+    {
+      "expected": false,
+      "id": "unset-variable-is-safe",
+      "input": "unset ruff"
+    },
+    {
+      "expected": false,
+      "id": "expansion-path-prefix-is-safe",
+      "input": "${ROOT}/bin/x.py --flag"
+    },
+    {
+      "expected": false,
+      "id": "carried-bare-variable-is-safe",
+      "input": "bash -c \"$METRIC_CMD\""
+    },
+    {
+      "expected": true,
+      "id": "expansion-as-printf-option",
+      "input": "o=-v; n=BASH_C; n+=MDS; printf \"$o\" \"$n[ruff]\" %s /bin/echo; ruff PROBE"
+    },
+    {
+      "expected": true,
+      "id": "expansion-as-set-option",
+      "input": "o=-A; n=comm; n+=ands; set \"$o\" \"$n\" ruff /bin/echo; ruff PROBE"
+    },
+    {
+      "expected": true,
+      "id": "quoted-prefix-before-expansion",
+      "input": "command 'h'${x:-a}sh -p /bin/echo ruff"
+    },
+    {
+      "expected": true,
+      "id": "escaped-prefix-before-expansion",
+      "input": "command \\h${x:-a}sh -p /bin/echo ruff"
+    },
+    {
+      "expected": true,
+      "id": "escaped-bang-in-glob-class",
+      "input": "command h[\\!a]sh -p /bin/echo ruff"
+    },
+    {
+      "expected": true,
+      "id": "quoted-bang-in-glob-class",
+      "input": "command h['!'a]sh -p /bin/echo ruff"
+    },
+    {
+      "expected": true,
+      "id": "zsh-repeat-in-carried-script",
+      "input": "zsh -c 'repeat 1 hash ruff=/bin/echo; ruff PROBE'"
+    },
+    {
+      "expected": true,
+      "id": "bash-coproc",
+      "input": "coproc hash -p /bin/echo ruff"
+    },
+    {
+      "expected": true,
+      "id": "zsh-short-for",
+      "input": "for x (a) hash -p /bin/echo ruff"
+    },
+    {
+      "expected": true,
+      "id": "zsh-short-select",
+      "input": "select x (a) hash -p /bin/echo ruff"
+    },
+    {
+      "expected": true,
+      "id": "zsh-brace-if",
+      "input": "if true { hash -p /bin/echo ruff }"
+    },
+    {
+      "expected": true,
+      "id": "zsh-brace-while",
+      "input": "while false { hash -p /bin/echo ruff }"
+    },
+    {
+      "expected": false,
+      "id": "quoted-subscript-is-safe",
+      "input": "item[\"verdict\"]"
+    },
+    {
+      "expected": false,
+      "id": "printf-literal-format-is-safe",
+      "input": "printf \"%s\\n\" \"$x\""
+    },
+    {
+      "expected": false,
+      "id": "set-positional-is-safe",
+      "input": "set -- \"$@\""
+    },
+    {
+      "expected": false,
+      "id": "for-in-loop-is-safe",
+      "input": "for f in *.md; do echo $f; done"
     }
   ],
   "needs_bailout": [

@@ -23,7 +23,7 @@ if [ "$CODEMAP_CURRENCY" = "stale" ] || [ "${SCAN_NO_AUTOBUILD:-0}" = "1" ]; the
 # $RUN_DIR made in Step2; stage to TMPDIR, copied later
 CODEMAP_CONTEXT_STAGE="${TMPDIR:-/tmp}/oss-review-codemap-context-${CLEAN_ARGS}-${CSID}.md"
 # reload mode flags (scope-detection.md pattern) — gates test/docs sub-batteries behind consuming agent; missing sentinel → all flags false, run everything
-[ -f "${TMPDIR:-/tmp}/oss-review-mode-flags-${CLEAN_ARGS}-${CSID}" ] && . "${TMPDIR:-/tmp}/oss-review-mode-flags-${CLEAN_ARGS}-${CSID}"
+[ -f "${TMPDIR:-/tmp}/oss-review-mode-flags-${CLEAN_ARGS}-${CSID}" ] && while IFS='=' read -r _SK _SV; do case "$_SK" in PR_TYPE) PR_TYPE=$_SV ;; DOCS_TYPING_MODE) DOCS_TYPING_MODE=$_SV ;; TESTS_CI_MODE) TESTS_CI_MODE=$_SV ;; CICD_ONLY_MODE) CICD_ONLY_MODE=$_SV ;; DOCS_ONLY_MODE) DOCS_ONLY_MODE=$_SV ;; DOCS_CICD_MODE) DOCS_CICD_MODE=$_SV ;; esac; done < "${TMPDIR:-/tmp}/oss-review-mode-flags-${CLEAN_ARGS}-${CSID}"
 CICD_ONLY_MODE="${CICD_ONLY_MODE:-false}"; DOCS_ONLY_MODE="${DOCS_ONLY_MODE:-false}"; DOCS_CICD_MODE="${DOCS_CICD_MODE:-false}"
 if [ "$CODEMAP_ENABLED" = "true" ] && command -v codemap-py >/dev/null 2>&1; then
     codemap_available=true

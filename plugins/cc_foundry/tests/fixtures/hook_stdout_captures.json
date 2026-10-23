@@ -2620,7 +2620,7 @@
       "RUN_DIR=$(cat \"${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}\")\"": {
         "exit": 0,
         "stderr_b64": "",
-        "stdout_b64": "eyJob29rU3BlY2lmaWNPdXRwdXQiOnsiaG9va0V2ZW50TmFtZSI6IlByZVRvb2xVc2UiLCJwZXJtaXNzaW9uRGVjaXNpb24iOiJhbGxvdyIsInBlcm1pc3Npb25EZWNpc2lvblJlYXNvbiI6InBsdWdpbiBibHVlcHJpbnQg4oCUIHZlcmJhdGltIGJsb2NrIGZyb20gdGFtcGVyZWQubWQ6MSJ9fQ=="
+        "stdout_b64": ""
       },
       "TS=$(date +%s); date --set=@0": {
         "exit": 0,
@@ -2785,7 +2785,7 @@
       "X=T\nexport PA${X}H=/attacker/bin:$PATH": {
         "exit": 0,
         "stderr_b64": "",
-        "stdout_b64": "eyJob29rU3BlY2lmaWNPdXRwdXQiOnsiaG9va0V2ZW50TmFtZSI6IlByZVRvb2xVc2UiLCJwZXJtaXNzaW9uRGVjaXNpb24iOiJhbGxvdyIsInBlcm1pc3Npb25EZWNpc2lvblJlYXNvbiI6InBsdWdpbiBibHVlcHJpbnQg4oCUIHZlcmJhdGltIGJsb2NrIGZyb20gdGFtcGVyZWQubWQ6MSJ9fQ=="
+        "stdout_b64": ""
       },
       "a; b && c | d": {
         "exit": 0,
@@ -2930,12 +2930,12 @@
       "echo $'\\''; git push --force \\'": {
         "exit": 0,
         "stderr_b64": "",
-        "stdout_b64": "eyJob29rU3BlY2lmaWNPdXRwdXQiOnsiaG9va0V2ZW50TmFtZSI6IlByZVRvb2xVc2UiLCJwZXJtaXNzaW9uRGVjaXNpb24iOiJhbGxvdyIsInBlcm1pc3Npb25EZWNpc2lvblJlYXNvbiI6InBsdWdpbiBibHVlcHJpbnQg4oCUIHZlcmJhdGltIGJsb2NrIGZyb20gdGFtcGVyZWQubWQ6MSJ9fQ=="
+        "stdout_b64": ""
       },
       "echo $\\\n'\\''; git push --force \\'": {
         "exit": 0,
         "stderr_b64": "",
-        "stdout_b64": "eyJob29rU3BlY2lmaWNPdXRwdXQiOnsiaG9va0V2ZW50TmFtZSI6IlByZVRvb2xVc2UiLCJwZXJtaXNzaW9uRGVjaXNpb24iOiJhbGxvdyIsInBlcm1pc3Npb25EZWNpc2lvblJlYXNvbiI6InBsdWdpbiBibHVlcHJpbnQg4oCUIHZlcmJhdGltIGJsb2NrIGZyb20gdGFtcGVyZWQubWQ6MSJ9fQ=="
+        "stdout_b64": ""
       },
       "echo ${DYLD_INSERT_LIBRARIES:=/tmp/evil.dylib}": {
         "exit": 0,
@@ -3080,7 +3080,7 @@
       "eval echo hi": {
         "exit": 0,
         "stderr_b64": "",
-        "stdout_b64": "eyJob29rU3BlY2lmaWNPdXRwdXQiOnsiaG9va0V2ZW50TmFtZSI6IlByZVRvb2xVc2UiLCJwZXJtaXNzaW9uRGVjaXNpb24iOiJhbGxvdyIsInBlcm1pc3Npb25EZWNpc2lvblJlYXNvbiI6InBsdWdpbiBibHVlcHJpbnQg4oCUIHZlcmJhdGltIGJsb2NrIGZyb20gdGFtcGVyZWQubWQ6MSJ9fQ=="
+        "stdout_b64": ""
       },
       "eval rm -rf /": {
         "exit": 0,
@@ -3255,12 +3255,12 @@
       "printf -v BASH_ENV /tmp/e": {
         "exit": 0,
         "stderr_b64": "",
-        "stdout_b64": "eyJob29rU3BlY2lmaWNPdXRwdXQiOnsiaG9va0V2ZW50TmFtZSI6IlByZVRvb2xVc2UiLCJwZXJtaXNzaW9uRGVjaXNpb24iOiJhbGxvdyIsInBlcm1pc3Npb25EZWNpc2lvblJlYXNvbiI6InBsdWdpbiBibHVlcHJpbnQg4oCUIHZlcmJhdGltIGJsb2NrIGZyb20gdGFtcGVyZWQubWQ6MSJ9fQ=="
+        "stdout_b64": ""
       },
       "printf -v PATH /attacker/bin:%s \"$PATH\"": {
         "exit": 0,
         "stderr_b64": "",
-        "stdout_b64": "eyJob29rU3BlY2lmaWNPdXRwdXQiOnsiaG9va0V2ZW50TmFtZSI6IlByZVRvb2xVc2UiLCJwZXJtaXNzaW9uRGVjaXNpb24iOiJhbGxvdyIsInBlcm1pc3Npb25EZWNpc2lvblJlYXNvbiI6InBsdWdpbiBibHVlcHJpbnQg4oCUIHZlcmJhdGltIGJsb2NrIGZyb20gdGFtcGVyZWQubWQ6MSJ9fQ=="
+        "stdout_b64": ""
       },
       "printf x | xargs rm -f": {
         "exit": 0,

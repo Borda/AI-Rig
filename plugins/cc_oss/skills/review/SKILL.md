@@ -217,7 +217,7 @@ Classify PR from changed file patterns. Default `PR_TYPE=CODE`; override only wh
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r CLEAN_ARGS < "${TMPDIR:-/tmp}/oss-review-pr-tag-${CSID}" 2>/dev/null || CLEAN_ARGS=""
-[ -f "${TMPDIR:-/tmp}/oss-review-flags-${CSID}" ] && . "${TMPDIR:-/tmp}/oss-review-flags-${CSID}"
+[ -f "${TMPDIR:-/tmp}/oss-review-flags-${CSID}" ] && while IFS='=' read -r _SK _SV; do case "$_SK" in REPLY_MODE) REPLY_MODE=$_SV ;; WT_ENABLED) WT_ENABLED=$_SV ;; FILL_GAPS_MODE) FILL_GAPS_MODE=$_SV ;; DIRECT_PATH_MODE) DIRECT_PATH_MODE=$_SV ;; REVIEW_FILE) REVIEW_FILE=$_SV ;; esac; done < "${TMPDIR:-/tmp}/oss-review-flags-${CSID}"
 if [ "$DIRECT_PATH_MODE" = "false" ] && [[ "$CLEAN_ARGS" =~ ^[0-9]+$ ]]; then
     SNAP_DIR="${TMPDIR:-/tmp}/oss-review-snap-${CLEAN_ARGS}-${CSID}"
     mkdir -p "$SNAP_DIR"
@@ -240,7 +240,7 @@ fi
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-[ -f "${TMPDIR:-/tmp}/oss-review-flags-${CSID}" ] && . "${TMPDIR:-/tmp}/oss-review-flags-${CSID}"
+[ -f "${TMPDIR:-/tmp}/oss-review-flags-${CSID}" ] && while IFS='=' read -r _SK _SV; do case "$_SK" in REPLY_MODE) REPLY_MODE=$_SV ;; WT_ENABLED) WT_ENABLED=$_SV ;; FILL_GAPS_MODE) FILL_GAPS_MODE=$_SV ;; DIRECT_PATH_MODE) DIRECT_PATH_MODE=$_SV ;; REVIEW_FILE) REVIEW_FILE=$_SV ;; esac; done < "${TMPDIR:-/tmp}/oss-review-flags-${CSID}"
 [ "${FILL_GAPS_MODE:-false}" = "true" ] || exit 0
 IFS= read -r REVIEW_SKILL_DIR < "${TMPDIR:-/tmp}/review-skill-dir-${CSID}" 2>/dev/null || REVIEW_SKILL_DIR=""
 cat "$REVIEW_SKILL_DIR/modes/fill-gaps.md"  # timeout: 5000
@@ -254,7 +254,7 @@ A full review is a multi-agent fan-out; re-running one over an unchanged PR head
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # timeout: 15000
 IFS= read -r CLEAN_ARGS < "${TMPDIR:-/tmp}/oss-review-pr-tag-${CSID}" 2>/dev/null || CLEAN_ARGS=""
-[ -f "${TMPDIR:-/tmp}/oss-review-flags-${CSID}" ] && . "${TMPDIR:-/tmp}/oss-review-flags-${CSID}"
+[ -f "${TMPDIR:-/tmp}/oss-review-flags-${CSID}" ] && while IFS='=' read -r _SK _SV; do case "$_SK" in REPLY_MODE) REPLY_MODE=$_SV ;; WT_ENABLED) WT_ENABLED=$_SV ;; FILL_GAPS_MODE) FILL_GAPS_MODE=$_SV ;; DIRECT_PATH_MODE) DIRECT_PATH_MODE=$_SV ;; REVIEW_FILE) REVIEW_FILE=$_SV ;; esac; done < "${TMPDIR:-/tmp}/oss-review-flags-${CSID}"
 IFS= read -r SNAP_DIR < "${TMPDIR:-/tmp}/oss-review-snap-dir-${CSID}" 2>/dev/null || SNAP_DIR=""
 # fill-gaps names its prior run explicitly; its gate already wrote the prior-resolution sentinel — never overwrite it
 [ "${FILL_GAPS_MODE:-false}" = "false" ] || { echo "PRIOR_REPORT="; exit 0; }
@@ -301,7 +301,7 @@ Selected (a) → proceed with the full review. Selected (b) → `TaskUpdate(stat
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r REVIEW_FILE < "${TMPDIR:-/tmp}/oss-review-prior-report-${CSID}" 2>/dev/null || REVIEW_FILE=""
-# later lines win when the sentinel is sourced — the Step 0 REPLY_MODE=false line stays, this overrides it
+# later lines win when the sentinel is read back — the Step 0 REPLY_MODE=false line stays, this overrides it
 {
     echo "REPLY_MODE=true"
     echo "REVIEW_FILE=$REVIEW_FILE"
@@ -314,7 +314,7 @@ Step 8 reads `REVIEW_FILE` from the flags sentinel whenever it is set there — 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r CLEAN_ARGS < "${TMPDIR:-/tmp}/oss-review-pr-tag-${CSID}" 2>/dev/null || CLEAN_ARGS=""
-[ -f "${TMPDIR:-/tmp}/oss-review-flags-${CSID}" ] && . "${TMPDIR:-/tmp}/oss-review-flags-${CSID}"
+[ -f "${TMPDIR:-/tmp}/oss-review-flags-${CSID}" ] && while IFS='=' read -r _SK _SV; do case "$_SK" in REPLY_MODE) REPLY_MODE=$_SV ;; WT_ENABLED) WT_ENABLED=$_SV ;; FILL_GAPS_MODE) FILL_GAPS_MODE=$_SV ;; DIRECT_PATH_MODE) DIRECT_PATH_MODE=$_SV ;; REVIEW_FILE) REVIEW_FILE=$_SV ;; esac; done < "${TMPDIR:-/tmp}/oss-review-flags-${CSID}"
 IFS= read -r SNAP_DIR < "${TMPDIR:-/tmp}/oss-review-snap-dir-${CSID}" 2>/dev/null || SNAP_DIR=""
 PR_TYPE="CODE"
 DOCS_TYPING_MODE=false; TESTS_CI_MODE=false
@@ -389,7 +389,7 @@ IFS= read -r CODEMAP_FORCE_OFF < "${TMPDIR:-/tmp}/review-codemap-forced-off-${CS
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _OSS_SHARED < "${TMPDIR:-/tmp}/review-oss-shared-${CSID}" 2>/dev/null || _OSS_SHARED="$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/resolve_shared_path.py" oss skills/_shared 2>/dev/null)"  # timeout: 5000
-[ -f "${TMPDIR:-/tmp}/oss-review-flags-${CSID}" ] && . "${TMPDIR:-/tmp}/oss-review-flags-${CSID}"
+[ -f "${TMPDIR:-/tmp}/oss-review-flags-${CSID}" ] && while IFS='=' read -r _SK _SV; do case "$_SK" in REPLY_MODE) REPLY_MODE=$_SV ;; WT_ENABLED) WT_ENABLED=$_SV ;; FILL_GAPS_MODE) FILL_GAPS_MODE=$_SV ;; DIRECT_PATH_MODE) DIRECT_PATH_MODE=$_SV ;; REVIEW_FILE) REVIEW_FILE=$_SV ;; esac; done < "${TMPDIR:-/tmp}/oss-review-flags-${CSID}"
 [ "$WT_ENABLED" = "true" ] || WT_ENABLED=false
 [ "$WT_ENABLED" = "true" ] && [ -f "$_OSS_SHARED/worktree-isolation.md" ] && cat "$_OSS_SHARED/worktree-isolation.md"  # timeout: 5000
 ```
@@ -401,7 +401,7 @@ IFS= read -r _OSS_SHARED < "${TMPDIR:-/tmp}/review-oss-shared-${CSID}" 2>/dev/nu
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r CLEAN_ARGS < "${TMPDIR:-/tmp}/oss-review-pr-tag-${CSID}" 2>/dev/null || CLEAN_ARGS=""
-[ -f "${TMPDIR:-/tmp}/oss-review-flags-${CSID}" ] && . "${TMPDIR:-/tmp}/oss-review-flags-${CSID}"
+[ -f "${TMPDIR:-/tmp}/oss-review-flags-${CSID}" ] && while IFS='=' read -r _SK _SV; do case "$_SK" in REPLY_MODE) REPLY_MODE=$_SV ;; WT_ENABLED) WT_ENABLED=$_SV ;; FILL_GAPS_MODE) FILL_GAPS_MODE=$_SV ;; DIRECT_PATH_MODE) DIRECT_PATH_MODE=$_SV ;; REVIEW_FILE) REVIEW_FILE=$_SV ;; esac; done < "${TMPDIR:-/tmp}/oss-review-flags-${CSID}"
 if [ "$DIRECT_PATH_MODE" = "false" ]; then
     if [ -z "$CLEAN_ARGS" ] || ! [[ "$CLEAN_ARGS" =~ ^[0-9]+$ ]]; then
         echo "Error: PR number required. Usage: /oss:review <PR number> [--reply] [--no-challenge]"
@@ -889,7 +889,7 @@ Before output path, extract `BRANCH` and `DATE` and reload the Stage-2 gate verd
 BRANCH=$(git branch --show-current 2>/dev/null | tr '/' '-' || echo 'main')  # timeout: 3000
 DATE=$(date -u +%Y-%m-%d)  # timeout: 5000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-[ -f "${TMPDIR:-/tmp}/oss-review-gate-${CSID}" ] && . "${TMPDIR:-/tmp}/oss-review-gate-${CSID}"
+[ -f "${TMPDIR:-/tmp}/oss-review-gate-${CSID}" ] && while IFS='=' read -r _SK _SV; do case "$_SK" in GATE) GATE=$_SV ;; GATE_SHA) GATE_SHA=$_SV ;; GATE_REASON) GATE_REASON=$_SV ;; esac; done < "${TMPDIR:-/tmp}/oss-review-gate-${CSID}"
 GATE="${GATE:-PASS}"; GATE_REASON="${GATE_REASON:-}"
 echo "Gate: $GATE ${GATE_REASON:+($GATE_REASON)}"
 IFS= read -r _PR_TAG < "${TMPDIR:-/tmp}/oss-review-pr-tag-${CSID}" 2>/dev/null || _PR_TAG=""
@@ -912,7 +912,7 @@ Select consolidator agent by `PR_TYPE` (lighter model for non-logic PRs) and res
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r CLEAN_ARGS < "${TMPDIR:-/tmp}/oss-review-pr-tag-${CSID}" 2>/dev/null || CLEAN_ARGS=""
 _REVIEW_MODE_FILE="${TMPDIR:-/tmp}/oss-review-mode-flags-${CLEAN_ARGS}-${CSID}"
-[ -f "$_REVIEW_MODE_FILE" ] && . "$_REVIEW_MODE_FILE"
+[ -f "$_REVIEW_MODE_FILE" ] && while IFS='=' read -r _SK _SV; do case "$_SK" in PR_TYPE) PR_TYPE=$_SV ;; DOCS_TYPING_MODE) DOCS_TYPING_MODE=$_SV ;; TESTS_CI_MODE) TESTS_CI_MODE=$_SV ;; CICD_ONLY_MODE) CICD_ONLY_MODE=$_SV ;; DOCS_ONLY_MODE) DOCS_ONLY_MODE=$_SV ;; DOCS_CICD_MODE) DOCS_CICD_MODE=$_SV ;; esac; done < "$_REVIEW_MODE_FILE"
 case "${PR_TYPE:-CODE}" in
     DOCS_TYPING) CONSOLIDATOR_AGENT="foundry:doc-scribe" ;;
     TESTS_CI)    CONSOLIDATOR_AGENT="foundry:qa-specialist" ;;
@@ -1108,7 +1108,7 @@ cat "$_OSS_SHARED/shepherd-reply-protocol.md"  # timeout: 5000
 
 Spawn with:
 
-- Report path: `REVIEW_FILE` from the flags sentinel (`. "${TMPDIR:-/tmp}/oss-review-flags-${CSID}"`) when set — the direct-report fast path and Step 0's existing-report redirect both store it there; unset → the review output file from Step 5
+- Report path: `REVIEW_FILE` from the flags sentinel (`"${TMPDIR:-/tmp}/oss-review-flags-${CSID}"`, read as `KEY=value` lines, never sourced) when set — the direct-report fast path and Step 0's existing-report redirect both store it there; unset → the review output file from Step 5
 - PR number and contributor handle: from Step 1 `gh pr view` output
 - Output path: `.temp/output-reply-<PR#>-$(date -u +%Y-%m-%d).md`
 

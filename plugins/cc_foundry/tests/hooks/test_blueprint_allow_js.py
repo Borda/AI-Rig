@@ -362,6 +362,15 @@ class TestSharedVectors:
         """Match JavaScript command splitting with the generator."""
         assert _node_eval(f"h.splitLogicalCommands({json.dumps(vector['input'])})") == vector["expected"]
 
+    @pytest.mark.parametrize("vector", _vector_params("aliases_escaped_blank"))
+    def test_aliases_escaped_blank(self, vector: dict) -> None:
+        """Match JavaScript escaped-blank refusal with the generator.
+
+        The hook runs this check on the raw command before normalization; a shape only one side refuses either drops a
+        shipped entry or lets the shell's split reading through on a digest hit.
+        """
+        assert _node_eval(f"h.aliasesEscapedBlank({json.dumps(vector['input'])})") is vector["expected"]
+
     @pytest.mark.parametrize("vector", _vector_params("is_dangerous"))
     def test_is_dangerous(self, vector: dict) -> None:
         """Match JavaScript risk classification with the generator.

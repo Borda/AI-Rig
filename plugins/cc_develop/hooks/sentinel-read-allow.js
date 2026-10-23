@@ -284,7 +284,32 @@ const SENSITIVE_ASSIGN = new RegExp(
 // The control therefore has to be "can this segment write a shell variable at all",
 // not "does the text contain a sensitive assignment".
 const PRINTF_ASSIGN = /(?:^|[\s;|&(){])printf\s[^\n;|&]*-v\b/;
-const READ_TARGET = new RegExp("(?:^|[\\s;|&(){])read\\s+(?:-\\S+\\s+)*(?:" + SENSITIVE_VARS + "|IFS)(?:\\s|$)");
+// `read` assigns EVERY name operand, an option can carry its argument attached
+// (`-aPATH`) or in the next word (`-p PATH`), and a redirection may sit between
+// names (`read X < f PATH`). Judging only the first word after the options let
+// `read -r IGNORE PATH` rebind PATH. So every word of the read segment counts,
+// except redirection words: one naming a sensitive variable, alone or after an
+// option cluster, or one whose name is computed (`read "$V"`) refuses the command.
+const READ_ARGS = /(?:^|[\s;|&(){])read\s([^;|&\n)]*)/g;
+const READ_SENSITIVE_WORD = new RegExp("^(?:-[A-Za-z]*)?(?:" + SENSITIVE_VARS + "|IFS)$");
+const REDIRECT_WORD = /^\d*[<>]/;
+const REDIRECT_OPERATOR = /^\d*(?:<<<|<<|<>|<&|<|>>|>\||>&|>)$/;
+
+/** True when a `read` in `cmd` may assign a sensitive or computed variable name. */
+function readWritesSensitiveName(cmd) {
+  for (const match of cmd.matchAll(READ_ARGS)) {
+    const words = match[1].split(/\s+/).filter(Boolean);
+    for (let i = 0; i < words.length; i++) {
+      if (REDIRECT_OPERATOR.test(words[i])) {
+        i++;
+        continue;
+      }
+      if (REDIRECT_WORD.test(words[i])) continue;
+      if (READ_SENSITIVE_WORD.test(words[i]) || /[$`]/.test(words[i])) return true;
+    }
+  }
+  return false;
+}
 // An `export` whose NAME half carries an expansion cannot be read literally, so the
 // name it actually assigns is unknowable here. Blueprint idioms always name the
 // variable outright (`export CSID="${…}"` — expansion in the VALUE only).
@@ -350,7 +375,7 @@ function isAllowable(cmd) {
   if (SENSITIVE_ASSIGN.test(cmd) || SENSITIVE_ASSIGN.test(unquoted)) return false;
   if (NONEMPTY_IFS.test(cmd) || NONEMPTY_IFS.test(unquotedKeepEmpty)) return false;
   // Non-assignment routes to setting a variable — see the block comment above.
-  if (PRINTF_ASSIGN.test(cmd) || READ_TARGET.test(cmd) || READ_TARGET.test(unquoted)) return false;
+  if (PRINTF_ASSIGN.test(cmd) || readWritesSensitiveName(cmd) || readWritesSensitiveName(unquoted)) return false;
   if (EXPORT_COMPUTED_NAME.test(cmd)) return false;
   // Replace safe substitution spans (sentinel reads / date stamps); require at
   // least one blueprint anchor: a safe substitution OR the rewritten read-form

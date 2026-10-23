@@ -483,7 +483,7 @@
       },
       {
         "head": "! BLOCKED \u2014 pr-vars.sh has unexpected output; refusing to source",
-        "now": "! BLOCKED \u2014 pr-vars.sh has unexpected output; refusing to source"
+        "now": "! BLOCKED \u2014 pr-vars.sh has unexpected output; refusing to read it"
       },
       {
         "head": "! BLOCKED \u2014 resolution",

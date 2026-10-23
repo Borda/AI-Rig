@@ -208,20 +208,21 @@ Return ONLY this compact JSON as your FINAL message (nothing after it):
 
 > **Health monitoring** — SKILL.md §Agent wait discipline: in the spawn response, write `$IMPL_DIR/agent-watch-intel.tsv` with the row `intel<TAB><IMPL_DIR>/pr-intelligence.md<TAB>300` (`CHALLENGE_TIMEOUT_S`). Never poll — no `ScheduleWakeup`, `ListAgents` or `Monitor` loop; end the turn and resume on the notification. At the notification, or any later wake-up, run the watch check; `timed_out`, or a notification that arrived without `pr-intelligence.md` → ⏱: fall back to inline execution (fetch GitHub data directly in orchestrator context, classify inline) with explicit warning — never silently produce empty ACTION_ITEMS.
 
-Validate and source vars after agent returns:
+Validate and read vars after agent returns:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
 [ -n "$IMPL_DIR" ] && [ -s "$IMPL_DIR/pr-vars.sh" ] || { echo "! BLOCKED — IMPL_DIR sentinel or pr-vars.sh missing/empty"; exit 1; }
-# only VAR='value' lines — mirrors parse-resolve-args.py defence-in-depth; grep -v rc: 0 = bad line, 1 = clean, 2 = unreadable → only 1 passes
-grep -qvE "^[A-Z_][A-Z0-9_]*='[^']*'$" "$IMPL_DIR/pr-vars.sh"; _RC=$?
+# only the listed NAME='value' lines — mirrors parse-resolve-args.py defence-in-depth; grep -v rc: 0 = bad line, 1 = clean, 2 = unreadable → only 1 passes
+grep -qvE "^(RESOLVED_THREAD_IDS_COUNT|ACTION_ITEMS_(TOTAL|REQ|SUGGEST|DONE|INLINE|DISCUSSION)|PR_MOTIVATION)='[^']*'$" "$IMPL_DIR/pr-vars.sh"; _RC=$?
 if [ "$_RC" != 1 ]; then
-    echo "! BLOCKED — pr-vars.sh has unexpected output; refusing to source (grep rc=$_RC, 2 = unreadable)"
+    echo "! BLOCKED — pr-vars.sh has unexpected output; refusing to read it (grep rc=$_RC, 2 = unreadable)"
     cat "$IMPL_DIR/pr-vars.sh"
     exit 1
 fi
-. "$IMPL_DIR/pr-vars.sh"
+# read as data, never sourced: agent-written values stay literal text
+while IFS='=' read -r _SK _SV || [ -n "$_SK" ]; do _SV=${_SV#\'}; _SV=${_SV%\'}; case "$_SK" in RESOLVED_THREAD_IDS_COUNT) RESOLVED_THREAD_IDS_COUNT=$_SV ;; ACTION_ITEMS_TOTAL) ACTION_ITEMS_TOTAL=$_SV ;; ACTION_ITEMS_REQ) ACTION_ITEMS_REQ=$_SV ;; ACTION_ITEMS_SUGGEST) ACTION_ITEMS_SUGGEST=$_SV ;; ACTION_ITEMS_DONE) ACTION_ITEMS_DONE=$_SV ;; ACTION_ITEMS_INLINE) ACTION_ITEMS_INLINE=$_SV ;; ACTION_ITEMS_DISCUSSION) ACTION_ITEMS_DISCUSSION=$_SV ;; PR_MOTIVATION) PR_MOTIVATION=$_SV ;; esac; done < "$IMPL_DIR/pr-vars.sh"
 [ "${RESOLVED_THREAD_IDS_COUNT:-0}" = "0" ] && echo "⚠ Could not fetch resolved thread status — some items may already be resolved; review table carefully"  # timeout: 3000
 ```
 

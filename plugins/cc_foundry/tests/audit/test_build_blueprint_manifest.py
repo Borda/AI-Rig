@@ -136,6 +136,15 @@ class TestSharedVectors:
         """Split exactly as the fixture specifies."""
         assert bbm.split_logical_commands(vector["input"]) == vector["expected"]
 
+    @pytest.mark.parametrize("vector", _vector_params("aliases_escaped_blank"))
+    def test_aliases_escaped_blank(self, vector: dict) -> None:
+        """Refuse raw text whose escaped blank normalization would erase, and only that.
+
+        A backslash-blank at a line end or before ``#`` makes the shell run a different command than the normalized text
+        the digest covers; both sides must refuse the same raw shapes.
+        """
+        assert bbm.aliases_escaped_blank(vector["input"]) is vector["expected"]
+
     @pytest.mark.parametrize("vector", _vector_params("is_dangerous"))
     def test_is_dangerous(self, vector: dict) -> None:
         """Classify every shared vector as the fixture specifies.
@@ -248,7 +257,6 @@ class TestAllowlistGate:
             pytest.param("command -v jq >/dev/null 2>&1 && echo ok", id="fd-redirection-does-not-split"),
             pytest.param("find . -name '*.md' -print0 | xargs -0 grep -l x", id="xargs-wraps-listed-command"),
             pytest.param("timeout 5 curl -sS https://example.com", id="timeout-wraps-curl-get"),
-            pytest.param('eval "$(python "$ROOT/bin/parse.py" "$ARGS")"', id="eval-of-plugin-script-output"),
             pytest.param("uv run pytest tests/ -q", id="uv-run-listed-command"),
             pytest.param("uv run --frozen --python=3.12 pytest -q", id="uv-run-known-options"),
             pytest.param('ARGS+=(--output "$F")', id="array-append"),
@@ -266,26 +274,13 @@ class TestAllowlistGate:
             pytest.param(
                 "python -c 'import json,sys; print(json.load(sys.stdin)[\"a\"])' < f", id="python-literal-code"
             ),
-            pytest.param(
-                'IFS= read -r RUNNER < "${TMPDIR:-/tmp}/qs-runner-${CSID}" 2>/dev/null || RUNNER="python -m"\n'
-                'eval "$RUNNER pytest -q" > "$LOG" 2>&1',
-                id="runner-eval-from-sentinel",
-            ),
-            pytest.param('RUNNER="uv run"\neval "$RUNNER ruff --version"', id="runner-eval-from-literal"),
-            pytest.param(
-                'IFS= read -r METRIC_CMD < "${TMPDIR:-/tmp}/metric-cmd-${CSID}"\nbash -c "$METRIC_CMD"',
-                id="shell-string-from-sentinel",
-            ),
             pytest.param('cp -p "$f" "$RUN_DIR/pre/$f"', id="cp-snapshot"),
             pytest.param('echo x | tee -a "$LOG"', id="tee-append"),
             pytest.param(
-                '[ -f "${TMPDIR:-/tmp}/flags-${CSID}" ] && . "${TMPDIR:-/tmp}/flags-${CSID}"', id="source-sentinel"
+                "[ -f \"${TMPDIR:-/tmp}/flags-${CSID}\" ] && while IFS='=' read -r _SK _SV; do "
+                'case "$_SK" in MODE) MODE=$_SV ;; esac; done < "${TMPDIR:-/tmp}/flags-${CSID}"',
+                id="read-sentinel-keys",
             ),
-            pytest.param(
-                'IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/impl-${CSID}"\n. "$IMPL_DIR/pr-vars.sh"',
-                id="source-under-sentinel-root",
-            ),
-            pytest.param('tmpenv=$(mktemp)\n. "$tmpenv"', id="source-mktemp-file"),
             pytest.param(
                 'IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/impl-${CSID}"\nbash "$IMPL_DIR/full-suite.sh"',
                 id="shell-script-from-own-state",
@@ -318,6 +313,27 @@ class TestAllowlistGate:
             pytest.param('mv -f "$D/a.md" "$D/b.md"', "mv", id="mv-under-untrusted-root"),
             pytest.param("cp -r build /", "cp /", id="cp-onto-root"),
             pytest.param('. "$HOME/.bashrc"', ". $HOME/.bashrc", id="source-non-state-file"),
+            pytest.param(
+                '[ -f "${TMPDIR:-/tmp}/flags-${CSID}" ] && . "${TMPDIR:-/tmp}/flags-${CSID}"',
+                ". ${TMPDIR:-/tmp}/flags-${CSID}",
+                id="source-sentinel",
+            ),
+            pytest.param(
+                'IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/impl-${CSID}"\n. "$IMPL_DIR/pr-vars.sh"',
+                ". $IMPL_DIR/pr-vars.sh",
+                id="source-under-sentinel-root",
+            ),
+            pytest.param('tmpenv=$(mktemp)\n. "$tmpenv"', ". $tmpenv", id="source-mktemp-file"),
+            pytest.param(
+                'IFS= read -r METRIC_CMD < "${TMPDIR:-/tmp}/metric-cmd-${CSID}"\nbash -c "$METRIC_CMD"',
+                "$METRIC_CMD",
+                id="shell-string-from-sentinel",
+            ),
+            pytest.param(
+                'IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/impl-${CSID}"\nbash "$IMPL_DIR/steps.sh"',
+                "shell script $IMPL_DIR/steps.sh",
+                id="shell-script-from-state-not-named",
+            ),
             pytest.param('. "$IMPL_DIR/vars.sh"', ". $IMPL_DIR/vars.sh", id="source-under-untrusted-root"),
             pytest.param("perl -pi -e 's/a/b/' f", "perl", id="unknown-interpreter"),
             pytest.param('python -c "$CODE"', "python -c", id="python-code-from-expansion"),
@@ -328,13 +344,14 @@ class TestAllowlistGate:
             pytest.param("curl -X POST -d x https://example.com", "curl -X POST", id="curl-post"),
             pytest.param("find . -name '*.bak' -exec mv {} /tmp \\;", "mv", id="find-exec-unlisted"),
             pytest.param("ls | xargs -I {} mv {} dst", "mv", id="xargs-unlisted"),
-            pytest.param('eval "$RUNNER pytest -q"', "$RUNNER", id="eval-of-unset-variable"),
-            pytest.param('X=$(cat "$F")\neval "$X"', "$X", id="eval-of-variable-from-substitution"),
+            pytest.param('bash -c "$RUNNER pytest -q"', "$RUNNER", id="shell-string-of-unset-variable"),
+            pytest.param('X=$(cat "$F")\nbash -c "$X"', "$X", id="shell-string-of-variable-from-substitution"),
             pytest.param(
-                'IFS= read -r X < "${TMPDIR:-/tmp}/x-${CSID}"\nfor X in a b; do eval "$X"; done',
+                'IFS= read -r X < "${TMPDIR:-/tmp}/x-${CSID}"\nfor X in a b; do bash -c "$X"; done',
                 "$X",
-                id="eval-of-variable-also-set-by-loop",
+                id="shell-string-of-variable-also-set-by-loop",
             ),
+            pytest.param('eval "$(python "$ROOT/bin/parse.py" "$ARGS")"', "eval", id="eval-of-plugin-script-output"),
             pytest.param('kaggle competitions download "$SLUG"', "kaggle competitions download", id="kaggle-download"),
             pytest.param('unlink "$dest"', "unlink", id="unlink-non-state-path"),
             pytest.param("case x in a) mv p q;; esac", "mv", id="arm-on-case-line"),
@@ -352,11 +369,33 @@ class TestAllowlistGate:
     def test_unlisted_commands_are_excluded(self, text: str, offender: str) -> None:
         """Any command the allowlist does not name keeps its entry out of the manifest, and is reported by name.
 
-        The denylist misses every one of these (``mv``, ``tee``, ``python -c``, ``eval "$RUNNER …"`` and friends) or,
-        for the ``case``-line arm and the function body, cannot see the command at all.
+        The denylist misses most of these (``mv``, ``tee``, ``python -c``, ``bash -c "$RUNNER …"`` and friends) or, for
+        the ``case``-line arm and the function body, cannot see the command at all. ``eval`` has no allowlist judgement
+        any more, so it is unlisted by name as well as denied by the danger filter.
         """
         assert bbm.unlisted_command(text) == offender
         assert bbm.is_excluded(text) is True
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            pytest.param('eval "$(python "$ROOT/bin/parse.py" "$ARGS")"', id="eval-of-plugin-script-output"),
+            pytest.param(
+                'IFS= read -r RUNNER < "${TMPDIR:-/tmp}/qs-runner-${CSID}" 2>/dev/null || RUNNER="python -m"\n'
+                'eval "$RUNNER pytest -q" > "$LOG" 2>&1',
+                id="runner-eval-from-sentinel",
+            ),
+            pytest.param('RUNNER="uv run"\neval "$RUNNER ruff --version"', id="runner-eval-from-literal"),
+            pytest.param('n=comm; n+=ands\neval "${n}[ruff]=/bin/rm"\nruff -rf x', id="eval-of-assembled-table-name"),
+        ],
+    )
+    def test_eval_shapes_are_dangerous(self, text: str) -> None:
+        """Every ``eval`` keeps its entry out of the manifest, including the runner shapes once admitted.
+
+        ``eval`` re-parses text built at run time, so a table name assembled from literal pieces can rebind a command
+        name past every name check; no shipped block runs ``eval``, so the danger filter denies it by name.
+        """
+        assert bbm.is_dangerous(text) is True
 
     def test_unlisted_drop_is_counted_with_danger_drops(
         self, scan_dir: Path, capsys: pytest.CaptureFixture[str]
@@ -381,7 +420,13 @@ class TestHashing:
     @pytest.mark.parametrize(
         ("text", "kinds", "dropped"),
         [
-            pytest.param("cat <<EOF\nline one\nline two\nEOF", ["block"], 0, id="heredoc-emits-only-whole-block"),
+            pytest.param("cat <<EOF\nline one\nline two\nEOF", [], 1, id="data-heredoc-emits-nothing"),
+            pytest.param(
+                "python - \"$F\" <<'PY'\nimport sys\nprint(sys.argv[1])\nPY",
+                ["block"],
+                0,
+                id="python-code-heredoc-block",
+            ),
             pytest.param("echo safe\nrm -rf x", ["command"], 2, id="dangerous-block-keeps-safe-commands"),
         ],
     )

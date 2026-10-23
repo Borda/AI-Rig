@@ -110,12 +110,39 @@ printf "=== Check 23c: eval for data output ===\n"
 
 No false-positive exemption for `parse-skill-flags.py` or `derive_codemap_target.py`: both write per-session sentinels with `--keep-state` and the caller reads them with `IFS= read -r`. Finding = any `eval "$…"` in a shipped block; fix = sentinel files for data (`bin-authoring-guide.md §Script Output Routing`), a closed `case` that maps a saved runner string to an array (`"${R[@]}" tool …`), or an allowlisted bin runner. Cross-block persistence is Sub-check 23d, not this one.
 
+### Sub-check 23e — command-name rebind in a shipped block
+
+Block rebinds what a command name runs: `hash`, `builtin`, `alias`, `enable`/`disable`, `functions`, `autoload`, `zmodload`, `emulate`, `mapfile`/`readarray`, `vared`, `zparseopts`, `getln` in command position; `set` with an `A` option, `read -a`/`-A` or a `$` name operand, `printf`/`print -v` (past other options and their values), a declaring builtin with `-n` or a `$` in the declared name; any mention of a name→program table (zsh `commands`/`functions`/`aliases`/`galiases`/`saliases`/`dis_*`/`fpath`, bash `BASH_CMDS`/`BASH_ALIASES`, attached option prefix included); or an indirect expansion `${(P)…}`/`${!…}`. Blueprint danger filter denies all of these, so such block never gets a manifest entry and prompts every run; a later harmless-looking command would run whatever the rebind pointed at. `eval` = Sub-check 23c. Scans only `bash`/`sh`/`zsh`/`shell` fences. Each line loses its trailing comment (a `#` inside quotes kept), then its quotes and backslashes (whitespace inside quotes stays part of its word, so `2>"a b" set …` keeps `set` in command position), as the shell would join `\hash` or `co""mmands`, then its redirections with their targets (`2>/dev/null`, `hash>x`, `{fd}>x`), so an operand after one is still read; printed lines show that form. A line ending in `\` joins the next and reports where the command ends. A command word with `$` after its first character (`h$'\x61'sh`) is flagged outright: its name is decoded only at run time. Command position = line start or after `; & | ( { ! $(`, past assignments, redirections and precommand words (`command`, `noglob`, `exec`, `env`, `sudo`, `timeout N` …) with their options and option values (`command --`, `sudo -u root`); an option carrying `v` or `V` ends the prefix, so a `command -v` lookup is not flagged. Advisory: the danger filter stays authoritative. Each word below opens with a bracket class so this block never matches its own text.
+
+```bash
+# timeout: 10000
+printf "=== Check 23e: command-name rebind ===\n"
+CMD='(:[0-9]+:|[;&|({`!]|\$\()[[:space:]]*((then|do|else|[[:alpha:]_][[:alnum:]_]*=[^[:space:]]*|[0-9]*&?[<>][^[:space:]]*|command|noglob|nocorrect|exec|env|sudo|doas|nohup|time|nice|timeout[[:space:]]+[^[:space:]]+|-[^[:space:]vV]*([[:space:]]+[^-[:space:]][^[:space:]]*)?)[[:space:]]+)*'
+REB='([h]ash|[b]uiltin|[a]lias|[u]nalias|[e]nable|[d]isable|[f]unctions|[a]utoload|[z]modload|[e]mulate|[m]apfile|[r]eadarray|[v]ared|[z]parseopts|[g]etln)([[:space:]]|$)'
+{ find plugins -mindepth 4 -maxdepth 4 -path 'plugins/*/skills/*/SKILL.md' -type f -print0
+  find plugins -mindepth 4 -maxdepth 4 -path 'plugins/*/skills/_shared/*.md' -type f -print0
+  find plugins -mindepth 5 -path 'plugins/*/skills/*/*' -name '*.md' -type f -print0
+  find .claude/skills -mindepth 2 -maxdepth 2 -name SKILL.md -type f -print0; } 2>/dev/null |
+  xargs -0 -r awk 'BEGIN { tick = sprintf("%c", 96); sq = sprintf("%c", 39); soh = sprintf("%c", 1); open = "^(" tick tick tick tick "*|~~~~*)" } FNR == 1 { fence = ""; held = "" } { line = $0; sub(/^([[:space:]]*>)*[[:space:]]*/, "", line); run = match(line, open) ? substr(line, 1, RLENGTH) : "" } fence == "" && run != "" { fence = run; lang = substr(line, length(run) + 1); sub(/^[[:space:]]*/, "", lang); shell = lang ~ /^(bash|sh|zsh|shell)([^[:alnum:]_-]|$)/; next } fence != "" && run != "" && substr(run, 1, 1) == substr(fence, 1, 1) && length(run) >= length(fence) && substr(line, length(run) + 1) ~ /^[[:space:]]*$/ { fence = ""; held = ""; next } fence != "" && shell { line = held line; held = ""; if (line ~ /(^|[^\\])(\\\\)*\\$/) { held = substr(line, 1, length(line) - 1); next } q = ""; out = ""; for (i = 1; i <= length(line); i++) { c = substr(line, i, 1); if (q == "" && c == "#" && (i == 1 || substr(line, i - 1, 1) ~ /[[:space:]]/)) break; if (c == "\\" && q != sq) { out = out c substr(line, i + 1, 1); i++; continue } if (q == "" && (c == "\"" || c == sq)) q = c; else if (q != "" && c == q) q = ""; else if (q != "" && (c == " " || c == "\t")) c = soh; out = out c } gsub(/[\\"]/, "", out); gsub(sq, "", out); gsub(/([0-9]+|\{[A-Za-z_][A-Za-z0-9_]*\})?(&>>?|[<>]+&?)([ \t]*[^ \t;&|(<>][^ \t;&|<>]*)?/, " ", out); print FILENAME ":" FNR ":" out }' |
+  grep -E -e "$CMD$REB" \
+    -e "$CMD"'[s]et[[:space:]]([^;&|]*[[:space:]])?[-+][[:alpha:]]*A' \
+    -e "$CMD"'[r]ead[[:space:]]([^;&|]*[[:space:]])?-[[:alpha:]]*[aA]' -e "$CMD"'[r]ead[[:space:]][^;&|<>]*[$`]' \
+    -e "$CMD"'[p]rintf?([[:space:]]+-[[:alpha:]]+([[:space:]]+[^[:space:]-][^[:space:]]*)*)*[[:space:]]+-[[:alpha:]]*v' \
+    -e "$CMD"'[[:alnum:]_-]*[[:alnum:]_]\$' \
+    -e "$CMD"'([d]eclare|[t]ypeset|[l]ocal|[e]xport|[r]eadonly|int[e]ger|[f]loat)[[:space:]]([^;&|]*[[:space:]])?(-[[:alpha:]]*n|[^[:space:]=]*\$[^[:space:]=]*=)' \
+    -e '[^[:alnum:]_./-]([-+][[:alpha:]]*)?([c]ommands|[f]unctions|al[i]ases|gal[i]ases|sal[i]ases|[d]is_[[:lower:]_]+|[f]path|[F]PATH|[B]ASH_CMDS|[B]ASH_ALIASES)([^[:alnum:]_./-]|$)' \
+    -e '\$\{(\([^)]*P|!)' | tr '\001' ' ' | head -20
+```
+
+Finding = any hit in a shipped block; fix = `command -v tool` for a lookup, call the program by its real name or path, and pass values through sentinel files rather than through a variable named at run time.
+
 **Sub-check 23d** — shell variable used for state across separate Bash tool calls. **Not grep-detectable** (requires cross-block analysis of Bash call boundaries, which are runtime not lexical). Flag during curator per-file review only: when auditing a skill, scan for `VAR=$(...)` pattern in one fenced block and `"$VAR"` or `[ -z "$VAR" ]` in a later fenced block with no `cat "${TMPDIR:-/tmp}/...-${CSID}"` supplying `VAR` between them.
 
 | Sub-check | Pattern | Severity | Auto-fix |
 | -- | -- | -- | -- |
 | 23c — eval in a shipped block | `eval "$…"` of script output or a session-file value | high | no — replace with TMPDIR-file pattern per `bin-authoring-guide.md §Script Output Routing`, a closed-`case` runner array, or an allowlisted bin runner |
 | 23d — cross-call shell var | `$VAR` in block N, set in earlier block M, no TMPDIR bridge | medium | no — curator flag only |
+| 23e — command-name rebind | rebind command in command position, name→program table, or `${(P)…}`/`${!…}` | medium | no — `command -v` lookup, real program name, sentinel files |
 
 **Report only** — never auto-fix; replacement requires understanding the script's full output contract.
 

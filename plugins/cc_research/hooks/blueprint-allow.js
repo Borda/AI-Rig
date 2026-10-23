@@ -188,6 +188,25 @@ function trailingBackslashes(line) {
   return count;
 }
 
+// An unescaped backslash, then a blank, then `#`: the shell keeps `\ #…` as word text, normalization drops it.
+const ESCAPED_BLANK_BEFORE_COMMENT = /(?<!\\)(?:\\\\)*\\[ \t]#/;
+
+/**
+ * True when normalization would erase a blank the shell reads as escaped: a line ending in an odd backslash run plus
+ * blanks (the shell ends the command there, normalization sees a continuation), or an escaped blank before `#` (the
+ * shell passes it as an argument, normalization drops it as a comment). Raw text and normalized form are then different
+ * commands sharing one digest, so the raw text is refused before any lookup.
+ * Port of build_blueprint_manifest.aliases_escaped_blank.
+ */
+function aliasesEscapedBlank(text) {
+  for (const line of text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n")) {
+    const trimmed = rstrip(line);
+    if (trimmed.length < line.length && trailingBackslashes(trimmed) % 2 === 1) return true;
+    if (ESCAPED_BLANK_BEFORE_COMMENT.test(line)) return true;
+  }
+  return false;
+}
+
 /** Split normalized text into logical commands on top-level newlines only. */
 function splitLogicalCommands(normalized) {
   const commands = [];
@@ -215,7 +234,8 @@ function needsBailout(normalized) {
 }
 
 /**
- * Read a nesting-aware delimited run beginning at `start`.
+ * Read a nesting-aware delimited run beginning at `start`. A `(…)` body is shell code, so its quoted strings are
+ * read whole: a parenthesis inside `'…'`, `"…"` or `$'…'` neither opens nor closes the body.
  * @returns {[string, number]} inner text and the index just past the closing delimiter.
  */
 function readDelimited(text, start, openChar, closeChar) {
@@ -225,6 +245,10 @@ function readDelimited(text, start, openChar, closeChar) {
     const char = text[index];
     if (char === "\\") {
       index += 2;
+      continue;
+    }
+    if (openChar === "(" && (char === "'" || char === '"' || ansiCBody(text, index) !== -1)) {
+      index = skipQuoted(text, index);
       continue;
     }
     if (openChar !== null && char === openChar) {
@@ -238,7 +262,37 @@ function readDelimited(text, start, openChar, closeChar) {
   return [text.slice(start), text.length];
 }
 
+/**
+ * Where the body of a `$'…'` string opening at `index` starts, or -1 when none opens there. The shell removes a
+ * backslash-newline before it reads quotes, so `$` and `'` split across a line continuation still open `$'…'`.
+ */
+function ansiCBody(text, index) {
+  if (text[index] !== "$") return -1;
+  let next = index + 1;
+  while (text.startsWith("\\\n", next)) next += 2;
+  return text[next] === "'" ? next + 1 : -1;
+}
+
+/** Index just past the `'…'`, `"…"` or `$'…'` string opening at `index`. */
+function skipQuoted(text, index) {
+  if (text[index] === "'") {
+    const end = text.indexOf("'", index + 1);
+    return end < 0 ? text.length : end + 1;
+  }
+  const body = ansiCBody(text, index);
+  if (body !== -1) return readAnsiC(text, body)[1];
+  return readDoubleQuoted(text, index + 1)[1];
+}
+
 const SEGMENT_SEPARATORS = ";&|\n";
+
+/** True when the separator at `index` is the `&` of `>&`, `<&` or `&>`, not a command boundary. */
+function isRedirectionAmpersand(text, index) {
+  if (text[index] !== "&") return false;
+  const before = index > 0 ? text[index - 1] : "";
+  const after = index + 1 < text.length ? text[index + 1] : "";
+  return before === "<" || before === ">" || after === ">";
+}
 
 /**
  * Read a `$(...)` or backtick command substitution opening at `index`.
@@ -270,18 +324,22 @@ function readProcessSubstitution(text, index) {
  * Locate unquoted segment separators and expanded substitution bodies.
  * Command substitutions are read at top level and inside double quotes — bash expands
  * them in both — while process substitutions are read at top level only. Nothing is read
- * inside single quotes, where bash expands nothing.
- * @returns {[number[], string[]]} separator indices and substitution inner texts.
+ * inside single quotes, where bash expands nothing. A `$'…'` string honours its backslash
+ * escapes, and the `&` of a redirection (`2>&1`, `&>/dev/null`) is not a separator.
+ * @returns {[number[], string[], boolean]} separator indices, substitution inner texts, and
+ *   whether the text ends inside an unclosed quote or holds a `$'…'` string with an escape
+ *   bash and zsh read differently.
  */
 function scanTopLevel(text) {
   const separators = [];
   const substitutions = [];
   let quote = null;
+  let unsettled = false;
   let index = 0;
   while (index < text.length) {
     const char = text[index];
     if (quote !== null) {
-      if (char === "\\" && quote === '"') {
+      if (char === "\\" && quote !== "'") {
         index += 2;
         continue;
       }
@@ -291,7 +349,7 @@ function scanTopLevel(text) {
         index = read[1];
         continue;
       }
-      if (char === quote) quote = null;
+      if (char === quote[quote.length - 1]) quote = null;
       index += 1;
       continue;
     }
@@ -299,9 +357,11 @@ function scanTopLevel(text) {
       index += 2;
       continue;
     }
-    if (char === "'" || char === '"') {
-      quote = char;
-      index += 1;
+    const body = ansiCBody(text, index);
+    if (char === "'" || char === '"' || body !== -1) {
+      quote = body === -1 ? char : "$'";
+      unsettled = unsettled || (body !== -1 && readAnsiC(text, body)[0].indexOf("\u0000") !== -1);
+      index = body === -1 ? index + 1 : body;
       continue;
     }
     const read = readSubstitution(text, index) || readProcessSubstitution(text, index);
@@ -310,10 +370,16 @@ function scanTopLevel(text) {
       index = read[1];
       continue;
     }
-    if (SEGMENT_SEPARATORS.indexOf(char) !== -1) separators.push(index);
+    if (SEGMENT_SEPARATORS.indexOf(char) !== -1 && !isRedirectionAmpersand(text, index)) separators.push(index);
     index += 1;
   }
-  return [separators, substitutions];
+  return [separators, substitutions, quote !== null || unsettled];
+}
+
+/** True when `command` or a substitution body in it ends inside an unclosed quote or has an unsettled escape. */
+function quotingUnsettled(command) {
+  const scanned = scanTopLevel(command);
+  return scanned[2] || scanned[1].some(quotingUnsettled);
 }
 
 /**
@@ -366,8 +432,31 @@ function splitSegments(command) {
 // ── Danger filter ─────────────────────────────────────────────────────────────
 
 const DANGER_COMMANDS = new Set(["rm", "dd", "chmod", "chown", "mkfs", "shutdown", "kill", "pkill"]);
-const DEFERRING_COMMANDS = new Set([
+// Commands that change what a command name runs, reach a builtin behind a prefix, fill a variable or array named on
+// the command line, or run text built at run time. No shipped block runs one, so each is denied by name.
+const REBIND_COMMANDS = new Set([
+  "hash",
+  "builtin",
+  "enable",
+  "disable",
+  "alias",
+  "unalias",
+  "functions",
+  "autoload",
+  "zmodload",
+  "emulate",
+  "mapfile",
+  "readarray",
+  "vared",
+  "zparseopts",
+  "getln",
   "eval",
+]);
+// `noglob`, `nocorrect` and `-` are zsh precommand modifiers: `noglob rm -rf x` runs `rm`.
+const DEFERRING_COMMANDS = new Set([
+  "noglob",
+  "nocorrect",
+  "-",
   "xargs",
   "sudo",
   "doas",
@@ -396,17 +485,6 @@ const GIT_DANGER_TOKENS = new Set(["push", "commit", "reset", "revert", "restore
 const GIT_FORCE_TOKENS = new Set(["--force", "--force-with-lease", "-f"]);
 const GIT_BRANCH_DELETE_TOKENS = new Set(["-D", "-d", "--delete"]);
 const ASSIGNMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
-
-/** Split a segment into bare tokens with grouping and quote characters removed. */
-function segmentTokens(segment) {
-  const tokens = [];
-  for (const raw of segment.split(WS_SPLIT_RE)) {
-    if (!raw) continue;
-    const token = stripChars(stripChars(raw, "(){}"), "'\"");
-    if (token) tokens.push(token);
-  }
-  return tokens;
-}
 
 /** Return a segment's command token (assignments skipped, directory dropped) and its arguments. */
 function commandHead(tokens) {
@@ -441,29 +519,86 @@ function sedEditsInPlace(tokens) {
   return hasShortFlag(tokens, "i") || tokens.some((token) => token.startsWith("--in-place"));
 }
 
+/** A command word as the shell runs it: backslashes and quotes removed, directory dropped (`\rm`, `r""m` → `rm`). */
+function bareWord(token) {
+  const bare = token.replace(/[\\'"]/g, "");
+  return bare.slice(bare.lastIndexOf("/") + 1);
+}
+
 /**
- * True when a `hash` segment rebinds a command name to another path (`hash name=/p`, `hash -p /p name`).
- * Any option word carrying `p` counts (attached `-p/bin/rm`, bundled `-rp`); `-l`, `-r`, `-d`, `-t` only look up.
+ * Option words after a segment's command word, and its operands. An option can take its argument as the next word
+ * (`set -o noglob -A …`, `read -t 5 -a …`), so every word before `--` starting with `-` or `+` counts as an option.
  */
-function hashRebinds(tokens) {
-  return tokens.slice(1).some((word) => (word.startsWith("-") && word.includes("p")) || word.includes("="));
+function splitOptions(tokens) {
+  const rest = commandHead(tokens)[1];
+  const options = [];
+  const operands = [];
+  for (let index = 0; index < rest.length; index++) {
+    const word = rest[index];
+    if (word === "--") return [options, operands.concat(rest.slice(index + 1))];
+    ((word.startsWith("-") || word.startsWith("+")) && word.length > 1 ? options : operands).push(word);
+  }
+  return [options, operands];
 }
 
-/** True when `builtin hash …` rebinds a command name, the same as a bare `hash` segment. */
-function builtinRebinds(tokens) {
-  return tokens.length > 1 && tokens[1] === "hash" && hashRebinds(tokens.slice(1));
+/** True when a `set` segment assigns an array (zsh `set -A name …` / `set +A name …`), whatever the name. */
+function setAssignsArray(tokens) {
+  return splitOptions(tokens)[0].some((word) => word.includes("A"));
 }
 
-// A pure read of the zsh `commands` / bash 4 `BASH_CMDS` table (`${commands[x]}`, `${+commands[x]}`, `$commands`).
-// Only a literal word or plain `$name` / `${name}` subscript is a pure read; `${commands[$(…)]}` can run a write.
-const COMMAND_TABLE_READ_RE =
-  /\$\{[+#]?(?:commands|BASH_CMDS)(?:\[(?:[A-Za-z0-9_.-]+|\$[A-Za-z_][A-Za-z0-9_]*|\$\{[A-Za-z_][A-Za-z0-9_]*\})\])?\}|\$(?:commands|BASH_CMDS)\b/g;
-// Any other mention of either table name: writable in many spellings, so treated as a rebind.
-const COMMAND_TABLE_USE_RE = /(?<![A-Za-z0-9_./-])(?:commands|BASH_CMDS)(?![A-Za-z0-9_./-])/;
+/**
+ * True when a `read` segment fills an array (`-a`/`-A`) or a variable whose name comes from an expansion. The tokens
+ * come from `shellWords`, which has already dropped redirections (`read -r v < "$f"` arrives as `read -r v`).
+ */
+function readAssignsByName(tokens) {
+  const [options, operands] = splitOptions(tokens);
+  if (options.some((word) => word.includes("a") || word.includes("A"))) return true;
+  return operands.some((word) => word.includes("$") || word.includes("`"));
+}
 
-/** True when `command` may write the zsh `commands` or bash 4 `BASH_CMDS` table. */
+/**
+ * True when a `printf`/`print` segment writes its output into a variable (`-v name`). Both stop reading options at
+ * their first other word, so only leading options count; a zsh `print` value option (`-u 2`) consumes the next word.
+ */
+function printAssignsVariable(tokens) {
+  const [head, rest] = commandHead(tokens);
+  const valueLetters = bareWord(head) === "print" ? "ufCxX" : "";
+  let index = 0;
+  while (index < rest.length) {
+    const word = rest[index];
+    if (word === "--" || !word.startsWith("-") || word.length < 2) return false;
+    if (word.includes("v")) return true;
+    index += valueLetters.includes(word[word.length - 1]) ? 2 : 1;
+  }
+  return false;
+}
+
+/** True when a declaring builtin makes a name reference (`-n`) or declares a name taken from an expansion. */
+function declaresByName(tokens) {
+  const [options, operands] = splitOptions(tokens);
+  if (options.some((word) => word.startsWith("-") && word.includes("n"))) return true;
+  return operands.some((word) => {
+    const name = word.split("=", 1)[0];
+    return name.includes("$") || name.includes("`");
+  });
+}
+
+// Any mention of a table that maps a name to what it runs (zsh `commands`, `functions`, `aliases` and siblings,
+// `fpath`/`FPATH`, bash `BASH_CMDS`/`BASH_ALIASES`), an attached option prefix included (`set -Acommands`).
+const COMMAND_TABLE_USE_RE =
+  /(?<![A-Za-z0-9_./-])(?:[-+][A-Za-z]*)?(?:commands|functions|aliases|galiases|saliases|dis_[a-z_]+|fpath|FPATH|BASH_CMDS|BASH_ALIASES)(?![A-Za-z0-9_./-])/;
+// Indirect parameter expansion, which can assign through a name held in another variable: `${(P)n::=…}`, `${!n:=…}`.
+const INDIRECT_EXPANSION_RE = /\$\{(?:\([^)]*P|!)/;
+
+/**
+ * True when `command` may rebind a name through a command table or an indirect expansion. Table names are matched
+ * as written and with quotes and backslashes removed: the shell joins `co""mmands` into `commands`.
+ */
 function writesCommandTable(command) {
-  return COMMAND_TABLE_USE_RE.test(command.replace(COMMAND_TABLE_READ_RE, ""));
+  const unquoted = command.replace(/[\\'"]/g, "");
+  return (
+    COMMAND_TABLE_USE_RE.test(command) || COMMAND_TABLE_USE_RE.test(unquoted) || INDIRECT_EXPANSION_RE.test(command)
+  );
 }
 
 /** True when a `gh api` segment issues an HTTP DELETE. */
@@ -489,13 +624,26 @@ function readsScriptFromStdin(args) {
   return operands.length === 0 || hasShortFlag(args, "s") || args.indexOf("-") !== -1;
 }
 
+/** True when `unset` removes a function (`-f`, zsh `-F`) or pattern-matched names (zsh `-m`), like `unalias`. */
+function unsetRemovesFunction(tokens) {
+  for (const word of tokens.slice(1)) {
+    if (word === "--" || !word.startsWith("-")) return false;
+    if (/^-[A-Za-z]*[fFm]/.test(word)) return true;
+  }
+  return false;
+}
+
 /** Command-specific destructive-use checks, keyed by command word and fed the segment's tokens. */
 const TOOL_CHECKS = new Map([
+  ["unset", unsetRemovesFunction],
   ["git", gitIsDangerous],
   ["sed", sedEditsInPlace],
   ["gh", ghApiDeletes],
-  ["hash", hashRebinds],
-  ["builtin", builtinRebinds],
+  ["set", setAssignsArray],
+  ["read", readAssignsByName],
+  ["printf", printAssignsVariable],
+  ["print", printAssignsVariable],
+  ...["declare", "typeset", "local", "export", "readonly", "integer", "float"].map((name) => [name, declaresByName]),
 ]);
 
 /**
@@ -543,25 +691,366 @@ function commandWords(segment) {
   return words.slice(index);
 }
 
-/** True when the command word is itself an expansion (`$CMD`, `${CMD}`, `$(...)`, backtick). */
-function headIsExpansion(words) {
-  if (words.length === 0) return false;
-  const head = stripChars(stripChars(words[0], "(){}"), "'\"");
-  const base = head.slice(head.lastIndexOf("/") + 1);
-  return base.startsWith("$") || base.startsWith("`");
-}
-
 /** True when the arguments of a command that merely carries another command hold a destructive one. */
 function deferredIsDangerous(head, rest) {
   if (rest.indexOf("-delete") !== -1) return true;
   if (SHELL_INTERPRETERS.has(head) && readsScriptFromStdin(rest)) return true;
   for (const token of rest) {
-    if (DANGER_COMMANDS.has(token.slice(token.lastIndexOf("/") + 1))) return true;
+    const bare = bareWord(token);
+    if (DANGER_COMMANDS.has(bare) || REBIND_COMMANDS.has(bare)) return true;
   }
-  for (const [name, check] of TOOL_CHECKS) {
-    if (rest.indexOf(name) !== -1 && check(rest)) return true;
+  // A command-specific check gets the words from the carried command word on (`timeout 5 set -A …` → `set -A …`).
+  for (let index = 0; index < rest.length; index++) {
+    const check = TOOL_CHECKS.get(bareWord(rest[index]));
+    if (check && check(rest.slice(index))) return true;
   }
   return false;
+}
+
+// ── Shell words ───────────────────────────────────────────────────────────────
+// Mirrors the Python generator's `shell_words` lexer: each word's text as written (`raw`), the value the shell
+// builds from it after quote removal (`value`), whether quoting took part (`quoted`), and whether an unquoted
+// `*`, `?`, `[` or `{` can expand it (`pattern`). Redirections and their targets are dropped.
+
+const WS_CHAR_RE = new RegExp("[" + PY_WS + "]");
+// A redirection operator with its optional file-descriptor prefix: `2>`, `>>`, `<<<`, `&>`, `>&`, `<>`.
+const REDIRECTION_OPERATOR_RE = /(?:[0-9]+|&|\{[A-Za-z_][A-Za-z0-9_]*\})?(?:<<<|<<-?|<>|<&|>&|>>|>\||<|>)/y;
+// A word read so far that opens an array assignment when `(` follows (`ARGS=(`), and a leading assignment word.
+const ARRAY_ASSIGNMENT_OPEN_RE = /^[A-Za-z_][A-Za-z0-9_]*\+?=$/;
+const ASSIGNMENT_WORD_RE = /^[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?\+?=/;
+const VARIABLE_WORD_RE = /^\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))$/;
+const ANSI_C_ESCAPES = new Map(
+  Object.entries({ a: "\x07", b: "\b", e: "\x1b", E: "\x1b", f: "\f", n: "\n", r: "\r", t: "\t", v: "\v" }).concat(
+    Object.entries({ "\\": "\\", "'": "'", '"': '"', "?": "?" }),
+  ),
+);
+// Only the hex escape is numeric in both shells alike; `\u…` is missing from bash 3.2.
+const ANSI_C_NUMERIC = new Map([["x", [/^[0-9A-Fa-f]{1,2}/, 16]]]);
+
+/** Body of a `$'…'` string from its first inner character, escapes resolved, and the index past its close. */
+function readAnsiC(text, index) {
+  let out = "";
+  while (index < text.length) {
+    const char = text[index];
+    if (char === "'") return [out, index + 1];
+    if (char !== "\\") {
+      out += char;
+      index += 1;
+      continue;
+    }
+    const escape = text.slice(index + 1, index + 2);
+    index += 2;
+    if (ANSI_C_ESCAPES.has(escape)) {
+      out += ANSI_C_ESCAPES.get(escape);
+    } else if (ANSI_C_NUMERIC.has(escape) || (escape && "01234567".includes(escape))) {
+      const [pattern, base] = ANSI_C_NUMERIC.get(escape) || [/^[0-7]{0,2}/, 8];
+      const digits = pattern.exec(text.slice(index));
+      const number = (base === 8 ? escape : "") + (digits ? digits[0] : "");
+      out += number && parseInt(number, base) <= 0o377 ? String.fromCharCode(parseInt(number, base)) : "\u0000";
+      index += digits ? digits[0].length : 0;
+    } else {
+      // an escape bash and zsh decode differently (`\m`, `\u…`, `\c…`) reads as NUL, which is refused
+      out += "\u0000";
+      if (escape === "c" && index < text.length) index += text.codePointAt(index) > 0xffff ? 2 : 1;
+    }
+  }
+  return [out, text.length];
+}
+
+/** Index just past a `$(…)`, backtick, `${…}`, `<(…)` or `>(…)` opening at `index`, or null when none opens there. */
+function readExpansion(text, index) {
+  if (text.startsWith("${", index)) return readDelimited(text, index + 2, "{", "}")[1];
+  const read = readSubstitution(text, index) || readProcessSubstitution(text, index);
+  return read === null ? null : read[1];
+}
+
+/** Body of a `"…"` string from its first inner character; a backslash escapes only `$`, backtick, `"`, `\`, newline. */
+function readDoubleQuoted(text, index) {
+  let out = "";
+  while (index < text.length) {
+    const char = text[index];
+    if (char === '"') return [out, index + 1];
+    if (char === "\\") {
+      const escaped = text.slice(index + 1, index + 2);
+      out += '$`"\\'.includes(escaped) ? escaped : escaped === "\n" ? "" : char + escaped;
+      index += 2;
+      continue;
+    }
+    const end = readExpansion(text, index);
+    out += end !== null ? text.slice(index, end) : char;
+    index = end !== null ? end : index + 1;
+  }
+  return [out, text.length];
+}
+
+/** One quoted or escaped piece of a word as [value, next index], or null when none opens at `index`. */
+function readQuoted(text, index) {
+  const char = text[index];
+  if (char === "\\") {
+    const escaped = text.slice(index + 1, index + 2);
+    return [escaped === "\n" ? "" : escaped, index + 2];
+  }
+  if (char === "'") {
+    let end = text.indexOf("'", index + 1);
+    if (end < 0) end = text.length;
+    return [text.slice(index + 1, end), end + 1];
+  }
+  const body = ansiCBody(text, index);
+  if (body !== -1) return readAnsiC(text, body);
+  if (char === '"' || text.startsWith('$"', index)) return readDoubleQuoted(text, index + (char === '"' ? 1 : 2));
+  return null;
+}
+
+/** One shell word from `index` as [word, next index]; ends at whitespace, a redirection, or an unquoted paren. */
+function readWord(text, index) {
+  const start = index;
+  let out = "";
+  let quoted = false;
+  let pattern = false;
+  while (index < text.length) {
+    const char = text[index];
+    if (WS_CHAR_RE.test(char) || ((char === "<" || char === ">") && text[index + 1] !== "(")) break;
+    if (char === "(" && !quoted && ARRAY_ASSIGNMENT_OPEN_RE.test(out)) {
+      const end = readDelimited(text, index + 1, "(", ")")[1];
+      out += text.slice(index, end);
+      index = end;
+      continue;
+    }
+    if (char === "(" || char === ")") {
+      if (!out) {
+        out += char;
+        index += 1;
+      }
+      break;
+    }
+    const piece = readQuoted(text, index);
+    if (piece !== null) {
+      out += piece[0];
+      quoted = true;
+      index = piece[1];
+      continue;
+    }
+    const end = readExpansion(text, index);
+    pattern = pattern || (end === null && "*?[{".includes(char));
+    out += text.slice(index, end !== null ? end : index + 1);
+    index = end !== null ? end : index + 1;
+  }
+  return [{ raw: text.slice(start, index), value: out, quoted, pattern }, index];
+}
+
+/** The words the shell passes to a segment's command, quotes resolved and redirections left out. */
+function shellWords(segment) {
+  const words = [];
+  let index = 0;
+  while (index < segment.length) {
+    if (WS_CHAR_RE.test(segment[index]) || segment.startsWith("\\\n", index)) {
+      index += segment[index] === "\\" ? 2 : 1;
+      continue;
+    }
+    REDIRECTION_OPERATOR_RE.lastIndex = index;
+    const operator = REDIRECTION_OPERATOR_RE.exec(segment);
+    if (operator && segment[REDIRECTION_OPERATOR_RE.lastIndex] !== "(") {
+      index = REDIRECTION_OPERATOR_RE.lastIndex;
+      while (index < segment.length && WS_CHAR_RE.test(segment[index])) index += 1;
+      if (index < segment.length) index = readWord(segment, index)[1];
+      continue;
+    }
+    let [word, end] = readWord(segment, index);
+    if (end === index) {
+      word = { raw: segment[index], value: segment[index], quoted: false, pattern: false };
+      end = index + 1;
+    }
+    words.push(word);
+    index = end;
+  }
+  return words;
+}
+
+/** Words from the command word on, past reserved words, grouping and leading assignments. */
+function commandStartWords(words) {
+  let index = 0;
+  while (index < words.length) {
+    const raw = words[index].raw;
+    if (SHELL_RESERVED_WORDS.has(raw) || !stripChars(raw, "(){}") || ASSIGNMENT_WORD_RE.test(raw)) {
+      index += 1;
+    } else {
+      break;
+    }
+  }
+  return words.slice(index);
+}
+
+/** The inside of a `[…]` pattern class as a regex class; an out-of-order range matches nothing. */
+function globClass(body) {
+  const negate = body[0] === "!" || body[0] === "^";
+  const chars = negate ? body.slice(1) : body;
+  const escape = (char) => char.replace(/[\\\][^-]/g, "\\$&");
+  const parts = [];
+  let index = 0;
+  while (index < chars.length) {
+    if (index + 2 < chars.length && chars[index + 1] === "-") {
+      const low = chars[index];
+      const high = chars[index + 2];
+      if (low <= high) parts.push(escape(low) + "-" + escape(high));
+      index += 3;
+    } else {
+      parts.push(escape(chars[index]));
+      index += 1;
+    }
+  }
+  if (parts.length === 0) return negate ? "." : "(?!)";
+  return "[" + (negate ? "^" : "") + parts.join("") + "]";
+}
+
+/** A shell filename pattern as a full-match regex: `*`, `?` and `[…]`/`[!…]` classes, the rest literal. */
+function globRegex(pattern) {
+  let out = "";
+  let index = 0;
+  while (index < pattern.length) {
+    const char = pattern[index];
+    const close = char === "[" ? pattern.indexOf("]", index + 2) : -1;
+    if (char === "*") {
+      out += ".*";
+    } else if (char === "?") {
+      out += ".";
+    } else if (close > 0) {
+      out += globClass(pattern.slice(index + 1, close));
+      index = close;
+    } else {
+      out += char.replace(/[.*+?^${}()|[\]\\/-]/g, "\\$&");
+    }
+    index += 1;
+  }
+  return new RegExp("^(?:" + out + ")$");
+}
+
+/** True when an unquoted pattern in command position can expand to a refused command name (`r?`, `{ha,}sh`). */
+// A `[…]` pattern class with a quote or backslash inside it.
+const QUOTED_CLASS_RE = /\[[^\]]*[\\'"]/;
+
+function spellingHidesName(word) {
+  if (!word.pattern) return false;
+  let name = word.value.slice(word.value.lastIndexOf("/") + 1);
+  if (name.includes("{") && (name.includes(",") || name.includes(".."))) return true;
+  // a POSIX bracket class (`[[:alpha:]]`) can match any letter of a refused name
+  if (name.includes("[:") || name.includes("[=") || name.includes("[.")) return true;
+  // quote removal turns a quoted `!` or `-` in a class into negation or a range: count the class as any one character
+  if (QUOTED_CLASS_RE.test(word.raw)) name = name.replace(/\[[^\]]*\]/g, "?");
+  const matcher = globRegex(name);
+  for (const refused of [...DANGER_COMMANDS, ...REBIND_COMMANDS]) {
+    if (matcher.test(refused)) return true;
+  }
+  return false;
+}
+
+// Long shell options whose value is the next word.
+const SHELL_VALUE_OPTIONS = new Set(["--rcfile", "--init-file"]);
+
+/**
+ * Every argument that may be a shell's `-c` script. Options are read as clusters, each `o`/`O` letter taking the
+ * next word; once a cluster carries `c`, every later argument is returned, so a misplaced value is still judged.
+ */
+function shellScript(args) {
+  let index = 0;
+  while (index < args.length) {
+    const option = args[index];
+    if (option === "--" || !(option.startsWith("-") || option.startsWith("+")) || option.length < 2) return [];
+    if (option.startsWith("-") && hasShortFlag([option], "c"))
+      return args.slice(index + 1).filter((arg) => arg !== "--");
+    let values = 0;
+    if (SHELL_VALUE_OPTIONS.has(option)) values = 1;
+    else if (!option.startsWith("--")) values = (option.match(/[oO]/g) || []).length;
+    index += 1 + values;
+  }
+  return [];
+}
+
+// A backslash escape or a single-quoted span (`'…'`, `$'…'`), where `$` and a backtick expand nothing.
+const INERT_SPAN_RE = /\\[\s\S]|\$?'[^']*'/g;
+
+/** Index just past the `${…}`, `$(…)` or backtick expansion opening at `start`; unterminated runs to the end. */
+function expansionEnd(text, start) {
+  if (text[start] === "`") {
+    const end = text.indexOf("`", start + 1);
+    return end === -1 ? text.length : end + 1;
+  }
+  const opening = text[start + 1];
+  const closing = opening === "{" ? "}" : ")";
+  let depth = 0;
+  for (let index = start + 1; index < text.length; index++) {
+    if (text[index] === opening) {
+      depth += 1;
+    } else if (text[index] === closing) {
+      depth -= 1;
+      if (depth === 0) return index + 1;
+    }
+  }
+  return text.length;
+}
+
+/** The text with each `${…}`, `$(…)` and backtick expansion collapsed to a lone `$`. */
+function collapseExpansions(text) {
+  let out = "";
+  let index = 0;
+  while (index < text.length) {
+    if (text[index] === "`" || (text[index] === "$" && (text[index + 1] === "{" || text[index + 1] === "("))) {
+      index = expansionEnd(text, index);
+      out += "$";
+    } else {
+      out += text[index];
+      index += 1;
+    }
+  }
+  return out;
+}
+
+/** The part of a word after its last path separator outside any expansion (`h${x:-/}sh` stays whole). */
+function lastSegment(text) {
+  const collapsed = collapseExpansions(text);
+  return collapsed.slice(collapsed.lastIndexOf("/") + 1);
+}
+
+/** True when a word's last path segment holds a live expansion after its first character (`h${x}sh`). */
+function expandsMidWord(word) {
+  // a quoted or escaped span stands in as one literal character, so `'h'${x}sh` keeps its expansion mid-word
+  const name = lastSegment(word.raw.replace(INERT_SPAN_RE, "_").replace(/"/g, ""));
+  return name.slice(1).includes("$") || name.slice(1).includes("`");
+}
+
+/**
+ * Every string `env -S`/`--split-string` may split into a command line. `S` is found anywhere in a short-option
+ * cluster (`-iS`); the rest of the cluster after it and the next word are both returned.
+ */
+function envSplitString(args) {
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index];
+    if (arg === "--split-string") return args.slice(index + 1, index + 2);
+    if (arg.startsWith("--split-string=")) return [arg.slice(arg.indexOf("=") + 1)];
+    if (/^-[A-Za-z]*S/.test(arg)) {
+      const rest = arg.slice(arg.indexOf("S") + 1);
+      return (rest ? [rest] : []).concat(args.slice(index + 1, index + 2));
+    }
+  }
+  return [];
+}
+
+/**
+ * Command lines a deferring command runs from one argument: a shell's `-c` string, a `trap` action, a `watch`
+ * command, an `env -S` string. A lone variable (`bash -c "$METRIC_CMD"`) is left to the allowlist gate.
+ */
+function carriedCommands(values) {
+  const texts = [];
+  values.forEach((value, index) => {
+    const name = bareWord(value);
+    if (SHELL_INTERPRETERS.has(name)) {
+      texts.push(...shellScript(values.slice(index + 1)));
+    } else if (name === "trap" || name === "watch") {
+      texts.push(...values.slice(index + 1).filter((arg) => !arg.startsWith("-")));
+    } else if (name === "env") {
+      texts.push(...envSplitString(values.slice(index + 1)));
+    }
+  });
+  return texts.filter((text) => !VARIABLE_WORD_RE.test(text));
 }
 
 // One `case` pattern: unquoted chars other than space, parentheses and `|`, escapes, or quoted runs.
@@ -621,29 +1110,111 @@ function hiddenCommands(segment) {
   if (arm !== null) hidden.push(arm);
   const words = commandWords(segment);
   if (functionName(words) !== null) hidden.push(functionBody(words).join(" "));
-  return hidden;
+  return hidden.concat(compoundBodies(segment));
 }
 
-/** True when one segment runs a destructive command, including one hidden behind a label or function definition. */
+// Words opening a loop or condition whose zsh short or brace form (`for x (a) cmd`, `if true { cmd }`, `repeat 3 cmd`)
+// or bash `coproc` runs a command later on the same line.
+const COMPOUND_HEADS = new Set(["for", "foreach", "select", "repeat", "if", "elif", "while", "until", "coproc"]);
+
+/**
+ * Text after each word that may close a loop list or condition in a compound command: after a `)`, `{`, `}` or `]]`,
+ * after `repeat`'s count, or right after `coproc`. Judging a list word as a command can only refuse a block.
+ */
+function compoundBodies(segment) {
+  const words = shellWords(segment).map((word) => word.raw);
+  if (words.length === 0 || !COMPOUND_HEADS.has(words[0])) return [];
+  const starts = new Set(words[0] === "coproc" ? [1] : words[0] === "repeat" ? [2] : []);
+  words.forEach((word, index) => {
+    if (word === "{" || word === "}" || word === "]]" || word.endsWith(")")) starts.add(index + 1);
+  });
+  return [...starts]
+    .sort((a, b) => a - b)
+    .filter((start) => start <= words.length)
+    .map((start) => words.slice(start).join(" "));
+}
+
+// Builtins whose options name a variable or array to fill (`printf -v`, `set -A`, `read -a`, `declare -n`,
+// `unset -f`), so an option supplied by an expansion may rebind a command name.
+const OPTION_REBINDERS = new Set([
+  "set",
+  "read",
+  "printf",
+  "print",
+  "unset",
+  "declare",
+  "typeset",
+  "local",
+  "export",
+  "readonly",
+  "integer",
+  "float",
+]);
+
+/**
+ * True when an expansion stands where a builtin still reads options, so its value may be one (`printf "$o" …` with
+ * `o=-v`). `printf`/`print` read options only before their first other word; the others anywhere before `--`.
+ */
+function optionFromExpansion(head, words) {
+  const leadingOnly = head === "printf" || head === "print";
+  let index = 0;
+  while (index < words.length) {
+    const word = words[index];
+    const live = word.raw.replace(INERT_SPAN_RE, "_");
+    if (word.value === "--") return false;
+    const first = live.replace(/^"+/, "").charAt(0);
+    if (first === "$" || first === "`") return true;
+    if ((word.value.startsWith("-") || word.value.startsWith("+")) && word.value.length > 1) {
+      if (live.includes("$") || live.includes("`")) return true;
+      index += head === "print" && "ufCxX".includes(word.value[word.value.length - 1]) ? 2 : 1;
+      continue;
+    }
+    if (leadingOnly) return false;
+    index += 1;
+  }
+  return false;
+}
+
+/**
+ * True when one segment runs a destructive command, including one hidden behind a label or function definition.
+ * A `case` label is a pattern, never a command, so a labelled segment is judged by the command after its label.
+ */
 function segmentIsDangerous(segment) {
-  return [segment, ...hiddenCommands(segment)].some(commandIsDangerous);
+  const hidden = hiddenCommands(segment);
+  return (caseLabelEnd(segment) !== -1 ? hidden : [segment, ...hidden]).some(commandIsDangerous);
 }
 
-/** True when one command runs a destructive command, directly or through a deferring command. */
+/**
+ * True when one command runs a destructive command, directly or through a deferring command. The segment is read as
+ * shell words (quotes resolved, redirections dropped); a command-word pattern that can expand to a refused name and
+ * a table name in any word are refused, and command text a wrapper carries in one argument is judged as a command.
+ */
 function commandIsDangerous(segment) {
-  const words = commandWords(segment);
-  const tokens = segmentTokens(words.join(" "));
-  const split = commandHead(tokens);
-  const head = split[0];
-  if (DANGER_COMMANDS.has(head) || headIsExpansion(words)) return true;
+  const words = commandStartWords(shellWords(segment));
+  if (words.length === 0) return false;
+  const values = words.map((word) => word.value);
+  // bash ends a $'…' string at a decoded NUL and zsh keeps it: no single reading is right for both shells
+  if (values.some((value) => value.indexOf("\u0000") !== -1)) return true;
+  const head = bareWord(values[0]);
+  if (DANGER_COMMANDS.has(head) || REBIND_COMMANDS.has(head) || spellingHidesName(words[0])) return true;
+  const base = lastSegment(values[0]);
+  if (base.includes("$") || base.includes("`") || values.some((value) => COMMAND_TABLE_USE_RE.test(value))) {
+    return true;
+  }
+  if (OPTION_REBINDERS.has(head) && optionFromExpansion(head, words.slice(1))) return true;
   const check = TOOL_CHECKS.get(head);
-  if (check) return check(tokens);
-  return DEFERRING_COMMANDS.has(head) && deferredIsDangerous(head, split[1]);
+  if (check) return check(values);
+  if (!DEFERRING_COMMANDS.has(head)) return false;
+  if (words.slice(1).some((word) => spellingHidesName(word) || expandsMidWord(word))) return true;
+  return deferredIsDangerous(head, values.slice(1)) || carriedCommands(values).some(isDangerous);
 }
 
-/** True when any segment of `command` is destructive. */
+/**
+ * True when any segment of `command` is destructive. Text ending inside an unclosed quote is refused: the reader and
+ * the shell disagree about where its commands start.
+ */
 function isDangerous(command) {
-  if (writesCommandTable(command)) return true;
+  if (writesCommandTable(command) || quotingUnsettled(command)) return true;
   return splitSegments(command).some(segmentIsDangerous);
 }
 
@@ -729,7 +1300,7 @@ function decide(raw) {
   if (!data || data.tool_name !== "Bash") return null;
   const command = data.tool_input && data.tool_input.command;
   if (typeof command !== "string" || !command) return null;
-  if (isDangerous(normalize(command))) return null;
+  if (aliasesEscapedBlank(command) || isDangerous(normalize(command))) return null;
   const entries = loadEntries();
   if (!entries) return null;
   const record = matchBlueprint(command, entries);
@@ -770,7 +1341,7 @@ function evaluate(raw) {
   const normalized = normalize(command);
   const digest = sha256Text(normalized);
   const declined = (why) => ({ ...lane, payload: null, decision: "passthrough", why, digest });
-  if (isDangerous(normalized)) return declined("danger");
+  if (aliasesEscapedBlank(command) || isDangerous(normalized)) return declined("danger");
   const entries = loadEntries();
   if (!entries) return declined("manifest-unavailable");
   const record = matchBlueprint(command, entries);
@@ -800,6 +1371,7 @@ module.exports = {
   needsBailout,
   splitLogicalCommands,
   isDangerous,
+  aliasesEscapedBlank,
   sha256Text,
   matchBlueprint,
   decide,

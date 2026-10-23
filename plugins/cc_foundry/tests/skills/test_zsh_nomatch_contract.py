@@ -176,6 +176,110 @@ def test_check_23c_keeps_long_fences_open_and_drops_blockquoted_comments(shell: 
     assert ("long.py" in proc.stdout, "comment.py" in proc.stdout) == (True, False), proc.stderr
 
 
+def _check_23e_block() -> str:
+    """Return the bash block of the audit's Sub-check 23e."""
+    text = _CHECKS_SKILLS_BASH.read_text(encoding="utf-8")
+    section = text.split("### Sub-check 23e", 1)[1]
+    return section.split("```bash\n", 1)[1].split("\n```", 1)[0]
+
+
+@_both_shells
+def test_check_23e_flags_rebinds_in_shell_fences_only(shell: str, tmp_path: Path) -> None:
+    """Check 23e reports name rebinds in shell fences and leaves lookups, paths, comments and prose fences alone.
+
+    Every rebind spelling the blueprint danger filter denies by name must surface here too, so an author learns why the
+    block prompts; ``command -v``, a ``commands.md`` path, a trailing comment and a ``text`` fence must stay quiet.
+    """
+    mode = tmp_path / "plugins" / "demo" / "skills" / "probe" / "modes" / "rebind.md"
+    mode.parent.mkdir(parents=True)
+    mode.write_text(
+        "```bash\nset -Acommands ruff /bin/echo\nx=1; hash -p /bin/rm ruff\n: ${(P)n::=/bin/rm}\ntypeset -A aliases\n"
+        "echo hi  # hash later\ncommand -v uv\nls docs/commands.md\n```\n"
+        "```text\nfunctions to change\n```\n"
+        "> ```zsh\n> alias ruff=rm\n> ```\n",
+        encoding="utf-8",
+    )
+    (tmp_path / ".claude").mkdir()
+    proc = subprocess.run(
+        [shell, "-c", _check_23e_block()], cwd=tmp_path, capture_output=True, encoding="utf-8", timeout=30
+    )
+    flagged = sorted(int(line.split(":")[1]) for line in proc.stdout.splitlines() if line.startswith("plugins/"))
+    assert flagged == [2, 3, 4, 5, 14], proc.stderr
+
+
+@_both_shells
+def test_check_23e_flags_option_forms_and_prefixed_commands(shell: str, tmp_path: Path) -> None:
+    """Check 23e reports option-driven rebinds and rebinds behind prefixes, escapes and quoted ``#`` characters.
+
+    The blueprint danger filter refuses each of lines 2-13, 18-21, 23, 26 and 27 (an array or variable named by an
+    option, a command word behind ``command``, a backslash, an assignment, a wrapper, a redirection, a ``hash`` after a
+    quoted string holding an escaped quote and a ``#``, ``print -v`` after a quoted format, a command word built with
+    ``$'…'``, one continued across lines, reported where it ends, ``set -A`` behind a quoted redirection target, or a
+    ``read`` operand built by a command substitution); lines 14-17, 24 and 25 are ordinary shapes the filter admits,
+    ``-v`` passed to ``printf`` as data among them.
+    """
+    mode = tmp_path / "plugins" / "demo" / "skills" / "probe" / "modes" / "options.md"
+    mode.parent.mkdir(parents=True)
+    mode.write_text(
+        "```bash\nset -A names x y\nread -a names\nprintf -v target %s value\ndeclare -n ref=target\n"
+        'typeset "$n=value"\ncommand hash -p /bin/echo probe\n\\hash -p /bin/echo probe\n'
+        'FOO=1 hash -p /bin/echo probe\necho " # literal"; hash -p /bin/echo probe\ntimeout 5 set -A x y\n'
+        "2>/dev/null set -A x y\nprint -u 2 -v x y\n"
+        'printf "  Python: %s\\n" "$(python --version 2>&1)"\n'
+        'IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/r-${CSID}" 2>/dev/null || RUN_DIR=""\n'
+        'local x="$1"\nset -euo pipefail\ninteger -n ref\necho "a \\" # literal"; hash -p /bin/echo probe\n'
+        "print -f '%s %s' -v target /bin/echo\nh$'\\x61'sh -p /bin/echo probe\nha\\\nsh -p /bin/echo probe\n"
+        "printf '%s\\n' -v\nX=a$b; echo hi\n"
+        '2>"a echo" set -A "$n" ruff /bin/echo\nread `echo n`\n```\n',
+        encoding="utf-8",
+    )
+    (tmp_path / ".claude").mkdir()
+    proc = subprocess.run(
+        [shell, "-c", _check_23e_block()], cwd=tmp_path, capture_output=True, encoding="utf-8", timeout=30
+    )
+    flagged = sorted(int(line.split(":")[1]) for line in proc.stdout.splitlines() if line.startswith("plugins/"))
+    assert flagged == [*range(2, 14), 18, 19, 20, 21, 23, 26, 27], proc.stdout + proc.stderr
+
+
+@_both_shells
+def test_check_23e_reads_operands_past_redirections(shell: str, tmp_path: Path) -> None:
+    """Check 23e drops whole redirections and wrapper options before matching, so a rebind behind one is reported.
+
+    Lines 2-4 and 8-9 are refused by the blueprint danger filter (a ``read`` operand after ``2>/dev/null``, a
+    redirection glued to ``hash``, ``set -A`` behind an allocated descriptor ``{fd}>``, ``hash`` behind ``command --``
+    or ``sudo -u root``); lines 5-7 are ordinary reads whose redirection targets hold a ``$``, a command substitution
+    with a quoted space, or a ``;`` right after the target, and line 10 is a ``command -v`` lookup.
+    """
+    mode = tmp_path / "plugins" / "demo" / "skills" / "probe" / "modes" / "redirections.md"
+    mode.parent.mkdir(parents=True)
+    mode.write_text(
+        '```bash\nread 2>/dev/null "$n"\nhash>/dev/null -p /bin/echo probe\n{fd}>/dev/null set -A "$n" ruff /bin/echo\n'
+        'read -r x < "$file"\nIFS= read -r y < "$(dirname "$R")/sha.txt" || y=\n'
+        'IFS= read -r z < "$F" 2>/dev/null; z="${z:-a}"\n'
+        "command -- hash -p /bin/echo probe\nsudo -u root hash -p /bin/echo probe\ncommand -v hash >/dev/null\n```\n",
+        encoding="utf-8",
+    )
+    (tmp_path / ".claude").mkdir()
+    proc = subprocess.run(
+        [shell, "-c", _check_23e_block()], cwd=tmp_path, capture_output=True, encoding="utf-8", timeout=30
+    )
+    flagged = sorted(int(line.split(":")[1]) for line in proc.stdout.splitlines() if line.startswith("plugins/"))
+    assert flagged == [2, 3, 4, 8, 9], proc.stdout + proc.stderr
+
+
+@_both_shells
+def test_check_23e_finds_no_rebind_in_shipped_skills(shell: str) -> None:
+    """No shipped skill block rebinds a command name, and Check 23e does not match its own pattern text.
+
+    The blueprint danger filter denies these spellings by name on the evidence that no shipped block needs them; this
+    keeps that premise true as skills change.
+    """
+    proc = subprocess.run(
+        [shell, "-c", _check_23e_block()], cwd=_PLUGINS.parent, capture_output=True, encoding="utf-8", timeout=60
+    )
+    assert [line for line in proc.stdout.splitlines() if not line.startswith("===")] == [], proc.stderr
+
+
 @_both_shells
 def test_check_23c_reports_plugin_finding_without_project_skills(shell: str, plugin_only_tree: Path) -> None:
     """Check 23c reports a plugin skill's eval finding in a checkout that has no ``.claude/skills/`` directory.

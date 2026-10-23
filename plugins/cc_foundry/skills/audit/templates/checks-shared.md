@@ -548,7 +548,7 @@ for f in $(grep -rl "<!-- policy-sibling:" .claude plugins --include="*.md" 2>/d
         grep -q "<!-- policy-sibling:" "$sib" || OUT="${OUT}⚠ 45-ASYMMETRIC: $f — declares sibling $sib, but that file has no policy-sibling marker back\n"
     done
 done
-if [ -n "$OUT" ]; then printf "$OUT"; else printf "✓: Check 45 — no unsynced policy-sibling markers found\n"; fi
+if [ -n "$OUT" ]; then printf '%b' "$OUT"; else printf "✓: Check 45 — no unsynced policy-sibling markers found\n"; fi
 ```
 
 A sibling path resolves from the repository root first, then from the marker file's own plugin root (`plugins/<p>/`): an installed plugin has no repository root, so shipped markers may name siblings plugin-relatively (`skills/assess/SKILL.md`) — only a path missing under both roots is `45-BROKEN`.
