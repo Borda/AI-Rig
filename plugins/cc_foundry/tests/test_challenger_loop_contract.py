@@ -70,6 +70,43 @@ def test_dispatch_site_records_challenger_failure(relative: str) -> None:
     assert "no `--no-codex`" in text
 
 
+@pytest.mark.parametrize(
+    "clause",
+    [
+        pytest.param("is an agent failure, never a silent `not-run`", id="failure-not-silent"),
+        pytest.param("never append it to `loop-rounds.jsonl`", id="failure-never-a-round"),
+        pytest.param(
+            "Re-dispatch that reviewer once with a brief that removes the cause;", id="unconditional-redispatch"
+        ),
+        pytest.param("not a retry of the same one", id="redispatch-not-retry"),
+        pytest.param("still needs any approval its route requires", id="redispatch-keeps-approval"),
+        pytest.param("for a refused write, require the findings inline in the final reply", id="refused-write-inline"),
+        pytest.param("never spend the re-dispatch on the same write under another name", id="no-rename-retry"),
+        pytest.param("treat the route as failed without a re-dispatch", id="no-attempt-left-fails-route"),
+        pytest.param("switch to another permitted independent route when one exists", id="second-failure-switches"),
+        pytest.param("stop as `independence-unavailable` only when none remains", id="stop-only-without-route"),
+    ],
+)
+def test_loop_rule_records_reviewer_round_failure(clause: str) -> None:
+    """The shipped loop rule treats any reviewer round without a deliverable as a recorded agent failure.
+
+    The quality-gates files cover the challenger; the loop rule itself must say the same for every reviewer, or a caller
+    reading only ``_full/adversarial-loop.md`` records the round as ``not-run`` and loses its cause.
+    """
+    text = (_PLUGINS / "cc_foundry/rules/_full/adversarial-loop.md").read_text(encoding="utf-8")
+    assert clause in text
+
+
+def test_loop_rule_redispatch_is_not_gated_on_retry_contract() -> None:
+    """The corrected re-dispatch is an obligation, not an option a workflow's retry contract can veto.
+
+    Codex Rig's specialist retry policy allows only timeout, transport and rate-limit retries; a qualifier tying the re-
+    dispatch to that contract silently removed it there while every rule and changelog promised it.
+    """
+    text = (_PLUGINS / "cc_foundry/rules/_full/adversarial-loop.md").read_text(encoding="utf-8")
+    assert "Where the owning workflow's retry contract permits that class, re-dispatch" not in text
+
+
 def test_eager_foundry_rule_points_at_challenger_rounds() -> None:
     """The always-loaded foundry rule sends every challenger dispatch to the full Challenger Rounds section.
 

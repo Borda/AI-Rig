@@ -196,6 +196,7 @@ Claim "specialist fan-out" only with separate outputs/runtime provenance. Record
 - Wait for children under [Agent Waits](native-skill-contract.md#agent-waits): blocking wait with a timeout, no polling, and a child past its per-agent deadline recorded `timed_out` at once. After every wait, including an empty return, report completed/expected counts, pending roles and elapsed time before any next tool call; include the last observed event or `no new progress evidence`, deadline and next action. Never infer child liveness from an empty return or wait without an outstanding accepted dispatch.
 - Max 2 attempts/specialist.
 - Retry only timeout, transport, rate limit; not deterministic finding, validation failure, completed output.
+- Exception: an adversarial-loop reviewer round with no deliverable or a `blocked` envelope gets one corrected re-dispatch with a brief that removes the recorded cause, per [Adversarial Convergence Loop](adversarial-loop.md); it counts toward the 2-attempt cap and is never an identical retry. When the cap is already spent, the route is failed: switch to another permitted reviewer route or stop as the loop rule says. Strict portable `parallel_execution` nodes are excluded: their validator admits a second attempt only after a transient failure, so a reviewer failure there fails the route.
 - Preserve completed output/narrow packs. Checkpoint records evidence, not completed response.
 - Record selected completed attempt; retain failed transient attempt for audit.
 

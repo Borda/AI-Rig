@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.70.3
+
+- The adversarial-loop progress table shows security findings in their own `Security` column ahead of `Critical`, instead of folding them into `Critical`, so a reader sees how many open findings are security bypasses. Score weights and the `Weighted score` column are unchanged.
+- The adversarial-loop rule treats any reviewer round that returns no deliverable, a refused findings write, an unparsable envelope, a safety-classifier stop or a `blocked` envelope as an agent failure, records its cause in `loop-report.md` (never as a round, where it would read as a clean review), re-dispatches that reviewer once with a brief that removes the cause, switches to another permitted reviewer route if the same one fails again or cannot be re-dispatched (no attempt left, no approval, or a cause no brief can remove), and stops as `independence-unavailable` only when no route remains, instead of letting the round drop out as `not-run`.
+
 ## 0.70.2
 
 - `/foundry:calibrate` arms a 60-minute pipeline deadline when `--full` or `--ab-test` is set (previously 10 minutes, 15 with Codex), so a full A/B calibration with Codex scoring is no longer cut off at 15 minutes.

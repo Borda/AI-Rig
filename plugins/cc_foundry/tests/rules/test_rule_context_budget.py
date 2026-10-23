@@ -43,7 +43,10 @@ EAGER_GLOBS = frozenset({"**", "**/*"})
 # Raised from 61146 by 66 bytes: a one-line pointer to `_full/quality-gates.md` §Challenger Rounds,
 # which holds the procedure itself. The challenger brief is written before the first Agent() call,
 # and rule-inject.js injects agent-spawn.md only after that call ran, so a lazy home misses it.
-EAGER_BUDGET_BYTES = 61212
+# Raised from 61212 by 11 bytes: the progress table header in the quality-gates stub gains its
+# `Security` column; the stub states the exact columns, so leaving it out reintroduces the
+# seven-column table in live loop reports.
+EAGER_BUDGET_BYTES = 61223
 #: Rules ``hooks/rule-inject.js`` injects on their activity; eager loading would duplicate them.
 HOOK_INJECTED_RULES = ("agent-spawn.md", "git-commit.md")
 

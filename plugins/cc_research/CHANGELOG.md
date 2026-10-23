@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.30.4
+
+- The adversarial-loop progress table shows security findings in their own `Security` column ahead of `Critical`, instead of folding them into `Critical`, so a reader sees how many open findings are security bypasses. Score weights and the `Weighted score` column are unchanged.
+- The adversarial-loop rule treats any reviewer round that returns no deliverable, a refused findings write, an unparsable envelope, a safety-classifier stop or a `blocked` envelope as an agent failure, records its cause in `loop-report.md` (never as a round, where it would read as a clean review), re-dispatches that reviewer once with a brief that removes the cause, switches to another permitted reviewer route if the same one fails again or cannot be re-dispatched (no attempt left, no approval, or a cause no brief can remove), and stops as `independence-unavailable` only when no route remains, instead of letting the round drop out as `not-run`.
+
 ## 0.30.3
 
 - Adversarial review loops treat a `foundry:challenger` round that returns no deliverable or a `blocked` envelope as an agent failure, never a silent `not-run`: the cause is recorded and the round re-dispatched once. Security-filter reviews keep Codex enabled, so the challenger runs the bypass search through its Codex cross-check and needs no separate Codex row.

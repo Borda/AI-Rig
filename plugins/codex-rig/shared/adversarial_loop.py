@@ -39,8 +39,8 @@ completed round to print its cumulative severity table on stderr, leaving machin
 
 The CLI prints one JSON object. A valid ledger yields its deterministic summary and exit status zero; an invalid ledger
 yields ``status=invalid``, error names, and exit status one. ``--require-clean`` preserves the valid JSON summary but
-exits one unless its reason is ``clean``. Optional progress cells split old and new open findings, grouping security
-with critical for display while retaining their distinct weights; no table is printed before a completed round. Action
+exits one unless its reason is ``clean``. Optional progress cells split old and new open findings, with security and
+critical in separate columns and their distinct weights; no table is printed before a completed round. Action
 validation checks record consistency, not whether a claimed fix or cause is true. Only ``--append`` modifies files: it
 adds one line to the round log and removes the staged record; a rejected record is kept for inspection and nothing is
 appended.
@@ -518,19 +518,19 @@ def _render_progress(payload: dict[str, Any], completed_rounds: int) -> str:
     if not completed_rounds:
         return ""
     lines = [
-        "| Iteration | Critical | High | Medium | Low | Nits | Weighted score |",
-        "| --- | --- | --- | --- | --- | --- | --- |",
+        "| Iteration | Security | Critical | High | Medium | Low | Nits | Weighted score |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     seen: set[str] = set()
     for round_record in payload["rounds"][:completed_rounds]:
-        counts = {tier: [0, 0] for tier in ("critical", "high", "medium", "low", "nit")}
+        counts = {tier: [0, 0] for tier in ("security", "critical", "high", "medium", "low", "nit")}
         weighted = [0, 0]
         for finding in round_record["findings"]:
             if finding["disposition"] not in _OPEN_DISPOSITIONS:
                 continue
             bucket = 0 if finding["signature"] in seen else 1
             tier = finding["tier"]
-            counts["critical" if tier == "security" else tier][bucket] += 1
+            counts[tier][bucket] += 1
             weighted[bucket] += _TIERS[tier]
         cells = [str(round_record["index"]), *(f"{old} + {new}" for old, new in [*counts.values(), weighted])]
         lines.append("| " + " | ".join(cells) + " |")
@@ -539,7 +539,7 @@ def _render_progress(payload: dict[str, Any], completed_rounds: int) -> str:
     lines.append("")
     lines.append(
         "Cells: old + new open findings (including pending verification); old = seen in any prior completed round. "
-        "Critical includes security; weights: security 20, critical 10, high 6, medium 4, low 2, nit 1. "
+        "Security and Critical count their own tiers; weights: security 20, critical 10, high 6, medium 4, low 2, nit 1. "
         "Weighted score: old weighted + new weighted."
     )
     return "\n".join(lines)

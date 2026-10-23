@@ -28,7 +28,7 @@
     {
       "mode": "0644",
       "path": ".codex-plugin/plugin.json",
-      "sha256": "86529e5ac4b12c7181e2f861fa1117d699934d321c0b5156fec764fada63354d"
+      "sha256": "38113be04b109f44b9358294b6dd9745a043eeccf8c847dd02fe46a03f889927"
     },
     {
       "mode": "0644",
@@ -38,7 +38,7 @@
     {
       "mode": "0644",
       "path": "CHANGELOG.md",
-      "sha256": "63d6b5107880c88e7e14ae504a76c3eda5342e3b8265e94eb678d7279bba5a3c"
+      "sha256": "7f54cf244472af5cd4025c833ddcc2b5b9379eb5924879f2024f2978f74c5d90"
     },
     {
       "mode": "0644",
@@ -53,7 +53,7 @@
     {
       "mode": "0644",
       "path": "README.md",
-      "sha256": "cf2843a771d07ce00ebb3228653930ebe27759996eb0d383f798a559a32d597b"
+      "sha256": "7f4975637ad8346868604e63bfbcb96748013159b9910d2596c9b5e284f44620"
     },
     {
       "mode": "0644",
@@ -258,7 +258,7 @@
     {
       "mode": "0644",
       "path": "scripts/README.md",
-      "sha256": "491725b6c0a5ab4fc53261ff1b995bfb6ccd124fcd0d2edecc34c3769d4c8a83"
+      "sha256": "e53c9f9ff3ccc37883c1c47565b0e3e5a69746e0dbe9f8a7f509ea587870b289"
     },
     {
       "mode": "0644",
@@ -348,12 +348,12 @@
     {
       "mode": "0644",
       "path": "shared/adversarial-loop.md",
-      "sha256": "18d1d25fcf57438ebe26407cc26a6bd3d5424a5cd182b6522651295ad9da691e"
+      "sha256": "bc48208ed7f7d20f32fe3d116c13cad76d206f539975c1cbe15b4172b39ac7d1"
     },
     {
       "mode": "0755",
       "path": "shared/adversarial_loop.py",
-      "sha256": "cc8f8636df67d9a5baf0d56170d1559400dd177e2f5440d4cc530ec8bde8f06b"
+      "sha256": "e8de2eb4048c334689a012af3c6012ee8a8f791bee5aacb65644ebe45a14efa3"
     },
     {
       "mode": "0644",
@@ -533,7 +533,7 @@
     {
       "mode": "0644",
       "path": "shared/specialist-orchestration.md",
-      "sha256": "691a9274742525465050a08fcae62a365767ad6d89b536e949885ff5082f0d1c"
+      "sha256": "eb34e9c98baba4390210d010a90d0e049af42a1c3dcfe28b045f3b2520992322"
     },
     {
       "mode": "0755",
@@ -598,7 +598,7 @@
     {
       "mode": "0644",
       "path": "skills/challenge-resolve/SKILL.md",
-      "sha256": "36087f6de73755685a10c8f1992aaf7c9a89c40af2dad859d7d27dc66822c952"
+      "sha256": "09bec5da023365c48e0c956a7e7508ceec81c0ccd493709003ba6a756b757b26"
     },
     {
       "mode": "0755",
@@ -998,7 +998,7 @@
     {
       "mode": "0644",
       "path": "tests/loop/test_adversarial_loop.py",
-      "sha256": "c0103d0c70dec57eed65414b823b49ff5fcefe232d61db85cc49973a8aae80d1"
+      "sha256": "4b710bdaf96fd3ad2e4ee1accdcfe4215139988251f6c7fc908a916c1cfc87e3"
     },
     {
       "mode": "0644",
@@ -1797,5 +1797,5 @@
       "path": "skills/sync/SKILL.md"
     }
   ],
-  "version": "0.37.5"
+  "version": "0.37.6"
 }

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.37.6
+
+- `adversarial_loop.py --progress` and the shared loop rule show security findings in their own `Security` column ahead of `Critical`, instead of folding them into `Critical`, so a reader sees how many open findings are security bypasses. Score weights and `Weighted score` are unchanged, and existing ledgers render without migration because each finding already records its `security` tier.
+- The shared loop rule treats any reviewer round that returns no deliverable, a refused findings write, an unparsable envelope, a safety-classifier stop or a `blocked` envelope as an agent failure, records its cause in `loop-report.md` (never as a round, where it would read as a clean review), re-dispatches that reviewer once with a brief that removes the cause, switches to another permitted reviewer route if the same one fails again or cannot be re-dispatched (no attempt left, no approval, or a cause no brief can remove), and stops as `independence-unavailable` only when no route remains, instead of letting the round drop out as `not-run`. The specialist retry policy gains the matching exception: one corrected re-dispatch within the 2-attempt cap, never an identical retry, and not for strict portable `parallel_execution` nodes, whose validator admits only a transient retry.
+
 ## 0.37.5
 
 - Prepare Codemap context from the verified reviewed checkout and include structural lookup in Python challenge scopes; reuse current evidence and retain provider limitations.

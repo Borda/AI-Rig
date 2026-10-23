@@ -509,14 +509,14 @@ def test_cli_progress_reprints_history_and_splits_old_new_weights(tmp_path: Path
     ledger_path.write_text(json.dumps(ledger), encoding="utf-8")
     updated = subprocess.run(command, capture_output=True, text=True, check=False)
 
-    header = "| Iteration | Critical | High | Medium | Low | Nits | Weighted score |"
-    first_row = "| 1 | 0 + 2 | 0 + 1 | 0 + 1 | 0 + 1 | 0 + 1 | 0 + 43 |"
+    header = "| Iteration | Security | Critical | High | Medium | Low | Nits | Weighted score |"
+    first_row = "| 1 | 0 + 1 | 0 + 1 | 0 + 1 | 0 + 1 | 0 + 1 | 0 + 1 | 0 + 43 |"
     assert baseline.returncode == updated.returncode == 1
     assert header in baseline.stderr
     assert header in updated.stderr
     assert first_row in baseline.stderr
     assert first_row in updated.stderr
-    assert "| 2 | 0 + 0 | 1 + 3 | 0 + 0 | 0 + 0 | 0 + 0 | 6 + 18 |" in updated.stderr
+    assert "| 2 | 0 + 0 | 0 + 0 | 1 + 3 | 0 + 0 | 0 + 0 | 0 + 0 | 6 + 18 |" in updated.stderr
     assert json.loads(baseline.stdout) == _load_module().summarize_ledger(_ledger(_round(1, first)))
     assert json.loads(updated.stdout) == _load_module().summarize_ledger(ledger)
     assert json.loads(updated.stdout)["reason"] == "converging"
@@ -537,8 +537,8 @@ def test_cli_progress_counts_reopened_signatures_as_old(tmp_path: Path) -> None:
         check=False,
     )
     assert result.returncode == 0
-    assert "| 1 | 0 + 1 | 0 + 0 | 0 + 0 | 0 + 0 | 0 + 0 | 0 + 20 |" in result.stderr
-    assert "| 2 | 0 + 0 | 1 + 0 | 0 + 0 | 0 + 0 | 0 + 1 | 6 + 1 |" in result.stderr
+    assert "| 1 | 0 + 1 | 0 + 0 | 0 + 0 | 0 + 0 | 0 + 0 | 0 + 0 | 0 + 20 |" in result.stderr
+    assert "| 2 | 0 + 0 | 0 + 0 | 1 + 0 | 0 + 0 | 0 + 0 | 0 + 1 | 6 + 1 |" in result.stderr
 
 
 @pytest.mark.parametrize("independent", [True, False])
@@ -574,8 +574,8 @@ def test_cli_progress_only_appends_completed_reviews(tmp_path: Path, independent
         check=False,
     )
     assert result.returncode == (0 if independent else 1)
-    assert "| 1 | 0 + 0 | 0 + 1 | 0 + 0 | 0 + 0 | 0 + 0 | 0 + 6 |" in result.stderr
-    assert ("| 2 | 0 + 0 | 0 + 0 | 0 + 0 | 0 + 0 | 0 + 0 | 0 + 0 |" in result.stderr) is independent
+    assert "| 1 | 0 + 0 | 0 + 0 | 0 + 1 | 0 + 0 | 0 + 0 | 0 + 0 | 0 + 6 |" in result.stderr
+    assert ("| 2 | 0 + 0 | 0 + 0 | 0 + 0 | 0 + 0 | 0 + 0 | 0 + 0 | 0 + 0 |" in result.stderr) is independent
     assert json.loads(result.stdout)["reason"] == ("clean" if independent else "independence-unavailable")
 
 
@@ -845,3 +845,19 @@ def test_reopened_third_occurrence_cannot_be_fixed_despite_improving_total() -> 
     assert module.validate_ledger(ledger) == []
     assert module.summarize_ledger(ledger)["scores"] == [43, 21, 13, 5, 3]
     assert module.validate_actions(ledger, actions) == ["round-5-third-occurrence-must-stop:repeat"]
+
+
+def test_specialist_retry_policy_permits_corrected_reviewer_redispatch() -> None:
+    """The Codex Rig retry policy carries the loop rule's one corrected reviewer re-dispatch.
+
+    The policy otherwise retries only timeout, transport and rate-limit failures, so without this exception a reviewer
+    round that returned nothing or a ``blocked`` envelope would never get the re-dispatch the loop rule requires.
+    """
+    policy = (PLUGIN_ROOT / "shared" / "specialist-orchestration.md").read_text(encoding="utf-8")
+    loop_rule = (PLUGIN_ROOT / "shared" / "adversarial-loop.md").read_text(encoding="utf-8")
+    assert "gets one corrected re-dispatch with a brief that removes the recorded cause" in policy
+    assert "counts toward the 2-attempt cap and is never an identical retry" in policy
+    assert "When the cap is already spent, the route is failed" in policy
+    assert "Strict portable `parallel_execution` nodes are excluded" in policy
+    assert "Re-dispatch that reviewer once with a brief that removes the cause;" in loop_rule
+    assert "When no attempt remains, the required approval is not held, or no brief can remove the cause" in loop_rule
