@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.37.7
+
+- The shared loop rule lists a reviewer reply truncated in transit (its envelope or `## Confidence` closing block missing) as an agent failure, so a cut-off reply is no longer scored as a complete round with fewer findings. Where the host can continue that reviewer, the parent asks it for only the remainder, in replies short enough to pass the transport, until the closing block arrives; a reply that adds nothing new records the failure.
+
 ## 0.37.6
 
 - `adversarial_loop.py --progress` and the shared loop rule show security findings in their own `Security` column ahead of `Critical`, instead of folding them into `Critical`, so a reader sees how many open findings are security bypasses. Score weights and `Weighted score` are unchanged, and existing ledgers render without migration because each finding already records its `security` tier.

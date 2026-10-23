@@ -4361,6 +4361,6 @@
       "src": "skills/audit/templates/checks-skills-gaps.md:49"
     }
   },
-  "plugin": "cc_foundry@0.70.3",
+  "plugin": "cc_foundry@0.70.4",
   "schema": 1
 }

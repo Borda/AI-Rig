@@ -3381,6 +3381,6 @@
       "src": "skills/debug/SKILL.md:331"
     }
   },
-  "plugin": "cc_develop@0.43.4",
+  "plugin": "cc_develop@0.43.5",
   "schema": 1
 }

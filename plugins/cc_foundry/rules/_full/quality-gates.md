@@ -103,7 +103,7 @@ The third review has open findings but still decreases the total integer score, 
 
 ### Challenger Rounds
 
-A challenger round that returns no deliverable or a `blocked` envelope is an agent failure, never a silent `not-run`: record its cause from the transcript (safety-classifier stop, refused report write, background stall, malformed envelope) and re-dispatch once with a brief that removes it. For a security-filter review, leave Codex enabled (no `--no-codex`): the challenger runs the open-ended bypass search through its Codex cross-check, statically classifies Codex's candidates and any probe generator the caller supplies, counts the reproduced ones in its own six-tier row, and never authors bypass strings itself, so the round needs no separate Codex row.
+A challenger round that returns no deliverable or a `blocked` envelope is an agent failure, never a silent `not-run`: record its cause from the transcript (safety-classifier stop, refused report write, background stall, malformed envelope, reply truncated before its required closing block) and re-dispatch once with a brief that removes it. For a security-filter review, leave Codex enabled (no `--no-codex`): the challenger runs the open-ended bypass search through its Codex cross-check, statically classifies Codex's candidates and any probe generator the caller supplies, counts the reproduced ones in its own six-tier row, and never authors bypass strings itself, so the round needs no separate Codex row.
 
 ## Pre-Handover Check
 

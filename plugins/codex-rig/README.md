@@ -40,7 +40,7 @@ Selected read-only review passes run concurrently by default and may inspect the
 
 The package covers capabilities Codex can currently install and verify. It includes a local native-question provider and no native bundled agent registrations. Parallel work uses runtime blank agent with exact role card injected when that route is available; inline role pass is serial fallback. Persistent named-agent routing remains platform-blocked until Codex exposes verifiable custom-agent selector. The split schema, approval allowlist, synchronization gates, runtime evidence, telemetry, fallback, and promotion lifecycle are defined in [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
-> Current source version: `0.37.6`. Codex Rig is peer product to foundry, oss, develop, research, and codemap-py—not copy of repository's `.codex/` configuration.
+> Current source version: `0.37.7`. Codex Rig is peer product to foundry, oss, develop, research, and codemap-py—not copy of repository's `.codex/` configuration.
 
 Adversarial-loop updates show the cumulative convergence table once after each newly validated challenge, not while a review is pending or before any round is validated; new final Results rows show carried + newly found counts and weighted score in every numeric cell. New assessed review candidates must include reviewer attribution and the aggregate summary before promotion, while historical report intake stays compatible. Non-PR assessed candidates additionally need a `Review Snapshot` table whose Scope is the normalized review scope and whose Revision binds retained diff bytes; the collector does not structurally retain target or commit identity.
 

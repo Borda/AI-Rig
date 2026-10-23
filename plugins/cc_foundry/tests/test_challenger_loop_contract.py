@@ -62,10 +62,12 @@ def test_dispatch_site_records_challenger_failure(relative: str) -> None:
     """Every rule that dispatches the challenger in a loop treats a round without a deliverable as an agent failure.
 
     A silent ``not-run`` row hides why the primary reviewer produced nothing; the rule asks for the cause and one
-    corrected re-dispatch, and keeps Codex enabled so the challenger's own cross-check runs the bypass search.
+    corrected re-dispatch, and keeps Codex enabled so the challenger's own cross-check runs the bypass search. A reply
+    cut off before its closing block is listed as a cause too, or it reads as a complete round with fewer findings.
     """
     text = (_PLUGINS / relative).read_text(encoding="utf-8")
     assert "agent failure" in text
+    assert "reply truncated before its required closing block" in text
     assert "probe generator" in text
     assert "no `--no-codex`" in text
 
@@ -85,6 +87,12 @@ def test_dispatch_site_records_challenger_failure(relative: str) -> None:
         pytest.param("treat the route as failed without a re-dispatch", id="no-attempt-left-fails-route"),
         pytest.param("switch to another permitted independent route when one exists", id="second-failure-switches"),
         pytest.param("stop as `independence-unavailable` only when none remains", id="stop-only-without-route"),
+        pytest.param("a reply truncated in transit", id="truncated-reply-is-failure"),
+        pytest.param(
+            "A truncated reply never counts as a complete round with fewer findings", id="truncated-not-short-round"
+        ),
+        pytest.param("keep asking while each reply adds new content", id="truncated-tail-recovery"),
+        pytest.param("A reply that adds nothing new", id="truncated-tail-stalls"),
     ],
 )
 def test_loop_rule_records_reviewer_round_failure(clause: str) -> None:

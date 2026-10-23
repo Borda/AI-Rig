@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.52.5
+
+- The adversarial-loop rule and the challenger dispatch rule list a reviewer reply truncated before its required closing block (envelope or `## Confidence`) as an agent failure, so a cut-off reply is no longer scored as a complete round with fewer findings. Where the host can continue that reviewer, the parent asks it for only the remainder, in replies short enough to pass the transport, until the closing block arrives; a reply that adds nothing new records the failure.
+
 ## 0.52.4
 
 - The adversarial-loop progress table shows security findings in their own `Security` column ahead of `Critical`, instead of folding them into `Critical`, so a reader sees how many open findings are security bypasses. Score weights and the `Weighted score` column are unchanged.
