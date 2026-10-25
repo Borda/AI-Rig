@@ -27,6 +27,120 @@ def repository_template(tmp_path_factory: pytest.TempPathFactory) -> RepositoryT
     return _build_repository_template(tmp_path_factory.mktemp("remediation-git-template"))
 
 
+@pytest.mark.parametrize("branch", ["topic", "contributor/topic"])
+@pytest.mark.parametrize("tracking", ["pull-ref", "contributor-branch"])
+def test_native_checkout_prepares_and_checks_local_fix_without_push_destination(
+    tmp_path: Path, repository_template: RepositoryTemplate, branch: str, tracking: str
+) -> None:
+    """Retain native fork source through a local fix without requiring publication configuration."""
+    source, worktree, base, _old, head = _setup_repositories(tmp_path, repository_template)
+    pr_dir = tmp_path / "pr"
+    code, calls = _collect(
+        _load_collector(),
+        source,
+        worktree,
+        pr_dir,
+        base,
+        head,
+        checkout_mode="remediate",
+        gh_checkout_fails=False,
+        gh_local_branch=branch,
+        gh_pull_ref_tracking=tracking == "pull-ref",
+    )
+    assert code == 0
+    assert ["gh", "pr", "checkout", "https://github.com/example/project/pull/17"] in calls
+    _git(worktree, "config", f"branch.{branch}.pushRemote", "origin")
+    _git(worktree, "config", "remote.origin.push", "HEAD:refs/heads/unrelated")
+    before_config = _git(worktree, "config", "--local", "--list")
+    before_source = _git(source, "show-ref")
+    receipt = tmp_path / "branch.json"
+    prepared = subprocess.run(
+        [sys.executable, str(HELPER), "prepare", "--pr-dir", str(pr_dir), "--receipt", str(receipt)],
+        cwd=worktree,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert prepared.returncode == 0, prepared.stderr
+    record = json.loads(receipt.read_text(encoding="utf-8"))
+    assert record["branch"] == branch
+    assert record["head_repository"] == "contributor/project"
+    assert record["initial_head"] == head
+    assert record["schema_version"] == 2
+    (worktree / "module.py").write_text("value = 'corrected'\n", encoding="utf-8")
+    _git(worktree, "add", "module.py")
+    _git(worktree, "commit", "-m", "local correction\n\nCo-authored-by: Codex <codex@openai.com>")
+    committed = _git(worktree, "rev-parse", "HEAD")
+    checked = subprocess.run(
+        [sys.executable, str(HELPER), "check", "--receipt", str(receipt), "--expected-head", committed],
+        cwd=worktree,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert checked.returncode == 0, checked.stderr
+    assert json.loads(checked.stdout) == record
+    assert _git(worktree, "branch", "--show-current") == branch
+    assert _git(worktree, "config", "--local", "--list") == before_config
+    assert _git(source, "show-ref") == before_source
+
+
+@pytest.mark.parametrize("invalid", ["pull-number", "base-remote", "head", "pr-url", "recovered"])
+def test_native_pull_ref_receipt_rejects_changed_source_identity(
+    tmp_path: Path, repository_template: RepositoryTemplate, invalid: str
+) -> None:
+    """A successful native checkout does not authorize a different PR, repository, or revision."""
+    source, worktree, base, _old, head = _setup_repositories(tmp_path, repository_template)
+    pr_dir = tmp_path / "pr"
+    assert (
+        _collect(
+            _load_collector(),
+            source,
+            worktree,
+            pr_dir,
+            base,
+            head,
+            checkout_mode="remediate",
+            gh_checkout_fails=False,
+            gh_pull_ref_tracking=True,
+        )[0]
+        == 0
+    )
+    receipt = tmp_path / "branch.json"
+    prepared = subprocess.run(
+        [sys.executable, str(HELPER), "prepare", "--pr-dir", str(pr_dir), "--receipt", str(receipt)],
+        cwd=worktree,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert prepared.returncode == 0, prepared.stderr
+    record = json.loads(receipt.read_text(encoding="utf-8"))
+    if invalid == "pull-number":
+        _git(worktree, "config", "branch.topic.merge", "refs/pull/18/head")
+    elif invalid == "base-remote":
+        _git(worktree, "remote", "set-url", "origin", "https://github.com/other/project.git")
+    elif invalid == "head":
+        _git(worktree, "commit", "--allow-empty", "-m", "unrecorded change")
+    elif invalid == "pr-url":
+        record["pr_url"] = "https://github.com/example/project/pull/18"
+    else:
+        record["recovery"] = {"legacy_receipt": "retained.json"}
+    receipt.write_text(json.dumps(record), encoding="utf-8")
+    before_config = _git(worktree, "config", "--local", "--list")
+    before_refs = _git(worktree, "show-ref")
+    checked = subprocess.run(
+        [sys.executable, str(HELPER), "check", "--receipt", str(receipt), "--expected-head", head],
+        cwd=worktree,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert checked.returncode == 2
+    assert _git(worktree, "config", "--local", "--list") == before_config
+    assert _git(worktree, "show-ref") == before_refs
+
+
 @pytest.mark.parametrize("cross_repository", [False, True])
 @pytest.mark.parametrize("host", ["github.com", "GITHUB.COM"])
 @pytest.mark.parametrize(
@@ -140,13 +254,13 @@ def test_legacy_recovery_preserves_work_and_enables_topic_commits(
         text=True,
         check=False,
     )
-    assert result.returncode == (0 if invalid == "none" else 2), result.stderr
+    assert result.returncode == (0 if invalid in {"none", "push"} else 2), result.stderr
     assert legacy.read_bytes() == before
     assert _git(worktree, "show-ref") == before_refs
     assert _git(worktree, "status", "--porcelain=v1") == before_status
     assert _git(worktree, "config", "--local", "--list") == before_config
     assert (worktree / "user.txt").read_text(encoding="utf-8") == "preserved user work\n"
-    if invalid != "none":
+    if invalid not in {"none", "push"}:
         assert (
             receipt.read_text(encoding="utf-8") == "existing evidence\n"
             if invalid == "existing"
@@ -180,6 +294,18 @@ def test_legacy_recovery_preserves_work_and_enables_topic_commits(
     assert receipt.read_bytes() == recovered_bytes
     assert legacy.read_bytes() == before
     assert _git(worktree, "status", "--porcelain=v1") == "?? user.txt"
+    _git(worktree, "config", "branch.topic.remote", "origin")
+    _git(worktree, "config", "branch.topic.merge", "refs/pull/17/head")
+    changed_tracking = subprocess.run(
+        [sys.executable, str(HELPER), "check", "--receipt", str(receipt), "--expected-head", expected],
+        cwd=worktree,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert changed_tracking.returncode == 2
+    assert "pr-upstream-mismatch" in changed_tracking.stderr
+    assert receipt.read_bytes() == recovered_bytes
 
 
 def test_prepare_retains_collected_github_branch(tmp_path: Path, repository_template: RepositoryTemplate) -> None:
@@ -402,7 +528,7 @@ def test_receipt_checks_actual_state_without_repair(
         text=True,
         check=False,
     )
-    assert result.returncode == (0 if mismatch == "none" else 2), result.stderr
+    assert result.returncode == (0 if mismatch in {"none", "push-remote"} else 2), result.stderr
     assert receipt.read_bytes() == before
     assert _git(worktree, "branch", "--show-current") == branch
     assert _git(worktree, "rev-parse", "HEAD") == head
@@ -444,11 +570,13 @@ def test_branch_preparation_rejects_changed_head_and_preserves_dirty_files(
     assert not receipt.exists()
 
 
-@pytest.mark.parametrize("invalid", ["review", "detached", "missing-upstream", "pull-ref", "custom-push", "renamed"])
+@pytest.mark.parametrize(
+    "invalid", ["review", "detached", "missing-upstream", "pull-ref", "wrong-fetch-remote", "renamed"]
+)
 def test_prepare_rejects_unusable_destination_without_git_mutation(
     tmp_path: Path, repository_template: RepositoryTemplate, invalid: str
 ) -> None:
-    """Do not approve editing when checkout evidence or the PR publication destination is missing."""
+    """Do not approve editing when checkout evidence or the PR source identity is missing."""
     source, worktree, base, _old, head = _setup_repositories(tmp_path, repository_template)
     pr_dir = tmp_path / "pr"
     assert (
@@ -476,8 +604,8 @@ def test_prepare_rejects_unusable_destination_without_git_mutation(
         _git(worktree, "config", "--unset", "branch.topic.merge")
     elif invalid == "pull-ref":
         _git(worktree, "config", "branch.topic.merge", "refs/pull/17/head")
-    elif invalid == "custom-push":
-        _git(worktree, "config", "remote.origin.push", "HEAD:refs/heads/main")
+    elif invalid == "wrong-fetch-remote":
+        _git(worktree, "remote", "set-url", "origin", "https://github.com/other/project.git")
     else:
         _git(worktree, "branch", "-m", "contributor/topic")
     before_refs = _git(worktree, "show-ref")

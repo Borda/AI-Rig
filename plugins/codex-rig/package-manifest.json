@@ -28,7 +28,7 @@
     {
       "mode": "0644",
       "path": ".codex-plugin/plugin.json",
-      "sha256": "92ea2070ee465e8da6b3bdc832562abd4e50140bd547080895f7072878c390c1"
+      "sha256": "dfa1b0a3fb833a1d1d5d013229717ae5d8e10382704e47e9da499c60c9c100d1"
     },
     {
       "mode": "0644",
@@ -38,7 +38,7 @@
     {
       "mode": "0644",
       "path": "CHANGELOG.md",
-      "sha256": "18f3c09d823665b48095a55f94a96b7b74915812b099afa3d090e70756d55882"
+      "sha256": "c0160680819a00d0b9f8c70b0c162d6e0d30789443939d7c1835842a39071d36"
     },
     {
       "mode": "0644",
@@ -53,7 +53,7 @@
     {
       "mode": "0644",
       "path": "README.md",
-      "sha256": "a4322451f6638146fbf027d2c28c81a883860eae53c42a03c352c894a429b1df"
+      "sha256": "e888fbd45d948657d8a2298ff2e2910d7fa5803fb5577d918e4b9142cb390cd2"
     },
     {
       "mode": "0644",
@@ -178,12 +178,12 @@
     {
       "mode": "0644",
       "path": "runtime/calibration/behavioral-cases.json",
-      "sha256": "eeb5f6ad7fd1b7d8a1069864fa75715c6ecb37b8608c2ce21d20bba3b13d9a89"
+      "sha256": "e709e7bcc0d37121a1c931db971a2722c355a1263eeb32c578ffc1ad64dba9b7"
     },
     {
       "mode": "0644",
       "path": "runtime/calibration/behavioral-observations.jsonl",
-      "sha256": "8bad0f73324c3ca801399858807ca862bf9cb82e12deb1326d497044e29315f3"
+      "sha256": "d16448ff988275904cfcd59501de599be226c602c6a5f95f816eeb40b053579d"
     },
     {
       "mode": "0644",
@@ -258,7 +258,7 @@
     {
       "mode": "0644",
       "path": "scripts/README.md",
-      "sha256": "8e9880ffaa9e40c6fcf1d3bbe22daa4540f8ba3ec8d10f864b9aa07ace4cb3a8"
+      "sha256": "714f20211d3a83d88c68340308e269aad78d5e662291b84f51d718473ae30038"
     },
     {
       "mode": "0644",
@@ -348,12 +348,12 @@
     {
       "mode": "0644",
       "path": "shared/adversarial-loop.md",
-      "sha256": "0fe918c2b70f60b50c2a410c21ecd0dca7f60654058afa629aa916e22c98a586"
+      "sha256": "22a89501ad4755d83ff76c033a0b103c5264c2f43f782670ed59f47c8d366250"
     },
     {
       "mode": "0755",
       "path": "shared/adversarial_loop.py",
-      "sha256": "3c0b49df3a0c4b5c8973608135d7b7be970e81379b510db52b86a5101aabe7a5"
+      "sha256": "97ca35c6d7ef5b305fda187d312a73f8c1aecbbde2d13a8d9255f78d9ecbb193"
     },
     {
       "mode": "0644",
@@ -393,7 +393,7 @@
     {
       "mode": "0755",
       "path": "shared/collect_pr.py",
-      "sha256": "85b09ca7ce953a33e366de78d6b451489ab2dfa0db8b16c1a82be51620d104fe"
+      "sha256": "820a24456a342c1fea9bcb4e538721c6abc7dcfd1e76bed93cb93cb5ddd88e6e"
     },
     {
       "mode": "0644",
@@ -468,7 +468,7 @@
     {
       "mode": "0644",
       "path": "shared/native-skill-contract.md",
-      "sha256": "239c9e296a04e64a8516847c189a082490e9c832e066e5f3abc3103aef58a99c"
+      "sha256": "38ac5963f9181efb3c5b351d131496c9abbf110096d5aca62ca4449e68d5cd01"
     },
     {
       "mode": "0644",
@@ -508,7 +508,7 @@
     {
       "mode": "0755",
       "path": "shared/remediation_branch.py",
-      "sha256": "224e5fc83b573f89f8bee4c4e84f4a6e2512558e16234fdc00ec65f9aaed233d"
+      "sha256": "2d016be911600aa2a3dc2a2045518c73bcfaf821afea91f6a3d9c1e99611d2b0"
     },
     {
       "mode": "0755",
@@ -598,7 +598,7 @@
     {
       "mode": "0644",
       "path": "skills/challenge-resolve/SKILL.md",
-      "sha256": "9b6185626ba3e38212532a05d624c4c3f3483daa1677b90000ede15dc6187808"
+      "sha256": "4385e7c0839841998f835a40b24adbe8004ffb372cf880b3c5e45f9e321fd46a"
     },
     {
       "mode": "0755",
@@ -628,7 +628,7 @@
     {
       "mode": "0644",
       "path": "skills/code-remediate/SKILL.md",
-      "sha256": "cd056306c6f4ccb6690af9277e5a7065e5efa4035ae7c6b65ed90dadfe45707e"
+      "sha256": "da928740ac427f945475b686b181a73c2a241363086f3cb2208d8c82aa4d1d78"
     },
     {
       "mode": "0644",
@@ -638,7 +638,7 @@
     {
       "mode": "0644",
       "path": "skills/code-remediate/references/missing-review-decision.md",
-      "sha256": "4e729f766338316bf9e1d21b69f2c6c734d581f3bf8c60870a187ea92362f296"
+      "sha256": "55b25bbe72d57496bedaea3829cbb2b67bfa6917bf906ae408c82c364955109d"
     },
     {
       "mode": "0644",
@@ -648,7 +648,7 @@
     {
       "mode": "0644",
       "path": "skills/code-remediate/references/source-recovery.md",
-      "sha256": "64ea949fd31019d078cd594fb30a28b249d96fc777a07bf542560875a149ca2d"
+      "sha256": "291d6c647713a3508669b24c1079f732e54ac98511e26844a1c9d67b20f19bca"
     },
     {
       "mode": "0644",
@@ -953,12 +953,12 @@
     {
       "mode": "0644",
       "path": "tests/github/test_collect_pr.py",
-      "sha256": "b4389261fe9d53fe758cd02e6cc81c49dd99006ddbc96d8d4d01bcaa0f2ca754"
+      "sha256": "dee3dd4761ef59653e69ff4550d1137e8b6d790a51067b3c394844fa1b86776e"
     },
     {
       "mode": "0644",
       "path": "tests/github/test_collect_pr_git_recovery.py",
-      "sha256": "522b7b543c1390e2706f2532f7f3c26bf42662ddea0080fce727a2b5135abbb0"
+      "sha256": "a4de133c4cf0ccb41ae26258bda3eab9db897e1fb2cdc6af4178b0ff5c3e2316"
     },
     {
       "mode": "0644",
@@ -998,7 +998,7 @@
     {
       "mode": "0644",
       "path": "tests/loop/test_adversarial_loop.py",
-      "sha256": "acd590d56b63850ce188fb7a44c0cf9e53e32dfca745a6d36b463dcb812852f2"
+      "sha256": "2ff69bd993331da48d162ee78cb10959bc393c9f2897039df2dacb89db8b8261"
     },
     {
       "mode": "0644",
@@ -1153,7 +1153,7 @@
     {
       "mode": "0644",
       "path": "tests/remediate/test_code_remediate_online_only_contract.py",
-      "sha256": "0ee3f1b6d0fab75251b67854e9bec48161a2014153b66cd7b42cc0919fe69de4"
+      "sha256": "a99f4b5009a7b981b152ddb7f3e010e5db1a10270fc3a13b6c1c53c6b7d3fce1"
     },
     {
       "mode": "0644",
@@ -1183,7 +1183,7 @@
     {
       "mode": "0644",
       "path": "tests/remediate/test_remediation_branch.py",
-      "sha256": "3c6a7f6435ad39c8cecee58c2dfa3130f8e97460f5dcf438b6e93ac2d5ba26db"
+      "sha256": "e15eca01d29054cb5b8b520a950c80bb25143bbd77c5d11a75126325205fc1be"
     },
     {
       "mode": "0644",
@@ -1278,7 +1278,7 @@
     {
       "mode": "0644",
       "path": "tests/review/test_code_review_routing_contract.py",
-      "sha256": "860603a93c5af485d5a50408c9b9d837768f8c0500592f14f0f1247e5f7ecbbf"
+      "sha256": "107c477e1ba833ed93646af7c046fda6a6b969e6fe300ca915b96421b0f38be3"
     },
     {
       "mode": "0644",
@@ -1797,5 +1797,5 @@
       "path": "skills/sync/SKILL.md"
     }
   ],
-  "version": "0.38.0"
+  "version": "0.39.0"
 }

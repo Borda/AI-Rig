@@ -35,7 +35,9 @@ It writes PR metadata, threads, diff/stat files, routing, target/head checks, op
 terminal failure markers. A successful bundle includes files such as ``pr.json``, ``review-threads.json``,
 ``diff.patch``, ``pr-routing.json``, and checkout identity records when checkout was requested. Worktree preflight
 records compare every local dirty path, including ignored files, with the incoming paths, but list only the overlapping
-paths plus a bounded sample; the remaining paths are counted by class instead of listed.
+paths plus a bounded sample; the remaining paths are counted by class instead of listed. For isolated review, an
+oversized invoking-worktree context scan is recorded as unavailable and does not replace or block verification of the
+separate exact-commit review worktree. Attached remediation checkout still requires complete preservation checks.
 
 ## Failure
 
@@ -1062,17 +1064,33 @@ def _review_worktree_checkout(
             if source == review or source in review.parents:
                 raise CollectionError("review-worktree-temporary-path-not-isolated")
     current_head = _run(run, ["git", "rev-parse", "HEAD"], timeout, "pre-checkout-head").decode().strip()
-    _worktree_preflight(
-        run,
-        timeout,
-        output,
-        phase="source-worktree-context",
-        current_head=current_head,
-        base_oid=base_oid,
-        head_oid=head_oid,
-        preserve_main=True,
-        artifact_name="source-worktree-context.json",
-    )
+    try:
+        _worktree_preflight(
+            run,
+            timeout,
+            output,
+            phase="source-worktree-context",
+            current_head=current_head,
+            base_oid=base_oid,
+            head_oid=head_oid,
+            preserve_main=True,
+            artifact_name="source-worktree-context.json",
+        )
+    except CollectionError as error:
+        if not str(error).startswith("command-output-oversized:source-worktree-context-"):
+            raise
+        # This tree is never checked out. Preserve the diagnostic gap rather than treating it as source failure;
+        # the separate review tree must still pass repository, head, branch, and cleanliness checks below.
+        _write_json(
+            output / "source-worktree-context.json",
+            {
+                "phase": "source-worktree-context",
+                "status": "unavailable",
+                "current_head": current_head,
+                "expected_head": head_oid,
+                "reason": str(error),
+            },
+        )
     command = ["git", "worktree", "add", "--detach", str(review), head_oid]
     routing["checkout_mode"] = "review"
     routing["local_checkout_command"] = " ".join(command)

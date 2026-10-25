@@ -677,6 +677,646 @@ def test_append_refuses_invalid_round_and_keeps_staged_record(
     assert (tmp_path / "loop-rounds.jsonl.rec").is_file()
 
 
+def _metrics_record(**overrides: Any) -> dict[str, Any]:
+    """Build a valid per-round cost record, with unknown token counts as the Claude route reports them."""
+    record: dict[str, Any] = {
+        "schema_version": 1,
+        "kind": "round",
+        "round": 1,
+        "route": "agent:foundry:challenger",
+        "brief": "full",
+        "brief_bytes": 4096,
+        "duration_s": 310,
+        "tokens_in": None,
+        "tokens_out": None,
+        "attested_gaps": 2,
+    }
+    return record | overrides
+
+
+def _run_metrics(
+    ledger_path: Path,
+    metrics_record: dict[str, Any] | None,
+    round_record: dict[str, Any] | None = None,
+    extra_flags: tuple[str, ...] = (),
+) -> subprocess.CompletedProcess[str]:
+    """Stage a cost record (and optionally a round) and append through the CLI in one helper call."""
+    flags = ["--append-metrics", *extra_flags]
+    if metrics_record is not None:
+        (ledger_path.parent / "loop-metrics.jsonl.rec").write_text(json.dumps(metrics_record), encoding="utf-8")
+    if round_record is not None:
+        (ledger_path.parent / "loop-rounds.jsonl.rec").write_text(json.dumps(round_record), encoding="utf-8")
+        flags.insert(0, "--append")
+    return subprocess.run(
+        [sys.executable, str(LEDGER_PATH), "--ledger", str(ledger_path), *flags],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_append_metrics_records_cost_beside_the_round_without_changing_the_ledger(tmp_path: Path) -> None:
+    """Record a round and its cost in one helper call, leaving the ledger summary identical to a round-only append.
+
+    The cost log is advisory data for later analysis, so adding it must never change the score or the round log.
+    """
+    module = _load_module()
+    ledger_path = tmp_path / "loop-ledger.json"
+    _write_header(ledger_path)
+    first = _round(1, [_finding("finding-a")])
+
+    result = _run_metrics(ledger_path, _metrics_record(), first)
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == module.summarize_ledger(_ledger(first) | {"schema_version": 2})
+    assert json.loads((tmp_path / "loop-metrics.jsonl").read_text(encoding="utf-8")) == _metrics_record()
+    assert len((tmp_path / "loop-rounds.jsonl").read_bytes().splitlines()) == 1
+    assert not (tmp_path / "loop-metrics.jsonl.rec").exists()
+
+
+@pytest.mark.parametrize(
+    ("record", "expected_error"),
+    [
+        pytest.param(_metrics_record(round=2), "metrics-round-must-be-a-completed-round", id="round-not-completed"),
+        pytest.param(_metrics_record(round=True), "metrics-round-must-be-a-completed-round", id="round-is-boolean"),
+        pytest.param(_metrics_record(schema_version=2), "metrics-schema-version-unsupported", id="unknown-version"),
+        pytest.param(_metrics_record(schema_version=True), "metrics-schema-version-unsupported", id="boolean-version"),
+        pytest.param(_metrics_record(schema_version=1.0), "metrics-schema-version-unsupported", id="float-version"),
+        pytest.param(_metrics_record(kind="origin"), "metrics-kind-invalid", id="unknown-kind"),
+        pytest.param(_metrics_record(route=" "), "metrics-route-required", id="blank-route"),
+        pytest.param(_metrics_record(brief="short"), "metrics-brief-invalid", id="unknown-brief"),
+        pytest.param(_metrics_record(brief=None), "metrics-brief-invalid", id="missing-brief"),
+        pytest.param(
+            _metrics_record(tokens_in=-1), "metrics-tokens_in-must-be-nonnegative-integer-or-null", id="negative-count"
+        ),
+        pytest.param(
+            _metrics_record(duration_s=-1), "metrics-duration_s-must-be-nonnegative-number-or-null", id="negative-time"
+        ),
+        pytest.param(
+            _metrics_record(duration_s=float("nan")),
+            "metrics-duration_s-must-be-nonnegative-number-or-null",
+            id="not-a-number-time",
+        ),
+        pytest.param(
+            _metrics_record(tokens_in=1.5),
+            "metrics-tokens_in-must-be-nonnegative-integer-or-null",
+            id="fractional-count",
+        ),
+        pytest.param(
+            _metrics_record(attested_gaps=True),
+            "metrics-attested_gaps-must-be-nonnegative-integer-or-null",
+            id="boolean-count",
+        ),
+        pytest.param(_metrics_record() | {"extra": 1}, "metrics-unexpected-fields:extra", id="unexpected-field"),
+    ],
+)
+def test_append_metrics_warns_on_invalid_record_and_keeps_staged_record(
+    tmp_path: Path, record: dict[str, Any], expected_error: str
+) -> None:
+    """Warn about a cost record that is not a well-formed report on a completed round, appending nothing.
+
+    The record is advisory, so the rejection leaves the exit status and the summary alone.
+    """
+    ledger_path = tmp_path / "loop-ledger.json"
+    _write_header(ledger_path)
+    assert _append(ledger_path, _round(1, [_finding("finding-a")])).returncode == 0
+
+    rejected = _run_metrics(ledger_path, record)
+
+    assert rejected.returncode == 0, rejected.stderr
+    assert f"warning: metrics-rejected:{expected_error}" in rejected.stderr.replace(",", "\nwarning: metrics-rejected:")
+    assert json.loads(rejected.stdout)["status"] == "active"
+    assert not (tmp_path / "loop-metrics.jsonl").exists()
+    assert (tmp_path / "loop-metrics.jsonl.rec").is_file()
+
+
+def test_rejected_cost_record_does_not_hide_the_committed_round_or_its_table(tmp_path: Path) -> None:
+    """Deliver a validated round's summary and progress table even when its advisory cost record is bad.
+
+    The round is committed and its staging file consumed before the cost record is judged, so a failure there must not
+    turn the call into an error that makes a retry hit a missing staged round.
+    """
+    ledger_path = tmp_path / "loop-ledger.json"
+    _write_header(ledger_path)
+
+    result = _run_metrics(
+        ledger_path, _metrics_record(tokens_in=-1), _round(1, [_finding("finding-a")]), extra_flags=("--progress",)
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "warning: metrics-rejected:metrics-tokens_in-must-be-nonnegative-integer-or-null" in result.stderr
+    assert "| Iteration |" in result.stderr
+    assert json.loads(result.stdout)["rounds"][0]["index"] == 1
+    assert len((tmp_path / "loop-rounds.jsonl").read_bytes().splitlines()) == 1
+    assert not (tmp_path / "loop-rounds.jsonl.rec").exists()
+    assert (tmp_path / "loop-metrics.jsonl.rec").is_file()
+
+
+@pytest.mark.parametrize(
+    ("staged_text", "warns"),
+    [
+        pytest.param(
+            json.dumps(_metrics_record()).replace('"duration_s": 310', '"duration_s": ' + "9" * 400),
+            False,
+            id="int-past-float",
+        ),
+        pytest.param(
+            json.dumps(_metrics_record()).replace('"duration_s": 310', '"duration_s": ' + "9" * 5000),
+            True,
+            id="int-past-digit-limit",
+        ),
+        pytest.param("[" * 200000, True, id="absurd-nesting"),
+    ],
+)
+def test_pathological_cost_record_never_aborts_a_committed_round_call(
+    tmp_path: Path, staged_text: str, warns: bool
+) -> None:
+    """Contain every way an advisory record can fail, not just the ones it reports as codes.
+
+    Numbers or nesting no honest route writes raise inside parsing or validation; the round is already committed by
+    then, so the call must still deliver its summary and table with exit status zero.
+    """
+    ledger_path = tmp_path / "loop-ledger.json"
+    _write_header(ledger_path)
+    (tmp_path / "loop-metrics.jsonl.rec").write_text(staged_text, encoding="utf-8")
+
+    result = _run_metrics(ledger_path, None, _round(1, [_finding("finding-a")]), extra_flags=("--progress",))
+
+    assert result.returncode == 0, result.stderr[-300:]
+    assert "Traceback" not in result.stderr
+    assert ("warning: metrics-rejected:" in result.stderr) is warns
+    assert "| Iteration |" in result.stderr
+    assert json.loads(result.stdout)["rounds"][0]["index"] == 1
+    assert not (tmp_path / "loop-rounds.jsonl.rec").exists()
+
+
+def test_unwritable_cost_log_never_aborts_a_committed_round_call(tmp_path: Path) -> None:
+    """Keep a locked, read-only or occupied cost-log destination from undoing the round's delivery."""
+    ledger_path = tmp_path / "loop-ledger.json"
+    _write_header(ledger_path)
+    (tmp_path / "loop-metrics.jsonl").mkdir()
+
+    result = _run_metrics(
+        ledger_path, _metrics_record(), _round(1, [_finding("finding-a")]), extra_flags=("--progress",)
+    )
+
+    assert result.returncode == 0, result.stderr[-300:]
+    assert "warning: metrics-rejected:append-metrics-write-failed:" in result.stderr
+    assert "| Iteration |" in result.stderr
+    assert (tmp_path / "loop-metrics.jsonl.rec").is_file()
+
+
+def test_route_with_a_control_character_is_echoed_on_one_warning_line(tmp_path: Path) -> None:
+    """Keep each stderr warning to one line even when a route carries an interior newline."""
+    ledger_path = tmp_path / "loop-ledger.json"
+    _write_header(ledger_path)
+    assert _append(ledger_path, _round(1, [_finding("finding-a")])).returncode == 0
+
+    result = _run_metrics(ledger_path, _metrics_record(route="bridge:re\nview"))
+
+    assert result.returncode == 0, result.stderr
+    assert [line for line in result.stderr.splitlines() if "not-in-vocabulary" in line] == [
+        "warning: metrics-route-not-in-vocabulary:'bridge:re\\nview'"
+    ]
+    assert len(result.stderr.splitlines()) == 1
+
+
+def test_append_metrics_accepts_fractional_seconds(tmp_path: Path) -> None:
+    """Take a wall-clock duration as the clock reports it instead of forcing callers to round."""
+    ledger_path = tmp_path / "loop-ledger.json"
+    _write_header(ledger_path)
+    assert _append(ledger_path, _round(1, [_finding("finding-a")])).returncode == 0
+
+    result = _run_metrics(ledger_path, _metrics_record(duration_s=312.7))
+
+    assert result.returncode == 0, result.stderr
+    assert "metrics-rejected" not in result.stderr
+    assert json.loads((tmp_path / "loop-metrics.jsonl").read_text(encoding="utf-8"))["duration_s"] == 312.7
+
+
+def test_append_metrics_reports_a_missing_staged_record(tmp_path: Path) -> None:
+    """Name the absent staged file instead of appending an empty or stale cost record."""
+    ledger_path = tmp_path / "loop-ledger.json"
+    _write_header(ledger_path)
+
+    rejected = _run_metrics(ledger_path, None)
+
+    assert rejected.returncode == 0
+    assert "warning: metrics-rejected:append-metrics-record-missing:loop-metrics.jsonl.rec" in rejected.stderr
+    assert not (tmp_path / "loop-metrics.jsonl").exists()
+
+
+@pytest.mark.parametrize(
+    ("header", "expected_error"),
+    [
+        pytest.param([], "append-metrics-requires-current-schema", id="header-is-a-list"),
+        pytest.param({"schema_version": 3}, "append-metrics-requires-current-schema", id="other-schema"),
+    ],
+)
+def test_append_metrics_refuses_a_ledger_it_cannot_bind_to(tmp_path: Path, header: Any, expected_error: str) -> None:
+    """Name a stable error, never a traceback, for a header that is not the current ledger shape."""
+    ledger_path = tmp_path / "loop-ledger.json"
+    ledger_path.write_text(json.dumps(header), encoding="utf-8")
+
+    result = _run_metrics(ledger_path, _metrics_record())
+
+    assert "Traceback" not in result.stderr
+    assert expected_error in result.stderr or "ledger-read-failed" in result.stderr
+    assert not (tmp_path / "loop-metrics.jsonl").exists()
+    assert (tmp_path / "loop-metrics.jsonl.rec").is_file()
+
+
+def test_append_metrics_refuses_an_invalid_round_log_without_writing(tmp_path: Path) -> None:
+    """Bind cost only to rounds the ledger validator accepts, not to raw lines of a broken log."""
+    ledger_path = tmp_path / "loop-ledger.json"
+    _write_header(ledger_path)
+    (tmp_path / "loop-rounds.jsonl").write_text(json.dumps({"index": 1}) + "\n", encoding="utf-8")
+
+    result = _run_metrics(ledger_path, _metrics_record())
+
+    assert "warning: metrics-rejected:" in result.stderr
+    assert not (tmp_path / "loop-metrics.jsonl").exists()
+    assert (tmp_path / "loop-metrics.jsonl.rec").is_file()
+
+
+def test_append_metrics_refuses_the_historical_inline_schema(tmp_path: Path) -> None:
+    """Keep a frozen schema-1 archive free of new files, as the round append already does."""
+    ledger_path = tmp_path / "loop-ledger.json"
+    ledger_path.write_text(json.dumps(_ledger(_round(1, [_finding("finding-a")]))), encoding="utf-8")
+
+    result = _run_metrics(ledger_path, _metrics_record())
+
+    assert "append-metrics-requires-current-schema" in result.stderr
+    assert not (tmp_path / "loop-metrics.jsonl").exists()
+
+
+def test_append_metrics_refuses_attested_gaps_after_the_baseline(tmp_path: Path) -> None:
+    """Hold the documented rule that attestation precedes only the baseline, so later records carry null."""
+    ledger_path = tmp_path / "loop-ledger.json"
+    _write_header(ledger_path)
+    assert _append(ledger_path, _round(1, [_finding("finding-a")])).returncode == 0
+    assert _append(ledger_path, _round(2, [_finding("finding-a")])).returncode == 0
+
+    result = _run_metrics(ledger_path, _metrics_record(round=2, attested_gaps=7))
+
+    assert "metrics-attested_gaps-only-on-round-1" in result.stderr
+    assert not (tmp_path / "loop-metrics.jsonl").exists()
+
+
+def test_append_metrics_closes_an_unterminated_final_line_and_stores_a_stripped_route(tmp_path: Path) -> None:
+    """Keep every record on its own line and the route joinable even after a partial earlier write."""
+    ledger_path = tmp_path / "loop-ledger.json"
+    _write_header(ledger_path)
+    assert _append(ledger_path, _round(1, [_finding("finding-a")])).returncode == 0
+    (tmp_path / "loop-metrics.jsonl").write_bytes(json.dumps(_metrics_record(duration_s=1)).encode("utf-8"))
+
+    result = _run_metrics(ledger_path, _metrics_record(route="bridge:review\n"))
+
+    lines = (tmp_path / "loop-metrics.jsonl").read_bytes().splitlines()
+    assert result.returncode == 0, result.stderr
+    assert [json.loads(line)["duration_s"] for line in lines] == [1, 310]
+    assert json.loads(lines[1])["route"] == "bridge:review"
+
+
+@pytest.mark.parametrize(
+    ("route", "warns"),
+    [
+        pytest.param("agent:foundry:challenger", False, id="agent-route"),
+        pytest.param("bridge:review", False, id="bridge-route"),
+        pytest.param("parent", False, id="parent-route"),
+        pytest.param("other:manual-read", False, id="other-label"),
+        pytest.param("foundry:challenger", True, id="missing-kind-prefix"),
+        pytest.param("challenger", True, id="bare-role"),
+    ],
+)
+def test_append_metrics_warns_without_refusing_an_off_vocabulary_route(tmp_path: Path, route: str, warns: bool) -> None:
+    """Accept any non-blank route but nudge toward the shared vocabulary so route-versus-outcome analysis can join."""
+    ledger_path = tmp_path / "loop-ledger.json"
+    _write_header(ledger_path)
+    assert _append(ledger_path, _round(1, [_finding("finding-a")])).returncode == 0
+
+    result = _run_metrics(ledger_path, _metrics_record(route=route))
+
+    assert result.returncode == 0, result.stderr
+    assert ("metrics-route-not-in-vocabulary" in result.stderr) is warns
+    assert len((tmp_path / "loop-metrics.jsonl").read_bytes().splitlines()) == 1
+
+
+def test_append_warns_when_a_later_new_finding_lacks_an_origin_entry(tmp_path: Path) -> None:
+    """Nudge, never refuse, when a finding first reported after the baseline names no origin class.
+
+    The loop rule already requires the origin; the warning makes a missing one visible at the moment it is cheap to add.
+    """
+    ledger_path = tmp_path / "loop-ledger.json"
+    _write_header(ledger_path)
+    baseline = _append(ledger_path, _round(1, [_finding("finding-a")]))
+    later = _append(
+        ledger_path,
+        _round(
+            2,
+            [
+                _finding("finding-a", disposition="verified-fixed"),
+                _finding("finding-b", "medium"),
+                _finding("finding-c", "medium", evidence=["origin: resolver-edit"]),
+                _finding("finding-f", "medium", evidence=["origin: Resolver-Edit (round 2 diff)"]),
+                _finding("finding-d", "medium", evidence=["origin:"]),
+                _finding("finding-e", "medium", evidence=["origin: banana"]),
+            ],
+        ),
+    )
+
+    assert baseline.returncode == 0
+    assert "origin-missing" not in baseline.stderr
+    assert later.returncode == 0, later.stderr
+    assert "warning: round-2-finding-origin-missing:finding-b" in later.stderr
+    assert "warning: round-2-finding-origin-missing:finding-d" in later.stderr
+    assert "warning: round-2-finding-origin-missing:finding-e" in later.stderr
+    assert "origin-missing:finding-c" not in later.stderr
+    assert "origin-missing:finding-f" not in later.stderr
+    assert len((tmp_path / "loop-rounds.jsonl").read_bytes().splitlines()) == 2
+
+
+def _plateau_ledger(second: list[dict[str, Any]], first: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    """Build a two-round ledger whose second round does not lower the score."""
+    opening = first if first is not None else [_finding("finding-a", "medium")]
+    return _ledger(_round(1, opening), _round(2, second))
+
+
+@pytest.mark.parametrize(
+    ("ledger_factory", "expected"),
+    [
+        pytest.param(
+            lambda: _plateau_ledger([_finding("finding-a", "medium")]),
+            "stuck",
+            id="same-signature-persists",
+        ),
+        pytest.param(
+            lambda: _plateau_ledger(
+                [_finding("finding-a", "medium", disposition="verified-fixed"), _finding("finding-b", "medium")]
+            ),
+            "whack-a-mole",
+            id="fixed-target-replaced-by-new-finding",
+        ),
+        pytest.param(
+            lambda: _plateau_ledger(
+                [
+                    _finding("finding-a", "medium"),
+                    _finding("finding-b", "low", disposition="verified-fixed"),
+                    _finding("finding-c", "low"),
+                ],
+                [_finding("finding-a", "medium"), _finding("finding-b", "low")],
+            ),
+            "mixed",
+            id="carried-and-new-together",
+        ),
+        pytest.param(
+            lambda: _plateau_ledger(
+                [
+                    _finding(
+                        "finding-a", "medium", disposition="verified-fixed", evidence=["invariant: same boundary"]
+                    ),
+                    _finding("finding-b", "medium", evidence=["invariant: same boundary"]),
+                ],
+                [_finding("finding-a", "medium", evidence=["invariant: same boundary"])],
+            ),
+            "stuck",
+            id="new-route-to-known-invariant-is-not-new",
+        ),
+        pytest.param(
+            lambda: _plateau_ledger(
+                [_finding("finding-a", "medium", disposition="verified-fixed"), _finding("finding-b", "low")]
+            ),
+            None,
+            id="score-decreased",
+        ),
+        pytest.param(
+            lambda: _plateau_ledger([_finding("finding-a", "medium", disposition="verified-fixed")]),
+            None,
+            id="clean",
+        ),
+    ],
+)
+def test_plateau_kind_names_why_the_latest_round_did_not_improve(ledger_factory: Any, expected: str | None) -> None:
+    """Tell a fix that never landed from a fix that exposed siblings, without changing the ledger decision."""
+    module = _load_module()
+    ledger = ledger_factory()
+
+    assert module.validate_ledger(ledger | {"schema_version": 2}) == []
+    assert module.plateau_kind(ledger) == expected
+
+
+def test_plateau_kind_is_none_before_a_second_round() -> None:
+    """Report nothing when only the baseline exists."""
+    module = _load_module()
+
+    assert module.plateau_kind(_ledger(_round(1, [_finding("finding-a")]))) is None
+
+
+def test_plateau_kind_flag_prints_on_stderr_and_keeps_stdout_and_exit_unchanged(tmp_path: Path) -> None:
+    """Add the note only on request, so existing consumers of the JSON summary see no difference."""
+    module = _load_module()
+    ledger_path = tmp_path / "loop-ledger.json"
+    _write_header(ledger_path)
+    assert _append(ledger_path, _round(1, [_finding("finding-a", "medium")])).returncode == 0
+    assert _append(ledger_path, _round(2, [_finding("finding-a", "medium")])).returncode == 0
+    command = [sys.executable, str(LEDGER_PATH), "--ledger", str(ledger_path)]
+
+    plain = subprocess.run(command, capture_output=True, text=True, check=False)
+    flagged = subprocess.run([*command, "--plateau-kind"], capture_output=True, text=True, check=False)
+
+    assert flagged.stdout == plain.stdout
+    assert flagged.returncode == plain.returncode
+    assert plain.stderr == ""
+    assert flagged.stderr.strip() == "plateau-kind: stuck"
+    assert json.loads(flagged.stdout)["reason"] == "plateau"
+    assert module.load_ledger(ledger_path)["rounds"][1]["index"] == 2
+
+
+@pytest.mark.parametrize(
+    ("second_round", "expected"),
+    [
+        pytest.param(
+            _round(2, [_finding("finding-a", "medium", disposition="verified-fixed"), _finding("finding-b", "medium")]),
+            "whack-a-mole",
+            id="siblings-exposed",
+        ),
+        pytest.param(
+            _round(
+                2,
+                [_finding("finding-a", "medium", disposition="verified-fixed"), _finding("finding-b", "medium")],
+                independent=False,
+            ),
+            "none",
+            id="stop-is-not-a-score-plateau",
+        ),
+    ],
+)
+def test_plateau_kind_flag_names_a_non_stuck_kind_only_for_a_score_stop(
+    tmp_path: Path, second_round: dict[str, Any], expected: str
+) -> None:
+    """Drive the flag through the CLI for a non-stuck kind, and stay silent when the stop is not a score plateau."""
+    ledger_path = tmp_path / "loop-ledger.json"
+    _write_header(ledger_path)
+    assert _append(ledger_path, _round(1, [_finding("finding-a", "medium")])).returncode == 0
+    assert _append(ledger_path, second_round).returncode == 0
+
+    result = subprocess.run(
+        [sys.executable, str(LEDGER_PATH), "--ledger", str(ledger_path), "--plateau-kind"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.stderr.strip() == f"plateau-kind: {expected}"
+
+
+@pytest.mark.parametrize(
+    "other_flag",
+    [
+        pytest.param("--append", id="append"),
+        pytest.param("--append-metrics", id="append-metrics"),
+        pytest.param("--progress", id="progress"),
+        pytest.param("--plateau-kind", id="plateau-kind"),
+        pytest.param("--require-clean", id="require-clean"),
+    ],
+)
+def test_brief_arm_refuses_to_swallow_another_action(tmp_path: Path, other_flag: str) -> None:
+    """Fail loudly instead of silently skipping a staged append when both flags are given."""
+    ledger_path = tmp_path / "loop-ledger.json"
+    _write_header(ledger_path)
+    (tmp_path / "loop-rounds.jsonl.rec").write_text(json.dumps(_round(1, [_finding("finding-a")])), encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(LEDGER_PATH), "--ledger", str(ledger_path), "--brief-arm", other_flag],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert result.stdout == ""
+    assert (tmp_path / "loop-rounds.jsonl.rec").is_file()
+
+
+def test_brief_arm_pause_file_beside_the_run_forces_the_full_wording(tmp_path: Path) -> None:
+    """Carry the documented lean-arm pause in a file every later run sees, whatever its name hashes to."""
+    module = _load_module()
+    runs = [tmp_path / f"run-{index}" / "loop-ledger.json" for index in range(20)]
+    assert {module.brief_arm(path) for path in runs} == {"full", "lean"}
+
+    (tmp_path / "brief-arm-pause").write_text("lean paused: high finding after lean baseline\n", encoding="utf-8")
+
+    assert {module.brief_arm(path) for path in runs} == {"full"}
+
+
+def test_brief_arm_survives_a_run_name_that_is_not_valid_utf8() -> None:
+    """Keep the pilot flag from raising on a POSIX directory whose name holds undecodable bytes."""
+    module = _load_module()
+
+    assert module.brief_arm(Path("run-\udcff") / "loop-ledger.json") in {"full", "lean"}
+    assert module.brief_arm(Path("run-\ud800") / "loop-ledger.json") in {"full", "lean"}
+
+
+def test_brief_arm_survives_an_unsearchable_parent_and_a_symlink_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Return a wording even when the OS refuses the pause-file probe or path resolution.
+
+    Older Python raises ``PermissionError`` from ``Path.exists`` for an unsearchable directory and ``RuntimeError`` from
+    ``Path.resolve`` for a symlink loop; the pilot flag must never turn either into a crash.
+    """
+    module = _load_module()
+
+    def refuse_probe(self: Path) -> bool:
+        raise PermissionError(13, "Permission denied", str(self))
+
+    def refuse_resolve(self: Path, strict: bool = False) -> Path:
+        raise RuntimeError(f"Symlink loop from {self}")
+
+    monkeypatch.setattr(Path, "exists", refuse_probe)
+    assert module.brief_arm(Path("run-a") / "loop-ledger.json") in {"full", "lean"}
+
+    monkeypatch.setattr(Path, "resolve", refuse_resolve)
+    assert module.brief_arm(Path("run-a") / "loop-ledger.json") in {"full", "lean"}
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows cannot remove the working directory of a process")
+def test_brief_arm_cli_survives_a_deleted_working_directory(tmp_path: Path) -> None:
+    """Run the real flag from a working directory that no longer exists, where every relative-path OS call fails.
+
+    The earlier fix contained only the exceptions its tests injected, so a fallback that called the working directory
+    itself still raised; this drives the shipped command instead of the unit.
+    """
+    script = (
+        "import os, runpy, sys\n"
+        "os.mkdir('gone'); os.chdir('gone'); os.rmdir('../gone')\n"
+        "sys.argv = ['adversarial_loop.py', '--ledger', 'run-a/loop-ledger.json', '--brief-arm']\n"
+        "runpy.run_path(" + repr(str(LEDGER_PATH)) + ", run_name='__main__')\n"
+    )
+
+    result = subprocess.run([sys.executable, "-c", script], cwd=tmp_path, capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stderr[-300:]
+    assert result.stdout.strip() in {"full", "lean"}
+
+
+def test_warnings_built_from_record_text_stay_on_one_line(tmp_path: Path) -> None:
+    """Escape newlines in a signature or an unexpected key so record text cannot forge extra warning lines."""
+    ledger_path = tmp_path / "loop-ledger.json"
+    _write_header(ledger_path)
+    assert _append(ledger_path, _round(1, [_finding("finding-a")])).returncode == 0
+    appended = _append(
+        ledger_path,
+        _round(2, [_finding("finding-a", disposition="verified-fixed"), _finding("sig\nsecond-line", "medium")]),
+    )
+    rejected = _run_metrics(ledger_path, _metrics_record() | {"x\ny": 1})
+
+    assert appended.returncode == 0, appended.stderr
+    assert rejected.returncode == 0, rejected.stderr
+    assert "warning: round-2-finding-origin-missing:sig\\nsecond-line" in appended.stderr
+    assert "second-line" not in [line.strip() for line in appended.stderr.splitlines()]
+    assert [line for line in rejected.stderr.splitlines() if line.startswith("warning")] == [
+        "warning: metrics-rejected:metrics-unexpected-fields:x\\ny"
+    ]
+    assert len(rejected.stderr.splitlines()) == 1
+
+
+def test_brief_arm_is_stable_per_run_balanced_and_needs_no_ledger(tmp_path: Path) -> None:
+    """Assign a pilot brief wording from the run directory name alone, the same every time and split across runs.
+
+    The flag runs before any round exists, so it must not read the ledger, and it must never alter files or stdout shape
+    beyond one word.
+    """
+    arms = []
+    for index in range(40):
+        ledger_path = tmp_path / f"run-{index}" / "loop-ledger.json"
+        first = subprocess.run(
+            [sys.executable, str(LEDGER_PATH), "--ledger", str(ledger_path), "--brief-arm"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        again = subprocess.run(
+            [sys.executable, str(LEDGER_PATH), "--ledger", str(ledger_path), "--brief-arm"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert first.returncode == 0, first.stderr
+        assert first.stdout == again.stdout
+        arms.append(first.stdout.strip())
+
+    assert set(arms) == {"full", "lean"}
+    assert 8 <= arms.count("lean") <= 32
+    assert not (tmp_path / "run-0").exists()
+
+
+def test_metrics_path_follows_the_ledger_prefix(tmp_path: Path) -> None:
+    """Keep a copied prior ledger's cost log beside it, as the round log already does."""
+    module = _load_module()
+
+    assert module.metrics_path(tmp_path / "loop-ledger.json").name == "loop-metrics.jsonl"
+    assert module.metrics_path(tmp_path / "prior-loop-ledger.json").name == "prior-loop-metrics.jsonl"
+
+
 def test_historical_inline_ledger_stays_readable_but_cannot_grow(tmp_path: Path) -> None:
     """Read a schema-1 archive unchanged, while refusing to append rounds to the rewritten single-file shape."""
     module = _load_module()

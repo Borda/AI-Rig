@@ -32,6 +32,23 @@ Record each completed round by writing it as one JSON object to ``loop-rounds.js
 running the CLI with ``--append``: the staged round is validated against the earlier rounds, appended as one line, and
 the staged file is deleted. Earlier rounds are never re-emitted, so a dropped or reworded round cannot slip in.
 
+Record each round's cost beside it the same way: write one object to ``loop-metrics.jsonl.rec`` and add
+``--append-metrics`` to the same call. The record has ten fields: ``schema_version`` (1), ``kind`` (``round``), a
+completed ``round``, the review ``route``, ``brief`` (``full`` or ``lean``), and ``brief_bytes``, ``duration_s``,
+``tokens_in``, ``tokens_out``, ``attested_gaps``, each ``null`` when a route cannot report it. ``duration_s`` is a
+nonnegative number of seconds; the other four are nonnegative integers, and ``attested_gaps`` is ``null`` after round
+1 or when no attestation was written.
+It is advisory data for later cost analysis and never feeds scoring, recurrence, or clean acceptance: a rejected record
+only prints ``warning: metrics-rejected:<codes>`` and keeps its staged file, so the round, the progress table and the
+exit status are unaffected. A second record for the same round supersedes the first (last record per round wins). Its
+``route`` is ``parent`` or ``agent:``, ``bridge:``, ``codex:``, ``other:`` plus a label; any other shape only draws a
+warning. ``--append`` likewise warns, never refuses, when an open finding first reported after round 1 has no
+``origin:`` evidence entry naming ``earlier-snapshot``, ``resolver-edit``, ``scope-added`` or ``undated``.
+``--plateau-kind`` prints ``stuck``, ``whack-a-mole``, ``mixed`` or ``none`` on stderr for a plateau or non-converging
+latest round without touching stdout or the exit status. ``--brief-arm`` prints ``full`` or ``lean`` (stable per run
+directory name, ``full`` while a ``brief-arm-pause`` file sits beside the run directory) for the reviewer-brief pilot
+and exits; it cannot be combined with another action.
+
 Use ``--require-clean`` when an acceptance gate must reject every valid non-clean outcome. Add ``--progress`` after each
 completed round to print its cumulative severity table on stderr, leaving machine-readable stdout unchanged. Add
 ``--actions path/to/loop-actions.json`` after parent triage to bind every open finding to a resolution action. The
@@ -44,9 +61,9 @@ The CLI prints one JSON object. A valid ledger yields its deterministic summary 
 yields ``status=invalid``, error names, and exit status one. ``--require-clean`` preserves the valid JSON summary but
 exits one unless its reason is ``clean``. Optional progress cells split old and new open findings, with security and
 critical in separate columns and their distinct weights; no table is printed before a completed round. Action
-validation checks record consistency, not whether a claimed fix or cause is true. Only ``--append`` modifies files: it
-adds one line to the round log and removes the staged record; a rejected record is kept for inspection and nothing is
-appended.
+validation checks record consistency, not whether a claimed fix or cause is true. Only ``--append`` and
+``--append-metrics`` modify files: each adds one line to its log (round log, cost log) and removes its staged record; a
+rejected round is kept for inspection and nothing is appended, and a rejected cost record is kept the same way.
 
 ## Failure
 
@@ -66,6 +83,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import re
 import sys
 from pathlib import Path
@@ -93,6 +111,27 @@ _REVIEWER_KEYS = {"identity", "independent"}
 _SNAPSHOT_KEYS = {"revision", "diff_digest"}
 #: Exact set of keys permitted in each finding record.
 _FINDING_KEYS = {"signature", "tier", "structural", "disposition", "evidence"}
+#: Schema revision of the per-round cost log; the log is advisory data, never an input to scoring or clean acceptance.
+METRICS_SCHEMA_VERSION = 1
+#: Exact set of keys permitted in each per-round cost record.
+_METRICS_KEYS = {
+    "schema_version",
+    "kind",
+    "round",
+    "route",
+    "brief",
+    "brief_bytes",
+    "duration_s",
+    "tokens_in",
+    "tokens_out",
+    "attested_gaps",
+}
+#: Reviewer-brief wordings the cost log distinguishes; ``lean`` states each item once, ``full`` is the rule's brief.
+_BRIEF_ARMS = ("full", "lean")
+#: Cost fields that hold a nonnegative integer, or ``None`` when the route cannot report them.
+_METRICS_COUNT_FIELDS = ("brief_bytes", "tokens_in", "tokens_out", "attested_gaps")
+#: Name of the file a parent drops beside the run directories to pause the lean brief arm for them.
+_BRIEF_PAUSE_FILE = "brief-arm-pause"
 #: Exact set of keys permitted at the top level of a round-actions record.
 _ACTION_ROOT_KEYS = {"schema_version", "rounds"}
 #: Exact set of keys permitted in each per-round entry of the actions record.
@@ -105,6 +144,12 @@ _ROOT_CAUSE_KEYS = {"claim", "evidence", "falsification", "rejected_alternative"
 _ACTION_DECISIONS = {"fix", "escalate", "defer"}
 #: Evidence prefix naming the invariant a finding violates; together with the signature it identifies a recurrence.
 _INVARIANT_PREFIX = "invariant:"
+#: Evidence prefix naming a first-reported finding's source origin (earlier snapshot, resolver edit, scope, undated).
+_ORIGIN_PREFIX = "origin:"
+#: The origin classes a later-round finding names after ``origin:``; anything else counts as missing.
+_ORIGIN_CLASSES = ("earlier-snapshot", "resolver-edit", "scope-added", "undated")
+#: Shape of a cost-log route: ``parent``, or ``agent:``/``bridge:``/``codex:``/``other:`` plus a label.
+_ROUTE_SHAPE = re.compile(r"parent|(?:agent|bridge|codex|other):\S+")
 #: Evidence prefixes a fix action must cover, each naming one kind of proof such as an invariant or a sibling.
 _FIX_EVIDENCE_PREFIXES = (_INVARIANT_PREFIX, "original:", "consumer:", "sibling:", "source-paths:")
 
@@ -181,6 +226,30 @@ def ledger_digest(path: Path) -> str:
     return hashlib.sha256(len(header).to_bytes(8, "big") + header + log_bytes).hexdigest()
 
 
+def _one_line(text: str) -> str:
+    """Escape control characters so a warning built from record text stays one stderr line.
+
+    Examples:
+        >>> _one_line("sig\\nsecond-line")
+        'sig\\\\nsecond-line'
+        >>> _one_line("plain-code:x")
+        'plain-code:x'
+    """
+    return ascii(text)[1:-1]
+
+
+def _append_line(log: Path, record: dict[str, Any]) -> None:
+    """Append one JSON record as its own line, first closing a final line an earlier writer left without a newline."""
+    try:
+        with log.open("rb") as handle:
+            handle.seek(-1, 2)
+            unterminated = handle.read(1) != b"\n"
+    except OSError:
+        unterminated = False
+    with log.open("a", encoding="utf-8", newline="\n") as handle:
+        handle.write(("\n" if unterminated else "") + json.dumps(record, sort_keys=True) + "\n")
+
+
 def append_round(ledger_path: Path) -> list[str]:
     """Append the staged round record to the ledger's round log after validating the extended ledger.
 
@@ -207,9 +276,170 @@ def append_round(ledger_path: Path) -> list[str]:
     errors = validate_ledger({**ledger, "rounds": [*ledger["rounds"], record]})
     if errors:
         return errors
-    with log.open("a", encoding="utf-8", newline="\n") as handle:
-        handle.write(json.dumps(record, sort_keys=True) + "\n")
+    warnings = _missing_origin_warnings(ledger["rounds"], record)
+    _append_line(log, record)
     staged.unlink()
+    for warning in warnings:
+        print(f"warning: {_one_line(warning)}", file=sys.stderr)
+    return []
+
+
+def _missing_origin_warnings(earlier_rounds: list[dict[str, Any]], record: dict[str, Any]) -> list[str]:
+    """Name open findings first reported after the baseline that carry no ``origin:`` evidence entry.
+
+    The loop rule already requires the origin class of a later-round finding; only a handful of past reports recorded
+    it, so the append action nudges without refusing. A baseline record never warns.
+
+    Examples:
+        >>> _missing_origin_warnings([], {"findings": []})
+        []
+    """
+    if not earlier_rounds:
+        return []
+    seen: set[str] = set()
+    for round_record in earlier_rounds:
+        for keys in _history_keys(round_record):
+            seen |= keys
+    return [
+        f"round-{record['index']}-finding-origin-missing:{finding['signature']}"
+        for finding in record["findings"]
+        if finding["disposition"] in _OPEN_DISPOSITIONS
+        and not _identity_keys(finding["signature"], finding["evidence"]) & seen
+        and not any(_names_origin_class(item) for item in finding["evidence"])
+    ]
+
+
+def _names_origin_class(item: object) -> bool:
+    """Return whether one evidence entry reads ``origin: <class>`` with a class the loop rule defines.
+
+    Examples:
+        >>> _names_origin_class("origin: resolver-edit (round 2 diff)")
+        True
+        >>> [_names_origin_class(item) for item in ("origin:", "origin: banana", "invariant: x", 3)]
+        [False, False, False, False]
+    """
+    if not isinstance(item, str) or not item.startswith(_ORIGIN_PREFIX):
+        return False
+    words = item[len(_ORIGIN_PREFIX) :].split()
+    return bool(words) and words[0].rstrip(".,;:").casefold() in _ORIGIN_CLASSES
+
+
+def metrics_path(ledger_path: Path) -> Path:
+    """Return the append-only per-round cost log that belongs to one ledger header.
+
+    Examples:
+        >>> metrics_path(Path("run") / "loop-ledger.json").name
+        'loop-metrics.jsonl'
+        >>> metrics_path(Path("prior-loop-ledger.json")).name
+        'prior-loop-metrics.jsonl'
+    """
+    rounds_name = rounds_path(ledger_path).name
+    return ledger_path.with_name(f"{rounds_name[: -len('rounds.jsonl')]}metrics.jsonl")
+
+
+def brief_arm(ledger_path: Path) -> str:
+    """Assign the reviewer-brief wording for one run: ``lean`` or ``full``, balanced across runs and stable per run.
+
+    The arm hashes the run directory's name, so the same run always gets the same arm and no counter file is needed. It
+    only assigns wording for a pilot comparison; the parent records the brief it actually sent.
+
+    Examples:
+        >>> brief_arm(Path("2026-10-25T09-32-53Z") / "loop-ledger.json") in {"full", "lean"}
+        True
+        >>> brief_arm(Path("run-a") / "loop-ledger.json") == brief_arm(Path("elsewhere") / "run-a" / "loop-ledger.json")
+        True
+    """
+    try:
+        run = ledger_path.resolve().parent
+        paused = (run.parent / _BRIEF_PAUSE_FILE).exists()
+    except (OSError, ValueError, RuntimeError):
+        # Every OS call is best-effort enrichment. Whatever it refuses (deleted working directory, symlink loop,
+        # unsearchable parent, NUL byte), the arm falls back to the name as written and never raises.
+        run = ledger_path.parent
+        paused = False
+    if paused:
+        return "full"
+    digest = hashlib.sha256(run.name.encode("utf-8", "surrogatepass")).hexdigest()
+    return _BRIEF_ARMS[int(digest[0], 16) % 2]
+
+
+def _count_or_unknown(value: object) -> bool:
+    """Return whether a metric is a nonnegative integer or an honest unknown (``None``)."""
+    return value is None or (type(value) is int and value >= 0)
+
+
+def _seconds_or_unknown(value: object) -> bool:
+    """Return whether a duration is a finite nonnegative number of seconds or an honest unknown (``None``)."""
+    if type(value) is int:
+        return value >= 0
+    return value is None or (type(value) is float and math.isfinite(value) and value >= 0)
+
+
+def _validate_metrics(record: object, completed_rounds: int) -> list[str]:
+    """Check one staged metrics record: exact fields, supported version, a completed round, honest unknowns."""
+    errors: list[str] = []
+    metrics = _exact_keys(record, _METRICS_KEYS, "metrics", errors)
+    if metrics is None or errors:
+        return errors
+    if type(metrics["schema_version"]) is not int or metrics["schema_version"] != METRICS_SCHEMA_VERSION:
+        errors.append("metrics-schema-version-unsupported")
+    if metrics["kind"] != "round":
+        errors.append("metrics-kind-invalid")
+    index = metrics["round"]
+    if not isinstance(index, int) or isinstance(index, bool) or not 1 <= index <= completed_rounds:
+        errors.append("metrics-round-must-be-a-completed-round")
+    if not _text(metrics["route"]):
+        errors.append("metrics-route-required")
+    if metrics["brief"] not in _BRIEF_ARMS:
+        errors.append("metrics-brief-invalid")
+    errors.extend(
+        f"metrics-{field}-must-be-nonnegative-integer-or-null"
+        for field in _METRICS_COUNT_FIELDS
+        if not _count_or_unknown(metrics[field])
+    )
+    if not _seconds_or_unknown(metrics["duration_s"]):
+        errors.append("metrics-duration_s-must-be-nonnegative-number-or-null")
+    if index != 1 and metrics["attested_gaps"] is not None:
+        errors.append("metrics-attested_gaps-only-on-round-1")
+    return errors
+
+
+def append_metrics(ledger_path: Path) -> list[str]:
+    """Append the staged per-round cost record to the ledger's metrics log after validating it.
+
+    The owner writes one metrics object to ``<metrics log>.rec``; this action validates it against the completed rounds
+    of a valid current ledger, appends it as one line, and deletes the staged file. The log never feeds scoring,
+    recurrence, or clean acceptance, so a rejected record leaves the ledger and round log untouched. A second record
+    for one round supersedes the first: readers take the last record per round.
+    """
+    log = metrics_path(ledger_path)
+    staged = log.with_name(f"{log.name}.rec")
+    try:
+        record = json.loads(staged.read_bytes())
+    except OSError:
+        return [f"append-metrics-record-missing:{staged.name}"]
+    except (ValueError, RecursionError):  # bad bytes, bad JSON, an integer past the digit limit, absurd nesting
+        return ["append-metrics-record-invalid-json"]
+    try:
+        ledger = load_ledger(ledger_path)
+    except (OSError, ValueError) as error:
+        return [f"ledger-read-failed:{error}"]
+    if not isinstance(ledger, dict) or ledger.get("schema_version") != SCHEMA_VERSION:
+        return ["append-metrics-requires-current-schema"]
+    errors = validate_ledger(ledger) or _validate_metrics(record, len(ledger["rounds"]))
+    if errors:
+        return errors
+    record["route"] = record["route"].strip()
+    try:
+        _append_line(log, record)
+    except OSError as error:
+        return [f"append-metrics-write-failed:{type(error).__name__}"]
+    try:
+        staged.unlink()
+    except OSError as error:
+        print(f"warning: metrics-staged-record-not-removed:{type(error).__name__}", file=sys.stderr)
+    if _ROUTE_SHAPE.fullmatch(record["route"]) is None:
+        print(f"warning: metrics-route-not-in-vocabulary:{record['route']!a}", file=sys.stderr)
     return []
 
 
@@ -671,6 +901,36 @@ def _history_keys(round_record: dict[str, Any]) -> list[set[str]]:
     return [_identity_keys(finding["signature"], finding["evidence"]) for finding in round_record["findings"]]
 
 
+def plateau_kind(payload: dict[str, Any]) -> str | None:
+    """Name why the latest round did not lower the score, or ``None`` when it did (or none ran).
+
+    ``stuck`` means every open finding was already seen in an earlier round (carried or reopened), so the fix did not
+    land and needs a different approach. ``whack-a-mole`` means every open finding is new, so the fix closed its target
+    but the touched area still hides siblings. ``mixed`` is both. The result is informational and never changes the
+    ledger's decision.
+
+    Examples:
+        >>> plateau_kind({"rounds": []}) is None
+        True
+    """
+    rounds = payload["rounds"]
+    if len(rounds) < 2:
+        return None
+    scores = [_score(round_record) for round_record in rounds]
+    if scores[-1] == 0 or scores[-1] < scores[-2]:
+        return None
+    seen: set[str] = set()
+    for round_record in rounds[:-1]:
+        for keys in _history_keys(round_record):
+            seen |= keys
+    open_findings = [finding for finding in rounds[-1]["findings"] if finding["disposition"] in _OPEN_DISPOSITIONS]
+    carried = sum(1 for finding in open_findings if _identity_keys(finding["signature"], finding["evidence"]) & seen)
+    fresh = len(open_findings) - carried
+    if carried and not fresh:
+        return "stuck"
+    return "whack-a-mole" if fresh and not carried else "mixed"
+
+
 def _render_progress(payload: dict[str, Any], completed_rounds: int) -> str:
     """Render validated completed history with separate old and new open totals."""
     if not completed_rounds:
@@ -719,7 +979,34 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="First append the staged round from <round log>.rec, refusing it unless the extended ledger is valid.",
     )
+    parser.add_argument(
+        "--append-metrics",
+        action="store_true",
+        help="After any --append, append the staged cost record from <metrics log>.rec for a completed round.",
+    )
+    parser.add_argument(
+        "--plateau-kind",
+        action="store_true",
+        help="Print stuck, whack-a-mole, mixed or none on stderr for the latest round; informational only.",
+    )
+    parser.add_argument(
+        "--brief-arm",
+        action="store_true",
+        help="Print the pilot reviewer-brief wording (full or lean) for this run and exit; the ledger need not exist.",
+    )
     args = parser.parse_args(argv)
+    if args.brief_arm:
+        if (
+            args.append
+            or args.append_metrics
+            or args.require_clean
+            or args.progress
+            or args.plateau_kind
+            or args.actions
+        ):
+            parser.error("--brief-arm cannot be combined with another action")
+        print(brief_arm(args.ledger))
+        return 0
     if args.append:
         append_errors = append_round(args.ledger)
         if append_errors:
@@ -728,6 +1015,14 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 1
+    if args.append_metrics:
+        # Advisory data: a rejected cost record must not hide the committed round's summary or progress table.
+        try:
+            metrics_errors = append_metrics(args.ledger)
+        except Exception as error:
+            metrics_errors = [f"append-metrics-failed:{type(error).__name__}"]
+        if metrics_errors:
+            print(f"warning: metrics-rejected:{_one_line(','.join(metrics_errors))}", file=sys.stderr)
     try:
         payload = load_ledger(args.ledger)
     except (OSError, ValueError) as error:
@@ -754,6 +1049,9 @@ def main(argv: list[str] | None = None) -> int:
     summary = summarize_ledger(payload)
     if args.progress and summary["rounds"]:
         print(_render_progress(payload, len(summary["rounds"])), file=sys.stderr)
+    if args.plateau_kind:
+        stopped_on_score = summary["reason"] in ("plateau", "nonconverging")
+        print(f"plateau-kind: {(stopped_on_score and plateau_kind(payload)) or 'none'}", file=sys.stderr)
     print(json.dumps(summary, sort_keys=True))
     return 0 if not args.require_clean or summary["reason"] == "clean" else 1
 

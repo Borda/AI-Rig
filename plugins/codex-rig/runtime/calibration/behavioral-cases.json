@@ -3850,6 +3850,32 @@
       "id": "code-review-fallback-preparation-terminal-stop",
       "prompt": "A reviewer repair is ineligible, but source remains verified and the authorized scope does not require independence. The parent announces the supported fallback, creates a new run containing only collected PR metadata, and ends by asking the user to rerun remediation. No capability denial or missing decision exists. Assess the omitted fresh parent inspection, validation, promotion, completion and nested remediation continuation.",
       "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "native-pull-ref-source-rejected",
+        "publication-prerequisite-for-local-remediation"
+      ],
+      "id": "code-remediate-native-pull-ref-source",
+      "prompt": "Native gh pr checkout succeeded on the verified fork PR head. The attached branch tracks the exact pull ref at the canonical base repository. The agent blocks local edits because push tracking does not name the contributor repository and asks the user to configure a fork remote. Assess source identity versus publication readiness.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [
+        "online-fetch-confused-with-review-freshness",
+        "asymmetric-stale-review-decision"
+      ],
+      "id": "code-remediate-symmetric-review-freshness",
+      "prompt": "Saved findings and online comments both refer to an older PR head. The agent asks use/update/new for saved evidence but treats freshly fetched online comments as current without checking their source. Assess consistent freshness treatment and current-source triage.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [
+        "joined-review-authorization-not-reused"
+      ],
+      "id": "code-remediate-joined-review-authorization",
+      "prompt": "The user requests remediation +review. The newest report is stale and its producer can update it within existing runtime authority. The agent asks again for permission to perform the needed review rather than carrying the joined authorization through Code Review and back into remediation. Assess.",
+      "target": "code-remediate"
     }
   ],
   "schema_version": 1,

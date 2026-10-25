@@ -4,12 +4,12 @@
 ## Purpose
 
     Bind the collector's successful original-branch checkout to the branch used for
-    editing, target integration, and optional commits. Equal commit hashes alone
-    do not establish the original pull request's publication destination.
+    editing, target integration, and optional local commits. Source identity is
+    independent of publication configuration; this receipt never authorizes a push.
 ## Scope
 
     Local Git queries only. Preparation records the existing branch and verifies
-    its tracking destination; it never creates or switches branches, sets tracking,
+    its source tracking; it never creates or switches branches, sets tracking,
     or repairs a changed revision. Only the explicitly requested receipt is written.
 ## Usage
 
@@ -23,7 +23,7 @@
 ## Outputs
 
     Preparation prints and exclusively writes a JSON receipt binding the PR,
-    worktree, initial revision, PR destination, and attached branch. Check prints that receipt
+    worktree, initial revision, PR source, and attached branch. Check prints that receipt
     only after the current branch and expected revision match. Recovery exclusively
     writes a separate schema-2 receipt with the legacy evidence digest and verified
     continuation revision; it does not claim a new collector checkout occurred.
@@ -77,37 +77,54 @@ def _head(expected: str) -> None:
         raise ValueError("head-mismatch")
 
 
-def _destination(branch: str, head_ref: str, head_repository: str) -> None:
-    """Verify tracking and effective push remotes still identify the original PR head."""
+def _destination(
+    branch: str,
+    head_ref: str,
+    head_repository: str,
+    pr_url: str,
+    pr_number: int,
+    *,
+    allow_pull_ref: bool = False,
+) -> None:
+    """Verify branch or native fork pull-ref tracking identifies the recorded PR source."""
     expected = _github_remote_identity(f"https://github.com/{head_repository}.git")
-    if expected is None or not head_ref:
+    if (
+        expected is None
+        or not head_ref
+        or type(pr_number) is not int
+        or pr_number <= 0
+        or not isinstance(pr_url, str)
+        or not re.fullmatch(rf"(?i:https://github\.com)/[^/]+/[^/]+/pull/{pr_number}", pr_url)
+    ):
         raise ValueError("invalid-pr-destination")
     # gh may prefix a fork's local branch to avoid collisions. Tracking identifies
     # the remote ref; the collector receipt separately binds the actual local name.
     _git("check-ref-format", f"refs/heads/{head_ref}")
     merge = _git("config", "--get", f"branch.{branch}.merge", optional=True)
     remote = _git("config", "--get", f"branch.{branch}.remote", optional=True)
-    if merge != f"refs/heads/{head_ref}" or not remote:
+    base = _github_remote_identity(pr_url.rsplit("/pull/", 1)[0])
+    # Native gh may track the base repository's pull ref when no contributor
+    # remote is configured. Bind that ref to this fork PR, never to a push target.
+    if (
+        allow_pull_ref
+        and base is not None
+        and tuple(part.casefold() for part in base) != tuple(part.casefold() for part in expected)
+        and merge == f"refs/pull/{pr_number}/head"
+    ):
+        expected = base
+    elif merge != f"refs/heads/{head_ref}":
         raise ValueError("pr-upstream-mismatch:stop-without-changing-tracking")
-    push_remote = (
-        _git("config", "--get", f"branch.{branch}.pushRemote", optional=True)
-        or _git("config", "--get", "remote.pushDefault", optional=True)
-        or remote
-    )
+    if not remote:
+        raise ValueError("pr-upstream-mismatch:stop-without-changing-tracking")
     remotes = _git("remote").splitlines()
     # gh can configure a fork URL directly instead of adding a named local remote.
-    for selected, direction in ((remote, []), (push_remote, ["--push"])):
-        urls = (
-            _git("remote", "get-url", *direction, "--all", selected).splitlines() if selected in remotes else [selected]
-        )
-        if not urls or any(
-            tuple(part.casefold() for part in (_github_remote_identity(url) or ()))
-            != tuple(part.casefold() for part in expected)
-            for url in urls
-        ):
-            raise ValueError("pr-remote-mismatch:stop-without-changing-tracking")
-    if push_remote in remotes and _git("config", "--get", f"remote.{push_remote}.push", optional=True):
-        raise ValueError("custom-push-refspec:publication-destination-unverified")
+    urls = _git("remote", "get-url", "--all", remote).splitlines() if remote in remotes else [remote]
+    if not urls or any(
+        tuple(part.casefold() for part in (_github_remote_identity(url) or ()))
+        != tuple(part.casefold() for part in expected)
+        for url in urls
+    ):
+        raise ValueError("pr-remote-mismatch:stop-without-changing-tracking")
 
 
 def check(receipt: Path, expected_head: str) -> dict[str, Any]:
@@ -134,7 +151,14 @@ def _verify_record(record: dict[str, Any], expected_head: str) -> None:
     head_ref, head_repository = record.get("head_ref"), record.get("head_repository")
     if not isinstance(head_ref, str) or not isinstance(head_repository, str):
         raise ValueError("invalid-pr-destination")
-    _destination(branch, head_ref, head_repository)
+    _destination(
+        branch,
+        head_ref,
+        head_repository,
+        record.get("pr_url"),
+        record.get("pr_number"),
+        allow_pull_ref="recovery" not in record,
+    )
 
 
 def recover(legacy_receipt: Path, pr_dir: Path, receipt: Path, expected_head: str) -> dict[str, Any]:
@@ -265,7 +289,14 @@ def prepare(pr_dir: Path, receipt: Path) -> dict[str, Any]:
     branch = _git("branch", "--show-current")
     if not branch or branch != checkout.get("local_branch"):
         raise ValueError("branch-mismatch-after-pr-checkout")
-    _destination(branch, head_ref, head_repository)
+    _destination(
+        branch,
+        head_ref,
+        head_repository,
+        url,
+        number,
+        allow_pull_ref=checkout.get("checkout_method") == "gh-pr-checkout",
+    )
     record = {
         "schema_version": 2,
         "status": "prepared",

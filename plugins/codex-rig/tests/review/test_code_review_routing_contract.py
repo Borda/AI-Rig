@@ -693,6 +693,23 @@ def test_verified_pr_source_accepts_isolated_review_worktree(tmp_path: Path, col
     _load_validator()._validate_verified_pr_source(tmp_path, routing, target, checkout)
 
 
+def test_verified_pr_source_accepts_unavailable_invoking_worktree_context(tmp_path: Path) -> None:
+    """Keep unavailable informational context separate from exact isolated-source admission."""
+    routing, target, checkout = _verified_review_worktree_source(tmp_path)
+    path = tmp_path / "source-worktree-context.json"
+    context = json.loads(path.read_text(encoding="utf-8"))
+    context = {
+        "phase": context["phase"],
+        "status": "unavailable",
+        "current_head": context["current_head"],
+        "expected_head": context["expected_head"],
+        "reason": "command-output-oversized:source-worktree-context-untracked-worktree-paths",
+    }
+    path.write_text(json.dumps(context), encoding="utf-8")
+
+    _load_validator()._validate_verified_pr_source(tmp_path, routing, target, checkout)
+
+
 @pytest.mark.parametrize("state", ["pass", "failed", "wrong-head", "non-pr"])
 def test_consolidation_confidence_admits_only_verified_pr_gate_logs(tmp_path: Path, state: str) -> None:
     """Admit mutation evidence through checkout routing while retaining exact-source and passing-gate checks."""

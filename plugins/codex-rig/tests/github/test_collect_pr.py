@@ -1172,6 +1172,59 @@ def test_collect_pr_records_unrelated_main_dirtiness_without_blocking_review(
     assert any(argv == _review_worktree_add(output) for argv, _ in _runner.calls)
 
 
+@pytest.mark.parametrize(
+    ("failure", "expected_code", "expected_error"),
+    [
+        pytest.param("oversized-main", 0, None, id="optional-main-context"),
+        pytest.param(
+            "oversized-review", 2, "command-output-oversized:review-worktree-status", id="required-review-source"
+        ),
+        pytest.param(
+            "failed-main", 2, "command-failed:source-worktree-context-untracked-worktree-paths", id="other-main-error"
+        ),
+    ],
+)
+def test_review_only_tolerates_output_limit_in_informational_main_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+    expected_code: int,
+    expected_error: str | None,
+) -> None:
+    """Apply the real output cap only as a soft limit for invoking-tree context."""
+    module = _load_collector()
+    runner = FakeRunner()
+    oversized = b"cache/file\0" * (module.MAX_OUTPUT_BYTES // len(b"cache/file\0") + 1)
+
+    def run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        """Supply command output at the informational or required source boundary."""
+        result = runner(argv, **kwargs)
+        main_scan = argv == ["git", "ls-files", "--others", "-z"]
+        review_scan = argv[:2] == ["git", "-C"] and argv[3:] == ["status", "--porcelain", "-z"]
+        if (failure == "oversized-main" and main_scan) or (failure == "oversized-review" and review_scan):
+            return subprocess.CompletedProcess(argv, 0, stdout=oversized, stderr=b"")
+        if failure == "failed-main" and main_scan:
+            return subprocess.CompletedProcess(argv, 128, stdout=b"", stderr=b"fatal: unable to read index")
+        return result
+
+    monkeypatch.setattr(module.shutil, "which", lambda command: f"/fixture/{command}")
+    output = tmp_path / "pr"
+
+    result = module.collect_pr(target="17", output=output, checkout=True, timeout_seconds=5, run=run)
+
+    assert result == expected_code
+    if expected_error is not None:
+        assert (output / "pr-error.txt").read_text(encoding="utf-8") == f"{expected_error}\n"
+        assert not (output / "local-checkout.json").exists()
+    else:
+        context = json.loads((output / "source-worktree-context.json").read_text(encoding="utf-8"))
+        assert context["status"] == "unavailable"
+        assert context["reason"] == "command-output-oversized:source-worktree-context-untracked-worktree-paths"
+        checkout = json.loads((output / "local-checkout.json").read_text(encoding="utf-8"))
+        assert checkout["local_head"] == HEAD_OID
+        assert not (output / "pr-error.txt").exists()
+
+
 def test_collect_pr_records_main_dirty_paths_overlapping_pr_diff(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

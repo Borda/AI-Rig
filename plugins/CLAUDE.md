@@ -143,6 +143,7 @@ A file that only grows — `.jsonl` record logs, `.tsv` rows, `.log` files, diar
 - **Corrections are new records, not edits.** A later verdict on an earlier entry is appended as an event line, and readers take the last record per key. Values derived after the fact go to a sidecar file (e.g. `results-deltas.jsonl`), never back into the ledger.
 - **Exempt — editing or rewriting is correct here:** single-value state (`state.json`, sentinels); mtime-clock `agent-watch-*.tsv` batch files; compaction contracts; digest- or validator-bound rendered artifacts; dedup and merge reconciliation; the artifact being refined (a report section, a release draft, a placeholder filled in place); frozen plans.
 - Guard: `tests/test_append_only_ledgers.py` fails on a skill, agent, or mode sentence that pairs "append" with the Write or Edit tool without naming the `.rec` staging.
+- **Schema-owning helper exception**: `loop-rounds.jsonl` and `loop-metrics.jsonl` are appended by `adversarial_loop.py --append` / `--append-metrics` (byte-identical `bin/` copy per plugin), which validates the staged `.rec` against the ledger and deletes it. Never `append_ledger.py` for these two.
 - Codex Rig counterpart: same `.rec` staging, no `append_ledger.py` — the helper owning each ledger's schema appends and validates the staged record (`codex-rig/shared/native-skill-contract.md` §Append-Only Ledgers). Intentional: Codex has no permission matcher or blueprint manifest, and per-schema validation refuses a bad record before it lands.
 
 ## Installability

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.72.0
+
+- Review loops add a pre-baseline attestation: before the first review of a diff the parent or its resolver wrote, the author lists each changed behavior's invariant, sibling routes, consumer and failing-before/passing-after check, and fixes the gaps within scope. Fewer avoidable defects reach a paid independent review. The reviewer never sees the attestation, it never counts toward scoring or clean acceptance, and it is skipped for review-only requests, unauthored code and continuations of a prior ledger.
+- `adversarial_loop.py --append-metrics` records each round's cost (route, brief bytes, duration, tokens, attested gaps; unknown values stay `null`) in an advisory `loop-metrics.jsonl` beside the ledger, so later investigations can price review rounds. It never affects scores, recurrence or clean acceptance.
+- The loop rule names where a first-reported finding's origin class is stored (an `origin:` evidence entry), so missed versus fix-introduced defects can be counted from the ledger.
+- Review loops report why a stalled round stalled: `adversarial_loop.py --plateau-kind` prints `stuck` (the fix did not land), `whack-a-mole` (the fix exposed new siblings) or `mixed` on stderr, and the loop rule recommends the matching next step. It is informational only and never changes the stop decision, exit status or JSON summary.
+- The cost log's `route` follows a shared vocabulary (`parent`, `agent:…`, `bridge:…`, `codex:…`, `other:…`) so routes can be joined to outcomes, and `--append` warns, never refuses, when a finding first reported after round 1 has no `origin:` evidence entry.
+- Review loops can pilot a leaner reviewer brief: `adversarial_loop.py --brief-arm` assigns `lean` or `full` per run directory, only for loops that are not filter or gate reviews and have no open security or critical finding. The cost log records the wording sent (`brief`), so about 10 runs can be compared by first-reported weight, rounds and brief size. A high or higher severity finding first found after a lean baseline pauses the lean arm.
+- The review-loop cost log and pilot flags are hardened: a rejected cost record now only warns (`warning: metrics-rejected:…`) and no longer hides the committed round's summary or progress table; records bind only to a valid current ledger, take fractional `duration_s`, keep one stripped route per line even after a partial write, and a `brief-arm-pause` file carries the lean-arm pause. `--brief-arm` refuses to combine with another action, `--plateau-kind` speaks only at a plateau or non-converging stop, the `origin:` warning also fires for an unknown class, and the attestation goes to a randomly named temp file outside the workspace so a reviewer cannot derive its path, and `attested_gaps` is `null` whenever no attestation was written.
+
 ## 0.71.0
 
 - Blueprint generation and manifest re-checks reject unsupported shell forms. Stale or tampered entries cannot regain auto-approval through the following forms:

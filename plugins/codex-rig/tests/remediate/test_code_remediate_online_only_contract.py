@@ -102,13 +102,36 @@ def test_requested_review_does_not_replace_primary_remediation() -> None:
     skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
     intake = skill.split("### 02: Normalize input", maxsplit=1)[1].split("### 03:", maxsplit=1)[0]
 
-    assert "`+review` requests existing review evidence; it does not authorize a fresh code review" in intake
+    assert "`+review` joins review with remediation and authorizes the needed review step" in intake
+    assert "`+report`, report aliases and explicit report paths request existing evidence only" in intake
     assert "Missing requested PR review decision" in intake
     assert "continue available findings only after explicit user confirmation" in intake
     assert "Disclose the requested review evidence as unavailable without manufacturing a finding" in intake
     assert "Remediation resumes only after the producer completes" not in intake
     assert "or switch to online-only intake" not in intake
     assert "complete its ordered artifact closure before intake" not in intake
+
+
+def test_stale_saved_and_online_evidence_share_one_decision_with_bound_authorization() -> None:
+    """Do not treat a fresh online fetch as current review or repeat joined-review consent."""
+    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    freshness = skill.split("### Review evidence freshness", maxsplit=1)[1].split("\n### ", maxsplit=1)[0]
+    assert "saved reports and online review comments" in freshness
+    assert "fetch time does not establish review freshness" in freshness
+    assert "Use existing findings" in freshness
+    assert "Update existing review" in freshness
+    assert "Create a new review" in freshness
+    assert "unknown" in freshness
+    assert "`+review`" in freshness
+    assert "do not ask again" in freshness
+    assert "current source" in freshness
+    assert "never edit or post GitHub comments" in freshness
+    assert "set `REQUESTED_REPORT=true`" in freshness
+    assert "retain online evidence" in freshness
+    assert "exact returned canonical result" in freshness
+    decision = MISSING_REVIEW_DECISION.read_text(encoding="utf-8")
+    assert "joined `+review`" in decision
+    assert "carry that authorization into Code Review" in decision
 
 
 def test_preliminary_findings_keep_source_and_completion_boundaries() -> None:

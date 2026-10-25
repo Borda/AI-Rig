@@ -198,6 +198,7 @@ def _collect(
     checkout_mode: str = "review",
     gh_checkout_fails: bool = True,
     gh_local_branch: str = "topic",
+    gh_pull_ref_tracking: bool = False,
     mutate_after_gh_failure: bool = False,
     move_source_after_head_fetch: bool = False,
 ) -> tuple[int, list[list[str]]]:
@@ -226,9 +227,18 @@ def _collect(
                 _git(worktree, "branch", gh_local_branch, head)
             checkout = subprocess.run(["git", "checkout", gh_local_branch], cwd=worktree, **kwargs)
             if checkout.returncode == 0:
-                tracking_remote = "https://github.com/contributor/project.git" if cross_repository else "origin"
+                tracking_remote = (
+                    "https://github.com/contributor/project.git"
+                    if cross_repository and not gh_pull_ref_tracking
+                    else "origin"
+                )
                 _git(worktree, "config", f"branch.{gh_local_branch}.remote", tracking_remote)
-                _git(worktree, "config", f"branch.{gh_local_branch}.merge", "refs/heads/topic")
+                _git(
+                    worktree,
+                    "config",
+                    f"branch.{gh_local_branch}.merge",
+                    "refs/pull/17/head" if gh_pull_ref_tracking else "refs/heads/topic",
+                )
             return checkout
         if arguments[:3] == ["git", "checkout", "--detach"]:
             result = subprocess.run(arguments, cwd=worktree, **kwargs)
@@ -633,6 +643,69 @@ def test_collect_pr_lists_bounded_sample_for_large_ignored_tree(
     assert preflight["dirty_paths_omitted"] == _IGNORED_TREE_FILES + 1 - module.DIRTY_PATH_SAMPLE_LIMIT
     assert module.dirty_path_record_is_consistent(preflight)
     assert record_path.stat().st_size < 8 * 1024
+
+
+@pytest.mark.parametrize("mutate_after_checkout", [False, True])
+def test_review_context_output_limit_does_not_replace_isolated_source_checks(
+    tmp_path: Path,
+    repository_template: RepositoryTemplate,
+    monkeypatch: pytest.MonkeyPatch,
+    mutate_after_checkout: bool,
+) -> None:
+    """Continue past oversized main-tree context while still rejecting dirty isolated source."""
+    module = _load_collector()
+    source, worktree, base, _old, head = _setup_repositories(tmp_path, repository_template)
+    _write_ignored_tree(worktree, ".venv/\n")
+    # Exercise the real Git output boundary without creating a machine-sized environment in every test.
+    monkeypatch.setattr(module, "MAX_OUTPUT_BYTES", 8192)
+    main_head = _git(worktree, "rev-parse", "HEAD")
+    output = tmp_path / "collected"
+
+    code, calls = _collect(module, source, worktree, output, base, head, mutate_after_checkout=mutate_after_checkout)
+
+    assert code == (2 if mutate_after_checkout else 0)
+    context = json.loads((output / "source-worktree-context.json").read_text(encoding="utf-8"))
+    assert context == {
+        "phase": "source-worktree-context",
+        "status": "unavailable",
+        "current_head": main_head,
+        "expected_head": head,
+        "reason": "command-output-oversized:source-worktree-context-untracked-worktree-paths",
+    }
+    assert any(call[:3] == ["git", "worktree", "add"] for call in calls)
+    assert _git(worktree, "rev-parse", "HEAD") == main_head
+    assert len(list((worktree / ".venv/lib/site-packages").iterdir())) == _IGNORED_TREE_FILES
+    if mutate_after_checkout:
+        assert (output / "pr-error.txt").read_text(encoding="utf-8") == "review-worktree-dirty\n"
+        assert not (output / "local-checkout.json").exists()
+    else:
+        checkout = json.loads((output / "local-checkout.json").read_text(encoding="utf-8"))
+        review = Path(checkout["worktree"])
+        assert _git(review, "rev-parse", "HEAD") == head
+        assert _git(review, "status", "--short") == ""
+        assert (output / "diff.patch").read_text(encoding="utf-8").strip() == _git(
+            review, "diff", "--binary", f"{base}...{head}", "--"
+        )
+
+
+def test_remediation_context_output_limit_still_blocks_checkout(
+    tmp_path: Path, repository_template: RepositoryTemplate, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Require complete invoking-tree preservation checks before attached remediation checkout."""
+    module = _load_collector()
+    source, worktree, base, _old, head = _setup_repositories(tmp_path, repository_template)
+    _write_ignored_tree(worktree, ".venv/\n")
+    monkeypatch.setattr(module, "MAX_OUTPUT_BYTES", 8192)
+    output = tmp_path / "collected"
+
+    code, calls = _collect(module, source, worktree, output, base, head, checkout_mode="remediate")
+
+    assert code == 2
+    assert (output / "pr-error.txt").read_text(encoding="utf-8") == (
+        "command-output-oversized:before-checkout-untracked-worktree-paths\n"
+    )
+    assert not any(call[:3] == ["gh", "pr", "checkout"] for call in calls)
+    assert not (output / "local-checkout.json").exists()
 
 
 def test_collect_pr_remediation_blocks_ignored_collision_inside_large_ignored_tree(
