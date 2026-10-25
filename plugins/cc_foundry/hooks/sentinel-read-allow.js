@@ -44,6 +44,17 @@
 //        remaining `>` rejects. Input `<` is allowed — the `read < file` idiom
 //        needs it and it is no more capable than a whitelisted token reading the
 //        same path as an argument (`Bash(cat:*)` already reads any file).
+//     5a. Every `$` the shell expands — unquoted or inside double quotes, outside
+//        comments and the safe spans of item 1 — is one the lane models
+//        (ADMITTED_DOLLAR): `$NAME` with no zsh subscript after it, `${NAME}`,
+//        or `${NAME` + one reading operator (`:-` default, `%`/`%%`/`#`/`##`
+//        pattern removal) + literal filename text and nested `$NAME`/`${NAME}`.
+//        Any other form — zsh sigils `${~X}` `$~X` `${=X}` `${^X}`, indirection
+//        `${!X}`, flags `${(e)X}`, arithmetic `$[…]` `$((…))`, an assigning
+//        operator (`=`, `:=`, `::=`), `?`, a subscript — rejects, so a form this
+//        list never named fails closed instead of reaching an allow. No word may
+//        sit as a brace group right against a redirection (`{NAME}<f`): bash
+//        and zsh assign the descriptor number to NAME, a write no `=` shows.
 //     6. Every segment (split on newline ; & | && ||), after skipping whole-line
 //        comments and stripping leading VAR=... assignments, starts with a
 //        strictly non-writing whitelisted token (see SAFE_TOKENS —
@@ -78,6 +89,31 @@
 //   0  always — passthrough (no output) or allow (JSON to stdout)
 
 "use strict";
+
+// Reuse the blueprint lane's shell reader, including ANSI-C decoding, rather than inventing another quote dialect.
+let shellReader = null;
+try {
+  shellReader = require("./blueprint-allow.js");
+} catch (_error) {
+  // An unavailable reader must withhold auto-approval without preventing the dispatcher from recording the result.
+}
+const {
+  shellWordSpans,
+  COMMAND_TABLE_USE_RE,
+  commandWordIndex,
+  lookupTextPositions,
+  literalLookupData,
+  lookupRegions,
+  readWord,
+  maskLiveExpansions,
+  literalWord,
+  commandWritesName,
+  printAssignsVariable,
+  printfWritesName,
+  unusualLookupWrite,
+  splitHeredocs,
+  heredocOperators,
+} = shellReader || {};
 
 // ── Sentinel-read shape ───────────────────────────────────────────────────────
 // ${VAR} / ${VAR:-plain-default} — no nested `$(`/backtick/backslash/parens.
@@ -123,6 +159,18 @@ const SAFE_SUBST = new RegExp(SENTINEL_READ + "|" + DATE_STAMP, "g");
 // ZERO substitutions qualify, because the leading `IFS=` assignment means no
 // prefix allow-rule can ever match the rewritten form.
 const READ_FORM = new RegExp("(?:IFS=\\s+)?read\\s+-r\\s+[A-Za-z_]\\w*\\s*<\\s*(?:" + QPATH + "|" + UPATH + ")");
+// The `$` forms admitted anywhere the shell expands (see item 5a): `$NAME` not followed by a zsh subscript `[`,
+// `${NAME}`, and `${NAME` + a reading operator + an operand of literal filename text and nested `$NAME`/`${NAME}`
+// (`${CLAUDE_CODE_SESSION_ID:-$PPID}`, `${DIR%/_shared}`). Read at each `$` with a sticky match; anything else rejects.
+const DOLLAR_NAME = "[A-Za-z_]\\w*";
+const DOLLAR_OPERAND = "(?:[A-Za-z0-9_./,:@%+-]|\\$" + DOLLAR_NAME + "(?![\\w[])|\\$\\{" + DOLLAR_NAME + "\\})*";
+const ADMITTED_DOLLAR_SOURCE =
+  "\\$(?:" + DOLLAR_NAME + "(?![\\w[])|\\{" + DOLLAR_NAME + "(?:(?::-|%%?|##?)" + DOLLAR_OPERAND + ")?\\})";
+const ADMITTED_DOLLAR = new RegExp(ADMITTED_DOLLAR_SOURCE, "y");
+const ADMITTED_DOLLARS = new RegExp(ADMITTED_DOLLAR_SOURCE, "g");
+// A word written as a brace group right against a redirection (`{NAME}<f`, `{IFS}>&-`, `{X}&>f`), read once the
+// admitted `$` forms stand as plain text: the shells allocate a descriptor and assign its number to NAME.
+const FD_VARIABLE_REDIRECT = /\}(?:[<>]|&>)/;
 
 // Strictly non-writing, non-spawning first tokens. A whitelisted token must not
 // be able to write a file, create a dir, spawn a process, or change host state
@@ -147,6 +195,7 @@ const SAFE_TOKENS = new Set([
   "wc",
   "echo",
   "printf",
+  "print",
   "basename",
   "dirname",
   "cut",
@@ -232,7 +281,11 @@ function segmentsAreReadOnly(masked) {
     // Strip leading VAR=... assignments (covers `IFS= read`, `RUN_DIR=SREAD`).
     const rest = t.replace(/^(?:[A-Za-z_]\w*=\S*\s*)+/, "");
     if (!rest) continue; // pure assignment segment
-    const first = rest.match(/^\S+/)[0];
+    const words = shellWordSpans(rest).map(([word]) => word);
+    const start = commandWordIndex(words);
+    if (start === null || start >= words.length) return false;
+    const first = words[start].raw;
+    if (first === "tee" && words.slice(start + 1).every((word) => word.raw === "--")) continue;
     if (!SAFE_TOKENS.has(first)) return false;
   }
   return true;
@@ -263,15 +316,44 @@ const TRAVERSAL = /(?<![.\w])\.\.(?![.\w])/;
 // `BASH_FUNC_name%%=`, so the character after the prefix is `_`, never `=` — the
 // entry could never match and only gave false coverage. `IFS` is handled by
 // NONEMPTY_IFS instead, since the blueprint idiom itself opens with `IFS= read`.
+// It holds every name in `blueprint-allow.js`'s LOOKUP_VARIABLES (zsh `path`/`cdpath`, `ZDOTDIR`, prompt strings,
+// zsh hook arrays, zsh `options`) except `IFS`, and every command-table name its COMMAND_TABLE_USE_RE refuses (zsh
+// `fpath`/`FPATH`, `commands`, `functions`, `aliases`, bash `BASH_CMDS`/`BASH_ALIASES`), so this lane refuses every
+// `read` target the blueprint danger gate refuses.
 const SENSITIVE_VARS =
-  "PATH|LD_PRELOAD|LD_LIBRARY_PATH|LD_AUDIT|DYLD_INSERT_LIBRARIES|DYLD_LIBRARY_PATH|DYLD_FALLBACK_LIBRARY_PATH|DYLD_FRAMEWORK_PATH|DYLD_FALLBACK_FRAMEWORK_PATH|DYLD_VERSIONED_LIBRARY_PATH|BASH_ENV|ENV|SHELLOPTS|BASHOPTS|GLOBIGNORE|PS4|CDPATH|PROMPT_COMMAND";
+  "PATH|path|LD_PRELOAD|LD_LIBRARY_PATH|LD_AUDIT|DYLD_[A-Z_]+|BASH_ENV|ENV|ZDOTDIR|SHELLOPTS|BASHOPTS|GLOBIGNORE|CDPATH|cdpath|PROMPT_COMMAND|PS[0-4]|PROMPT[0-4]?|RPROMPT2?|RPS[12]|SPROMPT|(?:precmd|preexec|chpwd|periodic|zshexit|zshaddhistory)_functions|options" +
+  "|fpath|FPATH|commands|functions|aliases|galiases|saliases|dis_[a-z_]+|BASH_CMDS|BASH_ALIASES";
+// Raw and shell-decoded writes are checked before shape admission; only proven inert operands are exempt.
+const LOOKUP_WRITE_TOKEN_RE = new RegExp(
+  "(?<![A-Za-z0-9_])(?:(?:\\+\\+|--)(?:" +
+    SENSITIVE_VARS +
+    "|IFS" +
+    ")(?![A-Za-z0-9_])|(?:" +
+    SENSITIVE_VARS +
+    "|IFS" +
+    ")(?:\\[[^\\]]*\\])?(?:\\+\\+|--|[ \\t\\n\\r\\v\\f]*(?:\\*\\*=|<<=|>>=|&&=|\\|\\|=|\\^\\^=|[+*/%&|^\\-]=|=(?!=))))",
+  "g",
+);
+const LOOKUP_WRITE_FLAG_RE = new RegExp("^(?:\\$?'|\\\")?--?(?:" + SENSITIVE_VARS + "|IFS" + ")=(?!=)");
+// Consume %% as a conversion too, so escaped percent signs do not hide or manufacture a %n.
+
+// The boundary before a name: a start, a shell separator, a grouping/brace open, OR an arithmetic operator
+// (`,` comma, `[` subscript, `?`/`:` ternary, `+` add). A position the shell evaluates as arithmetic (`[[ -eq ]]`
+// operand, `printf` numeric conversion, a count operand, an integer parameter's value) accepts an assignment reached
+// through one of these. The legacy guards remain a second check on raw and decoded text after lookupWriteScan
+// masks only proven inert tokens; subscript and parameter-expression spans never receive that exemption.
+const NAME_BOUNDARY = "[\\s;|&(){,\\[?:+]";
 const SENSITIVE_ASSIGN = new RegExp(
   // `(?:\+|:)?=` covers three operators, not one: plain `NAME=`, the append form
   // `NAME+=`, and bash's parameter-expansion assignment `${NAME:=word}` — the last
   // performs a real assignment (and keeps an existing export attribute, so a child
   // process inherits it) while never producing the literal `NAME=` the plain
   // pattern looks for.
-  "(?:^|[\\s;|&(){])(?:export\\s+|declare\\s+\\S+\\s+|typeset\\s+\\S+\\s+)?(?:" + SENSITIVE_VARS + ")(?:\\+|:)?=",
+  "(?:^|" +
+    NAME_BOUNDARY +
+    ")(?:export\\s+|declare\\s+\\S+\\s+|typeset\\s+\\S+\\s+)?(?:" +
+    SENSITIVE_VARS +
+    ")(?:\\+|:)?=",
 );
 
 // Assignment syntax is only ONE route to setting a variable, and gating it alone
@@ -283,29 +365,24 @@ const SENSITIVE_ASSIGN = new RegExp(
 //   export PA${X}H=…        export expands its argument, so no literal PATH= exists
 // The control therefore has to be "can this segment write a shell variable at all",
 // not "does the text contain a sensitive assignment".
-const PRINTF_ASSIGN = /(?:^|[\s;|&(){])printf\s[^\n;|&]*-v\b/;
 // `read` assigns EVERY name operand, an option can carry its argument attached
 // (`-aPATH`) or in the next word (`-p PATH`), and a redirection may sit between
 // names (`read X < f PATH`). Judging only the first word after the options let
 // `read -r IGNORE PATH` rebind PATH. So every word of the read segment counts,
 // except redirection words: one naming a sensitive variable, alone or after an
 // option cluster, or one whose name is computed (`read "$V"`) refuses the command.
+// Decoded operands must be an option cluster, number or bare name: computed names and subscripts remain refused.
 const READ_ARGS = /(?:^|[\s;|&(){])read\s([^;|&\n)]*)/g;
 const READ_SENSITIVE_WORD = new RegExp("^(?:-[A-Za-z]*)?(?:" + SENSITIVE_VARS + "|IFS)$");
-const REDIRECT_WORD = /^\d*[<>]/;
-const REDIRECT_OPERATOR = /^\d*(?:<<<|<<|<>|<&|<|>>|>\||>&|>)$/;
+const READ_PLAIN_WORD = /^(?:-[A-Za-z]+|[0-9]+|[A-Za-z_][A-Za-z0-9_]*)$/;
 
 /** True when a `read` in `cmd` may assign a sensitive or computed variable name. */
 function readWritesSensitiveName(cmd) {
   for (const match of cmd.matchAll(READ_ARGS)) {
-    const words = match[1].split(/\s+/).filter(Boolean);
-    for (let i = 0; i < words.length; i++) {
-      if (REDIRECT_OPERATOR.test(words[i])) {
-        i++;
-        continue;
-      }
-      if (REDIRECT_WORD.test(words[i])) continue;
-      if (READ_SENSITIVE_WORD.test(words[i]) || /[$`]/.test(words[i])) return true;
+    // The reader removes real redirections; a quoted `>` is still an operand and must not hide the next name.
+    for (const [word] of shellWordSpans(match[1])) {
+      if (READ_SENSITIVE_WORD.test(word.value) || !READ_PLAIN_WORD.test(word.value) || /[$`]/.test(word.value))
+        return true;
     }
   }
   return false;
@@ -317,7 +394,27 @@ const EXPORT_COMPUTED_NAME = /(?:^|[\s;|&(){])export\s+[^\s=]*[${`]/;
 // `{` in the boundary class and `:?=` for the same reasons as SENSITIVE_ASSIGN —
 // without them `${IFS=x}` and `${IFS:=x}` both slipped, the first because the
 // character before `IFS` is `{`.
-const NONEMPTY_IFS = /(?:^|[\s;|&({])(?:export\s+)?IFS:?=[^\s;|&]/;
+// The append (`IFS+=`) and subscript (`IFS[0]=`) forms assign it too. NAME_BOUNDARY so an `IFS=` reached through an
+// arithmetic operator (`1?IFS=1:0` in a `[[ -eq ]]` operand) is caught as for any sensitive assignment.
+const NONEMPTY_IFS = new RegExp("(?:^|" + NAME_BOUNDARY + ")(?:export\\s+)?IFS(?:\\[[^\\]]*\\])?(?:\\+|:)?=[^\\s;|&]");
+// A quoted empty value (`IFS="" read`) is the same empty assignment as `IFS= read`, so it is folded before the raw
+// NONEMPTY_IFS test, which would otherwise read its `"` as a value.
+const QUOTED_EMPTY_IFS = /(?<=(?:^|[\s;|&({])IFS=)(?:""|'')(?=[\s;|&]|$)/g;
+// An empty `IFS=` is allowed only as the prefix of a `read` (the blueprint idiom). On its own, exported, appended,
+// subscripted, or before any other command (`IFS= X=$(…)`) it changes how every later unquoted expansion splits.
+const ANY_IFS = /(?:^|[\s;|&({])(?:export\s+)?IFS(?:\[[^\]]*\])?(?:\+|:)?=/g;
+const PLAIN_IFS = /(?:^|[\s;|&({])IFS=$/;
+const READ_PREFIX_IFS = /(?:""|'')?[ \t]+read\s/y;
+
+/** True when `cmd` assigns `IFS` anywhere but as the empty prefix of a `read`. */
+function ifsOutsideReadPrefix(cmd) {
+  for (const match of cmd.matchAll(ANY_IFS)) {
+    if (!PLAIN_IFS.test(match[0])) return true;
+    READ_PREFIX_IFS.lastIndex = match.index + match[0].length;
+    if (!READ_PREFIX_IFS.test(cmd)) return true;
+  }
+  return false;
+}
 
 /**
  * Return `cmd` with shell comments removed — an unquoted `#` in word-start
@@ -345,8 +442,188 @@ function stripComments(cmd) {
   return out;
 }
 
+/**
+ * True when `text` holds a `$` the shell expands that is not an ADMITTED_DOLLAR form. Walks quoting as the shell
+ * does: single-quoted text and a backslash-escaped character are literal, and every expanded `$` — unquoted or inside
+ * double quotes — must match at its own position.
+ */
+function dollarUnmodeled(text) {
+  let state = "plain"; // plain | single | double
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (state === "single") {
+      if (c === "'") state = "plain";
+    } else if (c === "\\") {
+      i++;
+    } else if (c === "'" && state === "plain") {
+      state = "single";
+    } else if (c === '"') {
+      state = state === "double" ? "plain" : "double";
+    } else if (c === "$") {
+      // A quote closing this word cannot open a locale string; the preceding dollar is literal text.
+      if (state === "double" && text[i + 1] === '"') continue;
+      ADMITTED_DOLLAR.lastIndex = i;
+      if (!ADMITTED_DOLLAR.test(text)) return true;
+      i = ADMITTED_DOLLAR.lastIndex - 1;
+    }
+  }
+  return false;
+}
+
+/** Raw expression spans never receive an inert-text exemption, including expressions written inside quotes. */
+function lookupExpressionSpans(text) {
+  const spans = [];
+  let index = 0;
+  while (index < text.length) {
+    const opening = text.startsWith("${", index)
+      ? "{"
+      : text.startsWith("((", index)
+        ? "("
+        : text[index] === "["
+          ? "["
+          : "";
+    if (!opening) {
+      index++;
+      continue;
+    }
+    const begin = index;
+    const stack = opening === "{" ? ["}"] : opening === "(" ? [")", ")"] : ["]"];
+    index += opening === "[" ? 1 : 2;
+    let quote = "";
+    while (index < text.length && stack.length) {
+      const char = text[index];
+      if (char === "\\" && quote !== "'") {
+        index += 2;
+        continue;
+      }
+      if (quote) {
+        if (char === quote) quote = "";
+      } else if (char === "'" || char === '"') {
+        quote = char;
+      } else if ("([{".includes(char)) {
+        stack.push({ "(": ")", "[": "]", "{": "}" }[char]);
+      } else if (char === stack[stack.length - 1]) {
+        stack.pop();
+      }
+      index++;
+    }
+    spans.push([begin, index]);
+  }
+  return spans;
+}
+
+/** Scan lookup writes separately from shape admission; only inert tokens are masked for the older lookup guards. */
+function lookupWriteScan(cmd) {
+  const masked = maskQuotes(cmd);
+  const contexts = [];
+  const ifsPrefixes = [];
+  const decodedText = cmd.split("");
+  const expansionText = cmd.split("");
+  const lookupText = cmd.split("");
+  // Definitions cannot pass the shape grammar; conservatively withhold all text exemptions if one appears.
+  const definitions = masked
+    .split(/[\n;|&]+/)
+    .some((segment) => /^\s*(?:function\s|alias(?:\s|$)|[A-Za-z_][A-Za-z0-9_.-]*\s*\(\s*\))/.test(segment));
+  for (const [segment, offset] of lookupRegions(cmd)) {
+    const spans = shellWordSpans(segment).map(([word, end]) => [word, offset + end - word.raw.length]);
+    const words = spans.map(([word]) => word);
+    const start = commandWordIndex(words);
+    if (start === null) return [true, cmd];
+    const head = start < words.length ? words[start].value : "";
+    if (commandWritesName(words, start)) return [true, cmd];
+    const positions = lookupTextPositions(words, start, definitions ? new Set([head.split("/").pop()]) : new Set());
+    if (head === "printf" || head === "print") {
+      if (printAssignsVariable(words.slice(start).map((word) => word.value))) return [true, cmd];
+      if (printfWritesName(head, words, start)) return [true, cmd];
+    }
+    for (const [index, [word, begin]] of spans.entries()) {
+      if (COMMAND_TABLE_USE_RE.test(word.value) && !(positions.has(index) && /^'[^']*'$/.test(word.raw)))
+        return [true, cmd];
+      const data = literalLookupData(word, head, positions.has(index));
+      if (data) lookupText.fill(" ", begin, begin + word.raw.length);
+      if (positions.has(index) && literalWord(word) && /\$\(|[<>]\(/.test(word.raw))
+        expansionText.fill(" ", begin, begin + word.raw.length);
+      const flag = LOOKUP_WRITE_FLAG_RE.exec(word.raw);
+      const prefix = head === "read" && index < start && word.raw.startsWith("IFS=") ? begin + 4 : begin;
+      contexts.push([
+        begin,
+        begin + word.raw.length,
+        positions.has(index),
+        flag ? begin + flag[0].length : prefix,
+        data,
+      ]);
+      const value = readWord(maskLiveExpansions(word.raw), 0)[0].value;
+      if (!data && unusualLookupWrite(value, head, positions.has(index))) return [true, cmd];
+      const decodedFlag = LOOKUP_WRITE_FLAG_RE.exec(value);
+      const decodedPrefix = decodedFlag ? decodedFlag[0].length : prefix - begin;
+      const protectedSpans = data ? [] : lookupExpressionSpans(value);
+      const decodedWord = value.split("");
+      for (const match of value.matchAll(LOOKUP_WRITE_TOKEN_RE)) {
+        const end = match.index + match[0].length;
+        if (protectedSpans.some(([low, high]) => low < end && match.index < high)) return [true, cmd];
+        if (!positions.has(index) && end > decodedPrefix) return [true, cmd];
+        decodedWord.fill(" ", match.index, end);
+      }
+      // Keep exemptions in the decoded copy too; stripping quotes again would resurrect split inert names.
+      decodedText.fill(" ", begin, begin + word.raw.length);
+      if (!data)
+        decodedWord.forEach((char, index) => {
+          decodedText[begin + index] = char;
+        });
+    }
+  }
+  for (const match of cmd.matchAll(ANY_IFS)) {
+    if (!PLAIN_IFS.test(match[0])) continue;
+    READ_PREFIX_IFS.lastIndex = match.index + match[0].length;
+    if (READ_PREFIX_IFS.test(cmd)) {
+      const begin = match.index + match[0].lastIndexOf("IFS=");
+      ifsPrefixes.push([begin, begin + 4]);
+    }
+  }
+  const protectedSpans = contexts.flatMap(([begin, end, , , data]) =>
+    data ? [] : lookupExpressionSpans(cmd.slice(begin, end)).map(([low, high]) => [begin + low, begin + high]),
+  );
+  if (protectedSpans.some(([begin, end]) => unusualLookupWrite(cmd.slice(begin, end), "", true))) return [true, cmd];
+  for (const match of cmd.matchAll(LOOKUP_WRITE_TOKEN_RE)) {
+    const end = match.index + match[0].length;
+    if (protectedSpans.some(([begin, finish]) => begin < end && match.index < finish)) return [true, cmd];
+    const context = contexts
+      .filter(([begin, finish]) => begin <= match.index && match.index < finish)
+      .sort((a, b) => a[1] - a[0] - (b[1] - b[0]))[0];
+    const inert = context && (context[2] || end <= context[3]);
+    const readPrefix = ifsPrefixes.some(([begin, finish]) => begin <= match.index && end <= finish);
+    if (!inert && !readPrefix) return [true, cmd];
+    // Only the proven inert token is hidden from the older lookup regexes. All grammar and effect gates use cmd.
+    lookupText.fill(" ", match.index, end);
+  }
+  return [false, lookupText.join(""), decodedText.join(""), expansionText.join("")];
+}
+
 /** Decide whether `cmd` is provably just blueprint sentinel-reads + read-only follow-ups. */
 function isAllowable(cmd) {
+  if (shellReader === null) return false;
+  const [text, liveBodies, unterminated] = splitHeredocs(cmd);
+  if (unterminated) return false;
+  if (text !== cmd) {
+    // Only a single quoted data heredoc at a text-program line's end is modeled here. Other shapes retain approval.
+    if (liveBodies.length) return false;
+    const lines = text.split("\n");
+    for (let index = 0; index < lines.length; index++) {
+      const openings = heredocOperators(lines[index]);
+      if (!openings.length) continue;
+      if (openings.length !== 1 || !openings[0][1]) return false;
+      const match = /^(.*)<<-?[ \t]*(['"])([A-Za-z_][A-Za-z0-9_]*)\2[ \t]*$/.exec(lines[index]);
+      if (!match || match[3] !== openings[0][0]) return false;
+      // The consumer stays literal and read-only; its other arguments still pass all normal shape checks below.
+      const consumer = lookupRegions(match[1]).find(([segment, offset]) => offset + segment.length === match[1].length);
+      const head = consumer && shellWordSpans(consumer[0])[0]?.[0].raw;
+      if (!["cat", "tee", "grep", "head", "tail", "wc", "cut", "tr"].includes(head)) return false;
+      lines[index] = match[1];
+    }
+    cmd = lines.join("\n");
+  }
+  const [lookupWrite, lookupText, lookupDecoded, expansionText] = lookupWriteScan(cmd);
+  if (lookupWrite) return false;
   if (cmd.includes("`")) return false;
   // ANSI-C quoting desyncs maskQuotes: bash unescapes `\'` INSIDE `$'…'`, so the
   // string ends at a different quote than the masker thinks, and the toggle count
@@ -363,29 +640,41 @@ function isAllowable(cmd) {
   // Detection-only — the original string is what gets executed, so this can only
   // add rejections.
   if (TRAVERSAL.test(cmd) || TRAVERSAL.test(cmd.replace(/\\(.)/g, "$1"))) return false;
-  // Loader / lookup-poisoning assignments defeat the read-only-token guarantee.
-  // NONEMPTY_IFS stays on the raw text only — stripping quotes would turn the
-  // legitimate empty `IFS=""` into a bare `IFS=` and stop rejecting the non-empty
-  // forms it exists to catch.
-  const unquoted = cmd.replace(/["'\\]/g, "");
-  // `""`/`''` collapse to a space first, so a deliberately EMPTY assignment stays
-  // empty in the stripped copy. Without that, the blueprint's own `IFS="" read`
-  // would read as a non-empty IFS; with it, `export "IFS"=,` is still caught.
-  const unquotedKeepEmpty = cmd.replace(/""|''/g, " ").replace(/["'\\]/g, "");
-  if (SENSITIVE_ASSIGN.test(cmd) || SENSITIVE_ASSIGN.test(unquoted)) return false;
-  if (NONEMPTY_IFS.test(cmd) || NONEMPTY_IFS.test(unquotedKeepEmpty)) return false;
+  // Loader and lookup assignments defeat the read-only guarantee. Raw checks retain quote spelling; the decoded
+  // copy preserves empty IFS values and each word's exemptions without blindly deleting quotes a second time.
+  // Retain the older conservative spelling check after masking decoded inert tokens, so it cannot resurrect them.
+  const lookupUnquoted = lookupDecoded.replace(/["'\\]/g, "");
+  if (
+    SENSITIVE_ASSIGN.test(lookupText) ||
+    SENSITIVE_ASSIGN.test(lookupDecoded) ||
+    SENSITIVE_ASSIGN.test(lookupUnquoted)
+  )
+    return false;
+  const emptyIfsFolded = lookupText.replace(QUOTED_EMPTY_IFS, "");
+  // The decoded copy catches a quoted name (`export "IFS"=`), which the shell assigns all the same.
+  if (
+    NONEMPTY_IFS.test(emptyIfsFolded) ||
+    NONEMPTY_IFS.test(lookupDecoded) ||
+    NONEMPTY_IFS.test(lookupUnquoted) ||
+    ifsOutsideReadPrefix(lookupText) ||
+    ifsOutsideReadPrefix(lookupDecoded) ||
+    ifsOutsideReadPrefix(lookupUnquoted)
+  ) {
+    return false;
+  }
   // Non-assignment routes to setting a variable — see the block comment above.
-  if (PRINTF_ASSIGN.test(cmd) || readWritesSensitiveName(cmd) || readWritesSensitiveName(unquoted)) return false;
+  if (readWritesSensitiveName(lookupText) || readWritesSensitiveName(lookupUnquoted)) return false;
   if (EXPORT_COMPUTED_NAME.test(cmd)) return false;
   // Replace safe substitution spans (sentinel reads / date stamps); require at
   // least one blueprint anchor: a safe substitution OR the rewritten read-form
   // sentinel idiom. Without an anchor (e.g. plain `ls -la`), passthrough — this
   // hook only fronts for blueprint idioms the prefix matcher cannot express.
   const remaining = cmd.replace(SAFE_SUBST, () => "SREAD");
+  const remainingExpansions = expansionText.replace(SAFE_SUBST, () => "SREAD");
   // The anchor must come from text the shell actually runs — see stripComments.
   // Everything below still inspects the FULL command, so commented-out text can
   // only add rejections, never remove them.
-  const live = stripComments(cmd);
+  const live = stripComments(expansionText);
   let liveSpans = 0;
   live.replace(SAFE_SUBST, () => {
     liveSpans++;
@@ -393,8 +682,14 @@ function isAllowable(cmd) {
   });
   if (liveSpans === 0 && !READ_FORM.test(live)) return false;
   // Any other substitution / process substitution / heredoc → not our idiom.
-  if (remaining.includes("$(") || remaining.includes("<(") || remaining.includes(">(")) return false;
+  if (remainingExpansions.includes("$(") || remainingExpansions.includes("<(") || remainingExpansions.includes(">("))
+    return false;
   if (remaining.includes("<<")) return false;
+  // Admit set over every other `$` the shell expands (item 5a), on comment-free text: a comment is never expanded.
+  // The fd-variable test reads the admitted forms as plain text first, so `${X}<f` is no `{NAME}<` prefix.
+  const liveRemaining = stripComments(remaining);
+  if (dollarUnmodeled(liveRemaining)) return false;
+  if (FD_VARIABLE_REDIRECT.test(maskQuotes(liveRemaining.replace(ADMITTED_DOLLARS, "V")))) return false;
   const masked = maskQuotes(remaining);
   if (masked.includes("$(")) return false; // unterminated-quote marker
   // Bare parens, outside quotes and after safe substitutions became SREAD. A POSIX
@@ -484,6 +779,7 @@ function evaluate(raw) {
   const lane = { lane: "shape", rank: 2 };
   const cmd = commandOf(raw);
   if (cmd === null) return { ...lane, payload: null, decision: "none", why: "not-applicable" };
+  if (shellReader === null) return { ...lane, payload: null, decision: "passthrough", why: "shell-reader-unavailable" };
   if (!isAllowable(cmd)) return { ...lane, payload: null, decision: "passthrough", why: "shape-mismatch" };
   return { ...lane, payload: allowPayload(), decision: "allow" };
 }

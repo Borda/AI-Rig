@@ -369,7 +369,8 @@ class TestCommitGuard:
         [
             pytest.param("echo ${(U)HOME}", "zsh `${(flags)…}` parameter flags", id="zsh-parameter-flag"),
             pytest.param('echo $"x"', 'a `$"…"` locale string', id="locale-string"),
-            pytest.param("echo .(e:'date':)", "a zsh glob qualifier that runs code", id="code-running-glob-qualifier"),
+            pytest.param("echo .(e:'date':)", "a `(` group attached to a word", id="code-running-glob-qualifier"),
+            pytest.param("echo .(N)(e:'date':)", "a `(` group attached to a word", id="second-glob-qualifier-group"),
         ],
     )
     def test_unreadable_syntax_block_names_the_construct(self, guard: Callable, command: str, construct: str) -> None:

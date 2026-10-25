@@ -1,5 +1,11 @@
 """Keep foundry:challenger usable as the adversarial loop's reviewer: a round must fold into the loop table."""
 
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -113,6 +119,127 @@ def test_loop_rule_redispatch_is_not_gated_on_retry_contract() -> None:
     """
     text = (_PLUGINS / "cc_foundry/rules/_full/adversarial-loop.md").read_text(encoding="utf-8")
     assert "Where the owning workflow's retry contract permits that class, re-dispatch" not in text
+
+
+@pytest.mark.parametrize(
+    "clause",
+    [
+        pytest.param("Name the signature after the violated invariant", id="invariant-signature"),
+        pytest.param("a new route to a known invariant is a repeat, never a new finding", id="route-is-repeat"),
+        pytest.param("An `unmodeled` cell is a finding, never a coverage note", id="unmodeled-is-finding"),
+        pytest.param("Every review round re-fills the whole table", id="full-table-every-round"),
+        pytest.param("a search that finds no bypass proves only its own inputs", id="probe-not-coverage"),
+        pytest.param("changing the deciding reader's default to refuse", id="fix-reader-default"),
+        pytest.param("a check that refuses only inputs found in a hand-written set", id="hand-set-is-finding"),
+        pytest.param(
+            "so reuse the same invariant wording for every route of one invariant", id="recurrence-by-invariant"
+        ),
+        pytest.param("a later bypass inside a cell an earlier round marked `refused`", id="refused-cell-reopens"),
+        pytest.param("Write the header before recording the first round, on every runtime", id="ledger-from-round-one"),
+    ],
+)
+def test_loop_rule_closes_route_by_route_drift(clause: str) -> None:
+    """The loop rule keys findings to invariants, demands grammar coverage for filters and a ledger on Claude too.
+
+    A danger-gate loop ran eight rounds with new security findings every round: each was named after its route, so
+    the repeat root-cause and third-occurrence rules never fired; each review searched by probe, so gaps surfaced one
+    per round; each fix closed the cited route; and no Claude-side checker existed, so the run kept no ledger.
+    """
+    text = (_PLUGINS / "cc_foundry/rules/_full/adversarial-loop.md").read_text(encoding="utf-8")
+    assert clause in text
+
+
+@pytest.mark.parametrize(
+    "clause",
+    [
+        pytest.param("Coverage table: from the filtered language's authoritative grammar", id="coverage-table-step"),
+        pytest.param("Every `unmodeled` cell is a finding", id="unmodeled-is-finding"),
+        pytest.param("an incomplete table forbids a clean verdict", id="no-clean-without-table"),
+        pytest.param("signature names the invariant it violates", id="invariant-signature"),
+        pytest.param("`maps_to: <signature>`", id="maps-to-known"),
+    ],
+)
+def test_challenger_filter_review_covers_grammar(clause: str) -> None:
+    """A challenger security-filter review fills a grammar coverage table and names findings by invariant.
+
+    Probe search alone found a few bypasses per round and named each after its route, hiding that every one broke an
+    invariant an earlier round had already reported.
+    """
+    assert clause in _CHALLENGER.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("plugin", ["cc_foundry", "cc_oss", "cc_develop", "cc_research"])
+def test_claude_loop_checker_runs_standalone(plugin: str, tmp_path: Path) -> None:
+    """Each Claude plugin's copy of the loop checker validates a ledger without the Codex plugin installed.
+
+    The rule tells Claude loops to run a byte-identical copy; a copy that imported a Codex-only module would fail where
+    it is the only checker available.
+    """
+    header = {
+        "schema_version": 2,
+        "implementation_author": "lead",
+        "current_snapshot": {"revision": "HEAD", "diff_digest": "0" * 64},
+    }
+    ledger = tmp_path / "loop-ledger.json"
+    ledger.write_text(json.dumps(header), encoding="utf-8")
+    script = _PLUGINS / plugin / "bin" / "adversarial_loop.py"
+    result = subprocess.run([sys.executable, str(script), "--ledger", str(ledger)], capture_output=True, text=True)
+    assert json.loads(result.stdout)["status"] != "invalid", result.stdout + result.stderr
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
+def test_loop_rule_claude_command_resolves_without_plugin_root(tmp_path: Path) -> None:
+    """The rule's Claude ledger command finds a checker when no plugin-root variable is set.
+
+    A rule file gets no plugin-root substitution and the Bash tool exports none, so a command built on that variable
+    named ``/bin/adversarial_loop.py`` and exited 2, leaving the loop ledger-less. The resolver line is run as the rule
+    prints it, from the source tree with an empty home, so only its fallback can supply the checker.
+    """
+    text = (_PLUGINS / "cc_foundry/rules/_full/adversarial-loop.md").read_text(encoding="utf-8")
+    resolver = re.search(r'`(_AL="\$\(ls -td [^`]+)`', text).group(1)
+    header = {
+        "schema_version": 2,
+        "implementation_author": "lead",
+        "current_snapshot": {"revision": "HEAD", "diff_digest": "0" * 64},
+    }
+    ledger = tmp_path / "loop-ledger.json"
+    ledger.write_text(json.dumps(header), encoding="utf-8")
+    env = {key: value for key, value in os.environ.items() if key != "CLAUDE_PLUGIN_ROOT"} | {"HOME": str(tmp_path)}
+    script = f'{resolver}; python "$_AL" --ledger "{ledger.as_posix()}"'
+    result = subprocess.run(["bash", "-c", script], cwd=_PLUGINS.parent, env=env, capture_output=True, text=True)
+    assert json.loads(result.stdout)["status"] != "invalid", result.stdout + result.stderr
+
+
+def _install_checker(checker: Path, mtime: int) -> None:
+    """Place an installed checker copy in a fake plugin cache with a fixed modification time."""
+    checker.parent.mkdir(parents=True)
+    checker.write_text("", encoding="utf-8")
+    os.utime(checker, (mtime, mtime))
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
+def test_loop_rule_claude_command_skips_orphaned_cache_copy(tmp_path: Path) -> None:
+    """The rule's Claude resolver takes the newest installed checker whose version directory is not orphaned.
+
+    The rule ships unchanged in four plugins, so it resolves any plugin's byte-identical copy by modification time. A
+    version Claude Code has marked ``.orphaned_at`` is no longer installed, and a newest-first pick that ignored the
+    marker ran it whenever it was touched last. The resolver line is run as the rule prints it against a fake cache.
+    """
+    text = (_PLUGINS / "cc_foundry/rules/_full/adversarial-loop.md").read_text(encoding="utf-8")
+    resolver = re.search(r'`(_AL="\$\(ls -td [^`]+)`', text).group(1)
+    cache = tmp_path / ".claude" / "plugins" / "cache" / "borda-ai-rig"
+    _install_checker(cache / "oss" / "0.53.0" / "bin" / "adversarial_loop.py", 1_000_000_000)
+    _install_checker(cache / "foundry" / "0.71.0" / "bin" / "adversarial_loop.py", 2_000_000_000)
+    (cache / "foundry" / "0.71.0" / ".orphaned_at").write_text("1", encoding="utf-8")
+    env = {key: value for key, value in os.environ.items() if key != "CLAUDE_PLUGIN_ROOT"} | {
+        "HOME": tmp_path.as_posix()
+    }
+
+    result = subprocess.run(
+        ["bash", "-c", f'{resolver}; printf "%s" "$_AL"'], cwd=tmp_path, env=env, capture_output=True, text=True
+    )
+
+    assert result.stdout.endswith("/oss/0.53.0/bin/adversarial_loop.py"), result.stdout + result.stderr
 
 
 def test_eager_foundry_rule_points_at_challenger_rounds() -> None:

@@ -118,8 +118,8 @@ def _write_index(idx_dir: Path, source_root: Path, *, git_sha: str, modules: int
 def _fake_plugin_root(root: Path, *, with_scan_bin: bool, marker: Path) -> Path:
     """Create a fake CLAUDE_PLUGIN_ROOT.
 
-    When *with_scan_bin* is True, ``bin/scan-index`` is a Python stub that touches *marker* on spawn —
-    the observable proof the hook launched a refresh.
+    When *with_scan_bin* is True, ``bin/scan-index`` is a Python stub that touches *marker* on spawn — the observable
+    proof the hook launched a refresh.
     """
     plugin_root = root / "plugin"
     bin_dir = plugin_root / "bin"
@@ -210,8 +210,8 @@ def _await_marker(marker: Path, timeout_s: float = 8.0) -> bool:
     The stale-index refresh is a detached, fire-and-forget spawn, so the stub's marker write races the assertion and
     must be awaited. The budget is generous because on Windows the stub runs through a fresh ``python`` interpreter
     whose cold start (a new, Defender-scanned ``CreateProcess``) can take several seconds under CI load — far longer
-    than a warm Python process. Returns as soon as the marker exists, so a fast platform pays only the
-    real spawn latency, not the ceiling.
+    than a warm Python process. Returns as soon as the marker exists, so a fast platform pays only the real spawn
+    latency, not the ceiling.
     """
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:

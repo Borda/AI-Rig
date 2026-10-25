@@ -13,6 +13,7 @@ Covers:
 
 from __future__ import annotations
 
+import re
 import shlex
 import shutil
 import subprocess
@@ -236,6 +237,26 @@ def test_emit_shell_round_trip_for_hostile_values(value: str) -> None:
     parsed = {"PR_NUMBER": "", "PR_URL": "", "MODE": "comment-dispatch", "ARGUMENTS": value}
     assignments = dict(token.split("=", 1) for token in shlex.split(_emit(parsed)))
     assert assignments["ARGUMENTS"] == value
+
+
+def test_resolve_intake_reads_only_known_keys_as_data() -> None:
+    """The shipped intake validates parser output and never runs it as shell source."""
+    skill = (_BIN.parents[1] / "skills" / "resolve" / "SKILL.md").read_text(encoding="utf-8")
+    intake = skill.split("tmpenv=$(mktemp)", 1)[1].split("# sets:", 1)[0]
+    assert "grep -qvE" in intake
+    assert "exit 1" in intake
+    assert '. "$tmpenv"' not in intake
+    assert "eval " not in intake
+    assert "while IFS='=' read -r _K _V; do" in intake
+    assert 'case "$_V" in' in intake
+    assert r"_V=${_V#\'}; _V=${_V%\'}" in intake
+    assert re.findall(r"([A-Z_]+)\) ([A-Z_]+)=\$_V;;", intake) == [
+        ("PR_NUMBER", "PR_NUMBER"),
+        ("PR_URL", "PR_URL"),
+        ("MODE", "MODE"),
+        ("ARGUMENTS", "ARGUMENTS"),
+    ]
+    assert 'done < "$tmpenv"' in intake
 
 
 # ---------------------------------------------------------------------------

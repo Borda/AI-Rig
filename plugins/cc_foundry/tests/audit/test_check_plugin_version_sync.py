@@ -365,6 +365,100 @@ class TestHeadContinuity:
 
         assert vs.main(["--scan-dir", "plugins", str(new_path.relative_to(tmp_path))]) == 0
 
+    @pytest.mark.parametrize(
+        ("copy_version", "expected"),
+        [pytest.param(2, 0, id="copy-matches-canonical"), pytest.param(5, 1, id="copy-skips-canonical")],
+    )
+    def test_new_propagated_copy_takes_canonical_baseline(
+        self, tmp_path: Path, monkeypatch, copy_version: int, expected: int
+    ) -> None:
+        """A MANIFEST copy new to a plugin is checked against its canonical's HEAD, not as a new family.
+
+        ``propagate_shared.py`` adds a byte-identical copy of a canonical file to another plugin; the copy has no HEAD
+        path of its own, so without the canonical baseline an unchanged ``SCHEMA_VERSION = 2`` read as a family that
+        must start at 1. A copy that skips the canonical's value still fails.
+        """
+        _committed_file(tmp_path, "plugins/codex-rig/shared/adversarial_loop.py", "SCHEMA_VERSION = 2\n")
+        copy = tmp_path / "plugins/cc_oss/bin/adversarial_loop.py"
+        copy.parent.mkdir(parents=True)
+        copy.write_text(f"SCHEMA_VERSION = {copy_version}\n", encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+
+        assert vs.main(["--scan-dir", "plugins", str(copy.relative_to(tmp_path))]) == expected
+
+    def test_new_propagated_copy_with_untracked_canonical_starts_at_one(self, tmp_path: Path, monkeypatch) -> None:
+        """An untracked canonical has no committed baseline and its copy can start a new version family."""
+        _committed_file(tmp_path, "plugins/example/bin/existing.py", "VALUE = 1\n")
+        canonical = tmp_path / "plugins/codex-rig/shared/adversarial_loop.py"
+        canonical.parent.mkdir(parents=True)
+        canonical.write_text("SCHEMA_VERSION = 1\n", encoding="utf-8")
+        copy = tmp_path / "plugins/cc_oss/bin/adversarial_loop.py"
+        copy.parent.mkdir(parents=True)
+        copy.write_text("SCHEMA_VERSION = 1\n", encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+
+        assert vs.find_head_discontinuities([str(copy.relative_to(tmp_path))]) == []
+
+    @pytest.mark.parametrize(
+        ("copy_version", "expected"),
+        [
+            pytest.param(1, [], id="new-family-starts-at-one"),
+            pytest.param(
+                4,
+                [
+                    "plugins/codex-rig/shared/adversarial_loop.py:SCHEMA_VERSION: new version family must start at 1, got 4",
+                    "plugins/cc_oss/bin/adversarial_loop.py:SCHEMA_VERSION: new version family must start at 1, got 4",
+                ],
+                id="deleted-sibling-cannot-supply-baseline",
+            ),
+        ],
+    )
+    def test_untracked_propagated_canonical_ignores_deleted_sibling(
+        self, tmp_path: Path, monkeypatch, copy_version: int, expected: list[str]
+    ) -> None:
+        """An untracked canonical and its copy start at one despite deleted siblings in either plugin."""
+        old_path = _committed_file(tmp_path, "plugins/cc_oss/bin/unrelated.py", "SCHEMA_VERSION = 4\n")
+        old_canonical_sibling = _committed_file(
+            tmp_path, "plugins/codex-rig/shared/unrelated.py", "SCHEMA_VERSION = 4\n"
+        )
+        old_path.unlink()
+        old_canonical_sibling.unlink()
+        canonical = tmp_path / "plugins/codex-rig/shared/adversarial_loop.py"
+        canonical.write_text(f"SCHEMA_VERSION = {copy_version}\n", encoding="utf-8")
+        copy = tmp_path / "plugins/cc_oss/bin/adversarial_loop.py"
+        copy.write_bytes(canonical.read_bytes())
+        monkeypatch.chdir(tmp_path)
+
+        assert (
+            vs.find_head_discontinuities([str(canonical.relative_to(tmp_path)), str(copy.relative_to(tmp_path))])
+            == expected
+        )
+
+    @pytest.mark.parametrize("operation", ["ls-tree", "show"])
+    def test_new_propagated_copy_requires_readable_canonical_head(
+        self, tmp_path: Path, monkeypatch, operation: str
+    ) -> None:
+        """A Git failure reading the canonical must not let a new copy restart its version family at one."""
+        canonical = "plugins/codex-rig/shared/adversarial_loop.py"
+        _committed_file(tmp_path, canonical, "SCHEMA_VERSION = 2\n")
+        copy = tmp_path / "plugins/cc_oss/bin/adversarial_loop.py"
+        copy.parent.mkdir(parents=True)
+        copy.write_text("SCHEMA_VERSION = 1\n", encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+        real_git = vs._git
+
+        def unreadable_canonical(args: list[str], **kwargs) -> subprocess.CompletedProcess:
+            """Fail only the selected canonical read, preserving real Git behavior for the copy."""
+            if args[0] == operation and args[-1] in {canonical, f"HEAD:{canonical}"}:
+                return subprocess.CompletedProcess(args, 1, stdout="", stderr="canonical read failed")
+            return real_git(args, **kwargs)
+
+        monkeypatch.setattr(vs, "_git", unreadable_canonical)
+
+        assert vs.find_head_discontinuities([str(copy.relative_to(tmp_path))]) == [
+            f"plugins/cc_oss/bin/adversarial_loop.py: cannot read committed canonical {canonical}"
+        ]
+
     def test_new_python_version_ignores_unrelated_deleted_sibling(self, tmp_path: Path, monkeypatch, capsys) -> None:
         """A deleted sibling's value only excuses an exact match, not an arbitrary new value.
 

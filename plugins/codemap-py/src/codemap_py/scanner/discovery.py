@@ -220,9 +220,9 @@ def _md5_file_hashes(root: Path, exclusions: Exclusions) -> dict[str, str]:
 def get_file_hashes(root: Path, exclusions: Exclusions | None = None) -> dict[str, str]:
     """Hash discovered source/doc bytes, including unstaged edits, additions and deletions.
 
-    Git projects retain compatible blob digests, non-Git projects retain their existing MD5 digests. An empty map is
-    a successful empty discovery. Repository probe or file-read failures propagate so callers cannot mistake them
-    for freshness or delete valid indexed nodes on incomplete evidence.
+    Git projects retain compatible blob digests, non-Git projects retain their existing MD5 digests. An empty map is a
+    successful empty discovery. Repository probe or file-read failures propagate so callers cannot mistake them for
+    freshness or delete valid indexed nodes on incomplete evidence.
     """
     if not root.is_dir():
         raise FileNotFoundError(f"Source root is not a directory: {root}")

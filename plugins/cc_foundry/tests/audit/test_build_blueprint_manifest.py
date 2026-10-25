@@ -282,7 +282,7 @@ class TestAllowlistGate:
                 id="read-sentinel-keys",
             ),
             pytest.param(
-                'IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/impl-${CSID}"\nbash "$IMPL_DIR/full-suite.sh"',
+                'IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/impl-${CSID}"\nbash -- "$IMPL_DIR/full-suite.sh"',
                 id="shell-script-from-own-state",
             ),
             pytest.param('unlink "${TMPDIR:-/tmp}/lock-${CSID}"', id="unlink-sentinel"),
@@ -579,3 +579,183 @@ class TestCli:
         with pytest.raises(SystemExit) as excinfo:
             bbm.main(["--scan-dir", str(scan_dir)])
         assert excinfo.value.code == 2
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        pytest.param("IFS= read -r X < \"${TMPDIR:-/tmp}/x\"; printf '%1$n' PATH", True, id="positional-percent-n"),
+        pytest.param("IFS= read -r X < \"${TMPDIR:-/tmp}/x\"; printf %d 'IFS-=1'", True, id="numeric-ifs-subtract"),
+        pytest.param("typeset -F n=1,PATH=1", True, id="float-declaration"),
+        pytest.param("exit -- '-1,PATH=1'", True, id="exit-negative-count"),
+        pytest.param("bye '1,PATH=1'", True, id="bye-count"),
+        pytest.param("logout '1,PATH=1'", True, id="logout-count"),
+        pytest.param("print -f%d '1,PATH=1'", True, id="print-attached-format"),
+        pytest.param("ZLE_RPROMPT_INDENT=1,PATH=1", True, id="integer-special-parameter"),
+        pytest.param("echo $(( PATH ||= 1 ))", True, id="logical-or-assignment"),
+        pytest.param("echo $(( ++IFS ))", True, id="prefix-ifs-increment"),
+        pytest.param('IFS= read -r X < "${TMPDIR:-/tmp}/x"', False, id="sentinel-read-prefix"),
+        pytest.param("grep -- --path=x f", False, id="lowercase-path-flag"),
+        pytest.param("[[ $a == PATH ]]", False, id="equality-comparison"),
+        pytest.param("echo PATH", False, id="bare-lookup-name"),
+        pytest.param("echo '-PATH=1'", False, id="quoted-single-dash-flag"),
+        pytest.param("echo --PATH=1", False, id="double-dash-flag"),
+        pytest.param("echo OTHER_PATH=1", False, id="identifier-suffix"),
+        pytest.param("printf '%%n' PATH", False, id="escaped-percent"),
+        pytest.param("IFS=',' command read -r X", False, id="wrapped-nonempty-read-prefix"),
+        pytest.param('echo "PATH == 1"', False, id="quoted-equality"),
+        pytest.param('echo CDP""ATH=0', False, id="dequoted-inert-word"),
+        pytest.param("python x.py CD$'P'ATH=0", False, id="ansi-c-inert-word"),
+        pytest.param('unknown --CDP""ATH=0', False, id="dequoted-flag-prefix"),
+        pytest.param('unknown CDP""ATH=0', True, id="dequoted-unknown-operand"),
+        pytest.param('python x.py "$(echo CDP""ATH=0)"', False, id="nested-inert-word-owner"),
+        pytest.param('printf %""n IFS', True, id="dequoted-percent-n"),
+        pytest.param("printf %s 'PATH=1'", False, id="string-conversion-data"),
+        pytest.param("printf '%b %c %q' 'PATH=1' 'IFS=1' 'CDPATH=1'", True, id="text-conversions-data"),
+        pytest.param("printf %s '%n'", False, id="percent-n-data-stays-conservative"),
+        pytest.param("printf %*s 'PATH=1' x", True, id="numeric-width-keeps-check"),
+        pytest.param("printf '%s %d' x 'PATH=1'", True, id="mixed-format-keeps-check"),
+        pytest.param("printf '$F' IFS", False, id="single-quoted-dollar-format"),
+        pytest.param('print -- "$value"', False, id="print-without-format"),
+    ],
+)
+def test_position_independent_lookup_writes(command: str, expected: bool) -> None:
+    """Refuse writes wherever an operand appears while retaining comparisons, flags and read prefixes."""
+    assert bbm.is_dangerous(command) is expected
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'print -f%d CDP""ATH=0',
+        r"print -f%d CD\PATH=0",
+        "print -f%d CD$'P'ATH=0",
+        "print -f%d $'CD'PATH=0",
+        "print -f%d CDPATH$''=0",
+        "print -f%d CD\\\nPATH=0",
+        'printf -""v PATH %s /tmp',
+        r"printf -\v PATH %s /tmp",
+        "printf '-v' PATH %s /tmp",
+        'F=%n; printf "$F" IFS',
+        'printf "${F:-%n}" IFS',
+        'print -f "$F" IFS',
+        "[[ 0 -eq 'CDPATH\n=0' ]]",
+        "[[ 0 -eq 'CDPATH\r=0' ]]",
+        "[[ 0 -eq 'CDPATH\v=0' ]]",
+        "[[ 0 -eq 'CDPATH\f=0' ]]",
+        "[[ 0 -eq CDPATH$'\\n'=0 ]]",
+        "[[ 0 -eq CDPATH\\\n=0 ]]",
+    ],
+)
+def test_shell_read_lookup_writes(command: str) -> None:
+    """Shell quote removal and every arithmetic blank must preserve lookup-write refusals."""
+    assert bbm.is_dangerous(command)
+
+
+@pytest.mark.parametrize(
+    "operator", ["=", "+=", "-=", "*=", "/=", "%=", "**=", "<<=", ">>=", "&=", "|=", "^=", "&&=", "||=", "^^="]
+)
+@pytest.mark.parametrize("quoted", ["{}", '"{}"', "'{}'", "$'{}'"])
+def test_raw_lookup_write_operator_matrix(operator: str, quoted: str) -> None:
+    """Single-quoted echo operands are data; other quote states retain expression protection."""
+    command = "echo " + quoted.format(f"1,PATH[0] {operator} 1")
+    assert bbm.is_dangerous(command) is (quoted != "'{}'")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "case x in x) printf '%1$n' PATH;; esac",
+        "repeat 1 printf '%1$n' PATH",
+        "for x (a) printf '%1$n' PATH",
+        "if true { printf '%1$n' PATH }",
+        "command printf '%1$n' PATH",
+        "builtin printf '%1$n' PATH",
+        "env printf '%1$n' PATH",
+        "timeout 1 printf '%1$n' PATH",
+        "xargs printf '%1$n' PATH",
+    ],
+)
+def test_percent_n_in_resolved_commands(command: str) -> None:
+    """Positional percent-n must refuse through every existing compound and wrapper resolver."""
+    assert bbm.is_dangerous(command) is True
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        pytest.param("exit test-PATH=1", True, id="exit-hyphenated-lvalue"),
+        pytest.param("git log; (( a-PATH=1 ))", True, id="arithmetic-after-external-command"),
+        pytest.param("echo $(( 1-PATH=1 ))", True, id="echo-arithmetic-expansion"),
+        pytest.param("python x.py $(( PATH=1 ))", True, id="external-arithmetic-expansion"),
+        pytest.param("git() { (( $1 )); }; git 'a-PATH=1'", True, id="shadowed-external-command"),
+        pytest.param("python x.py --path-out f", False, id="external-long-flag"),
+        pytest.param('printf "export PATH=%s\\n" "$value"', False, id="printed-export-format"),
+        pytest.param('echo "set PATH=x"', False, id="echo-assignment-message"),
+        pytest.param("exit '--PATH-a'", True, id="leading-dashes-can-decrement"),
+        pytest.param("printf %d '1-PATH=1'", True, id="numeric-subtraction-lvalue"),
+        pytest.param("python x.py 'PATH=1'", False, id="external-assignment-shaped-argument"),
+        pytest.param("python x.py 'test-PATH=1'", False, id="external-hyphenated-text"),
+        pytest.param("python x.py '$(( 1-PATH=1 ))'", False, id="quoted-arithmetic-text"),
+        pytest.param("echo '$[test-PATH=1]'", False, id="quoted-legacy-arithmetic"),
+        pytest.param("echo '[[ test-PATH=1 ]]'", False, id="quoted-conditional-text"),
+        pytest.param("python x.py 'n[PATH=1]'", False, id="external-subscript-text"),
+        pytest.param("echo '${x:-test-PATH=1}'", False, id="quoted-parameter-operator"),
+        pytest.param("printf 'export PATH=%1$n' PATH", True, id="format-percent-n-is-never-exempt"),
+        pytest.param("print -f 'export PATH=%s' value", False, id="print-format-only"),
+        pytest.param("print -f%d '1,PATH=1'", True, id="attached-format-keeps-numeric-operand"),
+        pytest.param("unknown 'test-PATH=1'", True, id="unknown-command-keeps-full-rule"),
+        pytest.param("'python' x.py --path-out f", True, id="quoted-command-has-no-exemption"),
+        pytest.param('"$RUNNER" x.py --path-out f', True, id="expanded-command-has-no-exemption"),
+        pytest.param("./inspect.py 'test-PATH=1'", False, id="literal-direct-python-script"),
+        pytest.param("node inspect.js 'test-PATH=1'", False, id="literal-node-script"),
+        pytest.param("git 'a-PATH=1'; git() { (( $1 )); }", True, id="later-definition-disables-exemption"),
+        pytest.param("alias git='printf %d'; git 'a-PATH=1'", True, id="alias-disables-exemption"),
+        pytest.param("LABEL='test-PATH=1'", True, id="ordinary-assignment-has-no-exemption"),
+        pytest.param('python x.py "$(exit test-PATH=1)"', True, id="nested-command-owns-operand"),
+        pytest.param("python x.py \"$(echo 'test-PATH=1')\"", False, id="nested-echo-owns-inert-operand"),
+        pytest.param(
+            "python x.py --path-out f; exit 'python x.py --path-out f'",
+            True,
+            id="literal-lookalike-cannot-borrow-context",
+        ),
+        pytest.param("python x.py '[^\"]'; IFS= read -r X < f", False, id="regex-context-stays-in-word"),
+        pytest.param("while IFS='=' read -r k v; do echo \"$k\"; done", False, id="while-read-prefix-is-preserved"),
+        pytest.param('python x.py "program-path=${OUT}"', False, id="label-outside-parameter-expansion"),
+    ],
+)
+def test_lookup_write_context_exemptions(command: str, expected: bool) -> None:
+    """Only inert positions of literal unshadowed commands may exempt raw lookup-write tokens."""
+    assert bbm.is_dangerous(command) is expected
+
+
+@pytest.mark.parametrize("vector", _vector_params("closed_text_formats") + _vector_params("literal_builtin_operands"))
+def test_closed_text_formats(vector: dict) -> None:
+    """Closed formats and literal name operands keep inert text separate from live writes."""
+    # Gate A confirmed the closed grammar validates dash-leading formats; HEAD admitted printf -- '-%s' x.
+    assert bbm.is_dangerous(vector["input"]) is vector["expected"]
+
+
+@pytest.mark.parametrize("vector", _vector_params("literal_data_pairs"))
+def test_literal_data_positions_preserve_live_refusals(vector: dict) -> None:
+    """Each inert-data exemption retains refusal in the corresponding live write positions."""
+    for command in vector["inert"]:
+        assert bbm.is_dangerous(command) is False, command
+    for command in vector["live"]:
+        assert bbm.is_dangerous(command) is True, command
+
+
+@pytest.mark.parametrize("builtin", ["printf", "print -f", "print -rf", "env printf"])
+@pytest.mark.parametrize("end_options", [False, True])
+@pytest.mark.parametrize("vector", _vector_params("closed_format_matrix"))
+def test_closed_format_grammar_matrix(builtin: str, end_options: bool, vector: dict) -> None:
+    """Format admission depends on the closed grammar even when a format begins with a dash."""
+    before = "-- " if end_options and builtin.endswith("printf") else ""
+    after = "-- " if end_options and not builtin.endswith("printf") else ""
+    command = f"{builtin} {before}'{vector['format']}' {after}PATH x"
+    assert bbm.is_dangerous(command) is (not vector["admitted"]), command
+
+
+def test_dash_leading_print_format_cannot_write_lookup_name() -> None:
+    """A dash-leading print format never escapes the percent-n prohibition."""
+    assert bbm.is_dangerous("print -f '-%nf%s' PATH x") is True

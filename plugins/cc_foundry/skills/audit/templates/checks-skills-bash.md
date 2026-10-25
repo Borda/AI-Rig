@@ -117,7 +117,8 @@ Block rebinds what a command name runs: `hash`, `builtin`, `alias`, `enable`/`di
 ```bash
 # timeout: 10000
 printf "=== Check 23e: command-name rebind ===\n"
-CMD='(:[0-9]+:|[;&|({`!]|\$\()[[:space:]]*((then|do|else|[[:alpha:]_][[:alnum:]_]*=[^[:space:]]*|[0-9]*&?[<>][^[:space:]]*|command|noglob|nocorrect|exec|env|sudo|doas|nohup|time|nice|timeout[[:space:]]+[^[:space:]]+|-[^[:space:]vV]*([[:space:]]+[^-[:space:]][^[:space:]]*)?)[[:space:]]+)*'
+TICK=$(awk 'BEGIN {printf "%c", 96}')  # backtick built live: a literal one stored in CMD reads as stored code to the danger gate
+CMD='(:[0-9]+:|[;&|({'"$TICK"'!]|\$\()[[:space:]]*((then|do|else|[[:alpha:]_][[:alnum:]_]*=[^[:space:]]*|[0-9]*&?[<>][^[:space:]]*|command|noglob|nocorrect|exec|env|sudo|doas|nohup|time|nice|timeout[[:space:]]+[^[:space:]]+|-[^[:space:]vV]*([[:space:]]+[^-[:space:]][^[:space:]]*)?)[[:space:]]+)*'
 REB='([h]ash|[b]uiltin|[a]lias|[u]nalias|[e]nable|[d]isable|[f]unctions|[a]utoload|[z]modload|[e]mulate|[m]apfile|[r]eadarray|[v]ared|[z]parseopts|[g]etln)([[:space:]]|$)'
 { find plugins -mindepth 4 -maxdepth 4 -path 'plugins/*/skills/*/SKILL.md' -type f -print0
   find plugins -mindepth 4 -maxdepth 4 -path 'plugins/*/skills/_shared/*.md' -type f -print0

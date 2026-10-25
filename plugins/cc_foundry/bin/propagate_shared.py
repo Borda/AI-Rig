@@ -97,6 +97,18 @@ MANIFEST: list[dict[str, object]] = [
         ],
     },
     {
+        # Adversarial-loop checker: appends rounds, prints the progress table and enforces the
+        # repeat root-cause and third-occurrence rules. Codex owns the canonical source; without
+        # a local copy a Claude loop runs ledger-less and those rules never fire.
+        "canonical": "plugins/codex-rig/shared/adversarial_loop.py",
+        "copies": [
+            "plugins/cc_foundry/bin/adversarial_loop.py",
+            "plugins/cc_oss/bin/adversarial_loop.py",
+            "plugins/cc_develop/bin/adversarial_loop.py",
+            "plugins/cc_research/bin/adversarial_loop.py",
+        ],
+    },
+    {
         # Parses `--keep "..."` out of a skill's arguments. The inline `[[ =~ ]]` twin it
         # replaces reads ${BASH_REMATCH[1]}, which zsh leaves empty, so every skill that
         # accepts --keep needs this and a plugin may be installed alone.

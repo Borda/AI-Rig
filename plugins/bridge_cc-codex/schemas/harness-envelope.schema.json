@@ -6,16 +6,6 @@
       "partial_output"
     ]
   },
-  "then": {
-    "properties": {
-      "status": {
-        "const": "blocked"
-      },
-      "direction": {
-        "const": "claude_to_codex"
-      }
-    }
-  },
   "properties": {
     "blockers": {
       "items": {
@@ -170,6 +160,16 @@
     "verb",
     "direction"
   ],
+  "then": {
+    "properties": {
+      "direction": {
+        "const": "claude_to_codex"
+      },
+      "status": {
+        "const": "blocked"
+      }
+    }
+  },
   "title": "Bridge public result envelope",
   "type": "object"
 }

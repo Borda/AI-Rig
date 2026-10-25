@@ -15,7 +15,7 @@ from pathlib import Path
 _TESTS_DIR = Path(__file__).resolve().parent
 
 #: Suites whose parametrized ``command`` values, and whose shared-vector ``input`` values, form the corpus.
-SUITES = ("test_blueprint_allow_js.py", "test_sentinel_read_allow_js.py")
+SUITES = ("hooks/test_blueprint_allow_js.py", "hooks/test_sentinel_read_allow_js.py")
 
 
 class _Collector:

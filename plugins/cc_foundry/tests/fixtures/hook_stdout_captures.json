@@ -2350,7 +2350,7 @@
       "IFS= read -r LD_PRELOAD < /tmp/x": {
         "exit": 0,
         "stderr_b64": "",
-        "stdout_b64": "eyJob29rU3BlY2lmaWNPdXRwdXQiOnsiaG9va0V2ZW50TmFtZSI6IlByZVRvb2xVc2UiLCJwZXJtaXNzaW9uRGVjaXNpb24iOiJhbGxvdyIsInBlcm1pc3Npb25EZWNpc2lvblJlYXNvbiI6InBsdWdpbiBibHVlcHJpbnQg4oCUIHZlcmJhdGltIGJsb2NrIGZyb20gdGFtcGVyZWQubWQ6MSJ9fQ=="
+        "stdout_b64": ""
       },
       "IFS= read -r OTHER < \"${TMPDIR:-/tmp}/y-${CSID}\"": {
         "exit": 0,
@@ -2360,7 +2360,7 @@
       "IFS= read -r PATH < /tmp/attacker": {
         "exit": 0,
         "stderr_b64": "",
-        "stdout_b64": "eyJob29rU3BlY2lmaWNPdXRwdXQiOnsiaG9va0V2ZW50TmFtZSI6IlByZVRvb2xVc2UiLCJwZXJtaXNzaW9uRGVjaXNpb24iOiJhbGxvdyIsInBlcm1pc3Npb25EZWNpc2lvblJlYXNvbiI6InBsdWdpbiBibHVlcHJpbnQg4oCUIHZlcmJhdGltIGJsb2NrIGZyb20gdGFtcGVyZWQubWQ6MSJ9fQ=="
+        "stdout_b64": ""
       },
       "IFS= read -r RUN_DIR < \"${TMPDIR:-/tmp}/oss-review-run-dir-$CSID\"\ncat \"$RUN_DIR/r.md\"": {
         "exit": 0,
@@ -2480,7 +2480,7 @@
       "IFS= read -r RUN_DIR < \"${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}\"\ncat (..)": {
         "exit": 0,
         "stderr_b64": "",
-        "stdout_b64": "eyJob29rU3BlY2lmaWNPdXRwdXQiOnsiaG9va0V2ZW50TmFtZSI6IlByZVRvb2xVc2UiLCJwZXJtaXNzaW9uRGVjaXNpb24iOiJhbGxvdyIsInBlcm1pc3Npb25EZWNpc2lvblJlYXNvbiI6InBsdWdpbiBibHVlcHJpbnQg4oCUIHZlcmJhdGltIGJsb2NrIGZyb20gdGFtcGVyZWQubWQ6MSJ9fQ=="
+        "stdout_b64": ""
       },
       "IFS= read -r RUN_DIR < \"${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}\"\ncat ..": {
         "exit": 0,
@@ -2575,12 +2575,12 @@
       "IFS=x; V=$(cat \"${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}\")": {
         "exit": 0,
         "stderr_b64": "",
-        "stdout_b64": "eyJob29rU3BlY2lmaWNPdXRwdXQiOnsiaG9va0V2ZW50TmFtZSI6IlByZVRvb2xVc2UiLCJwZXJtaXNzaW9uRGVjaXNpb24iOiJhbGxvdyIsInBlcm1pc3Npb25EZWNpc2lvblJlYXNvbiI6InBsdWdpbiBibHVlcHJpbnQg4oCUIHZlcmJhdGltIGJsb2NrIGZyb20gdGFtcGVyZWQubWQ6MSJ9fQ=="
+        "stdout_b64": ""
       },
       "PATH=/tmp/x:$PATH V=$(cat \"${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}\")": {
         "exit": 0,
         "stderr_b64": "",
-        "stdout_b64": "eyJob29rU3BlY2lmaWNPdXRwdXQiOnsiaG9va0V2ZW50TmFtZSI6IlByZVRvb2xVc2UiLCJwZXJtaXNzaW9uRGVjaXNpb24iOiJhbGxvdyIsInBlcm1pc3Npb25EZWNpc2lvblJlYXNvbiI6InBsdWdpbiBibHVlcHJpbnQg4oCUIHZlcmJhdGltIGJsb2NrIGZyb20gdGFtcGVyZWQubWQ6MSJ9fQ=="
+        "stdout_b64": ""
       },
       "RUN_DIR=\"$(cat \"${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}\")\"": {
         "exit": 0,
@@ -2815,12 +2815,12 @@
       "cat () ( sh -c \"echo X > ./f\" ); cat": {
         "exit": 0,
         "stderr_b64": "",
-        "stdout_b64": "eyJob29rU3BlY2lmaWNPdXRwdXQiOnsiaG9va0V2ZW50TmFtZSI6IlByZVRvb2xVc2UiLCJwZXJtaXNzaW9uRGVjaXNpb24iOiJhbGxvdyIsInBlcm1pc3Npb25EZWNpc2lvblJlYXNvbiI6InBsdWdpbiBibHVlcHJpbnQg4oCUIHZlcmJhdGltIGJsb2NrIGZyb20gdGFtcGVyZWQubWQ6MSJ9fQ=="
+        "stdout_b64": ""
       },
       "cat () ( touch /tmp/pwned ); cat": {
         "exit": 0,
         "stderr_b64": "",
-        "stdout_b64": "eyJob29rU3BlY2lmaWNPdXRwdXQiOnsiaG9va0V2ZW50TmFtZSI6IlByZVRvb2xVc2UiLCJwZXJtaXNzaW9uRGVjaXNpb24iOiJhbGxvdyIsInBlcm1pc3Npb25EZWNpc2lvblJlYXNvbiI6InBsdWdpbiBibHVlcHJpbnQg4oCUIHZlcmJhdGltIGJsb2NrIGZyb20gdGFtcGVyZWQubWQ6MSJ9fQ=="
+        "stdout_b64": ""
       },
       "cat .\\./etc/passwd": {
         "exit": 0,
@@ -2940,22 +2940,22 @@
       "echo ${DYLD_INSERT_LIBRARIES:=/tmp/evil.dylib}": {
         "exit": 0,
         "stderr_b64": "",
-        "stdout_b64": "eyJob29rU3BlY2lmaWNPdXRwdXQiOnsiaG9va0V2ZW50TmFtZSI6IlByZVRvb2xVc2UiLCJwZXJtaXNzaW9uRGVjaXNpb24iOiJhbGxvdyIsInBlcm1pc3Npb25EZWNpc2lvblJlYXNvbiI6InBsdWdpbiBibHVlcHJpbnQg4oCUIHZlcmJhdGltIGJsb2NrIGZyb20gdGFtcGVyZWQubWQ6MSJ9fQ=="
+        "stdout_b64": ""
       },
       "echo ${IFS:=X}": {
         "exit": 0,
         "stderr_b64": "",
-        "stdout_b64": "eyJob29rU3BlY2lmaWNPdXRwdXQiOnsiaG9va0V2ZW50TmFtZSI6IlByZVRvb2xVc2UiLCJwZXJtaXNzaW9uRGVjaXNpb24iOiJhbGxvdyIsInBlcm1pc3Npb25EZWNpc2lvblJlYXNvbiI6InBsdWdpbiBibHVlcHJpbnQg4oCUIHZlcmJhdGltIGJsb2NrIGZyb20gdGFtcGVyZWQubWQ6MSJ9fQ=="
+        "stdout_b64": ""
       },
       "echo ${IFS=X}": {
         "exit": 0,
         "stderr_b64": "",
-        "stdout_b64": "eyJob29rU3BlY2lmaWNPdXRwdXQiOnsiaG9va0V2ZW50TmFtZSI6IlByZVRvb2xVc2UiLCJwZXJtaXNzaW9uRGVjaXNpb24iOiJhbGxvdyIsInBlcm1pc3Npb25EZWNpc2lvblJlYXNvbiI6InBsdWdpbiBibHVlcHJpbnQg4oCUIHZlcmJhdGltIGJsb2NrIGZyb20gdGFtcGVyZWQubWQ6MSJ9fQ=="
+        "stdout_b64": ""
       },
       "echo ${LD_PRELOAD:=/tmp/evil.so}": {
         "exit": 0,
         "stderr_b64": "",
-        "stdout_b64": "eyJob29rU3BlY2lmaWNPdXRwdXQiOnsiaG9va0V2ZW50TmFtZSI6IlByZVRvb2xVc2UiLCJwZXJtaXNzaW9uRGVjaXNpb24iOiJhbGxvdyIsInBlcm1pc3Npb25EZWNpc2lvblJlYXNvbiI6InBsdWdpbiBibHVlcHJpbnQg4oCUIHZlcmJhdGltIGJsb2NrIGZyb20gdGFtcGVyZWQubWQ6MSJ9fQ=="
+        "stdout_b64": ""
       },
       "echo ${V:-#x}": {
         "exit": 0,
@@ -3090,17 +3090,17 @@
       "export \"GLOBIGNORE\"=x": {
         "exit": 0,
         "stderr_b64": "",
-        "stdout_b64": "eyJob29rU3BlY2lmaWNPdXRwdXQiOnsiaG9va0V2ZW50TmFtZSI6IlByZVRvb2xVc2UiLCJwZXJtaXNzaW9uRGVjaXNpb24iOiJhbGxvdyIsInBlcm1pc3Npb25EZWNpc2lvblJlYXNvbiI6InBsdWdpbiBibHVlcHJpbnQg4oCUIHZlcmJhdGltIGJsb2NrIGZyb20gdGFtcGVyZWQubWQ6MSJ9fQ=="
+        "stdout_b64": ""
       },
       "export \"IFS\"=,": {
         "exit": 0,
         "stderr_b64": "",
-        "stdout_b64": "eyJob29rU3BlY2lmaWNPdXRwdXQiOnsiaG9va0V2ZW50TmFtZSI6IlByZVRvb2xVc2UiLCJwZXJtaXNzaW9uRGVjaXNpb24iOiJhbGxvdyIsInBlcm1pc3Npb25EZWNpc2lvblJlYXNvbiI6InBsdWdpbiBibHVlcHJpbnQg4oCUIHZlcmJhdGltIGJsb2NrIGZyb20gdGFtcGVyZWQubWQ6MSJ9fQ=="
+        "stdout_b64": ""
       },
       "export \"PATH\"=/attacker/bin:$PATH": {
         "exit": 0,
         "stderr_b64": "",
-        "stdout_b64": "eyJob29rU3BlY2lmaWNPdXRwdXQiOnsiaG9va0V2ZW50TmFtZSI6IlByZVRvb2xVc2UiLCJwZXJtaXNzaW9uRGVjaXNpb24iOiJhbGxvdyIsInBlcm1pc3Npb25EZWNpc2lvblJlYXNvbiI6InBsdWdpbiBibHVlcHJpbnQg4oCUIHZlcmJhdGltIGJsb2NrIGZyb20gdGFtcGVyZWQubWQ6MSJ9fQ=="
+        "stdout_b64": ""
       },
       "export CSID=\"${CLAUDE_CODE_SESSION_ID:-$PPID}\"": {
         "exit": 0,
@@ -3125,42 +3125,42 @@
       "export DYLD_FRAMEWORK_PATH=/tmp/e": {
         "exit": 0,
         "stderr_b64": "",
-        "stdout_b64": "eyJob29rU3BlY2lmaWNPdXRwdXQiOnsiaG9va0V2ZW50TmFtZSI6IlByZVRvb2xVc2UiLCJwZXJtaXNzaW9uRGVjaXNpb24iOiJhbGxvdyIsInBlcm1pc3Npb25EZWNpc2lvblJlYXNvbiI6InBsdWdpbiBibHVlcHJpbnQg4oCUIHZlcmJhdGltIGJsb2NrIGZyb20gdGFtcGVyZWQubWQ6MSJ9fQ=="
+        "stdout_b64": ""
       },
       "export LD_AUDIT=/tmp/e.so": {
         "exit": 0,
         "stderr_b64": "",
-        "stdout_b64": "eyJob29rU3BlY2lmaWNPdXRwdXQiOnsiaG9va0V2ZW50TmFtZSI6IlByZVRvb2xVc2UiLCJwZXJtaXNzaW9uRGVjaXNpb24iOiJhbGxvdyIsInBlcm1pc3Npb25EZWNpc2lvblJlYXNvbiI6InBsdWdpbiBibHVlcHJpbnQg4oCUIHZlcmJhdGltIGJsb2NrIGZyb20gdGFtcGVyZWQubWQ6MSJ9fQ=="
+        "stdout_b64": ""
       },
       "export LD_PRELOAD=/tmp/evil.so; V=$(cat \"${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}\"); cat x": {
         "exit": 0,
         "stderr_b64": "",
-        "stdout_b64": "eyJob29rU3BlY2lmaWNPdXRwdXQiOnsiaG9va0V2ZW50TmFtZSI6IlByZVRvb2xVc2UiLCJwZXJtaXNzaW9uRGVjaXNpb24iOiJhbGxvdyIsInBlcm1pc3Npb25EZWNpc2lvblJlYXNvbiI6InBsdWdpbiBibHVlcHJpbnQg4oCUIHZlcmJhdGltIGJsb2NrIGZyb20gdGFtcGVyZWQubWQ6MSJ9fQ=="
+        "stdout_b64": ""
       },
       "export PA\"TH\"=/evil": {
         "exit": 0,
         "stderr_b64": "",
-        "stdout_b64": "eyJob29rU3BlY2lmaWNPdXRwdXQiOnsiaG9va0V2ZW50TmFtZSI6IlByZVRvb2xVc2UiLCJwZXJtaXNzaW9uRGVjaXNpb24iOiJhbGxvdyIsInBlcm1pc3Npb25EZWNpc2lvblJlYXNvbiI6InBsdWdpbiBibHVlcHJpbnQg4oCUIHZlcmJhdGltIGJsb2NrIGZyb20gdGFtcGVyZWQubWQ6MSJ9fQ=="
+        "stdout_b64": ""
       },
       "export PATH+=:/attacker/bin": {
         "exit": 0,
         "stderr_b64": "",
-        "stdout_b64": "eyJob29rU3BlY2lmaWNPdXRwdXQiOnsiaG9va0V2ZW50TmFtZSI6IlByZVRvb2xVc2UiLCJwZXJtaXNzaW9uRGVjaXNpb24iOiJhbGxvdyIsInBlcm1pc3Npb25EZWNpc2lvblJlYXNvbiI6InBsdWdpbiBibHVlcHJpbnQg4oCUIHZlcmJhdGltIGJsb2NrIGZyb20gdGFtcGVyZWQubWQ6MSJ9fQ=="
+        "stdout_b64": ""
       },
       "export PATH=/tmp/attacker:$PATH; V=$(cat \"${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}\")": {
         "exit": 0,
         "stderr_b64": "",
-        "stdout_b64": "eyJob29rU3BlY2lmaWNPdXRwdXQiOnsiaG9va0V2ZW50TmFtZSI6IlByZVRvb2xVc2UiLCJwZXJtaXNzaW9uRGVjaXNpb24iOiJhbGxvdyIsInBlcm1pc3Npb25EZWNpc2lvblJlYXNvbiI6InBsdWdpbiBibHVlcHJpbnQg4oCUIHZlcmJhdGltIGJsb2NrIGZyb20gdGFtcGVyZWQubWQ6MSJ9fQ=="
+        "stdout_b64": ""
       },
       "export PATH=/tmp/evil:$PATH; IFS= read -r V < \"${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}\"": {
         "exit": 0,
         "stderr_b64": "",
-        "stdout_b64": "eyJob29rU3BlY2lmaWNPdXRwdXQiOnsiaG9va0V2ZW50TmFtZSI6IlByZVRvb2xVc2UiLCJwZXJtaXNzaW9uRGVjaXNpb24iOiJhbGxvdyIsInBlcm1pc3Npb25EZWNpc2lvblJlYXNvbiI6InBsdWdpbiBibHVlcHJpbnQg4oCUIHZlcmJhdGltIGJsb2NrIGZyb20gdGFtcGVyZWQubWQ6MSJ9fQ=="
+        "stdout_b64": ""
       },
       "export PROMPT_COMMAND=/tmp/e": {
         "exit": 0,
         "stderr_b64": "",
-        "stdout_b64": "eyJob29rU3BlY2lmaWNPdXRwdXQiOnsiaG9va0V2ZW50TmFtZSI6IlByZVRvb2xVc2UiLCJwZXJtaXNzaW9uRGVjaXNpb24iOiJhbGxvdyIsInBlcm1pc3Npb25EZWNpc2lvblJlYXNvbiI6InBsdWdpbiBibHVlcHJpbnQg4oCUIHZlcmJhdGltIGJsb2NrIGZyb20gdGFtcGVyZWQubWQ6MSJ9fQ=="
+        "stdout_b64": ""
       },
       "export X=\" /etc/passwd\"; V=$(cat ${TMPDIR:-/tmp}/$X); printf %s \"$V\"": {
         "exit": 0,
@@ -3170,12 +3170,12 @@
       "export \\IFS=,": {
         "exit": 0,
         "stderr_b64": "",
-        "stdout_b64": "eyJob29rU3BlY2lmaWNPdXRwdXQiOnsiaG9va0V2ZW50TmFtZSI6IlByZVRvb2xVc2UiLCJwZXJtaXNzaW9uRGVjaXNpb24iOiJhbGxvdyIsInBlcm1pc3Npb25EZWNpc2lvblJlYXNvbiI6InBsdWdpbiBibHVlcHJpbnQg4oCUIHZlcmJhdGltIGJsb2NrIGZyb20gdGFtcGVyZWQubWQ6MSJ9fQ=="
+        "stdout_b64": ""
       },
       "export \\PATH=/attacker/bin:$PATH": {
         "exit": 0,
         "stderr_b64": "",
-        "stdout_b64": "eyJob29rU3BlY2lmaWNPdXRwdXQiOnsiaG9va0V2ZW50TmFtZSI6IlByZVRvb2xVc2UiLCJwZXJtaXNzaW9uRGVjaXNpb24iOiJhbGxvdyIsInBlcm1pc3Npb25EZWNpc2lvblJlYXNvbiI6InBsdWdpbiBibHVlcHJpbnQg4oCUIHZlcmJhdGltIGJsb2NrIGZyb20gdGFtcGVyZWQubWQ6MSJ9fQ=="
+        "stdout_b64": ""
       },
       "find . -name '*.tmp' | xargs rm -f": {
         "exit": 0,
@@ -3240,7 +3240,7 @@
       "ls () ( touch /tmp/pwned ); ls": {
         "exit": 0,
         "stderr_b64": "",
-        "stdout_b64": "eyJob29rU3BlY2lmaWNPdXRwdXQiOnsiaG9va0V2ZW50TmFtZSI6IlByZVRvb2xVc2UiLCJwZXJtaXNzaW9uRGVjaXNpb24iOiJhbGxvdyIsInBlcm1pc3Npb25EZWNpc2lvblJlYXNvbiI6InBsdWdpbiBibHVlcHJpbnQg4oCUIHZlcmJhdGltIGJsb2NrIGZyb20gdGFtcGVyZWQubWQ6MSJ9fQ=="
+        "stdout_b64": ""
       },
       "ls -la": {
         "exit": 0,

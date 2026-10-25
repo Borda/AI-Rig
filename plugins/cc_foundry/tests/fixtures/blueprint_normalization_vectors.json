@@ -47,6 +47,525 @@
       "input": "echo a  # note\necho b   "
     }
   ],
+  "closed_format_matrix": [
+    {
+      "admitted": true,
+      "format": "%s",
+      "id": "string"
+    },
+    {
+      "admitted": true,
+      "format": "-%s",
+      "id": "dash-string"
+    },
+    {
+      "admitted": false,
+      "format": "-%n",
+      "id": "dash-count-write"
+    },
+    {
+      "admitted": false,
+      "format": "%n",
+      "id": "count-write"
+    },
+    {
+      "admitted": false,
+      "format": "-%nf%s",
+      "id": "dash-count-write-string"
+    },
+    {
+      "admitted": false,
+      "format": "%-s",
+      "id": "missing-width"
+    },
+    {
+      "admitted": true,
+      "format": "%-3s",
+      "id": "literal-width-string"
+    },
+    {
+      "admitted": false,
+      "format": "%c",
+      "id": "character-conversion"
+    },
+    {
+      "admitted": false,
+      "format": "%b",
+      "id": "escape-conversion"
+    },
+    {
+      "admitted": false,
+      "format": "%d",
+      "id": "numeric-conversion"
+    }
+  ],
+  "closed_text_formats": [
+    {
+      "expected": true,
+      "id": "getopts-computed-option-shifts-target",
+      "input": "s=-a; n=PATH; getopts \"$s\" ignored ab \"$n\""
+    },
+    {
+      "expected": true,
+      "id": "typeset-computed-name",
+      "input": "typeset -- \"$n\""
+    },
+    {
+      "expected": true,
+      "id": "local-split-name",
+      "input": "local SA\"\"FE=1"
+    },
+    {
+      "expected": true,
+      "id": "readonly-subscript-name",
+      "input": "readonly 'safe[0]'"
+    },
+    {
+      "expected": true,
+      "id": "integer-computed-name",
+      "input": "integer -- \"$n\""
+    },
+    {
+      "expected": true,
+      "id": "float-computed-name",
+      "input": "float -- \"$n\""
+    },
+    {
+      "expected": true,
+      "id": "printf-computed-target",
+      "input": "printf -v \"$n\" %s x"
+    },
+    {
+      "expected": true,
+      "id": "print-computed-target",
+      "input": "print -v \"$n\" x"
+    },
+    {
+      "expected": true,
+      "id": "vared-computed-name",
+      "input": "vared \"$n\""
+    },
+    {
+      "expected": true,
+      "id": "zparseopts-computed-name",
+      "input": "zparseopts -A \"$n\" a"
+    },
+    {
+      "expected": true,
+      "id": "let-computed-name",
+      "input": "let \"$n=1\""
+    },
+    {
+      "expected": true,
+      "id": "mapfile-computed-name",
+      "input": "mapfile \"$n\""
+    },
+    {
+      "expected": true,
+      "id": "readarray-computed-name",
+      "input": "readarray \"$n\""
+    },
+    {
+      "expected": true,
+      "id": "shift-computed-count",
+      "input": "shift \"$n\""
+    },
+    {
+      "expected": true,
+      "id": "dash-leading-format",
+      "input": "X=$(date +%s); printf '-%n' PATH"
+    },
+    {
+      "expected": true,
+      "id": "repeated-print-format",
+      "input": "print -f '%s' -f '%n' PATH"
+    },
+    {
+      "expected": true,
+      "id": "read-prompt-name",
+      "input": "read 'PATH?prompt'"
+    },
+    {
+      "expected": true,
+      "id": "shift-named-array",
+      "input": "shift 1 path"
+    },
+    {
+      "expected": true,
+      "id": "getopts-computed-target",
+      "input": "OPTIND=1; n=PATH; getopts ab \"$n\" -a"
+    },
+    {
+      "expected": true,
+      "id": "unset-computed-after-double-dash",
+      "input": "n=PATH; unset -- \"$n\""
+    },
+    {
+      "expected": true,
+      "id": "missing-string-width",
+      "input": "printf '%-s' x"
+    },
+    {
+      "expected": true,
+      "id": "unknown-printf-option",
+      "input": "printf -r '%s' x"
+    },
+    {
+      "expected": false,
+      "id": "double-dash-leading-format",
+      "input": "printf -- '-%s' x"
+    },
+    {
+      "expected": true,
+      "id": "print-unknown-option",
+      "input": "print -u 2 -f '%s' x"
+    },
+    {
+      "expected": true,
+      "id": "print-flags-after-double-dash",
+      "input": "print -- -f '%n' PATH"
+    },
+    {
+      "expected": true,
+      "id": "print-attached-repeated-format",
+      "input": "print -f%s -f%n PATH"
+    },
+    {
+      "expected": true,
+      "id": "read-computed-after-double-dash",
+      "input": "read -- \"$n\""
+    },
+    {
+      "expected": true,
+      "id": "read-split-name",
+      "input": "read SA\"\"FE"
+    },
+    {
+      "expected": true,
+      "id": "read-subscript-name",
+      "input": "read 'safe[0]'"
+    },
+    {
+      "expected": true,
+      "id": "export-computed-after-double-dash",
+      "input": "export -- \"$n\""
+    },
+    {
+      "expected": true,
+      "id": "declare-computed-target",
+      "input": "declare -- \"$n=value\""
+    },
+    {
+      "expected": true,
+      "id": "unset-literal-dollar-name",
+      "input": "unset -- '$n'"
+    },
+    {
+      "expected": true,
+      "id": "for-computed-target",
+      "input": "for \"$n\" in a; do :; done"
+    },
+    {
+      "expected": true,
+      "id": "select-split-target",
+      "input": "select SA\"\"FE in a; do :; done"
+    },
+    {
+      "expected": false,
+      "id": "inert-assignment-code-text",
+      "input": "echo 'x=$(id)'"
+    },
+    {
+      "expected": false,
+      "id": "inert-command-table-heredoc",
+      "input": "cat <<'EOF'\nBASH_CMDS[x]=/tmp\nEOF"
+    },
+    {
+      "expected": false,
+      "id": "inert-substitution-with-date",
+      "input": "X=$(date +%s); echo '$(id)'"
+    },
+    {
+      "expected": false,
+      "id": "printf-option-shaped-data",
+      "input": "X=$(date +%s); printf '%s' '-v'"
+    },
+    {
+      "expected": false,
+      "id": "printf-double-dash",
+      "input": "printf -- '%s' x"
+    },
+    {
+      "expected": false,
+      "id": "read-literal-quoted-name",
+      "input": "read 'SAFE'"
+    },
+    {
+      "expected": false,
+      "id": "export-assignment-value-data",
+      "input": "export SAFE=\"$value\""
+    },
+    {
+      "expected": true,
+      "id": "unquoted-ascii-separator",
+      "input": "true PATH\u001c=0"
+    },
+    {
+      "expected": true,
+      "id": "unquoted-unicode-space",
+      "input": "true PATH\u00a0=0"
+    },
+    {
+      "expected": true,
+      "id": "unquoted-control-inside-name",
+      "input": "true PA\u001cTH=0"
+    },
+    {
+      "expected": true,
+      "id": "unquoted-space-inside-name",
+      "input": "true PA\u00a0TH=0"
+    },
+    {
+      "expected": true,
+      "id": "unquoted-control-read-name",
+      "input": "read PA\u001cTH"
+    },
+    {
+      "expected": true,
+      "id": "unquoted-space-read-name",
+      "input": "read PA\u00a0TH"
+    },
+    {
+      "expected": true,
+      "id": "astral-format-name",
+      "input": "true 'PA\udb40\udc01TH=0'"
+    },
+    {
+      "expected": true,
+      "id": "unicode-line-separator-name",
+      "input": "true 'PATH\u2028=0'"
+    },
+    {
+      "expected": true,
+      "id": "unicode-paragraph-separator-name",
+      "input": "true 'PATH\u2029=0'"
+    },
+    {
+      "expected": true,
+      "id": "delete-name",
+      "input": "true 'PATH\u007f=0'"
+    },
+    {
+      "expected": true,
+      "id": "short-length-write",
+      "input": "printf %hn X"
+    },
+    {
+      "expected": true,
+      "id": "hex-escaped-conversion",
+      "input": "printf '%\\x6e' X"
+    },
+    {
+      "expected": true,
+      "id": "long-numeric-postfix",
+      "input": "printf %ld 'X ++'"
+    },
+    {
+      "expected": true,
+      "id": "byte-length-write",
+      "input": "printf %hhn PATH"
+    },
+    {
+      "expected": true,
+      "id": "octal-escaped-conversion",
+      "input": "printf '%\\156' PATH"
+    },
+    {
+      "expected": true,
+      "id": "long-long-numeric-postfix",
+      "input": "printf %lld 'PATH ++'"
+    },
+    {
+      "expected": true,
+      "id": "expanded-conversion",
+      "input": "printf \"%$X\" PATH"
+    },
+    {
+      "expected": true,
+      "id": "print-length-write",
+      "input": "print -f %ln PATH"
+    },
+    {
+      "expected": true,
+      "id": "print-attached-length-write",
+      "input": "print -f%ln PATH"
+    },
+    {
+      "expected": true,
+      "id": "decimal-conversion",
+      "input": "printf %d 42"
+    },
+    {
+      "expected": true,
+      "id": "dynamic-width",
+      "input": "printf %*s 4 x"
+    },
+    {
+      "expected": true,
+      "id": "positional-conversion",
+      "input": "printf '%1$s' x"
+    },
+    {
+      "expected": true,
+      "id": "escaped-data-conversion",
+      "input": "printf %b x"
+    },
+    {
+      "expected": true,
+      "id": "character-conversion",
+      "input": "printf %c x"
+    },
+    {
+      "expected": true,
+      "id": "quoted-conversion",
+      "input": "printf %q x"
+    },
+    {
+      "expected": true,
+      "id": "unknown-escape",
+      "input": "printf '\\a'"
+    },
+    {
+      "expected": false,
+      "id": "string-newline",
+      "input": "printf '%s\\n' x"
+    },
+    {
+      "expected": false,
+      "id": "string-width",
+      "input": "printf '%-10s|%s\\n' a b"
+    },
+    {
+      "expected": false,
+      "id": "string-tab-backslash-percent",
+      "input": "printf '%10s\\t\\\\%%' x"
+    },
+    {
+      "expected": false,
+      "id": "percent-n-operand-is-data",
+      "input": "printf %s %n"
+    },
+    {
+      "expected": false,
+      "id": "assignment-operand-is-data",
+      "input": "printf %s 'PATH=1'"
+    },
+    {
+      "expected": false,
+      "id": "quoted-subscript-is-data",
+      "input": "echo '[PATH=0]'"
+    },
+    {
+      "expected": false,
+      "id": "quoted-external-subscript-is-data",
+      "input": "cat '[PATH=0]'"
+    },
+    {
+      "expected": true,
+      "id": "live-quoted-expression",
+      "input": "echo \"[$((PATH=1))]\""
+    },
+    {
+      "expected": false,
+      "id": "quoted-heredoc-data",
+      "input": "cat <<'EOF'\nPATH=0\nEOF"
+    },
+    {
+      "expected": false,
+      "id": "quoted-heredoc-inert-expansion",
+      "input": "cat <<'EOF'\n$((PATH=0))\nEOF"
+    },
+    {
+      "expected": true,
+      "id": "unquoted-heredoc-live-expression",
+      "input": "cat <<EOF\n$((PATH=0))\nEOF"
+    },
+    {
+      "expected": true,
+      "id": "unquoted-heredoc-live-command",
+      "input": "cat <<EOF\n$(printf %hn X)\nEOF"
+    },
+    {
+      "expected": true,
+      "id": "ascii-separator",
+      "input": "true 'PATH\u001c=0'"
+    },
+    {
+      "expected": true,
+      "id": "unicode-format",
+      "input": "true 'PATH\ufeff=0'"
+    },
+    {
+      "expected": true,
+      "id": "unicode-space",
+      "input": "true 'PATH\u00a0=0'"
+    },
+    {
+      "expected": true,
+      "id": "control-inside-name",
+      "input": "true 'PA\u001cTH=0'"
+    },
+    {
+      "expected": true,
+      "id": "format-inside-name",
+      "input": "true 'PA\ufeffTH=0'"
+    },
+    {
+      "expected": true,
+      "id": "control-read-name",
+      "input": "read 'PA\u001cTH'"
+    },
+    {
+      "expected": true,
+      "id": "format-read-name",
+      "input": "read 'PA\ufeffTH'"
+    },
+    {
+      "expected": true,
+      "id": "control-expression",
+      "input": "echo \"$(( PA\u001cTH=0 ))\""
+    },
+    {
+      "expected": true,
+      "id": "format-expression",
+      "input": "echo \"$(( PA\ufeffTH=0 ))\""
+    },
+    {
+      "expected": false,
+      "id": "control-data-operand",
+      "input": "printf %s 'PATH\u001c=0'"
+    },
+    {
+      "expected": false,
+      "id": "format-data-operand",
+      "input": "printf %s 'PATH\ufeff=0'"
+    },
+    {
+      "expected": false,
+      "id": "control-assignment-value",
+      "input": "X='a\r'"
+    },
+    {
+      "expected": false,
+      "id": "format-assignment-value",
+      "input": "X='a\ufeff'"
+    },
+    {
+      "expected": false,
+      "id": "sentinel-read",
+      "input": "IFS= read -r X < \"${TMPDIR:-/tmp}/x\""
+    }
+  ],
   "is_dangerous": [
     {
       "expected": false,
@@ -754,8 +1273,8 @@
       "input": "local x=\"$1\""
     },
     {
-      "expected": false,
-      "id": "source-state-file-is-safe",
+      "expected": true,
+      "id": "source-state-file-is-refused",
       "input": ". \"${TMPDIR:-/tmp}/flags-${CSID}\""
     },
     {
@@ -816,7 +1335,7 @@
     {
       "expected": false,
       "id": "shell-c-lone-variable-left-to-allowlist",
-      "input": "bash -c \"$METRIC_CMD\""
+      "input": "bash -c -- \"$METRIC_CMD\""
     },
     {
       "expected": false,
@@ -1104,11 +1623,6 @@
       "input": "${ROOT}/bin/x.py --flag"
     },
     {
-      "expected": false,
-      "id": "carried-bare-variable-is-safe",
-      "input": "bash -c \"$METRIC_CMD\""
-    },
-    {
       "expected": true,
       "id": "expansion-as-printf-option",
       "input": "o=-v; n=BASH_C; n+=MDS; printf \"$o\" \"$n[ruff]\" %s /bin/echo; ruff PROBE"
@@ -1187,6 +1701,1746 @@
       "expected": false,
       "id": "for-in-loop-is-safe",
       "input": "for f in *.md; do echo $f; done"
+    },
+    {
+      "expected": false,
+      "id": "ifs-read-value-carriage-return",
+      "input": "while IFS=$' \\t\\r' read -r _ID _RESOLUTION _DOMAIN _EXTRA || [ -n \"$_ID\" ]; do"
+    },
+    {
+      "expected": true,
+      "id": "zsh-equals-process-substitution-body-judged",
+      "input": "cat =(eval 'echo x')"
+    },
+    {
+      "expected": false,
+      "id": "zsh-equals-process-substitution-safe-body",
+      "input": "diff =(ls a) =(ls b)"
+    },
+    {
+      "expected": false,
+      "id": "array-assignment-is-not-equals-substitution",
+      "input": "ARGS=(a b)"
+    },
+    {
+      "expected": true,
+      "id": "zsh-glob-qualifier-runs-code",
+      "input": "echo *(e:'alias ruff=echo':)"
+    },
+    {
+      "expected": true,
+      "id": "zsh-glob-qualifier-calls-function",
+      "input": "ls *.md(+_f)"
+    },
+    {
+      "expected": true,
+      "id": "zsh-glob-qualifier-without-code-is-refused",
+      "input": "ls *.md(N)"
+    },
+    {
+      "expected": true,
+      "id": "zsh-e-flag-evaluates-value",
+      "input": "x=y; echo ${(e)x}"
+    },
+    {
+      "expected": true,
+      "id": "bash-prompt-operator-evaluates-value",
+      "input": "echo ${x@P}"
+    },
+    {
+      "expected": true,
+      "id": "zsh-tilde-globs-value",
+      "input": "echo ${~x}"
+    },
+    {
+      "expected": true,
+      "id": "zsh-globsubst-option",
+      "input": "setopt glob_subst; echo $x"
+    },
+    {
+      "expected": true,
+      "id": "assignment-stores-substitution-text",
+      "input": "x='a[$(echo x)0]'; echo $((x))"
+    },
+    {
+      "expected": true,
+      "id": "assignment-stores-escaped-substitution",
+      "input": "x=\"\\$(echo x)\""
+    },
+    {
+      "expected": false,
+      "id": "assignment-with-live-substitution-is-safe",
+      "input": "x=\"$(git rev-parse HEAD)\""
+    },
+    {
+      "expected": false,
+      "id": "assignment-with-quoted-backticks-inside-substitution",
+      "input": "n=$(grep -c '^```' f)"
+    },
+    {
+      "expected": true,
+      "id": "prompt-string-assignment",
+      "input": "PS4='+ '; set -x"
+    },
+    {
+      "expected": true,
+      "id": "path-assignment",
+      "input": "PATH=/tmp; ruff check ."
+    },
+    {
+      "expected": true,
+      "id": "zsh-path-array-assignment",
+      "input": "path=(/tmp $path); ruff check ."
+    },
+    {
+      "expected": true,
+      "id": "bash-env-prefix-assignment",
+      "input": "BASH_ENV=/tmp/x bash -c 'echo ok'"
+    },
+    {
+      "expected": true,
+      "id": "zdotdir-prefix-assignment",
+      "input": "ZDOTDIR=/tmp zsh -c 'echo ok'"
+    },
+    {
+      "expected": true,
+      "id": "path-assignment-through-expansion",
+      "input": ": ${PATH:=/tmp}"
+    },
+    {
+      "expected": true,
+      "id": "read-into-path-glued-redirection",
+      "input": "read -r PATH</tmp/input"
+    },
+    {
+      "expected": true,
+      "id": "for-loop-assigns-path",
+      "input": "for path in /tmp; do echo; done"
+    },
+    {
+      "expected": false,
+      "id": "path-read-is-safe",
+      "input": "echo \"$PATH\""
+    },
+    {
+      "expected": false,
+      "id": "bare-path-argument-is-safe",
+      "input": "tool --match path"
+    },
+    {
+      "expected": true,
+      "id": "function-named-like-command",
+      "input": "ruff () { echo replaced; }"
+    },
+    {
+      "expected": true,
+      "id": "zsh-multi-name-function",
+      "input": "ruff check () { echo replaced; }"
+    },
+    {
+      "expected": true,
+      "id": "function-keyword-without-underscore",
+      "input": "function cleanup { echo; }"
+    },
+    {
+      "expected": false,
+      "id": "underscore-helper-function-is-safe",
+      "input": "preflight_ok() { echo ok; }"
+    },
+    {
+      "expected": false,
+      "id": "quoted-parens-are-not-a-function",
+      "input": "printf \"%s() missing\" x"
+    },
+    {
+      "expected": true,
+      "id": "dot-sources-file",
+      "input": ". ./state"
+    },
+    {
+      "expected": true,
+      "id": "source-reads-file",
+      "input": "source ./state"
+    },
+    {
+      "expected": true,
+      "id": "command-runs-dot",
+      "input": "command . ./state"
+    },
+    {
+      "expected": false,
+      "id": "find-dot-is-a-directory",
+      "input": "find . -name x"
+    },
+    {
+      "expected": false,
+      "id": "quoted-heredoc-body-is-data",
+      "input": "python - <<'PY'\nx = f.strip()\nPY"
+    },
+    {
+      "expected": true,
+      "id": "wrapper-carries-read-into-path",
+      "input": "command read PATH; ruff check ."
+    },
+    {
+      "expected": true,
+      "id": "precommand-carries-read-into-path",
+      "input": "noglob read PATH"
+    },
+    {
+      "expected": true,
+      "id": "time-carries-read-into-path",
+      "input": "time read PATH"
+    },
+    {
+      "expected": true,
+      "id": "default-operand-stores-substitution",
+      "input": "x=${y:-'$(echo x)'}"
+    },
+    {
+      "expected": false,
+      "id": "default-operand-live-substitution-is-safe",
+      "input": "x=${y:-$(git rev-parse HEAD)}"
+    },
+    {
+      "expected": true,
+      "id": "glob-qualifier-word-delimiter",
+      "input": "echo *(e_id_)"
+    },
+    {
+      "expected": true,
+      "id": "glob-qualifier-letter-delimiter",
+      "input": "echo *(eXidX)"
+    },
+    {
+      "expected": true,
+      "id": "glob-qualifier-non-ascii-delimiter",
+      "input": "echo *(e\u00e9id\u00e9)"
+    },
+    {
+      "expected": true,
+      "id": "glob-qualifier-eval-sort-key",
+      "input": "echo *(oe:x:)"
+    },
+    {
+      "expected": true,
+      "id": "heredoc-delimiter-with-trailing-text",
+      "input": "cat <<EOF.\nEOF\nPATH=/tmp\nEOF."
+    },
+    {
+      "expected": true,
+      "id": "unterminated-heredoc-from-arithmetic-shift",
+      "input": "echo $((a<<b))\nPATH=/tmp"
+    },
+    {
+      "expected": true,
+      "id": "zstyle-writes-named-variable",
+      "input": "zstyle -s ctx st PATH"
+    },
+    {
+      "expected": true,
+      "id": "zformat-writes-named-variable",
+      "input": "zformat -f PATH x"
+    },
+    {
+      "expected": true,
+      "id": "arithmetic-assigns-path",
+      "input": "(( PATH = 0 ))"
+    },
+    {
+      "expected": true,
+      "id": "arithmetic-expansion-assigns-path",
+      "input": "echo $((PATH=0))"
+    },
+    {
+      "expected": true,
+      "id": "let-assigns-path",
+      "input": "let 'PATH = 0'"
+    },
+    {
+      "expected": true,
+      "id": "arithmetic-increments-path",
+      "input": "(( PATH++ ))"
+    },
+    {
+      "expected": false,
+      "id": "arithmetic-on-ordinary-variable-is-safe",
+      "input": "n=$(( n + 1 ))"
+    },
+    {
+      "expected": true,
+      "id": "raw-write-token-path-option-is-safe",
+      "input": "tool --path p --paths-only"
+    },
+    {
+      "expected": false,
+      "id": "path-assignment-text-in-message-is-safe",
+      "input": "printf \"export PATH=x\\n\""
+    },
+    {
+      "expected": false,
+      "id": "plain-heredoc-delimiter-is-safe",
+      "input": "cat <<EOF\nbody\nEOF"
+    },
+    {
+      "expected": false,
+      "id": "tab-stripped-heredoc-is-safe",
+      "input": "cat <<-EOF\n\tbody\n\tEOF"
+    },
+    {
+      "expected": false,
+      "id": "here-string-is-not-a-heredoc",
+      "input": "grep <<< \"word\""
+    },
+    {
+      "expected": true,
+      "id": "quoted-heredoc-delimiter-with-trailing-text",
+      "input": "cat <<'EOF'x\nEOF\nPATH=/tmp\nEOF"
+    },
+    {
+      "expected": true,
+      "id": "escaped-default-operand-stores-code",
+      "input": "x=${a:-a[\\$\\(id\\)0]}; echo $((x))"
+    },
+    {
+      "expected": true,
+      "id": "second-glob-qualifier-group",
+      "input": "ls *(N)(e:id:)"
+    },
+    {
+      "expected": true,
+      "id": "second-glob-qualifier-group-plus-function",
+      "input": "ls *(N)(+fn)"
+    },
+    {
+      "expected": true,
+      "id": "any-attached-paren-group",
+      "input": "ls x(a|b)"
+    },
+    {
+      "expected": true,
+      "id": "escaped-heredoc-delimiter",
+      "input": "cat << \\EOF\n<<X\nEOF\nPATH=/tmp\nX"
+    },
+    {
+      "expected": true,
+      "id": "ansi-c-heredoc-delimiter",
+      "input": "cat <<$'EOF'\nx\nEOF"
+    },
+    {
+      "expected": true,
+      "id": "partly-quoted-heredoc-delimiter",
+      "input": "cat <<E\"OF\"\nx\nEOF"
+    },
+    {
+      "expected": true,
+      "id": "arithmetic-shift-hides-heredoc",
+      "input": "echo $((1<<EOF))\nread PATH\nEOF"
+    },
+    {
+      "expected": true,
+      "id": "arithmetic-shift-is-refused",
+      "input": "echo $((n << amount))"
+    },
+    {
+      "expected": true,
+      "id": "arithmetic-assignment-across-newline",
+      "input": "echo $((PATH\n=0))"
+    },
+    {
+      "expected": true,
+      "id": "integer-attribute-makes-assignment-arithmetic",
+      "input": "typeset -i x=PATH=1"
+    },
+    {
+      "expected": true,
+      "id": "zsh-integer-command",
+      "input": "integer x=PATH=1"
+    },
+    {
+      "expected": true,
+      "id": "arithmetic-substring-offset",
+      "input": "echo ${x:PATH=1}"
+    },
+    {
+      "expected": true,
+      "id": "arithmetic-expansion-subscript",
+      "input": "echo ${a[PATH=1]}"
+    },
+    {
+      "expected": true,
+      "id": "arithmetic-assignment-subscript",
+      "input": "a[PATH=1]=0"
+    },
+    {
+      "expected": true,
+      "id": "arithmetic-read-target-subscript",
+      "input": "read -r 'a[PATH=1]'"
+    },
+    {
+      "expected": true,
+      "id": "zsh-arithmetic-dollar-subscript",
+      "input": "echo $a[PATH=1]"
+    },
+    {
+      "expected": true,
+      "id": "arithmetic-command",
+      "input": "(( n + 1 ))"
+    },
+    {
+      "expected": true,
+      "id": "brace-command-substitution",
+      "input": "echo ${ hash -p /tmp/x git; }"
+    },
+    {
+      "expected": true,
+      "id": "brace-command-substitution-assigns",
+      "input": "x=${ PATH=/tmp; }"
+    },
+    {
+      "expected": true,
+      "id": "brace-value-substitution",
+      "input": "echo ${| hash -p /tmp/x git; }"
+    },
+    {
+      "expected": true,
+      "id": "glob-subst-quoted-spelling",
+      "input": "setopt glob_s\"\"ubst"
+    },
+    {
+      "expected": true,
+      "id": "glob-subst-expanded-spelling",
+      "input": "setopt glob_su${x}bst"
+    },
+    {
+      "expected": true,
+      "id": "glob-subst-long-shell-option",
+      "input": "zsh --globsubst -c 'echo $x'"
+    },
+    {
+      "expected": true,
+      "id": "glob-subst-set-option",
+      "input": "set -o globsubst"
+    },
+    {
+      "expected": true,
+      "id": "zsh-options-array",
+      "input": "options[globsubst]=on"
+    },
+    {
+      "expected": true,
+      "id": "zsh-glob-flag-expansion",
+      "input": "echo $~x"
+    },
+    {
+      "expected": true,
+      "id": "ifs-read-target",
+      "input": "read IFS"
+    },
+    {
+      "expected": true,
+      "id": "ifs-export",
+      "input": "export IFS=,"
+    },
+    {
+      "expected": true,
+      "id": "ifs-prefix-of-other-command",
+      "input": "IFS=, ls"
+    },
+    {
+      "expected": true,
+      "id": "ifs-standalone-assignment",
+      "input": "IFS=,"
+    },
+    {
+      "expected": true,
+      "id": "comment-holding-heredoc",
+      "input": "echo hi # <<EOF"
+    },
+    {
+      "expected": false,
+      "id": "raw-write-token-quoted-arithmetic-text-is-safe",
+      "input": "printf '%s' 'PATH = 0'"
+    },
+    {
+      "expected": true,
+      "id": "raw-write-token-here-string-text-is-safe",
+      "input": "cat <<< 'PATH++'"
+    },
+    {
+      "expected": false,
+      "id": "double-quoted-message-is-safe",
+      "input": "echo \"set path = 0\""
+    },
+    {
+      "expected": false,
+      "id": "raw-write-token-quoted-python-heredoc-is-safe",
+      "input": "python - <<'PY'\npath = Path('x')\nPY"
+    },
+    {
+      "expected": false,
+      "id": "assigner-word-as-argument-is-safe",
+      "input": "echo read path"
+    },
+    {
+      "expected": false,
+      "id": "printf-argument-named-read-is-safe",
+      "input": "printf '%s\\n' read path"
+    },
+    {
+      "expected": false,
+      "id": "non-ascii-option-text-is-safe",
+      "input": "echo GLOB_\u017fUBST"
+    },
+    {
+      "expected": false,
+      "id": "heredoc-body-arithmetic-is-safe",
+      "input": "cat <<EOF\n$(( n + 1 ))\nEOF"
+    },
+    {
+      "expected": false,
+      "id": "quoted-heredoc-command-text-is-data",
+      "input": "cat <<'EOF'\nrm -rf x\nEOF"
+    },
+    {
+      "expected": false,
+      "id": "ifs-prefix-of-read-is-safe",
+      "input": "IFS='=' read -r k v < f"
+    },
+    {
+      "expected": false,
+      "id": "substitution-inside-arithmetic-is-safe",
+      "input": "n=$(( $(wc -l < \"$f\") + 1 ))"
+    },
+    {
+      "expected": false,
+      "id": "conditional-arithmetic-is-safe",
+      "input": "x=$(( COUNT < 5 ? COUNT : 5 ))"
+    },
+    {
+      "expected": false,
+      "id": "safe-shell-options-are-safe",
+      "input": "set -euo pipefail; unsetopt nomatch"
+    },
+    {
+      "expected": false,
+      "id": "parameter-operators-are-safe",
+      "input": "b=${f##*/}; s=${x:0:8}; n=${#arr[@]}; d=${p%/*}"
+    },
+    {
+      "expected": false,
+      "id": "helper-function-definition-is-safe",
+      "input": "_q() { echo hi; }"
+    },
+    {
+      "expected": true,
+      "id": "heredoc-body-substitution-spans-lines",
+      "input": "cat <<EOF\n$(\nhash -p /tmp/x git\n)\nEOF"
+    },
+    {
+      "expected": true,
+      "id": "heredoc-body-backticks-span-lines",
+      "input": "cat <<EOF\n`\nread PATH\n`\nEOF"
+    },
+    {
+      "expected": true,
+      "id": "ansi-c-default-operand-stores-code",
+      "input": "x=${a:-$'a[\\x24\\x28id\\x29]'}; echo $((x))"
+    },
+    {
+      "expected": true,
+      "id": "ansi-c-octal-default-operand-stores-code",
+      "input": "x=${a:-$'a[\\140id\\140]'}; echo $((x))"
+    },
+    {
+      "expected": true,
+      "id": "arithmetic-default-operand-assigns",
+      "input": "echo $(( ${x:-PATH=1} ))"
+    },
+    {
+      "expected": true,
+      "id": "arithmetic-default-operand-increments",
+      "input": "echo $(( ${x:-++n} ))"
+    },
+    {
+      "expected": true,
+      "id": "arithmetic-default-operand-subscript",
+      "input": "echo $(( ${x:-a[PATH=1]} ))"
+    },
+    {
+      "expected": true,
+      "id": "carriage-return-is-no-word-break",
+      "input": "ls *\r(e:id:)"
+    },
+    {
+      "expected": true,
+      "id": "vertical-tab-is-no-word-break",
+      "input": "ls *\u000b(e:id:)"
+    },
+    {
+      "expected": true,
+      "id": "form-feed-is-no-word-break",
+      "input": "ls *\f(e:id:)"
+    },
+    {
+      "expected": true,
+      "id": "exec-name-option-hides-shell",
+      "input": "exec -a dummy zsh -o globsubst -c 'echo hi'"
+    },
+    {
+      "expected": true,
+      "id": "unknown-runner-option",
+      "input": "command -x read PATH"
+    },
+    {
+      "expected": true,
+      "id": "shopt-flag-cluster-holds-option",
+      "input": "shopt -sextglob"
+    },
+    {
+      "expected": true,
+      "id": "quoted-option-name",
+      "input": "setopt \"nomatch\""
+    },
+    {
+      "expected": true,
+      "id": "zsh-subscript-reads-lookup-variable",
+      "input": "echo \"$x[PATH]\""
+    },
+    {
+      "expected": true,
+      "id": "multi-name-zsh-loop-over-path",
+      "input": "for a path in x; do :; done"
+    },
+    {
+      "expected": true,
+      "id": "quoted-assignment-operand-of-env",
+      "input": "env 'PATH=/tmp/x' git status"
+    },
+    {
+      "expected": true,
+      "id": "quoted-brace-in-parameter-operand",
+      "input": "echo ${x:-'a}b'}"
+    },
+    {
+      "expected": false,
+      "id": "quoted-assignment-text-to-echo-is-safe",
+      "input": "echo 'PATH=/tmp'"
+    },
+    {
+      "expected": false,
+      "id": "assignment-text-to-grep-is-safe",
+      "input": "grep \"options=foo\" f"
+    },
+    {
+      "expected": false,
+      "id": "loop-keyword-as-argument-is-safe",
+      "input": "echo for path in a"
+    },
+    {
+      "expected": false,
+      "id": "indexed-parameter-length-is-safe",
+      "input": "echo ${#x[0]}"
+    },
+    {
+      "expected": false,
+      "id": "special-parameter-length-is-safe",
+      "input": "echo ${#?}"
+    },
+    {
+      "expected": false,
+      "id": "numeric-zsh-subscript-is-safe",
+      "input": "echo $x[1]"
+    },
+    {
+      "expected": false,
+      "id": "numeric-default-in-arithmetic-is-safe",
+      "input": "echo $((TDD_CYCLE + ${BATCH_SIZE:-1}))"
+    },
+    {
+      "expected": false,
+      "id": "query-runner-option-is-safe",
+      "input": "command -v node >/dev/null"
+    },
+    {
+      "expected": false,
+      "id": "heredoc-body-substitution-across-lines-is-judged",
+      "input": "cat <<EOF\n$(\ndate\n)\nEOF"
+    },
+    {
+      "expected": true,
+      "id": "comment-in-heredoc-substitution-hides-close",
+      "input": "cat <<EOF\n$(: # )\nrm -rf /tmp/x)\nEOF"
+    },
+    {
+      "expected": true,
+      "id": "comment-in-substitution-hides-close",
+      "input": "echo $(echo x # )\nPATH=/x)"
+    },
+    {
+      "expected": true,
+      "id": "shell-option-after-long-option",
+      "input": "zsh --norc -o globsubst -c 'echo hi'"
+    },
+    {
+      "expected": true,
+      "id": "shell-option-after-script-flag",
+      "input": "bash -c -O extglob x"
+    },
+    {
+      "expected": true,
+      "id": "shell-option-after-script-flag-cluster",
+      "input": "zsh -ce -o globsubst x"
+    },
+    {
+      "expected": true,
+      "id": "wrapped-shell-option",
+      "input": "env zsh -o globsubst -c 'echo hi'"
+    },
+    {
+      "expected": true,
+      "id": "timeout-wrapped-shell-option",
+      "input": "timeout 5 zsh -o globsubst -c x"
+    },
+    {
+      "expected": true,
+      "id": "array-word-as-argument-is-glob-qualifier",
+      "input": "echo NAME=(e:id:)"
+    },
+    {
+      "expected": false,
+      "id": "comment-ending-in-substitution-is-safe",
+      "input": "x=$(date # stamp\n)"
+    },
+    {
+      "expected": false,
+      "id": "options-after-script-are-arguments",
+      "input": "bash -c 'echo hi' -O extglob"
+    },
+    {
+      "expected": false,
+      "id": "declared-array-is-safe",
+      "input": "local -a arr=(1 2)"
+    },
+    {
+      "expected": false,
+      "id": "array-in-case-arm-is-safe",
+      "input": "case \"$R\" in \"uv run\") A=(uv run);; *) A=(python);; esac"
+    },
+    {
+      "expected": true,
+      "id": "quoted-assignment-word-is-command-word",
+      "input": "'X=1' a=(e:id:)"
+    },
+    {
+      "expected": true,
+      "id": "escaped-assignment-word-is-command-word",
+      "input": "X\\=1 a=(e:id:)"
+    },
+    {
+      "expected": true,
+      "id": "nested-case-arm-reads-path",
+      "input": "case x in x) case y in y) read PATH;; esac;; esac"
+    },
+    {
+      "expected": true,
+      "id": "attached-shell-option-name",
+      "input": "zsh -oglobsubst pipefail -c x"
+    },
+    {
+      "expected": true,
+      "id": "wrapped-attached-shell-option-name",
+      "input": "env zsh -oglobsubst pipefail -c x"
+    },
+    {
+      "expected": false,
+      "id": "attached-safe-shell-option-is-safe",
+      "input": "zsh -onomatch -c 'echo hi'"
+    },
+    {
+      "expected": false,
+      "id": "declared-name-and-array-is-safe",
+      "input": "local a b=(x)"
+    },
+    {
+      "expected": true,
+      "id": "nested-case-arm-runs-command",
+      "input": "case x in x) case y in y) rm -rf /tmp/x;; esac;; esac"
+    },
+    {
+      "expected": true,
+      "id": "quoted-set-option-flag",
+      "input": "set '-o' globsubst"
+    },
+    {
+      "expected": true,
+      "id": "escaped-set-option-flag",
+      "input": "set \\-o globsubst"
+    },
+    {
+      "expected": true,
+      "id": "quoted-attached-shell-option",
+      "input": "zsh '-oglobsubst' -c x"
+    },
+    {
+      "expected": true,
+      "id": "wrapped-quoted-shell-option-flag",
+      "input": "nice zsh '-o' globsubst -c x"
+    },
+    {
+      "expected": true,
+      "id": "expanded-shell-option-word",
+      "input": "F=-o; zsh \"$F\" globsubst -c x"
+    },
+    {
+      "expected": false,
+      "id": "shell-script-after-end-of-options-is-safe",
+      "input": "bash -- \"$D/run.sh\""
+    },
+    {
+      "expected": true,
+      "id": "variable-in-shell-option-position",
+      "input": "bash -c \"$METRIC_CMD\""
+    },
+    {
+      "expected": true,
+      "id": "paren-glob-qualifier-estimate",
+      "input": "echo (*)(e:id:)"
+    },
+    {
+      "expected": true,
+      "id": "paren-glob-qualifier-cmd",
+      "input": "echo (*)(e:'rm -rf /tmp/x':)"
+    },
+    {
+      "expected": true,
+      "id": "paren-glob-qualifier-alt",
+      "input": "echo (f1|f2)(e:id:)"
+    },
+    {
+      "expected": true,
+      "id": "paren-glob-qualifier-plus",
+      "input": "ls (a)(+fn)"
+    },
+    {
+      "expected": true,
+      "id": "paren-word-start-bare",
+      "input": "echo (e:'rm -rf /tmp/x':)"
+    },
+    {
+      "expected": true,
+      "id": "paren-word-start-after-arg",
+      "input": "echo x (e:id:)"
+    },
+    {
+      "expected": true,
+      "id": "paren-glob-qualifier-N",
+      "input": "echo *(N)(e:id:)"
+    },
+    {
+      "expected": true,
+      "id": "paren-glob-after-redirect",
+      "input": "echo >out (e:id:)"
+    },
+    {
+      "expected": true,
+      "id": "paren-comment-after-paren",
+      "input": "echo (#a|b); rm -rf /tmp/x"
+    },
+    {
+      "expected": true,
+      "id": "paren-comment-after-pipe",
+      "input": "echo (a|#b); hash -p /tmp/x git"
+    },
+    {
+      "expected": true,
+      "id": "paren-comment-nomatch",
+      "input": "unsetopt nomatch; echo (#a|b); read PATH"
+    },
+    {
+      "expected": true,
+      "id": "paren-subshell-command-position",
+      "input": "(shutdown)"
+    },
+    {
+      "expected": true,
+      "id": "paren-subshell-after-sep",
+      "input": "echo a; (rm -rf x)"
+    },
+    {
+      "expected": true,
+      "id": "paren-subshell-after-andand",
+      "input": "echo a && (rm -rf x)"
+    },
+    {
+      "expected": true,
+      "id": "paren-subshell-after-if",
+      "input": "if (rm -rf x)"
+    },
+    {
+      "expected": false,
+      "id": "paren-group-safe",
+      "input": "(echo a; echo b)"
+    },
+    {
+      "expected": false,
+      "id": "paren-group-pipe-safe",
+      "input": "echo a | (cat)"
+    },
+    {
+      "expected": false,
+      "id": "paren-function-def-safe",
+      "input": "_q() { echo x; }"
+    },
+    {
+      "expected": false,
+      "id": "paren-cond-pattern-safe",
+      "input": "[[ x == (a|b) ]]"
+    },
+    {
+      "expected": true,
+      "id": "paren-cond-glob-flag-refused",
+      "input": "[[ x == (#i)X ]]"
+    },
+    {
+      "expected": false,
+      "id": "paren-case-pattern-safe",
+      "input": "case x in (a|b) echo hi;; esac"
+    },
+    {
+      "expected": true,
+      "id": "option-tilde-operand",
+      "input": "HOME=-o; set ~ globsubst"
+    },
+    {
+      "expected": true,
+      "id": "option-tilde-zsh",
+      "input": "HOME=-o; zsh ~ globsubst -c x"
+    },
+    {
+      "expected": true,
+      "id": "option-tilde-plus",
+      "input": "PWD=-o; zsh ~+ globsubst -c x"
+    },
+    {
+      "expected": true,
+      "id": "option-tilde-minus",
+      "input": "OLDPWD=-o; zsh ~- globsubst -c x"
+    },
+    {
+      "expected": true,
+      "id": "option-tilde-bash-O",
+      "input": "HOME=-O; bash ~ extglob -c x"
+    },
+    {
+      "expected": true,
+      "id": "option-tilde-via-env",
+      "input": "HOME=-o; env zsh ~ globsubst -c x"
+    },
+    {
+      "expected": true,
+      "id": "option-paren-operand",
+      "input": "set (-o) globsubst"
+    },
+    {
+      "expected": true,
+      "id": "option-paren-alt-zsh",
+      "input": "zsh (-o|x) globsubst -c x"
+    },
+    {
+      "expected": true,
+      "id": "option-equals-operand",
+      "input": "zsh =ls globsubst -c x"
+    },
+    {
+      "expected": true,
+      "id": "option-process-sub-operand",
+      "input": "zsh <(echo) globsubst -c x"
+    },
+    {
+      "expected": true,
+      "id": "option-brace-operand",
+      "input": "set {-o,x} globsubst"
+    },
+    {
+      "expected": true,
+      "id": "option-glob-operand",
+      "input": "set *.sh -o globsubst"
+    },
+    {
+      "expected": true,
+      "id": "option-dollar-operand",
+      "input": "set $F globsubst"
+    },
+    {
+      "expected": false,
+      "id": "option-script-ends-scan",
+      "input": "bash build.sh -o x"
+    },
+    {
+      "expected": false,
+      "id": "option-dotslash-script",
+      "input": "bash ./run.sh -o x"
+    },
+    {
+      "expected": false,
+      "id": "option-literal-c-string",
+      "input": "bash -c 'echo x'"
+    },
+    {
+      "expected": false,
+      "id": "option-zsh-onomatch",
+      "input": "zsh -onomatch -c 'x'"
+    },
+    {
+      "expected": false,
+      "id": "option-double-dash-ends",
+      "input": "bash -- run.sh"
+    },
+    {
+      "expected": true,
+      "id": "case-quoted-in-subject",
+      "input": "case 'x in y' in *) eval x;; esac"
+    },
+    {
+      "expected": true,
+      "id": "case-double-quoted-in",
+      "input": "case \"x in y\" in *) read PATH;; esac"
+    },
+    {
+      "expected": true,
+      "id": "case-escaped-in-subject",
+      "input": "case x\\ in\\ y in *) eval x;; esac"
+    },
+    {
+      "expected": true,
+      "id": "case-arm-function-shadow",
+      "input": "case x in x) function ruff { :; };; esac; ruff check"
+    },
+    {
+      "expected": true,
+      "id": "case-arm-function-shadow-paren",
+      "input": "case x in x) ruff () { :; };; esac; ruff check"
+    },
+    {
+      "expected": true,
+      "id": "case-arm-compound-brace",
+      "input": "case x in x) if true { set -o globsubst };; esac"
+    },
+    {
+      "expected": true,
+      "id": "case-arm-compound-eval",
+      "input": "case x in x) if true { eval x };; esac"
+    },
+    {
+      "expected": true,
+      "id": "case-arm-short-for",
+      "input": "case x in x) for i (a) eval x;; esac"
+    },
+    {
+      "expected": true,
+      "id": "case-arm-while-brace",
+      "input": "case x in x) while true { hash -p /tmp/x git };; esac"
+    },
+    {
+      "expected": true,
+      "id": "case-nested-function-shadow",
+      "input": "case x in x) case y in y) function ruff { :; };; esac;; esac; ruff check"
+    },
+    {
+      "expected": true,
+      "id": "case-arm-paren-label-rm",
+      "input": "case x in (x) rm -rf /tmp/x;; esac"
+    },
+    {
+      "expected": false,
+      "id": "case-arm-safe-array",
+      "input": "case $m in a) X=(a);; esac"
+    },
+    {
+      "expected": false,
+      "id": "case-arm-safe-rebind-after-pattern",
+      "input": "case \"$R\" in \"uv run\") R=(uv run);; esac"
+    },
+    {
+      "expected": false,
+      "id": "case-safe-grouped-each",
+      "input": "case \"$M\" in all|grouped) echo ok ;; *) echo no ;; esac"
+    },
+    {
+      "expected": false,
+      "id": "case-arm-quoted-eval-text",
+      "input": "case x in a) echo 'eval x';; esac"
+    },
+    {
+      "expected": true,
+      "id": "fd-variable-prefix-input-ifs",
+      "input": "cat {IFS}</dev/null f"
+    },
+    {
+      "expected": true,
+      "id": "fd-variable-prefix-exec-path",
+      "input": "exec {PATH}</dev/null"
+    },
+    {
+      "expected": true,
+      "id": "fd-variable-prefix-append",
+      "input": "exec {PATH}>>/tmp/log"
+    },
+    {
+      "expected": true,
+      "id": "fd-variable-prefix-dup-close",
+      "input": "exec {IFS}>&-"
+    },
+    {
+      "expected": true,
+      "id": "fd-variable-prefix-here-string",
+      "input": "cat {PATH}<<<x"
+    },
+    {
+      "expected": true,
+      "id": "fd-variable-prefix-heredoc",
+      "input": "cat {PATH}<<EOF\nx\nEOF"
+    },
+    {
+      "expected": true,
+      "id": "fd-variable-prefix-amp-redirect",
+      "input": "echo {fd}&>/dev/null"
+    },
+    {
+      "expected": true,
+      "id": "fd-variable-prefix-in-substitution",
+      "input": "echo $(exec {PATH}</dev/null)"
+    },
+    {
+      "expected": true,
+      "id": "fd-variable-prefix-before-command",
+      "input": "{fd}>/dev/null set -A n x"
+    },
+    {
+      "expected": true,
+      "id": "fd-variable-prefix-brace-list",
+      "input": "cat {a,b}<f"
+    },
+    {
+      "expected": false,
+      "id": "fd-digit-prefix-admitted",
+      "input": "echo a 9>/dev/null"
+    },
+    {
+      "expected": false,
+      "id": "fd-quoted-brace-word-before-redirect",
+      "input": "echo \"{fd}\">/dev/null"
+    },
+    {
+      "expected": false,
+      "id": "fd-expansion-before-redirect",
+      "input": "echo ${x}>/dev/null"
+    },
+    {
+      "expected": true,
+      "id": "zsh-brace-case-arm-runs",
+      "input": "case x { x) rm -rf /tmp/x ;; }"
+    },
+    {
+      "expected": true,
+      "id": "zsh-brace-case-arm-rebinds",
+      "input": "case x { x) read PATH ;; }"
+    },
+    {
+      "expected": true,
+      "id": "zsh-brace-case-safe-arms-unmodeled",
+      "input": "case x {\n  x) echo a ;;\n}"
+    },
+    {
+      "expected": true,
+      "id": "zsh-brace-case-nested",
+      "input": "case x { x) case y { y) rm -rf /tmp/x ;; } ;; }"
+    },
+    {
+      "expected": true,
+      "id": "zsh-brace-case-paren-pattern",
+      "input": "case x { (x) echo a ;; }"
+    },
+    {
+      "expected": true,
+      "id": "zsh-always-block-runs",
+      "input": "{ echo a } always { rm -rf /tmp/x }"
+    },
+    {
+      "expected": true,
+      "id": "zsh-always-after-closed-group",
+      "input": "{ echo a; } always { rm -rf /tmp/x; }"
+    },
+    {
+      "expected": true,
+      "id": "zsh-always-safe-bodies-unmodeled",
+      "input": "{ echo a } always { echo b }"
+    },
+    {
+      "expected": true,
+      "id": "zsh-always-rebinds",
+      "input": "{ echo a } always { read PATH }"
+    },
+    {
+      "expected": true,
+      "id": "zsh-always-after-subshell",
+      "input": "(echo a) always { echo b }"
+    },
+    {
+      "expected": true,
+      "id": "zsh-always-in-function-body",
+      "input": "_f() { echo a } always { rm -rf /tmp/x }"
+    },
+    {
+      "expected": true,
+      "id": "zsh-always-in-case-arm",
+      "input": "case x in x) { echo a } always { rm -rf /tmp/x } ;; esac"
+    },
+    {
+      "expected": true,
+      "id": "zsh-elif-brace-after-closing-line",
+      "input": "if true; then :; fi\n} elif true { rm -rf /tmp/x }"
+    },
+    {
+      "expected": true,
+      "id": "zsh-compound-brace-inside-subshell",
+      "input": "(if true { rm -rf /tmp/x })"
+    },
+    {
+      "expected": true,
+      "id": "zsh-close-brace-mid-command",
+      "input": "echo x } always { echo b }"
+    },
+    {
+      "expected": true,
+      "id": "brace-words-as-arguments-unmodeled",
+      "input": "echo { }"
+    },
+    {
+      "expected": false,
+      "id": "brace-group-then-and-admitted",
+      "input": "{ echo a; } && echo b"
+    },
+    {
+      "expected": false,
+      "id": "brace-group-redirect-pipe-admitted",
+      "input": "{ echo a; echo b; } 2>&1 | tee out.log"
+    },
+    {
+      "expected": false,
+      "id": "zsh-brace-group-closing-run-admitted",
+      "input": "{ echo a } >/dev/null"
+    },
+    {
+      "expected": false,
+      "id": "zsh-if-else-brace-bodies-admitted",
+      "input": "if true { echo a } else { echo b }"
+    },
+    {
+      "expected": false,
+      "id": "zsh-if-else-brace-multiline-admitted",
+      "input": "if true {\n  echo a\n} else {\n  echo b\n}"
+    },
+    {
+      "expected": false,
+      "id": "function-body-closing-brace-admitted",
+      "input": "_q() { echo \"$1\"; }"
+    },
+    {
+      "expected": false,
+      "id": "function-keyword-brace-body-admitted",
+      "input": "function _q { echo a }"
+    },
+    {
+      "expected": false,
+      "id": "find-exec-brace-pair-admitted",
+      "input": "find . -name x -exec echo {} +"
+    },
+    {
+      "expected": false,
+      "id": "quoted-brace-words-admitted",
+      "input": "echo '{' \"}\""
+    },
+    {
+      "expected": false,
+      "id": "brace-group-multiline-redirect-admitted",
+      "input": "{\n  echo a\n  echo b\n} > out.txt"
+    },
+    {
+      "expected": true,
+      "id": "zsh-unbraced-split-sigil",
+      "input": "ls $=X"
+    },
+    {
+      "expected": true,
+      "id": "zsh-unbraced-rcexpand-sigil",
+      "input": "echo a$^X"
+    },
+    {
+      "expected": true,
+      "id": "zsh-unbraced-glob-sigil-quoted",
+      "input": "ls \"$~X\""
+    },
+    {
+      "expected": true,
+      "id": "zsh-unbraced-plus-sigil",
+      "input": "echo $+X"
+    },
+    {
+      "expected": true,
+      "id": "bash-arithmetic-dollar-bracket-quoted",
+      "input": "echo \"$[1+2]\""
+    },
+    {
+      "expected": true,
+      "id": "locale-string-unquoted-refused",
+      "input": "echo $\"x\""
+    },
+    {
+      "expected": false,
+      "id": "dollar-special-parameters-admitted",
+      "input": "echo $? $# $$ $! $- $1 \"$@\" \"$*\""
+    },
+    {
+      "expected": false,
+      "id": "dollar-literal-before-blank-slash-quote",
+      "input": "echo \"cost $\" \"s/a$/b/\" \"a$'b\" x$ y"
+    },
+    {
+      "expected": false,
+      "id": "dollar-in-heredoc-body-literal-quote",
+      "input": "cat <<EOF\nprice $'x' $\"y\"\nEOF"
+    },
+    {
+      "expected": true,
+      "id": "cond-arith-comma-assigns-path",
+      "input": "[[ 1 -eq x,PATH=1 ]]"
+    },
+    {
+      "expected": true,
+      "id": "cond-arith-subscript-assigns-path",
+      "input": "[[ 1 -eq a[PATH=1] ]]"
+    },
+    {
+      "expected": true,
+      "id": "cond-arith-ternary-assigns-path",
+      "input": "[[ 1 -eq '1?PATH=1:0' ]]"
+    },
+    {
+      "expected": true,
+      "id": "cond-arith-second-operand-ifs",
+      "input": "[[ 1 -eq 1 && 2 -gt x,IFS=1 ]]"
+    },
+    {
+      "expected": true,
+      "id": "cond-arith-increment-refused",
+      "input": "[[ ( 1 -lt n++ ) ]]"
+    },
+    {
+      "expected": true,
+      "id": "cond-arith-quoted-substitution-runs",
+      "input": "[[ 1 -eq 'a[$(rm -rf /tmp/x)]' ]]"
+    },
+    {
+      "expected": true,
+      "id": "cond-arith-v-subscript-assigns",
+      "input": "[[ -v 'a[PATH=1]' ]]"
+    },
+    {
+      "expected": false,
+      "id": "cond-arith-plain-var-admitted",
+      "input": "[[ $n -gt 0 ]]"
+    },
+    {
+      "expected": false,
+      "id": "cond-arith-default-operand-admitted",
+      "input": "[[ \"${count:-0}\" -ge 5 ]]"
+    },
+    {
+      "expected": false,
+      "id": "cond-arith-special-params-admitted",
+      "input": "[[ \"$#\" -gt 0 && $? -eq 0 ]]"
+    },
+    {
+      "expected": false,
+      "id": "cond-arith-substitution-operand-admitted",
+      "input": "[[ $(wc -l < f) -gt 1 ]]"
+    },
+    {
+      "expected": false,
+      "id": "cond-arith-v-plain-name-admitted",
+      "input": "[[ -v arr[2] ]]"
+    },
+    {
+      "expected": true,
+      "id": "printf-numeric-comma-assigns-path",
+      "input": "printf %d x,PATH=1"
+    },
+    {
+      "expected": true,
+      "id": "printf-numeric-quoted-arg-assigns",
+      "input": "printf '%d\\n' 'n,PATH=1'"
+    },
+    {
+      "expected": true,
+      "id": "printf-numeric-second-slot-assigns",
+      "input": "printf '%s %d' a 'n,PATH=1'"
+    },
+    {
+      "expected": true,
+      "id": "printf-star-width-assigns",
+      "input": "printf '%*s' 'n,PATH=1' a"
+    },
+    {
+      "expected": true,
+      "id": "printf-percent-n-names-path",
+      "input": "printf %n PATH"
+    },
+    {
+      "expected": true,
+      "id": "printf-percent-n-names-ifs",
+      "input": "printf 'ab%n' IFS"
+    },
+    {
+      "expected": true,
+      "id": "printf-numeric-quoted-substitution-runs",
+      "input": "printf %d 'a[$(rm -rf /tmp/x)]'"
+    },
+    {
+      "expected": true,
+      "id": "print-f-numeric-assigns-path",
+      "input": "print -f %d n,PATH=1"
+    },
+    {
+      "expected": false,
+      "id": "raw-write-token-printf-string-slot-admits-assignment-text",
+      "input": "printf '%s' 'PATH=x,y'"
+    },
+    {
+      "expected": true,
+      "id": "printf-numeric-var-arg-admitted",
+      "input": "printf '%d bin\\n' \"$_C32E_N\""
+    },
+    {
+      "expected": true,
+      "id": "printf-numeric-special-param-admitted",
+      "input": "printf '(exit %d)\\n' \"$?\""
+    },
+    {
+      "expected": true,
+      "id": "raw-write-token-printf-runtime-format-residual",
+      "input": "printf \"x$F\" 'n,PATH=1'"
+    },
+    {
+      "expected": true,
+      "id": "count-exit-comma-assigns-path",
+      "input": "exit x,PATH=1"
+    },
+    {
+      "expected": true,
+      "id": "count-shift-assigns-path",
+      "input": "shift 'x,PATH=1'"
+    },
+    {
+      "expected": true,
+      "id": "count-return-assigns-path",
+      "input": "return 'x,PATH=1'"
+    },
+    {
+      "expected": true,
+      "id": "count-break-assigns-path",
+      "input": "break x,PATH=1"
+    },
+    {
+      "expected": true,
+      "id": "count-continue-assigns-path",
+      "input": "continue x,PATH=1"
+    },
+    {
+      "expected": true,
+      "id": "count-repeat-assigns-path",
+      "input": "repeat 1,PATH=1 echo hi"
+    },
+    {
+      "expected": true,
+      "id": "count-shift-names-lookup",
+      "input": "shift path"
+    },
+    {
+      "expected": false,
+      "id": "count-exit-number-admitted",
+      "input": "exit 1"
+    },
+    {
+      "expected": false,
+      "id": "count-exit-special-param-admitted",
+      "input": "exit $?"
+    },
+    {
+      "expected": false,
+      "id": "count-exit-var-admitted",
+      "input": "exit \"$GUARD_EXIT\""
+    },
+    {
+      "expected": false,
+      "id": "count-shift-bare-admitted",
+      "input": "shift"
+    },
+    {
+      "expected": false,
+      "id": "count-break-number-admitted",
+      "input": "break 2"
+    },
+    {
+      "expected": true,
+      "id": "read-t-arith-assigns-path",
+      "input": "read -t 1,PATH=1 x < f"
+    },
+    {
+      "expected": false,
+      "id": "read-r-admitted",
+      "input": "read -r X < f"
+    },
+    {
+      "expected": true,
+      "id": "integer-param-leading-assigns-path",
+      "input": "SHLVL=1,PATH=1 ls"
+    },
+    {
+      "expected": true,
+      "id": "integer-param-export-assigns-path",
+      "input": "export SECONDS='1,PATH=1'"
+    },
+    {
+      "expected": false,
+      "id": "integer-param-plain-number-admitted",
+      "input": "SECONDS=0 ls"
+    },
+    {
+      "expected": true,
+      "id": "array-key-literal-assigns-path",
+      "input": "a=([PATH=1]=x)"
+    },
+    {
+      "expected": true,
+      "id": "array-key-comma-assigns-path",
+      "input": "a=([1,PATH=1]=x)"
+    },
+    {
+      "expected": false,
+      "id": "array-key-digit-admitted",
+      "input": "a=([3]=x)"
+    },
+    {
+      "expected": false,
+      "id": "cond-test-builtin-admitted",
+      "input": "test 1 -eq 2"
+    },
+    {
+      "expected": false,
+      "id": "cond-bracket-builtin-admitted",
+      "input": "[ \"$x\" -eq 0 ]"
+    },
+    {
+      "expected": true,
+      "id": "integer-param-quoted-name-assigns-path",
+      "input": "export \"SECONDS\"=1,PATH=1"
+    }
+  ],
+  "literal_builtin_operands": [
+    {
+      "expected": false,
+      "id": "print-clustered-text-flags",
+      "input": "print -nr -f '%s' x"
+    },
+    {
+      "expected": false,
+      "id": "print-attached-format-flags",
+      "input": "print -f%s -nr x"
+    },
+    {
+      "expected": false,
+      "id": "print-text-after-double-dash",
+      "input": "print -nr -- text"
+    },
+    {
+      "expected": false,
+      "id": "shift-default",
+      "input": "shift"
+    },
+    {
+      "expected": false,
+      "id": "shift-literal-count",
+      "input": "shift '1'"
+    },
+    {
+      "expected": false,
+      "id": "getopts-literal-target",
+      "input": "getopts ab SAFE -a"
+    },
+    {
+      "expected": false,
+      "id": "unset-literal-target",
+      "input": "unset -- 'SAFE'"
+    },
+    {
+      "expected": false,
+      "id": "declare-literal-assignment",
+      "input": "declare SAFE=\"$value\""
+    },
+    {
+      "expected": false,
+      "id": "read-literal-delimiter",
+      "input": "read -r -d '' SAFE"
+    }
+  ],
+  "literal_data_pairs": [
+    {
+      "id": "print-raw-format-clusters",
+      "inert": [
+        "print -rf '%s' ok",
+        "print -nrf '%s' ok",
+        "print -rnf '%s' ok",
+        "print -rf%s ok"
+      ],
+      "live": [
+        "print -rf '%n' PATH",
+        "print -vf '%s' PATH",
+        "print -uf '%s' x",
+        "print -sf '%s' x",
+        "print -zf '%s' x",
+        "print -Pf '%s' x"
+      ]
+    },
+    {
+      "id": "printf-double-dash-literal-format",
+      "inert": [
+        "printf -- '-%s' x"
+      ],
+      "live": [
+        "printf -- '-%n' PATH",
+        "printf -- '-%n' x",
+        "printf -- '-%d' x",
+        "printf -- '-%b' x",
+        "printf -- '-%s%n' x",
+        "printf -- '-%' x",
+        "printf -v PATH '%s' x"
+      ]
+    },
+    {
+      "id": "print-double-dash-operands",
+      "inert": [
+        "print -f '%s' -- -x"
+      ],
+      "live": [
+        "print -f '%n' PATH -- -x",
+        "print -f '%s' -- -x; read PATH"
+      ]
+    },
+    {
+      "id": "assignment-values-retain-lookup-write-refusal",
+      "inert": [],
+      "live": [
+        "x='PATH=1'",
+        "x=\"PATH=1\"",
+        "x=PATH=1",
+        "x='PATH=1'; [[ x -eq 0 ]]",
+        "x='PATH=1'; (( x ))",
+        "x='PATH=1'; eval \"$x\"",
+        "x='PATH=1'; declare \"$x\"",
+        "x='PATH=1'; export \"$x\"",
+        "x='a[PATH=1]'; [[ -v $x ]]",
+        "PATH=1",
+        "IFS=1",
+        "x=\"${PATH:=1}\""
+      ]
+    },
+    {
+      "id": "read-delimiter-is-data",
+      "inert": [
+        "read -d 'PATH=1' line",
+        "read -d \"PATH=1\" line"
+      ],
+      "live": [
+        "read -d 'PATH=1' PATH",
+        "read -d x PATH",
+        "read -d 'PATH=1' line; eval \"$line\""
+      ]
+    },
+    {
+      "id": "env-preserves-printf-operands",
+      "inert": [
+        "env printf '%s' 'PATH=1'",
+        "env SAFE=1 printf '%s' 'PATH=1'"
+      ],
+      "live": [
+        "env PATH=1 printf '%s' x",
+        "env IFS=1 printf '%s' x"
+      ]
+    },
+    {
+      "id": "printf-literal-brackets-are-data",
+      "inert": [
+        "printf '%s' \"a[PATH=1]\""
+      ],
+      "live": [
+        "printf '%s' \"$((PATH=1))\"",
+        "printf '%s' \"${a[PATH=1]}\"",
+        "eval \"$(printf '%s' \"a[PATH=1]\")\"",
+        "x=$(printf '%s' \"a[PATH=1]\"); declare \"$x\"",
+        "[[ -v $(printf '%s' \"a[PATH=1]\") ]]"
+      ]
+    },
+    {
+      "id": "single-quoted-zsh-flags-are-data",
+      "inert": [
+        "echo '${(e)x}'"
+      ],
+      "live": [
+        "echo ${(e)x}",
+        "echo \"${(e)x}\"",
+        "echo $'${(e)x}'",
+        "eval \"$(echo '${(e)x}')\""
+      ]
+    },
+    {
+      "id": "single-quoted-command-table-is-data",
+      "inert": [
+        "echo 'BASH_CMDS=x'",
+        "cat <<'EOF'\nBASH_CMDS[x]=/tmp\nEOF",
+        "tee <<'EOF'\nBASH_CMDS[x]=/tmp\nEOF"
+      ],
+      "live": [
+        "BASH_CMDS[x]=/tmp",
+        "declare -A BASH_CMDS",
+        "echo BASH_CMDS=x",
+        "export \"$(echo 'BASH_CMDS=x')\""
+      ]
+    },
+    {
+      "id": "printf-read-text-is-data",
+      "inert": [
+        "printf '%s' 'read PATH'"
+      ],
+      "live": [
+        "read PATH",
+        "printf -v PATH '%s' 'read PATH'",
+        "eval \"$(printf '%s' 'read PATH')\""
+      ]
+    },
+    {
+      "id": "single-quoted-default-write-is-data",
+      "inert": [
+        "printf '%s' '${PATH:=x}'",
+        "echo '${PATH:=x}'"
+      ],
+      "live": [
+        "echo ${PATH:=x}",
+        "echo \"${PATH:=x}\"",
+        "printf '%s' \"${PATH:=x}\"",
+        "x=$(printf '%s' '${PATH:=x}'); eval \"$x\""
+      ]
     }
   ],
   "needs_bailout": [

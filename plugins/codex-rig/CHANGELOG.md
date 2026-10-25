@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.38.0
+
+- Review loops identify findings by violated invariant across all prior rounds, including renamed or reopened findings. A repeated invariant requires root-cause evidence and stops at the third occurrence, even when a new bypass uses a different route. Multiple actions sharing an invariant count once per round, and progress tables use the same identity to distinguish old findings.
+- `loop-actions.json` schema 3 requires invariant evidence on every action, and action invariants must match their ledger findings after whitespace and case normalization. This prevents untracked or inconsistent recurrence. A non-integer or unhashable `schema_version` in an actions file now reports `actions-schema-version-invalid` instead of raising. `challenge-resolve` results require `action_contract_version: 3`; schema-1 and schema-2 archives retain their original recurrence rules.
+- Filter reviews require grammar coverage across every reader each round, with a separate saved coverage table citing every grammar subsection and code evidence for refused constructs. Unmodeled constructs become findings, probes alone cannot establish a clean result, and the saved evidence supports parent verification. A later bypass of a previously refused construct reopens its invariant, preventing false clean-review claims.
+- Repeated filter failures require defaults that reject unmodeled input; handwritten refusal lists remain findings. Tightened filters must preserve required ordinary inputs, and newly rejecting an ordinary input requires user acceptance.
+- Review loops initialize their ledger before the first round on every runtime, preserving complete review history. Claude review loops use the newest installed checker while skipping orphaned versions, applying the shared recurrence rules.
+
 ## 0.37.7
 
 - The shared loop rule lists a reviewer reply truncated in transit (its envelope or `## Confidence` closing block missing) as an agent failure, so a cut-off reply is no longer scored as a complete round with fewer findings. Where the host can continue that reviewer, the parent asks it for only the remainder, in replies short enough to pass the transport, until the closing block arrives; a reply that adds nothing new records the failure.

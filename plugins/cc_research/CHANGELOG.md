@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.31.0
+
+- Blueprint manifest re-checks reject unsupported shell forms and command overrides. Stale or tampered entries cannot regain auto-approval through the following forms:
+  - Parameter expansions beyond supported reads.
+  - Arithmetic beyond read-only `$((…))` expressions.
+  - Malformed or unterminated heredocs.
+  - zsh glob qualifiers and misplaced array assignments.
+  - Shell options outside `pipefail`, `errexit`, `nounset` and `nomatch`, including wrapped or constructed flags.
+  - Wrapper options requiring operands.
+  - Lookup-variable writes, including disguised names, invisible characters and arithmetic operands.
+  - Unsupported `$` expansions and named-descriptor redirections.
+  - Unmodeled brace compounds, including inside nested `case` arms.
+  - Command-shadowing functions and `source`/`.`.
+- Blueprint checks keep ordinary text operands and quoted-delimiter heredocs as data, while checking command substitutions across lines in unquoted heredocs. Quoted assignment text avoids false rejections, and dangerous commands cannot hide in expanded heredoc text. Shell script paths held in variables require `--` before the path to remain auto-allowed.
+- Blueprint checks and sentinel reads accept literal string-only `printf`/`print` formats with fixed widths, literal percent signs and newline, tab or backslash escapes. Supported formatted output remains auto-allowed under the stricter checks. Nonliteral formats, non-string conversions and unsupported escapes are rejected. Every format word is checked against that closed list whatever its first character, so a dash-leading `print -f` or `printf` format can no longer write a lookup variable, while `print -rf`, `printf -- '-%s'`, `env printf` and inert quoted text stay allowed.
+- Sentinel reads require plain target names and reject lookup variables, prompt strings, hook arrays and command tables. Only empty `IFS=` prefixes on `read` are allowed, preventing other field-separator writes and shell-environment changes. Arguments accept supported variable reads, literal or variable defaults and trims; unsupported expansions and named-descriptor redirections are rejected.
+- Review → fix loops now keep a round ledger and progress table, making review history visible. Repeated invariants are tracked across all earlier rounds, including renamed findings, requiring root-cause evidence on repetition and stopping at the third occurrence. Action invariants must match their ledger findings after whitespace and case normalization, preventing inconsistent recurrence tracking.
+- Filter reviews require grammar coverage across every reader, exposing unmodeled constructs as findings and preventing clean verdicts with incomplete coverage. Repeated filter failures require defaults that reject unmodeled input, preventing another narrow bypass fix.
+
 ## 0.30.5
 
 - The adversarial-loop rule and the challenger dispatch rule list a reviewer reply truncated before its required closing block (envelope or `## Confidence`) as an agent failure, so a cut-off reply is no longer scored as a complete round with fewer findings. Where the host can continue that reviewer, the parent asks it for only the remainder, in replies short enough to pass the transport, until the closing block arrives; a reply that adds nothing new records the failure.

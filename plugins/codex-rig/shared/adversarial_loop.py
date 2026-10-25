@@ -23,7 +23,8 @@ JSON file; those archives stay readable through the same loader, but a current r
 
 ## Usage
 
-Run ``python shared/adversarial_loop.py --ledger path/to/loop-ledger.json``. Import ``load_ledger`` to assemble the
+Run ``python <dir>/adversarial_loop.py --ledger path/to/loop-ledger.json``, where ``<dir>`` is the directory that
+ships this file: ``shared/`` in Codex Rig, ``bin/`` in each Claude plugin. Import ``load_ledger`` to assemble the
 header and round log into the object ``validate_ledger`` checks, ``summarize_ledger`` for the inferred status, reason,
 and open-finding scores, and ``ledger_digest`` for the identity a continuation records for a ledger on disk.
 
@@ -33,7 +34,9 @@ the staged file is deleted. Earlier rounds are never re-emitted, so a dropped or
 
 Use ``--require-clean`` when an acceptance gate must reject every valid non-clean outcome. Add ``--progress`` after each
 completed round to print its cumulative severity table on stderr, leaving machine-readable stdout unchanged. Add
-``--actions path/to/loop-actions.json`` after parent triage to bind every open finding to a resolution action.
+``--actions path/to/loop-actions.json`` after parent triage to bind every open finding to a resolution action. The
+current actions schema 3 names an ``invariant:`` on every action, so recurrence is counted per signature or invariant;
+schema-1 and schema-2 action records stay readable under their own evidence rules.
 
 ## Outputs
 
@@ -100,8 +103,10 @@ _ACTION_KEYS = {"signature", "decision", "evidence", "owner", "next_action", "ro
 _ROOT_CAUSE_KEYS = {"claim", "evidence", "falsification", "rejected_alternative"}
 #: Allowed decisions for an action on a finding: fix it, escalate it, or defer it.
 _ACTION_DECISIONS = {"fix", "escalate", "defer"}
+#: Evidence prefix naming the invariant a finding violates; together with the signature it identifies a recurrence.
+_INVARIANT_PREFIX = "invariant:"
 #: Evidence prefixes a fix action must cover, each naming one kind of proof such as an invariant or a sibling.
-_FIX_EVIDENCE_PREFIXES = ("invariant:", "original:", "consumer:", "sibling:", "source-paths:")
+_FIX_EVIDENCE_PREFIXES = (_INVARIANT_PREFIX, "original:", "consumer:", "sibling:", "source-paths:")
 
 
 def _text(value: object) -> bool:
@@ -430,7 +435,16 @@ def summarize_ledger(payload: object) -> dict[str, object]:
 
 
 def validate_actions(ledger: object, payload: object) -> list[str]:
-    """Bind parent triage and resolution evidence to each open reviewed finding."""
+    """Bind parent triage and resolution evidence to each open reviewed finding.
+
+    Schema 3 counts recurrence per invariant: an action's identity is its signature plus every ``invariant:`` evidence
+    text in its matching ledger finding; every action invariant must also appear there after normalization. Identity
+    includes keys connected transitively through earlier findings, regardless of disposition. A reworded invariant
+    under a known signature and a new route-named signature under a known invariant are therefore both
+    repeats. All dispositions enter history; findings sharing a key inside one round count once.
+    Schemas 1 and 2 count signatures only, requiring root cause for a fix repeated from the previous round and stopping
+    a fix after two earlier open occurrences.
+    """
     errors = validate_ledger(ledger)
     if errors:
         return errors
@@ -440,77 +454,221 @@ def validate_actions(ledger: object, payload: object) -> list[str]:
     if root is None:
         return errors
     action_version = root.get("schema_version")
-    if action_version not in {1, 2} or isinstance(action_version, bool):
+    # Schema 3 is current; schemas 1 and 2 stay readable as historical records under their own evidence rules.
+    if not isinstance(action_version, int) or isinstance(action_version, bool) or action_version not in {1, 2, 3}:
         errors.append("actions-schema-version-invalid")
     rounds = root.get("rounds")
     if not isinstance(rounds, list) or len(rounds) != len(ledger["rounds"]):
         errors.append("actions-rounds-mismatch")
         return errors
+    # Publish each finding's key connections only after checking its whole round. Recurrence can follow historical
+    # chains without treating an action's same-round sibling as an earlier occurrence.
+    rounds_by_key: dict[str, set[int]] = {}
+    related_keys: dict[str, set[str]] = {}
     prior_open: set[str] = set()
-    occurrence_counts: dict[str, int] = {}
     for index, (review, action_value) in enumerate(zip(ledger["rounds"], rounds, strict=True), start=1):
-        action_round = _exact_keys(action_value, _ACTION_ROUND_KEYS, f"round-{index}-actions", errors)
-        if action_round is None:
-            continue
-        if action_round.get("index") != index or isinstance(action_round.get("index"), bool):
-            errors.append(f"round-{index}-actions-index-invalid")
-        items = action_round.get("actions")
-        if not isinstance(items, list):
-            errors.append(f"round-{index}-actions-list-required")
-            continue
-        open_findings = {
-            finding["signature"]: finding
-            for finding in review["findings"]
-            if finding["disposition"] in _OPEN_DISPOSITIONS
-        }
-        observed: set[str] = set()
-        for value in items:
-            action = _exact_keys(value, _ACTION_KEYS, f"round-{index}-action", errors)
-            if action is None:
-                continue
-            signature = action.get("signature")
-            if not _text(signature):
-                errors.append(f"round-{index}-action-signature-required")
-                continue
-            if signature in observed:
-                errors.append(f"round-{index}-action-duplicate:{signature}")
-            observed.add(signature)
-            finding = open_findings.get(signature)
-            if finding is None:
-                errors.append(f"round-{index}-action-not-open:{signature}")
-                continue
-            decision = action.get("decision")
-            if not isinstance(decision, str) or decision not in _ACTION_DECISIONS:
-                errors.append(f"round-{index}-action-decision-invalid:{signature}")
-            if finding["tier"] in {"security", "critical", "high"} and decision == "defer":
-                errors.append(f"round-{index}-severe-finding-must-fix-or-escalate:{signature}")
-            evidence = action.get("evidence")
-            if not isinstance(evidence, list) or not evidence or any(not _text(item) for item in evidence):
-                errors.append(f"round-{index}-action-evidence-required:{signature}")
-            elif action_version == 2 and decision == "fix":
-                for prefix in _FIX_EVIDENCE_PREFIXES:
-                    if not any(item.startswith(prefix) and item[len(prefix) :].strip() for item in evidence):
-                        errors.append(f"round-{index}-fix-evidence-missing:{prefix}{signature}")
-            for field in ("owner", "next_action"):
-                if not _text(action.get(field)):
-                    errors.append(f"round-{index}-action-{field}-required:{signature}")
-            root_cause = action.get("root_cause")
-            if root_cause is not None:
-                cause = _exact_keys(root_cause, _ROOT_CAUSE_KEYS, f"round-{index}-root-cause", errors)
-                if cause is not None:
-                    for field in _ROOT_CAUSE_KEYS:
-                        if not _text(cause.get(field)):
-                            errors.append(f"round-{index}-root-cause-{field}-required:{signature}")
-            if signature in prior_open and decision == "fix" and root_cause is None:
-                errors.append(f"round-{index}-repeat-root-cause-required:{signature}")
-            if occurrence_counts.get(signature, 0) >= 2 and decision == "fix":
-                errors.append(f"round-{index}-third-occurrence-must-stop:{signature}")
-        for signature in open_findings.keys() - observed:
-            errors.append(f"round-{index}-action-missing:{signature}")
-        prior_open = set(open_findings)
-        for signature in open_findings:
-            occurrence_counts[signature] = occurrence_counts.get(signature, 0) + 1
+        action_keys = _validate_action_round(
+            review, action_value, index, action_version, rounds_by_key, related_keys, prior_open, errors
+        )
+        if action_version == 3:
+            action_keys = _history_keys(review)
+        for keys in action_keys:
+            for key in keys:
+                rounds_by_key.setdefault(key, set()).add(index)
+                if action_version == 3:
+                    related_keys.setdefault(key, set()).update(keys)
     return errors
+
+
+def _validate_action_round(
+    review: dict[str, Any],
+    action_value: object,
+    index: int,
+    action_version: object,
+    rounds_by_key: dict[str, set[int]],
+    related_keys: dict[str, set[str]],
+    prior_open: set[str],
+    errors: list[str],
+) -> list[set[str]]:
+    """Check one round's actions against its open findings and return each action's connected identity keys."""
+    action_keys: list[set[str]] = []
+    action_round = _exact_keys(action_value, _ACTION_ROUND_KEYS, f"round-{index}-actions", errors)
+    if action_round is None:
+        return action_keys
+    if action_round.get("index") != index or isinstance(action_round.get("index"), bool):
+        errors.append(f"round-{index}-actions-index-invalid")
+    items = action_round.get("actions")
+    if not isinstance(items, list):
+        errors.append(f"round-{index}-actions-list-required")
+        return action_keys
+    open_findings = {
+        finding["signature"]: finding for finding in review["findings"] if finding["disposition"] in _OPEN_DISPOSITIONS
+    }
+    observed: set[str] = set()
+    for value in items:
+        action = _exact_keys(value, _ACTION_KEYS, f"round-{index}-action", errors)
+        if action is None:
+            continue
+        signature = action.get("signature")
+        if not _text(signature):
+            errors.append(f"round-{index}-action-signature-required")
+            continue
+        if signature in observed:
+            errors.append(f"round-{index}-action-duplicate:{signature}")
+        observed.add(signature)
+        finding = open_findings.get(signature)
+        if finding is None:
+            errors.append(f"round-{index}-action-not-open:{signature}")
+            continue
+        _validate_action_record(action, finding, index, action_version, errors)
+        keys = _identity_keys(signature, action.get("evidence"))
+        if action_version == 3:
+            # Ledger evidence defines identity for both recurrence and progress; actions cannot add unseen keys.
+            finding_keys = _identity_keys(signature, finding["evidence"])
+            if not keys <= finding_keys:
+                errors.append(f"round-{index}-action-invariant-not-in-finding:{signature}")
+            keys = finding_keys
+            errors.extend(_recurrence_errors(action, keys, index, rounds_by_key, related_keys))
+        else:
+            errors.extend(_legacy_recurrence_errors(action, index, prior_open, rounds_by_key))
+        action_keys.append(keys)
+    for signature in open_findings.keys() - observed:
+        errors.append(f"round-{index}-action-missing:{signature}")
+        action_keys.append({f"signature:{signature}"})
+    prior_open.clear()
+    prior_open.update(open_findings)
+    return action_keys
+
+
+def _validate_action_record(
+    action: dict[str, Any], finding: dict[str, Any], index: int, action_version: object, errors: list[str]
+) -> None:
+    """Check one action's decision, evidence, ownership and root cause against the open finding it answers."""
+    signature = action["signature"]
+    decision = action.get("decision")
+    if not isinstance(decision, str) or decision not in _ACTION_DECISIONS:
+        errors.append(f"round-{index}-action-decision-invalid:{signature}")
+    if finding["tier"] in {"security", "critical", "high"} and decision == "defer":
+        errors.append(f"round-{index}-severe-finding-must-fix-or-escalate:{signature}")
+    evidence = action.get("evidence")
+    if not isinstance(evidence, list) or not evidence or any(not _text(item) for item in evidence):
+        errors.append(f"round-{index}-action-evidence-required:{signature}")
+    else:
+        kind = "fix" if decision == "fix" else "action"
+        errors.extend(
+            f"round-{index}-{kind}-evidence-missing:{prefix}{signature}"
+            for prefix in _missing_evidence_prefixes(evidence, decision, action_version)
+        )
+    for field in ("owner", "next_action"):
+        if not _text(action.get(field)):
+            errors.append(f"round-{index}-action-{field}-required:{signature}")
+    root_cause = action.get("root_cause")
+    if root_cause is not None:
+        cause = _exact_keys(root_cause, _ROOT_CAUSE_KEYS, f"round-{index}-root-cause", errors)
+        if cause is not None:
+            for field in _ROOT_CAUSE_KEYS:
+                if not _text(cause.get(field)):
+                    errors.append(f"round-{index}-root-cause-{field}-required:{signature}")
+
+
+def _missing_evidence_prefixes(evidence: list[str], decision: object, action_version: object) -> list[str]:
+    """Return the evidence prefixes an action's schema requires but its evidence lacks or leaves empty.
+
+    Schema 3 requires an ``invariant:`` entry on every decision, so an escalated or deferred finding still has the
+    identity its recurrence is counted under. A ``fix`` in schema 2 or 3 also names its original case, consumer check,
+    sibling route and source paths. Schema 1 required no prefix.
+
+    Examples:
+        >>> _missing_evidence_prefixes(["original: retained case"], "escalate", 3)
+        ['invariant:']
+        >>> _missing_evidence_prefixes(["original: retained case"], "escalate", 2)
+        []
+        >>> _missing_evidence_prefixes(["invariant: arms judged", "sibling: none"], "fix", 3)
+        ['original:', 'consumer:', 'source-paths:']
+    """
+    required: tuple[str, ...] = ()
+    if decision == "fix" and action_version in {2, 3}:
+        required = _FIX_EVIDENCE_PREFIXES
+    elif action_version == 3:
+        required = (_INVARIANT_PREFIX,)
+    return [
+        prefix
+        for prefix in required
+        if not any(item.startswith(prefix) and item[len(prefix) :].strip() for item in evidence)
+    ]
+
+
+def _legacy_recurrence_errors(
+    action: dict[str, Any], index: int, prior_open: set[str], rounds_by_key: dict[str, set[int]]
+) -> list[str]:
+    """Apply the signature-only repeat and occurrence rules of actions schemas 1 and 2."""
+    if action.get("decision") != "fix":
+        return []
+    signature = action["signature"]
+    errors: list[str] = []
+    if signature in prior_open and action.get("root_cause") is None:
+        errors.append(f"round-{index}-repeat-root-cause-required:{signature}")
+    if len(rounds_by_key.get(f"signature:{signature}", set())) >= 2:
+        errors.append(f"round-{index}-third-occurrence-must-stop:{signature}")
+    return errors
+
+
+def _recurrence_errors(
+    action: dict[str, Any],
+    keys: set[str],
+    index: int,
+    rounds_by_key: dict[str, set[int]],
+    related_keys: dict[str, set[str]],
+) -> list[str]:
+    """Return the repeat and third-occurrence errors for one action against every earlier round.
+
+    The earlier occurrences are the rounds holding any key transitively connected to the action's keys by findings of
+    earlier rounds. A ``fix`` of a repeat needs root-cause evidence; a ``fix`` once two earlier rounds carried the
+    invariant is its third occurrence and must stop instead. Other decisions already stop or defer the fix.
+    """
+    if action.get("decision") != "fix":
+        return []
+    signature = action["signature"]
+    connected = set(keys)
+    pending = list(keys)
+    while pending:
+        neighbors = related_keys.get(pending.pop(), set()) - connected
+        connected.update(neighbors)
+        pending.extend(neighbors)
+    earlier_rounds = set().union(*(rounds_by_key.get(key, set()) for key in connected))
+    errors: list[str] = []
+    if earlier_rounds and action.get("root_cause") is None:
+        errors.append(f"round-{index}-repeat-root-cause-required:{signature}")
+    if len(earlier_rounds) >= 2:
+        errors.append(f"round-{index}-third-occurrence-must-stop:{signature}")
+    return errors
+
+
+def _identity_keys(signature: str, evidence: object) -> set[str]:
+    """Return the keys a finding's recurrence is counted under: its signature and every invariant its evidence names.
+
+    The invariant text is compared with blanks collapsed and case folded, so the parent reusing the same invariant
+    wording for a sibling route makes the two one recurring invariant, while the signature key still catches a reworded
+    invariant on a known signature.
+
+    Examples:
+        >>> sorted(_identity_keys("route-a", ["invariant: Every  arm judged", "original: x"]))
+        ['invariant:every arm judged', 'signature:route-a']
+        >>> sorted(_identity_keys("route-a", ["Changed parser boundary."]))
+        ['signature:route-a']
+    """
+    keys = {f"signature:{signature}"}
+    for item in evidence if isinstance(evidence, list) else []:
+        if isinstance(item, str) and item.startswith(_INVARIANT_PREFIX):
+            text = " ".join(item[len(_INVARIANT_PREFIX) :].split()).casefold()
+            if text:
+                keys.add(f"{_INVARIANT_PREFIX}{text}")
+    return keys
+
+
+def _history_keys(round_record: dict[str, Any]) -> list[set[str]]:
+    """Retain every finding's identity in history, including verified-fixed and rejected findings."""
+    return [_identity_keys(finding["signature"], finding["evidence"]) for finding in round_record["findings"]]
 
 
 def _render_progress(payload: dict[str, Any], completed_rounds: int) -> str:
@@ -528,25 +686,29 @@ def _render_progress(payload: dict[str, Any], completed_rounds: int) -> str:
         for finding in round_record["findings"]:
             if finding["disposition"] not in _OPEN_DISPOSITIONS:
                 continue
-            bucket = 0 if finding["signature"] in seen else 1
+            bucket = 0 if _identity_keys(finding["signature"], finding["evidence"]) & seen else 1
             tier = finding["tier"]
             counts[tier][bucket] += 1
             weighted[bucket] += _TIERS[tier]
         cells = [str(round_record["index"]), *(f"{old} + {new}" for old, new in [*counts.values(), weighted])]
         lines.append("| " + " | ".join(cells) + " |")
-        # Closed signatures remain history so a later reopened finding is old, not newly discovered.
-        seen.update(finding["signature"] for finding in round_record["findings"])
+        for keys in _history_keys(round_record):
+            seen |= keys
     lines.append("")
     lines.append(
-        "Cells: old + new open findings (including pending verification); old = seen in any prior completed round. "
-        "Security and Critical count their own tiers; weights: security 20, critical 10, high 6, medium 4, low 2, nit 1. "
-        "Weighted score: old weighted + new weighted."
+        "Cells: old + new open findings (including pending verification); old = signature or `invariant:` evidence seen "
+        "in any prior completed round. Security and Critical count their own tiers; weights: security 20, critical 10, "
+        "high 6, medium 4, low 2, nit 1. Weighted score: old weighted + new weighted."
     )
     return "\n".join(lines)
 
 
-def main() -> int:
-    """Emit JSON validation and optionally a cumulative human-readable progress table."""
+def main(argv: list[str] | None = None) -> int:
+    """Emit JSON validation and optionally a cumulative human-readable progress table.
+
+    Args:
+        argv: Command-line arguments; ``None`` reads ``sys.argv``. Claude plugins' ``bin/`` contract tests pass them.
+    """
     parser = argparse.ArgumentParser(description="Validate an adversarial-review convergence ledger.")
     parser.add_argument("--ledger", required=True, type=Path, help="Ledger header JSON path; rounds sit beside it.")
     parser.add_argument("--require-clean", action="store_true", help="Exit nonzero unless the valid summary is clean.")
@@ -557,7 +719,7 @@ def main() -> int:
         action="store_true",
         help="First append the staged round from <round log>.rec, refusing it unless the extended ledger is valid.",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.append:
         append_errors = append_round(args.ledger)
         if append_errors:

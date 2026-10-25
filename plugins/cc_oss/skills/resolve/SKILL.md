@@ -258,16 +258,16 @@ echo domain > "${TMPDIR:-/tmp}/resolve-group-strategy-${CSID}"
 echo auto > "${TMPDIR:-/tmp}/resolve-dispatch-mode-${CSID}"
 : > "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}"  # empty, not rm (danger filter): report mode skips Step 3b; a stale dir from the previous PR would feed its items into this run
 : > "${TMPDIR:-/tmp}/resolve-intake-degraded-${CSID}"  # gap triage Proceed writes the accepted report path; empty = full intake, never inherited
-# defence-in-depth: validate VAR=value, no metachars, before sourcing — guards regression/tampered binary
+# defence-in-depth: validate VAR=value, no metachars, then assign only the four known keys — guards regression/tampered binary
 tmpenv=$(mktemp)  # timeout: 3000
 trap 'rm -f "$tmpenv"' EXIT INT TERM
 python "${CLAUDE_PLUGIN_ROOT}/bin/parse-resolve-args.py" "$ARGUMENTS" >"$tmpenv"  # timeout: 5000
 if grep -qvE "^[A-Z_][A-Z0-9_]*=([A-Za-z0-9_./:#@+-]*|'[^']*')$" "$tmpenv"; then
-    echo "Error: parse-resolve-args.py emitted unexpected output — refusing to source"
+    echo "Error: parse-resolve-args.py emitted unexpected output — refusing to load"
     cat "$tmpenv"
     exit 1
 fi
-. "$tmpenv"
+while IFS='=' read -r _K _V; do case "$_V" in \'*\') _V=${_V#\'}; _V=${_V%\'};; esac; case "$_K" in PR_NUMBER) PR_NUMBER=$_V;; PR_URL) PR_URL=$_V;; MODE) MODE=$_V;; ARGUMENTS) ARGUMENTS=$_V;; esac; done < "$tmpenv"
 # sets: PR_NUMBER, PR_URL, MODE, ARGUMENTS ('#' stripped, comment-dispatch only)
 # parser keeps a non-/pull/ GitHub URL as MODE=pr, empty PR_NUMBER (never comment dispatch); every PR step keys on PR_NUMBER
 if [ "$MODE" = pr ] && [ -z "$PR_NUMBER" ]; then echo "! BLOCKED — not a pull-request URL: $PR_URL — /oss:resolve takes a PR number or a .../pull/N URL"; exit 1; fi

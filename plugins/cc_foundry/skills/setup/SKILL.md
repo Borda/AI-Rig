@@ -321,7 +321,7 @@ IFS= read -r PLUGIN_ROOT < "${TMPDIR:-/tmp}/setup-plugin-root-${CSID}" 2>/dev/nu
 # reset Phase 3 choice sentinels, approved list and scan marker — a prior run's answer or scan must not leak into Phase 4
 echo false > "${TMPDIR:-/tmp}/foundry-setup-skip-conflicts-${CSID}"; echo false > "${TMPDIR:-/tmp}/foundry-setup-per-item-${CSID}"; echo false > "${TMPDIR:-/tmp}/foundry-setup-scan-ok-${CSID}"; : > "${TMPDIR:-/tmp}/foundry-setup-approved-${CSID}.txt"
 # file + exit status, never process substitution (its status is lost: a failed scan would read as zero conflicts and skip consent); no mapfile — absent in zsh
-python "$PLUGIN_ROOT/bin/symlink_with_guard.py" scan --plugin-root "$PLUGIN_ROOT" > "${TMPDIR:-/tmp}/foundry-setup-conflicts-${CSID}.txt" || { printf "! BLOCKED — conflict scan failed (exit %d); nothing linked — fix the error above, re-run /foundry:setup\n" "$?"; exit 1; }  # timeout: 30000
+python "$PLUGIN_ROOT/bin/symlink_with_guard.py" scan --plugin-root "$PLUGIN_ROOT" > "${TMPDIR:-/tmp}/foundry-setup-conflicts-${CSID}.txt" || { printf "! BLOCKED — conflict scan failed (exit %s); nothing linked — fix the error above, re-run /foundry:setup\n" "$?"; exit 1; }  # timeout: 30000
 echo true > "${TMPDIR:-/tmp}/foundry-setup-scan-ok-${CSID}"
 echo "--- LINK_CONFLICTS ---"; cat "${TMPDIR:-/tmp}/foundry-setup-conflicts-${CSID}.txt"; echo "--- end LINK_CONFLICTS ---"
 ```

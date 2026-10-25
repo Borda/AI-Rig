@@ -46,7 +46,10 @@ EAGER_GLOBS = frozenset({"**", "**/*"})
 # Raised from 61212 by 11 bytes: the progress table header in the quality-gates stub gains its
 # `Security` column; the stub states the exact columns, so leaving it out reintroduces the
 # seven-column table in live loop reports.
-EAGER_BUDGET_BYTES = 61223
+# Raised from 61223 by 44 bytes: the stub's recurrence clause names "a repeated invariant (same
+# signature or same invariant evidence)". Already eager, it said "repeated signature" alone, which
+# contradicts the full rule's per-invariant count; dropping it would leave no eager recurrence trigger.
+EAGER_BUDGET_BYTES = 61267
 #: Rules ``hooks/rule-inject.js`` injects on their activity; eager loading would duplicate them.
 HOOK_INJECTED_RULES = ("agent-spawn.md", "git-commit.md")
 

@@ -99,7 +99,7 @@ A refactor stays within unchanged scope and reviewed coverage. Each later review
 | 3 | 1 low | 2 | 0.40 | converging — continue |
 | 4 | none | 0 | 0 | independently clean — complete remaining caller gates |
 
-The third review has open findings but still decreases the total integer score, so it does not trigger a generic round cap. Continue only with valid authority, independence, current snapshots and caller budgets; plateau, increase or a third occurrence of the same open signature still stops the affected route. The final zero needs current independent coverage and the owning workflow's post-clean gates. Preserve every completed row and any earlier stopped history.
+The third review has open findings but still decreases the total integer score, so it does not trigger a generic round cap. Continue only with valid authority, independence, current snapshots and caller budgets; plateau, increase or a third occurrence of the same invariant (same signature or same invariant evidence) still stops the affected route. The final zero needs current independent coverage and the owning workflow's post-clean gates. Preserve every completed row and any earlier stopped history.
 
 ### Challenger Rounds
 

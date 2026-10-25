@@ -1074,8 +1074,8 @@ def _current_git_sha() -> str | None:
 def _untracked_py_files() -> list[str]:
     """List Git-untracked Python paths for the legacy unindexed-source coverage diagnostic.
 
-    Working-tree fingerprints already detect these files and their edits. This supplemental list identifies graph
-    inputs absent from a frozen or unmeasurable index. Paths remain Git-root relative and scanner exclusions apply.
+    Working-tree fingerprints already detect these files and their edits. This supplemental list identifies graph inputs
+    absent from a frozen or unmeasurable index. Paths remain Git-root relative and scanner exclusions apply.
     """
     try:
         output = subprocess.check_output(

@@ -833,7 +833,8 @@ def test_reopened_third_occurrence_cannot_be_fixed_despite_improving_total() -> 
                         "evidence": ["Retained independent recurrence evidence"],
                         "owner": "parent",
                         "next_action": "Seek independent verification",
-                        "root_cause": None,
+                        # a reopened invariant needs a cause before each later fix; this test isolates the third stop
+                        "root_cause": _ROOT_CAUSE if signature == "repeat" else None,
                     }
                     for signature in tiers
                     if signature not in closed
@@ -845,6 +846,698 @@ def test_reopened_third_occurrence_cannot_be_fixed_despite_improving_total() -> 
     assert module.validate_ledger(ledger) == []
     assert module.summarize_ledger(ledger)["scores"] == [43, 21, 13, 5, 3]
     assert module.validate_actions(ledger, actions) == ["round-5-third-occurrence-must-stop:repeat"]
+
+
+_ROOT_CAUSE = {
+    "claim": "Reader default admits what it does not model.",
+    "evidence": "Retained source read names the default branch.",
+    "falsification": "A refusing default rejects the original case.",
+    "rejected_alternative": "Listing the reported route closes only that route.",
+}
+
+
+def _invariant_action(signature: str, root_cause: dict[str, str] | None = None) -> dict[str, Any]:
+    """Build a schema-2 fix action whose evidence names one shared invariant."""
+    return {
+        "signature": signature,
+        "decision": "fix",
+        "evidence": [
+            "invariant: Every case arm is judged as a command",
+            "original: retained case file c1",
+            "consumer: hook verdict",
+            "sibling: retained case file c2",
+            "source-paths: reader.py",
+        ],
+        "owner": "parent",
+        "next_action": "Seek independent verification",
+        "root_cause": root_cause,
+    }
+
+
+def _route_ledger(*signatures_by_round: list[str], invariants: dict[str, str] | None = None) -> dict[str, Any]:
+    """Build a schema-2 ledger where each round reports the given open security signatures.
+
+    Every signature from an earlier round that is not open again is carried as verified-fixed, as the ledger requires. A
+    signature named in ``invariants`` carries that text as its finding's ``invariant:`` evidence line.
+    """
+    invariants = invariants or {}
+    seen: list[str] = []
+    rounds = []
+    for index, signatures in enumerate(signatures_by_round, start=1):
+        seen += [signature for signature in signatures if signature not in seen]
+        rounds.append(
+            _round(
+                index,
+                [
+                    _finding(
+                        signature,
+                        "security",
+                        "open" if signature in signatures else "verified-fixed",
+                        evidence=[f"invariant: {invariants[signature]}"] if signature in invariants else None,
+                    )
+                    for signature in seen
+                ],
+            )
+        )
+    return _ledger(*rounds) | {"schema_version": 2}
+
+
+def _actions(*rounds: list[dict[str, Any]], version: int = 2) -> dict[str, Any]:
+    """Wrap per-round action lists in an actions document, schema 2 unless a version is given."""
+    return {"schema_version": version, "rounds": [{"index": i, "actions": a} for i, a in enumerate(rounds, start=1)]}
+
+
+@pytest.mark.parametrize("version", [1, 2, 3])
+def test_action_only_invariant_cannot_connect_distinct_ledger_findings(version: int) -> None:
+    """Only schema 3 rejects an action-only connection that progress cannot see in ledger evidence."""
+    module = _load_module()
+    ledger = _route_ledger(["a"], ["b"], invariants={"a": "first boundary", "b": "second boundary"})
+    actions = _actions(
+        [_reworded_action("a", "shared boundary")],
+        [_reworded_action("b", "shared boundary", _ROOT_CAUSE)],
+        version=version,
+    )
+
+    assert module.validate_ledger(ledger) == []
+    assert "| 2 | 0 + 1 |" in module._render_progress(ledger, 2)
+    expected = (
+        ["round-1-action-invariant-not-in-finding:a", "round-2-action-invariant-not-in-finding:b"]
+        if version == 3
+        else []
+    )
+    assert module.validate_actions(ledger, actions) == expected
+
+
+@pytest.mark.parametrize("decision", ["fix", "escalate", "defer"])
+@pytest.mark.parametrize(
+    ("finding_evidence", "expected"),
+    [
+        pytest.param(
+            ["invariant: Straße  boundary", "invariant: second boundary", "invariant: ledger-only boundary"],
+            [],
+            id="normalized-subset",
+        ),
+        pytest.param(
+            ["invariant: Straße boundary"],
+            ["round-1-action-invariant-not-in-finding:boundary"],
+            id="second-invariant-missing",
+        ),
+        pytest.param([], ["round-1-action-invariant-not-in-finding:boundary"], id="no-ledger-invariant"),
+    ],
+)
+def test_current_actions_require_every_invariant_in_finding(
+    decision: str, finding_evidence: list[str], expected: list[str]
+) -> None:
+    """Every action invariant must match normalized finding evidence, for all schema-3 decisions."""
+    module = _load_module()
+    ledger = _ledger(_round(1, [_finding("boundary", "low", evidence=finding_evidence)]))
+    action = _invariant_action("boundary")
+    action["decision"] = decision
+    action["evidence"][:1] = ["invariant:  STRASSE boundary ", "invariant: second  BOUNDARY"]
+
+    assert module.validate_actions(ledger, _actions([action], version=3)) == expected
+
+
+@pytest.mark.parametrize(
+    ("version", "expected"),
+    [
+        pytest.param(1, [], id="schema-one-signature-only"),
+        pytest.param(2, [], id="schema-two-signature-only"),
+        pytest.param(3, ["round-2-repeat-root-cause-required:route-two"], id="schema-three-invariant-repeat"),
+    ],
+)
+def test_new_route_to_known_invariant_requires_root_cause(version: int, expected: list[str]) -> None:
+    """Only schema 3 treats a sibling signature with the same invariant as a repeat.
+
+    A filter loop named each round's bypass after its route, so the signature never repeated and the repeat root-cause
+    rule never fired; schema 3 uses the shared ``invariant:`` evidence to identify that recurrence.
+    """
+    module = _load_module()
+    ledger = _route_ledger(
+        ["route-one"],
+        ["route-two"],
+        invariants=dict.fromkeys(("route-one", "route-two"), "Every case arm is judged as a command"),
+    )
+    actions = _actions([_invariant_action("route-one")], [_invariant_action("route-two")], version=version)
+
+    assert module.validate_actions(ledger, actions) == expected
+
+
+@pytest.mark.parametrize("version", [1, 2])
+def test_historical_signature_repeat_requires_root_cause(version: int) -> None:
+    """A fix of a signature open in the previous round needs root-cause evidence in historical schemas."""
+    module = _load_module()
+    ledger = _route_ledger(["repeat"], ["repeat"])
+    actions = _actions([_invariant_action("repeat")], [_invariant_action("repeat")], version=version)
+
+    assert module.validate_actions(ledger, actions) == ["round-2-repeat-root-cause-required:repeat"]
+
+
+@pytest.mark.parametrize("version", [1, 2])
+def test_historical_signature_reopened_after_a_gap_is_not_a_repeat(version: int) -> None:
+    """One earlier occurrence before an intervening closed round does not require root-cause evidence."""
+    module = _load_module()
+    ledger = _route_ledger(["repeat", "padding"], ["padding"], ["repeat"])
+    actions = _actions(
+        [_invariant_action("repeat"), _held_action("padding", "unrelated")],
+        [_held_action("padding", "unrelated")],
+        [_invariant_action("repeat")],
+        version=version,
+    )
+
+    assert module.validate_actions(ledger, actions) == []
+
+
+@pytest.mark.parametrize("version", [1, 2])
+def test_historical_occurrences_include_findings_without_actions(version: int) -> None:
+    """Missing actions do not erase open signatures from the repeat or third-occurrence count."""
+    module = _load_module()
+    ledger = _route_ledger(["repeat", "pad-1", "pad-2"], ["repeat", "pad-1"], ["repeat"])
+    actions = _actions(
+        [_held_action("pad-1", "padding one"), _held_action("pad-2", "padding two")],
+        [_held_action("pad-1", "padding one")],
+        [_invariant_action("repeat")],
+        version=version,
+    )
+
+    assert module.validate_actions(ledger, actions) == [
+        "round-1-action-missing:repeat",
+        "round-2-action-missing:repeat",
+        "round-3-repeat-root-cause-required:repeat",
+        "round-3-third-occurrence-must-stop:repeat",
+    ]
+
+
+def test_third_route_to_known_invariant_must_stop() -> None:
+    """Three route-named signatures of one invariant count as its third occurrence."""
+    module = _load_module()
+    # escalated padding keeps the score strictly decreasing, so round 3 is not refused as a round after a plateau stop
+    ledger = _route_ledger(
+        ["route-one", "pad-1", "pad-2"],
+        ["route-two", "pad-1"],
+        ["route-three"],
+        invariants={
+            **dict.fromkeys(("route-one", "route-two", "route-three"), "Every case arm is judged as a command"),
+            "pad-1": "padding one",
+            "pad-2": "padding two",
+        },
+    )
+    actions = _actions(
+        [_invariant_action("route-one"), _held_action("pad-1", "padding one"), _held_action("pad-2", "padding two")],
+        [_invariant_action("route-two", _ROOT_CAUSE), _held_action("pad-1", "padding one")],
+        [_invariant_action("route-three", _ROOT_CAUSE)],
+        version=3,
+    )
+
+    assert module.validate_actions(ledger, actions) == ["round-3-third-occurrence-must-stop:route-three"]
+
+
+def test_invariant_reopened_after_closed_round_is_third_occurrence() -> None:
+    """A verified-fixed carry still enters history, so reopening after two recorded rounds must stop."""
+    module = _load_module()
+    ledger = _route_ledger(
+        ["route-one", "other"],
+        ["other"],
+        ["route-two"],
+        invariants={
+            **dict.fromkeys(("route-one", "route-two"), "Every case arm is judged as a command"),
+            "other": "unrelated",
+        },
+    )
+    other = {
+        **_invariant_action("other", _ROOT_CAUSE),
+        "evidence": ["invariant: unrelated", *_invariant_action("x")["evidence"][1:]],
+    }
+    actions = _actions(
+        [_invariant_action("route-one"), {**other, "root_cause": None}],
+        [other],
+        [_invariant_action("route-two")],
+        version=3,
+    )
+
+    assert module.validate_actions(ledger, actions) == [
+        "round-3-repeat-root-cause-required:route-two",
+        "round-3-third-occurrence-must-stop:route-two",
+    ]
+    actions["rounds"][2]["actions"][0]["root_cause"] = _ROOT_CAUSE
+    assert module.validate_actions(ledger, actions) == ["round-3-third-occurrence-must-stop:route-two"]
+
+
+def _held_action(signature: str, invariant: str, decision: str = "escalate") -> dict[str, Any]:
+    """Build a schema-3 action that does not fix its finding but still names the invariant it violates."""
+    return {
+        "signature": signature,
+        "decision": decision,
+        "evidence": [f"invariant: {invariant}", "Contract change needs an owner decision."],
+        "owner": "parent",
+        "next_action": "Request the owner decision.",
+        "root_cause": None,
+    }
+
+
+def _reworded_action(signature: str, invariant: str, root_cause: dict[str, str] | None = None) -> dict[str, Any]:
+    """Build a schema-3 fix action whose ``invariant:`` evidence carries the given wording."""
+    action = _invariant_action(signature, root_cause)
+    return {**action, "evidence": [f"invariant: {invariant}", *action["evidence"][1:]]}
+
+
+def test_reworded_invariant_under_known_signature_is_repeat() -> None:
+    """A known signature stays a repeat when the parent rewords its invariant in a later round.
+
+    Keying recurrence on the invariant text alone let one rewording hide the second fix of the same finding, a
+    regression from signature-keyed counting; the signature is still part of the identity.
+    """
+    module = _load_module()
+    ledger = _route_ledger(
+        ["case-arm-body-judged"],
+        ["case-arm-body-judged"],
+        invariants={"case-arm-body-judged": "every arm judged"},
+    )
+    ledger["rounds"][1]["findings"][0]["evidence"] = ["invariant: arms are judged"]
+    actions = _actions(
+        [_reworded_action("case-arm-body-judged", "every arm judged")],
+        [_reworded_action("case-arm-body-judged", "arms are judged")],
+        version=3,
+    )
+
+    assert module.validate_actions(ledger, actions) == ["round-2-repeat-root-cause-required:case-arm-body-judged"]
+
+
+@pytest.mark.parametrize("decision", ["escalate", "defer"])
+def test_new_route_after_unfixed_invariant_is_repeat(decision: str) -> None:
+    """An invariant first escalated or deferred still counts as an earlier occurrence when a new route is fixed.
+
+    Only fixes had to name their invariant, so a round that escalated the finding left no key and the next route read as
+    a first occurrence. Schema 3 makes every decision carry the ``invariant:`` entry the recurrence count needs.
+    """
+    module = _load_module()
+    ledger = _route_ledger(
+        ["route-one"],
+        ["route-two"],
+        invariants=dict.fromkeys(("route-one", "route-two"), "Every case arm is judged as a command"),
+    )
+    # route-one gets a deferrable tier, carried unchanged into round 2 as the ledger requires
+    ledger["rounds"][0]["findings"][0]["tier"] = ledger["rounds"][1]["findings"][0]["tier"] = "medium"
+    actions = _actions(
+        [_held_action("route-one", "Every case arm is judged as a command", decision)],
+        [_invariant_action("route-two")],
+        version=3,
+    )
+
+    assert module.validate_actions(ledger, actions) == ["round-2-repeat-root-cause-required:route-two"]
+
+
+def test_shared_invariant_within_one_round_is_one_occurrence() -> None:
+    """Two signatures of one invariant in the same round are accepted, neither a repeat nor an error.
+
+    A reviewer can report two routes to one invariant at once; the parent fixes both under one closure plan, and the
+    round is that invariant's first occurrence.
+    """
+    module = _load_module()
+    ledger = _route_ledger(
+        ["route-one", "route-two"],
+        invariants=dict.fromkeys(("route-one", "route-two"), "Every case arm is judged as a command"),
+    )
+    actions = _actions([_invariant_action("route-one"), _invariant_action("route-two")], version=3)
+
+    assert module.validate_actions(ledger, actions) == []
+
+
+def test_shared_invariant_round_counts_once_toward_third_occurrence() -> None:
+    """A round where two routes share an invariant is one occurrence, so the third fix is two rounds later, not one.
+
+    Round 1 records the invariant twice, round 2 fixes a new route with root cause as its second occurrence, and round 3
+    is the first round with two earlier rounds behind it.
+    """
+    module = _load_module()
+    # escalated padding keeps the score strictly decreasing, so round 3 is not refused as a round after a plateau stop
+    ledger = _route_ledger(
+        ["route-one", "route-two", "pad-1", "pad-2"],
+        ["route-three", "pad-1"],
+        ["route-four"],
+        invariants={
+            **dict.fromkeys(
+                ("route-one", "route-two", "route-three", "route-four"), "Every case arm is judged as a command"
+            ),
+            "pad-1": "pad one holds",
+            "pad-2": "pad two holds",
+        },
+    )
+    actions = _actions(
+        [
+            _invariant_action("route-one"),
+            _invariant_action("route-two"),
+            _held_action("pad-1", "pad one holds"),
+            _held_action("pad-2", "pad two holds"),
+        ],
+        [_invariant_action("route-three", _ROOT_CAUSE), _held_action("pad-1", "pad one holds")],
+        [_invariant_action("route-four", _ROOT_CAUSE)],
+        version=3,
+    )
+
+    assert module.validate_actions(ledger, actions) == ["round-3-third-occurrence-must-stop:route-four"]
+
+
+def test_keys_from_two_earlier_rounds_make_a_third_occurrence() -> None:
+    """A fix whose signature matches one earlier round and whose invariant matches another is a third occurrence.
+
+    Counting each key on its own would see one earlier round per key; the earlier occurrences are the union of the
+    rounds any identity key appeared in.
+    """
+    module = _load_module()
+    ledger = _route_ledger(
+        ["sig-a", "pad-1", "pad-2"],
+        ["sig-b", "pad-1"],
+        ["sig-a"],
+        invariants={
+            "sig-a": "arms are judged",
+            "sig-b": "options are judged",
+            "pad-1": "pad one holds",
+            "pad-2": "pad two holds",
+        },
+    )
+    ledger["rounds"][2]["findings"][0]["evidence"] = ["invariant: options are judged"]
+    actions = _actions(
+        [
+            _reworded_action("sig-a", "arms are judged"),
+            _held_action("pad-1", "pad one holds"),
+            _held_action("pad-2", "pad two holds"),
+        ],
+        [_reworded_action("sig-b", "options are judged"), _held_action("pad-1", "pad one holds")],
+        [_reworded_action("sig-a", "options are judged", _ROOT_CAUSE)],
+        version=3,
+    )
+
+    assert module.validate_actions(ledger, actions) == ["round-3-third-occurrence-must-stop:sig-a"]
+
+
+@pytest.mark.parametrize(
+    ("signature", "invariant", "root_cause", "expected"),
+    [
+        pytest.param(
+            "route-b",
+            "second wording",
+            _ROOT_CAUSE,
+            ["round-3-third-occurrence-must-stop:route-b"],
+            id="chain-third-occurrence",
+        ),
+        pytest.param(
+            "route-b",
+            "first wording",
+            _ROOT_CAUSE,
+            ["round-3-third-occurrence-must-stop:route-b"],
+            id="chain-back-to-first-key",
+        ),
+        pytest.param("route-c", "unrelated invariant", None, [], id="unrelated-key-is-new"),
+    ],
+)
+def test_recurrence_follows_keys_connected_by_earlier_actions(
+    signature: str, invariant: str, root_cause: dict[str, str] | None, expected: list[str]
+) -> None:
+    """Rewording a known signature joins both invariant keys before the next route is counted."""
+    module = _load_module()
+    ledger = _route_ledger(
+        ["route-a", "pad-1", "pad-2"],
+        ["route-a", "pad-1"],
+        [signature],
+        invariants={
+            "route-a": "first wording",
+            "pad-1": "pad one holds",
+            "pad-2": "pad two holds",
+            signature: invariant,
+        },
+    )
+    ledger["rounds"][1]["findings"][0]["evidence"] = ["invariant: second wording"]
+    actions = _actions(
+        [
+            _reworded_action("route-a", "first wording"),
+            _held_action("pad-1", "pad one holds"),
+            _held_action("pad-2", "pad two holds"),
+        ],
+        [_reworded_action("route-a", "second wording", _ROOT_CAUSE), _held_action("pad-1", "pad one holds")],
+        [_reworded_action(signature, invariant, root_cause)],
+        version=3,
+    )
+
+    assert module.validate_actions(ledger, actions) == expected
+
+
+def test_two_round_key_chain_is_only_a_repeat() -> None:
+    """A chain formed by two same-round actions has only one earlier round behind the next fix."""
+    module = _load_module()
+    ledger = _route_ledger(
+        ["route-a", "route-b"],
+        ["route-c"],
+        invariants={"route-a": "first wording", "route-b": "second wording", "route-c": "first wording"},
+    )
+    ledger["rounds"][0]["findings"][0]["evidence"].append("invariant: second wording")
+    first = _reworded_action("route-a", "first wording")
+    first["evidence"].append("invariant: second wording")
+    actions = _actions(
+        [first, _reworded_action("route-b", "second wording")],
+        [_reworded_action("route-c", "first wording")],
+        version=3,
+    )
+
+    assert module.validate_actions(ledger, actions) == ["round-2-repeat-root-cause-required:route-c"]
+    actions["rounds"][1]["actions"][0]["root_cause"] = _ROOT_CAUSE
+    assert module.validate_actions(ledger, actions) == []
+
+
+def test_current_round_connections_do_not_change_sibling_recurrence() -> None:
+    """A connection created by one action is published only after its siblings have been validated."""
+    module = _load_module()
+    ledger = _route_ledger(
+        ["route-a", "pad-1", "pad-2"],
+        ["route-a", "route-b"],
+        invariants={
+            "route-a": "first wording",
+            "route-b": "second wording",
+            "pad-1": "pad one holds",
+            "pad-2": "pad two holds",
+        },
+    )
+    ledger["rounds"][1]["findings"][0]["evidence"] = ["invariant: second wording"]
+    actions = _actions(
+        [
+            _reworded_action("route-a", "first wording"),
+            _held_action("pad-1", "pad one holds"),
+            _held_action("pad-2", "pad two holds"),
+        ],
+        [_reworded_action("route-a", "second wording", _ROOT_CAUSE), _reworded_action("route-b", "second wording")],
+        version=3,
+    )
+
+    assert module.validate_actions(ledger, actions) == []
+
+
+@pytest.mark.parametrize("version", [1, 2])
+def test_historical_actions_keep_signature_only_recurrence(version: int) -> None:
+    """Archived action schemas do not connect signatures through shared invariant evidence."""
+    module = _load_module()
+    ledger = _route_ledger(["route-a", "pad-1", "pad-2"], ["route-a", "pad-1"], ["route-b"])
+    actions = _actions(
+        [
+            _reworded_action("route-a", "first wording"),
+            _held_action("pad-1", "pad one holds"),
+            _held_action("pad-2", "pad two holds"),
+        ],
+        [_reworded_action("route-a", "second wording", _ROOT_CAUSE), _held_action("pad-1", "pad one holds")],
+        [_reworded_action("route-b", "second wording", _ROOT_CAUSE)],
+        version=version,
+    )
+
+    assert module.validate_actions(ledger, actions) == []
+
+
+@pytest.mark.parametrize("version", [1, 2, 3])
+def test_ledger_invariants_count_when_actions_name_unrelated_invariants(version: int) -> None:
+    """Schema 3 rejects unrelated action wording and still counts the ledger's invariant history."""
+    module = _load_module()
+    ledger = _route_ledger(
+        ["a", "pad-1", "pad-2"],
+        ["b", "pad-1"],
+        ["c"],
+        invariants={
+            "a": "Shared invariant",
+            "b": " shared  INVARIANT ",
+            "c": "shared invariant",
+            "pad-1": "padding one",
+            "pad-2": "padding two",
+        },
+    )
+    actions = _actions(
+        [
+            _reworded_action("a", "first unrelated invariant"),
+            _held_action("pad-1", "padding one"),
+            _held_action("pad-2", "padding two"),
+        ],
+        [_reworded_action("b", "second unrelated invariant"), _held_action("pad-1", "padding one")],
+        [_reworded_action("c", "third unrelated invariant")],
+        version=version,
+    )
+
+    assert module.validate_ledger(ledger) == []
+    progress = module._render_progress(ledger, 3)
+    assert "| 2 | 2 + 0 | 0 + 0 | 0 + 0 | 0 + 0 | 0 + 0 | 0 + 0 | 40 + 0 |" in progress
+    assert "| 3 | 1 + 0 | 0 + 0 | 0 + 0 | 0 + 0 | 0 + 0 | 0 + 0 | 20 + 0 |" in progress
+    expected = (
+        [
+            "round-1-action-invariant-not-in-finding:a",
+            "round-2-action-invariant-not-in-finding:b",
+            "round-2-repeat-root-cause-required:b",
+            "round-3-action-invariant-not-in-finding:c",
+            "round-3-repeat-root-cause-required:c",
+            "round-3-third-occurrence-must-stop:c",
+        ]
+        if version == 3
+        else []
+    )
+    assert module.validate_actions(ledger, actions) == expected
+
+
+def test_consistent_ledger_invariant_history_with_third_occurrence_escalated_is_valid() -> None:
+    """A repeated fix with root cause and escalation at the third occurrence remains valid."""
+    module = _load_module()
+    invariant = "Every case arm is judged as a command"
+    ledger = _route_ledger(
+        ["a", "pad-1", "pad-2"],
+        ["b", "pad-1"],
+        ["c"],
+        invariants={**dict.fromkeys(("a", "b", "c"), invariant), "pad-1": "padding one", "pad-2": "padding two"},
+    )
+    actions = _actions(
+        [_invariant_action("a"), _held_action("pad-1", "padding one"), _held_action("pad-2", "padding two")],
+        [_invariant_action("b", _ROOT_CAUSE), _held_action("pad-1", "padding one")],
+        [_held_action("c", invariant)],
+        version=3,
+    )
+
+    assert module.validate_actions(ledger, actions) == []
+
+
+@pytest.mark.parametrize("disposition", ["open", "fixed-pending-verification", "verified-fixed", "rejected"])
+def test_progress_and_recurrence_share_every_disposition_history(disposition: str) -> None:
+    """A closed or rejected first report still makes a later route old and requires root cause for its fix."""
+    module = _load_module()
+    invariant = "The same boundary holds"
+    first = _finding("a", "high", disposition, evidence=[f"invariant: {invariant}", "review evidence"])
+    closed = {**first, "disposition": "verified-fixed"}
+    ledger = _ledger(
+        _round(1, [first, _finding("padding", "security", evidence=["invariant: unrelated"])]),
+        _round(
+            2,
+            [
+                closed,
+                _finding("padding", "security", "verified-fixed"),
+                _finding("b", "high", evidence=[f"invariant: {invariant}"]),
+            ],
+        ),
+    )
+    initial_actions = [_held_action("padding", "unrelated")]
+    if disposition in {"open", "fixed-pending-verification"}:
+        initial_actions.insert(0, _held_action("a", invariant))
+    actions = _actions(initial_actions, [_reworded_action("b", invariant)], version=3)
+
+    assert module.validate_ledger(ledger) == []
+    assert module.summarize_ledger(ledger)["scores"] == [
+        26 if disposition in {"open", "fixed-pending-verification"} else 20,
+        6,
+    ]
+    assert "| 2 | 0 + 0 | 0 + 0 | 1 + 0 | 0 + 0 | 0 + 0 | 0 + 0 | 6 + 0 |" in module._render_progress(ledger, 2)
+    assert module.validate_actions(ledger, actions) == ["round-2-repeat-root-cause-required:b"]
+
+    actions["rounds"][1]["actions"][0]["root_cause"] = _ROOT_CAUSE
+    assert module.validate_actions(ledger, actions) == []
+
+
+def test_progress_counts_new_route_to_known_invariant_as_old(tmp_path: Path) -> None:
+    """The progress table reads a new route to an invariant from an earlier round as an old finding.
+
+    The table keyed old/new by signature only, so a route-named signature for a known invariant showed as new discovery
+    while the action check already counted it as a repeat.
+    """
+    ledger = _route_ledger(
+        ["route-one", "pad"],
+        ["route-two"],
+        invariants={"route-one": "Every case arm is judged", "route-two": "every case arm  is judged", "pad": "pad"},
+    )
+    ledger_path = tmp_path / "ledger.json"
+    # the single-file historical shape keeps the rounds inline, so one JSON write stands in for header plus round log
+    ledger_path.write_text(json.dumps(ledger | {"schema_version": 1}), encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(LEDGER_PATH), "--ledger", str(ledger_path), "--progress"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "| 1 | 0 + 2 | 0 + 0 | 0 + 0 | 0 + 0 | 0 + 0 | 0 + 0 | 0 + 40 |" in result.stderr
+    assert "| 2 | 1 + 0 | 0 + 0 | 0 + 0 | 0 + 0 | 0 + 0 | 0 + 0 | 20 + 0 |" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("decision", "evidence", "expected"),
+    [
+        pytest.param(
+            "escalate", ["Contract change needs an owner."], "action-evidence-missing:invariant:", id="escalate"
+        ),
+        pytest.param("defer", ["Copy file is out of scope."], "action-evidence-missing:invariant:", id="defer"),
+        pytest.param(
+            "fix",
+            ["original: case c1", "consumer: hook verdict", "sibling: case c2", "source-paths: reader.py"],
+            "fix-evidence-missing:invariant:",
+            id="fix",
+        ),
+        pytest.param("escalate", ["invariant:   ", "needs owner"], "action-evidence-missing:invariant:", id="blank"),
+    ],
+)
+def test_current_actions_require_invariant_on_every_decision(decision: str, evidence: list[str], expected: str) -> None:
+    """Schema 3 rejects any action, whatever its decision, that does not name a nonempty invariant.
+
+    Without the entry an escalated or deferred finding has no invariant key, and a later route to it slips past the
+    repeat and third-occurrence rules.
+    """
+    module = _load_module()
+    ledger = _ledger(_round(1, [_finding("typo", "low")])) | {"schema_version": 2}
+    action = {
+        "signature": "typo",
+        "decision": decision,
+        "evidence": evidence,
+        "owner": "parent",
+        "next_action": "Request the owner decision.",
+        "root_cause": None,
+    }
+
+    assert module.validate_actions(ledger, _actions([action], version=3)) == [f"round-1-{expected}typo"]
+
+
+def test_historical_schema_two_actions_keep_their_evidence_rules() -> None:
+    """A schema-2 action record without ``invariant:`` on escalated or deferred findings still validates as before.
+
+    Archived schema-2 records were written when only a fix named its invariant; they stay readable under that rule while
+    current results require schema 3.
+    """
+    module = _load_module()
+    ledger = _ledger(_round(1, [_finding("boundary"), _finding("typo", "low")])) | {"schema_version": 2}
+    held = {"evidence": ["Needs an owner decision."], "owner": "parent", "next_action": "Ask.", "root_cause": None}
+    actions = _actions(
+        [{**held, "signature": "boundary", "decision": "escalate"}, {**held, "signature": "typo", "decision": "defer"}]
+    )
+
+    assert module.validate_actions(ledger, actions) == []
+
+
+@pytest.mark.parametrize("version", [0, 4, True, "3", 3.0, pytest.param([], id="list"), pytest.param({}, id="dict")])
+def test_actions_schema_outside_known_versions_is_rejected(version: object) -> None:
+    """Only actions schemas 1, 2 and 3 are accepted; a boolean is not an integer version."""
+    module = _load_module()
+    ledger = _ledger(_round(1, [_finding("typo", "low")])) | {"schema_version": 2}
+    actions = _actions([_held_action("typo", "copy matches the spec", "defer")], version=version)
+
+    assert "actions-schema-version-invalid" in module.validate_actions(ledger, actions)
 
 
 def test_specialist_retry_policy_permits_corrected_reviewer_redispatch() -> None:

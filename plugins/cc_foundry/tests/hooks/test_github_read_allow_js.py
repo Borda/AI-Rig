@@ -301,6 +301,39 @@ class TestNoGrantShapes:
     """Everything outside the read allowlist gets no allow, whatever the grant says."""
 
     @pytest.mark.parametrize(
+        "command",
+        [
+            'fish -C "$x" -c :',
+            'exec 3<<< "$x"; sh <&3',
+            "function gh { :; }; gh pr list",
+            "alias gh=':'; gh pr list",
+            'eval "$(cat f)"',
+            r"env -S 'printf %s gh\ pr\ list' | sh",
+        ],
+    )
+    def test_final_round_unknown_code_is_unreadable(self, classify, command: str) -> None:
+        """Unknown startup, descriptor and eval source cannot receive a read allow."""
+        result = classify(command + "; gh pr list")
+        assert result["ok"] is False
+        assert result["why"] == "unreadable"
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            'fish -C "gh pr list" -c :',
+            'exec 3<<< "gh pr list"; sh <&3',
+            "alias -p; gh pr list",
+            "function f { :; }; gh pr list",
+            "grep -F eval '$x'; gh pr list",
+        ],
+    )
+    def test_final_round_mixed_reads_are_not_gh_only(self, classify, command: str) -> None:
+        """A readable gh invocation alongside other programs still needs the normal Bash decision."""
+        result = classify(command)
+        assert result["ok"] is False
+        assert result["why"] == "not-gh-only"
+
+    @pytest.mark.parametrize(
         ("command", "why"),
         [
             pytest.param("gh api repos/o/r/issues -f title=x", "not-a-read", id="rest-raw-field"),
@@ -336,7 +369,7 @@ class TestNoGrantShapes:
             pytest.param("gh codespace list", "not-a-read", id="codespace"),
             pytest.param("gh auth status", "not-a-read", id="auth-status"),
             pytest.param("gh auth token", "not-a-read", id="auth-token"),
-            pytest.param("gh pr view 1 | sh", "not-gh-only", id="pipe"),
+            pytest.param("gh pr view 1 | sh", "unreadable", id="pipe"),
             pytest.param("gh pr view 1 > out.txt", "not-gh-only", id="redirect-file"),
             pytest.param("gh pr view 1 >> out.txt", "not-gh-only", id="redirect-append"),
             pytest.param("gh pr view 1 < in.txt", "not-gh-only", id="redirect-input"),
@@ -374,6 +407,10 @@ class TestNoGrantShapes:
             pytest.param("gh api user --jq '$ENV'", "not-a-read", id="jq-env-object"),
             pytest.param("bash -c 'gh pr view 1'", "not-gh-only", id="bash-c"),
             pytest.param("eval 'gh pr view 1'", "not-gh-only", id="eval"),
+            pytest.param('bash helper.sh "fix(parser): data"; gh pr view 1', "not-gh-only", id="script-data"),
+            pytest.param('env MODE=test python3 -c "print(2)"; gh pr view 1', "not-gh-only", id="interpreter-data"),
+            pytest.param("ls; bash --version; gh pr view 1", "not-gh-only", id="shell-version-after-command"),
+            pytest.param("setopt SH_WORD_SPLIT; gh pr view 1", "not-gh-only", id="split-option-is-not-a-read"),
             pytest.param("echo 1 | xargs gh pr view", "not-gh-only", id="xargs"),
             pytest.param("gh pr view $'\\u0031'", "unreadable", id="ansi-c-unreadable"),
             pytest.param("gh pr view 'unbalanced", "unreadable", id="unbalanced-quote"),
@@ -381,7 +418,7 @@ class TestNoGrantShapes:
             pytest.param("gh pr view ~/x", "not-gh-only", id="tilde"),
             pytest.param("gh pr view {1,2}", "lexer-mismatch", id="brace-expansion"),
             pytest.param("gh issue list -l gh", "lexer-mismatch", id="gh-word-in-arguments"),
-            pytest.param("gh pr view 1 {fd}>/dev/null", "lexer-mismatch", id="named-fd-redirect"),
+            pytest.param("gh pr view 1 {fd}>/dev/null", "unreadable", id="named-fd-redirect"),
             pytest.param("gh pr -R o/r view 1", "not-a-read", id="flag-before-verb"),
             pytest.param("/usr/bin/gh pr view 1", "not-gh-only", id="program-path"),
             pytest.param("gh pr view 1 &", "not-gh-only", id="background"),

@@ -30,7 +30,7 @@ else
     _C33_DIR=$(ls -td ~/.claude/plugins/cache/borda-ai-rig/foundry/*/ 2>/dev/null | head -1)
     _C33_DIR="${_C33_DIR:-.claude/}"
 fi
-printf "=== Check 33b: scope=%s files=%d ===\n" "$_C33_DIR" \
+printf "=== Check 33b: scope=%s files=%s ===\n" "$_C33_DIR" \
     "$(find "$_C33_DIR" -name '*.md' -type f 2>/dev/null | wc -l | tr -d ' ')"
 
 printf "=== Check 33b Phase 1: Cross-file code block quick scan ===\n"

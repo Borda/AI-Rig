@@ -132,6 +132,22 @@ class TestWritesBlocked:
     @pytest.mark.parametrize(
         "command",
         [
+            pytest.param("printf 'gh pr create\\n' | timeout 60 bash", id="timeout-wrapper-decoded-stdin"),
+            pytest.param("printf 'gh pr create\\n' | { cat; bash; }", id="group-decoded-stdin"),
+        ],
+    )
+    def test_decoded_printf_source_reports_the_exact_write(self, run_hook, command: str) -> None:
+        """Decoded source has a complete three-word gh argv and is blocked as that specific write."""
+        result = run_hook("gh-write-guard.js", _bash(command))
+
+        assert result.returncode == 2
+        assert result.stderr.splitlines()[0] == "gh write blocked — gh pr create."
+        assert "cannot read this command's gh arguments exactly" not in result.stderr
+        assert "shell syntax the guards cannot read exactly" not in result.stderr
+
+    @pytest.mark.parametrize(
+        "command",
+        [
             pytest.param("gh pr -R o/r create", id="repo-flag-before-verb"),
             pytest.param("gh -R o/r pr create", id="repo-flag-before-group"),
             pytest.param("gh pr --repo=o/r create", id="joined-repo-flag"),
@@ -161,10 +177,17 @@ class TestWritesBlocked:
             pytest.param("gh pr 2>&1 merge 1", id="fd-duplication-between-words"),
             pytest.param("gh pr merge>/dev/null 1", id="redirection-glued-to-verb"),
             pytest.param('gh api repos/o/r/issues --input - <<EOF\n{"title":"x"}\nEOF', id="heredoc-input"),
+            pytest.param("exit '$(gh pr merge 1)'", id="count-exit-arithmetic-substitution"),
+            pytest.param("shift '$(gh pr merge 1)'", id="count-shift-arithmetic-substitution"),
+            pytest.param("repeat '$(gh pr merge 1)' true", id="count-repeat-arithmetic-substitution"),
         ],
     )
     def test_spelling_cannot_hide_a_write(self, run_hook, command: str) -> None:
-        """Flags, wrappers, quoting and nested shell source are resolved before the subcommand is matched."""
+        """Flags, wrappers, quoting and nested shell source are resolved before the subcommand is matched.
+
+        A count command (`exit`, `shift`, `repeat`) evaluates its first operand as arithmetic, which re-expands a
+        command substitution the author quoted, so a `$(gh pr merge)` stored there runs and must be seen.
+        """
         result = run_hook("gh-write-guard.js", _bash(command))
 
         assert result.returncode == 2, f"{command!r} was not blocked"
@@ -237,6 +260,33 @@ class TestWritesBlocked:
             pytest.param("echo create | xargs -I{} gh pr {} --title t --body b", id="xargs-replacement-as-verb"),
             pytest.param("echo repos/o/r/issues -f title=x | xargs gh api", id="xargs-supplies-api-fields"),
             pytest.param("echo 'gh pr create --title t --body b' | sh", id="echo-piped-to-sh"),
+            pytest.param("echo 'gh pr create' | timeout 60 bash", id="unknown-timeout-wrapper"),
+            pytest.param("echo 'gh pr create' | stdbuf -oL bash", id="unknown-stdbuf-wrapper"),
+            pytest.param("echo 'gh pr create' | doas bash", id="unknown-doas-wrapper"),
+            pytest.param("echo 'gh pr create' | setsid bash", id="unknown-setsid-wrapper"),
+            pytest.param("echo 'gh pr create' | flock /tmp/lock bash", id="unknown-flock-wrapper"),
+            pytest.param("echo 'gh pr create' | caffeinate -i bash", id="unknown-caffeinate-wrapper"),
+            pytest.param("echo 'gh pr create' | ionice -c3 sh", id="unknown-ionice-wrapper"),
+            pytest.param("echo 'gh pr create' | unbuffer -p bash", id="unknown-unbuffer-wrapper"),
+            pytest.param("echo 'gh pr create' | busybox sh", id="busybox-wrapper"),
+            pytest.param("timeout 60 bash <<'EOF'\ngh pr create\nEOF", id="unknown-wrapper-heredoc"),
+            pytest.param(
+                "cat > w.sh <<'EOF'\ngh pr create\nEOF\ntimeout 60 bash w.sh", id="unknown-wrapper-script-file"
+            ),
+            pytest.param("echo 'gh pr create;' bash | sh", id="unfed-shell-candidate-still-prints-source"),
+            pytest.param("echo 'gh pr create' | { cat; bash; }", id="brace-group-inherits-stdin"),
+            pytest.param("echo 'gh pr create' |& { cat; bash; }", id="brace-group-inherits-merged-pipe"),
+            pytest.param("echo 'gh pr create' | (cat; bash)", id="subshell-inherits-stdin"),
+            pytest.param("echo 'gh pr create' | { cat; (bash); }", id="nested-subshell-inherits-stdin"),
+            pytest.param("echo 'gh pr create' | echo $(cat; bash)", id="substitution-inherits-stdin"),
+            pytest.param("echo 'gh pr create' | echo \"$(cat; bash)\"", id="quoted-substitution-inherits-stdin"),
+            pytest.param("echo 'gh pr create' | echo \"`cat; bash`\"", id="backticks-inherit-stdin"),
+            pytest.param("echo 'gh pr create' > >(cat; bash)", id="output-process-substitution-inherits-input"),
+            pytest.param("echo 'gh pr create' |\nbash", id="pipeline-continues-after-newline"),
+            pytest.param("echo 'gh pr create' |\n# pipeline continues\nbash", id="pipeline-continues-after-comment"),
+            pytest.param("{ cat; bash; } <<'TEXT'\ngh pr create\nTEXT", id="brace-group-heredoc-feeds-commands"),
+            pytest.param("(cat; bash) <<< 'gh pr create'", id="subshell-here-string-feeds-commands"),
+            pytest.param("echo 'gh pr create' | { echo }; bash; }", id="brace-operand-preserves-group-input"),
             pytest.param("printf '%s\\n' 'gh pr create --title t --body b' | bash", id="printf-escapes-piped-to-bash"),
             pytest.param("echo 'gh pr create --title t --body b' | bash -s", id="piped-to-bash-s"),
             pytest.param("sh < <(echo 'gh pr create --title t --body b')", id="process-substitution-as-stdin"),
@@ -278,6 +328,18 @@ class TestWritesBlocked:
             pytest.param("echo .(Ne:'gh pr create --title t --body b':)", id="glob-qualifier-list-with-e"),
             pytest.param("echo *(e:'gh pr create --title t --body b':)", id="star-glob-qualifier-e"),
             pytest.param("echo .(+gh)", id="glob-qualifier-plus-function"),
+            pytest.param("echo .(e_gh pr create --title t --body b_)", id="glob-qualifier-e-word-delimiter"),
+            pytest.param("echo .(eXgh pr view 1X)", id="glob-qualifier-e-letter-delimiter"),
+            pytest.param("echo .(N)(e:'gh pr create --title t --body b':)", id="glob-qualifier-second-group"),
+            pytest.param("echo *(N)(+gh)", id="glob-qualifier-second-group-plus-function"),
+            pytest.param("echo *=(+gh)", id="glob-qualifier-after-non-name-equals"),
+            pytest.param("gh pr view NAME=(e:'gh pr merge 1':)", id="glob-qualifier-after-argument-name-equals"),
+            pytest.param("'X=1' a=(e:'gh pr merge 1':)", id="glob-qualifier-after-quoted-assignment-word"),
+            pytest.param("'a'=(e:'gh pr merge 1':); gh pr view 1", id="glob-qualifier-after-quoted-name-equals"),
+            pytest.param("a'b'=(e:'gh pr merge 1':); gh pr view 1", id="glob-qualifier-after-partly-quoted-name"),
+            pytest.param(
+                "local \\a=(e:'gh pr merge 1':); gh pr view 1", id="glob-qualifier-after-escaped-declared-name"
+            ),
             pytest.param("echo ${(e):-'$(gh pr create --title t --body b)'}", id="parameter-flag-e"),
             pytest.param("x='$(gh pr create --title t --body b)'; echo ${(e)x}", id="parameter-flag-e-on-variable"),
             pytest.param(
@@ -380,6 +442,39 @@ class TestNoExactArgvFailsClosed:
     @pytest.mark.parametrize(
         "command",
         [
+            'fish -C "$x" -c :',
+            'exec 3<<< "$x"; sh <&3',
+            "function gh { :; }; gh pr list",
+            "alias gh=':'; gh pr list",
+            'eval "$(cat f)"',
+            r"env -S 'printf %s gh\ pr\ list' | sh",
+        ],
+    )
+    def test_final_round_unknown_code_is_blocked(self, run_hook, command: str) -> None:
+        """Unproven consumers produce a blocking verdict without executing the supplied shell text."""
+        result = run_hook("gh-write-guard.js", _bash(command))
+        assert result.returncode == 2
+        assert "shell syntax the guards cannot read exactly" in result.stderr
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            'fish -C "gh pr list" -c :',
+            'exec 3<<< "gh pr list"; sh <&3',
+            "alias -p; gh pr list",
+            "function f { :; }; gh pr list",
+            "grep -F eval '$x'; gh pr list",
+        ],
+    )
+    def test_final_round_literal_reads_pass(self, run_hook, command: str) -> None:
+        """Harmless literal consumers and queries keep the read guard's passing verdict."""
+        result = run_hook("gh-write-guard.js", _bash(command))
+        assert result.returncode == 0, result.stderr
+        assert result.stderr == ""
+
+    @pytest.mark.parametrize(
+        "command",
+        [
             pytest.param("gh api repos/o/r/issues -q '>' -ftitle=x {1..300}", id="oversized-braces-api"),
             pytest.param("gh pr --title 'a b' create {1..300}", id="oversized-braces-quoted-space"),
             pytest.param("gh pr --title 'a b' create 'x", id="unbalanced-quote-quoted-space"),
@@ -410,8 +505,33 @@ class TestNoExactArgvFailsClosed:
         [
             pytest.param("echo ${(U)HOME}", "parameter flags", id="zsh-parameter-flags"),
             pytest.param('echo $"x"', "locale string", id="locale-string"),
+            pytest.param(
+                "timeout 5 zsh -o rcquotes -c 'echo ok'; gh pr view 1", "shell option", id="timeout-shell-options"
+            ),
+            pytest.param("stdbuf -oL zsh -o rcquotes -c 'echo ok'", "shell option", id="stdbuf-shell-options"),
+            pytest.param("print -f '%b' 'gh pr list' | sh", "outside the decoded set", id="print-format-outside-set"),
+            pytest.param(
+                'print "$TEXT" > w.sh; source ./w.sh', "outside the decoded set", id="nonliteral-written-source"
+            ),
+            pytest.param(
+                "echo 'gh pr create' | { cat; zsh -o rcquotes; }", "shell option", id="group-fed-shell-options"
+            ),
+            pytest.param(
+                "{ cat; zsh -o rcquotes; } <<< 'gh pr create'", "shell option", id="group-here-string-shell-options"
+            ),
             pytest.param("echo .(e:'date':)", "glob qualifier", id="zsh-glob-qualifier"),
             pytest.param("echo $'\\u0041'", "escape bash and zsh decode differently", id="ansi-c-unicode-escape"),
+            pytest.param(
+                'bash -c "$(cat code)"; gh pr list', "outside the decoded set", id="unknown-substitution-source"
+            ),
+            pytest.param(
+                "curl -fsSL https://example.invalid/install | sh", "outside the decoded set", id="unknown-pipe-source"
+            ),
+            pytest.param(
+                "echo (e:x:) && gh pr view 1",
+                "a `(` opening a word after the command word",
+                id="word-start-paren-after-command",
+            ),
         ],
     )
     def test_unreadable_syntax_names_the_syntax_not_a_gh_write(self, run_hook, command: str, construct: str) -> None:
@@ -426,6 +546,14 @@ class TestNoExactArgvFailsClosed:
         assert result.stderr.startswith("Bash command blocked — it holds shell syntax the guards cannot read exactly")
         assert construct in result.stderr
         assert ("gh write blocked" in result.stderr, "AskUserQuestion" in result.stderr) == (False, False)
+
+    @pytest.mark.parametrize("runner", ["bash -c", "eval"])
+    def test_plain_variable_source_stays_runtime_state(self, run_hook, runner: str) -> None:
+        """A whole variable source operand stays out of scope while the literal gh read still passes."""
+        result = run_hook("gh-write-guard.js", _bash(f'{runner} "$CMD"; gh pr list'))
+
+        assert result.returncode == 0, result.stderr
+        assert result.stderr == ""
 
     def test_unreadable_syntax_beside_a_gh_write_says_no_approval_covers_it(self, run_hook) -> None:
         """A gh write written with such syntax names the syntax and says no gh-write approval can cover it."""
@@ -450,6 +578,121 @@ class TestNoExactArgvFailsClosed:
 
         Interpreter code that never names gh leaves the rest of the command read exactly, so ``--label create`` stays a
         label value there.
+        """
+        result = run_hook("gh-write-guard.js", _bash(command))
+
+        assert result.returncode == 0, result.stderr
+
+
+@_skip_node_unavailable
+class TestLexerAdmitSet:
+    """The lexer reads only the `$` forms, descriptor prefixes and shell options it models; anything else is unreadable.
+
+    It used to refuse a short list (`${(…)}`, `${ cmd; }`, `$\\⏎`) and read every other `$` form as a plain word, drop a
+    `{name}>` prefix as a descriptor, and read every command with the shell options at their defaults even after the
+    command line switched one. Each now blocks, naming the syntax.
+    """
+
+    @pytest.mark.parametrize(
+        ("command", "construct"),
+        [
+            pytest.param("echo ${~x}; gh pr list", "`$` form", id="zsh-glob-sigil-braced"),
+            pytest.param("echo $~x; gh pr list", "`$` form", id="zsh-glob-sigil"),
+            pytest.param("echo ${^x}; gh pr list", "`$` form", id="zsh-rcexpand-sigil"),
+            pytest.param("echo ${!x}; gh pr list", "`$` form", id="indirection"),
+            pytest.param("echo $[1+2]; gh pr list", "`$` form", id="dollar-bracket-arithmetic"),
+            pytest.param('echo "$[1+2]"; gh pr list', "`$` form", id="dollar-bracket-in-double-quotes"),
+            pytest.param("echo ${x:=y}; gh pr list", "`$` form", id="assigning-default"),
+            pytest.param("echo ${x::=y}; gh pr list", "`$` form", id="zsh-unconditional-assign"),
+            pytest.param("echo ${x[$i]}; gh pr list", "`$` form", id="arithmetic-subscript"),
+            pytest.param("cat <<EOF\n$[1]\nEOF\ngh pr list", "`$` form", id="dollar-bracket-in-heredoc-body"),
+            pytest.param("exec {gh}>/dev/null; gh pr list", "descriptor variable", id="fd-variable-prefix"),
+            pytest.param("echo {fd}&>/dev/null; gh pr list", "descriptor variable", id="fd-variable-amp-redirect"),
+            pytest.param("setopt rcquotes; gh pr list", "switched at run time", id="setopt-before-gh"),
+            pytest.param("builtin setopt braceccl; gh pr list", "switched at run time", id="setopt-behind-builtin"),
+            pytest.param("shopt -s extglob; gh pr list", "switched at run time", id="shopt-before-gh"),
+            pytest.param("set -o noglob; gh pr list", "switched at run time", id="set-o-unsafe-option"),
+            pytest.param("emulate sh; gh pr list", "switched at run time", id="emulate"),
+            pytest.param("zsh -o rcquotes -c 'gh pr list'", "switched at run time", id="interpreter-option"),
+            pytest.param("bash -O extglob -c 'gh pr list'", "switched at run time", id="interpreter-shopt"),
+            pytest.param("options[rcquotes]=on; gh pr list", "switched at run time", id="zsh-options-array"),
+            pytest.param("SHELLOPTS=x bash -c 'gh pr list'", "switched at run time", id="shellopts-environment"),
+            pytest.param("export SHELLOPTS=x; gh pr list", "switched at run time", id="shellopts-exported"),
+            pytest.param("echo 'gh pr list' | bash --posix", "switched at run time", id="option-shell-fed-a-pipe"),
+            pytest.param(
+                "bash --posix <<'EOF'\ngh pr list\nEOF", "switched at run time", id="option-shell-fed-a-heredoc"
+            ),
+        ],
+    )
+    def test_unmodeled_syntax_blocks_naming_it(self, run_hook, command: str, construct: str) -> None:
+        """A form outside the lexer's admit set blocks with the construct named, never read as plain words.
+
+        A zsh sigil or assigning expansion changes what later words are, a `{name}>` prefix is a word to bash 3.2 and a
+        variable to bash 4.1+ and zsh, and an option switched at run time changes how every later command is read.
+        """
+        result = run_hook("gh-write-guard.js", _bash(command))
+
+        assert result.returncode == 2, f"{command!r} was not blocked"
+        assert result.stderr.startswith("Bash command blocked — it holds shell syntax the guards cannot read exactly")
+        assert construct in result.stderr
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            'gh pr view "${N:-1}" ${#X} ${X%.md} ${X##*/} ${X:0:2} ${@:2} $? $# $$ $! "$@"',
+            'echo "${CLAUDE_SESSION_ID:-$$}" "x$" s/a$/b/ && gh pr list',
+            'gh release list ${TARGET:+--limit "$TARGET"}',
+            "set -euo pipefail; gh pr list",
+            "unsetopt nomatch; gh pr list",
+            "gh pr list; setopt rcquotes",
+            "echo a 2>/dev/null; gh pr list",
+            "rg zsh --glob '*.md' \"$DIR\"",
+            "grep -rn bash --include='*.js' .",
+            "git log --grep bash --oneline | head -5",
+            "bash --version",
+            "curl -d options=1 example.invalid",
+            "set -E; gh pr list",
+            "set -eET; gh pr list",
+            "set -o errtrace; gh pr list",
+            "set +o functrace; gh pr list",
+            "set -o xtrace -o verbose; gh pr list",
+            "echo $=x; gh pr list",
+            "echo ${=words}; gh pr list",
+            "setopt SH_WORD_SPLIT; gh pr list",
+            "setopt NO_SH_WORD_SPLIT; gh pr list",
+            'bash helper.sh "fix(parser): data"; gh pr list',
+            'env MODE=test python3 -c "print(2)"; gh pr list',
+            "cat > helper.sh <<'TEXT'\n#!/bin/bash\necho \"(data)\"\nTEXT\nbash helper.sh; gh pr list",
+            "ls; bash --version | head -1",
+            'for tag in a; do [[ "$tag" =~ ^r[0-9]+(\\.[0-9]+)+$ ]]; done',
+            "time (ls)",
+            "echo ${X:?missing}; gh pr list",
+            'echo "${X?needs gh}"; gh pr list',
+            "echo ${X^^} ${X,} ${X,,} ${X^}; gh pr list",
+            "man bash | col -b | grep -n 'alpha\\|beta' | head -5",
+            "brew info bash | grep -E 'x\\|y'",
+            "echo bash | sed 's/a\\|b/x/'",
+            "which zsh | sed 's/\\/bin//'",
+            "sudo -u bash man zsh | grep 'a\\|b'",
+            "apropos zsh | grep 'a\\|b'",
+            "ls /bin | grep -c 'sh\\|bash'",
+            "bash -s | grep 'a\\|b'",
+            "echo 'gh pr create' | cat; bash",
+            "echo 'gh pr create' | cat && bash",
+            "echo 'gh pr create' | cat || bash",
+            "{ echo 'gh pr create' | cat; bash; }",
+            "(echo 'gh pr create' | cat; bash)",
+            "echo 'gh pr create'; echo \"$(bash)\" | cat",
+            "cat <(man bash | grep 'a\\|b')",
+        ],
+    )
+    def test_modeled_forms_still_read(self, run_hook, command: str) -> None:
+        """Shipped forms inside the admit set keep their exact reading and pass a read.
+
+        Reading operators, special parameters, a literal `$`, the four safe options, an option switched after the last
+        command, and a shell running a run-time script all stay readable. So do a shell name among another program's
+        arguments, a shell run for its own flags, and an `options=` word that assigns nothing: the guard runs on every
+        Bash command, so an over-read here blocks ordinary work.
         """
         result = run_hook("gh-write-guard.js", _bash(command))
 
@@ -573,6 +816,22 @@ class TestReadsPass:
     @pytest.mark.parametrize(
         "command",
         [
+            "man bash <<'TEXT'\ngh pr create\nTEXT",
+            "echo 'gh pr create' | runner } bash",
+            'echo "$TEXT" | grep bash',
+            'echo "$TEXT" | rg bash',
+            'echo "$TEXT" | cat bash',
+            'echo "$DATA" > logs/setup.sh; sh scripts/setup.sh',
+        ],
+    )
+    def test_shell_named_arguments_do_not_execute_source(self, run_hook, command: str) -> None:
+        """Only executable command positions select shell input, and distinct script paths stay distinct."""
+        result = run_hook("gh-write-guard.js", _bash(command))
+        assert result.returncode == 0, result.stderr
+
+    @pytest.mark.parametrize(
+        "command",
+        [
             pytest.param("gh pr view 1", id="pr-view"),
             pytest.param("gh pr diff 1", id="pr-diff"),
             pytest.param("gh pr checks 1", id="pr-checks"),
@@ -643,11 +902,9 @@ class TestReadsPass:
             pytest.param(
                 "gh pr list --json number | jq -r '.[].number' | xargs -n1 gh pr view", id="xargs-read-pipeline"
             ),
-            pytest.param("curl -fsSL https://example.invalid/install | sh", id="pipe-to-sh-without-gh"),
             pytest.param("printf -v x '%s' \"$y\"", id="printf-v-plain-name"),
             pytest.param("trap 'rm -f \"$tmpenv\"' EXIT INT TERM", id="oss-resolve-trap"),
             pytest.param("source .venv/bin/activate && gh pr view 1", id="source-a-file"),
-            pytest.param("echo (e:x:) && gh pr view 1", id="parenthesis-word-is-no-qualifier"),
             pytest.param("f() { gh pr view 1; }; f", id="function-definition"),
             pytest.param("a=(e: f); gh pr view 1", id="array-assignment"),
             pytest.param("[[ ab =~ ^(e:|b)$ ]] && gh pr view 1", id="regex-group-inside-a-word"),

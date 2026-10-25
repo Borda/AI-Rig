@@ -3060,6 +3060,10 @@
       "kind": "command",
       "src": "skills/review/SKILL.md:369"
     },
+    "713193a5f3c877787566855f85392679004be33c2d2a67ceabb43ddd775b4f4d": {
+      "kind": "command",
+      "src": "skills/resolve/SKILL.md:227"
+    },
     "7162c75907522384da5a7ed1277e569d654b90e2ad80539aae5da079a83af891": {
       "kind": "command",
       "src": "skills/resolve/SKILL.md:883"
@@ -4108,6 +4112,10 @@
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-phase2.md:63"
     },
+    "9385b3abb7268665937fad658888fb45262d68747f92d010a64d76ac45aaca39": {
+      "kind": "command",
+      "src": "skills/resolve/SKILL.md:227"
+    },
     "93c1d3591db84f3ae93f6eec4bcfe9fe5dadd4044026dc401ca254a77e053443": {
       "kind": "block",
       "src": "skills/resolve/SKILL.md:1410"
@@ -4952,10 +4960,6 @@
       "kind": "command",
       "src": "skills/release/modes/delegation.md:109"
     },
-    "b134a2741c9b7bc05581604aa5e3f20e71be8525c2819ec948c6205d0fa58e86": {
-      "kind": "command",
-      "src": "skills/resolve/SKILL.md:227"
-    },
     "b16c6d004e956caba2d6035677935a709e2da4ed50397d7d9fc5887f7bce786a": {
       "kind": "command",
       "src": "skills/release/modes/prepare.md:9"
@@ -5671,6 +5675,10 @@
     "c6d5f71ba07e71a1fde3d272534180e8c02644a5302083413c9fc66253c5e36d": {
       "kind": "block",
       "src": "agents/cicd-steward.md:98"
+    },
+    "c71867395d10bc34a984e6b043463ab9a1d760491f5609bab179790898232251": {
+      "kind": "block",
+      "src": "skills/resolve/modes/lint-qa-gate.md:91"
     },
     "c7263b739f1c1d69e665941d6ec86b1e94e839d8c2c053b66657324125f43d13": {
       "kind": "block",
@@ -6888,10 +6896,6 @@
       "kind": "command",
       "src": "skills/analyse/modes/codemap-signals.md:64"
     },
-    "f451acda662388a7c70e0d5b9a96fe29a30d13c10811feffe223b45e8634c5a5": {
-      "kind": "block",
-      "src": "skills/resolve/modes/lint-qa-gate.md:91"
-    },
     "f4db486e109930d898102d1007d99010577a263a18a1a2b76b93405d4c22da3c": {
       "kind": "block",
       "src": "skills/resolve/SKILL.md:1296"
@@ -7269,6 +7273,6 @@
       "src": "skills/resolve/SKILL.md:149"
     }
   },
-  "plugin": "cc_oss@0.52.5",
+  "plugin": "cc_oss@0.53.0",
   "schema": 1
 }

@@ -27,6 +27,23 @@ HOOK = Path(__file__).resolve().parent.parent.parent / "hooks" / "sentinel-read-
 
 NODE_UNAVAILABLE = shutil.which("node") is None
 
+VECTORS = json.loads(
+    (Path(__file__).resolve().parent.parent / "fixtures" / "blueprint_normalization_vectors.json").read_text(
+        encoding="utf-8"
+    )
+)
+FORMAT_VECTORS = VECTORS["closed_text_formats"]
+
+
+@pytest.mark.skipif(NODE_UNAVAILABLE, reason="node unavailable")
+@pytest.mark.parametrize("vector", [pytest.param(vector, id=vector["id"]) for vector in FORMAT_VECTORS])
+def test_closed_text_formats(vector: dict) -> None:
+    """A sentinel anchor preserves closed formats, literal name targets and inert text."""
+    # Gate A confirmed the closed grammar validates dash-leading formats; HEAD admitted printf -- '-%s' x.
+    command = 'IFS= read -r X < "${TMPDIR:-/tmp}/x"; ' + vector["input"]
+    assert _is_allowed(_run(command)) is (not vector["expected"])
+
+
 SENTINEL = '"${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}"'
 
 
@@ -92,6 +109,7 @@ _skip_node_unavailable = pytest.mark.skipif(
         'IFS= read -r V < "${TMPDIR:-/tmp}/foundry-shared-dir-${CSID}" 2>/dev/null || V=""\n'
         'cat "$V/agent-spawn-protocol.md"',
         "IFS= read -r V < ${TMPDIR:-/tmp}/dev-review-run-dir-123 2>/dev/null || V=x",
+        pytest.param('IFS="" read -r V < "${TMPDIR:-/tmp}/a-${CSID}" 2>/dev/null || V=""', id="quoted-empty-ifs"),
     ],
 )
 def test_blueprint_sentinel_reads_are_allowed(command: str) -> None:
@@ -420,6 +438,26 @@ class TestReviewedBypasses:
             "IFS= read -r -p x PATH < /tmp/attacker",
             "IFS= read -r -aPATH < /tmp/attacker",
             "IFS= read -r X < /tmp/attacker PATH",
+            "IFS= read -r PATH</tmp/attacker",
+            "IFS= read -r X PATH<'/tmp/attacker'",
+            "IFS= read -r path < /tmp/attacker",
+            "IFS= read -r ZDOTDIR < /tmp/attacker",
+            "IFS= read -r PS1 < /tmp/attacker",
+            "IFS= read -r precmd_functions < /tmp/attacker",
+            "IFS= read -r options < /tmp/attacker",
+            "IFS= read -r 'PATH[0]' < /tmp/attacker",
+            "IFS= read -r PATH\\[0] < /tmp/attacker",
+            'IFS= read -r "PATH"[0] < /tmp/attacker',
+            "IFS= read -r 'a[PATH=1]' < /tmp/attacker",
+            "IFS= read -r FPATH < /tmp/attacker",
+            "IFS= read -r fpath < /tmp/attacker",
+            "IFS= read -r functions < /tmp/attacker",
+            'IFS= X=$(cat "${TMPDIR:-/tmp}/x")',
+            'IFS=; X=$(cat "${TMPDIR:-/tmp}/x")',
+            'export IFS+=,; X=$(cat "${TMPDIR:-/tmp}/x")',
+            'export IFS[0]=,; X=$(cat "${TMPDIR:-/tmp}/x")',
+            'IFS+=, read -r X < "${TMPDIR:-/tmp}/x"',
+            'export "IFS"=; X=$(cat "${TMPDIR:-/tmp}/x")',
             'IFS= read -r "$NAME" < /tmp/attacker',
             "X=T\nexport PA${X}H=/attacker/bin:$PATH",
             'export "IFS"=,',
@@ -518,6 +556,153 @@ class TestRedirectStripping:
         """
         result = _run(command)
         assert _is_allowed(result), f"{command!r} should be allowed, got: {result}"
+
+
+# ── Every `$` the shell expands is one the lane models ─────────────────────────
+
+
+@_skip_node_unavailable
+class TestDollarAdmitSet:
+    """Arguments of read-only tokens admit only the `$` forms the lane models.
+
+    The lane used to refuse a list of openers (`$(`, backtick, `$'`) and let every other `$` form through, so a zsh
+    sigil, an arithmetic or assigning expansion, or a subscript in an argument reached an allow. The admit set is
+    `$NAME`, `${NAME}` and `${NAME` + a reading operator + literal or nested-name operand; everything else rejects.
+    """
+
+    @pytest.mark.parametrize(
+        "argument",
+        [
+            "${~X}",
+            "$~X",
+            '"${~X}"',
+            "${=X}",
+            "$=X",
+            "${^X}",
+            "$^X",
+            "${!X}",
+            "${(e)X}",
+            "$[PATH=1]",
+            '"$[PATH=1]"',
+            "$((PATH=1))",
+            "${PATH::=x}",
+            '"${PATH:=x}"',
+            "${X=y}",
+            "${X?y}",
+            "$X[PATH=1]",
+            "${X[PATH=1]}",
+            "${#X}",
+            "${X:-'a'}",
+            "${X:-~/x}",
+            "$1",
+            '$"x"',
+        ],
+    )
+    def test_unmodeled_dollar_forms_reject(self, argument: str) -> None:
+        """A `$` form outside the admit set in an argument of a read-only token is never allowed.
+
+        A sigil turns on glob substitution for text read from a state file, `$[…]` and `::=` assign without a literal
+        `NAME=`, and a subscript is arithmetic; none of them was named by the old refuse list.
+        """
+        result = _run(f"{READ_FORM}; ls {argument}")
+        assert result == {}, f"{argument!r} STILL ALLOWED — unmodeled expansion: {result}"
+
+    @pytest.mark.parametrize("command", ['ls "$"', 'ls "a$"', 'grep -nE "^_{5,} .* _{5,}$" "$F"'])
+    def test_literal_dollar_before_closing_quote_allows(self, command: str) -> None:
+        """Bash and zsh both read a `$` before a closing double quote as literal text, including regex end anchors."""
+        result = _run(f"{READ_FORM}\n{command}")
+        assert _is_allowed(result), f"{command!r} should be allowed, got: {result}"
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            'export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"',
+            'DIM="${DIM:-F,H,E,N,C}"; [ -n "${UNCONFIRMED:-}" ]',
+            'echo "${RUN_DIR%/_shared}" "$RUN_DIR" ${RUN_DIR}',
+            "echo '${~X}' \\$~X",
+            "# costs $5",
+        ],
+    )
+    def test_shipped_dollar_forms_still_allow(self, command: str) -> None:
+        """The forms shipped sentinel blocks use, and literal or commented `$` text, keep their allow.
+
+        `${CLAUDE_CODE_SESSION_ID:-$PPID}` opens 52 shipped blocks, so a nested name in a default is admitted; a single-
+        quoted, escaped or commented `$` is never expanded.
+        """
+        result = _run(f"{READ_FORM}\n{command}")
+        assert _is_allowed(result), f"{command!r} should be allowed, got: {result}"
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            f"cat {{PATH}}<{SENTINEL}",
+            "cat {IFS}>/dev/null x",
+            "cat {PATH}>&2 x",
+            "cat {X}&>/dev/null",
+        ],
+    )
+    def test_fd_variable_redirection_rejects(self, command: str) -> None:
+        """A brace group written against a redirection assigns the descriptor number to that name, so it rejects.
+
+        `{PATH}<f` writes PATH with no `=` in sight; stripping `>/dev/null` first used to leave a bare `{IFS}` behind.
+        """
+        result = _run(f"{READ_FORM}; {command}")
+        assert result == {}, f"{command!r} STILL ALLOWED — writes a variable through a redirection: {result}"
+
+    def test_expansion_against_a_redirection_still_allows(self) -> None:
+        """`${X}>/dev/null` is an admitted expansion followed by a silencing redirect, not a descriptor variable."""
+        result = _run(f"{READ_FORM}; echo ${{RUN_DIR}}>/dev/null")
+        assert _is_allowed(result), f"should be allowed, got: {result}"
+
+
+# ── Arithmetic-operand name writes reach a sensitive assignment past the boundary ──
+
+
+@_skip_node_unavailable
+class TestArithmeticOperandWrites:
+    """A sensitive assignment reached through an arithmetic operator, or a `%n`, is refused.
+
+    A `[[ -eq ]]` operand, a `printf` numeric conversion, a count operand or an integer parameter's value is evaluated
+    as arithmetic, so `PATH=1` reached through a comma, subscript or ternary writes PATH without a `NAME=` at a shell
+    boundary. The shape lane has no word reader, so it adds arithmetic operators to the sensitive-name boundary (tested
+    on the quote-stripped copy too, so a quoted operand is seen) and refuses any `%n`.
+    """
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param("[[ 1 -eq x,PATH=1 ]]", id="cond-comma"),
+            pytest.param("[[ 1 -eq 'a[PATH=1]' ]]", id="cond-quoted-subscript"),
+            pytest.param("[[ 1 -eq '1?IFS=1:0' ]]", id="cond-ternary-ifs"),
+            pytest.param('[[ "$X" -gt n,fpath=1 ]]', id="cond-command-table"),
+            pytest.param("printf %d x,PATH=1", id="printf-comma"),
+            pytest.param("printf '%d\\n' 'n,PATH=1'", id="printf-quoted"),
+            pytest.param("printf %n PATH", id="printf-percent-n"),
+            pytest.param("printf 'a%n' IFS", id="printf-percent-n-ifs"),
+            pytest.param("export SHLVL=1,PATH=1", id="integer-param-export"),
+        ],
+    )
+    def test_arithmetic_operand_assignment_rejects(self, command: str) -> None:
+        """A sensitive name assigned through an arithmetic operator, or any `%n`, is never allowed.
+
+        Each command otherwise reads as a benign sentinel-read compound; the assignment hides inside an operand the
+        shell evaluates as arithmetic, which the previous boundary class (`[\\s;|&(){]`) did not see.
+        """
+        result = _run(f"{READ_FORM}; {command}")
+        assert result == {}, f"{command!r} STILL ALLOWED — arithmetic-operand name write: {result}"
+
+    @pytest.mark.parametrize(
+        ("command", "expected"),
+        [
+            pytest.param('[[ "$RUN_DIR" -gt 0 ]] && echo y', True, id="cond-plain-compare"),
+            pytest.param("printf '%d\\n' \"$RUN_DIR\"", False, id="printf-var-arg"),
+            pytest.param("printf '%s\\n' \"$RUN_DIR\"", True, id="printf-string-arg"),
+        ],
+    )
+    def test_benign_arithmetic_positions_still_allow(self, command: str, expected: bool) -> None:
+        """Plain comparisons and string formats stay admitted; numeric formats require permission."""
+        result = _run(f"{READ_FORM}; {command}")
+        assert _is_allowed(result) is expected
 
 
 # ── `..` is matched as a path component, not as any two dots ──────────────────
@@ -732,3 +917,184 @@ class TestEvaluateClassification:
         )
         proc = subprocess.run(["node", "-e", script], capture_output=True, encoding="utf-8", timeout=15, check=False)
         assert proc.stdout == "survived"
+
+
+@_skip_node_unavailable
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param("printf '%1$n' PATH", id="positional-percent-n"),
+        pytest.param("printf %d 'IFS-=1'", id="numeric-ifs-subtract"),
+        pytest.param("typeset -F n=1,PATH=1", id="float-declaration"),
+        pytest.param("exit -- '-1,PATH=1'", id="exit-negative-count"),
+        pytest.param("bye '1,PATH=1'", id="bye-count"),
+        pytest.param("logout '1,PATH=1'", id="logout-count"),
+        pytest.param("print -f%d '1,PATH=1'", id="print-attached-format"),
+        pytest.param("ZLE_RPROMPT_INDENT=1,PATH=1", id="integer-special-parameter"),
+        pytest.param("echo $(( PATH ||= 1 ))", id="logical-or-assignment"),
+        pytest.param("echo $(( ++IFS ))", id="prefix-ifs-increment"),
+    ],
+)
+def test_position_independent_lookup_writes(command: str) -> None:
+    """Raw writes and positional percent-n conversions must never receive a sentinel allow."""
+    assert _run(f"{READ_FORM}; {command}") == {}
+
+
+@_skip_node_unavailable
+@pytest.mark.parametrize(
+    "command",
+    [
+        'print -f%d CDP""ATH=0',
+        r"print -f%d CD\PATH=0",
+        "print -f%d CD$'P'ATH=0",
+        "print -f%d $'CD'PATH=0",
+        "print -f%d CDPATH$''=0",
+        "print -f%d CD\\\nPATH=0",
+        'printf -""v PATH %s /tmp',
+        r"printf -\v PATH %s /tmp",
+        "printf '-v' PATH %s /tmp",
+        'F=%n; printf "$F" IFS',
+        'printf "${F:-%n}" IFS',
+        'print -f "$F" IFS',
+        "[[ 0 -eq 'CDPATH\n=0' ]]",
+        "[[ 0 -eq 'CDPATH\r=0' ]]",
+        "[[ 0 -eq 'CDPATH\v=0' ]]",
+        "[[ 0 -eq 'CDPATH\f=0' ]]",
+        "[[ 0 -eq CDPATH$'\\n'=0 ]]",
+        "[[ 0 -eq CDPATH\\\n=0 ]]",
+    ],
+)
+def test_shell_read_lookup_writes(command: str) -> None:
+    """A sentinel anchor cannot hide dequoted write options, names or arithmetic operands."""
+    assert _run(f'X=$(cat "${{TMPDIR:-/tmp}}/x"); {command}') == {}
+
+
+@_skip_node_unavailable
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        pytest.param('echo CDP""ATH=0', True, id="dequoted-inert-word"),
+        pytest.param('printf %""n IFS', False, id="dequoted-percent-n"),
+        pytest.param("printf %s 'PATH=1'", True, id="string-conversion-data"),
+        pytest.param("printf '%b %c %q' 'PATH=1' 'IFS=1' 'CDPATH=1'", False, id="text-conversions-data"),
+        pytest.param("printf %s '%n'", True, id="percent-n-data-stays-conservative"),
+        pytest.param("printf %*s 'PATH=1' x", False, id="numeric-width-keeps-check"),
+        pytest.param("printf '%s %d' x 'PATH=1'", False, id="mixed-format-keeps-check"),
+        pytest.param("printf '$F' IFS", True, id="single-quoted-dollar-format"),
+    ],
+)
+def test_shell_read_text_exemptions(command: str, expected: bool) -> None:
+    """Only closed text formats pass; their operands remain inert data."""
+    assert _is_allowed(_run(f"{READ_FORM}; {command}")) is expected
+
+
+@_skip_node_unavailable
+@pytest.mark.parametrize(
+    "command",
+    [
+        "grep -- --path=x f",
+        "[[ $a == PATH ]]",
+        "echo PATH",
+        "echo '-PATH=1'",
+        "echo --PATH=1",
+        "echo OTHER_PATH=1",
+    ],
+)
+def test_lookup_write_exceptions_keep_sentinel_allow(command: str) -> None:
+    """Flags, comparisons and ordinary text retain the sentinel compound allow."""
+    assert _is_allowed(_run(f"{READ_FORM}; {command}"))
+
+
+@_skip_node_unavailable
+@pytest.mark.parametrize(
+    "operator", ["=", "+=", "-=", "*=", "/=", "%=", "**=", "<<=", ">>=", "&=", "|=", "^=", "&&=", "||=", "^^="]
+)
+@pytest.mark.parametrize("quoted", ["{}", '"{}"', "'{}'", "$'{}'"])
+def test_raw_lookup_write_operator_matrix(operator: str, quoted: str) -> None:
+    """Single-quoted echo operands are data; the shape grammar still refuses a literal heredoc opener."""
+    command = "echo " + quoted.format(f"1,PATH[0] {operator} 1")
+    assert _is_allowed(_run(f"{READ_FORM}; {command}")) is (quoted == "'{}'" and operator != "<<=")
+
+
+@_skip_node_unavailable
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param("exit test-PATH=1", id="exit-hyphenated-lvalue"),
+        pytest.param("git log; (( a-PATH=1 ))", id="arithmetic-after-external-command"),
+        pytest.param("echo $(( 1-PATH=1 ))", id="echo-arithmetic-expansion"),
+        pytest.param("python x.py $(( PATH=1 ))", id="external-arithmetic-expansion"),
+        pytest.param("git() { (( $1 )); }; git 'a-PATH=1'", id="shadowed-external-command"),
+        pytest.param("exit '--PATH-a'", id="leading-dashes-can-decrement"),
+        pytest.param("printf %d '1-PATH=1'", id="numeric-subtraction-lvalue"),
+        pytest.param("python x.py '$(( 1-PATH=1 ))'", id="quoted-arithmetic-text"),
+        pytest.param("python x.py 'n[PATH=1]'", id="external-subscript-text"),
+        pytest.param("printf 'export PATH=%1$n' PATH", id="format-percent-n-is-never-exempt"),
+        pytest.param("print -f%d '1,PATH=1'", id="attached-format-keeps-numeric-operand"),
+        pytest.param("unknown 'test-PATH=1'", id="unknown-command-keeps-full-rule"),
+        pytest.param("'python' x.py --path-out f", id="quoted-command-has-no-exemption"),
+        pytest.param('"$RUNNER" x.py --path-out f', id="expanded-command-has-no-exemption"),
+        pytest.param("git 'a-PATH=1'; git() { (( $1 )); }", id="later-definition-disables-exemption"),
+        pytest.param("alias git='printf %d'; git 'a-PATH=1'", id="alias-disables-exemption"),
+        pytest.param("LABEL='test-PATH=1'", id="ordinary-assignment-has-no-exemption"),
+        pytest.param('python x.py "$(exit test-PATH=1)"', id="nested-command-owns-operand"),
+        pytest.param(
+            "python x.py --path-out f; exit 'python x.py --path-out f'", id="literal-lookalike-cannot-borrow-context"
+        ),
+    ],
+)
+def test_shape_lookup_expression_contexts(command: str) -> None:
+    """An inert-text exemption never hides protected expressions, numeric operands or definitions."""
+    assert _run(f"{READ_FORM}; {command}") == {}
+
+
+@_skip_node_unavailable
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param("echo '$[test-PATH=1]'", id="quoted-legacy-arithmetic"),
+        pytest.param("echo '[[ test-PATH=1 ]]'", id="quoted-conditional-text"),
+        pytest.param("echo '${x:-test-PATH=1}'", id="quoted-parameter-operator"),
+        'printf "export PATH=%s\\n" "$value"',
+        'echo "set PATH=x"',
+        'echo "function description: set PATH=x"',
+        "grep 'options=foo' f",
+        "grep '[^\"]' f",
+    ],
+)
+def test_shape_inert_lookup_text(command: str) -> None:
+    """The older lookup guards retain inert format, echo and external-program argument exemptions."""
+    assert _is_allowed(_run(f"{READ_FORM}; {command}"))
+
+
+@_skip_node_unavailable
+@pytest.mark.parametrize("vector", [pytest.param(vector, id=vector["id"]) for vector in VECTORS["literal_data_pairs"]])
+def test_literal_data_positions_preserve_live_refusals(vector: dict) -> None:
+    """Each inert-data exemption retains refusal in the corresponding live write positions."""
+    for command in vector["inert"]:
+        anchored = "echo $(date +%s); " + command
+        assert _node_eval_sentinel(f"h.isAllowable({json.dumps(anchored)})") is True, command
+    for command in vector["live"]:
+        anchored = "echo $(date +%s); " + command
+        assert _node_eval_sentinel(f"h.isAllowable({json.dumps(anchored)})") is False, command
+
+
+@_skip_node_unavailable
+@pytest.mark.parametrize("builtin", ["printf", "print -f", "print -rf", "env printf"])
+@pytest.mark.parametrize("end_options", [False, True])
+@pytest.mark.parametrize(
+    "vector", [pytest.param(vector, id=vector["id"]) for vector in VECTORS["closed_format_matrix"]]
+)
+def test_closed_format_grammar_matrix(builtin: str, end_options: bool, vector: dict) -> None:
+    """Format admission depends on the closed grammar even when a format begins with a dash."""
+    before = "-- " if end_options and builtin.endswith("printf") else ""
+    after = "-- " if end_options and not builtin.endswith("printf") else ""
+    command = f"echo $(date +%s); {builtin} {before}'{vector['format']}' {after}PATH x"
+    assert _node_eval_sentinel(f"h.isAllowable({json.dumps(command)})") is vector["admitted"], command
+
+
+@_skip_node_unavailable
+def test_dash_leading_print_format_cannot_write_lookup_name() -> None:
+    """A dash-leading print format never escapes the percent-n prohibition."""
+    command = "echo $(date +%s); print -f '-%nf%s' PATH x"
+    assert _node_eval_sentinel(f"h.isAllowable({json.dumps(command)})") is False

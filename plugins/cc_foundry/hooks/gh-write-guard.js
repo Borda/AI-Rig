@@ -47,8 +47,9 @@
 //   5. Fail closed where no exact argv exists: the lexer cannot follow the quoting (unbalanced
 //      quote, unterminated substitution, brace expansion past its cap, or quoting bash and zsh
 //      read differently — `$"…"`, a `$'…'` escape other than the named, octal and `\xHH` ones,
-//      `$$` before a quote, `{` or `(`, a single quote inside a double-quoted `${…}`; the Bash tool runs the user's
-//      shell), gh is named in
+//      `$$` before a quote, `{` or `(`, a single quote inside a double-quoted `${…}`, a `$` form outside the lexer's
+//      admit set (`${~x}`, `$=x`, `${!x}`, `$[…]`, `${x:=…}`), a `{name}>` descriptor variable, a shell option
+//      switched at run time; the Bash tool runs the user's shell), gh is named in
 //      `python3 -c`/`perl -e`/`node -e` code, lib/shell-git.js cannot load, or classifying throws.
 //      Then every command naming gh together with `api` or a write verb is blocked, read with and
 //      without its quote and backslash characters, and so is every command whose quoting the shells

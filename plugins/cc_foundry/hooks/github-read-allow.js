@@ -104,8 +104,10 @@
 //   * The host and `--jq` checks read a word wherever it may be an option value, so a value that only
 //     looks like a host or `env` prompts: a search for URL text, `--branch a/b/c` under `gh repo view`,
 //     a `-R` letter inside another option's value.
-//   * zsh options that change quoting or expansion when set (RC_QUOTES, BRACE_CCL, EXTENDED_GLOB with
-//     an unquoted `^`, `#`, `~` — the last three never reach an allow here) are read as off.
+//   * zsh options that change quoting or expansion when set before the command runs (an rc file:
+//     RC_QUOTES, BRACE_CCL, EXTENDED_GLOB with an unquoted `^`, `#`, `~` — the last three never reach
+//     an allow here) are read as off. One the command itself switches before another command, or
+//     starts a shell with, makes the command unreadable (lib/shell-git.js step 5), so it never allows.
 //   * The lexer's own LIMITS (lib/shell-git.js) apply to its reading.
 //
 // RESULT (evaluate)

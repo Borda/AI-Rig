@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.71.0
+
+- Blueprint generation and manifest re-checks reject unsupported shell forms. Stale or tampered entries cannot regain auto-approval through the following forms:
+  - Parameter expansions beyond supported reads.
+  - Encoded command substitutions or ambiguous closing braces in parameter defaults.
+  - zsh variable subscripts that assign, execute code or read lookup variables.
+  - Arithmetic beyond read-only `$((…))` expressions.
+  - Malformed or unterminated heredocs.
+  - Comments hiding closing delimiters in command substitutions.
+  - zsh glob qualifiers and misplaced array assignments.
+  - Shell options outside `pipefail`, `errexit`, `nounset` and `nomatch`, including wrapped or constructed flags.
+  - Wrapper options requiring operands.
+  - Unsupported `$` expansions and named-descriptor redirections.
+  - Unmodeled brace compounds, including inside nested `case` arms.
+- Blueprint checks reject lookup and startup-variable writes through assignments, declarations, loops and wrappers, including disguised names, invisible characters and arithmetic operands. Manifest re-checks also reject command-shadowing functions and `source`/`.`, preventing executable overrides. Ordinary text and supported length expansions avoid false rejections; indirect writes through arithmetic re-evaluation of text stored in variables remain outside the classifier's scope.
+- Blueprint checks keep ordinary text operands and quoted-delimiter heredocs as data, while checking command substitutions across lines in unquoted heredocs. Quoted assignment text avoids false rejections, and dangerous commands cannot hide in expanded heredoc text. Shell script paths held in variables require `--` before the path to remain auto-allowed.
+- Blueprint checks and sentinel reads accept literal string-only `printf`/`print` formats with fixed widths, literal percent signs and newline, tab or backslash escapes. Supported formatted output remains auto-allowed under the stricter checks. Nonliteral formats, non-string conversions and unsupported escapes are rejected. Every format word is checked against that closed list whatever its first character, so a dash-leading `print -f` or `printf` format can no longer write a lookup variable, while `print -rf`, `printf -- '-%s'`, `env printf` and inert quoted text stay allowed.
+- Shipped audit and setup blocks are rewritten to remain auto-allowed under stricter formatter checks. Counts and exit-code output are preserved, and an empty example count still reports a diagnostic with status 2. Audit Check 45 prints paths with backslashes literally and now requires each policy-sibling to list the declaring file back, so one-way or chained markers are reported as asymmetric.
+- Sentinel reads require plain target names and reject lookup variables, prompt strings, hook arrays and command tables. Only empty `IFS=` prefixes on `read` are allowed, preventing other field-separator writes and shell-environment changes. Arguments accept supported variable reads, literal or variable defaults and trims; unsupported expansions and named-descriptor redirections are rejected.
+- The gh-write and push guards block unreadable shell commands even without a `gh` call, including unsupported expansions, named-descriptor redirections and unsafe option switches. Attached parenthesis groups are rejected except valid array assignments, so zsh glob qualifiers cannot hide writes or pushes. Supported case conversions, unset-variable errors, zsh splitting and tracing options, `shopt -q`, `bash --rcfile FILE` and braced `case` statements remain readable.
+- The gh-write and push guards follow executable shell input through shell and `env` option values, including clusters, normalized script paths and nested shell input. Piped or redirected stdin reaches whole shell compounds, and only command words select shell stdin consumers; shell names used as arguments remain data. Script arguments, other interpreters' code, shell version queries, compound timing, loop regex tests and leading comments avoid false blocks, while `eval` substitutions consume only their output rather than later printed text. The guards inspect these executable sources:
+  - Shell `-c` strings and `eval` operands.
+  - `env -S` command text, including defined escapes.
+  - Pipes and heredocs feeding shell stdin.
+  - Files written and then run or sourced in the same command.
+  - `xargs` and `parallel` placeholders receiving stdin.
+- The gh-write and push guards also read `fish -C` startup code and here-strings read through a saved stdin descriptor (`exec 3<<< …; sh <&3`), and treat an unprovable descriptor or startup string as unreadable. Alias queries, harmless function definitions and `eval` used as an argument stay readable, while definitions that shadow a modeled command remain unreadable. A rejected `env -S` split now blocks as unreadable instead of throwing.
+- Printed shell input requires literal `echo`/`print` text without backslashes or supported string-only formatter output. Runtime operands and unsupported decoding are blocked when printed as executable source, preventing encoded gh writes and pushes while leaving ordinary printed data unaffected. Executable formatter output requires ASCII operands and limits padding to 65,536 characters, keeping generated shell input readable.
+- Newly propagated helpers inherit their canonical file's committed version baseline, avoiding false version-family errors. Version checks report canonical Git-read failures, and genuinely new canonical files and copies must start at version 1.
+- Review → fix loops now keep a round ledger and progress table, making review history visible. Repeated invariants are tracked across all earlier rounds, including renamed findings, requiring root-cause evidence on repetition and stopping at the third occurrence. Action invariants must match their ledger findings after whitespace and case normalization, preventing inconsistent recurrence tracking.
+- Filter reviews require grammar coverage across every reader, exposing unmodeled constructs as findings and preventing clean verdicts with incomplete coverage. Repeated filter failures require defaults that reject unmodeled input, preventing another narrow bypass fix.
+
 ## 0.70.4
 
 - The adversarial-loop rule and the challenger dispatch rule list a reviewer reply truncated before its required closing block (envelope or `## Confidence`) as an agent failure, so a cut-off reply is no longer scored as a complete round with fewer findings. Where the host can continue that reviewer, the parent asks it for only the remainder, in replies short enough to pass the transport, until the closing block arrives; a reply that adds nothing new records the failure.

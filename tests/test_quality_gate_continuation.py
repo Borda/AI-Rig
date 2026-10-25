@@ -15,7 +15,11 @@ def test_review_summary_keeps_feasible_remediation_and_any_score_decrease(plugin
     section = text.split("## Adversarial Convergence Loop", 1)[1].split("\n## ", 1)[0]
     assert "Resolve every feasible authorized finding" in section
     assert "a structural flag alone is not a stop" in section
-    assert "a repeated signature requires shared-root-cause investigation before another fix" in section
+    # recurrence is per invariant: a new route under a new signature but the same invariant evidence still repeats
+    assert (
+        "a repeated invariant (same signature or same invariant evidence) requires shared-root-cause investigation "
+        "before another fix" in section
+    )
     assert "Any score decrease converges (`0 < r_n < 1`)" in section
     assert "equal scores plateau" in section
     assert "Open `security` or `critical` findings forbid completion and commit" in section

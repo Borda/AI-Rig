@@ -41,7 +41,7 @@ def _write_loop(
         "scores": [0],
         "rounds": [{"index": 1, "score": 0, "counts": counts, "decision": "clean"}],
     }
-    result["metadata"]["action_contract_version"] = 2
+    result["metadata"]["action_contract_version"] = 3
     result["metadata"]["challenge_table_contract_version"] = 1
     result["metadata"]["challenge_scope"] = {"mode": "single"}
     result["metadata"]["challenge_origin"] = {
@@ -55,7 +55,7 @@ def _write_loop(
     (tmp_path / "loop-actions.json").write_text(
         json.dumps(
             {
-                "schema_version": 2,
+                "schema_version": 3,
                 "rounds": [
                     {
                         "index": 1,
@@ -65,7 +65,10 @@ def _write_loop(
                                 "decision": (
                                     "escalate" if finding["tier"] in {"security", "critical", "high"} else "defer"
                                 ),
-                                "evidence": ["The finding remains open pending the next scoped action."],
+                                "evidence": [
+                                    f"invariant: {finding['signature']} holds",
+                                    "The finding remains open pending the next scoped action.",
+                                ],
                                 "owner": "parent",
                                 "next_action": "Request the needed scope or independent verification.",
                                 "root_cause": None,
@@ -1276,11 +1279,14 @@ def test_public_validator_requires_bound_parent_actions(tmp_path: Path, monkeypa
         validator.validate("challenge-resolve", tmp_path, final_path)
 
 
-def test_current_result_rejects_old_action_contract(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep schema-1 action records readable without using them to certify a current loop."""
+@pytest.mark.parametrize("old_contract", [1, 2])
+def test_current_result_rejects_old_action_contract(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, old_contract: int
+) -> None:
+    """Keep schema-1 and schema-2 action records readable without using them to certify a current loop."""
     result_path = _write_loop(tmp_path, monkeypatch)
     result = json.loads(result_path.read_text(encoding="utf-8"))
-    result["metadata"]["action_contract_version"] = 1
+    result["metadata"]["action_contract_version"] = old_contract
     result_path.write_text(json.dumps(result), encoding="utf-8")
 
     with pytest.raises(SystemExit, match="adversarial-loop-action-contract-required"):
@@ -1409,14 +1415,17 @@ def test_public_validator_accepts_stopped_loop_with_failed_review_and_folded_fin
             "tier": "security",
             "structural": True,
             "disposition": "open",
-            "evidence": ["review-1.md identifies a shared contract change."],
+            "evidence": [
+                "review-1.md identifies a shared contract change.",
+                "invariant: shared-contract-boundary holds",
+            ],
         },
         {
             "signature": "spelling",
             "tier": "nit",
             "structural": False,
             "disposition": "open",
-            "evidence": ["review-1.md identifies a spelling correction."],
+            "evidence": ["review-1.md identifies a spelling correction.", "invariant: spelling holds"],
         },
     ]
     result_path = _write_loop(tmp_path, monkeypatch, findings=findings)
@@ -1529,7 +1538,7 @@ def test_public_validator_accepts_unavailable_loop_with_not_run_row(
     ledger = _read_ledger(tmp_path / "loop-ledger.json")
     ledger["rounds"] = []
     _write_ledger(tmp_path / "loop-ledger.json", ledger)
-    (tmp_path / "loop-actions.json").write_text(json.dumps({"schema_version": 2, "rounds": []}), encoding="utf-8")
+    (tmp_path / "loop-actions.json").write_text(json.dumps({"schema_version": 3, "rounds": []}), encoding="utf-8")
     evidence_path = tmp_path / "loop-evidence.json"
     evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
     evidence["rounds"] = []

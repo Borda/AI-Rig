@@ -144,7 +144,7 @@ else
     if [ "$_C32E_N" -lt 2 ]; then
         printf "✓: Check 32e — fewer than 2 bin/ scripts, skip\n"
     else
-        printf "⚙ Check 32e — %d bin/ scripts found; delegating similarity analysis to foundry:curator\n" "$_C32E_N"
+        printf "⚙ Check 32e — %s bin/ scripts found; delegating similarity analysis to foundry:curator\n" "$_C32E_N"
     fi
 fi
 ```

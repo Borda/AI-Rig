@@ -10,8 +10,8 @@ Run ``check_plugin_version_sync.py --scan-dir plugins [changed JSON/Python paths
 Positional paths are optional for a host-sync-only run. Outputs: Print actionable findings and exit 1 on a mismatch,
 skipped or downgraded version, or unreadable selected file. Otherwise print success and exit 0. No writes. Failure: A
 missing Git HEAD, invalid selected file, or Git read failure fails closed. A file absent from HEAD starts each static
-integer version family at 1. Used by: The repository pre-commit ``check-plugin-version-sync`` hook and adjacent
-packaging tests.
+integer version family at 1, unless it is a ``propagate_shared.py`` MANIFEST copy, which takes its canonical's HEAD text
+as baseline. Used by: The repository pre-commit ``check-plugin-version-sync`` hook and adjacent packaging tests.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import ast
 import functools
+import importlib.util
 import json
 import re
 import subprocess
@@ -267,6 +268,29 @@ def _deleted_sibling_versions(root: Path, plugin_root: str) -> dict[str, frozens
     return {name: frozenset(values) for name, values in versions.items()}
 
 
+@functools.cache
+def _propagated_canonicals() -> dict[str, str]:
+    """Map each byte-identical propagated copy to its canonical file, from ``propagate_shared.MANIFEST``.
+
+    A copy newly added to a plugin has no HEAD baseline of its own, yet it carries the canonical's version constants
+    unchanged, so its continuity baseline is the canonical's committed text. ``propagate_shared.py`` sits beside this
+    script; when it is absent (a partial install) no copy gets a borrowed baseline and new files start at 1 as before.
+    """
+    sibling = Path(__file__).resolve().parent / "propagate_shared.py"
+    if not sibling.is_file():
+        return {}
+    spec = importlib.util.spec_from_file_location("_propagate_shared_manifest", sibling)
+    if spec is None or spec.loader is None:
+        return {}
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return {
+        str(copy): str(entry["canonical"])
+        for entry in getattr(module, "MANIFEST", [])
+        for copy in entry.get("copies", [])  # type: ignore[union-attr]
+    }
+
+
 def _semver_finding(path: str, current: Any, baseline: Any) -> str | None:
     """Describe an invalid one-step SemVer bump from its committed version."""
     current_match = _SEMVER.fullmatch(current) if isinstance(current, str) else None
@@ -471,6 +495,23 @@ def _json_discontinuities(relative: Path, current_source: str, prior: subprocess
     return findings
 
 
+def _read_propagated_prior(relative: Path, root: Path) -> str | list[str] | None:
+    """Read a new propagated copy's canonical baseline, distinguishing an untracked file from a Git failure."""
+    canonical = _propagated_canonicals().get(relative.as_posix())
+    if canonical is None:
+        return None
+    finding = [f"{relative.as_posix()}: cannot read committed canonical {canonical}"]
+    tracked = _git(["ls-tree", "--name-only", "HEAD", "--", canonical], cwd=root)
+    if tracked.returncode != 0:
+        return finding
+    if not tracked.stdout.strip():
+        return None
+    prior = _git(["show", f"HEAD:{canonical}"], cwd=root)
+    if prior.returncode != 0:
+        return finding
+    return prior.stdout
+
+
 def find_head_discontinuities(files: list[str]) -> list[str]:
     """Compare selected shipped JSON and Python versions with committed HEAD."""
     if not files:
@@ -479,6 +520,8 @@ def find_head_discontinuities(files: list[str]) -> list[str]:
     if root is None:
         return [root_error]
 
+    propagated_canonicals = _propagated_canonicals()
+    propagated_family_paths = set(propagated_canonicals) | set(propagated_canonicals.values())
     findings: list[str] = []
     for filename in files:
         relative, scope_finding = _scoped_file(filename, root)
@@ -493,10 +536,16 @@ def find_head_discontinuities(files: list[str]) -> list[str]:
             continue
         current_source, prior = outcome
         if relative.suffix == ".py":
-            prior_source = prior.stdout if prior is not None else None
+            prior_source = prior.stdout if prior is not None else _read_propagated_prior(relative, root)
+            if isinstance(prior_source, list):
+                findings.extend(prior_source)
+                continue
+            # A MANIFEST family never borrows deleted siblings: new canonicals and their copies start at 1.
             deleted_siblings = (
                 _deleted_sibling_versions(root, "/".join(relative.parts[:2]))
-                if prior_source is None and len(relative.parts) > 1
+                if prior_source is None
+                and len(relative.parts) > 1
+                and relative.as_posix() not in propagated_family_paths
                 else {}
             )
             try:

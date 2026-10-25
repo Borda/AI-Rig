@@ -200,11 +200,13 @@ Report above is Claude-only.
 
 - **Final reply = deliverable.** The host may refuse a subagent's report-file write (`Subagents should return findings as text, not write report files`). On that refusal, put the full findings in the final reply; never retry under another name or via Bash.
 - **Never send the report or envelope through SendMessage**; the caller reads the final reply. A demanded envelope closes the reply as one JSON line.
-- **Security-filter review (deny-list, sandbox, permission or danger gate): never author candidate bypass strings.** A safety classifier stops a response that composes attack-shaped strings, whatever the payload, so the open-ended search runs in Codex, never in your own reply. Order:
+- **Security-filter review (deny-list, allowlist, sandbox, permission, approval or danger gate, or a parser deciding whether input may run): never author candidate bypass strings.** A safety classifier stops a response that composes attack-shaped strings, whatever the payload, so the open-ended search runs in Codex, never in your own reply. Order:
   1. Logic review first: read the diff and trace each filter path; a finding names the mechanism and file:line and describes inputs by class (`a short-option cluster such as -co`), never as a new working string.
-  2. Codex search: the Step 2 `bridge:review` call carries the caller's specification and asks for candidate bypasses with exact inputs and expected verdicts. A filter review needs Codex: ignore `--no-codex` for it.
-  3. Static check: classify every Codex candidate, and every string from a generator the caller supplies, with the functions under review (foreground Bash); never run a candidate in a real shell. A reproduced admission is a finding in your six-tier counts, tagged `source: codex` or `source: generator`; an unreproduced one goes to Refuted Challenges.
-  4. Codex unavailable or failed, or a response stopped by a safety classifier → return the envelope with `"status": "blocked"`, `"reason": "codex-unavailable"` or `"classifier"`, six-tier counts of what was found and `"probes": N`. Never report PASS for a search that did not run, and never FAIL without a finding.
+  2. Coverage table: from the filtered language's authoritative grammar (cite the manual or spec sections: syntax, expansions, options, compound forms), one row per construct class, one column per reader that judges it (every lane, mirror, lexer). Each cell `admitted-by-spec`, `refused` or `unmodeled`, with the deciding file:line, read from the whole frozen snapshot, not only the diff. Every `unmodeled` cell is a finding. In an allowlist filter, flag every check that refuses only inputs found in a hand-written set (characters, words, option names) unless an admit check bounds it. At least one row per cited grammar subsection; each `refused` cell cites the code that refuses it, as a file:line the parent reads before it accepts a clean table. Deliver the table with the findings as one block, which the parent keeps as that round's own table file; an incomplete table forbids a clean verdict.
+  3. Codex search: the workflow Step 2 `bridge:review` call carries the caller's specification and asks for candidate bypasses with exact inputs and expected verdicts. A filter review needs Codex: ignore `--no-codex` for it.
+  4. Static check: classify every Codex candidate, and every string from a generator the caller supplies, with the functions under review (foreground Bash); never run a candidate in a real shell. A reproduced admission is a finding in your six-tier counts, tagged `source: codex` or `source: generator`; an unreproduced one goes to Refuted Challenges.
+  5. Codex unavailable or failed, or a response stopped by a safety classifier → return the envelope with `"status": "blocked"`, `"reason": "codex-unavailable"` or `"classifier"`, six-tier counts of what was found and `"probes": N`. Never report PASS for a search that did not run, and never FAIL without a finding.
+  <!-- policy-sibling: plugins/codex-rig/shared/adversarial-loop.md (filter-review coverage paragraph, canonical), plugins/cc_foundry/agents/challenger.md -->
 
 </delivery>
 
@@ -216,7 +218,7 @@ Report above is Claude-only.
 | **Concern** | Creates tech debt, limits future options, or misses edge cases | Resolve or explicitly accept with documented rationale |
 | **Nitpick** | Suboptimal but functional | Fix if easy, skip if not |
 
-**Loop tiers**: when the caller's brief names the adversarial-loop tiers (`security`, `critical`, `high`, `medium`, `low`, `nit`), count and label every finding in those tiers so the round folds into the loop table:
+**Loop tiers**: when the caller's brief names the adversarial-loop tiers (`security`, `critical`, `high`, `medium`, `low`, `nit`), count and label every finding in those tiers so the round folds into the loop table. Each finding's signature names the invariant it violates (`case-arm-body-judged`), never the route that broke it; the route goes in evidence. Reuse the brief's known invariant signature when the finding breaks one of them, even by a new route, and mark it `maps_to: <signature>`; otherwise mark `maps_to: new` and state the invariant.
 
 | Loop tier | Finding |
 | -- | -- |

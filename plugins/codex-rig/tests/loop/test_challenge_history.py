@@ -165,7 +165,7 @@ def test_advisory_only_history_cannot_pass_completion(
     ledger = _read_ledger(tmp_path / "loop-ledger.json")
     ledger["rounds"] = []
     _write_ledger(tmp_path / "loop-ledger.json", ledger)
-    (tmp_path / "loop-actions.json").write_text(json.dumps({"schema_version": 2, "rounds": []}))
+    (tmp_path / "loop-actions.json").write_text(json.dumps({"schema_version": 3, "rounds": []}))
     evidence = json.loads((tmp_path / "loop-evidence.json").read_text())
     evidence["rounds"] = []
     (tmp_path / "loop-evidence.json").write_text(json.dumps(evidence))

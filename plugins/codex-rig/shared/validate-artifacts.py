@@ -3435,7 +3435,8 @@ def _validate_adversarial_loop(
     if ledger["schema_version"] != LOOP_LEDGER_SCHEMA_VERSION:
         raise SystemExit("adversarial-loop-ledger-schema-v2-required")
     action_contract = result.get("metadata", {}).get("action_contract_version")
-    if type(action_contract) is not int or action_contract != 2:
+    # Actions schema 3 names an invariant on every action; schema-1 and schema-2 records stay archives only.
+    if type(action_contract) is not int or action_contract != 3:
         raise SystemExit("adversarial-loop-action-contract-required")
     actions_path = out_dir / "loop-actions.json"
     actions = subprocess.run(  # noqa: S603 - argv list, no shell

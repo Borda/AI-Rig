@@ -157,9 +157,9 @@ for f in $(find . -path "*skills/*/SKILL.md" 2>/dev/null | sort); do
     # grep -c prints 0 AND exits 1 on no match — || echo 0 double-fires; most files have none, so this hit the majority
     count=$(grep -c "AskUserQuestion" "$f" 2>/dev/null) || count=0
     if [ "$count" -gt 8 ]; then
-        printf "C38-HIGH: %d AskUserQuestion calls in %s — review for >4-per-branch\n" "$count" "$f"
+        printf "C38-HIGH: %s AskUserQuestion calls in %s — review for >4-per-branch\n" "$count" "$f"
     elif [ "$count" -gt 4 ]; then
-        printf "C38-MEDIUM: %d AskUserQuestion calls in %s — review for >4-per-branch\n" "$count" "$f"
+        printf "C38-MEDIUM: %s AskUserQuestion calls in %s — review for >4-per-branch\n" "$count" "$f"
     fi
 done  # timeout: 5000
 ```

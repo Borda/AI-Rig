@@ -311,8 +311,8 @@ def changed_file_count(root: Path, git_sha: str) -> int | None:
     """Count eligible working-tree differences from the index commit, or report unknown.
 
     This is a consumed-input delta against the recorded commit, not a measured reparse count. Configuration and
-    documentation remain inputs even when Python discovery excludes their paths. The commit tree supplies preimages
-    for deletions. Invalid commits, unreadable inputs, and historical symlink configs remain unknown.
+    documentation remain inputs even when Python discovery excludes their paths. The commit tree supplies preimages for
+    deletions. Invalid commits, unreadable inputs, and historical symlink configs remain unknown.
     """
     if not _HEX_OBJECT_RE.fullmatch(git_sha or ""):
         return None
@@ -359,8 +359,8 @@ def changed_file_count(root: Path, git_sha: str) -> int | None:
 def refresh_fingerprint(root: Path, head: str, source_fingerprint: str | None = None) -> str | None:
     """Identify a refresh's actual discovered inputs and commit without requiring staging.
 
-    The optional source fingerprint reuses the main hook's already-computed value. Missing HEAD is valid for a
-    non-Git project; an unreadable source cannot establish an unchanged input set.
+    The optional source fingerprint reuses the main hook's already-computed value. Missing HEAD is valid for a non-Git
+    project; an unreadable source cannot establish an unchanged input set.
     """
     try:
         if source_fingerprint is None:

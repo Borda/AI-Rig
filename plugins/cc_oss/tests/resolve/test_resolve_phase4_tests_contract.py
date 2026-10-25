@@ -97,7 +97,7 @@ def test_gate_runs_full_suite_with_repo_command_and_reruns_after_fixes() -> None
 def test_full_suite_block_records_exit_code(tmp_path: Path) -> None:
     """The run block keeps the log and the exit code on disk, so a failing suite is never mistaken for a pass."""
     gate = _read("modes/lint-qa-gate.md")
-    marker = gate.index('bash "$IMPL_DIR/full-suite.sh"')
+    marker = gate.index('bash -- "$IMPL_DIR/full-suite.sh"')
     start = gate.rindex("```bash", 0, marker) + len("```bash\n")
     block = gate[start : gate.index("```", start)]
     session = "resolve-full-suite"

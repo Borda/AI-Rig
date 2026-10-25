@@ -93,7 +93,7 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
 [ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing; cannot run the full suite"; exit 1; }
 _T0=$(date +%s)
-bash "$IMPL_DIR/full-suite.sh" > "$IMPL_DIR/full-suite.log" 2>&1
+bash -- "$IMPL_DIR/full-suite.sh" > "$IMPL_DIR/full-suite.log" 2>&1
 echo "$?" > "$IMPL_DIR/full-suite.rc"
 # a background call's own tool timing ends at dispatch, so the suite's wall time is recorded here instead
 echo "$(( $(date +%s) - _T0 ))" > "$IMPL_DIR/full-suite.seconds"

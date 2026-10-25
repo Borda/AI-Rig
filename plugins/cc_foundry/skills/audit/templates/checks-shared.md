@@ -191,7 +191,7 @@ Scan agent and skill files for inline examples:
 while IFS= read -r f; do # timeout: 5000
     count=$(grep -cE '^```|^## Example|^### Example' "$f" 2>/dev/null || true)
     lines=$(wc -l <"$f" | tr -d ' ')
-    [ "$count" -gt 0 ] && printf "%s: %d example blocks, %d total lines\n" "$f" "$count" "$lines"
+    [ "$count" -gt 0 ] && printf "%s: %s example blocks, %s total lines\n" "$f" "$count" "$lines"
 done
 ````
 
@@ -541,17 +541,25 @@ for f in $(grep -rl "<!-- policy-sibling:" .claude plugins --include="*.md" 2>/d
     proot=$(printf '%s' "$f" | sed -n 's#^\(plugins/[^/]*/\).*#\1#p')  # plugin-relative sibling paths resolve here
     for sib in $(printf '%s' "$siblings" | tr ',' '\n' | awk '{print $1}' | grep -E '/.*\.md$'); do
         [ -f "$sib" ] || { [ -n "$proot" ] && [ -f "$proot$sib" ] && sib="$proot$sib"; }
+        [ -f "$sib" ] || { [ -f "${f%/*}/$sib" ] && sib="${f%/*}/$sib"; }
         if [ ! -f "$sib" ]; then
-            OUT="${OUT}⚠ 45-BROKEN: $f — policy-sibling lists missing file: $sib\n"
+            OUT="${OUT}⚠ 45-BROKEN: $f — policy-sibling lists missing file: $sib"$'\n'
             continue
         fi
-        grep -q "<!-- policy-sibling:" "$sib" || OUT="${OUT}⚠ 45-ASYMMETRIC: $f — declares sibling $sib, but that file has no policy-sibling marker back\n"
+        sibroot=$(printf '%s' "$sib" | sed -n 's#^\(plugins/[^/]*/\).*#\1#p')
+        reciprocal=0
+        while IFS= read -r backref; do
+            [ -f "$backref" ] || { [ -n "$sibroot" ] && [ -f "$sibroot$backref" ] && backref="$sibroot$backref"; }
+            [ -f "$backref" ] || backref="${sib%/*}/$backref"
+            [ "$backref" -ef "$f" ] && reciprocal=1
+        done < <(grep -o '<!-- policy-sibling:[^—]*' "$sib" | sed 's/<!-- policy-sibling://' | tr ',' '\n' | awk '{print $1}' | grep -E '/.*\.md$')
+        [ "$reciprocal" -eq 1 ] || OUT="${OUT}⚠ 45-ASYMMETRIC: $f — declares sibling $sib, but that file has no policy-sibling marker back"$'\n'
     done
 done
-if [ -n "$OUT" ]; then printf '%b' "$OUT"; else printf "✓: Check 45 — no unsynced policy-sibling markers found\n"; fi
+if [ -n "$OUT" ]; then printf '%s' "$OUT"; else printf "✓: Check 45 — no unsynced policy-sibling markers found\n"; fi
 ```
 
-A sibling path resolves from the repository root first, then from the marker file's own plugin root (`plugins/<p>/`): an installed plugin has no repository root, so shipped markers may name siblings plugin-relatively (`skills/assess/SKILL.md`) — only a path missing under both roots is `45-BROKEN`.
+A sibling path resolves from the repository root first, then from the marker file's own plugin root (`plugins/<p>/`), then from its directory. Reciprocal paths resolve from the sibling's roots and directory and must identify the declaring file. An installed plugin has no repository root, so shipped markers may name siblings plugin-relatively (`skills/assess/SKILL.md`) — only a path missing under all three locations is `45-BROKEN`.
 
 Extraction anchors on the literal `<!-- policy-sibling:` prefix (not a bare grep for the word) so prose documenting the convention — like this file's own explanation above, or an example snippet — never self-matches; the sibling-token filter (`/.*\.md$`) additionally drops non-path fragments (placeholder text, trailing rationale words) surviving the comma split. No array syntax (`read -ra`, `mapfile`) — Claude Code's Bash tool runs under the user's login shell, `zsh` on macOS by default, and zsh's `read` doesn't support bash's `-a` flag; plain `for x in $(...)` word-splitting is portable to both.
 

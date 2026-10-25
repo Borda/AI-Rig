@@ -386,7 +386,7 @@ IFS= read -r _DEBUG_MODE < "${TMPDIR:-/tmp}/dev-debug-mode-${CSID}" 2>/dev/null 
 IFS= read -r _CI_RUN < "${TMPDIR:-/tmp}/dev-ci-run-id-${CSID}" 2>/dev/null || _CI_RUN=""
 IFS= read -r _TEST_PATH < "${TMPDIR:-/tmp}/dev-debug-test-path-${CSID}" 2>/dev/null || _TEST_PATH=""
 _TRIED=$(tail -8 "${TMPDIR:-/tmp}/dev-debug-hypotheses-${CSID}" 2>/dev/null)  # cap keeps contract compact; tail keeps the latest verdict events (last line per candidate wins)
-_PRESERVE="mode=$_DEBUG_MODE, ci-run=${_CI_RUN:-none}, test-path=${_TEST_PATH:-full-suite}"
+_PRESERVE="mode=$_DEBUG_MODE, ci-run=${_CI_RUN:-none}, test_path=${_TEST_PATH:-full-suite}"
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" --keep-sentinel dev-debug-keep-items "develop:debug" "hypothesis+handoff (after evidence gathered and pattern analysis)" ".plans/active/" "$_PRESERVE" "state hypothesis with evidence (Step 3) → confirm root cause → write diagnosis → handoff to /develop:fix. Skip any candidate marked refuted/ruled-out in the tried list below." "tried (do NOT re-test refuted/ruled-out)" "$_TRIED"  # timeout: 5000
 ```
 
