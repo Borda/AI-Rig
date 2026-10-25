@@ -15,4 +15,4 @@ Call `bridge_advise` with required `task` and current `binding_id`; preserve cal
 
 Return compact envelope; retain workspace-relative `transcript_path` and `incident` references, but never copy transcript-only peer `details`. Follow up with fresh call, never session resumption.
 
-If `status=blocked`, open the JSON file referenced by `incident`; inspect its `fault`. For `output-limit`, report incomplete advice. Split by file, symbol, or independent question; use fresh read-only calls with bounded tool output. Reconcile every scope; name unanswered work. Never treat transcript fragments as answers.
+If `status=blocked`, open the JSON file referenced by `incident`; inspect its `fault`. For `output-limit`, report incomplete advice; report `partial_output` only labelled as an unverified fragment and use it to scope the split follow-up, never as findings or a verdict; the follow-up brief must keep commands small with no inline scripts or data. Split by file, symbol, or independent question; use fresh read-only calls with bounded tool output. Reconcile every scope; name unanswered work. Never treat transcript fragments as answers.

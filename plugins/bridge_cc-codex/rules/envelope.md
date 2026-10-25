@@ -14,6 +14,8 @@
 
 > A timeout or a recursion refusal has no model core to merge. Harness constructs the required verdict and empty lists itself, places the concrete cause in `blockers`, and validates the full result before returning it.
 
+> Only a Codex child stopped by `output-limit` may have optional harness-owned `partial_output`: an unverified fragment of the last complete `item.completed` agent message, limited to 4 KiB of UTF-8 without splitting a character. It is also stored in the incident; it is absent when no message was seen and for Claude children. Status remains `blocked`, incident fault remains `output-limit`, and findings remain empty. Label the fragment unverified and use it only to scope a split follow-up, never as findings or a verdict. Older results without this optional field remain valid; neither envelope schema has an integer version.
+
 ## MCP inputs
 
 > MCP surface has three input shapes (`bridge_implement`, `bridge_advise`, and `bridge_review`); all three names are advertised by `tools/list`.

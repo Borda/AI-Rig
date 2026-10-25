@@ -1,6 +1,21 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
+  "if": {
+    "required": [
+      "partial_output"
+    ]
+  },
+  "then": {
+    "properties": {
+      "status": {
+        "const": "blocked"
+      },
+      "direction": {
+        "const": "claude_to_codex"
+      }
+    }
+  },
   "properties": {
     "blockers": {
       "items": {
@@ -77,6 +92,11 @@
     },
     "model": {
       "minLength": 1,
+      "type": "string"
+    },
+    "partial_output": {
+      "description": "Unverified fragment of the last complete Codex agent message before output-limit; only for a blocked Codex child, never findings or a verdict. At most 4 KiB of UTF-8 without splitting a character: consumers must also enforce the 4096-byte UTF-8 bound because maxLength counts characters.",
+      "maxLength": 4096,
       "type": "string"
     },
     "remaining": {

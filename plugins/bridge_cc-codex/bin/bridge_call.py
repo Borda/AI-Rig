@@ -79,12 +79,16 @@ MAX_PROMPT_UTF8_BYTES = 20 * 1024
 MAX_WINDOWS_COMMAND_UTF16_UNITS = 32_767
 #: Stricter command-line limit, in UTF-16 code units, applied when the child runs through a Windows .cmd or .bat shim.
 MAX_WINDOWS_BATCH_COMMAND_UTF16_UNITS = 8_000
-#: Largest single line of child stdout, in bytes, that is buffered while parsing its JSON event stream.
+#: Ordinary raw-record ceiling and largest compacted stdout record, in bytes.
 MAX_CHILD_RECORD_BYTES = 256 * 1024
+#: Raw-record ceiling for a prefix-proven completed command with an aggregated-output string.
+MAX_CHILD_COMMAND_RECORD_BYTES = 8 * 1024 * 1024
 #: Largest child transcript file, in bytes, written to disk; longer payloads are truncated to this size.
 MAX_CHILD_TRANSCRIPT_BYTES = 256 * 1024
 #: Capture limit for child output in bytes: the transcript cap minus the stdout/stderr framing text added around it.
 MAX_CHILD_OUTPUT_BYTES = MAX_CHILD_TRANSCRIPT_BYTES - len(b"stdout:\n\n\nstderr:\n\n")
+#: UTF-8 bytes retained from a completed command or the last complete agent message.
+MAX_CHILD_FRAGMENT_BYTES = 4 * 1024
 
 # Environment passed to a bridge child, as an allowlist. Inheriting the parent
 # environment wholesale hands every API key, cloud credential, and token in the
@@ -380,7 +384,7 @@ def validate_envelope(value: Any) -> dict[str, Any]:
         "verb",
         "direction",
     }
-    if not isinstance(value, dict) or set(value) != required:
+    if not isinstance(value, dict) or set(value) - {"partial_output"} != required:
         raise ValueError("public envelope has missing or unknown fields")
     if value["status"] not in FINAL_STATUSES:
         raise ValueError("public envelope has an unsupported status")
@@ -389,6 +393,18 @@ def validate_envelope(value: Any) -> dict[str, Any]:
         "codex_to_claude",
     }:
         raise ValueError("public envelope has unsupported routing metadata")
+    if "partial_output" in value:
+        fragment = value["partial_output"]
+        if not isinstance(fragment, str):
+            raise ValueError("partial_output must be a UTF-8 string of at most 4 KiB")
+        try:
+            fragment_size = len(fragment.encode("utf-8"))
+        except UnicodeEncodeError as error:
+            raise ValueError("partial_output must be valid UTF-8") from error
+        if fragment_size > MAX_CHILD_FRAGMENT_BYTES:
+            raise ValueError("partial_output must be a UTF-8 string of at most 4 KiB")
+        if value["status"] != "blocked" or value["direction"] != "claude_to_codex":
+            raise ValueError("partial_output is only an unverified fragment from a blocked Codex child")
     if isinstance(value["depth"], bool) or not isinstance(value["depth"], int) or value["depth"] < 0:
         raise ValueError("public envelope depth must be a non-negative integer")
     if (
@@ -607,7 +623,7 @@ def build_codex_argv(request: Request, schema_path: Path) -> list[str]:
             "fetch the GitHub data in the caller and pass it in the task file instead"
         )
     quoted_effort = json.dumps(request.effort)
-    prompt = _prompt_with_budget(request)
+    prompt = _prompt_with_budget(request, host="codex")
     github_read = request.network == "github-read"
     common = [
         "-c",
@@ -672,7 +688,7 @@ def build_claude_argv(request: Request, schema_path: Path) -> list[str]:
     command = [
         "claude",
         "--print",
-        _prompt_with_budget(request),
+        _prompt_with_budget(request, host="claude"),
         "--effort",
         effort,
         "--output-format",
@@ -880,6 +896,7 @@ def _run_request_attempt(
                 else None
             ),
             prior_incident=_prior_incident,
+            partial_output=outcome.partial_output if host == "codex" else None,
         )
     if outcome.timed_out:
         retry = _lower_effort_retry(effective_request, child_budget)
@@ -976,6 +993,7 @@ class ChildOutcome:
     timed_out: bool
     error: str | None
     output_limited: bool = False
+    partial_output: str | None = None
 
 
 @dataclass(frozen=True)
@@ -991,12 +1009,14 @@ class ParsedOutput:
 
 @dataclass
 class _ChildOutputBuffer:
-    """Retain bounded child output while compacting completed Codex command events."""
+    """Retain bounded output, compact commands, and remember the last complete agent message."""
 
     stdout_parts: list[bytes] = dataclass_field(default_factory=list)
     stderr_parts: list[bytes] = dataclass_field(default_factory=list)
     pending_stdout: bytearray = dataclass_field(default_factory=bytearray)
+    pending_record_limit: int = MAX_CHILD_RECORD_BYTES
     captured_bytes: int = 0
+    last_agent_message: str | None = None
     output_limited: threading.Event = dataclass_field(default_factory=threading.Event)
     finalized: threading.Event = dataclass_field(default_factory=threading.Event)
     lock: threading.Lock = dataclass_field(default_factory=threading.Lock)
@@ -1004,33 +1024,72 @@ class _ChildOutputBuffer:
     def append(self, stream: str, chunk: bytes) -> None:
         """Compact complete stdout records and enforce the retained-output budget."""
         with self.lock:
-            if self.finalized.is_set():
+            if self.finalized.is_set() or self.output_limited.is_set():
                 return
             if stream == "stderr":
                 self._retain(stream, chunk)
             else:
-                self.pending_stdout.extend(chunk)
-                while (newline := self.pending_stdout.find(b"\n")) >= 0:
-                    line = bytes(self.pending_stdout[: newline + 1])
-                    del self.pending_stdout[: newline + 1]
-                    # Enforce the raw per-record ceiling before a compactable
-                    # command payload can disappear from retained output.
-                    if len(line) > MAX_CHILD_RECORD_BYTES:
+                offset = 0
+                while offset < len(chunk):
+                    remaining = self.pending_record_limit - len(self.pending_stdout)
+                    if not remaining:
+                        # Admit extra raw bytes only after the bounded prefix proves
+                        # both event types and reaches the expendable output string.
+                        if self.pending_record_limit == MAX_CHILD_RECORD_BYTES and _has_command_output_prefix(
+                            self.pending_stdout
+                        ):
+                            self.pending_record_limit = MAX_CHILD_COMMAND_RECORD_BYTES
+                            continue
                         self.output_limited.set()
-                        self._retain("stdout", line)
                         return
-                    self._retain("stdout", _compact_command_event(line))
-                    if self.output_limited.is_set():
-                        return
-            # One oversized record remains terminal; parsing it would remove
-            # the per-record memory bound even when its tool output is expendable.
-            if len(self.pending_stdout) > MAX_CHILD_RECORD_BYTES:
-                self.output_limited.set()
+                    stop = min(len(chunk), offset + remaining)
+                    newline = chunk.find(b"\n", offset, stop)
+                    if newline >= 0:
+                        stop = newline + 1
+                    self.pending_stdout.extend(chunk[offset:stop])
+                    offset = stop
+                    if newline >= 0:
+                        line = bytes(self.pending_stdout)
+                        self.pending_stdout.clear()
+                        self.pending_record_limit = MAX_CHILD_RECORD_BYTES
+                        self._retain_stdout_record(line)
+                        if self.output_limited.is_set():
+                            return
             # Object fields can arrive in any order. Candidate records use the
             # independent raw-record budget until complete validation or final flush.
             candidate = self.pending_stdout.lstrip().startswith(b"{")
             if not candidate and self.captured_bytes + len(self.pending_stdout) > MAX_CHILD_OUTPUT_BYTES:
                 self.output_limited.set()
+
+    def _retain_stdout_record(self, line: bytes) -> None:
+        """Validate larger command records before retaining their bounded compaction."""
+        if len(line) > MAX_CHILD_RECORD_BYTES:
+            if len(line) <= MAX_CHILD_COMMAND_RECORD_BYTES and _has_command_output_prefix(
+                line[:MAX_CHILD_RECORD_BYTES]
+            ):
+                compacted = _compact_command_event(line)
+                if len(compacted) <= MAX_CHILD_RECORD_BYTES:
+                    self._retain("stdout", compacted)
+                    return
+            self.output_limited.set()
+            self._retain("stdout", line)
+            return
+        try:
+            record = json.loads(line)
+            item = record.get("item") if isinstance(record, dict) else None
+            if (
+                isinstance(item, dict)
+                and record.get("type") == "item.completed"
+                and item.get("type") == "agent_message"
+                and isinstance(item.get("text"), str)
+            ):
+                self.last_agent_message = (
+                    item["text"].encode("utf-8")[:MAX_CHILD_FRAGMENT_BYTES].decode("utf-8", errors="ignore")
+                )
+        except (ValueError, RecursionError, UnicodeEncodeError):
+            # Malformed records stay raw and cannot replace a previously complete message.
+            pass
+        self._retain("stdout", _compact_command_event(line))
 
     def _retain(self, stream: str, chunk: bytes) -> None:
         """Keep at most the shared byte budget and signal when a chunk exceeds it."""
@@ -1050,7 +1109,7 @@ class _ChildOutputBuffer:
             # before taking the snapshot so a late reader cannot alter its fault.
             self.finalized.set()
             if self.pending_stdout:
-                self._retain("stdout", _compact_command_event(bytes(self.pending_stdout)))
+                self._retain_stdout_record(bytes(self.pending_stdout))
                 self.pending_stdout.clear()
             decoded = []
             remaining = MAX_CHILD_OUTPUT_BYTES
@@ -1066,32 +1125,71 @@ class _ChildOutputBuffer:
             return decoded[0], decoded[1]
 
 
+def _has_command_output_prefix(prefix: bytes | bytearray) -> bool:
+    """Prove completed-command types before an unfinished aggregated-output string.
+
+    Closing the string and its two enclosing objects must yield valid JSON. Type fields following the output cannot
+    prove eligibility for the larger ceiling.
+    """
+    match = re.search(rb'"aggregated_output"\s*:\s*"', prefix)
+    if match is None:
+        return False
+    try:
+        record = json.loads(prefix[: match.end() - 1] + b'""}}')
+    except (ValueError, RecursionError):
+        return False
+    item = record.get("item") if isinstance(record, dict) else None
+    return (
+        isinstance(record, dict)
+        and record.get("type") == "item.completed"
+        and isinstance(item, dict)
+        and item.get("type") == "command_execution"
+        and item.get("aggregated_output") == ""
+    )
+
+
 def _compact_command_event(line: bytes) -> bytes:
-    """Replace completed Codex command output with its UTF-8 size and content digest."""
-    if b'"aggregated_output"' not in line:
-        return line
+    """Bound command text and replace completed output with UTF-8 sizes and digests."""
     try:
         record = json.loads(line)
     except (ValueError, RecursionError):
         return line
-    if not isinstance(record, dict) or record.get("type") != "item.completed":
+    if not isinstance(record, dict) or record.get("type") not in ("item.started", "item.completed"):
         return line
     item = record.get("item")
     if not isinstance(item, dict) or item.get("type") != "command_execution":
         return line
-    command_output = item.get("aggregated_output")
-    if not isinstance(command_output, str):
-        return line
+    item = dict(item)
     try:
-        output_bytes = command_output.encode("utf-8")
-    except UnicodeEncodeError:
+        if len(line) > MAX_CHILD_RECORD_BYTES:
+            # A large command or metadata payload is not an output-only overflow.
+            if record["type"] != "item.completed" or not isinstance(item.get("aggregated_output"), str):
+                return line
+            without_output = {**record, "item": {**item, "aggregated_output": ""}}
+            if len(json.dumps(without_output, separators=(",", ":")).encode("utf-8")) > MAX_CHILD_RECORD_BYTES:
+                return line
+        command = item.get("command")
+        if "command" in item:
+            if not isinstance(command, str):
+                return line
+            command_bytes = command.encode("utf-8")
+            if record["type"] == "item.started" or len(command_bytes) > MAX_CHILD_FRAGMENT_BYTES:
+                item["command_bytes"] = len(command_bytes)
+                item["command_sha256"] = hashlib.sha256(command_bytes).hexdigest()
+                if record["type"] == "item.started":
+                    del item["command"]
+                else:
+                    item["command"] = command_bytes[:MAX_CHILD_FRAGMENT_BYTES].decode("utf-8", errors="ignore")
+        if record["type"] == "item.completed" and "aggregated_output" in item:
+            if not isinstance(item["aggregated_output"], str):
+                return line
+            output_bytes = item.pop("aggregated_output").encode("utf-8")
+            item["aggregated_output_bytes"] = len(output_bytes)
+            item["aggregated_output_sha256"] = hashlib.sha256(output_bytes).hexdigest()
+    except (UnicodeEncodeError, RecursionError):
         return line
-    item = {
-        **item,
-        "aggregated_output_bytes": len(output_bytes),
-        "aggregated_output_sha256": hashlib.sha256(output_bytes).hexdigest(),
-    }
-    del item["aggregated_output"]
+    if item == record["item"]:
+        return line
     newline = "\n" if line.endswith(b"\n") else ""
     try:
         return (json.dumps({**record, "item": item}, separators=(",", ":")) + newline).encode("utf-8")
@@ -1273,6 +1371,7 @@ def _run_child(command: list[str], workspace: Path, timeout: float, job_path: Pa
                 False,
                 f"child output exceeded {MAX_CHILD_OUTPUT_BYTES} byte capture limit",
                 True,
+                output.last_agent_message,
             )
         if not drained:
             return ChildOutcome(
@@ -1648,7 +1747,7 @@ def _first_string(value: dict[str, Any], keys: Iterable[str]) -> str | None:
     return None
 
 
-def _prompt_with_budget(request: Request) -> str:
+def _prompt_with_budget(request: Request, *, host: str | None = None) -> str:
     """Add bounded execution context and review-specific adversarial instructions."""
     preamble = (
         f"You have a soft budget of {request.timeout_seconds:g} seconds. Return a compact structured result before it expires. "
@@ -1657,6 +1756,21 @@ def _prompt_with_budget(request: Request) -> str:
         "in details. The harness persists details in the transcript artifact and omits them from the public envelope. "
         f"Bridge depth is {request.depth}; run id is {request.run_id}.\n\n"
     )
+    child_host = host or ("claude" if request.direction == "codex_to_claude" else "codex")
+    capture_kib = MAX_CHILD_OUTPUT_BYTES / 1024
+    if child_host == "codex":
+        preamble += (
+            f"Your run is recorded in a transcript capped at about {capture_kib:.0f} KiB: "
+            "each shell command's text counts against the cap; command output is reduced to size and digest. "
+            "A run exceeding the cap ends with no result. "
+            "Keep every command short: never inline large scripts, source code or data lists; "
+            "pass small inputs as arguments and print bounded output. "
+        )
+    else:
+        preamble += f"Keep your final JSON result compact and within the capture cap of about {capture_kib:.0f} KiB. "
+    if not _is_write_verb(request.verb):
+        preamble += "Files cannot be written. "
+    preamble += "\n\n"
     if request.verb == "review":
         preamble += (
             "Perform an adversarial read-only review: identify concrete correctness, safety, and regression risks. "
@@ -1854,6 +1968,7 @@ def _terminal_envelope(
     workspace_delta: list[str] | None = None,
     prior_incident: str | None = None,
     fault: str | None = None,
+    partial_output: str | None = None,
 ) -> dict[str, Any]:
     """Create, record, and return a harness-owned terminal result."""
     paths = context.paths
@@ -1869,8 +1984,17 @@ def _terminal_envelope(
         "blockers": [reason],
     }
     incident = _write_incident(
-        paths, context.request, fault or status, reason, transcript_path, workspace_delta, prior_incident
+        paths,
+        context.request,
+        fault or status,
+        reason,
+        transcript_path,
+        workspace_delta,
+        prior_incident,
+        partial_output=partial_output,
     )
+    if partial_output is not None:
+        core["partial_output"] = partial_output
     envelope = _make_envelope(context, core, None, incident)
     _record_optional_health(paths, envelope, context.request.network)
     return envelope
@@ -1884,6 +2008,8 @@ def _write_incident(
     transcript_path: str,
     workspace_delta: list[str] | None,
     prior_incident: str | None = None,
+    *,
+    partial_output: str | None = None,
 ) -> str:
     """Persist one compact incident record without copying child environment data."""
     path = paths.incidents / f"{time.time_ns()}-{uuid.uuid4().hex[:8]}-{fault}.json"
@@ -1899,6 +2025,8 @@ def _write_incident(
         "workspace_delta": workspace_delta or [],
         "prior_incident": prior_incident,
     }
+    if partial_output is not None:
+        payload["partial_output"] = partial_output
     _write_json(path, payload, paths=paths)
     return paths.relative(path)
 

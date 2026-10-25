@@ -398,8 +398,25 @@ class TestHarnessSchema:
         assert schema["type"] == "object"
         assert schema["additionalProperties"] is False
         assert set(schema["required"]) == CORE_FIELDS | HARNESS_ONLY_FIELDS
-        assert set(schema["properties"]) == CORE_FIELDS | HARNESS_ONLY_FIELDS
+        assert set(schema["properties"]) == CORE_FIELDS | HARNESS_ONLY_FIELDS | {"partial_output"}
+        assert "partial_output" not in schema["required"]
+        assert schema["properties"]["partial_output"]["type"] == "string"
+        assert schema["properties"]["partial_output"]["maxLength"] == 4096
         assert schema["properties"]["status"]["enum"] == ["complete", "partial", "blocked", "timeout", "refused"]
+
+    def test_partial_output_requires_a_blocked_codex_child(self, schema: dict[str, object]) -> None:
+        """Require schema routing guards and the consumer-enforced UTF-8 byte bound.
+
+        The local fixture validator does not implement conditionals, so inspect their exact schema contract.
+        """
+        assert schema["if"] == {"required": ["partial_output"]}
+        assert schema["then"] == {
+            "properties": {"status": {"const": "blocked"}, "direction": {"const": "claude_to_codex"}}
+        }
+        assert (
+            "consumers must also enforce the 4096-byte UTF-8 bound"
+            in schema["properties"]["partial_output"]["description"]
+        )
 
     def test_accepts_a_refused_result_with_full_harness_metadata(self, schema: dict[str, object]) -> None:
         """A refused-status result carrying every harness-only field validates end to end.

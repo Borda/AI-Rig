@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.12.1
+
+- Keep completed Codex commands with large output running: a record proven, once fully parsed, to be a completed command with output may use a bounded 8 MiB raw buffer before compaction to full-output byte counts and SHA-256; retained records stay within 256 KiB, while other oversized records still stop the run.
+- Reduce transcript-limit failures with host-specific capture-budget warnings and compact Codex command text; when a Codex run still exceeds the cap, return a bounded, unverified `partial_output` fragment to help scope a follow-up without claiming findings or a verdict. The envelope schema admits it only on a blocked Codex result, and consumers must enforce its 4 KiB UTF-8 bound.
+
 ## 0.12.0
 
 - Resolve peer CLIs and subprocess utilities to absolute paths from PATH, skipping empty and dot entries and honoring Windows PATHEXT, so a planted executable in the checkout cannot receive child credentials through implicit current-directory lookup.

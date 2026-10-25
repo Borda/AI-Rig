@@ -1463,6 +1463,183 @@ def test_budget_prompt_and_timeout_terminate_held_process(tmp_path: Path) -> Non
     assert outcome.returncode is not None
 
 
+@pytest.mark.parametrize("verb", ["implement", "advise", "review"])
+@pytest.mark.parametrize("host", ["codex", "claude"])
+def test_prompt_warns_about_the_derived_capture_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, verb: str, host: str
+) -> None:
+    """Warn every verb using the actual child's capture behavior and configured cap."""
+    monkeypatch.setattr(bridge_call, "MAX_CHILD_OUTPUT_BYTES", 32 * 1024)
+    request = _request(tmp_path, verb=verb)
+    schema = tmp_path / "schema.json"
+    schema.write_text("{}", encoding="utf-8")
+    build = bridge_call.build_codex_argv if host == "codex" else bridge_call.build_claude_argv
+    command = build(request, schema)
+    prompt = next(argument for argument in command if argument.startswith("You have a soft budget"))
+
+    assert "about 32 KiB" in prompt
+    assert ("Files cannot be written." in prompt) is (verb != "implement")
+    if host == "codex":
+        assert "each shell command's text counts against the cap" in prompt
+        assert "command output is reduced to size and digest" in prompt
+        assert "never inline large scripts, source code or data lists" in prompt
+        assert "pass small inputs as arguments and print bounded output" in prompt
+        assert "ends with no result" in prompt
+    else:
+        assert "final JSON result" in prompt
+        assert "each shell command's text" not in prompt
+
+
+def test_started_command_text_is_replaced_with_size_and_digest() -> None:
+    """Avoid retaining a second full copy of a command in its started event."""
+    command = "python -c '" + "é" * 30_000 + "'"
+    item = {"id": "one", "type": "command_execution", "command": command, "status": "in_progress"}
+    line = (json.dumps({"type": "item.started", "item": item}) + "\n").encode()
+    output = bridge_call._ChildOutputBuffer()
+    output.append("stdout", line)
+    stdout, stderr = output.text()
+
+    assert json.loads(stdout)["item"] == {
+        **{key: value for key, value in item.items() if key != "command"},
+        "command_bytes": len(command.encode()),
+        "command_sha256": hashlib.sha256(command.encode()).hexdigest(),
+    }
+    assert stdout.endswith("\n")
+    assert stderr == ""
+    assert not output.output_limited.is_set()
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param("x" * 4096, id="exact-boundary"),
+        pytest.param("x" * 4097, id="over-boundary"),
+        pytest.param("x" * 4095 + "🙂tail", id="split-multibyte"),
+        pytest.param("é" * 3000, id="multibyte-prefix"),
+    ],
+)
+def test_completed_command_keeps_a_utf8_safe_prefix(command: str) -> None:
+    """Keep complete short commands and at most 4 KiB of a longer decoded command."""
+    event = {"type": "item.completed", "item": {"type": "command_execution", "command": command}}
+    item = json.loads(bridge_call._compact_command_event(json.dumps(event).encode()))["item"]
+
+    assert item["command"] == command.encode()[:4096].decode("utf-8", errors="ignore")
+    if len(command.encode()) > 4096:
+        assert item["command_bytes"] == len(command.encode())
+        assert item["command_sha256"] == hashlib.sha256(command.encode()).hexdigest()
+    else:
+        assert "command_bytes" not in item
+        assert "command_sha256" not in item
+
+
+@pytest.mark.parametrize("newline", [True, False])
+def test_output_limit_salvages_the_last_complete_agent_message(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, newline: bool
+) -> None:
+    """Preserve a complete message even when retaining that record triggers overflow."""
+    message = "x" * 4095 + "🙂 last message" * 100
+    emitter = (
+        "import json, sys\n"
+        "print(json.dumps({'type':'item.completed','item':{'type':'agent_message','text':'older'}}), flush=True)\n"
+        f"sys.stdout.write('X' * {bridge_call.MAX_CHILD_OUTPUT_BYTES - 1024} + '\\n'); sys.stdout.flush()\n"
+        "sys.stdout.write(json.dumps({'type':'item.completed','item':{'type':'agent_message','text':sys.argv[1]}})"
+        f" + {'chr(10)' if newline else repr('')}); sys.stdout.flush()\n"
+    )
+    resolve_command = bridge_call._resolved_command
+    monkeypatch.setattr(
+        bridge_call,
+        "_resolved_command",
+        lambda command: [sys.executable, "-c", emitter, message] if command[0] == "codex" else resolve_command(command),
+    )
+    result = bridge_call.run_request(_request(tmp_path, verb="review"))
+    incident = json.loads((tmp_path / result["incident"]).read_text(encoding="utf-8"))
+
+    assert result["status"] == "blocked"
+    assert result["findings"] == []
+    assert incident["fault"] == "output-limit"
+    assert result["partial_output"] == "x" * 4095
+    assert incident["partial_output"] == result["partial_output"]
+    assert len(result["partial_output"].encode()) <= 4096
+
+
+@pytest.mark.parametrize(
+    ("host", "fragment"),
+    [
+        pytest.param("codex", None, id="codex-without-message"),
+        pytest.param("claude", None, id="claude-without-message"),
+        pytest.param("claude", "must not escape", id="claude-with-message"),
+    ],
+)
+def test_output_limit_omits_partial_output_without_a_codex_message(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, host: str, fragment: str | None
+) -> None:
+    """Never attach salvage when absent or when the child is Claude."""
+    monkeypatch.setattr(
+        bridge_call,
+        "_run_child",
+        lambda *args: bridge_call.ChildOutcome("", "", -9, False, "output exceeded cap", True, fragment),
+    )
+    result = bridge_call.run_request(_request(tmp_path), host=host)
+    incident = json.loads((tmp_path / result["incident"]).read_text(encoding="utf-8"))
+    assert result["status"] == "blocked"
+    assert result["findings"] == []
+    assert "partial_output" not in result
+    assert "partial_output" not in incident
+
+
+def test_long_command_events_leave_room_for_the_final_result(tmp_path: Path) -> None:
+    """Prevent repeated command text from exhausting capture despite small command output."""
+    emitter = (
+        "import json, sys\n"
+        "for index in range(4):\n"
+        "    item = {'id':str(index),'type':'command_execution','command':'x' * 60000}\n"
+        "    print(json.dumps({'type':'item.started','item':item}), flush=True)\n"
+        "    item['aggregated_output'] = 'bounded output'\n"
+        "    print(json.dumps({'type':'item.completed','item':item}), flush=True)\n"
+        "print(json.dumps({'type':'item.completed','item':{'type':'agent_message','text':sys.argv[1]}}), flush=True)\n"
+    )
+    outcome = bridge_call._run_child([sys.executable, "-c", emitter, json.dumps(_core())], tmp_path, 5.0)
+
+    assert outcome.returncode == 0
+    assert not outcome.output_limited
+    assert outcome.partial_output is None
+    assert bridge_call._parse_output(outcome.stdout, "codex").core == _core()
+    assert len(outcome.stdout.encode()) < 20_000
+
+
+def test_incomplete_or_invalid_agent_events_cannot_replace_salvage() -> None:
+    """Ignore started, malformed, oversized and stderr messages while freezing a complete fragment."""
+    output = bridge_call._ChildOutputBuffer()
+    for event in (
+        {"type": "item.completed", "item": {"type": "agent_message", "text": "complete"}},
+        {"type": "item.started", "item": {"type": "agent_message", "text": "started"}},
+        {"type": "item.completed", "item": {"type": "agent_message", "text": 42}},
+    ):
+        output.append("stdout", (json.dumps(event) + "\n").encode())
+    output.append("stderr", b'{"type":"item.completed","item":{"type":"agent_message","text":"stderr"}}\n')
+    output.append("stdout", b'{"type":"item.completed","item":{"type":"agent_message","text":"unfinished')
+    output.text()
+    output.append("stdout", b'"}}\n')
+    assert output.last_agent_message == "complete"
+
+
+@pytest.mark.parametrize("event_type", ["item.started", "item.completed"])
+@pytest.mark.parametrize("newline", [True, False])
+def test_oversized_command_text_is_not_compacted_before_the_raw_ceiling(event_type: str, newline: bool) -> None:
+    """Reject oversized command records both during capture and final flush."""
+    event = {
+        "type": event_type,
+        "item": {"type": "command_execution", "command": "X" * bridge_call.MAX_CHILD_RECORD_BYTES},
+    }
+    line = json.dumps(event).encode() + (b"\n" if newline else b"")
+    output = bridge_call._ChildOutputBuffer()
+    output.append("stdout", line)
+    stdout, _ = output.text()
+    assert output.output_limited.is_set()
+    assert stdout.encode() == line[: bridge_call.MAX_CHILD_OUTPUT_BYTES]
+    assert "command_sha256" not in stdout
+
+
 @pytest.mark.parametrize(
     "emitter",
     [
@@ -1544,26 +1721,59 @@ def test_reordered_subprocess_event_preserves_final_result_under_stderr_pressure
     assert item["aggregated_output_sha256"] == hashlib.sha256(b"R" * 180_000).hexdigest()
 
 
-def test_one_oversized_codex_event_still_blocks_before_parsing(tmp_path: Path) -> None:
-    """Keep the per-record memory limit when one command event exceeds the buffer budget."""
+def test_oversized_codex_command_output_preserves_final_result(tmp_path: Path) -> None:
+    """Compact a real child's 600 KiB output without terminating its final review."""
     emitter = (
         "import json, sys\n"
         "print(json.dumps({'type': 'item.completed', 'item': {'type': 'command_execution', "
-        "'aggregated_output': 'X' * 400000}}), flush=True)\n"
-        "sys.exit(0)\n"
+        "'aggregated_output': '\\x1b[32mé.\\x1b[0m' * 51200}}, ensure_ascii=False), flush=True)\n"
+        "print(json.dumps({'type': 'item.completed', 'item': {'type': 'agent_message', 'text': sys.argv[1]}}), flush=True)\n"
     )
 
-    outcome = bridge_call._run_child([sys.executable, "-c", emitter], tmp_path, timeout=5.0)
+    outcome = bridge_call._run_child([sys.executable, "-c", emitter, json.dumps(_core())], tmp_path, timeout=5.0)
 
-    assert outcome.output_limited is True
-    assert outcome.error == f"child output exceeded {bridge_call.MAX_CHILD_OUTPUT_BYTES} byte capture limit"
+    assert outcome.output_limited is False
+    assert outcome.returncode == 0
+    assert outcome.error is None
+    item = json.loads(outcome.stdout.splitlines()[0])["item"]
+    payload = ("\x1b[32mé.\x1b[0m" * 51200).encode()
+    assert len(payload) == 600 * 1024
+    assert "aggregated_output" not in item
+    assert item["aggregated_output_bytes"] == len(payload)
+    assert item["aggregated_output_sha256"] == hashlib.sha256(payload).hexdigest()
+    assert bridge_call._parse_output(outcome.stdout, "codex").core == _core()
     assert (
         len(outcome.stdout.encode("utf-8")) + len(outcome.stderr.encode("utf-8")) <= bridge_call.MAX_CHILD_OUTPUT_BYTES
     )
 
 
-def test_completed_record_one_byte_over_limit_still_blocks() -> None:
-    """Reject one oversized JSONL record even when its command output could compact."""
+@pytest.mark.parametrize("newline", [False, True])
+def test_oversized_command_with_duplicate_started_type_remains_terminal(newline: bool) -> None:
+    """Reject a completed prefix when the full record overrides it with a started type."""
+    record = {
+        "type": "item.completed",
+        "item": {"type": "command_execution", "command": "C" * 8192, "aggregated_output": ""},
+    }
+    line = (
+        json.dumps(record).encode()[:-1]
+        + b" " * bridge_call.MAX_CHILD_RECORD_BYTES
+        + b', "type": "item.started"}'
+        + (b"\n" if newline else b"")
+    )
+    assert bridge_call._has_command_output_prefix(line[: bridge_call.MAX_CHILD_RECORD_BYTES])
+    assert json.loads(line)["type"] == "item.started"
+    output = bridge_call._ChildOutputBuffer()
+
+    for offset in range(0, len(line), 8192):
+        output.append("stdout", line[offset : offset + 8192])
+    stdout, _ = output.text()
+
+    assert output.output_limited.is_set()
+    assert len(stdout.encode()) <= bridge_call.MAX_CHILD_OUTPUT_BYTES
+
+
+def test_completed_record_one_byte_over_limit_compacts() -> None:
+    """Admit a proven command-output record at the first byte over the ordinary ceiling."""
     record = {"type": "item.completed", "item": {"type": "command_execution", "aggregated_output": ""}}
     base = (json.dumps(record) + "\n").encode("utf-8")
     record["item"]["aggregated_output"] = "X" * (bridge_call.MAX_CHILD_RECORD_BYTES + 1 - len(base))
@@ -1573,8 +1783,91 @@ def test_completed_record_one_byte_over_limit_still_blocks() -> None:
     output.append("stdout", line)
 
     assert len(line) == bridge_call.MAX_CHILD_RECORD_BYTES + 1
-    assert output.output_limited.is_set() is True
-    assert len(output.text()[0].encode("utf-8")) <= bridge_call.MAX_CHILD_OUTPUT_BYTES
+    assert output.output_limited.is_set() is False
+    item = json.loads(output.text()[0])["item"]
+    assert item["aggregated_output_bytes"] == len(record["item"]["aggregated_output"])
+
+
+@pytest.mark.parametrize("chunk_size", [8192, 1024 * 1024])
+@pytest.mark.parametrize("newline", [True, False])
+def test_large_command_record_has_bounded_capture_and_exact_digest(chunk_size: int, newline: bool) -> None:
+    """Bound pending memory and retained records across chunk boundaries and EOF."""
+    payload = 'é😀\\"\n' * 60_000
+    command = "é" * 5000
+    event = {
+        "type": "item.completed",
+        "item": {"type": "command_execution", "command": command, "aggregated_output": payload},
+    }
+    line = json.dumps(event).encode() + (b"\n" if newline else b"")
+    output = bridge_call._ChildOutputBuffer()
+    for offset in range(0, len(line), chunk_size):
+        output.append("stdout", line[offset : offset + chunk_size])
+        assert len(output.pending_stdout) <= bridge_call.MAX_CHILD_COMMAND_RECORD_BYTES
+        assert output.captured_bytes <= bridge_call.MAX_CHILD_RECORD_BYTES
+        assert not output.output_limited.is_set()
+
+    stdout, stderr = output.text()
+    item = json.loads(stdout)["item"]
+    assert not output.output_limited.is_set()
+    assert not output.pending_stdout
+    assert stderr == ""
+    assert len(stdout.encode()) <= bridge_call.MAX_CHILD_RECORD_BYTES
+    assert "aggregated_output" not in item
+    assert item["aggregated_output_bytes"] == len(payload.encode())
+    assert item["aggregated_output_sha256"] == hashlib.sha256(payload.encode()).hexdigest()
+    assert item["command"] == command.encode()[: bridge_call.MAX_CHILD_FRAGMENT_BYTES].decode()
+    assert item["command_bytes"] == len(command.encode())
+    assert item["command_sha256"] == hashlib.sha256(command.encode()).hexdigest()
+
+
+def test_large_command_record_stops_at_its_bounded_raw_ceiling() -> None:
+    """Stop an unfinished command-output string without retaining beyond 8 MiB."""
+    output = bridge_call._ChildOutputBuffer()
+    output.append("stdout", b'{"type":"item.completed","item":{"type":"command_execution","aggregated_output":"')
+    for _ in range(bridge_call.MAX_CHILD_COMMAND_RECORD_BYTES // 8192 + 1):
+        output.append("stdout", b"X" * 8192)
+        assert len(output.pending_stdout) <= bridge_call.MAX_CHILD_COMMAND_RECORD_BYTES
+        if output.output_limited.is_set():
+            break
+    assert output.output_limited.is_set()
+    assert len(output.pending_stdout) == bridge_call.MAX_CHILD_COMMAND_RECORD_BYTES
+    assert len(output.text()[0].encode()) <= bridge_call.MAX_CHILD_OUTPUT_BYTES
+    assert not output.pending_stdout
+
+
+@pytest.mark.parametrize(
+    "record_kind",
+    ["agent", "unknown", "malformed", "late-type", "changed-type", "large-metadata", "large-command", "nested-decoy"],
+)
+def test_other_oversized_records_remain_terminal(record_kind: str) -> None:
+    """Never exempt agent text, unknown types, malformed JSON, or large non-output fields."""
+    payload = "X" * (600 * 1024)
+    item: dict[str, Any] = {"type": "command_execution", "aggregated_output": payload}
+    record: dict[str, Any] = {"type": "item.completed", "item": item}
+    if record_kind == "agent":
+        record["item"] = {"type": "agent_message", "text": payload}
+    elif record_kind == "unknown":
+        item["type"] = "unknown"
+    elif record_kind == "late-type":
+        record = {"item": {"aggregated_output": payload, "type": "command_execution"}, "type": "item.completed"}
+    elif record_kind in {"large-metadata", "large-command"}:
+        item["aggregated_output"] = "small"
+        item["command" if record_kind == "large-command" else "metadata"] = payload
+    elif record_kind == "nested-decoy":
+        record = {"type": "unknown", "nested": record, "text": payload}
+    line = json.dumps(record).encode()
+    if record_kind == "malformed":
+        line = line[:-1]
+    elif record_kind == "changed-type":
+        line = line[:-2] + b', "type": "agent_message"}}'
+    output = bridge_call._ChildOutputBuffer()
+    for offset in range(0, len(line), 8192):
+        output.append("stdout", line[offset : offset + 8192])
+        assert len(output.pending_stdout) <= bridge_call.MAX_CHILD_COMMAND_RECORD_BYTES
+    output.append("stdout", b"\n")
+    assert output.output_limited.is_set()
+    assert len(output.text()[0].encode()) <= bridge_call.MAX_CHILD_OUTPUT_BYTES
+    assert output.last_agent_message is None
 
 
 def test_whitespace_prefixed_command_event_compacts_before_shared_budget() -> None:
