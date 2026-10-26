@@ -1,7 +1,7 @@
 ---
 name: audit
-description: Full-sweep quality audit of .claude/ config — cross-references, permissions, inventory drift, model tiers, docs freshness. Scope tokens select what to audit; --upgrade applies docs-sourced improvements; --adversarial runs foundry:challenger + Codex adversarial review; --efficiency sweeps model tiers, token bloat, spawn patterns, boilerplate duplication, and bin/ extraction candidates (extraction performed separately via /distill executables). Fix level chosen via always-fire follow-up gate after report.
-argument-hint: '[<scope>...] [--local] [--upgrade | --adversarial | --efficiency] [--fast] [--skip-gate] [--keep "<items>"]'
+description: Full-sweep quality audit of .claude/ config — cross-references, permissions, inventory drift, model tiers, docs freshness. Scope tokens select what to audit; --upgrade applies docs-sourced improvements; --adversarial runs foundry:challenger + Codex adversarial review; --efficiency sweeps model tiers, token bloat, spawn patterns, boilerplate duplication, and bin/ extraction candidates (extraction performed separately via /distill executables); --consolidate proposes merging overlapping narrow rules into fewer broader ones and sharpening overlapping skill notes and agent clauses (advisory, edits nothing). Fix level chosen via always-fire follow-up gate after report.
+argument-hint: '[<scope>...] [--local] [--upgrade | --adversarial | --efficiency | --consolidate] [--measured] [--fast] [--skip-gate] [--keep "<items>"]'
 disable-model-invocation: true
 allowed-tools: Read, Write, Edit, Bash, Grep, Glob, Agent, WebFetch, Skill, TaskCreate, TaskUpdate, TaskList, AskUserQuestion
 effort: high
@@ -20,9 +20,11 @@ Full-sweep audit of `.claude/` config + all `plugins/*/` files: agents, skills, 
   **Flags** (order independent, any combination with scope):
 
   - `--local` — audit source tree (`plugins/*/`) not project setup (`.claude/`); plugin-dev workflows where local edits not yet installed; sets `LOCAL_MODE=true`
-  - `--upgrade` — fetch latest Claude Code docs, filter new features by genuine value, apply: **config** changes (apply + correctness check), **capability** changes (`--local` only: calibrate before → apply → calibrate after → accept if Δrecall ≥ 0 and ΔF1 ≥ 0 and at least one delta ≥ 0.05, the noise floor; without `--local` each is reported as skipped). Skip to **Mode: upgrade**. Mutually exclusive with `--adversarial` and `--efficiency` — error if combined with either.
+  - `--upgrade` — fetch latest Claude Code docs, filter new features by genuine value, apply: **config** changes (apply + correctness check), **capability** changes (`--local` only: calibrate before → apply → calibrate after → accept if Δrecall ≥ 0 and ΔF1 ≥ 0 and at least one delta ≥ 0.05, the noise floor; without `--local` each is reported as skipped). Skip to **Mode: upgrade**. Mutually exclusive with `--adversarial`, `--efficiency` and `--consolidate` — error if combined with any.
   - `--adversarial` (alias: `--challenge`) — adversarial review of all agents + skills in scope using `foundry:challenger` (Phase A) + Codex adversarial pass (Phase B); surfaces issues beyond standard per-file audit; see **Mode: adversarial**. Mutually exclusive with `--upgrade` only; combinable with `--efficiency`.
-  - `--efficiency` — cost and efficiency sweep: model tier validation, token bloat detection, unbounded spawn patterns, cross-file boilerplate duplication, missing model declarations, bin/ extraction candidates (Check 33). Generates prioritized cost-reduction plan with estimated savings. Detection only — run `/distill executables` to act on extraction candidates. Skip to **Mode: efficiency**. Mutually exclusive with `--upgrade` only; combinable with `--adversarial`.
+  - `--efficiency` — cost and efficiency sweep: model tier validation, token bloat detection, unbounded spawn patterns, cross-file boilerplate duplication, missing model declarations, bin/ extraction candidates (Check 33), size against importance (E11). Generates prioritized cost-reduction plan with estimated savings. Detection only — run `/distill executables` to act on extraction candidates. Skip to **Mode: efficiency**. Mutually exclusive with `--upgrade` and `--consolidate`; combinable with `--adversarial`.
+  - `--consolidate` — advisory consolidation sweep (Check 47): clusters rule, skill and agent sections that express one intent in different words, proposes fewer broader ones with an obligation map and an independent `foundry:challenger` review, and reports tokens saved per load class. Edits nothing; no fix gate. Skip to **Mode: consolidate**. Standalone — error if combined with `--upgrade`, `--adversarial` or `--efficiency`.
+  - `--measured` — with `--efficiency` only: a question picks which of the projects whose sessions ran a flagged skill to measure, and the audit adds measured dollars from their transcripts (read-only, ids, counts and dollars only) and append the run to `.notes/efficiency/baselines.jsonl`, so a re-run prints the change against the first recorded baseline (Phase B3). Off by default: it reads transcripts and writes a ledger. Error without `--efficiency`
   - `--skip-gate` — suppress follow-up gate (for automation pipelines)
   - `--fast` — widen fan-out from `MAX_BATCHES` toward that phase's model-tier ceiling (`CAP_OPUS`/`CAP_SONNET`, see `<constants>` and claude-config.md §Parallel Spawn Ceilings), trading tokens for wall-clock. **Not free**: each extra agent costs ~120,851 tok of fixed overhead regardless of how little work it does. Curator-spawning phases (opus tier) have little headroom above `MAX_BATCHES=4` toward `CAP_OPUS=5`; Phase D's qa-specialist (sonnet tier) has more, toward `CAP_SONNET=8`. Use when latency matters more than cost; omit by default. Combinable with every other flag.
 
@@ -46,7 +48,7 @@ Full-sweep audit of `.claude/` config + all `plugins/*/` files: agents, skills, 
 
   **Scope token resolution** (each remaining token after flag-strip, resolved before Step 2): (1) reserved keywords (`agents`, `skills`, `rules`, `communication`, `setup`, `plugin`, `plugins`) → use as-is; (2) matches dir under `plugins/<token>/` → tier 2; (3) matches agent file in `plugins/*/agents/<token>.md` or `.claude/agents/<token>.md` → tier 3 agent; (4) matches skill dir `plugins/*/skills/<token>/` or `.claude/skills/<token>/` → tier 3 skill; (5) no match → error and stop. **Out-of-scope target** — any path or pasted content that is not an agent, skill, rule, hook, settings, plugin-manifest, `permissions-guide.md`, `MEMORY.md`, or plugin/project-configuration `README.md` file (e.g. a plain application `.py` script or unrelated project docs): lead with `**! UNSUPPORTED — <target> is not .claude/ or plugin config**`, name the owner (`foundry:sw-engineer`/`foundry:qa-specialist` for code, `foundry:linting-expert` for lint/types, `foundry:doc-scribe` for docs), report `Total: 0`, stop. Never append best-effort review findings after the decline — findings printed under a decline still read as an audit result.
 
-  **Valid combinations**: scope tokens + flags mix freely: `foundry --local`, `foundry --adversarial`, `agents skills --local`, `oss research --adversarial`, `foundry --efficiency`, `plugins --efficiency`, `foundry --adversarial --efficiency`, `plugins --local --adversarial --efficiency`. `--upgrade` mutually exclusive with `--adversarial` and `--efficiency` — error if combined with either. `--local` compatible with all. When `--adversarial` and `--efficiency` both present: run adversarial Phases A–C then efficiency Phases A–C sequentially; merge findings; single follow-up gate.
+  **Valid combinations**: scope tokens + flags mix freely: `foundry --local`, `foundry --adversarial`, `agents skills --local`, `oss research --adversarial`, `foundry --efficiency`, `plugins --efficiency`, `foundry --adversarial --efficiency`, `plugins --local --adversarial --efficiency`. `--upgrade` mutually exclusive with `--adversarial` and `--efficiency` — error if combined with either. `--consolidate` is standalone — error if combined with `--upgrade`, `--adversarial` or `--efficiency`. `--local` compatible with all. When `--adversarial` and `--efficiency` both present: run adversarial Phases A–C then efficiency Phases A–C sequentially; merge findings; single follow-up gate.
 
 </inputs>
 
@@ -112,7 +114,9 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/audit_preflight.py" --arguments "$ARGUMENTS"  # timeout: 20000
 ```
 
-If `.claude/` missing, abort immediately. Missing `jq` is warning — audit continues with Check 4 skipped.
+If `.claude/` missing, abort immediately (`--consolidate` needs `plugins/`, not `.claude/`). Missing `jq` is warning — audit continues with Check 4 skipped (fatal for `--consolidate`).
+
+**`dispatch=mode:consolidate` printed → jump to `## Mode: consolidate` now and run no other step**: not Step 1 (its `pre-commit --all-files` rewrites sources), not Steps 1b–11, not the follow-up gate. Pre-flight already exits 1 on an unknown `--<token>` under `--consolidate`, so the unsupported-flag check below is not skipped by the jump.
 
 **State re-derivation across Bash blocks** — Claude Code spawns a fresh shell per Bash() call; variables set in pre-flight are LOST in Steps 2–11. Every Bash block in subsequent steps that uses `LOCAL_MODE` or `AUDIT_TPL` must re-read them from the persisted state files:
 
@@ -124,9 +128,11 @@ IFS= read -r AUDIT_TPL < "${TMPDIR:-/tmp}/audit-state-${CSID}/audit-tpl" 2>/dev/
 
 Place these three lines at the top of every Bash block in Steps 2–11 that references either variable.
 
-**Unsupported flag check** — after extracting supported flags (`--local`, `--upgrade`, `--adversarial`, `--efficiency`, `--fast`, `--skip-gate`, `--keep`, plus the `--challenge` alias of `--adversarial`), scan `$ARGUMENTS` for remaining `--<token>` tokens. Found → invoke `AskUserQuestion` with question text `` ! Unknown flag(s): `--<token>`. Supported: `--local`, `--upgrade`, `--adversarial` (alias `--challenge`), `--efficiency`, `--fast`, `--skip-gate`, `--keep`. `` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
+**Unsupported flag check** — after extracting supported flags (`--local`, `--upgrade`, `--adversarial`, `--efficiency`, `--consolidate`, `--measured`, `--fast`, `--skip-gate`, `--keep`, plus the `--challenge` alias of `--adversarial`), scan `$ARGUMENTS` for remaining `--<token>` tokens. Found → invoke `AskUserQuestion` with question text `` ! Unknown flag(s): `--<token>`. Supported: `--local`, `--upgrade`, `--adversarial` (alias `--challenge`), `--efficiency`, `--consolidate`, `--measured`, `--fast`, `--skip-gate`, `--keep`. `` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
 
 ## Step 1: Run pre-commit (if configured)
+
+Skip entirely when pre-flight printed `dispatch=mode:consolidate`.
 
 ```bash
 preflight_ok()   { local f=".temp/state/preflight/$1.ok"; [ -f "$f" ] && [ $(($(date +%s) - $(cat "$f"))) -lt 14400 ]; }
@@ -435,6 +441,17 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" audit modes 
 
 Execute the mode loaded above.
 
+## Mode: consolidate
+
+**Trigger**: `/audit [<scope>...] --consolidate` — advisory, edits nothing, skips Step 1 (pre-commit auto-fix), Steps 1b–11 and the follow-up gate.
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" audit modes consolidate.md --local  # timeout: 5000
+```
+
+Execute the mode loaded above.
+
 ## Combined-run output isolation
 
 When `--adversarial` and `--efficiency` both run in the same invocation: each mode writes finding files to its own subdirectory to prevent overwrite — `$RUN_DIR/adversarial/` for adversarial output, `$RUN_DIR/efficiency/` for efficiency output. Step 5 consolidator reads both subdirs. Follow-up gate fires once after both complete, merged finding counts.
@@ -467,6 +484,8 @@ When user picks fix option (a–c): run Steps 8–10 inline via `modes/fix.md` (
 - question: "What next?" The first question's text carries the `Audit Report` headline, exact `Total: N`, severity counts and `→ $RUN_DIR/summary.jsonl`; include `→ $RUN_DIR/audit-report.md` for the saved full findings. Keep the question text to at most 6 plain lines (target 600 characters, hard cap 1,500), with no table, no pipe layout and no code fence.
 
 - Every option: label plus a one-line action description, no `preview`. Display `Fix auto-fixable (Recommended)` second while preserving all labels and answer mapping. The full Step 7 findings report is printed once in the final reply after the answer, after the last tool call, below Step 11b's header table — never before the question (`steps-4-5-7.md` §Step 7).
+
+`--consolidate` fires no gate: it is advisory, has no fix option, and prints its apply commands as plain text.
 
 After completing `--upgrade`, `--adversarial`, or `--efficiency`: also fire this gate. For (d) Skip: remove the mode just run from the "for other modes" list. When `--adversarial --efficiency` combined: fire gate once after both complete with merged finding counts; remove both from (d) hint. Efficiency distill: the user runs the printed `/distill executables` (→ `foundry:sw-engineer` extraction), then `/audit --efficiency` re-run confirms savings.
 

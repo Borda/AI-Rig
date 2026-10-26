@@ -71,6 +71,7 @@ jobs:
         scope: ["codex", "claude", "shared"]
     timeout-minutes: 45
     env:
+      PYTHONFAULTHANDLER: "1"
       PYTEST_ARGS: >-
         -n 4 --dist worksteal
         -W error::DeprecationWarning --durations=500 --durations-min=0.2

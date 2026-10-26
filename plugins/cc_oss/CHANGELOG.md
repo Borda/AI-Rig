@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.55.0
+
+- `/oss:analyse`, `/oss:release`, `/oss:resolve` and `/oss:review` no longer pin a model and run on the session model. The pin swapped the model for one turn and back, rewriting the whole cached prompt prefix twice: about $1.4 to $1.5 per `/oss:resolve` run in an Opus session. Net of the Sonnet turns that now run on Opus, removing the pins saves about $0.4 per run there; the large saving comes from starting these sessions on Sonnet, where the main thread costs about $1.2 instead of $2.82.
+- `/oss:resolve` fetches the PR thread with the new `fetch_pr_intel.py` (conversation comments, reviews, inline comments with resolved-thread flags, positions and commit context, the PR's commits, linked issues including cross-repository ones, and each commenter's association, as one deduplicated file, no model) and the classifier subagent reads that file instead of running about ten `gh` calls. The subagent's prompt limits it to Read, Write and the deprecation filter's `git describe` / `git show` (plus one `gh release list` as that filter's fallback), and a failed required fetch, a bad argument or the 150 s time budget now stops with a message that names the cause instead of classifying a partial or stale thread; the script removes the previous output before every fetch.
+- `/oss:resolve` classifies the fetched PR thread on Haiku instead of Opus. Against the Opus runs on three real PRs the required-change items were identical, the cost fell about 90% (about $0.15 against $1.1 to $1.6 per PR), and instructions planted in a comment and a commit message were reported rather than followed; borderline `status` and `change` labels can differ. A missing envelope or a refused `pr-vars.sh` retries once on Sonnet, then on the agent's own tier.
+
 ## 0.54.0
 
 - Review loops add a pre-baseline attestation: before the first review of a diff the parent or its resolver wrote, the author lists each changed behavior's invariant, sibling routes, consumer and failing-before/passing-after check, and fixes the gaps within scope. Fewer avoidable defects reach a paid independent review. The reviewer never sees the attestation, it never counts toward scoring or clean acceptance, and it is skipped for review-only requests, unauthored code and continuations of a prior ledger.

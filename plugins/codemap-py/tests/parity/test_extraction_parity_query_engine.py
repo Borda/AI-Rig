@@ -777,6 +777,8 @@ def _diff_impact_project(tmp_path_factory: pytest.TempPathFactory, request: pyte
     subprocess.run(["git", "init", "-q"], cwd=str(root), check=True, timeout=10)
     subprocess.run(["git", "config", "user.email", "t@t.t"], cwd=str(root), check=True, timeout=10)
     subprocess.run(["git", "config", "user.name", "t"], cwd=str(root), check=True, timeout=10)
+    # Windows write_text emits CRLF; autocrlf would commit LF blobs and make every file read as changed.
+    subprocess.run(["git", "config", "core.autocrlf", "false"], cwd=str(root), check=True, timeout=10)
     subprocess.run(["git", "add", "-A"], cwd=str(root), check=True, timeout=10)
     subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=str(root), check=True, timeout=10)
     _scan(root)

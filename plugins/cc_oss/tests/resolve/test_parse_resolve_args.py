@@ -13,6 +13,7 @@ Covers:
 
 from __future__ import annotations
 
+import io
 import re
 import shlex
 import shutil
@@ -21,9 +22,18 @@ import sys
 from pathlib import Path
 
 import pytest
-from parse_resolve_args import _emit, parse_resolve_args  # loaded by conftest.py
+from parse_resolve_args import _emit, main, parse_resolve_args  # loaded by conftest.py
 
 _BIN = Path(__file__).resolve().parents[2] / "bin" / "parse-resolve-args.py"
+
+
+def test_main_emits_lf_under_windows_newline_translation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bash reads assignments without carriage returns even when stdout defaults to CRLF."""
+    output = io.BytesIO()
+    stream = io.TextIOWrapper(output, encoding="utf-8", newline="\r\n", write_through=True)
+    monkeypatch.setattr(sys, "stdout", stream)
+    assert main(["1542"]) == 0
+    assert output.getvalue() == b"PR_NUMBER=1542\nPR_URL=''\nMODE=pr\nARGUMENTS=1542\n"
 
 
 # ---------------------------------------------------------------------------

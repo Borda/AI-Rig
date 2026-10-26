@@ -95,7 +95,7 @@ Clean scoped run with no breaking findings and no fix pick costs exactly 1 `AskU
 
 ## Mode branches
 
-`--upgrade`, `--adversarial`, `--efficiency` are mutually exclusive with `--upgrade` (not with each other). Each replaces or stacks onto the SETUP → FOLLOW-UP GATE span above; all three rejoin the same FOLLOW-UP GATE once their own findings exist, then FIX DISPATCH → CODEX CROSS-CHECK → RE-AUDIT proceed identically.
+`--upgrade`, `--adversarial`, `--efficiency` are mutually exclusive with `--upgrade` (not with each other). Each replaces or stacks onto the SETUP → FOLLOW-UP GATE span above; all three rejoin the same FOLLOW-UP GATE once their own findings exist, then FIX DISPATCH → CODEX CROSS-CHECK → RE-AUDIT proceed identically. `--consolidate` is the exception: standalone, advisory, no FOLLOW-UP GATE and no fix dispatch.
 
 ```
 ADVERSARIAL  (adversarial.md)  FAN 4   runs alongside PER-FILE AUDIT by default
@@ -118,7 +118,7 @@ Alone (no prior audit in RUN_DIR) skips PER-FILE AUDIT through CROSS-VALIDATE CR
 ```
 EFFICIENCY  (efficiency.md)  FAN 3   replaces PER-FILE AUDIT..CROSS-VALIDATE CRITICAL
   ▣ curator per file  (phase A)      model tier · effort · bloat · E8/E9/E10
-  bash scan  (phase B)               spawn-pattern + duplication (no Agent())
+  bash scan + measure  (phase B, B3, B4) spawn-pattern + duplication, transcript dollars, instruction size (no Agent())
   ▣ curator per plugin  (phase B2)   Check 33 code-block clusters
   JOIN → ▣ curator consolidator  (phase C)
     cost-reduction report → FOLLOW-UP GATE
@@ -131,6 +131,23 @@ EFFICIENCY  (efficiency.md)  FAN 3   replaces PER-FILE AUDIT..CROSS-VALIDATE CRI
 | C consolidator | 1 | opus pool | FOLLOW-UP GATE |
 
 Skips PER-FILE AUDIT through CROSS-VALIDATE CRITICAL outright — never runs the standard per-file quality audit. `--adversarial --efficiency` combined: both run, each to its own `$RUN_DIR` subdir (`adversarial/`, `efficiency/`); FOLLOW-UP GATE fires once, merged counts.
+
+```
+CONSOLIDATE  (consolidate.md)  FAN 3   standalone; skips every standard step, edits nothing
+  inventory + select scripts  (phases 1–2, no Agent())   sections, load groups, blocked dependencies, batches
+  ▣ curator per batch of groups  (phase 3) purpose clusters → deterministic vet (script)
+  ▣ curator per 5 clusters  (phase 4)       keep | sharpen | merge-prune + obligation map → settle (script)
+  ▣ challenger per 5 entries  (phase 5)     merge-prune and text-removing sharpen; missing → "unvalidated"
+  report (phase 6) → plain-text apply commands, no FOLLOW-UP GATE
+```
+
+| Phase | Width | Bound by | Joins at |
+| -- | -- | -- | -- |
+| 3 cluster | up to `MAX_BATCHES` batches of selected groups (`--fast`: `CAP_OPUS`) | opus pool (`CAP_OPUS`) | vet script |
+| 4 judge | 1 per `CONSOLIDATE_JUDGE_BATCH` judgeable clusters | opus pool | settle script |
+| 5 review | 1 per `CONSOLIDATE_REVIEW_BATCH` entries needing review | opus pool | settle script, then report |
+
+Each phase is its own turn: spawn, end the turn, resume on the notification. Never arms the fix-gate hooks (no `run-dir` sentinel, no `summary.jsonl`).
 
 ```
 UPGRADE  (upgrade.md)            entirely sequential, no fan-out
@@ -185,5 +202,6 @@ Index of the schema tags above, one row per block. A bare `step N` is a `SKILL.m
 | RE-AUDIT | 10 |
 | FINAL REPORT | 11 |
 | ADVERSARIAL mode | `modes/adversarial.md` (Phases A–D) |
-| EFFICIENCY mode | `modes/efficiency.md` (Phases A–C) |
+| EFFICIENCY mode | `modes/efficiency.md` (Phases A–C); `modes/efficiency-measured.md` (B3, `--measured` only) |
+| CONSOLIDATE mode | `modes/consolidate.md` (Phases 1–6) |
 | UPGRADE mode | `modes/upgrade.md` (Phases 1–5) |

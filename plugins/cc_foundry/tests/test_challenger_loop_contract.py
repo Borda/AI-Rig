@@ -14,6 +14,25 @@ _PLUGINS = Path(__file__).resolve().parents[2]
 _CHALLENGER = _PLUGINS / "cc_foundry" / "agents" / "challenger.md"
 
 
+def _find_bash() -> str | None:
+    """Find a working Bash, preferring Git Bash to the Windows WSL launcher."""
+    roots = (os.environ.get("ProgramFiles"), os.environ.get("ProgramW6432"), os.environ.get("ProgramFiles(x86)"))
+    candidates = [str(Path(root) / "Git" / sub / "bash.exe") for root in roots if root for sub in ("bin", "usr/bin")]
+    if found := shutil.which("bash"):
+        candidates.append(found)
+    for candidate in candidates:
+        try:
+            probe = subprocess.run([candidate, "-c", "printf ok"], capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if probe.returncode == 0 and probe.stdout == "ok":
+            return candidate
+    return None
+
+
+_BASH = _find_bash()
+
+
 @pytest.mark.parametrize(
     "clause",
     [
@@ -187,7 +206,7 @@ def test_claude_loop_checker_runs_standalone(plugin: str, tmp_path: Path) -> Non
     assert json.loads(result.stdout)["status"] != "invalid", result.stdout + result.stderr
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
+@pytest.mark.skipif(_BASH is None, reason="working bash not available")
 def test_loop_rule_claude_command_resolves_without_plugin_root(tmp_path: Path) -> None:
     """The rule's Claude ledger command finds a checker when no plugin-root variable is set.
 
@@ -206,7 +225,7 @@ def test_loop_rule_claude_command_resolves_without_plugin_root(tmp_path: Path) -
     ledger.write_text(json.dumps(header), encoding="utf-8")
     env = {key: value for key, value in os.environ.items() if key != "CLAUDE_PLUGIN_ROOT"} | {"HOME": str(tmp_path)}
     script = f'{resolver}; python "$_AL" --ledger "{ledger.as_posix()}"'
-    result = subprocess.run(["bash", "-c", script], cwd=_PLUGINS.parent, env=env, capture_output=True, text=True)
+    result = subprocess.run([_BASH, "-c", script], cwd=_PLUGINS.parent, env=env, capture_output=True, text=True)
     assert json.loads(result.stdout)["status"] != "invalid", result.stdout + result.stderr
 
 
@@ -217,7 +236,7 @@ def _install_checker(checker: Path, mtime: int) -> None:
     os.utime(checker, (mtime, mtime))
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
+@pytest.mark.skipif(_BASH is None, reason="working bash not available")
 def test_loop_rule_claude_command_skips_orphaned_cache_copy(tmp_path: Path) -> None:
     """The rule's Claude resolver takes the newest installed checker whose version directory is not orphaned.
 
@@ -236,7 +255,7 @@ def test_loop_rule_claude_command_skips_orphaned_cache_copy(tmp_path: Path) -> N
     }
 
     result = subprocess.run(
-        ["bash", "-c", f'{resolver}; printf "%s" "$_AL"'], cwd=tmp_path, env=env, capture_output=True, text=True
+        [_BASH, "-c", f'{resolver}; printf "%s" "$_AL"'], cwd=tmp_path, env=env, capture_output=True, text=True
     )
 
     assert result.stdout.endswith("/oss/0.53.0/bin/adversarial_loop.py"), result.stdout + result.stderr

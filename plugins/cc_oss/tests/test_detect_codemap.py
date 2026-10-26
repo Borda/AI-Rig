@@ -6,7 +6,9 @@ Covers: missing ``--prefix`` exit 2, ``--force-off``, codemap-py query present/a
 
 from __future__ import annotations
 
+import os
 import subprocess
+import sys
 import unittest.mock as mock
 from pathlib import Path
 
@@ -16,6 +18,33 @@ import pytest
 
 class TestMain:
     """Verify the command-line entry-point behavior."""
+
+    def test_missing_index_with_legacy_output_encoding(self, tmp_path: Path) -> None:
+        """The real CLI writes disabled state even when the output codec cannot encode its warning or project name."""
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        executable = bin_dir / ("codemap-py.cmd" if os.name == "nt" else "codemap-py")
+        executable.write_text("", encoding="utf-8")
+        executable.chmod(0o700)
+        env = {
+            **os.environ,
+            "PATH": str(bin_dir) + os.pathsep + os.environ.get("PATH", ""),
+            "TMPDIR": str(tmp_path),
+            "CSID": "legacy-encoding",
+            "PYTHONIOENCODING": "cp1252:strict",
+        }
+        script = Path(detect_codemap.__file__)
+        result = subprocess.run(
+            [sys.executable, str(script), "--prefix", "test", "--proj", "日本", "--idx-dir", str(tmp_path)],
+            env=env,
+            capture_output=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr.decode("cp1252")
+        assert b"no index for project" in result.stdout
+        assert b"\\u65e5\\u672c" in result.stdout
+        assert (tmp_path / "test-codemap-enabled-legacy-encoding").read_text(encoding="utf-8") == "false\n"
+        assert (tmp_path / "test-codemap-currency-legacy-encoding").read_text(encoding="utf-8") == "no_index\n"
 
     def test_missing_prefix_exits_2(self, capsys: pytest.CaptureFixture[str]) -> None:
         """No ``--prefix`` → exit 2, usage message on stderr."""

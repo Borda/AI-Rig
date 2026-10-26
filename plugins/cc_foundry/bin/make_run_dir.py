@@ -32,6 +32,25 @@ _FORBIDDEN_ABSOLUTE_PREFIXES: tuple[str, ...] = tuple(
 )
 
 
+#: Top-level directories of the working tree that hold instruction sources; a run directory is never made inside them.
+_INSTRUCTION_TOPS = ("plugins", ".claude", ".codex")
+
+
+def _refuse_instruction_source(base_dir: str) -> None:
+    """Reject a base directory that resolves (every link followed) into the working tree's instruction sources.
+
+    A run directory is a place for run artifacts; ``.reports/audit`` linked to a rules directory would otherwise create
+    its timestamped directory there.
+
+    Raises:
+        ValueError: When the resolved base lies inside ``plugins/``, ``.claude/`` or ``.codex/`` of the working tree.
+    """
+    root = Path.cwd().resolve()
+    resolved = (root / base_dir).resolve()
+    if any(resolved.is_relative_to(root / top) for top in _INSTRUCTION_TOPS):
+        raise ValueError(f"base_dir resolves into an instruction source: {base_dir!r} → {resolved.as_posix()}")
+
+
 def _validate_base_dir(base_dir: str) -> None:
     """Reject absolute paths that escape allowed roots (CWE-22).
 
@@ -54,6 +73,7 @@ def _validate_base_dir(base_dir: str) -> None:
     # On Windows /etc/evil is not `is_absolute()` (no drive letter) but is still
     # a Unix-style absolute path — check the posix form too.
     if not candidate.is_absolute() and not candidate.as_posix().startswith("/"):
+        _refuse_instruction_source(base_dir)
         return
     resolved = candidate.expanduser().resolve()
     # Compare against BOTH the raw input and the resolved form: on macOS the
@@ -70,6 +90,7 @@ def _validate_base_dir(base_dir: str) -> None:
             resolved.relative_to(root)
         except ValueError:
             continue
+        _refuse_instruction_source(base_dir)
         return
     raise ValueError(f"base_dir resolves outside project root and ~/.claude: {base_dir!r} → {resolved.as_posix()}")
 
@@ -89,7 +110,10 @@ def make_run_dir(base_dir: str) -> Path:
     _validate_base_dir(base_dir)
     ts = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
     run_dir = Path(base_dir) / ts
-    run_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        run_dir.mkdir(parents=True)
+    except FileExistsError:
+        raise ValueError(f"run directory already exists: {run_dir.as_posix()!r}; wait a second and rerun") from None
     return run_dir
 
 

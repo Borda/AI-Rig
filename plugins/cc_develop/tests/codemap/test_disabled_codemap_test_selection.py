@@ -81,7 +81,7 @@ def test_disabled_codemap_keeps_required_tests(
     if enabled is not None:
         values[f"dev-{actual_skill}-codemap-enabled"] = enabled
     for prefix, value in values.items():
-        (tmp_path / f"{prefix}-disabled").write_text(value + "\n", encoding="utf-8")
+        (tmp_path / f"{prefix}-disabled").write_text(value + "\n", encoding="utf-8", newline="\n")
     relative = "_shared/batch-mode.md" if skill == "batch" else f"{skill}/SKILL.md"
     source = (ROOT / "plugins/cc_develop/skills" / relative).read_text(encoding="utf-8")
     blocks = [

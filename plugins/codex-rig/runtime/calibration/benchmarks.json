@@ -272,7 +272,11 @@
       "Map the system",
       "Investigate one material uncertainty",
       "Reassess the finding in context",
-      "Final reconciliation"
+      "Final reconciliation",
+      "axis=consolidate",
+      "references/consolidate.md",
+      "consolidation",
+      "unvalidated"
     ],
     "calibrate": [
       "## Input Schema",

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.40.0
+
+- Audit adds `axis=consolidate` to discover overlapping instruction intent and propose keep, local sharpening or scope-preserving merges without editing sources. It accounts for skipped and blocked sections, preserves independent loading boundaries, and keeps consolidation advice separate from measured optimization acceptance.
+- Consolidation proposals bind source and citation bytes to independent reviews. Structural validation checks ranges, coverage and obligation records; stale or missing reviews and unsupported structural edits remain unvalidated rather than ready to apply.
+
 ## 0.39.0
 
 - Isolated PR review continues when the invoking worktree's informational context exceeds the command-output limit, recording that context as unavailable. Exact review-source verification and attached remediation preservation checks remain required.

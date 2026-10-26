@@ -198,6 +198,20 @@ def _parse_metadata(args: list[str]) -> tuple[list[str], str]:
     return args[:boundary], "- gate-metadata:\n" + "".join(f"    - {key}: {value}\n" for key, value in metadata.items())
 
 
+def _state_dir_problem() -> str:
+    """Return why the state directory cannot be trusted, or an empty string.
+
+    ``.temp`` and ``.temp/state`` may be links to somewhere else, but not to another place inside the tree: the contract
+    is replaced and removed there by name, and a link into the instruction sources would let that reach one.
+    """
+    root = Path.cwd().resolve()
+    state = (root / ".temp" / "state").resolve()
+    allowed = state.is_relative_to(root) is False or any(
+        state.is_relative_to(root / top) for top in (".temp", ".reports")
+    )
+    return "" if allowed else f".temp/state resolves to {state}, inside the tree but outside .temp/ and .reports/"
+
+
 def _atomic_write(path: Path, raw: bytes) -> None:
     """Replace one artifact with complete bytes and remove temporary files on failure."""
     temporary: Path | None = None
@@ -238,6 +252,9 @@ def _write_contract(contract: str) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     """Invalidate prior ownership on every invocation, then validate arguments and write the contract."""
+    if problem := _state_dir_problem():
+        print(f"write_skill_contract: cannot write {_CONTRACT}: {problem}", file=sys.stderr)
+        return 1
     try:
         _OWNER.unlink(missing_ok=True)
     except OSError as exc:

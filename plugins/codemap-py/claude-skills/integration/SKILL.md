@@ -9,7 +9,6 @@ description: |
 argument-hint: audit [--runtime {claude,codex,both}] [--json] [--since YYYY-MM-DD] | plan [--runtime ...] [--consumers <csv>] [--source {local-candidate,release}] [--out <artifact>] | apply --plan <artifact> --approve <sha256> | sync --source {local-candidate,release} --plan <artifact> --approve <sha256> [--runtime ...] | demo [--runtime ...]
 effort: medium
 allowed-tools: Bash, Read, AskUserQuestion
-model: sonnet
 ---
 
 <objective>

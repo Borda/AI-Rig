@@ -81,8 +81,8 @@ def test_one_query_per_module_in_shipped_preloop(
         newline="\n",
     )
     (tmp_path / "resolve-impl-dir-test-session").write_text(str(impl) + "\n", encoding="utf-8", newline="\n")
-    (tmp_path / "resolve-codemap-enabled-test-session").write_text("true\n", encoding="utf-8")
-    (tmp_path / "resolve-codemap-currency-test-session").write_text("current\n", encoding="utf-8")
+    (tmp_path / "resolve-codemap-enabled-test-session").write_text("true\n", encoding="utf-8", newline="\n")
+    (tmp_path / "resolve-codemap-currency-test-session").write_text("current\n", encoding="utf-8", newline="\n")
     index_dir = tmp_path / "index with spaces"
     index_dir.mkdir()
     index = index_dir / f"{tmp_path.name}.json"

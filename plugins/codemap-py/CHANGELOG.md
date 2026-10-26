@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.43.2
+
+- The `debrief-coding`, `query-code`, `test-impact`, `rename-refs` and `integration` skills no longer pin a model, so they run on the session model. The pins swapped the main-thread model for one turn and back, which rewrote the whole cached prompt prefix twice on every call whenever the session model differed from the pin (always for the three Haiku pins, and for the two Sonnet pins in an Opus session).
+
 ## 0.43.1
 
 - Refresh from actual working-tree source, documentation and consumed configuration bytes, including unstaged edits, new files and final-file deletion; prompt refreshes and query freshness share the same inputs.

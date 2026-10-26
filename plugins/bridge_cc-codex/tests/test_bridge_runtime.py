@@ -1725,6 +1725,7 @@ def test_oversized_codex_command_output_preserves_final_result(tmp_path: Path) -
     """Compact a real child's 600 KiB output without terminating its final review."""
     emitter = (
         "import json, sys\n"
+        "sys.stdout.reconfigure(encoding='utf-8')\n"  # Windows pipes default to the ANSI code page; Codex emits UTF-8
         "print(json.dumps({'type': 'item.completed', 'item': {'type': 'command_execution', "
         "'aggregated_output': '\\x1b[32mé.\\x1b[0m' * 51200}}, ensure_ascii=False), flush=True)\n"
         "print(json.dumps({'type': 'item.completed', 'item': {'type': 'agent_message', 'text': sys.argv[1]}}), flush=True)\n"

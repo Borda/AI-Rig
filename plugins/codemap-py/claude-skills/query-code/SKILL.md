@@ -7,7 +7,6 @@ description: >-
   the affected-test workflow (use test-impact).
 argument-hint: <rdeps|deps|path|central|coupled|symbol|symbols|find-symbol|fn-rdeps|fn-deps|fn-blast|fn-central|diff-impact|test-impact|mock-rdeps|fixture-rdeps|fixture-graph|subprocess-deps|subprocess-rdeps|coverage|coverage-gap|uncovered|undocumented|xrefs|packages|list|batch> ...
 allowed-tools: Bash(codemap-py query:*), Bash(*/bin/codemap-py* query:*), Read, Write
-model: haiku
 effort: low
 ---
 

@@ -6,7 +6,6 @@ description: |
   SKIP: non-Python; index not built (/codemap-py:scan-codebase first); local-variable rename; grep-only rename wanted; 1:N symbol splits; package directory rename (git mv).
 argument-hint: symbol <old_qname> <new_qname> [--dry-run] [--deprecate[='@deprecated(...)'|'@deprecated_class(...)'] | --no-deprecate] [--since <ver>] [--removed-in <ver>] [--remove-if-no-callers] | module <old_module_path> <new_module_path> [--dry-run]
 allowed-tools: Bash, Read, Edit, Write, AskUserQuestion
-model: sonnet
 effort: medium
 ---
 

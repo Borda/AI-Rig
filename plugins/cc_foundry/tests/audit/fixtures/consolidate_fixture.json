@@ -1,0 +1,9 @@
+{
+  "plugins/cc_demo/rules/changelog-evidence.md": "## Changelog Evidence\n\nWhen drafting a changelog entry, take every claim from the diff of the merged change, not from its title or its commit message.\n",
+  "plugins/cc_demo/rules/force-push-ban.md": "## Force-Push Ban\n\nNever force-push to the default branch. A force-push once erased a day of merged work, so this holds even when the push looks harmless.\n",
+  "plugins/cc_demo/rules/rebase-policy.md": "## Rebase Policy\n\nOn a shared branch, prefer merge commits over rebases so that history other people have pulled stays stable.\n",
+  "plugins/cc_demo/rules/release-draft-grounding.md": "## Release Draft Grounding\n\nA draft for a release must cite the change it describes. An entry without a traceable merged change is removed before the draft is shared.\n",
+  "plugins/cc_demo/rules/release-language.md": "## Release Notes Language\n\nWrite release notes in plain English for end users: no internal ticket numbers, no jargon the reader cannot look up.\n",
+  "plugins/cc_demo/rules/release-sources-python.md": "---\ndescription: Same wording as the always-loaded release rule, but only when Python files are touched.\npaths:\n  - '**/*.py'\n---\n\n## Release Notes Source\n\nBefore writing release notes, read the merged pull requests since the last tag and never rely on commit subjects alone.\n",
+  "plugins/cc_demo/rules/release-sources.md": "## Release Notes Source\n\nBefore writing release notes, read the merged pull requests since the last tag and never rely on commit subjects alone.\n"
+}

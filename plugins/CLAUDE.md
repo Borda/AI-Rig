@@ -60,6 +60,7 @@ In `.md` plugin files, prose annotations, notes, and load directives use `>` blo
 - Keep the measured fact, mechanism, and each deliberate exclusion with its reason.
 - **Never remove or reword `# timeout: N`** — parsed by the harness to set the Bash tool timeout; it is functional, not documentation. Same for `# tmpdir-exempt:`, `# noqa:`, `# shellcheck`.
 - **Compress wording, never content**, for any comment encoding a constraint, a why-not, or a bug that was fixed — those comments are why the bug stays fixed. Losing one silently re-opens it.
+- **Size follows importance.** Spine text (workflow steps, gates, deliverable contracts, high-stakes rules) is complete first and short second; complement text (rationale, examples, measurement detail, flag-only steps) stays small and moves behind a load boundary (a flag-loaded mode file, `_full/`) rather than being squeezed in place. `/foundry:audit --efficiency` E11 (`bin/size_importance.py`) flags only text it can prove is complement; doubt means spine.
 - **`.py` files are exempt**: Python docstrings and comments stay plain and extensive. They serve maintainers, and cost nothing at skill-load time.
 
 Worked before/after example, recurring casualties of a compression pass (modals, logic conjunctions, paragraph scope, actors/qualifiers, test-pinned sentences), and the pass-yield note: `AUTHORING.md` §Comment Compression.

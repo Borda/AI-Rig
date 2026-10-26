@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import importlib.util
 import re
+import sys
 from pathlib import Path
 
 import pytest
@@ -124,3 +125,73 @@ class TestSecurity:
         rc = main([base_dir])
         assert rc == 2
         assert "make_run_dir:" in capsys.readouterr().err
+
+
+class TestInstructionSourceLinks:
+    """Covers a run-directory base that is, or links into, the instruction sources of the working tree."""
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="creating symlinks needs POSIX permissions")
+    @pytest.mark.parametrize(
+        "base_dir",
+        [
+            pytest.param(".reports/audit", id="linked-base"),
+            pytest.param("plugins/cc_demo/rules", id="direct-base"),
+            pytest.param(".claude/agents", id="claude-dir"),
+        ],
+    )
+    def test_base_resolving_into_sources_creates_nothing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], base_dir: str
+    ) -> None:
+        """A base reaching `plugins/`, `.claude/` or `.codex/` exits 2 and leaves no timestamped directory behind."""
+        monkeypatch.chdir(tmp_path)
+        rules = tmp_path / "plugins" / "cc_demo" / "rules"
+        rules.mkdir(parents=True)
+        (tmp_path / ".claude" / "agents").mkdir(parents=True)
+        (tmp_path / ".reports").mkdir()
+        (tmp_path / ".reports" / "audit").symlink_to(rules)
+
+        rc = main([base_dir])
+
+        assert rc == 2
+        assert "instruction source" in capsys.readouterr().err
+        assert list(rules.iterdir()) == []
+        assert list((tmp_path / ".claude" / "agents").iterdir()) == []
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="creating symlinks needs POSIX permissions")
+    def test_planted_run_dir_link_is_refused(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A link already standing at the timestamped name is refused instead of reused as the run directory."""
+        monkeypatch.chdir(tmp_path)
+        rules = tmp_path / "plugins" / "cc_demo" / "rules"
+        rules.mkdir(parents=True)
+        (tmp_path / "runs").mkdir()
+
+        class _Frozen(_mod.datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return cls(2026, 1, 2, 3, 4, 5, tzinfo=tz)
+
+        monkeypatch.setattr(_mod, "datetime", _Frozen)
+        (tmp_path / "runs" / "2026-01-02T03-04-05Z").symlink_to(rules)
+
+        with pytest.raises(ValueError, match="already exists"):
+            make_run_dir("runs")
+        assert list(rules.iterdir()) == []
+
+    def test_existing_run_dir_is_never_reused(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A directory already standing at the timestamped name is refused, so nothing planted inside it is inherited.
+
+        A pre-made run directory could hold a link such as ``consolidate/proposals`` that later steps would write
+        through; a run directory is therefore always created fresh.
+        """
+        monkeypatch.chdir(tmp_path)
+
+        class _Frozen(_mod.datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return cls(2026, 1, 2, 3, 4, 5, tzinfo=tz)
+
+        monkeypatch.setattr(_mod, "datetime", _Frozen)
+        (tmp_path / "runs" / "2026-01-02T03-04-05Z").mkdir(parents=True)
+
+        with pytest.raises(ValueError, match="already exists"):
+            make_run_dir("runs")

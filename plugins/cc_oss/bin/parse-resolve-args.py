@@ -168,6 +168,8 @@ def main(argv: list[str]) -> int:
 
     arguments = " ".join(argv)
     parsed = parse_resolve_args(arguments)
+    # Bash reads these assignments one line at a time; Windows CRLF leaves a stray carriage return in each value.
+    sys.stdout.reconfigure(newline="\n")
     print(_emit(parsed))
     return 0
 

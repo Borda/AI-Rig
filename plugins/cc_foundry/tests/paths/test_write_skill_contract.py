@@ -624,3 +624,29 @@ class TestKeepFile:
         with pytest.raises(SystemExit):
             wsc.main(["--help"])
         assert "--keep-file <path>" in capsys.readouterr().out
+
+
+class TestLinkedStateDirectory:
+    """Covers a `.temp/state` that is a link into the instruction sources."""
+
+    @pytest.mark.skipif(not hasattr(Path, "symlink_to") or wsc.os.name != "posix", reason="needs POSIX symlinks")
+    def test_contract_is_not_written_through_a_link_into_the_tree(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A state directory linked to a rules folder leaves a file of that folder untouched and fails the write."""
+        rules = tmp_path / "plugins" / "cc_demo" / "rules"
+        rules.mkdir(parents=True)
+        (rules / "skill-contract.md").write_text("instructions\n", encoding="utf-8")
+        (tmp_path / ".temp").mkdir()
+        (tmp_path / ".temp" / "state").symlink_to(rules)
+        monkeypatch.chdir(tmp_path)
+        code = wsc.main(_ARGS)
+        assert (
+            code,
+            (rules / "skill-contract.md").read_text(encoding="utf-8"),
+            "inside the tree" in capsys.readouterr().err,
+        ) == (
+            1,
+            "instructions\n",
+            True,
+        )

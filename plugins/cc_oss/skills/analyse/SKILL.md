@@ -6,7 +6,6 @@ description: |
   SKIP: user already pasted full thread text inline; oss:resolve already active on same PR; user wants code review (use oss:review); user phrasing is "review PR" meaning code quality assessment, not thread triage (route to oss:review).
 argument-hint: <N|vitality [<owner>/<repo>|github-url]|ecosystem|path/to/report.md> [--reply] [--quick] [--keep "<items>"]
 allowed-tools: Read, Bash, Write, Edit, Agent, Skill, AskUserQuestion, TaskList, TaskCreate, TaskUpdate
-model: sonnet
 effort: high
 ---
 

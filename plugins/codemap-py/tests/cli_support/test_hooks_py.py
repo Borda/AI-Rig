@@ -89,6 +89,7 @@ def _init_repo(root: Path) -> str:
     _git(root, "init", "-q")
     _git(root, "config", "user.email", "t@t.t")
     _git(root, "config", "user.name", "t")
+    _git(root, "config", "core.autocrlf", "false")  # Windows write_text emits CRLF; blobs must hold the bytes written
     (root / "a.py").write_text("def f():\n    return 1\n")
     _git(root, "add", "-A")
     _git(root, "commit", "-q", "-m", "init")
@@ -910,6 +911,12 @@ class TestInjectPreambleRefreshLock:
         assert calls[0]["env"]["CODEMAP_REFRESH_TRIGGER"] == "codex_prompt_background"
 
 
+_skip_launcher_rejects_interpreter = pytest.mark.skipif(
+    sys.version_info < (3, 11),
+    reason="the launcher accepts CPython >=3.11 only, so this interpreter cannot be the override",
+)
+
+
 class TestInjectPreambleRefreshFingerprint:
     """A stale index refreshes once per distinct scanner input, not once per prompt.
 
@@ -918,7 +925,9 @@ class TestInjectPreambleRefreshFingerprint:
     """
 
     @pytest.mark.integration
-    @pytest.mark.parametrize("override", ["unset", "empty", "explicit"])
+    @pytest.mark.parametrize(
+        "override", ["unset", "empty", pytest.param("explicit", marks=_skip_launcher_rejects_interpreter)]
+    )
     def test_public_hook_refreshes_with_optional_python_override(
         self, tmp_path: Path, scan_index: Path, override: str
     ) -> None:

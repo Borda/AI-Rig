@@ -174,6 +174,16 @@ def test_main_missing_scan_query_silent_exit_0(in_tmp_cwd: Path, monkeypatch: py
     assert rc == 0
 
 
+def test_scan_query_runs_resolved_executable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A Windows PATHEXT lookup result reaches the subprocess instead of a bare command."""
+    executable = r"C:\Tools\codemap-py.cmd"
+    monkeypatch.setattr(cs.shutil, "which", lambda name: executable)
+    calls = []
+    monkeypatch.setattr(cs.subprocess, "run", lambda args, **kwargs: calls.append(args))
+    cs._scan_query(["rdeps", "pkg.mod"])
+    assert calls == [[executable, "query", "rdeps", "pkg.mod"]]
+
+
 def test_main_missing_index_silent_exit_0(in_tmp_cwd: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _stub_scan_query_present(monkeypatch, present=True)
     _stub_git(monkeypatch)
@@ -211,11 +221,11 @@ def test_main_find_mode_invokes_scan_query_per_module_and_coupled(
     assert rc == 0
 
     # Each module → one codemap-py query rdeps call; plus one coupled ``--top N`` at end.
-    rdep_calls = [c for c in calls if c[:3] == ["codemap-py", "query", "rdeps"]]
-    coupled_calls = [c for c in calls if c[:3] == ["codemap-py", "query", "coupled"]]
+    rdep_calls = [c for c in calls if c[:3] == ["/usr/bin/codemap-py", "query", "rdeps"]]
+    coupled_calls = [c for c in calls if c[:3] == ["/usr/bin/codemap-py", "query", "coupled"]]
     rdep_modules = {c[3] for c in rdep_calls}
     assert rdep_modules == {"pkg.a", "pkg.b"}
-    assert coupled_calls == [["codemap-py", "query", "coupled", "--top", "7"]]
+    assert coupled_calls == [["/usr/bin/codemap-py", "query", "coupled", "--top", "7"]]
 
 
 def test_main_find_missing_target_returns_1(
@@ -267,10 +277,10 @@ def test_main_diff_mode_invokes_per_module(
 
     rc = cs.main(argv)
     assert rc == 0
-    modules = sorted({c[3] for c in calls if c[:3] == ["codemap-py", "query", "rdeps"]})
+    modules = sorted({c[3] for c in calls if c[:3] == ["/usr/bin/codemap-py", "query", "rdeps"]})
     assert modules == expected_modules
     # diff mode does NOT call coupled.
-    assert not any(c[:3] == ["codemap-py", "query", "coupled"] for c in calls)
+    assert not any(c[:3] == ["/usr/bin/codemap-py", "query", "coupled"] for c in calls)
 
 
 def test_main_diff_empty_silent_exit_0(in_tmp_cwd: Path, monkeypatch: pytest.MonkeyPatch) -> None:

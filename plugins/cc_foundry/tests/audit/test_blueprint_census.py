@@ -47,7 +47,9 @@ _HELPER_MUTATION = re.compile(
 #: Helpers the source scan matches on a string that is data, not a call: reviewed, with the reason.
 _SCAN_FALSE_POSITIVES = {
     "audit_churn.py": '"revert" is a conventional-commit type in a set of names',
+    "consolidate_inventory.py": '"merge" is a JSON record key; the script runs no git command',
     "detect_codemap.py": '"checkout" is a project-name value in a doctest',
+    "fetch_pr_intel.py": '"commit" is a record key and source name; the script only runs gh reads',
     "gh_batch_query.py": '"commit" is a JSON record key',
     "vitality_extract.py": '"push" is a CI event name',
 }
@@ -65,12 +67,32 @@ def _unparsed(texts: list[str]) -> list[str]:
     """
 
     def parses(script: str) -> bool:
-        result = subprocess.run([_BASH, "-n"], input=script, capture_output=True, text=True, timeout=60, check=False)
+        result = subprocess.run(
+            [_BASH, "-n"], input=script.encode("utf-8"), capture_output=True, timeout=60, check=False
+        )
         return result.returncode == 0
 
     if parses("".join(f"(\n{text}\n)\n" for text in texts)):
         return []
     return [text for text in texts if not parses(f"(\n{text}\n)\n")]
+
+
+@_skip_bash_unavailable
+def test_unparsed_accepts_unicode_with_legacy_default_codec(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Real Bash parses Unicode entries even when subprocess defaults to a legacy Windows codec."""
+    real_run = subprocess.run
+
+    def run_with_legacy_text_encoding(*args, **kwargs):
+        if kwargs.get("text") or kwargs.get("universal_newlines"):
+            kwargs.setdefault("encoding", "cp1252")
+            # Reject unencodable input before starting Bash, which could otherwise wait on an open pipe on Windows.
+            kwargs["input"].encode(kwargs["encoding"])
+        return real_run(*args, **kwargs)
+
+    with pytest.raises(UnicodeEncodeError):
+        "printf '⚠'".encode("cp1252")
+    monkeypatch.setattr(subprocess, "run", run_with_legacy_text_encoding)
+    assert _unparsed(["printf '⚠'", "if true; then"]) == ["if true; then"]
 
 
 def _helper_source(name: str) -> str:
@@ -107,6 +129,12 @@ def admitted() -> list[tuple[str, str, str]]:
     return _admitted_entries()
 
 
+#: Rebuilding the corpus runs the danger analysis on every shipped block (about 12 s on a laptop, an order of magnitude
+#: more on a loaded CI runner where each xdist worker builds its own copy), so the 120 s default fails the setup.
+_CENSUS_TIMEOUT_SECONDS = 600
+
+
+@pytest.mark.timeout(_CENSUS_TIMEOUT_SECONDS)
 class TestShippedEntries:
     """Each refused class has zero admitted entries across the four plugins."""
 

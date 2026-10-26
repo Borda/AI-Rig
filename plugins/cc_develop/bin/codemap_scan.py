@@ -271,9 +271,12 @@ def _find_py_files(target: str) -> list[str]:
 
 def _scan_query(args: list[str], timeout: int = 15) -> None:
     """Invoke ``codemap-py query`` with given args; stream stdout; swallow non-zero exits."""
+    executable = shutil.which("codemap-py")
+    if executable is None:
+        return
     try:
-        subprocess.run(  # noqa: S603 — fixed binary name + caller-controlled args.
-            ["codemap-py", "query", *args],  # noqa: S607 - codemap-py resolved via PATH on purpose
+        subprocess.run(  # noqa: S603 — resolved executable + validated caller-controlled args.
+            [executable, "query", *args],
             check=False,
             stderr=subprocess.DEVNULL,
             timeout=timeout,

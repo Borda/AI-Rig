@@ -3876,6 +3876,23 @@
       "id": "code-remediate-joined-review-authorization",
       "prompt": "The user requests remediation +review. The newest report is stale and its producer can update it within existing runtime authority. The agent asks again for permission to perform the needed review rather than carrying the joined authorization through Code Review and back into remediation. Assess.",
       "target": "code-remediate"
+    },
+    {
+      "expected_findings": [
+        "lazy-owner-merge-forbidden",
+        "obligation-exception-lost",
+        "citation-drift-invalidates-review",
+        "byte-proxy-not-optimization-acceptance"
+      ],
+      "id": "audit-consolidation-scope-and-evidence",
+      "prompt": "A consolidation audit merges two independently invoked lazy skills because both have the same load label. It drops a conditional approval exception, updates a citing file without invalidating the old review, and reports byte reduction as accepted optimization. Identify each unsupported decision and preserve original loading and obligations. Propose advice only; no edits.",
+      "target": "audit"
+    },
+    {
+      "expected_findings": [],
+      "id": "audit-consolidation-honest-advice",
+      "prompt": "Assess this consolidation result: sources and citing documents retain matching hashes; identical authority and activation were verified; a complete obligation map and independent digest-bound review support one structurally eligible proposal. Missing-review and unsupported-structure candidates are reported unvalidated, every item is covered, and no-candidate scopes remain successful advisory assessments. The audit executes only read-only review and artifact validation, leaves sources unchanged, and claims neither application approval nor measured cost benefit.",
+      "target": "audit"
     }
   ],
   "schema_version": 1,
@@ -3887,5 +3904,5 @@
     "min_precision": 0.75,
     "min_recall": 0.75
   },
-  "version": "1.47"
+  "version": "1.48"
 }

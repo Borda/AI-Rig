@@ -158,9 +158,13 @@ def codemap_tests(module: str, repo: Path) -> list[str] | None:
         Test file paths, or ``None`` when codemap is unavailable, fails, or reports an incomplete or stale answer —
         never an empty list standing in for a failure.
     """
-    if shutil.which("codemap-py") is None:
+    executable = shutil.which("codemap-py")
+    if executable is None:
         return None
-    code, out = _run(["codemap-py", "query", "test-impact", module], repo, timeout=120)
+    # Windows may execute batch files through cmd.exe even without shell=True.
+    if executable.lower().endswith((".bat", ".cmd")) and not all(part.isidentifier() for part in module.split(".")):
+        return None
+    code, out = _run([str(Path(executable).absolute()), "query", "test-impact", module], repo, timeout=120)
     if code != 0:
         return None
     try:

@@ -370,4 +370,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    # Warning text and project paths may contain characters unsupported by a Windows pipe's code page.
+    sys.stdout.reconfigure(errors="backslashreplace")
+    sys.stderr.reconfigure(errors="backslashreplace")
     sys.exit(main())

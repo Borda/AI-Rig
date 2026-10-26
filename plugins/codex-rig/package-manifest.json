@@ -28,7 +28,7 @@
     {
       "mode": "0644",
       "path": ".codex-plugin/plugin.json",
-      "sha256": "dfa1b0a3fb833a1d1d5d013229717ae5d8e10382704e47e9da499c60c9c100d1"
+      "sha256": "693d31ccd407dc51f2aa159e1200c0b549ae7a8f517d16fba223b766892e0dd8"
     },
     {
       "mode": "0644",
@@ -38,7 +38,7 @@
     {
       "mode": "0644",
       "path": "CHANGELOG.md",
-      "sha256": "c0160680819a00d0b9f8c70b0c162d6e0d30789443939d7c1835842a39071d36"
+      "sha256": "460e9e88a7ed30dcf36b1b136f7c9424b8cd199db11372a316f3a70c1af52b1f"
     },
     {
       "mode": "0644",
@@ -53,7 +53,7 @@
     {
       "mode": "0644",
       "path": "README.md",
-      "sha256": "e888fbd45d948657d8a2298ff2e2910d7fa5803fb5577d918e4b9142cb390cd2"
+      "sha256": "c2c41043f53f4bf0b508335f234729bba02840fa8ee2f0bae823651a11da6b97"
     },
     {
       "mode": "0644",
@@ -178,17 +178,17 @@
     {
       "mode": "0644",
       "path": "runtime/calibration/behavioral-cases.json",
-      "sha256": "e709e7bcc0d37121a1c931db971a2722c355a1263eeb32c578ffc1ad64dba9b7"
+      "sha256": "0b8110143996ed579fd95e7944ea6f28c7e632b425ac28f82bec06e54b6a73c3"
     },
     {
       "mode": "0644",
       "path": "runtime/calibration/behavioral-observations.jsonl",
-      "sha256": "d16448ff988275904cfcd59501de599be226c602c6a5f95f816eeb40b053579d"
+      "sha256": "417b9b4a16c703ca634cd741a9f0a9b2746a10b15ba7f2809f070ddc67d712ee"
     },
     {
       "mode": "0644",
       "path": "runtime/calibration/benchmarks.json",
-      "sha256": "30dce076b39d1e2e08ef988fddae4c8f75bf9483f706746e97d45c4015d982fd"
+      "sha256": "7a93d254583685bc4c58080bda80a3118e116a9adc9ddf1162bb51844a636064"
     },
     {
       "mode": "0644",
@@ -359,6 +359,11 @@
       "mode": "0644",
       "path": "shared/audit-cost-contract.md",
       "sha256": "4deb0d12aa7a06c6ea916269dbd5112ba43382ecb8c76e8f0f569c5cc2ac718e"
+    },
+    {
+      "mode": "0644",
+      "path": "shared/audit_consolidation.py",
+      "sha256": "5484838e6b87692905b551a35dac2fcdc008acc20e10446fbc7e75075cdb572a"
     },
     {
       "mode": "0644",
@@ -548,7 +553,7 @@
     {
       "mode": "0755",
       "path": "shared/validate-artifacts.py",
-      "sha256": "8ea894ab4a05b75635ac68641bcacfe3e52781f47be8b00198ea6a9b0e9b3eba"
+      "sha256": "fd9174fdf3b64fa7b2531398bb314dadc48718eeb4088d4dd8daefea735b8189"
     },
     {
       "mode": "0755",
@@ -578,7 +583,12 @@
     {
       "mode": "0644",
       "path": "skills/audit/SKILL.md",
-      "sha256": "bf8685c387bd4ce1b6d72470396e20308ba61f018a2ea5c21aedd8b219681a4d"
+      "sha256": "cddbc00301571f8e9af388993a6b429020a5a9ea7bb1cd2eefc56dfde51cc934"
+    },
+    {
+      "mode": "0644",
+      "path": "skills/audit/references/consolidate.md",
+      "sha256": "642f21724cd62624691488a44a75317eca320925904ed798a11c3265943fe3e9"
     },
     {
       "mode": "0644",
@@ -1458,7 +1468,12 @@
     {
       "mode": "0644",
       "path": "tests/test_audit_acceptance.py",
-      "sha256": "c70661dc27088886cb112c7dcfb5b42de18377340140e0516568cefecad42af4"
+      "sha256": "b2e20915a1301092020e3cae12485e940780d038ef925f12d54321b6a5c4e7fc"
+    },
+    {
+      "mode": "0644",
+      "path": "tests/test_audit_consolidation.py",
+      "sha256": "ed35507e023c89f1d883df29a0f91091c6a6b78170f9b141c74aecc1d2541895"
     },
     {
       "mode": "0644",
@@ -1797,5 +1812,5 @@
       "path": "skills/sync/SKILL.md"
     }
   ],
-  "version": "0.39.0"
+  "version": "0.40.0"
 }

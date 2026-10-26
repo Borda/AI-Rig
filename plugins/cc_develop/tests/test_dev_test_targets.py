@@ -101,6 +101,36 @@ def test_changed_files_include_untracked_work(repo: Path) -> None:
 
 
 class TestParseCodemap:
+    def test_query_runs_resolved_executable(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """An executable found through Windows PATHEXT is passed to the subprocess by its full name."""
+        executable = str(tmp_path / "codemap-py.cmd")
+        monkeypatch.setattr(dtt.shutil, "which", lambda name: executable)
+        calls = []
+        monkeypatch.setattr(dtt, "_run", lambda args, cwd, timeout: calls.append(args) or (0, "{}"))
+        dtt.codemap_tests("pkg.mod", tmp_path)
+        assert calls == [[executable, "query", "test-impact", "pkg.mod"]]
+
+    def test_batch_query_rejects_shell_metacharacters(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A filename-derived module cannot inject commands into a Windows batch launcher."""
+        monkeypatch.setattr(dtt.shutil, "which", lambda name: r"C:\Tools\codemap-py.cmd")
+        calls = []
+        monkeypatch.setattr(dtt, "_run", lambda args, cwd, timeout: calls.append(args) or (0, "{}"))
+        assert dtt.codemap_tests("pkg.x&echo injected", tmp_path) is None
+        assert calls == []
+
+    def test_relative_launcher_is_anchored_before_changing_cwd(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A PATH entry relative to the caller remains valid when the query runs at the repo root."""
+        caller = tmp_path / "subdir"
+        caller.mkdir()
+        monkeypatch.chdir(caller)
+        monkeypatch.setattr(dtt.shutil, "which", lambda name: "bin/codemap-py")
+        calls = []
+        monkeypatch.setattr(dtt, "_run", lambda args, cwd, timeout: calls.append(args) or (0, "{}"))
+        dtt.codemap_tests("pkg.mod", tmp_path)
+        assert calls[0][0] == str(caller / "bin" / "codemap-py")
+
     @pytest.mark.parametrize(
         ("index", "trusted"),
         [

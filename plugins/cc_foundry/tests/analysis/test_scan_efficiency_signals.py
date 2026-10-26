@@ -114,6 +114,8 @@ class TestDeclaresModel:
             pytest.param("plugins/x/skills/audit/SKILL.md", True, id="skill-md-included"),
             pytest.param("plugins/x/agents/curator.md", True, id="agent-file-included"),
             pytest.param("plugins/x/skills/audit/modes/fix.md", False, id="mode-file-excluded"),
+            pytest.param("plugins/x/claude-skills/query/SKILL.md", True, id="claude-skills-root-included"),
+            pytest.param("plugins/x/other/query/SKILL.md", False, id="unknown-skill-root-excluded"),
         ],
     )
     def test_tier_declaration_scope(self, path: str, expected: bool) -> None:

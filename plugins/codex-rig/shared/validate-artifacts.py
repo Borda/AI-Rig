@@ -62,6 +62,7 @@ if str(SHARED_DIRECTORY) not in sys.path:
 
 from adversarial_loop import SCHEMA_VERSION as LOOP_LEDGER_SCHEMA_VERSION  # noqa: E402
 from adversarial_loop import load_ledger  # noqa: E402
+from audit_consolidation import settle_consolidation  # noqa: E402
 from collect_pr import _github_remote_identity, _head_repository, dirty_path_record_is_consistent  # noqa: E402
 from final_handoff import HandoffError, challenge_report_path, review_commit_sha  # noqa: E402
 from release_evidence import release_sections, validate_release_evidence  # noqa: E402
@@ -4276,6 +4277,20 @@ def _validate_audit_evidence(result: dict[str, Any], gates: dict[str, Any], out_
         check["id"] == "review" and check["status"] == "pass" for check in gates["checks"]
     ):
         raise SystemExit("audit-review-gate-required")
+    consolidation = result["metadata"].get("consolidation")
+    if result["metadata"].get("axis") == "consolidate" or consolidation is not None:
+        if not isinstance(consolidation, dict):
+            raise SystemExit("audit-consolidation-evidence-required")
+        report = _audit_cost_artifact(out_dir, consolidation.get("report"), "consolidation")
+        try:
+            settled = settle_consolidation(report)
+        except (OSError, ValueError) as error:
+            raise SystemExit(f"audit-consolidation-invalid:{error}") from error
+        if consolidation.get("outcomes") != settled["outcomes"]:
+            raise SystemExit("audit-consolidation-settlement-mismatch")
+        cost = result["metadata"].get("value_per_token")
+        if isinstance(cost, dict) and cost.get("status") == "accepted":
+            raise SystemExit("audit-consolidation-advisory-only")
     value = result["metadata"].get("value_per_token")
     if value is None:
         return

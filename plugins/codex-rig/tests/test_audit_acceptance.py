@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from test_audit_consolidation import make_report
 from test_gate_source import _python_command
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
@@ -182,6 +183,70 @@ def _validate(run: tuple[Any, Path, dict[str, Any]]) -> None:
 def test_accepts_retained_matched_audit_evidence(audit_run: tuple[Any, Path, dict[str, Any]]) -> None:
     """Permit a fully matched finite comparison with every hard guard passed."""
     _validate(audit_run)
+
+
+def test_consolidation_requires_bound_advisory_evidence(audit_run: tuple[Any, Path, dict[str, Any]]) -> None:
+    """Do not promote a consolidation audit through the ordinary unmeasured-cost early return."""
+    _, _, result = audit_run
+    result["metadata"]["axis"] = "consolidate"
+    result["metadata"]["value_per_token"] = {"status": "not-run"}
+    with pytest.raises(SystemExit, match="consolidation"):
+        _validate(audit_run)
+
+
+def test_advisory_consolidation_uses_derived_outcomes(audit_run: tuple[Any, Path, dict[str, Any]]) -> None:
+    """The real audit consumer accepts empty discovery, but never a forged reviewed outcome."""
+    _, directory, result = audit_run
+    report = {"schema_version": 1, "sources": [], "items": [], "coverage": [], "candidates": [], "excluded": []}
+    result["metadata"].update(
+        axis="consolidate",
+        value_per_token={"status": "not-run"},
+        consolidation={"report": _evidence(directory, "consolidation.json", report), "outcomes": []},
+    )
+    _validate(audit_run)
+    result["metadata"]["consolidation"]["outcomes"] = [{"status": "reviewed"}]
+    with pytest.raises(SystemExit, match="settlement-mismatch"):
+        _validate(audit_run)
+    result["metadata"]["consolidation"]["outcomes"] = []
+    result["metadata"]["value_per_token"]["status"] = "accepted"
+    with pytest.raises(SystemExit, match="advisory-only"):
+        _validate(audit_run)
+
+
+@pytest.mark.parametrize("damage", ["proposal", "citation", "outcome"])
+def test_reviewed_proposal_reaches_audit_consumer_with_drift_controls(
+    audit_run: tuple[Any, Path, dict[str, Any]], damage: str
+) -> None:
+    """Exercise a nonempty reviewed report through the public audit artifact validator."""
+    _, directory, result = audit_run
+    report = make_report(directory)
+    settle = runpy.run_path(str(PLUGIN_ROOT / "shared" / "audit_consolidation.py"))["settle_consolidation"]
+    report["candidates"][0]["review"] = {
+        "digest": settle(report)["review_inputs"][0]["digest"],
+        "verdict": "holds",
+        "evidence": "Fixture review preserves source obligations, loading and citations.",
+    }
+    result["metadata"].update(
+        axis="consolidate",
+        value_per_token={"status": "not-run"},
+        consolidation={
+            "report": _evidence(directory, "consolidation.json", report),
+            "outcomes": settle(report)["outcomes"],
+        },
+    )
+    assert result["metadata"]["consolidation"]["outcomes"][0]["status"] == "reviewed"
+    _validate(audit_run)
+    if damage == "proposal":
+        report["candidates"][0]["edits"][0]["replacement"] += " Additional explanation."
+    elif damage == "citation":
+        source = report["sources"][-1]
+        Path(source["path"]).write_text("Read first.md §Approval and preserve its actor.\n", encoding="utf-8")
+        source["sha256"] = hashlib.sha256(Path(source["path"]).read_bytes()).hexdigest()
+    else:
+        result["metadata"]["consolidation"]["outcomes"][0]["status"] = "accepted"
+    result["metadata"]["consolidation"]["report"] = _evidence(directory, "consolidation.json", report)
+    with pytest.raises(SystemExit, match="settlement-mismatch"):
+        _validate(audit_run)
 
 
 @pytest.mark.parametrize(

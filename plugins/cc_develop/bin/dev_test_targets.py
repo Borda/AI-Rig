@@ -233,9 +233,13 @@ def codemap_tests(module: str, repo: Path) -> CodemapAnswer | None:
     Returns:
         The parsed answer, or ``None`` when codemap is not installed, fails, or prints no usable payload.
     """
-    if shutil.which("codemap-py") is None:
+    executable = shutil.which("codemap-py")
+    if executable is None:
         return None
-    code, out = _run(["codemap-py", "query", "test-impact", module], repo, timeout=120)
+    # Windows may execute batch files through cmd.exe even without shell=True.
+    if executable.lower().endswith((".bat", ".cmd")) and not all(part.isidentifier() for part in module.split(".")):
+        return None
+    code, out = _run([str(Path(executable).absolute()), "query", "test-impact", module], repo, timeout=120)
     return parse_codemap(out) if code == 0 else None
 
 

@@ -137,8 +137,8 @@ def test_context_reloads_consumer_sentinels_before_fake_query(
     block = next(b for b in _bash_blocks(_CONTEXT) if "CODEMAP_SENTINEL_SLUG" in b)
     temp_dir = tmp_path / "tmp"
     temp_dir.mkdir()
-    (temp_dir / "research-run-codemap-enabled-session").write_text(f"{enabled}\n", encoding="utf-8")
-    (temp_dir / "research-codemap-currency-session").write_text(f"{currency}\n", encoding="utf-8")
+    (temp_dir / "research-run-codemap-enabled-session").write_text(f"{enabled}\n", encoding="utf-8", newline="\n")
+    (temp_dir / "research-codemap-currency-session").write_text(f"{currency}\n", encoding="utf-8", newline="\n")
     trace = tmp_path / "queries.txt"
     stub = (
         'codemap-py() { [ "$1" = query ] || return 0; shift; '

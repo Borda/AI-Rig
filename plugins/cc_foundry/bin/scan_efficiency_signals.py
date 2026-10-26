@@ -47,6 +47,9 @@ _MODEL_FIELD = re.compile(r"^model:", re.MULTILINE)
 #: Matches a ``context: fork`` line in skill frontmatter: the skill runs in its own subagent context.
 _FORK_FIELD = re.compile(r"^context:\s*fork\s*$", re.MULTILINE)
 
+#: Directory names that hold ``<skill>/SKILL.md`` files; ``claude-skills`` is codemap-py's Claude-only skill root.
+SKILL_ROOTS = ("skills", "claude-skills")
+
 #: Section label → regex counted across files, for the two count-only sections.
 BOILERPLATE: dict[str, str] = {
     "agent-resolution boilerplate": r"=\$\(ls -td.*plugins/cache",
@@ -106,7 +109,7 @@ def _declares_model(path: Path) -> bool:
     posix = path.as_posix()
     if "/agents/" in posix:
         return True
-    return path.name == "SKILL.md" and path.parent.parent.name == "skills"
+    return path.name == "SKILL.md" and path.parent.parent.name in SKILL_ROOTS
 
 
 def _read(path: Path) -> str:

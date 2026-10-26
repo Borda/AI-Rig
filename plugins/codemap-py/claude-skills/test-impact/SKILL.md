@@ -3,7 +3,6 @@ name: test-impact
 description: 'Identify which tests need rerunning after a code change — traces static call graph (function-level) or import graph (module-level) to find affected test files, then emits a ready-to-run pytest command. TRIGGER when: user asks which tests are affected by a change; phrases: "which tests are affected", "what tests cover this", "test impact of", "what tests to rerun".'
 argument-hint: <module::symbol | module> [--no-mocks]
 allowed-tools: Bash, Write, AskUserQuestion
-model: haiku
 effort: low
 ---
 

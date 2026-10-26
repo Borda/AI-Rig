@@ -1,6 +1,6 @@
 ---
 name: audit
-description: Audit Codex configuration and workflow contracts, including failures between individually successful steps, plus prompt-efficiency drift; emit evidence-backed gaps and measurable gates.
+description: Audit Codex configuration, workflow contracts and prompt efficiency; optionally discover overlapping instruction intent and propose advisory consolidation with preserved obligations and loading scope.
 ---
 
 > Before asking, read [User Questions](../../shared/codex-user-questions.md). Waits, plan updates, and test runs follow [Agent Waits](../../shared/native-skill-contract.md#agent-waits), [Plan Updates](../../shared/native-skill-contract.md#plan-updates), and [Sandboxed Test Runs](../../shared/native-skill-contract.md#sandboxed-test-runs).
@@ -20,7 +20,7 @@ Audit configuration and workflows iteratively: map the system, investigate speci
   "scope": "config|skills|roles|all",
   "target": "optional path",
   "mode": "upgrade|adversarial",
-  "axis": "standard|value-per-token",
+  "axis": "standard|value-per-token|consolidate",
   "min_cost_reduction": "optional fraction; default 0.05 for value-per-token acceptance",
   "skip_gate": false,
   "done_when": "drift and broken references are ranked with gate result, evidence-backed remediation proposals and explicit coverage limits"
@@ -43,6 +43,8 @@ Scopes:
 - `all`: every applicable surface above. Missing optional local skills or roles is `not-configured`, not drift.
 
 Run `rg --files` with the `AGENTS.md`, `.codex/config.toml`, `.agents/skills/**` globs as argv. When `target` is supplied and exists, enumerate regular files under it to depth four with platform-native filesystem walk. Sort and deduplicate both result sets into `<run-directory>/inventory.txt`; record unavailable inputs or collection failures.
+
+For `axis=consolidate`, load [Advisory Consolidation](references/consolidate.md) now. It takes precedence over `mode` and replaces steps 03–11 with its bounded discovery, review and read-only gates, then rejoins step 12 and the normal output contract. Do not execute ordinary formatter, calibration or probe commands on this branch. All scopes are supported; configuration and role consolidation do not require a skill root. Standard and value-per-token audits retain their existing workflow.
 
 ### 03: Build an audit ledger before running gates
 
@@ -189,6 +191,7 @@ Use shared lifecycle/authoritative help. Write `AUDIT_METADATA`, validate `audit
 10. `prompt-efficiency.md` or its required evidence sections missing => fail.
 11. Prompt candidate accepted from raw length/proxy alone, without obligation mapping, hard value guards, loaded-reference cost, required adversarial review, matched live identity, or declared material reduction => fail.
 12. `axis=value-per-token` requested without `scope=skills|all` or supplied target containing skill root => fail.
+13. Consolidation lacks digest-bound report and derived outcomes, reports stale/unreviewed advice as reviewed, or claims optimization acceptance => fail. Unsupported candidates remain explicitly unvalidated; no candidates is a valid advisory outcome.
 
 ## Quality Gates
 
@@ -202,12 +205,15 @@ Conditional checks:
 - `lint`/`format`: when Python/TOML/shell/Markdown formatters available.
 - `tests`: with executable probes/behavior-changing fixes.
 
+For `axis=consolidate`, use the reference's read-only review command and explicit inapplicability reasons for the other four gates. Its advisory proposals are not applied behavior changes.
+
 ## Calibration Hooks
 
 Update calibration when audit scope, contract requirements, or routing checks change:
 
 - benchmark patterns: `audit`, every configured skill, every configured agent
 - behavioral cases: unjustified stops, equivalent-input continuation, automatic complementary recovery with substantive negative controls, mapped-flow coverage, invalidated assumptions revisited in affected consumers, bounded static-target inapplicability, runtime leak detection, stale reference handling, overlap classification, unsafe sync recommendation, length-only compression, missing loaded-reference cost, missing paired evidence, critical behavior regression, and below-threshold cost reduction
+- consolidation cases: equivalent intent versus distinct triggers, lazy-owner and hierarchy boundaries, source/citation/proposal drift, missing review, incomplete coverage, advisory-only settlement, unsupported structure and empty discovery
 
 ## Output Contract
 
@@ -220,5 +226,7 @@ Use `../../shared/quality-gates.md`.
 Final chat follows shared frame with `Next steps`. `Outcome`: `accepted|rejected|insufficient-evidence`. `Results`: exactly `Item | Severity / impact | Decision | Evidence | Next action`, one row/material item. `Remaining`: owner and closure action.
 
 `AUDIT_METADATA.value_per_token` records schema version 2, status (`not-run|insufficient-evidence|rejected|accepted`), scope roots, baseline/candidate hashes, static measurements, conditional-load trace, obligation-map path, static gates, behavioral/live comparisons, decision, and residual limits.
+
+For consolidation, set `AUDIT_METADATA.axis=consolidate`, `value_per_token.status=not-run`, and `consolidation={"report":{"path":"consolidation.json","sha256":"<exact file digest>"},"outcomes":[...]}` using the helper's exact derived outcomes. Report the assessment outcome as `accepted` only to mean the advisory assessment completed; name each proposal's `keep|unvalidated|reviewed|rejected` state separately. `reviewed` never means approved for application or accepted cost improvement.
 
 Minimum artifact payload template: `result-template.json`.

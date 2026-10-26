@@ -11,6 +11,8 @@ Severity order: **security** → **critical** → **high** → **medium** → **
 | **low** | 2 | Verbosity, minor formatting, incomplete follow-up chain, outdated version pin with "autoupdate" note, agent/skill omits CLAUDE.md principle but no contradiction, 💡 new CC feature not yet used, inline example restates prose or superseded by `AGENTS.md`/`CONTRIBUTING.md` |
 | **nit** | 1 | Wording preference, a synonym swap, a comment that reads slightly better another way — anything whose fix changes no behaviour and no reader's decision |
 
+Check 47 (`--consolidate`) is advisory and carries no severity: weight 0, never scored, never in the fix gate.
+
 ## Antipatterns (severity under-classification — common calibration failures)
 
 - Any injection vector, secret leak, or eval-with-external-input → always **security**, not **critical**
