@@ -1,0 +1,4 @@
+# Repository Markdown belongs to the pinned mdformat hooks, which own its
+# wrapping and table style. Checking it here too would make two formatters
+# disagree on the same bytes.
+*.md

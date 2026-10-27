@@ -251,6 +251,8 @@ Per-plugin version in `.claude-plugin/plugin.json`, space `0.X.Y`:
 | New capability, new agent/skill, new designed behaviour (not intended before) | `X` |
 | Test-only changes (adding/editing `tests/*.py` or `tests/*_sh.py`, no source file changes) | none — skip |
 
+> **npm plugin exception:** OpenCode Rig ships no `.claude-plugin` or `.codex-plugin` manifest. Its version authority is `plugins/opencode-rig/package.json`, mirrored by `rig.json`, `src/version.ts`, and the README `Current version:` marker. Apply the same bump table to `package.json` from its own `HEAD` baseline, then run `node plugins/opencode-rig/scripts/sync_version.mjs --write` so all four sources move together; `--check` is the gate.
+
 > **Rule:** Ask "was this *supposed* to work this way?"
 >
 > - Yes + it didn't → `Y` (fix).

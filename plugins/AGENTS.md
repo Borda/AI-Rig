@@ -13,6 +13,7 @@ Root `AGENTS.md` and the shipped Codex Rig global template (`plugins/codex-rig/a
 ## Plugin Workflow
 
 - Run `.venv/bin/python -m pytest -q plugins/<name>` for the touched plugin; use focused test paths while iterating, then the full plugin suite before completion.
+- OpenCode Rig runs on Node instead: use `npm --prefix plugins/opencode-rig run check` (or `make rig-check`) for the full gate and `npx vitest run tests/<path>` for a focused suite. It has no pytest module.
 - When `plugins/<name>/scripts/build_package.py` and `validate_package.py` exist, build into a temporary directory and validate the produced package before commit.
 - There is no shared automatic release command. Update the owning manifests and CHANGELOG, validate the package, and leave remote publication to the human workflow.
 - Completion requires relevant tests, lint/format where applicable, package validation where available, README synchronization, the SemVer gate, and `git diff --check`.
@@ -73,6 +74,7 @@ Root `AGENTS.md` and the shipped Codex Rig global template (`plugins/codex-rig/a
 ## Python and `bin/` Policy
 
 - Python is the default `bin/` language and requires Python 3.10+, type hints, a module docstring, an `if __name__ == "__main__"` guard, and ruff-format at 120 columns.
+- OpenCode Rig is the TypeScript exception: its `bin/` entrypoint and release scripts are ESM `.mjs` with a Node engine floor declared in `package.json`, formatted by Prettier, and gated by `npm run check`. Do not add a Python launcher or use these files as a pattern for Python plugins.
 - Interpreter bootstrap exception: the shared `bin/python` POSIX shell launcher and native Windows `bin/python.cmd`, plus Codemap runtime launchers, may select and validate Python before any Python code can run. Keep application logic in Python; bootstrap preserves arguments, streams, and exit status without workload retries.
 - Pure functions use doctests; code that performs I/O, subprocesses, environment reads, or argv parsing uses pytest coverage in the adjacent `tests/` directory.
 - Use `bin/` only for deterministic transforms such as argument parsing, path resolution, or one-value computation.
@@ -107,6 +109,7 @@ Root `AGENTS.md` and the shipped Codex Rig global template (`plugins/codex-rig/a
 - Test-only changes need no bump.
 - Calculate from HEAD and write exactly that single bump; never increment from a previously bumped on-disk value.
 - After calculating the bump, update every shipped runtime manifest, including `.codex-plugin/plugin.json` when present, so it shares the bumped version with `.claude-plugin/plugin.json`.
+- OpenCode Rig is the npm exception: it ships no host manifest, so `package.json` carries the version, `rig.json`, `src/version.ts`, and the README marker mirror it, and `node plugins/opencode-rig/scripts/sync_version.mjs` writes all four from the same HEAD-derived bump.
 - Update CHANGELOG or release metadata only when a change affects shipped product or plugin behavior and the plugin convention requires it.
 
 ## Permission Gates

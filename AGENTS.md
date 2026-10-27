@@ -20,7 +20,7 @@ These generic rules ship in the global template (section names as in that file) 
 ## Edit Scope
 
 - All edits stay inside this project directory. Never edit `$CODEX_HOME` or `~/.claude/` directly — both are install targets populated from this checkout, and a hand-edit there is overwritten on the next sync.
-- Permitted roots: `.codex/` (Codex config, skills, session policy), `.claude/settings.json` and `.claude/settings.local.json`, `plugins/*/{agents,skills,rules,hooks,bin}/`.
+- Permitted roots: `.codex/` (Codex config, skills, session policy), `.claude/settings.json` and `.claude/settings.local.json`, `plugins/*/{agents,skills,rules,hooks,bin,src,scripts,tests}/`.
 - The Makefile installs from the pushed GitHub remote, not the local working tree: commit and push first, then `make sync-claude` or `make sync-codex`. Running it against uncommitted work silently installs the previous state.
 - Never initiate propagation mid-task; it is a deliberate human-triggered step.
 
@@ -71,6 +71,7 @@ Generic marker discipline ships in the global template (§Testing). This reposit
 - Python minimum: 3.10. The repository root is an environment anchor, not an installable package.
 - Bootstrap test tooling with `uv sync --only-group test`; benchmark-only dependencies use `uv sync --only-group bench`.
 - Run focused tests with `.venv/bin/python -m pytest <paths>` and broaden to the affected suite before completion.
+- The `plugins/opencode-rig` npm package is the Node exception: `make rig-check` runs its typecheck, Prettier, Vitest, version-source, and tarball gates, and `npx vitest run <paths>` is the focused form.
 - Broad local runs go parallel: `.venv/bin/python -m pytest -n 4 <paths>` (pytest-xdist, already in the test group). Measured on the full suite: 11556 tests in ~5 min at `-n 4`, several times faster than the same run serial. Use `-n 4` for any run wide enough to be worth waiting on; keep focused single-file runs serial, where worker startup costs more than it saves.
 - Coverage tracing is opt-in: CI passes the `--cov=<plugin>/bin` list (see `.github/workflows/ci-tests.yml`), and a local run measures only when you add `--cov=<path>` with `--cov-report=term-missing`. Keep sources out of `[tool.coverage]`: it also configures tests that start their own coverage run. Untraced is the default because tracing slows every test, most on Windows.
 - The generic xdist isolation rule ships in the global template (§Testing); in this repository the usual shared machine-global state is a `${TMPDIR}` sentinel without its `-${CSID}` suffix.

@@ -12,6 +12,7 @@
 #   make clear-all           # teardown both scopes
 #   make clear-claude        # teardown Claude scope only
 #   make clear-codex         # teardown Codex scope only
+#   make rig-check           # opencode-rig typecheck, format, tests, version, and package checks
 #
 # Requires GNU make (verified against GNU Make 3.81, the version Apple ships as /usr/bin/make;
 # not BSD make). Every multi-statement recipe below is written the traditional portable way —
@@ -92,6 +93,7 @@ endef
         verify-claude-plugins warn-stale-claude-sessions \
         install-codex-plugins sync-codex-home-policy sync-codex-bridge-consent \
         banner-claude banner-codex preflight-sync \
+        rig-install rig-typecheck rig-test rig-format rig-pack rig-check \
         prune-benchmarks prune-benchmarks-apply
 
 ## Meta targets ---------------------------------------------------------------
@@ -442,6 +444,30 @@ sync-codex-bridge-consent:
 	$(call stage,Record explicit Claude transfer consent); \
 	"$(BRIDGE_CONSENT_LAUNCHER)" "$(BRIDGE_CONSENT_SCRIPT)" grant --approve && \
 	"$(BRIDGE_CONSENT_LAUNCHER)" "$(BRIDGE_CONSENT_SCRIPT)" check
+
+## OpenCode plugin targets -----------------------------------------------------
+
+OPENCODE_RIG_DIR := $(PROJECT_DIR)/plugins/opencode-rig
+
+rig-install:
+	@npm --prefix "$(OPENCODE_RIG_DIR)" install --no-audit --no-fund
+
+rig-typecheck:
+	@npm --prefix "$(OPENCODE_RIG_DIR)" run typecheck
+
+rig-test:
+	@npm --prefix "$(OPENCODE_RIG_DIR)" test
+
+rig-format:
+	@npm --prefix "$(OPENCODE_RIG_DIR)" run format
+
+rig-pack:
+	@npm --prefix "$(OPENCODE_RIG_DIR)" run pack:check
+
+# Mirrors the package's CI gate: typecheck, formatting, Vitest suites, version sources,
+# and the published tarball contract.
+rig-check:
+	@npm --prefix "$(OPENCODE_RIG_DIR)" run check
 
 ## Benchmark retention -------------------------------------------------------
 

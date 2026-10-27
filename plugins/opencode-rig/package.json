@@ -1,0 +1,71 @@
+{
+  "name": "opencode-rig",
+  "version": "0.1.0",
+  "description": "Evidence-first workflows, independent review, quality gates, and Git guardrails for OpenCode.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "author": {
+    "name": "Jiri Borovec",
+    "url": "https://github.com/Borda"
+  },
+  "homepage": "https://github.com/Borda/AI-Rig",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Borda/AI-Rig.git",
+    "directory": "plugins/opencode-rig"
+  },
+  "bugs": {
+    "url": "https://github.com/Borda/AI-Rig/issues"
+  },
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "workflow",
+    "code-review",
+    "evidence",
+    "quality-gates"
+  ],
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src",
+    "bin",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "NOTICE",
+    "rig.json"
+  ],
+  "bin": {
+    "opencode-rig": "./bin/opencode-rig.mjs"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "version:check": "node scripts/sync_version.mjs --check",
+    "pack:check": "node scripts/pack_check.mjs",
+    "check": "npm run typecheck && npm run format:check && npm run test && npm run version:check && npm run pack:check"
+  },
+  "dependencies": {
+    "@opencode/plugin": "^2.1.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "prettier": "^3.4.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "prettier": {
+    "printWidth": 120,
+    "semi": false,
+    "singleQuote": false,
+    "trailingComma": "all"
+  }
+}

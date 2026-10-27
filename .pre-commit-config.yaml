@@ -58,7 +58,9 @@ repos:
         args: ["--autofix"]
         # Benchmark manifests, suites, and historical fixtures are identity-locked
         # inputs/outputs. Their dedicated builders/tests own byte and hash validation.
-        exclude: ^benchmarks/(manifests|suites|tests/fixtures)/.*\.json$
+        # The opencode-rig npm package owns its JSON layout through Prettier; this hook
+        # would re-sort keys and rewrite the file Prettier just laid out.
+        exclude: ^benchmarks/(manifests|suites|tests/fixtures)/.*\.json$|^plugins/opencode-rig/.*\.json$
 
   - repo: https://github.com/JoC0de/pre-commit-prettier
     rev: v3.9.9 # using tag; previously pinned SHA when tags were not persistent
@@ -69,6 +71,15 @@ repos:
         files: \.(html|yml|yaml|toml|js)$
         # https://prettier.io/docs/en/options.html#print-width
         args: ["--print-width=120"]
+      - id: prettier
+        name: "🎨 prettier (opencode-rig)"
+        # Coverage: the npm-packaged TypeScript plugin. The hook's --experimental-cli resolves
+        # options from the invocation directory instead of each file's package.json, so the
+        # package's `semi: false` has to be repeated here. Markdown stays with mdformat via
+        # the package .prettierignore; JSON is formatted here rather than by pretty-format-json,
+        # whose key sorting would reorder npm's package.json fields.
+        files: ^plugins/opencode-rig/.*\.(?:ts|mts|cts|js|mjs|cjs|json)$
+        args: ["--print-width=120", "--no-semi"]
 
   - repo: https://github.com/pre-commit/mirrors-eslint
     rev: v10.12.0
@@ -196,6 +207,14 @@ repos:
         # are symlinks to them. Scan both so a syntax error in plugin source is caught.
         files: ^plugins/[^/]+/hooks/.*\.js$|^\.claude/hooks/.*\.js$|^\.codex/hooks/.*\.js$
         types: [javascript]
+
+      - id: opencode-rig-node-syntax
+        name: "🟩 node --check (opencode-rig ESM)"
+        language: system
+        entry: node --check
+        # The npm plugin's CLI and release scripts are ESM entrypoints that no other hook
+        # parses; a syntax error here breaks installation for every user.
+        files: ^plugins/opencode-rig/(?:bin|scripts)/.*\.mjs$
 
       - id: check-tag-symmetry-empty
         name: "🏷️ XML empty structural blocks"
@@ -369,10 +388,11 @@ repos:
         # strict form. Leading slash stays required — dropping it false-positived on
         # prose like "users/endpoints", "users/devs", and "$HOME/path" doc mentions.
         entry: (?i)/(users|home)/[a-zA-Z0-9_-]+/?
-        # Plugin source (agents/skills/rules/hooks + manifest json) is the real install
-        # surface; a hardcoded path there breaks on every other machine. .claude/state
+        # Plugin source (agents/skills/rules/hooks, the npm package's shipped skill, role,
+        # and reference resources, plus manifest json) is the real install surface; a
+        # hardcoded path there breaks on every other machine. .claude/state
         # runtime dirs are gitignored and excluded from the pattern by not matching.
-        files: ^plugins/[^/]+/(agents|skills|rules|hooks)/.*\.(md|js)$|^plugins/[^/]+/\.claude-plugin/[^/]+\.json$|^\.claude/(agents|skills|rules)/.*\.md$|^\.claude/hooks/[^/]+\.js$|^\.claude/settings\.json$|^\.codex/(agents|skills|rules)/.*\.md$|^\.codex/hooks/[^/]+\.js$|^\.codex/settings\.json$
+        files: ^plugins/[^/]+/(agents|skills|rules|hooks)/.*\.(md|js)$|^plugins/[^/]+/src/resources/(skills|roles|references)/.*\.md$|^plugins/[^/]+/\.claude-plugin/[^/]+\.json$|^\.claude/(agents|skills|rules)/.*\.md$|^\.claude/hooks/[^/]+\.js$|^\.claude/settings\.json$|^\.codex/(agents|skills|rules)/.*\.md$|^\.codex/hooks/[^/]+\.js$|^\.codex/settings\.json$
 
       - id: test-path-separator-mixture
         name: "🪟 test asserts mixing native and / paths"
@@ -403,6 +423,37 @@ repos:
         entry: python3 benchmarks/check-portable-paths.py
         # Coverage: maintained benchmark docs/scripts plus the tracked methodology policy; excludes generated, result, and test trees.
         files: ^benchmarks/(?!manifests/|results/|tests/).*\.(md|py|sh)$|^benchmarks/policy/provider-parity-methodology\.json$
+
+      - id: opencode-rig-version-sync
+        name: "🔢 opencode-rig version sources agree"
+        language: system
+        entry: node plugins/opencode-rig/scripts/sync_version.mjs --check
+        # package.json is the npm release authority; rig.json, src/version.ts, and the README
+        # marker must agree before a tarball can be published.
+        pass_filenames: false
+        always_run: true
+
+      - id: opencode-rig-package-check
+        name: "📦 opencode-rig package contents"
+        language: system
+        entry: node plugins/opencode-rig/scripts/pack_check.mjs
+        # Self-contained Node check over `npm pack --dry-run`: it needs no node_modules and
+        # fails on a missing shipped resource or a leaked test/artifact path.
+        files: ^plugins/opencode-rig/
+        pass_filenames: false
+
+      - id: opencode-rig-changelog-version
+        name: "📝 opencode-rig version has a changelog heading"
+        language: system
+        entry: >-
+          node -e "const {readFileSync}=require('node:fs');
+          const root='plugins/opencode-rig';
+          const version=JSON.parse(readFileSync(root+'/package.json','utf8')).version;
+          const heading='## '+version;
+          const lines=readFileSync(root+'/CHANGELOG.md','utf8').split(/\r?\n/);
+          if(!lines.includes(heading)){console.error('Missing changelog heading: '+heading);process.exit(1)}"
+        pass_filenames: false
+        always_run: true
 
       - id: codex-rig-changelog-version
         name: "📝 Codex Rig version has a changelog heading"

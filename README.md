@@ -2,13 +2,13 @@
 
 ![Borda's AI-Rig banner](docs/assets/images/banner.webp)
 
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE) [![Claude Code](https://img.shields.io/badge/Claude_Code-plugins-D97757)](https://code.claude.com/docs/en/discover-plugins) [![Codex](https://img.shields.io/badge/Codex-plugins-10A37F)](https://developers.openai.com/codex/cli/reference) [![Python 3.10+](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)](pyproject.toml) ![Platforms](https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20windows-lightgrey)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE) [![Claude Code](https://img.shields.io/badge/Claude_Code-plugins-D97757)](https://code.claude.com/docs/en/discover-plugins) [![Codex](https://img.shields.io/badge/Codex-plugins-10A37F)](https://developers.openai.com/codex/cli/reference) [![OpenCode](https://img.shields.io/badge/OpenCode-plugin-111827)](https://opencode.ai) [![Python 3.10+](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)](pyproject.toml) ![Platforms](https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20windows-lightgrey)
 
 [![CI manifests](https://github.com/Borda/AI-Rig/actions/workflows/ci-manifests.yml/badge.svg?event=push)](https://github.com/Borda/AI-Rig/actions/workflows/ci-manifests.yml) [![CI executables](https://github.com/Borda/AI-Rig/actions/workflows/ci-tests.yml/badge.svg?event=push)](https://github.com/Borda/AI-Rig/actions/workflows/ci-tests.yml) [![CI harness](https://github.com/Borda/AI-Rig/actions/workflows/ci-harness.yml/badge.svg)](https://github.com/Borda/AI-Rig/actions/workflows/ci-harness.yml) [![codecov](https://codecov.io/gh/Borda/AI-Rig/graph/badge.svg?token=NTJKY4o4es)](https://codecov.io/gh/Borda/AI-Rig) [![pre-commit.ci status](https://results.pre-commit.ci/badge/github/Borda/AI-Rig/main.svg)](https://results.pre-commit.ci/latest/github/Borda/AI-Rig/main)
 
 Practical agent workflows for Python, ML, and open-source maintenance. AI-Rig turns recurring work—scoping a change, reproducing a bug, reviewing a pull request, running an experiment, or checking release readiness—into explicit workflows with specialist ownership, evidence gates, and reviewable artifacts.
 
-Seven packages serve two runtimes: six marketplace plugins for Claude Code, three for Codex, with `codemap-py` and `bridge_CC-Codex` shared by both.
+Eight packages serve three runtimes: six marketplace plugins for Claude Code, three for Codex, and one npm plugin for OpenCode, with `codemap-py` and `bridge_CC-Codex` shared by two hosts each.
 
 <details>
 <summary><strong>Contents</strong></summary>
@@ -19,6 +19,7 @@ Seven packages serve two runtimes: six marketplace plugins for Claude Code, thre
 - [Installed-all blueprint](#-installed-all-blueprint)
 - [Install for Claude Code](#-install-for-claude-code)
 - [Install for Codex](#-install-for-codex)
+- [Install for OpenCode](#-install-for-opencode)
 - [What each plugin solves](#-what-each-plugin-solves)
 - [Practical workflow sequences](#-practical-workflow-sequences)
 - [How the packages compose](#-how-the-packages-compose)
@@ -45,16 +46,17 @@ Choose the smallest plugin that solves the job in front of you. Every package in
 | Plan and run literature-grounded ML experiments                         | [🔬 `research`](plugins/cc_research/README.md)            | 2 research agents and 10 skills for planning, judging, running, verifying, ablation, retrospectives, and Kaggle notebooks |
 | Answer import, caller, coupling, rename, and affected-test questions    | [🗂️ `codemap-py`](plugins/codemap-py/README.md)           | The same 6 structural-analysis skills for Claude Code and Codex, backed by a local static Python index                    |
 | Use evidence-first workflows and specialist role cards in Codex         | [🤖 `Codex Rig`](plugins/codex-rig/README.md)             | 13 workflow skills, 1 lifecycle manager, 15 role cards, shared gates, calibration, and artifact contracts                 |
+| Run evidence-first workflows, gates, and Git guardrails in OpenCode     | [⚡ `OpenCode Rig`](plugins/opencode-rig/README.md)       | 8 workflow skills, 7 evidence tools, 5 role agents, an adversarial loop, and an npm-installable TypeScript package        |
 | Hand bounded implement, advise, and review calls between the two hosts  | [🌉 `bridge_CC-Codex`](plugins/bridge_cc-codex/README.md) | 3 bridge verbs in both directions with explicit models, effort, budgets, compact envelopes, and recursion safety          |
 
-If you use Claude Code, read the [Claude guide](.claude/README.md). If you use Codex, read the [Codex guide](.codex/README.md).
+If you use Claude Code, read the [Claude guide](.claude/README.md). If you use Codex, read the [Codex guide](.codex/README.md). OpenCode installs the npm package directly; its [README](plugins/opencode-rig/README.md) is the host guide.
 
 ## 🎯 What this setup enables
 
 <details>
 <summary><strong>Show the evidence-first value of the full suite</strong></summary>
 
-- A bounded route from uncertainty to evidence: Foundry audits configuration and routing, Develop gates Python changes, OSS organizes maintainer work, Research keeps experiments reviewable, Codemap-py supplies static structure, and Codex Rig provides the parallel host-native workflow.
+- A bounded route from uncertainty to evidence: Foundry audits configuration and routing, Develop gates Python changes, OSS organizes maintainer work, Research keeps experiments reviewable, Codemap-py supplies static structure, and Codex Rig and OpenCode Rig provide the host-native workflow layer for Codex and OpenCode.
 - Scope-selected specialist review: OSS and Codex Rig use narrow context packs and mandatory QA/challenge coverage where their contracts require it; smaller or lower-risk work can stay on the parent path.
 - Review-to-remediation continuity: OSS and Codex Rig save findings as artifacts, ask which work to select, group related findings, and verify the selected closure rather than silently applying every comment.
 - Validate-first development: Develop's feature path requires a failing demo, its fix path requires a failing regression test, and its refactor path protects current behavior before editing.
@@ -80,6 +82,7 @@ This is the literal shipped skill inventory. The host guides list every agent, r
 | 🔬 Research        | `/research:topic`, `/research:plan`, `/research:judge`, `/research:run`, `/research:sweep`, `/research:verify`, `/research:fortify`, `/research:retro`, `/research:kaggle`, `/research:setup`                                                                                                                                       |
 | 🗂️ Codemap-py      | `scan-codebase`, `query-code`, `test-impact`, `rename-refs`, `integration`, `debrief-coding`, namespaced as `/codemap-py:...` in Claude Code and `$codemap-py:...` in Codex                                                                                                                                                         |
 | 🤖 Codex Rig       | `$codex-rig:assess`, `$codex-rig:audit`, `$codex-rig:calibrate`, `$codex-rig:code-remediate`, `$codex-rig:code-review`, `$codex-rig:implement`, `$codex-rig:investigate`, `$codex-rig:kaggle`, `$codex-rig:manage`, `$codex-rig:optimize`, `$codex-rig:release`, `$codex-rig:research`, `$codex-rig:sync`, `$codex-rig:agent-shims` |
+| ⚡ OpenCode Rig    | `/rig-plan`, `/rig-investigate`, `/rig-implement`, `/rig-review`, `/rig-remediate`, `/rig-challenge`, `/rig-release`, `/rig-doctor`                                                                                                                                                                                                 |
 | 🌉 bridge_CC-Codex | `implement`, `advise`, `review`, `setup`, plus Claude-side detached-job `status`, `result`, `cancel`; namespaced as `/bridge:...` in Claude Code and `$bridge:...` in Codex                                                                                                                                                         |
 
 </details>
@@ -89,7 +92,7 @@ This is the literal shipped skill inventory. The host guides list every agent, r
 <details>
 <summary><strong>Show the complete two-runtime inventory and design boundary</strong></summary>
 
-The installed-all Claude surface is 16 agents across Foundry (10), OSS (4), and Research (2), plus 46 skills across Foundry (11), OSS (5), Develop (7), Research (10), Codemap-py (6), and bridge_CC-Codex (7). It also includes 16 namespaced rules (13 Foundry rules plus one quality-gates rule for each companion that ships rules) and host hooks whose exact active-module counts are maintained in the [Claude guide](.claude/README.md). Codex Rig adds 14 skills, 15 role cards, shared gates, calibration, and one optional read-only health hook; Codemap-py contributes six skills to both runtimes and no Codex hook manifest; the bridge_CC-Codex plugin contributes four Codex-side skills and the reverse MCP transport.
+The installed-all Claude surface is 16 agents across Foundry (10), OSS (4), and Research (2), plus 46 skills across Foundry (11), OSS (5), Develop (7), Research (10), Codemap-py (6), and bridge_CC-Codex (7). It also includes 16 namespaced rules (13 Foundry rules plus one quality-gates rule for each companion that ships rules) and host hooks whose exact active-module counts are maintained in the [Claude guide](.claude/README.md). Codex Rig adds 14 skills, 15 role cards, shared gates, calibration, and one optional read-only health hook; Codemap-py contributes six skills to both runtimes and no Codex hook manifest; the bridge_CC-Codex plugin contributes four Codex-side skills and the reverse MCP transport. OpenCode Rig adds eight skills, seven evidence tools, and five installed role agents as a TypeScript npm package.
 
 Specialist roles are requested by name or auto-selected. Claude agents dispatch as `<plugin>:<agent>`; the Codex column marks roles that also ship as a Codex Rig role card.
 
@@ -120,6 +123,7 @@ Sixteen Claude agents, fifteen Codex role cards. `delegation-lead` and `security
 | --------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Claude Code     | Six peer plugins: Foundry, OSS, Develop, Research, Codemap-py, and bridge_CC-Codex.        | Marketplace packages expose plugin-loader agents, skills, hooks, and `CLAUDE.md`; setup projects only documented rules/settings and does not install credentials or remote authority. |
 | Codex           | Codex Rig plus optional Codemap-py and bridge_CC-Codex.                                    | Marketplace packages expose namespaced skills and role cards; blank-agent injection or inline fallback is disclosed, while persistent named-agent selection remains unverified.       |
+| OpenCode        | OpenCode Rig, one npm package with tools, skills, and installed role agents.               | npm installs versioned TypeScript bytes; `opencode-rig init` writes role agents into the user or project config, and the permission hook only escalates an already-configured answer. |
 | Source checkout | `plugins/` is the source of truth; `.claude/` and `.codex/` are host guides/configuration. | Direct marketplace install uses published bytes; `Makefile` is a deliberate restore path that consumes the pushed remote and may project selected local policy.                       |
 
 The design principle is simple: make uncertainty, ownership, evidence, and recovery visible while keeping packages independently installable. A workflow may route to a specialist, but a role card, task name, artifact, or green gate is not proof that a model followed it or that the resulting change is correct. Human review remains the acceptance boundary for consequential work.
@@ -190,6 +194,34 @@ $codemap-py:query-code rdeps mypackage.auth
 
 From a shell, quote `$codex-rig:...` and `$codemap-py:...` invocations so the shell does not expand `$`.
 
+## 📦 Install for OpenCode
+
+Prerequisite: OpenCode `2.1.0` or newer and Node.js `20` or newer. OpenCode Rig is an npm package with no Python runtime.
+
+```bash
+opencode plugin add opencode-rig@0.1.0
+opencode-rig init
+```
+
+`opencode plugin add` installs the versioned package and adds it to the OpenCode configuration. `init` writes the five `rig-*` role agents that a plugin package cannot register: `~/.config/opencode/agents/` by default, or `.opencode/agents/` with `--project`. Plain local commits ask until you record an explicit grant with `rig_git_grant`; push and every other remote mutation keep asking.
+
+Start a fresh session, then try:
+
+```text
+/rig-investigate find the root cause of the failing test
+/rig-implement apply the verified fix
+/rig-review review the current diff
+/rig-challenge challenge the change and iterate to convergence
+```
+
+Ignore the run artifact directory in projects that use the plugin; it holds scope digests, gate logs, findings, and reports:
+
+```bash
+printf '\n.opencode-rig/\n' >> .gitignore
+```
+
+`opencode-rig print-config` prints the recommended permission rules, and `opencode-rig doctor` reports install and environment health.
+
 ## 🎯 What each plugin solves
 
 ### 🏭 Foundry: keep the agent system maintainable
@@ -228,6 +260,12 @@ Codex Rig provides investigation, development, review, remediation, research, op
 
 The plugin does not claim persistent named-agent registration, silently enable network access, or mutate remote GitHub state. Direct plugin installation also leaves global and project instructions unchanged. [Read the Codex Rig reference.](plugins/codex-rig/README.md)
 
+### ⚡ OpenCode Rig: keep OpenCode delivery evidence-first
+
+OpenCode Rig ports the suite's evidence discipline to OpenCode without the DAG, freeze, and approval machinery. Each run binds its scope bytes, records real gate exit codes, requires a named independent reviewer, and fails closed on source drift. Plan, investigate, implement, review, remediate, challenge, release-readiness, and doctor workflows share those contracts.
+
+The package is TypeScript distributed through npm. It cannot register agents by itself, so `opencode-rig init` installs five hash-stamped role agents and refuses to overwrite one you edited. The permission hook escalates remote mutations, destructive operations, history rewrites, and ungranted local commits, but never downgrades a configured `ask` and never publishes anything. [Read the OpenCode Rig reference.](plugins/opencode-rig/README.md)
+
 ## 🗺️ Practical workflow sequences
 
 ### Bug report to verified fix
@@ -244,6 +282,14 @@ In Codex:
 $codex-rig:investigate diagnose the reported failure
 $codex-rig:implement apply the verified fix
 $codex-rig:code-review review the resulting diff
+```
+
+In OpenCode:
+
+```text
+/rig-investigate diagnose the reported failure
+/rig-implement apply the verified fix
+/rig-review review the resulting diff
 ```
 
 ### ML idea to reviewable result
@@ -299,7 +345,7 @@ Keep the approved outline, acceptance statement, demo or reproduction evidence, 
 <details>
 <summary><strong>Show the installed-all topology and end-to-end paths</strong></summary>
 
-The packages remain independently installable, but their boundaries are intentional when the full suite is present. Foundry supplies Claude configuration, reusable rules, hooks, and specialist agents; Develop owns validate-first Python changes; OSS owns GitHub triage, review, and release preparation; Research owns literature-grounded ML iteration; Codemap-py answers unresolved Python structure for Claude and Codex; Codex Rig provides the Codex-native workflow, role-card, gate, and artifact layer.
+The packages remain independently installable, but their boundaries are intentional when the full suite is present. Foundry supplies Claude configuration, reusable rules, hooks, and specialist agents; Develop owns validate-first Python changes; OSS owns GitHub triage, review, and release preparation; Research owns literature-grounded ML iteration; Codemap-py answers unresolved Python structure for Claude and Codex; Codex Rig provides the Codex-native workflow, role-card, gate, and artifact layer; OpenCode Rig provides the same evidence-first layer for OpenCode as an npm package.
 
 Claude companion workflows use Foundry specialists when available and follow each plugin's documented fallback or stop condition when a companion is absent. Develop, Research, and Codex Rig can use Codemap-py as optional structural context; a missing or stale index is reported and does not become a claim that no callers or tests exist. Network-backed paths keep authentication and approval user-owned.
 
@@ -339,7 +385,7 @@ RTK is an output-compression convenience for supported shell commands, not a rep
 <details>
 <summary><strong>Show where workflows write state and how to read it</strong></summary>
 
-Codex Rig writes `.reports/codex/<skill>/<timestamp>/` with a validated `result.json`, gate records/logs, and skill-specific evidence. Research writes run state under `.experiments/` and final reports under `.reports/research/`. Codemap-py writes its local index under `.cache/codemap/` and includes freshness, coverage, truncation, and blind-spot metadata in query results.
+Codex Rig writes `.reports/codex/<skill>/<timestamp>/` with a validated `result.json`, gate records/logs, and skill-specific evidence. Research writes run state under `.experiments/` and final reports under `.reports/research/`. Codemap-py writes its local index under `.cache/codemap/` and includes freshness, coverage, truncation, and blind-spot metadata in query results. OpenCode Rig writes `.opencode-rig/runs/<skill>/<run-id>/` with a `run.json` record, gate receipts and logs, a validated findings inventory, an append-only loop ledger, and a report written only when a run completes.
 
 Artifacts are reviewable evidence, not authority. Read the commands, source, tests, gate status, confidence, and unresolved limits before accepting consequential work. Generated state is project-local; follow the owning plugin's retention and cleanup guidance before deleting or automating it.
 
@@ -353,6 +399,7 @@ Artifacts are reviewable evidence, not authority. Read the commands, source, tes
 - Release workflows prepare and assess local artifacts. Remote publication, pushes, comments, merges, tags, and package uploads remain human-owned unless a future workflow explicitly documents a different contract.
 - Generated reports, plans, and experiment state are project-local. Read the owning plugin's artifact and cleanup sections before automating retention.
 - Platform support is capability-specific. Core workflows target Windows, macOS, and Linux; Codex Rig's authenticated legacy-shim cleanup remains POSIX-only, and Codemap's scan timeout flag uses a Unix-only signal where available.
+- OpenCode Rig is an npm package for OpenCode `2.1.0+` on Node `20+`. It registers tools, skills, and one permission hook; role agents exist only after `opencode-rig init`, and its Git grant covers plain local commits only.
 - Possible future work is described as an opportunity, not a roadmap promise. The shipped source and tests define the current contract.
 
 ## 🏗️ Repository checkout and synchronization
@@ -367,6 +414,7 @@ make sync-all APPROVE_CLAUDE_CONSENT=0  # leave standing consent unchanged
 make sync-claude      # Claude scope only
 make sync-codex       # Codex scope only
 make sync-codex APPROVE_CLAUDE_CONSENT=1  # also approve standing Claude transfer consent
+make rig-check        # OpenCode Rig typecheck, formatting, tests, version, and package checks
 ```
 
 The `Makefile` installs from the pushed GitHub remote, not uncommitted local files. Commit and push first if you intentionally want a checkout change to become installable; never use sync as a preview of a dirty worktree.
@@ -380,17 +428,18 @@ Each external Claude marketplace and plugin add, update, uninstall, or install c
 <details>
 <summary><strong>Show repository layout, distribution paths, and session-only development</strong></summary>
 
-The checked-in `plugins/` directories are source of truth. Claude Code loads each plugin's manifest, agents, skills, hooks, and plugin instructions from its marketplace cache; setup projects only the documented namespaced rules and Foundry settings. Codex loads Codex Rig's namespaced skills and role cards from its package; direct installation leaves `.codex/config.toml`, personal policy, and global instructions untouched. Codemap-py is the shared structural product, not a runtime dependency that silently changes either host.
+The checked-in `plugins/` directories are source of truth. Claude Code loads each plugin's manifest, agents, skills, hooks, and plugin instructions from its marketplace cache; setup projects only the documented namespaced rules and Foundry settings. Codex loads Codex Rig's namespaced skills and role cards from its package; direct installation leaves `.codex/config.toml`, personal policy, and global instructions untouched. Codemap-py is the shared structural product, not a runtime dependency that silently changes either host. OpenCode Rig is loaded from npm; `opencode-rig init` is the only step that writes role agents into the host configuration.
 
 ```text
 AI-Rig/
-├── plugins/                  # Claude and Codex package source
+├── plugins/                  # Claude, Codex, and OpenCode package source
 │   ├── cc_foundry/            # Claude configuration, agents, rules, hooks
 │   ├── cc_oss/                # maintainer and release workflows
 │   ├── cc_develop/            # validate-first Python workflows
 │   ├── cc_research/           # literature-grounded ML workflows
 │   ├── codemap-py/             # shared Python structure skills and indexer
-│   └── codex-rig/              # Codex workflows, roles, gates, hooks, scripts
+│   ├── codex-rig/              # Codex workflows, roles, gates, hooks, scripts
+│   └── opencode-rig/           # OpenCode npm plugin: tools, skills, agents, CLI
 ├── .claude/README.md          # Claude host blueprint
 ├── .codex/README.md           # Codex host blueprint
 ├── .codex/config.toml         # project-local Codex defaults
@@ -429,10 +478,24 @@ codex plugin add codemap-py@borda-ai-rig
 
 Remove with `codex plugin remove <plugin>@borda-ai-rig`. If pre-release Codex Rig shims exist, run `$codex-rig:agent-shims remove` before removing the plugin.
 
+OpenCode:
+
+```bash
+opencode plugin update opencode-rig
+opencode-rig init --upgrade
+```
+
+Update the package, then refresh the installed role agents. `init --upgrade` replaces stale or locally edited stamped agents; without `--upgrade`, `init` and `check` stop on a conflict rather than overwriting your edits. Remove with:
+
+```bash
+opencode-rig remove
+opencode plugin remove opencode-rig
+```
+
 <details>
 <summary><strong>Show cleanup and recovery notes</strong></summary>
 
-Claude setup merges settings additively and creates namespaced rule links, so uninstall does not automatically revoke those entries; follow the owning plugin README for exact manual cleanup. Codex Rig shims should be removed while the plugin is still available, then the plugin can be removed. A sync-managed global instruction block must be removed only after checking its authenticated markers and preserving user-owned content.
+Claude setup merges settings additively and creates namespaced rule links, so uninstall does not automatically revoke those entries; follow the owning plugin README for exact manual cleanup. Codex Rig shims should be removed while the plugin is still available, then the plugin can be removed. A sync-managed global instruction block must be removed only after checking its authenticated markers and preserving user-owned content. OpenCode Rig's `remove` deletes only stamped agent files, and its `.opencode-rig/` run artifacts stay in the project until you delete them deliberately.
 
 Claude cleanup normally means reviewing `~/.claude/settings.json`, the matching `~/.claude/rules/<plugin>-<source-name>.md` links, and Foundry's `~/.claude/TEAM_PROTOCOL.md`; remove only entries whose ownership is attributable to this suite and preserve unrelated user settings.
 
@@ -450,6 +513,7 @@ If a cleanup check blocks, do not force-delete files. Reinstall the relevant plu
 - GitHub or Kaggle work stops: authenticate the user-owned CLI and approve the complete owning network command when the runtime requests it.
 - `Makefile` installs an older state: remember that it reads the pushed GitHub remote, so commit and push intentionally before syncing.
 - Codex Rig shim cleanup is blocked: preserve the diagnostic evidence, reinstall the plugin if needed, and rerun `agent-shims doctor` before an approved `remove`.
+- OpenCode Rig tools or skills are missing: rerun `opencode-rig check` to compare installed role agents with the package, then `opencode-rig doctor` for version, grant, ignore, and gate state.
 
 </details>
 
@@ -466,11 +530,12 @@ If a cleanup check blocks, do not force-delete files. Reinstall the relevant plu
 | [Research - README](plugins/cc_research/README.md)            | Complete ML research workflow reference                                                   |
 | [Codemap-py - README](plugins/codemap-py/README.md)           | Complete dual-runtime structural-analysis reference                                       |
 | [Codex Rig - README](plugins/codex-rig/README.md)             | Complete Codex workflow, role, lifecycle, and calibration reference                       |
+| [OpenCode Rig - README](plugins/opencode-rig/README.md)       | Complete OpenCode install, tool, skill, agent, guardrail, and artifact reference          |
 | [Bridge_CC-Codex - README](plugins/bridge_cc-codex/README.md) | Complete bidirectional bridge verb, budget, and envelope reference                        |
 
 ## 🙏 Contributing
 
-The source of truth lives under `plugins/`, one directory per package. Keep a plugin README synchronized with every public skill, agent, rule, hook, flag, prerequisite, output, or limitation change. Keep benchmark task details in benchmark evidence, not product copy. Run the owning plugin's tests, package validation, Markdown formatter, and link/site checks before proposing a release.
+The source of truth lives under `plugins/`, one directory per package. Keep a plugin README synchronized with every public skill, agent, rule, hook, flag, prerequisite, output, or limitation change. Keep benchmark task details in benchmark evidence, not product copy. Run the owning plugin's tests, package validation, Markdown formatter, and link/site checks before proposing a release. The TypeScript packages under `plugins/opencode-rig/` run `npm run check` (typecheck, formatting, Vitest suites, version sources, and the published tarball contract) instead of pytest.
 
 Questions, bug reports, and design proposals are welcome in [GitHub Issues](https://github.com/Borda/AI-Rig/issues).
 

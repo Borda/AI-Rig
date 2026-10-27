@@ -1,0 +1,54 @@
+{
+  "schema": 1,
+  "agents": {
+    "rig-investigator": {
+      "description": "Read-only failure investigation and root-cause analysis",
+      "mode": "subagent",
+      "steps": 30,
+      "permissions": [
+        { "action": "edit", "resource": "*", "effect": "deny" },
+        { "action": "read", "resource": "*", "effect": "allow" },
+        { "action": "shell", "resource": "*", "effect": "ask" }
+      ]
+    },
+    "rig-implementer": {
+      "description": "Bounded implementation of an assigned change with focused tests",
+      "mode": "subagent",
+      "permissions": [
+        { "action": "read", "resource": "*", "effect": "allow" },
+        { "action": "edit", "resource": "*", "effect": "allow" },
+        { "action": "shell", "resource": "*", "effect": "ask" }
+      ]
+    },
+    "rig-reviewer": {
+      "description": "Independent read-only reviewer returning structured findings",
+      "mode": "subagent",
+      "steps": 25,
+      "permissions": [
+        { "action": "edit", "resource": "*", "effect": "deny" },
+        { "action": "read", "resource": "*", "effect": "allow" },
+        { "action": "shell", "resource": "*", "effect": "ask" }
+      ]
+    },
+    "rig-challenger": {
+      "description": "Adversarial read-only challenger that tries to falsify a change",
+      "mode": "subagent",
+      "steps": 25,
+      "permissions": [
+        { "action": "edit", "resource": "*", "effect": "deny" },
+        { "action": "read", "resource": "*", "effect": "allow" },
+        { "action": "shell", "resource": "*", "effect": "ask" }
+      ]
+    },
+    "rig-verifier": {
+      "description": "Read-only verifier that checks whether a fix closes its finding",
+      "mode": "subagent",
+      "steps": 25,
+      "permissions": [
+        { "action": "edit", "resource": "*", "effect": "deny" },
+        { "action": "read", "resource": "*", "effect": "allow" },
+        { "action": "shell", "resource": "*", "effect": "ask" }
+      ]
+    }
+  }
+}

@@ -1,0 +1,14 @@
+# Local package installs and generated environments — never versioned.
+node_modules/
+package-lock.json
+npm-shrinkwrap.json
+
+# Generated or local-only outputs.
+dist/
+coverage/
+.vitest/
+*.tsbuildinfo
+*.log
+
+# Plugin run artifacts created inside this package during local smoke tests.
+.opencode-rig/

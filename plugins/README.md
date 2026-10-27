@@ -1,6 +1,6 @@
 # 🧩 plugins/ — Plugin Authoring & Behavior Reference
 
-This document covers the six Claude Code plugins and their permission model. Codex Rig is a separate peer product with Codex-native packaging, lifecycle, and trust rules; see [`codex-rig/README.md`](codex-rig/README.md).
+This document covers the six Claude Code plugins and their permission model. Codex Rig is a separate peer product with Codex-native packaging, lifecycle, and trust rules; see [`codex-rig/README.md`](codex-rig/README.md). OpenCode Rig is a TypeScript npm package with its own host permission hook and no Claude allow list; see [`opencode-rig/README.md`](opencode-rig/README.md).
 
 Authoritative reference: critical behaviors, permission model, known limitations, and user expectations across all six plugins. Read before editing plugin files or diagnosing unexpected behavior.
 
@@ -15,6 +15,7 @@ Authoritative reference: critical behaviors, permission model, known limitations
 - [Test Coverage & CI](#-test-coverage--ci)
 - [Known Limitations](#-known-limitations)
 - [Settings Sync](#-settings-sync)
+- [OpenCode Rig](#-opencode-rig)
 
 </details>
 
@@ -148,7 +149,7 @@ ______________________________________________________________________
 
 ## 🧪 Test Coverage & CI
 
-Each plugin ships pytest coverage for its deterministic helpers and workflow contracts. Tests run on pull requests and pushes to `main` through `ci-tests.yml`, whose executable matrix currently covers 12 combinations: Ubuntu, macOS, and Windows across Python 3.10, 3.11, 3.12, and 3.13.
+Each plugin ships pytest coverage for its deterministic helpers and workflow contracts. Tests run on pull requests and pushes to `main` through `ci-tests.yml`, whose executable matrix currently covers 12 combinations: Ubuntu, macOS, and Windows across Python 3.10, 3.11, 3.12, and 3.13. OpenCode Rig is the exception: it is TypeScript and runs its own Vitest suites in a separate `opencode-rig` job on Ubuntu, macOS, and Windows across Node 20 and 24.
 
 <details>
 <summary><strong>Show coverage table</strong></summary>
@@ -190,3 +191,25 @@ Adding new allow entry:
 1. Edit `plugins/cc_foundry/.claude-plugin/permissions-allow.json`
 2. Run `/foundry:manage add perm "Bash(X:*)" "description" "use case"` OR manually update `~/.claude/settings.json` + `~/.claude/permissions-guide.md`
 3. Re-run `/foundry:setup` to sync symlinks and verify
+
+## ⚡ OpenCode Rig
+
+OpenCode Rig is the suite's only npm-distributed plugin: TypeScript sources, a Node CLI, and no Python runtime. It targets OpenCode `2.1.0+` and Node `20+`.
+
+### Trust boundary
+
+`opencode plugin add opencode-rig@<version>` installs exact registry bytes and adds the package to the OpenCode configuration. There is no Claude-style allow list and no setup skill: the plugin registers its own tools, skills, commands, and one permission hook when it loads.
+
+The permission hook runs after configured rules and can only escalate. It turns an allowed remote mutation, destructive operation, history rewrite, or ungranted local commit into an `ask`; it never changes a configured `ask` or `deny` into `allow`, and it never approves a push. A local grant recorded with `rig_git_grant` covers plain local commits only. The grant lives in `<git-common-dir>/opencode-rig-approval.json`, outside version control and shared by every worktree.
+
+### Installed agents
+
+OpenCode cannot register agents from a plugin package, so `opencode-rig init` writes five hash-stamped role cards to `~/.config/opencode/agents/`, or to `.opencode/agents/` with `--project`. `check` compares them with the package, `init` stops on an edited or unstamped file, `init --upgrade` replaces stamped files, and `remove` deletes only stamped files. Without installed agents, `rig_dispatch` injects the same role card into a child session.
+
+### Artifacts
+
+Runs live under `.opencode-rig/runs/<skill>/<run-id>/`: `run.json`, gate receipts and logs, `findings.json`, an append-only `loop.jsonl`, and a `report.md` written only on completion. `run.json` is authoritative; source drift, a failed gate, missing review, an open remediation finding, or a non-converged loop prevents the `completed` status.
+
+### Tests and hooks
+
+`npm run check` runs the typecheck, Prettier over the plugin tree, the Vitest suites, version-source agreement, and the `npm pack --dry-run` tarball contract. Repository pre-commit adds the same Prettier options, `node --check` over the CLI and scripts, a version-source check, and the package-contents check; the full `npm run check` stays the CI gate because it needs installed dependencies.

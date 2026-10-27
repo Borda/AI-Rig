@@ -33,7 +33,7 @@ This repository's own convention, not shipped policy: other projects commonly de
 
 - `.claude/settings.json`, `.claude/settings.local.json` — project Claude config
 - `.codex/` — project Codex config, skills, session policy (mirrored to `$CODEX_HOME` by `Makefile`, never edited there)
-- `plugins/*/{agents,skills,rules,hooks,bin}/` — plugin source
+- `plugins/*/{agents,skills,rules,hooks,bin,src,scripts,tests}/` — plugin source
 
 **Propagation to live cache** at `~/.claude/plugins/cache/`:
 
@@ -51,6 +51,7 @@ Generic rule: `foundry:rules/claude-config.md` §Lint/Format (command forms: `fo
 - Python minimum 3.10. Repository root is an environment anchor, not an installable package.
 - Bootstrap test tooling with `uv sync --only-group test`; benchmark-only dependencies use `uv sync --only-group bench`.
 - Run tests with `.venv/bin/python -m pytest <paths>` — **not** `uv run pytest` or a bare `pytest`; the project venv is the pinned environment. Start focused, broaden to the affected suite before completion.
+- `plugins/opencode-rig` is the Node exception: `make rig-check` runs its typecheck, Prettier, Vitest, version-source, and tarball gates, and `npx vitest run <paths>` is the focused form. It has no pytest module.
 - Broad local runs go parallel: `.venv/bin/python -m pytest -n 4 <paths>` (pytest-xdist, already in the test group). Measured on the full suite: 11556 tests in ~5 min at `-n 4`, several times faster than the same run serial. Use `-n 4` for any run wide enough to be worth waiting on; keep focused single-file runs serial, where worker startup costs more than it saves.
 - Coverage tracing is opt-in: CI passes the `--cov=<plugin>/bin` list (see `.github/workflows/ci-tests.yml`), and a local run measures only when you add `--cov=<path>` with `--cov-report=term-missing`. Keep sources out of `[tool.coverage]`: it also configures tests that start their own coverage run. Untraced is the default because tracing slows every test, most on Windows.
 - Reading a failure serially, and a pass-serial/fail-under-`-n` test being a real isolation defect: `foundry:rules/python-testing.md` §Parallel Runs (pytest-xdist).
