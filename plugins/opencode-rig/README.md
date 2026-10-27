@@ -1,6 +1,6 @@
 # opencode-rig
 
-Current version: `0.1.0`
+Current version: `0.1.1`
 
 Evidence-first delivery workflows for [OpenCode](https://opencode.ai): frozen plans, recorded gates, independent review, adversarial convergence, and Git guardrails that keep publication human-owned.
 
@@ -23,12 +23,25 @@ Evidence-first delivery workflows for [OpenCode](https://opencode.ai): frozen pl
 
 ## Install
 
+Published package, when available:
+
 ```bash
-opencode plugin add opencode-rig@0.1.0
-opencode-rig init
+opencode plugin add opencode-rig@0.1.1
+npx opencode-rig@0.1.1 init
 ```
 
-`opencode plugin add` installs the package and adds it to the global configuration. `init` writes the five `rig-*` role agents that OpenCode cannot register from a plugin package; they land in `~/.config/opencode/agents/`, or in `.opencode/agents/` with `--project`.
+Before the first npm release, install straight from this repository:
+
+```bash
+opencode plugin add 'github:Borda/AI-Rig#main::path:plugins/opencode-rig'
+node plugins/opencode-rig/bin/opencode-rig.mjs init   # or the path inside your clone
+```
+
+A branch specifier follows `main`; replace it with a full commit hash when the install must stay pinned. `opencode plugin add` is idempotent and writes the package specifier into `~/.config/opencode/opencode.json`. It caches the package for loading but does not link this package's CLI on `PATH`, so run `init` through `npx` for a published version or the checked-out script otherwise.
+
+`init` writes the five `rig-*` role agents that OpenCode cannot register from a plugin package; they land in `~/.config/opencode/agents/`, or in `.opencode/agents/` with `--project`. Add `--upgrade` to replace stamped agents after a package upgrade; without it, `init` and `check` stop on a locally edited file.
+
+The recommended registration is already checked in at the repository root as [`opencode.jsonc`](../../opencode.jsonc), and `make sync-opencode` performs the global registration plus `init` from pushed state.
 
 Add the plugin options to `opencode.jsonc` if you want anything other than the defaults:
 

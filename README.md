@@ -198,12 +198,23 @@ From a shell, quote `$codex-rig:...` and `$codemap-py:...` invocations so the sh
 
 Prerequisite: OpenCode `2.1.0` or newer and Node.js `20` or newer. OpenCode Rig is an npm package with no Python runtime.
 
+Published package, when available:
+
 ```bash
-opencode plugin add opencode-rig@0.1.0
-opencode-rig init
+opencode plugin add opencode-rig@0.1.1
+npx opencode-rig@0.1.1 init
 ```
 
-`opencode plugin add` installs the versioned package and adds it to the OpenCode configuration. `init` writes the five `rig-*` role agents that a plugin package cannot register: `~/.config/opencode/agents/` by default, or `.opencode/agents/` with `--project`. Plain local commits ask until you record an explicit grant with `rig_git_grant`; push and every other remote mutation keep asking.
+Before the first npm release, install the package straight from this repository:
+
+```bash
+opencode plugin add 'github:Borda/AI-Rig#main::path:plugins/opencode-rig'
+node plugins/opencode-rig/bin/opencode-rig.mjs init
+```
+
+This repository already does the first step: [`opencode.jsonc`](opencode.jsonc) registers the same Git specifier for the project. `make sync-opencode` registers it in the global config and installs the role agents, following the same pushed-remote rule as the other sync targets.
+
+`opencode plugin add` installs the package and adds it to the OpenCode configuration. `init` writes the five `rig-*` role agents that a plugin package cannot register: `~/.config/opencode/agents/` by default, or `.opencode/agents/` with `--project`. `opencode plugin add` does not link the package's CLI on `PATH`, so run `init` with `npx` or the checked-out script. Plain local commits ask until you record an explicit grant with `rig_git_grant`; push and every other remote mutation keep asking.
 
 Start a fresh session, then try:
 
@@ -409,10 +420,11 @@ Direct marketplace installation is the normal public path. A source checkout add
 Checkout synchronization requires [RTK](https://github.com/rtk-ai/rtk) installed and available on `PATH`. Run `make preflight-sync` to check availability without changing installations; every sync entrypoint performs this check before installation changes. The Foundry RTK hook remains optional for ordinary plugin use.
 
 ```bash
-make sync-all         # Claude + Codex scopes, plus standing Claude consent when operator proof exists (default target)
+make sync-all         # Claude + Codex + OpenCode scopes, plus standing Claude consent when operator proof exists (default target)
 make sync-all APPROVE_CLAUDE_CONSENT=0  # leave standing consent unchanged
 make sync-claude      # Claude scope only
 make sync-codex       # Codex scope only
+make sync-opencode    # OpenCode scope only: GitHub registration + role agents
 make sync-codex APPROVE_CLAUDE_CONSENT=1  # also approve standing Claude transfer consent
 make rig-check        # OpenCode Rig typecheck, formatting, tests, version, and package checks
 ```
@@ -428,7 +440,7 @@ Each external Claude marketplace and plugin add, update, uninstall, or install c
 <details>
 <summary><strong>Show repository layout, distribution paths, and session-only development</strong></summary>
 
-The checked-in `plugins/` directories are source of truth. Claude Code loads each plugin's manifest, agents, skills, hooks, and plugin instructions from its marketplace cache; setup projects only the documented namespaced rules and Foundry settings. Codex loads Codex Rig's namespaced skills and role cards from its package; direct installation leaves `.codex/config.toml`, personal policy, and global instructions untouched. Codemap-py is the shared structural product, not a runtime dependency that silently changes either host. OpenCode Rig is loaded from npm; `opencode-rig init` is the only step that writes role agents into the host configuration.
+The checked-in `plugins/` directories are source of truth. Claude Code loads each plugin's manifest, agents, skills, hooks, and plugin instructions from its marketplace cache; setup projects only the documented namespaced rules and Foundry settings. Codex loads Codex Rig's namespaced skills and role cards from its package; direct installation leaves `.codex/config.toml`, personal policy, and global instructions untouched. Codemap-py is the shared structural product, not a runtime dependency that silently changes either host. OpenCode Rig is loaded from its repository package specifier, registered either globally by `make sync-opencode` or by the checked-in `opencode.jsonc`; `opencode-rig init` is the only step that writes role agents into the host configuration.
 
 ```text
 AI-Rig/
@@ -443,6 +455,7 @@ AI-Rig/
 ├── .claude/README.md          # Claude host blueprint
 ├── .codex/README.md           # Codex host blueprint
 ├── .codex/config.toml         # project-local Codex defaults
+├── opencode.jsonc             # project registration of the OpenCode Rig package
 └── Makefile                   # deliberate pushed-remote restore entry point
 ```
 

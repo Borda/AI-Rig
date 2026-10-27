@@ -144,13 +144,14 @@ function install(flags) {
     const stamp = current ? readStamp(current) : undefined
 
     if (!exists) {
-      problems += 1
-      console.log(`MISSING  ${spec.name}`)
-      if (!checkOnly) {
-        writeFileSync(path, rendered.content, "utf8")
-        changed += 1
-        console.log(`         installed`)
+      if (checkOnly) {
+        problems += 1
+        console.log(`MISSING  ${spec.name}`)
+        continue
       }
+      writeFileSync(path, rendered.content, "utf8")
+      changed += 1
+      console.log(`INSTALL  ${spec.name}`)
       continue
     }
 

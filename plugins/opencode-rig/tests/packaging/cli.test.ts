@@ -5,6 +5,8 @@ import { describe, expect, it } from "vitest"
 import { PACKAGE_ROOT, Project } from "../helpers/harness.ts"
 
 const CLI = join(PACKAGE_ROOT, "bin", "opencode-rig.mjs")
+const PACKAGE_VERSION = JSON.parse(readFileSync(join(PACKAGE_ROOT, "package.json"), "utf8")).version as string
+const VERSION_PATTERN = PACKAGE_VERSION.replaceAll(".", "\\.")
 
 interface CliResult {
   status: number
@@ -31,7 +33,7 @@ describe("opencode-rig CLI", () => {
   it("prints its version", () => {
     const result = cli(new Project(), ["version"])
     expect(result.status).toBe(0)
-    expect(result.stdout.trim()).toBe("0.1.0")
+    expect(result.stdout.trim()).toBe(PACKAGE_VERSION)
   })
 
   it("prints help for no command and for --help", () => {
@@ -43,12 +45,14 @@ describe("opencode-rig CLI", () => {
   it("installs five role agents into a project", () => {
     const project = new Project()
     const result = cli(project, ["init", "--project"])
+    expect(result.status).toBe(0)
     expect(result.stdout).toMatch(/5 file\(s\) written/)
+    expect(result.stdout).toMatch(/0 problem\(s\)/)
 
     for (const name of ["rig-investigator", "rig-implementer", "rig-reviewer", "rig-challenger", "rig-verifier"]) {
       const content = readFileSync(project.path(`.opencode/agents/${name}.md`), "utf8")
       expect(content.startsWith("---\n")).toBe(true)
-      expect(content).toMatch(/<!-- opencode-rig: v0\.1\.0 sha256:[a-f0-9]{64} -->/)
+      expect(content).toMatch(new RegExp(`<!-- opencode-rig: v${VERSION_PATTERN} sha256:[a-f0-9]{64} -->`))
       expect(content).toMatch(/mode: subagent/)
     }
 

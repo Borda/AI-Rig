@@ -15,6 +15,7 @@ import {
   type RunRecord,
   type ScopeRecord,
 } from "../../src/run.ts"
+import { PLUGIN_VERSION } from "../../src/version.ts"
 import { Project } from "../helpers/harness.ts"
 
 function setup(project: Project, skill: string): { run: RunRecord; scope: ScopeRecord } {
@@ -68,7 +69,7 @@ describe("createRun", () => {
       run_id: run.run_id,
       skill: "rig-implement",
       status: "in_progress",
-      plugin_version: "0.1.0",
+      plugin_version: PLUGIN_VERSION,
     })
     expect(loaded.scope.digest).toBe(run.scope.digest)
   })

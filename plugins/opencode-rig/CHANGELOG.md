@@ -2,6 +2,11 @@
 
 All notable changes to this package are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.1.1
+
+- A first `init` now exits successfully after installing the five role agents. It previously counted every freshly written file as a problem, so a scripted install such as `make sync-opencode` stopped on a clean machine.
+- `init --check` still reports missing agents as problems, and repeating `init` remains a no-op.
+
 ## 0.1.0
 
 - Initial release of the OpenCode evidence-first workflow plugin: eight skills (`rig-plan`, `rig-investigate`, `rig-implement`, `rig-review`, `rig-remediate`, `rig-challenge`, `rig-release`, `rig-doctor`) with matching slash commands.

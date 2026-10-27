@@ -1,12 +1,14 @@
-# Install AI-Rig plugins for Claude Code and/or Codex from the GitHub remote.
+# Install AI-Rig plugins for Claude Code, Codex, and/or OpenCode from the GitHub remote.
 # Codex sync also mirrors this checkout's model defaults, workflow approval policy, and personal policy into $CODEX_HOME.
+# OpenCode sync registers the npm package from its repository subdirectory and installs its role agents.
 # Remote installs use pushed state — commit and push before running.
 #
 # Run from the project root:
-#   make sync-all            # Claude + Codex scopes, plus standing Claude consent from an operator terminal or BRIDGE_OPERATOR_TOKEN (default target)
+#   make sync-all            # Claude + Codex + OpenCode scopes, plus standing Claude consent from an operator terminal or BRIDGE_OPERATOR_TOKEN (default target)
 #   make sync-all APPROVE_CLAUDE_CONSENT=0  # leave standing consent unchanged
 #   make sync-claude         # Claude scope only
 #   make sync-codex          # Codex scope only
+#   make sync-opencode       # OpenCode scope only
 #   make preflight-sync     # check RTK availability without changing installations
 #   make sync-codex APPROVE_CLAUDE_CONSENT=1  # explicitly record standing Claude transfer consent
 #   make clear-all           # teardown both scopes
@@ -32,6 +34,13 @@ SHELL := /bin/bash
 
 PLUGINS := foundry oss develop research codemap-py bridge
 EXTERNAL_PLUGINS := caveman@caveman
+# OpenCode installs one package straight from the repository subdirectory. The package is
+# not on npm yet, so the Git specifier is the supported route; replace it with
+# `opencode-rig@<version>` in opencode.jsonc once the first release is published.
+OPENCODE_RIG_SPEC := github:Borda/AI-Rig\#main::path:plugins/opencode-rig
+OPENCODE_RIG_MANIFEST := https://raw.githubusercontent.com/Borda/AI-Rig/main/plugins/opencode-rig/package.json
+# `init` never overwrites an edited role agent; set this to 1 to replace stamped files.
+OPENCODE_RIG_UPGRADE_AGENTS ?= 0
 MARKETPLACE := $(shell jq -r '.name' .claude-plugin/marketplace.json)
 SETTINGS := $(HOME)/.claude/settings.json
 KNOWN_MARKETPLACES := $(HOME)/.claude/plugins/known_marketplaces.json
@@ -87,12 +96,13 @@ define stage
 printf '\n    ┌%s┐\n    │ %-58.58s │\n    └%s┘\n' '$(STAGE_RULE)' '$(1)' '$(STAGE_RULE)'
 endef
 
-.PHONY: sync-all sync-claude sync-codex clear-all clear-claude clear-codex \
+.PHONY: sync-all sync-claude sync-codex sync-opencode clear-all clear-claude clear-codex \
         migrate-marketplace uninstall-claude-plugins refresh-ext-marketplace \
         update-ext-plugins register-marketplace install-claude-plugins prune-claude-cache \
         verify-claude-plugins warn-stale-claude-sessions \
         install-codex-plugins sync-codex-home-policy sync-codex-bridge-consent \
-        banner-claude banner-codex preflight-sync \
+        register-opencode-rig install-opencode-agents \
+        banner-claude banner-codex banner-opencode preflight-sync \
         rig-install rig-typecheck rig-test rig-format rig-pack rig-check \
         prune-benchmarks prune-benchmarks-apply
 
@@ -115,6 +125,9 @@ banner-claude:
 banner-codex:
 	@$(call section,Codex sync - plugins + session policy)
 
+banner-opencode:
+	@$(call section,OpenCode sync - package from GitHub + role agents)
+
 preflight-sync:
 	@command -v rtk >/dev/null 2>&1 || { \
 		echo "RTK is required for sync. Install RTK and put rtk on PATH: https://github.com/rtk-ai/rtk" >&2; \
@@ -122,10 +135,11 @@ preflight-sync:
 	}
 
 sync-all: preflight-sync
-	@$(call workflow,Full sync - Claude + Codex scopes); \
+	@$(call workflow,Full sync - Claude + Codex + OpenCode scopes); \
 	status=0; \
 	$(MAKE) sync-claude || status=1; \
 	$(MAKE) sync-codex APPROVE_CLAUDE_CONSENT=$(APPROVE_CLAUDE_CONSENT) CONSENT_EXPLICIT=$(CONSENT_EXPLICIT) || status=1; \
+	$(MAKE) sync-opencode || status=1; \
 	if [ $$status -ne 0 ]; then \
 		echo "⚠ sync-all finished with failures — see output above"; \
 	else \
@@ -142,6 +156,42 @@ sync-codex: preflight-sync banner-codex
 	$(MAKE) sync-codex-home-policy && \
 	$(MAKE) sync-codex-bridge-consent && \
 	echo "✓ Codex sync complete"
+
+# The OpenCode registration belongs to opencode.json(c), not to this Makefile: `plugin add`
+# is idempotent and writes the Git specifier into the global config, so other checkouts load
+# it too. The checked-in project entry is what makes this repository use it without that.
+sync-opencode: preflight-sync banner-opencode
+	@$(MAKE) register-opencode-rig && \
+	$(MAKE) install-opencode-agents && \
+	echo "✓ OpenCode sync complete"
+
+register-opencode-rig:
+	@command -v opencode >/dev/null 2>&1 || { \
+		echo "OpenCode CLI is required for sync. Install it and put opencode on PATH: https://opencode.ai" >&2; \
+		exit 1; \
+	}; \
+	command -v curl >/dev/null 2>&1 || { \
+		echo "curl is required to verify the pushed package before registering it." >&2; \
+		exit 1; \
+	}; \
+	curl -fsS --max-time 20 "$(OPENCODE_RIG_MANIFEST)" >/dev/null || { \
+		echo "plugins/opencode-rig is not on main yet — commit and push it before syncing." >&2; \
+		exit 1; \
+	}; \
+	$(call stage,Register OpenCode Rig from GitHub); \
+	opencode plugin add "$(OPENCODE_RIG_SPEC)"
+
+# `plugin add` caches the package for loading but does not link its bin on PATH, so the
+# CLI runs from this checkout. Role cards are packaged assets: sync from pushed state
+# only (commit and push first), exactly like every other install target here.
+install-opencode-agents:
+	@command -v node >/dev/null 2>&1 || { \
+		echo "Node.js 20 or newer is required to install the role agents: https://nodejs.org" >&2; \
+		exit 1; \
+	}; \
+	args=""; \
+	if [ "$(OPENCODE_RIG_UPGRADE_AGENTS)" = "1" ]; then args="--upgrade"; fi; \
+	node "$(OPENCODE_RIG_DIR)/bin/opencode-rig.mjs" init $$args
 
 clear-all:
 	@$(call workflow,Full teardown - Claude + Codex scopes); \

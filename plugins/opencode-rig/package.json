@@ -1,6 +1,6 @@
 {
   "name": "opencode-rig",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Evidence-first workflows, independent review, quality gates, and Git guardrails for OpenCode.",
   "type": "module",
   "license": "Apache-2.0",

@@ -1,0 +1,8 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  // Registers OpenCode Rig for this repository. The package is not on npm yet, so the
+  // Git specifier is pinned to main; use `opencode-rig@<version>` after the first publish.
+  // `make sync-opencode` also registers the same specifier in the global config, so other
+  // checkouts load it without this project file; identical name and version load once.
+  "plugins": ["github:Borda/AI-Rig#main::path:plugins/opencode-rig"],
+}
