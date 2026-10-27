@@ -57,7 +57,8 @@ Use `delegation-lead` for 2+ separable workstreams when delegation beats context
 
 Classify each workstream from current task evidence before selecting role; task label, file count, or cheaper available model is not evidence of capability:
 
-- Bounded support with no behavior, API, runtime, release-blocking, architecture, or security authority: Luna. Curation also uses Luna/high, with decisions returned to the parent.
+- Bounded coordination, CI/CD, OSS triage, static analysis and curation: Luna. Curation uses Luna/high, with decisions returned to the parent.
+- Documentation: Terra/high. External evidence, including visual/browser inspection: Terra/medium. These roles retain their existing scope and controls; web evidence remains read-only.
 - Implementation, runtime behavior, tests, data/ML, performance, research method, adversarial challenge, or executable verification: Sol. Use medium for routine implementation, testing, and performance; high for data/research method and challenge.
 - Architecture or security advisory: select `solution-architect` or `security-auditor` only after the user expressly requests that advisory pass or selects the role; otherwise the Sol parent/session retains work.
 
@@ -65,11 +66,16 @@ Choose the least costly model and effort satisfying that classification while pr
 
 Current canonical assignments:
 
-- Luna: delegation coordination, documentation, CI/CD stewardship, web evidence, OSS triage, static analysis, and curation.
+- Luna: delegation coordination, CI/CD stewardship, OSS triage, static analysis, and curation.
+- Terra: documentation and external evidence; this is a user-directed rollout, with paired local quality/cost evaluation still pending.
 - Sol: normal parent, implementation, tests, runtime behavior, data/ML, performance, research method, adversarial challenge, and final executable verification.
 - Sol advisory roles: explicitly requested architecture or security advice only. The pass is read-only and bounded; it returns evidence and artifact, then the parent/session accepts any behavior-changing or executable result.
 
 Never downgrade architecture, security, runtime/API, release-blocking judgment, or executable acceptance to bounded Luna support. Never auto-select architecture/security advisory roles or escalate bounded support to Sol without a supported task boundary. Advisory-role selection requires user's explicit request or agent selection, not task labels or risk classification. Record that request/selection, bounded advisory question, and any escalation/de-escalation evidence in routing decision. Astra has no standing route. Avoid delegation when all need same context or parent can finish before handoff packaging/validation.
+
+For native task work that does not require a canonical specialist pass, use Terra/medium for a bounded known-cause fix or test draft with explicit owned files, a verified specification and executable acceptance checks. The Sol parent owns integration, runs the checks and accepts the result. Unknown causes, coupled changes, public API decisions, security, data-integrity judgment and release-blocking decisions stay Sol-owned. Simple source retrieval may use Luna/medium. Record the task boundary and requested/observed model and effort; if the host cannot provide the requested model, keep the task with the parent and disclose the fallback.
+
+These task choices never override canonical role-card pins, required independent coverage, execution mode, permission controls, or a skill's stricter ownership rules. A task worker cannot substitute for required `sw-engineer`, `qa-specialist`, or reviewer evidence. Route steps by work: `release` drafting uses `doc-scribe`; `implement` and `code-remediate` may use the bounded task route only where their execution contract permits; `research` may use Terra external evidence while `scientist` retains method and synthesis. Compare Terra and Sol on scientific work at equal effort before changing the scientist pin; max-effort benchmark results do not justify automatic max effort or a lower-effort capability claim.
 
 ### Model Concurrency Ceilings
 
@@ -78,6 +84,7 @@ Separate pool per model, bounding how many nodes of that model may be in flight 
 | Model | Ceiling | Note |
 | -- | -- | -- |
 | Luna | 20 | Cheap bounded-support tier — highest headroom |
+| Terra | 5 | Documentation, evidence and bounded task work; retain the existing implementation-tier ceiling |
 | Sol | 5 | Implementation/verification tier — matches Claude's `opus` ceiling in `claude-config.md` §Parallel Spawn Ceilings |
 | Astra | 2 | Has no standing route (above) — ceiling is precautionary, not an invitation to route work here |
 

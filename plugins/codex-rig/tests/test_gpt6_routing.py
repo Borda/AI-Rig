@@ -18,7 +18,7 @@ EXPECTED = {
     "curator": ("gpt-6-luna", "high"),
     "data-steward": ("gpt-6.1-sol", "high"),
     "delegation-lead": ("gpt-6-luna", "high"),
-    "doc-scribe": ("gpt-6-luna", "high"),
+    "doc-scribe": ("gpt-6.1-terra", "high"),
     "linting-expert": ("gpt-6-luna", "medium"),
     "oss-shepherd": ("gpt-6-luna", "high"),
     "qa-specialist": ("gpt-6.1-sol", "medium"),
@@ -27,7 +27,7 @@ EXPECTED = {
     "solution-architect": ("gpt-6.1-sol", "high"),
     "squeezer": ("gpt-6.1-sol", "medium"),
     "sw-engineer": ("gpt-6.1-sol", "medium"),
-    "web-explorer": ("gpt-6-luna", "medium"),
+    "web-explorer": ("gpt-6.1-terra", "medium"),
 }
 
 
@@ -302,7 +302,7 @@ def test_live_timeout_consumers_persist_windows_timeout_evidence(
     assert "detail\ntimeout after 7 seconds\n" in evidence
 
 
-@pytest.mark.parametrize("model", ["gpt-6-luna", "gpt-6-sol", "gpt-6.1-sol", "gpt-6-astra"])
+@pytest.mark.parametrize("model", ["gpt-6-luna", "gpt-6-sol", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-astra"])
 def test_live_cli_plans_supported_selected_route_with_unselected_archive(
     live_cli: tuple[Any, Path, Path], model: str, capsys: pytest.CaptureFixture[str]
 ) -> None:

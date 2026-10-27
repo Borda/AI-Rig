@@ -45,6 +45,8 @@ When runtime permissions show network access enabled and the helper's required p
 
 Before creating a run, normalize only the target and apply [PR State Preflight](../../shared/native-skill-contract.md#pr-state-preflight) for PR scope, including resumed PR work, bare PRs, `+review` and explicit PR report-backed requests. Use the retained canonical PR URL on resume. Stop immediately for a currently closed or merged PR before prior-report lookup or validation, a missing-review question, collector access, run creation or any other dependent workflow. Preserve existing artifacts and local work. The metadata reader owns entry permissions and classified failures; local report-only intake remains network-free.
 
+For resumed source drift before worktree delivery, apply the preflight's guarded-pull exception and [Source drift recovery](references/source-recovery.md#source-drift-recovery) before requiring the remote state read. Locate and verify the original PR branch's current checkout, attempt the permitted fast-forward-only pull, then finish PR State Preflight before resuming intake or fixes. A moved HEAD or metadata approval timeout alone does not justify asking for another message instead of attempting that recovery.
+
 Resolve the metadata reader's profile-or-approval route before the first read, and finish permitted reader permission recovery before reporting entry blocked. Use GitHub Read Execution to distinguish missing capability from an actual denial, then continue this same remediation after a successful state check.
 
 ### 01: Create Run Directory

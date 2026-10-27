@@ -39,11 +39,15 @@ Continues the template's reasoning-progress bullets; the trigger bullet that nam
 
 - Normal parent, implementation, verification, data, performance, research, and adversarial roles use `gpt-6.1-sol`; parent, implementation, verification, and performance start at `medium`, while data, research, and adversarial challenge use `high`.
 
-- Delegation, documentation, CI/CD, web evidence, OSS triage, static analysis, and curation use `gpt-6-luna`; static analysis and web evidence start at `medium`, the others at `high`.
+- Documentation uses `gpt-6.1-terra` at `high`; external evidence, including visual/browser inspection, uses `gpt-6.1-terra` at `medium`.
+
+- Delegation, CI/CD, OSS triage, static analysis, and curation use `gpt-6-luna`; static analysis starts at `medium`, the others at `high`.
+
+- Bounded native task work follows the task routing in `shared/specialist-orchestration.md` §"Delegation Lead And Model Routing": Terra/medium may draft known-cause fixes or tests under Sol verification; canonical specialist pins, skill-specific ownership and final acceptance remain unchanged. Simple retrieval may use Luna/medium when no specialist pass is required.
 
 - `security-auditor` and `solution-architect` use `gpt-6.1-sol` at `high`, only after explicit user request or agent selection; both remain read-only advisory passes.
 
-- Historical GPT-5.6 routing evidence remains archived, not proof of GPT-6 quality or cost. Astra has no standing role assignment.
+- Terra assignments are a user-directed rollout with paired local quality/cost evidence pending. Historical GPT-5.6 routing evidence remains archived, not proof of GPT-6 quality or cost. Astra has no standing role assignment.
 
 - `medium`: normal coding, verification, performance analysis, linting, and web-evidence work.
 
@@ -205,7 +209,7 @@ def compute_score(predictions: torch.Tensor, targets: torch.Tensor) -> torch.Ten
 
 ## Delegation default mode
 
-Use `delegation-lead` when task has multiple separable workstreams and routing across configured Luna and Sol roles expected to cut total cost or elapsed time after coordination overhead.
+Use `delegation-lead` when task has multiple separable workstreams and routing across configured Luna, Terra and Sol roles expected to cut total cost or elapsed time after coordination overhead.
 
 Stay in main agent when:
 

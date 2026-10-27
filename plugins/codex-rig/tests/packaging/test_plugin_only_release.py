@@ -45,7 +45,7 @@ EXPECTED_ROLES = {
     "curator": ("gpt-6-luna", "high", "workspace-write"),
     "data-steward": ("gpt-6.1-sol", "high", "workspace-write"),
     "delegation-lead": ("gpt-6-luna", "high", "workspace-write"),
-    "doc-scribe": ("gpt-6-luna", "high", "workspace-write"),
+    "doc-scribe": ("gpt-6.1-terra", "high", "workspace-write"),
     "linting-expert": ("gpt-6-luna", "medium", "workspace-write"),
     "oss-shepherd": ("gpt-6-luna", "high", "read-only"),
     "qa-specialist": ("gpt-6.1-sol", "medium", "workspace-write"),
@@ -54,7 +54,7 @@ EXPECTED_ROLES = {
     "solution-architect": ("gpt-6.1-sol", "high", "read-only"),
     "squeezer": ("gpt-6.1-sol", "medium", "read-only"),
     "sw-engineer": ("gpt-6.1-sol", "medium", "workspace-write"),
-    "web-explorer": ("gpt-6-luna", "medium", "read-only"),
+    "web-explorer": ("gpt-6.1-terra", "medium", "read-only"),
 }
 EXPECTED_KAGGLE_REFERENCES = {
     "composition.md",

@@ -232,7 +232,7 @@ def test_source_drift_recovery_preserves_commits_and_owns_safe_refresh() -> None
     for invariant in (
         "destination branch ref before checkout",
         "last recorded authorized revision",
-        "git pull --ff-only",
+        "git -C <verified-pr-worktree> pull --ff-only",
         "current PR metadata",
         "never pull the unrelated current branch",
         "Do not recollect over local remediation commits",
@@ -251,6 +251,29 @@ def test_source_drift_recovery_preserves_commits_and_owns_safe_refresh() -> None
     assert legacy.startswith("For a schema-1 legacy receipt")
     assert "[Source drift recovery](#source-drift-recovery) before `recover`" in legacy
     assert "retained PR metadata" in legacy
+
+
+@pytest.mark.installed_plugin
+def test_source_drift_pulls_verified_branch_before_remote_metadata_gate() -> None:
+    """Keep a GitHub metadata timeout from preventing an otherwise safe PR pull."""
+    recovery = SOURCE_RECOVERY.read_text(encoding="utf-8").split("## Source drift recovery", 1)[1]
+    recovery = recovery.split("\n## ", 1)[0]
+
+    assert "git worktree list --porcelain" in recovery
+    assert "git -C <verified-pr-worktree> pull --ff-only" in recovery
+    assert "Do not require fresh GitHub metadata or a preliminary PR-head fetch before this pull" in recovery
+    assert "After the pull succeeds, obtain current PR metadata" in recovery
+    assert "If the pull fails or is denied, stop this recovery route and escalate to the user" in recovery
+    assert "a metadata-check approval timeout is not a pull failure" in recovery
+    assert "no active writer" in recovery
+    assert "no local remediation commits" in recovery
+    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    entry = skill.split("## Workflow (Exact Commands)", 1)[1].split("### 01:", 1)[0]
+    assert "guarded-pull exception" in entry
+    preflight = (PLUGIN_ROOT / "shared/native-skill-contract.md").read_text(encoding="utf-8")
+    preflight = preflight.split("## PR State Preflight", 1)[1].split("\n## ", 1)[0]
+    assert "may precede the remote state read in step 2" in preflight
+    assert "before this preflight succeeds" in preflight
 
 
 @pytest.mark.installed_plugin

@@ -1,8 +1,8 @@
 {
   "accepted_at": "2026-07-11",
   "active_assignment_basis": {
-    "decided_at": "2026-09-30",
-    "decision": "explicit-user-rollover",
+    "decided_at": "2026-10-26",
+    "decision": "explicit-user-terra-rollout",
     "gpt6_quality_cost_evidence": "pending-paired-evaluation"
   },
   "active_assignments": {
@@ -21,12 +21,10 @@
           "cicd-steward",
           "curator",
           "delegation-lead",
-          "doc-scribe",
           "oss-shepherd"
         ],
         "medium": [
-          "linting-expert",
-          "web-explorer"
+          "linting-expert"
         ]
       },
       "gpt-6.1-sol": {
@@ -41,6 +39,14 @@
           "qa-specialist",
           "squeezer",
           "sw-engineer"
+        ]
+      },
+      "gpt-6.1-terra": {
+        "high": [
+          "doc-scribe"
+        ],
+        "medium": [
+          "web-explorer"
         ]
       }
     }

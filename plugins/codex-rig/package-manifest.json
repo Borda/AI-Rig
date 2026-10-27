@@ -28,7 +28,7 @@
     {
       "mode": "0644",
       "path": ".codex-plugin/plugin.json",
-      "sha256": "693d31ccd407dc51f2aa159e1200c0b549ae7a8f517d16fba223b766892e0dd8"
+      "sha256": "08f04304d902fc6d121f474e3fe05d7cb43c61c01434d5b19cd71b92ed378217"
     },
     {
       "mode": "0644",
@@ -38,7 +38,7 @@
     {
       "mode": "0644",
       "path": "CHANGELOG.md",
-      "sha256": "460e9e88a7ed30dcf36b1b136f7c9424b8cd199db11372a316f3a70c1af52b1f"
+      "sha256": "eaf14d125ceae026efc99dc3bc09dfc8a1c9a743514931cf0f14d335527cca38"
     },
     {
       "mode": "0644",
@@ -53,12 +53,12 @@
     {
       "mode": "0644",
       "path": "README.md",
-      "sha256": "c2c41043f53f4bf0b508335f234729bba02840fa8ee2f0bae823651a11da6b97"
+      "sha256": "eb3ccb5552cbe095c8bb030eddd52f6e1c20962dc9a3c23d9de3290439955042"
     },
     {
       "mode": "0644",
       "path": "assets/AGENTS.md",
-      "sha256": "105051e31640a7d2286bc6cb4f04e30db389f5447c78b830d82badf4a2ef8600"
+      "sha256": "b01127ba67d3dd2bf2f9dc1742e5f65b6538d5060322861e6c5753e37b095168"
     },
     {
       "mode": "0755",
@@ -88,7 +88,7 @@
     {
       "mode": "0644",
       "path": "roles/README.md",
-      "sha256": "bfb82692b96de2ba5b729e0659b245f3819ddcce7d839e0ee0ec128bc0fa6492"
+      "sha256": "2c291179beb5c4c8163355490f80f20dd5c258f12b2d98722acfa561992af6a5"
     },
     {
       "mode": "0644",
@@ -113,12 +113,12 @@
     {
       "mode": "0644",
       "path": "roles/delegation-lead/ROLE.md",
-      "sha256": "e1dc46cf1ab38fbcb2c97f2eb089ee9e69955b9db5a82dc405efa94166405b14"
+      "sha256": "521786578c2f5208605a7c4be6261458bf729acda2405f46041cf63138945a17"
     },
     {
       "mode": "0644",
       "path": "roles/doc-scribe/ROLE.md",
-      "sha256": "b1a19e0db2df94434e5a058012f01e0a0a284f9c4dd042068356cccde4661c1f"
+      "sha256": "0f411cd2f1d68131156a799616fe8aaac663e8045ade4fc28be1b818df30269b"
     },
     {
       "mode": "0644",
@@ -163,7 +163,7 @@
     {
       "mode": "0644",
       "path": "roles/web-explorer/ROLE.md",
-      "sha256": "9872a977f4b81cbc6d52e53175ad3aabe01be93ee5ff6f152480db361c2d0866"
+      "sha256": "1b712ea18b90f51763f1408f67095d20ffc4a24c113a4cc59672d20b7892dd7e"
     },
     {
       "mode": "0644",
@@ -173,7 +173,7 @@
     {
       "mode": "0644",
       "path": "runtime/calibration/accepted-route-evidence.json",
-      "sha256": "ad9ad752fc5c6cfe972c12d5e0873d8e5d3f48463aa0dc0637f5462d378b3702"
+      "sha256": "c78f53334f2516ccd3244d9cf091bedc0ea26683930b75bbaeb0543178bee652"
     },
     {
       "mode": "0644",
@@ -238,12 +238,12 @@
     {
       "mode": "0755",
       "path": "runtime/calibration/run.py",
-      "sha256": "891a53adcb37a66837b61e3053489efbfd8b9b1d358c00f4b7722b185a4855da"
+      "sha256": "38ab04fe63382610ec7c040fd562d4938d47a795611941d1998725bbbc8ef5a4"
     },
     {
       "mode": "0755",
       "path": "runtime/calibration/run_live_ab.py",
-      "sha256": "7134c1eeab528d35423024cc3a832d71accec472340b8c538cc365913daeea6b"
+      "sha256": "8c652f200ed21e0ea86bee54463456d8f0f59c8f73113761ed1ccf9676d83ccc"
     },
     {
       "mode": "0755",
@@ -458,7 +458,7 @@
     {
       "mode": "0644",
       "path": "shared/global-baseline-details.md",
-      "sha256": "9bdbfd8a52db863e84639562b5112c6e6d60064349ab299c21bfa60b2d3f0e7b"
+      "sha256": "cf7ad3e5bca0714d4aa3be04b3cb7d31fb3e7431be3213b8db432ac47e17087a"
     },
     {
       "mode": "0644",
@@ -468,12 +468,12 @@
     {
       "mode": "0644",
       "path": "shared/local_reviewer_wave.py",
-      "sha256": "cd3e5cb6754b6641094048b10dddfef30b7630d9291d771d44e11e175fef5a43"
+      "sha256": "2b9bd7ca5c196b2f535d790dcd81f3e9f11ab5128fa0fbadbe33d5dacde6ac6b"
     },
     {
       "mode": "0644",
       "path": "shared/native-skill-contract.md",
-      "sha256": "38ac5963f9181efb3c5b351d131496c9abbf110096d5aca62ca4449e68d5cd01"
+      "sha256": "abd4a76192ff0cce9fa978be074bb18d17587ace3e9999ecbf9601644af7b29a"
     },
     {
       "mode": "0644",
@@ -538,7 +538,7 @@
     {
       "mode": "0644",
       "path": "shared/specialist-orchestration.md",
-      "sha256": "eb34e9c98baba4390210d010a90d0e049af42a1c3dcfe28b045f3b2520992322"
+      "sha256": "3f51367d87a167d85de08a89528d8a3a5b12c40d2ba0dcda99975703a3ab6918"
     },
     {
       "mode": "0755",
@@ -638,7 +638,7 @@
     {
       "mode": "0644",
       "path": "skills/code-remediate/SKILL.md",
-      "sha256": "da928740ac427f945475b686b181a73c2a241363086f3cb2208d8c82aa4d1d78"
+      "sha256": "7dfc9c5f00c522b445dc1c64daf24fb9b586c9105f03b4bd534483e42045af49"
     },
     {
       "mode": "0644",
@@ -658,7 +658,7 @@
     {
       "mode": "0644",
       "path": "skills/code-remediate/references/source-recovery.md",
-      "sha256": "291d6c647713a3508669b24c1079f732e54ac98511e26844a1c9d67b20f19bca"
+      "sha256": "3b9bf185d03885ed1a77980e776308ad6ffdfb0b3825f5cf3fc2d01a34c2eedb"
     },
     {
       "mode": "0644",
@@ -668,12 +668,12 @@
     {
       "mode": "0644",
       "path": "skills/code-review/SKILL.md",
-      "sha256": "5b28cd333b37af34a9fe587f2a636f4224e9e6177c44324c382d5da72b4b0f4a"
+      "sha256": "8d0b682ff94d808910c3aa8eba41218f363ea51205c8ddcfa09e10f71a968a74"
     },
     {
       "mode": "0644",
       "path": "skills/code-review/local-reviewer-wave.md",
-      "sha256": "fd7ca3a787e84c528aec6c33ea586ad67de4e8fd7c5b34e165bb0de4660ac618"
+      "sha256": "d0795e001a1032ee1cf864635ff1680d736e008d6521696cf6ab1c53e6941961"
     },
     {
       "mode": "0644",
@@ -698,7 +698,7 @@
     {
       "mode": "0644",
       "path": "skills/code-review/references/validation-recovery.md",
-      "sha256": "ba48bab87c4f0c75acca170f2b56f0e592d87979d5d0c3e1d3c6024fe76a58f4"
+      "sha256": "97068591861447d38d6ffe7b2ea01279abe00d85962eb6baaff401bf6d562e77"
     },
     {
       "mode": "0644",
@@ -1118,7 +1118,7 @@
     {
       "mode": "0644",
       "path": "tests/packaging/test_plugin_only_release.py",
-      "sha256": "3024d0b530ae5809b3862f54d98437c456c361f7f776d9f43d09d702f1c3bdf6"
+      "sha256": "b3717929a3a8431320089858fec8a868861353ba2416e7ef2ce56fa27f949b51"
     },
     {
       "mode": "0644",
@@ -1193,7 +1193,7 @@
     {
       "mode": "0644",
       "path": "tests/remediate/test_remediation_branch.py",
-      "sha256": "e15eca01d29054cb5b8b520a950c80bb25143bbd77c5d11a75126325205fc1be"
+      "sha256": "fefbb7861d1fe550d850b9333e33eb421274cc2c95946de7b4aff1ab6d392fcd"
     },
     {
       "mode": "0644",
@@ -1343,7 +1343,7 @@
     {
       "mode": "0644",
       "path": "tests/review/test_local_reviewer_wave.py",
-      "sha256": "f885ec77e9643689465ac6ce525902e6b7f2b4d0e678b74ab3436c024e60f0b9"
+      "sha256": "399bdc40065dff0e6914e96b2e73017cdaba9985371f5ef2bba02dcd8f3f4e6d"
     },
     {
       "mode": "0644",
@@ -1378,7 +1378,7 @@
     {
       "mode": "0644",
       "path": "tests/review/test_review_candidate_recovery_contract.py",
-      "sha256": "3de6ce0656f6197a421db2886236156055016c2a2d76745ae601d2898029fbd4"
+      "sha256": "c5f4b92c458a9620d8ee664ff73dfcfc441cab95caef18f934845efcfc6a8a12"
     },
     {
       "mode": "0644",
@@ -1513,7 +1513,7 @@
     {
       "mode": "0644",
       "path": "tests/test_gpt6_routing.py",
-      "sha256": "5f4fca635af6a42b45207402339b6f25f5173411eec339a9d520241ce2e9fed2"
+      "sha256": "8050182b82eddc8ee7f65e548c3dafb307f8ef76fa43103a3f1b57997c78290c"
     },
     {
       "mode": "0644",
@@ -1632,18 +1632,18 @@
         "model_reasoning_effort": "high",
         "sandbox_mode": "workspace-write"
       },
-      "sha256": "e1dc46cf1ab38fbcb2c97f2eb089ee9e69955b9db5a82dc405efa94166405b14"
+      "sha256": "521786578c2f5208605a7c4be6261458bf729acda2405f46041cf63138945a17"
     },
     {
       "id": "doc-scribe",
       "path": "roles/doc-scribe/ROLE.md",
       "runtime": {
         "approval_policy": "on-request",
-        "model": "gpt-6-luna",
+        "model": "gpt-6.1-terra",
         "model_reasoning_effort": "high",
         "sandbox_mode": "workspace-write"
       },
-      "sha256": "b1a19e0db2df94434e5a058012f01e0a0a284f9c4dd042068356cccde4661c1f"
+      "sha256": "0f411cd2f1d68131156a799616fe8aaac663e8045ade4fc28be1b818df30269b"
     },
     {
       "id": "linting-expert",
@@ -1738,11 +1738,11 @@
       "path": "roles/web-explorer/ROLE.md",
       "runtime": {
         "approval_policy": "on-request",
-        "model": "gpt-6-luna",
+        "model": "gpt-6.1-terra",
         "model_reasoning_effort": "medium",
         "sandbox_mode": "read-only"
       },
-      "sha256": "9872a977f4b81cbc6d52e53175ad3aabe01be93ee5ff6f152480db361c2d0866"
+      "sha256": "1b712ea18b90f51763f1408f67095d20ffc4a24c113a4cc59672d20b7892dd7e"
     }
   ],
   "schema": 1,
@@ -1812,5 +1812,5 @@
       "path": "skills/sync/SKILL.md"
     }
   ],
-  "version": "0.40.0"
+  "version": "0.41.0"
 }

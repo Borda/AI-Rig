@@ -69,6 +69,8 @@ Scope questions choose their delivery route before printing context: a native co
 
 Authorized Git work includes local operations and remote reads such as clone, ls-remote, fetch, remote update, and guarded pull --ff-only under effective grants. Push and other remote service mutations remain prohibited; destructive local actions and PR-specific checkout protections retain their existing scope checks.
 
+Remediation source recovery locates a relocated PR branch and attempts a fast-forward-only pull in its verified clean checkout before requiring fresh GitHub metadata. A failed or denied pull escalates with its cause; a successful pull still requires current PR identity and revision verification before fixes resume.
+
 Remediation validates exact report-obligation occurrences before scope selection and frozen bucket contracts before edits. Small dependent multi-role plans can run sequentially with concrete fallback evidence. Final status counts derive from item rows; failed quality gates remain visible in a valid failed result.
 
 Review report recovery assesses retained evidence before treating a version mismatch as a blocker. Supported selection presentations 2–5 pass the same structural preflight. Deterministic derived artifacts are repaired automatically by their owning workflow, preserving original evidence; substantive gaps offer bounded report repair with missing coverage or a fresh review. Archives remain unverified until authentic evidence passes producer completion and consumer admission.
@@ -322,14 +324,14 @@ The code-remediate-local production route retains full lifecycle and rollback pr
 | `sw-engineer`        | Sol             | Primary production Python source reviewer; core implementation, APIs, types, and reproducible Python/ML code. |
 | `qa-specialist`      | Sol             | Regression proof, edge cases, test design, and executable acceptance.                                         |
 | `squeezer`           | Sol             | Profile-first performance, throughput, memory, and synchronization analysis.                                  |
-| `doc-scribe`         | Luna            | User documentation, docstrings, examples, changelogs, and migration guidance.                                 |
+| `doc-scribe`         | Terra           | User documentation, docstrings, examples, changelogs, and migration guidance.                                 |
 | `security-auditor`   | Sol             | Auth, permissions, secrets, deserialization, supply chain, and trust boundaries.                              |
 | `data-steward`       | Sol             | Dataset integrity, leakage, splits, augmentation, and reproducibility.                                        |
 | `cicd-steward`       | Luna            | CI/CD, matrices, caching, publishing, and flaky-run diagnosis.                                                |
 | `linting-expert`     | Luna            | Ruff, mypy, pre-commit, suppressions, and static-analysis policy.                                             |
 | `oss-shepherd`       | Luna            | OSS triage, SemVer, deprecations, contributor workflow, and release readiness.                                |
 | `solution-architect` | Sol             | System design, public contracts, coupling, compatibility, and migrations.                                     |
-| `web-explorer`       | Luna            | Current external documentation, changelogs, and migration evidence.                                           |
+| `web-explorer`       | Terra           | Current external documentation, changelogs, and migration evidence.                                           |
 | `curator`            | Luna            | Configuration quality, duplication, drift, stale references, and weak gates.                                  |
 | `challenger`         | Sol             | Adversarial stress tests for plans, risky changes, and no-finding conclusions.                                |
 | `scientist`          | Sol             | Papers, hypotheses, experimental methods, metrics, and ablations.                                             |
@@ -390,9 +392,12 @@ For every routed pass, Codex Rig records role ID, card hash, attempted and selec
 
 Use delegation only when two or more disjoint workstreams can proceed without duplicating same context. Typical high-value splits are implementation versus tests, architecture versus migration docs, or CI diagnosis versus static analysis.
 
-- GPT-6 Luna owns bounded coordination, documentation, CI/CD, web evidence, OSS, linting, and curation support.
-- GPT-6.1 Sol owns the normal parent, implementation, runtime behavior, tests, data/ML, performance, challenge, and executable verification. Routine parent/build/test/performance use medium; deeper review, data/research method, and challenge use high.
+- GPT-6 Luna owns bounded coordination, CI/CD, OSS, linting and curation support.
+- GPT-6.1 Terra owns documentation at high effort and external evidence, including read-only visual/browser inspection, at medium. This user-directed rollout retains pending local paired quality/cost evaluation.
+- GPT-6.1 Sol owns the normal parent, engineering/QA specialist passes, runtime judgment, data/ML, performance, challenge and executable verification. Routine parent/build/test/performance use medium; deeper review, data/research method, and challenge use high.
 - GPT-6.1 Sol architecture and security roles remain explicit-selection, read-only advisory passes. GPT-6 Astra has no standing route.
+
+Native bounded fix/test-drafting tasks may use Terra/medium under Sol integration and executable verification when the owning skill permits task delegation. Canonical specialist pins and required independent coverage remain mandatory; this route does not substitute for required engineering, QA or reviewer evidence. Simple non-specialist retrieval may remain Luna/medium. Skills route individual steps through the shared policy: release drafting uses Terra documentation, while research method and final acceptance remain Sol-owned. Local reviewer validation and evaluation planning recognize Terra without changing permission controls or running paid comparisons automatically.
 
 Select smallest capable tier from current task evidence: escalate only for mandatory boundary or observed lower-tier insufficiency, de-escalate only after evidenced scope split leaves bounded support, and never change tiers on cost alone. The canonical policy is [`shared/specialist-orchestration.md`](shared/specialist-orchestration.md#delegation-lead-and-model-routing).
 

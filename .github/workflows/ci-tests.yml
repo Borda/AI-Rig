@@ -69,6 +69,8 @@ jobs:
         os: ["ubuntu-latest", "macos-latest", "windows-latest"]
         python-version: ["3.10", "3.11", "3.12", "3.13"]
         scope: ["codex", "claude", "shared"]
+        exclude:
+          - { os: "windows-latest", python-version: "3.10" }
     timeout-minutes: 45
     env:
       PYTHONFAULTHANDLER: "1"

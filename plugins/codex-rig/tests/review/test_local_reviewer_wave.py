@@ -2514,6 +2514,20 @@ def test_retained_output_rejects_malformed_optional_assessment(tmp_path: Path) -
         _adapter().validate_evidence(plan_path, evidence_path, CANONICAL_ROLES)
 
 
+@pytest.mark.parametrize("role", ["doc-scribe", "web-explorer"])
+def test_local_reviewer_accepts_terra_role_evidence(tmp_path: Path, role: str) -> None:
+    """Admit Terra's canonical cards without dropping source or runtime bindings."""
+    plan_path, evidence_path = review_evidence_files(tmp_path, roles=(role,))
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    assert plan["nodes"][0]["model"] == "gpt-6.1-terra"
+    assert _adapter().validate_evidence(plan_path, evidence_path, CANONICAL_ROLES)["consumer_id"] == "code-review"
+
+    plan["nodes"][0]["model"] = "gpt-6.1-sol"
+    _write_json(plan_path, plan)
+    with pytest.raises(_adapter().ReviewRouteError, match="plan-role-settings-mismatch"):
+        _adapter().validate_evidence(plan_path, evidence_path, CANONICAL_ROLES)
+
+
 def test_local_reviewer_rejects_explicit_selection_advisors(tmp_path: Path) -> None:
     """Keep architecture and security advisors outside automatic review dispatch."""
     plan_path, evidence_path = review_evidence_files(tmp_path, roles=("security-auditor",))

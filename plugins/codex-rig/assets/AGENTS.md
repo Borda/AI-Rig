@@ -217,8 +217,8 @@ Choose specialist teams (architecture and public API, security, data pipeline, t
 ### Model escalation policy
 
 - Use Codex Rig's `delegation-lead` role card plus packaged role trigger/skip boundaries as detailed routing source.
-- Prefer lowest-cost capable model and effort: Luna for bounded support and curation, Sol for implementation/runtime/testing and final executable verification; architecture/security advisor roles require explicit selection.
-- Luna support roles hand executable verification, release-blocking, API/runtime-changing ownership to the Sol parent or owning specialist.
+- Prefer lowest-cost capable model and effort per `shared/global-baseline-details.md` §"Runtime effort policy"; architecture/security advisor roles require explicit selection.
+- Luna and Terra support roles hand executable verification, release-blocking, API/runtime-changing ownership to the Sol parent or owning specialist.
 - Observed reasoning-progress stalls permit one advisory capability escalation only under packaged `shared/specialist-orchestration.md` protocol.
 - Parallelize disjoint task-authorized implementation or independent evidence, tests, docs and profiling w/ clear ownership, acceptance and stop conditions; serialize shared/coupled work, protected mutations and parent acceptance. Specialized portable read-only routes retain their own admission and mutation restrictions.
 - Every delegated workstream must pass packaged handover gate before parent acceptance.

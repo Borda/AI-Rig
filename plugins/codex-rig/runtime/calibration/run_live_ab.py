@@ -57,7 +57,7 @@ from live_contract import Layout, build_prompt, candidate_findings, prompt_sha25
 #: Label of the normalized token-cost formula, recorded with each live record's estimated cost.
 PRICING_REF = "normalized-token-v1:uncached+0.1*cached+4*output"
 #: Models the live A/B runner accepts for a campaign; any other model is rejected.
-SUPPORTED_LIVE_MODELS = ("gpt-6-luna", "gpt-6-sol", "gpt-6.1-sol", "gpt-6-astra")
+SUPPORTED_LIVE_MODELS = ("gpt-6-luna", "gpt-6-sol", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-astra")
 
 
 class BoundedProcessResult(NamedTuple):

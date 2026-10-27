@@ -454,13 +454,23 @@ def test_prepared_branch_retains_next_commit_and_original_pr_push_destination(
     assert "head-mismatch" in stale.stderr
     _git(worktree, "checkout", "-b", "other-destination", committed)
     rejected = subprocess.run(
-        [sys.executable, str(HELPER), "check", "--receipt", str(receipt), "--expected-head", committed],
+        [
+            sys.executable,
+            "-X",
+            "faulthandler",
+            str(HELPER),
+            "check",
+            "--receipt",
+            str(receipt),
+            "--expected-head",
+            committed,
+        ],
         cwd=worktree,
         capture_output=True,
         text=True,
         check=False,
     )
-    assert rejected.returncode == 2
+    assert rejected.returncode == 2, rejected.stderr
     assert "branch-mismatch" in rejected.stderr
 
 

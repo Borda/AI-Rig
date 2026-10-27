@@ -10,11 +10,11 @@ scheduler, or provenance replacement.
 ## Scope
 
 This module reads schema-version-one historical plans for direct evidence inspection and requires schema-version-two
-plans for new dispatch to one to four canonical Sol or Luna roles. It validates all local inputs before process launch,
-including complete source/diff inclusion and bounded operator capacity evidence, discovers configured MCP server
-identifiers without retaining configuration content, restarts with every simple identifier disabled, and rejects any
-control, event, output, path, hash, or cleanup deviation. It never changes global configuration, home directories,
-credentials, plugin state, or a parent result artifact.
+plans for one to four canonical Sol, Terra or Luna roles. Before launch it validates complete source/diff inclusion and
+bounded operator capacity evidence, discovers configured MCP server identifiers without retaining configuration content,
+restarts with every simple identifier disabled, and rejects any control, event, output, path, hash, or cleanup
+deviation. It never changes global configuration, home directories, credentials, plugin state, or a parent result
+artifact.
 
 ## Usage
 
@@ -667,7 +667,10 @@ def _resolve_node_role(node: dict[str, object], roles_dir: Path, role_ids: set[s
     role_path = roles_dir / role_id / "ROLE.md"
     role_bytes = _read_bytes(role_path, "role-card")
     model, effort = _role_settings(role_bytes)
-    if model not in {"gpt-6.1-sol", "gpt-6-luna"} or role_id in {"security-auditor", "solution-architect"}:
+    if model not in {"gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-luna"} or role_id in {
+        "security-auditor",
+        "solution-architect",
+    }:
         raise ReviewRouteError("plan-role-model-unsupported")
     if node.get("model") != model or node.get("reasoning_effort") != effort:
         raise ReviewRouteError("plan-role-settings-mismatch")

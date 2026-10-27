@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.41.0
+
+- Route documentation and external-evidence specialists to GPT-6.1 Terra, support bounded Terra fix/test drafts under Sol verification, and admit Terra in local review and evaluation planning. Sol retains integration and final acceptance; local paired quality/cost evidence remains pending.
+- Remediation recovers moved PR branches with a guarded fast-forward-only pull before the fresh GitHub state check, escalating failed pulls instead of asking the user to resume merely because HEAD moved. Fresh PR verification remains required before fixes.
+
 ## 0.40.0
 
 - Audit adds `axis=consolidate` to discover overlapping instruction intent and propose keep, local sharpening or scope-preserving merges without editing sources. It accounts for skipped and blocked sections, preserves independent loading boundaries, and keeps consolidation advice separate from measured optimization acceptance.

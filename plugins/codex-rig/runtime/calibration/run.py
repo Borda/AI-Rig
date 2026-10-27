@@ -118,20 +118,22 @@ REVIEW_MODEL = "gpt-6.1-sol"
 CRITICAL_MODEL = "gpt-6.1-sol"
 #: Model identifier assigned to lighter support roles on the Luna tier.
 SUPPORT_MODEL = "gpt-6-luna"
+#: Model identifier assigned to documentation and external-evidence roles.
+TERRA_MODEL = "gpt-6.1-terra"
 #: Models a role file may declare; any other model value fails the role-model check.
-SUPPORTED_ACTIVE_MODELS = {DEFAULT_MODEL, CRITICAL_MODEL, SUPPORT_MODEL}
+SUPPORTED_ACTIVE_MODELS = {DEFAULT_MODEL, CRITICAL_MODEL, SUPPORT_MODEL, TERRA_MODEL}
 #: Roles expected to run on the support (Luna) model instead of the critical model.
 LUNA_MODEL_AGENTS = {
     "cicd-steward",
     "curator",
     "delegation-lead",
-    "doc-scribe",
     "linting-expert",
     "oss-shepherd",
-    "web-explorer",
 }
-#: Roles expected to run on the critical (Sol) model: every role not assigned to Luna.
-SOL_MODEL_AGENTS = set(AGENTS) - LUNA_MODEL_AGENTS
+#: Roles assigned to Terra while preserving their existing reasoning efforts.
+TERRA_MODEL_AGENTS = {"doc-scribe", "web-explorer"}
+#: Roles expected to run on Sol instead of either bounded-support model.
+SOL_MODEL_AGENTS = set(AGENTS) - LUNA_MODEL_AGENTS - TERRA_MODEL_AGENTS
 #: Roles expected to declare medium reasoning effort.
 MEDIUM_EFFORT_AGENTS = {"linting-expert", "qa-specialist", "squeezer", "sw-engineer", "web-explorer"}
 #: Roles expected to declare high reasoning effort: every role not listed as medium effort.
@@ -557,13 +559,13 @@ def check_accepted_route_evidence(run: CalibrationRun) -> None:
         ):
             raise ValueError("active parent or deep-review assignment mismatch")
         if payload.get("active_assignment_basis") != {
-            "decided_at": "2026-09-30",
-            "decision": "explicit-user-rollover",
+            "decided_at": "2026-10-26",
+            "decision": "explicit-user-terra-rollout",
             "gpt6_quality_cost_evidence": "pending-paired-evaluation",
         }:
             raise ValueError("active GPT-6 evidence status mismatch")
         role_groups = active.get("roles")
-        if not isinstance(role_groups, dict) or set(role_groups) != {CRITICAL_MODEL, SUPPORT_MODEL}:
+        if not isinstance(role_groups, dict) or set(role_groups) != SUPPORTED_ACTIVE_MODELS:
             raise ValueError("active role model groups mismatch")
         declared_active: dict[str, tuple[str, str]] = {}
         for model, efforts in role_groups.items():
@@ -825,6 +827,8 @@ def expected_agent_model(agent: str) -> str | None:
         return CRITICAL_MODEL
     if agent in LUNA_MODEL_AGENTS:
         return SUPPORT_MODEL
+    if agent in TERRA_MODEL_AGENTS:
+        return TERRA_MODEL
     return None
 
 
@@ -3556,7 +3560,7 @@ def build_recommendations(
         )
     if live_routes.get("status") == "insufficient-evidence" and not accepted_route_evidence:
         follow_up.append(
-            "Design and run a GPT-6 Sol/Luna model-and-effort paired campaign before claiming measured quality or cost acceptance."
+            "Design and run a GPT-6 Sol/Terra/Luna model-and-effort paired campaign before claiming measured quality or cost acceptance."
         )
     if int(freshness.get("missing_observed_at", 0) or 0) > 0:
         follow_up.append("Backfill missing observed_at timestamps in behavioral observations.")
