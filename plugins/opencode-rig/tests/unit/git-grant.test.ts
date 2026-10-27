@@ -1,4 +1,5 @@
 import { lstatSync, readFileSync, symlinkSync, writeFileSync } from "node:fs"
+import { dirname, basename } from "node:path"
 import { describe, expect, it } from "vitest"
 import { GRANT_FILENAME, grantPath, readGrant, revokeGrant, validateGrant, writeGrant } from "../../src/git-grant.ts"
 import { resolveGitCommonDir } from "../../src/paths.ts"
@@ -58,7 +59,8 @@ describe("readGrant", () => {
     const project = Project.withCommit()
     const path = grantPath(commonDir(project))
     writeGrant(commonDir(project))
-    expect(path.endsWith(`/${GRANT_FILENAME}`)).toBe(true)
+    expect(dirname(path)).toBe(commonDir(project))
+    expect(basename(path)).toBe(GRANT_FILENAME)
     expect(lstatSync(path).isFile()).toBe(true)
     expect(JSON.parse(readFileSync(path, "utf8")).scope).toBe("local-git")
   })

@@ -23,8 +23,10 @@ describe("plugin registration", () => {
       "rig_git_grant",
       "rig_loop",
     ])
-    expect(harness.skills).toHaveLength(8)
-    expect(harness.skills.map((skill) => skill.id)).toContain("rig-challenge")
+    expect(harness.skills).toHaveLength(11)
+    expect(harness.skills.map((skill) => skill.id)).toEqual(
+      expect.arrayContaining(["rig-challenge", "rig-research", "rig-distill", "rig-optimize"]),
+    )
     expect(harness.skills.every((skill) => typeof skill.content === "string" && skill.content.length > 0)).toBe(true)
     expect(harness.skills.every((skill) => !skill.content.startsWith("---"))).toBe(true)
     expect(harness.commands.map((command) => command.name).sort()).toEqual(
@@ -259,7 +261,45 @@ describe("rig_findings", () => {
     const { harness } = await reviewHarness()
     await expect(
       harness.call("rig_findings", { action: "write", coverage: ["src"], reviewer: "rig-reviewer", findings: [] }),
-    ).rejects.toThrow(/requires axes/)
+    ).rejects.toThrow(/requires axes|aspects/)
+  })
+
+  it("requires correctness axis for rig-review", async () => {
+    const { harness } = await reviewHarness()
+    await expect(
+      harness.call("rig_findings", {
+        action: "write",
+        axes: ["security"],
+        coverage: ["src"],
+        reviewer: "rig-reviewer",
+        findings: [],
+      }),
+    ).rejects.toThrow(/correctness/)
+  })
+
+  it("accepts aspects as alias for axes", async () => {
+    const { harness } = await reviewHarness()
+    const result = await harness.call("rig_findings", {
+      action: "write",
+      aspects: ["Correctness", "tests"],
+      coverage: ["src/a.ts"],
+      reviewer: "rig-reviewer",
+      findings: [],
+    })
+    expect(result.content).toMatch(/axes: correctness, tests/)
+  })
+
+  it("rejects unknown axis/aspect", async () => {
+    const { harness } = await reviewHarness()
+    await expect(
+      harness.call("rig_findings", {
+        action: "write",
+        axes: ["correctness", "typo"],
+        coverage: ["src"],
+        reviewer: "rig-reviewer",
+        findings: [],
+      }),
+    ).rejects.toThrow(/unknown review axis/)
   })
 
   it("requires a reviewer for a rig-review write", async () => {
@@ -534,6 +574,14 @@ describe("rig_doctor", () => {
     expect(report.content).toContain("version sources agree")
     expect(report.content).toContain("local Git grant")
     expect(report.content).toContain("artifact root is gitignored")
+  })
+
+  it("curates the shipped skill and role cards on request", async () => {
+    const project = changedProject()
+    const harness = await createHarness(project)
+    const report = await harness.call("rig_doctor", { action: "assets" })
+    expect(report.metadata.ok).toBe(true)
+    expect(report.content).toMatch(/assets: 11 skills, 7 role agents, \d+ repeated prose line\(s\)/)
   })
 
   it("requires confirmation before removing stale runs", async () => {

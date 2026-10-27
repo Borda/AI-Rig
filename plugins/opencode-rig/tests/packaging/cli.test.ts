@@ -42,14 +42,22 @@ describe("opencode-rig CLI", () => {
     expect(cli(project, ["--help"]).stdout).toContain("print-config")
   })
 
-  it("installs five role agents into a project", () => {
+  it("installs seven role agents into a project", () => {
     const project = new Project()
     const result = cli(project, ["init", "--project"])
     expect(result.status).toBe(0)
-    expect(result.stdout).toMatch(/5 file\(s\) written/)
+    expect(result.stdout).toMatch(/7 file\(s\) written/)
     expect(result.stdout).toMatch(/0 problem\(s\)/)
 
-    for (const name of ["rig-investigator", "rig-implementer", "rig-reviewer", "rig-challenger", "rig-verifier"]) {
+    for (const name of [
+      "rig-investigator",
+      "rig-implementer",
+      "rig-reviewer",
+      "rig-challenger",
+      "rig-verifier",
+      "rig-scientist",
+      "rig-optimizer",
+    ]) {
       const content = readFileSync(project.path(`.opencode/agents/${name}.md`), "utf8")
       expect(content.startsWith("---\n")).toBe(true)
       expect(content).toMatch(new RegExp(`<!-- opencode-rig: v${VERSION_PATTERN} sha256:[a-f0-9]{64} -->`))
@@ -105,7 +113,7 @@ describe("opencode-rig CLI", () => {
     project.write(".opencode/agents/custom.md", "# custom\n")
 
     const result = cli(project, ["remove", "--project"])
-    expect(result.stdout).toMatch(/5 removed, 1 kept/)
+    expect(result.stdout).toMatch(/7 removed, 1 kept/)
     expect(project.exists(".opencode/agents/rig-reviewer.md")).toBe(false)
     expect(project.exists(".opencode/agents/custom.md")).toBe(true)
     expect(cli(project, ["remove", "--project"]).status).toBe(0)
@@ -129,6 +137,17 @@ describe("opencode-rig CLI", () => {
     const result = cli(project, ["doctor", "--project"])
     expect(result.stdout).toContain("opencode-rig doctor: healthy")
     expect(result.status).toBe(0)
+  })
+
+  it("curates the shipped skill and role cards with doctor --assets", () => {
+    const project = new Project()
+    project.git("init", "-q")
+    project.write(".gitignore", ".opencode-rig/\n")
+    cli(project, ["init", "--project"])
+    const result = cli(project, ["doctor", "--project", "--assets"])
+    expect(result.status).toBe(0)
+    expect(result.stdout).toContain("opencode-rig doctor: healthy")
+    expect(result.stdout).toMatch(/assets: 11 skills, 7 role agents, \d+ repeated prose line\(s\)/)
   })
 
   it("fails doctor when the agents are missing", () => {

@@ -2,6 +2,7 @@ import { existsSync } from "node:fs"
 import { describe, expect, it } from "vitest"
 import { collectScope } from "../../src/evidence.ts"
 import { resolvePaths } from "../../src/paths.ts"
+import { SKILLS } from "../../src/skill-manifest.ts"
 import {
   createRun,
   finalizeRun,
@@ -98,18 +99,16 @@ describe("createRun", () => {
 
 describe("requirementsFor", () => {
   it("defines a contract for every shipped skill", () => {
-    for (const skill of [
-      "rig-plan",
-      "rig-investigate",
-      "rig-implement",
-      "rig-review",
-      "rig-remediate",
-      "rig-challenge",
-      "rig-release",
-      "rig-doctor",
-    ]) {
-      expect(requirementsFor(skill)).toBeTruthy()
+    expect(SKILLS).toHaveLength(11)
+    for (const { id } of SKILLS) {
+      expect(requirementsFor(id)).toBeTruthy()
     }
+  })
+
+  it("gates optimize on gates and review, and keeps distill advisory", () => {
+    expect(requirementsFor("rig-optimize")).toMatchObject({ gates: true, review: true, loop: false })
+    expect(requirementsFor("rig-research")).toMatchObject({ gates: false, review: true })
+    expect(requirementsFor("rig-distill")).toMatchObject({ gates: false, review: false, findings: false })
   })
 
   it("rejects an unknown skill", () => {

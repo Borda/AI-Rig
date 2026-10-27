@@ -15,7 +15,7 @@ description: Run a bounded adversarial convergence loop with independent challen
 ## Workflow
 
 1. **Freeze the baseline.** Start a run with `rig_evidence` (`skill: "rig-challenge"`) and record the exact source and acceptance criteria.
-2. **Round 1 — independent challenge.** Dispatch `rig-challenger` with the complete source and criteria. The challenger returns structured findings: invariant, counterexample, severity, and file reference. The parent does not challenge its own work.
+2. **Round 1 — independent challenge.** Dispatch `rig-challenger` with the complete source and criteria. The challenger returns structured findings: invariant, counterexample, severity, and file reference. The parent does not challenge its own work. Ensure correctness is covered (the challenger must examine logic/control flow).
 3. **Validate.** Check each finding against the source. Record a stable signature: file plus normalized invariant. Use `rig_loop` with `action: "start"` and `reviewer` naming the independent challenger; the baseline round's weighted total is `W0`.
 4. **Fix.** Address validated findings only. One writer per path. Refresh the run scope with `rig_evidence` (`action: "refresh"`) after the last fix, then run configured gates.
 5. **Re-assess.** A fresh challenger receives the prior findings, the complete required source, and the changed paths. It marks each signature `verified-fixed` or `rejected` and may report new signatures.

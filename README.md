@@ -46,7 +46,7 @@ Choose the smallest plugin that solves the job in front of you. Every package in
 | Plan and run literature-grounded ML experiments                         | [🔬 `research`](plugins/cc_research/README.md)            | 2 research agents and 10 skills for planning, judging, running, verifying, ablation, retrospectives, and Kaggle notebooks |
 | Answer import, caller, coupling, rename, and affected-test questions    | [🗂️ `codemap-py`](plugins/codemap-py/README.md)           | The same 6 structural-analysis skills for Claude Code and Codex, backed by a local static Python index                    |
 | Use evidence-first workflows and specialist role cards in Codex         | [🤖 `Codex Rig`](plugins/codex-rig/README.md)             | 13 workflow skills, 1 lifecycle manager, 15 role cards, shared gates, calibration, and artifact contracts                 |
-| Run evidence-first workflows, gates, and Git guardrails in OpenCode     | [⚡ `OpenCode Rig`](plugins/opencode-rig/README.md)       | 8 workflow skills, 7 evidence tools, 5 role agents, an adversarial loop, and an npm-installable TypeScript package        |
+| Run evidence-first workflows, gates, and Git guardrails in OpenCode     | [⚡ `OpenCode Rig`](plugins/opencode-rig/README.md)       | 11 workflow skills, 7 evidence tools, 7 role agents, an adversarial loop, and an npm-installable TypeScript package       |
 | Hand bounded implement, advise, and review calls between the two hosts  | [🌉 `bridge_CC-Codex`](plugins/bridge_cc-codex/README.md) | 3 bridge verbs in both directions with explicit models, effort, budgets, compact envelopes, and recursion safety          |
 
 If you use Claude Code, read the [Claude guide](.claude/README.md). If you use Codex, read the [Codex guide](.codex/README.md). OpenCode installs the npm package directly; its [README](plugins/opencode-rig/README.md) is the host guide.
@@ -82,7 +82,7 @@ This is the literal shipped skill inventory. The host guides list every agent, r
 | 🔬 Research        | `/research:topic`, `/research:plan`, `/research:judge`, `/research:run`, `/research:sweep`, `/research:verify`, `/research:fortify`, `/research:retro`, `/research:kaggle`, `/research:setup`                                                                                                                                       |
 | 🗂️ Codemap-py      | `scan-codebase`, `query-code`, `test-impact`, `rename-refs`, `integration`, `debrief-coding`, namespaced as `/codemap-py:...` in Claude Code and `$codemap-py:...` in Codex                                                                                                                                                         |
 | 🤖 Codex Rig       | `$codex-rig:assess`, `$codex-rig:audit`, `$codex-rig:calibrate`, `$codex-rig:code-remediate`, `$codex-rig:code-review`, `$codex-rig:implement`, `$codex-rig:investigate`, `$codex-rig:kaggle`, `$codex-rig:manage`, `$codex-rig:optimize`, `$codex-rig:release`, `$codex-rig:research`, `$codex-rig:sync`, `$codex-rig:agent-shims` |
-| ⚡ OpenCode Rig    | `/rig-plan`, `/rig-investigate`, `/rig-implement`, `/rig-review`, `/rig-remediate`, `/rig-challenge`, `/rig-release`, `/rig-doctor`                                                                                                                                                                                                 |
+| ⚡ OpenCode Rig    | `/rig-plan`, `/rig-investigate`, `/rig-research`, `/rig-implement`, `/rig-review`, `/rig-remediate`, `/rig-challenge`, `/rig-optimize`, `/rig-distill`, `/rig-release`, `/rig-doctor`                                                                                                                                               |
 | 🌉 bridge_CC-Codex | `implement`, `advise`, `review`, `setup`, plus Claude-side detached-job `status`, `result`, `cancel`; namespaced as `/bridge:...` in Claude Code and `$bridge:...` in Codex                                                                                                                                                         |
 
 </details>
@@ -92,7 +92,7 @@ This is the literal shipped skill inventory. The host guides list every agent, r
 <details>
 <summary><strong>Show the complete two-runtime inventory and design boundary</strong></summary>
 
-The installed-all Claude surface is 16 agents across Foundry (10), OSS (4), and Research (2), plus 46 skills across Foundry (11), OSS (5), Develop (7), Research (10), Codemap-py (6), and bridge_CC-Codex (7). It also includes 16 namespaced rules (13 Foundry rules plus one quality-gates rule for each companion that ships rules) and host hooks whose exact active-module counts are maintained in the [Claude guide](.claude/README.md). Codex Rig adds 14 skills, 15 role cards, shared gates, calibration, and one optional read-only health hook; Codemap-py contributes six skills to both runtimes and no Codex hook manifest; the bridge_CC-Codex plugin contributes four Codex-side skills and the reverse MCP transport. OpenCode Rig adds eight skills, seven evidence tools, and five installed role agents as a TypeScript npm package.
+The installed-all Claude surface is 16 agents across Foundry (10), OSS (4), and Research (2), plus 46 skills across Foundry (11), OSS (5), Develop (7), Research (10), Codemap-py (6), and bridge_CC-Codex (7). It also includes 16 namespaced rules (13 Foundry rules plus one quality-gates rule for each companion that ships rules) and host hooks whose exact active-module counts are maintained in the [Claude guide](.claude/README.md). Codex Rig adds 14 skills, 15 role cards, shared gates, calibration, and one optional read-only health hook; Codemap-py contributes six skills to both runtimes and no Codex hook manifest; the bridge_CC-Codex plugin contributes four Codex-side skills and the reverse MCP transport. OpenCode Rig adds eleven skills, seven evidence tools, and seven installed role agents as a TypeScript npm package.
 
 Specialist roles are requested by name or auto-selected. Claude agents dispatch as `<plugin>:<agent>`; the Codex column marks roles that also ship as a Codex Rig role card.
 
@@ -201,8 +201,8 @@ Prerequisite: OpenCode `2.1.0` or newer and Node.js `20` or newer. OpenCode Rig 
 Published package, when available:
 
 ```bash
-opencode plugin add opencode-rig@0.1.1
-npx opencode-rig@0.1.1 init
+opencode plugin add opencode-rig@0.2.0
+npx opencode-rig@0.2.0 init
 ```
 
 Before the first npm release, install the package straight from this repository:
@@ -214,15 +214,18 @@ node plugins/opencode-rig/bin/opencode-rig.mjs init
 
 This repository already does the first step: [`opencode.jsonc`](opencode.jsonc) registers the same Git specifier for the project. `make sync-opencode` registers it in the global config and installs the role agents, following the same pushed-remote rule as the other sync targets.
 
-`opencode plugin add` installs the package and adds it to the OpenCode configuration. `init` writes the five `rig-*` role agents that a plugin package cannot register: `~/.config/opencode/agents/` by default, or `.opencode/agents/` with `--project`. `opencode plugin add` does not link the package's CLI on `PATH`, so run `init` with `npx` or the checked-out script. Plain local commits ask until you record an explicit grant with `rig_git_grant`; push and every other remote mutation keep asking.
+`opencode plugin add` installs the package and adds it to the OpenCode configuration. `init` writes the seven `rig-*` role agents that a plugin package cannot register: `~/.config/opencode/agents/` by default, or `.opencode/agents/` with `--project`. `opencode plugin add` does not link the package's CLI on `PATH`, so run `init` with `npx` or the checked-out script. Plain local commits ask until you record an explicit grant with `rig_git_grant`; push and every other remote mutation keep asking.
 
 Start a fresh session, then try:
 
 ```text
+/rig-research compare the two caching designs against the official docs
 /rig-investigate find the root cause of the failing test
 /rig-implement apply the verified fix
 /rig-review review the current diff
 /rig-challenge challenge the change and iterate to convergence
+/rig-optimize cut the indexing benchmark median by 20%
+/rig-distill which failures kept repeating across the last runs?
 ```
 
 Ignore the run artifact directory in projects that use the plugin; it holds scope digests, gate logs, findings, and reports:
@@ -273,9 +276,9 @@ The plugin does not claim persistent named-agent registration, silently enable n
 
 ### ⚡ OpenCode Rig: keep OpenCode delivery evidence-first
 
-OpenCode Rig ports the suite's evidence discipline to OpenCode without the DAG, freeze, and approval machinery. Each run binds its scope bytes, records real gate exit codes, requires a named independent reviewer, and fails closed on source drift. Plan, investigate, implement, review, remediate, challenge, release-readiness, and doctor workflows share those contracts.
+OpenCode Rig ports the suite's evidence discipline to OpenCode without the DAG, freeze, and approval machinery. Each run binds its scope bytes, records real gate exit codes, requires a named independent reviewer, and fails closed on source drift. Plan, investigate, research, implement, review, remediate, challenge, optimize, distill, release-readiness, and doctor workflows share those contracts.
 
-The package is TypeScript distributed through npm. It cannot register agents by itself, so `opencode-rig init` installs five hash-stamped role agents and refuses to overwrite one you edited. The permission hook escalates remote mutations, destructive operations, history rewrites, and ungranted local commits, but never downgrades a configured `ask` and never publishes anything. [Read the OpenCode Rig reference.](plugins/opencode-rig/README.md)
+The package is TypeScript distributed through npm. It cannot register agents by itself, so `opencode-rig init` installs seven hash-stamped role agents and refuses to overwrite one you edited. Research claims are graded against their sources by `rig-scientist`; benchmark rounds are recomputed by `rig-optimizer`; `rig-distill` proposes assets from recorded runs without installing them; `rig-release` drafts notes, migration steps, and contributor replies without posting. The permission hook escalates remote mutations, destructive operations, history rewrites, and ungranted local commits, but never downgrades a configured `ask` and never publishes anything. [Read the OpenCode Rig reference.](plugins/opencode-rig/README.md)
 
 ## 🗺️ Practical workflow sequences
 

@@ -8,7 +8,7 @@ AI-Rig packages recurring Python, ML, and open-source work as explicit Claude Co
 
 The plugins are used daily in active development and maintenance, which gives their workflow contracts and recovery paths sustained operational exercise. Foundry and Codex Rig calibration use synthetic instruction cases; operational use and synthetic calibration are complementary strengths, not guarantees that every model output is correct.
 
-Seven independently installable packages serve two runtimes: six marketplace plugins for Claude Code, three for Codex, with Codemap-py and bridge_CC-Codex shared by both. Install the smallest set that solves the current task.
+Eight packages serve three runtimes: six marketplace plugins for Claude Code, three for Codex, and one npm plugin for OpenCode, with Codemap-py and bridge_CC-Codex shared by two hosts each. Install the smallest set that solves the current task.
 
 ## Choose a package
 
@@ -20,19 +20,21 @@ Seven independently installable packages serve two runtimes: six marketplace plu
 | Ground and run reviewable ML experiments                                       | [🔬 Research](cc_research.md)            | 10 skills and 2 agents covering literature, design, execution, verification, ablation, retrospective, and Kaggle work |
 | Answer structural Python questions from a local index                          | [🗂️ Codemap-py](codemap-py.md)           | 6 skills shared by Claude Code and Codex                                                                              |
 | Run evidence-first engineering workflows in Codex                              | [🤖 Codex Rig](codex-rig.md)             | 13 workflow skills, 1 lifecycle manager, and 15 role cards                                                            |
+| Run evidence-first workflows, gates, and Git guardrails in OpenCode            | [⚡ OpenCode Rig](opencode-rig.md)       | 11 workflow skills, 7 evidence tools, 7 role agents, an adversarial loop, and an npm-installable TypeScript package   |
 | Hand bounded implement, advise, and review calls between Claude Code and Codex | [🌉 bridge_CC-Codex](bridge_cc-codex.md) | 3 bridge verbs in both directions with explicit models, budgets, compact envelopes, and recursion safety              |
 
 ## Complete skill inventory
 
-| Package            | Shipped skills                                                                                                                                                            |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 🏭 Foundry         | `setup`, `audit`, `calibrate`, `manage`, `brainstorm`, `investigate`, `profile`, `distill`, `session`, `create`, `humanizer`                                              |
-| 🌱 OSS             | `analyse`, `review`, `resolve`, `release`, `setup`                                                                                                                        |
-| 🛠️ Develop         | `plan`, `feature`, `fix`, `refactor`, `debug`, `review`, `setup`                                                                                                          |
-| 🔬 Research        | `topic`, `plan`, `judge`, `run`, `sweep`, `verify`, `fortify`, `retro`, `kaggle`, `setup`                                                                                 |
-| 🗂️ Codemap-py      | `scan-codebase`, `query-code`, `test-impact`, `rename-refs`, `integration`, `debrief-coding`                                                                              |
-| 🤖 Codex Rig       | `assess`, `audit`, `calibrate`, `code-remediate`, `code-review`, `implement`, `investigate`, `kaggle`, `manage`, `optimize`, `release`, `research`, `sync`, `agent-shims` |
-| 🌉 bridge_CC-Codex | `implement`, `advise`, `review`, `setup`, plus Claude-side detached-job `status`, `result`, `cancel`                                                                      |
+| Package            | Shipped skills                                                                                                                                                                        |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 🏭 Foundry         | `setup`, `audit`, `calibrate`, `manage`, `brainstorm`, `investigate`, `profile`, `distill`, `session`, `create`, `humanizer`                                                          |
+| 🌱 OSS             | `analyse`, `review`, `resolve`, `release`, `setup`                                                                                                                                    |
+| 🛠️ Develop         | `plan`, `feature`, `fix`, `refactor`, `debug`, `review`, `setup`                                                                                                                      |
+| 🔬 Research        | `topic`, `plan`, `judge`, `run`, `sweep`, `verify`, `fortify`, `retro`, `kaggle`, `setup`                                                                                             |
+| 🗂️ Codemap-py      | `scan-codebase`, `query-code`, `test-impact`, `rename-refs`, `integration`, `debrief-coding`                                                                                          |
+| 🤖 Codex Rig       | `assess`, `audit`, `calibrate`, `code-remediate`, `code-review`, `implement`, `investigate`, `kaggle`, `manage`, `optimize`, `release`, `research`, `sync`, `agent-shims`             |
+| ⚡ OpenCode Rig    | `/rig-plan`, `/rig-investigate`, `/rig-research`, `/rig-implement`, `/rig-review`, `/rig-remediate`, `/rig-challenge`, `/rig-optimize`, `/rig-distill`, `/rig-release`, `/rig-doctor` |
+| 🌉 bridge_CC-Codex | `implement`, `advise`, `review`, `setup`, plus Claude-side detached-job `status`, `result`, `cancel`                                                                                  |
 
 The package pages document every skill's arguments, prerequisites, outputs, stopping conditions, fallbacks, and known boundaries. The repository's [Claude guide](../.claude/README.md) also inventories all Claude agents, rules, and hooks; the [Codex Rig role-card reference](../plugins/codex-rig/roles/README.md) inventories all Codex specialist roles.
 

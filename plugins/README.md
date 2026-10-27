@@ -204,7 +204,9 @@ The permission hook runs after configured rules and can only escalate. It turns 
 
 ### Installed agents
 
-OpenCode cannot register agents from a plugin package, so `opencode-rig init` writes five hash-stamped role cards to `~/.config/opencode/agents/`, or to `.opencode/agents/` with `--project`. `check` compares them with the package, `init` stops on an edited or unstamped file, `init --upgrade` replaces stamped files, and `remove` deletes only stamped files. Without installed agents, `rig_dispatch` injects the same role card into a child session.
+OpenCode cannot register agents from a plugin package, so `opencode-rig init` writes seven hash-stamped role cards to `~/.config/opencode/agents/`, or to `.opencode/agents/` with `--project`. `check` compares them with the package, `init` stops on an edited or unstamped file, `init --upgrade` replaces stamped files, and `remove` deletes only stamped files. Without installed agents, `rig_dispatch` injects the same role card into a child session. All roles are read-only except the implementer: `rig-scientist` grades research claims, and `rig-optimizer` recomputes benchmark results.
+
+`rig_doctor` action `assets` (or `opencode-rig doctor --assets`) curates the shipped cards: it fails on roster drift and dead relative links, and warns about duplicated prose and oversized skill or role cards. It reads only package resources and never edits them.
 
 ### Artifacts
 

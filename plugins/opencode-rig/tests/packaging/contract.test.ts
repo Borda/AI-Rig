@@ -90,8 +90,8 @@ describe("skills", () => {
     .map((entry) => entry.name)
     .sort()
 
-  it("ships eight skills, each with a SKILL.md", () => {
-    expect(skills).toHaveLength(8)
+  it("ships eleven skills, each with a SKILL.md", () => {
+    expect(skills).toHaveLength(11)
     for (const skill of skills) {
       expect(existsSync(join(RESOURCES_DIR, "skills", skill, "SKILL.md"))).toBe(true)
     }
@@ -202,6 +202,6 @@ describe("published tarball", () => {
       encoding: "utf8",
       timeout: 120_000,
     })
-    expect(output).toMatch(/package check passed: \d+ files, 8 skills/)
+    expect(output).toMatch(/package check passed: \d+ files, 11 skills, 7 role cards/)
   })
 })

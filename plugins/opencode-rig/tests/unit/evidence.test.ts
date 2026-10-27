@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest"
+import { join } from "node:path"
 import { collectCommitScope, collectScope, detectDrift, refreshScope, scopeBase } from "../../src/evidence.ts"
 import { scopeDigest } from "../../src/digest.ts"
 import { Project } from "../helpers/harness.ts"
@@ -19,6 +20,18 @@ describe("collectScope", () => {
     project.write("src/a.ts", "2\n")
     project.write("docs/b.md", "changed\n")
     expect(collectScope(project.root, ["src"]).entries.map((entry) => entry.path)).toEqual(["src/a.ts"])
+  })
+
+  it("uses portable paths for a nested native path filter", () => {
+    const project = Project.withCommit({ "src/nested/a.ts": "before\n" })
+    project.write("src/nested/a.ts", "after\n")
+    const scope = collectScope(project.root, [join("src", "nested")])
+    expect(scope.paths).toEqual(["src/nested"])
+    expect(scope.entries.map((entry) => entry.path)).toEqual(["src/nested/a.ts"])
+    const commit = project.commit("update")
+    expect(
+      collectCommitScope(project.root, commit, [join("src", "nested")]).entries.map((entry) => entry.path),
+    ).toEqual(["src/nested/a.ts"])
   })
 
   it("scopes to every changed path when no filter is supplied", () => {

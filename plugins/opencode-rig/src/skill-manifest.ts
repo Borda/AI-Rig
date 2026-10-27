@@ -25,6 +25,12 @@ export const SKILLS: readonly SkillDefinition[] = [
       "Reproduce a failure and narrow it to an evidence-backed root cause before fixing. Use for bugs, CI failures, and unexplained behavior. NOT for implementing the fix.",
   },
   {
+    id: "rig-research",
+    name: "Rig Research",
+    description:
+      "Answer a decision question from primary sources with labeled claims, contradictions, and explicit limits. Use for official docs, state-of-the-art comparisons, paper analysis, or paper-versus-code checks. NOT for changing code or running experiments.",
+  },
+  {
     id: "rig-implement",
     name: "Rig Implement",
     description:
@@ -34,7 +40,7 @@ export const SKILLS: readonly SkillDefinition[] = [
     id: "rig-review",
     name: "Rig Review",
     description:
-      "Review the current diff, a commit, or a path with independent read-only reviewers and a validated findings artifact. Use before merge or after a large change. NOT for applying fixes; use rig-remediate.",
+      "Review the current diff, a commit, or a path with independent read-only reviewers and a validated findings artifact requiring the mandatory correctness axis. Use before merge or after a large change. NOT for applying fixes; use rig-remediate.",
   },
   {
     id: "rig-remediate",
@@ -49,10 +55,22 @@ export const SKILLS: readonly SkillDefinition[] = [
       "Run a bounded adversarial convergence loop: independent challenger, validated findings, fixes, independent re-assessment, and a stop reason. Use for risky or security-sensitive changes. NOT for routine edits.",
   },
   {
+    id: "rig-optimize",
+    name: "Rig Optimize",
+    description:
+      "Improve a measured performance metric in guarded rounds against a configured benchmark gate, keeping only noise-clearing wins that pass correctness gates. Use for a concrete performance target. NOT for speculative refactors or unmeasured tuning.",
+  },
+  {
+    id: "rig-distill",
+    name: "Rig Distill",
+    description:
+      "Mine recorded runs or a supplied external inventory for recurring failure patterns and propose durable assets with counted evidence. Use after several runs when the same friction repeats. NOT for installing assets, pruning artifacts, or one-off issues.",
+  },
+  {
     id: "rig-release",
     name: "Rig Release",
     description:
-      "Assess release readiness: version baseline from HEAD, full configured gates, changelog and README synchronization, and packaged file verification. Use before tagging or publishing. NOT for performing the publication itself.",
+      "Assess release readiness: version baseline from HEAD, full configured gates, changelog and README synchronization, packaged file verification, and read-only release-note, migration, and contributor-reply drafts. Use before tagging or publishing. NOT for performing the publication itself.",
   },
   {
     id: "rig-doctor",

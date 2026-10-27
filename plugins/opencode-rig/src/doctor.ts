@@ -7,9 +7,10 @@
 
 import { existsSync, lstatSync, readFileSync, readdirSync } from "node:fs"
 import { homedir } from "node:os"
-import { join } from "node:path"
+import { join, relative, sep } from "node:path"
 import { detectGates } from "./gates.ts"
 import { readGrant } from "./git-grant.ts"
+import { SKILLS } from "./skill-manifest.ts"
 import { PLUGIN_VERSION } from "./version.ts"
 import type { RigOptions } from "./options.ts"
 
@@ -19,6 +20,8 @@ export const AGENT_NAMES = [
   "rig-reviewer",
   "rig-challenger",
   "rig-verifier",
+  "rig-scientist",
+  "rig-optimizer",
 ] as const
 
 export interface AgentDirs {
@@ -46,6 +49,7 @@ export interface DoctorInput {
   readonly pluginListed: boolean
   readonly commonDir?: string
   readonly agentDir?: string
+  readonly assets?: boolean
   readonly options: RigOptions
 }
 
@@ -109,6 +113,160 @@ export function installedAgentStatus(agentDir: string, version: string): string[
   return problems
 }
 
+const MAX_SKILL_LINES = 160
+const MAX_ROLE_LINES = 80
+const DUPLICATE_MIN_LENGTH = 60
+const MAX_REPORTED_DUPLICATES = 3
+
+export interface AssetCheck {
+  readonly failures: readonly string[]
+  readonly warnings: readonly string[]
+  readonly summary: string
+}
+
+function diffRoster(expected: readonly string[], actual: readonly string[]): string | undefined {
+  const left = [...new Set(expected)].sort()
+  const right = [...new Set(actual)].sort()
+  const missing = left.filter((name) => !right.includes(name))
+  const extra = right.filter((name) => !left.includes(name))
+  if (missing.length === 0 && extra.length === 0) return undefined
+  return [
+    missing.length > 0 ? `missing ${missing.join(", ")}` : "",
+    extra.length > 0 ? `unlisted ${extra.join(", ")}` : "",
+  ]
+    .filter(Boolean)
+    .join("; ")
+}
+
+function rosterFailure(label: string, declared: unknown, actual: readonly string[]): string | undefined {
+  if (!Array.isArray(declared)) return `assets: ${label} is missing from rig.json`
+  const diff = diffRoster(declared.map(String), actual)
+  return diff ? `assets: ${label} do not match shipped files (${diff})` : undefined
+}
+
+function skillProseKey(line: string): string | undefined {
+  const normalized = line.trim()
+  if (normalized.length < DUPLICATE_MIN_LENGTH) return undefined
+  if (/^[>#|`]/.test(normalized)) return undefined
+  return normalized
+}
+
+/**
+ * Check the shipped skill and role assets as a curator would: roster agreement,
+ * frontmatter, relative cross-references, duplicated prose, and card size.
+ * Failures block health; duplication and size are warnings, because they are
+ * maintenance signals rather than defects.
+ */
+export function checkAssets(resourcesRoot: string): AssetCheck {
+  const packageRoot = join(resourcesRoot, "..", "..")
+  const rig = readJsonSafe(join(packageRoot, "rig.json")) ?? {}
+  const skillsDir = join(resourcesRoot, "skills")
+  const rolesDir = join(resourcesRoot, "roles")
+  const failures: string[] = []
+  const warnings: string[] = []
+
+  if (!existsSync(skillsDir) || !existsSync(rolesDir)) {
+    return {
+      failures: ["assets: shipped skills or roles directory is missing; reinstall the package"],
+      warnings: [],
+      summary: "assets unavailable",
+    }
+  }
+
+  const skills = readdirSync(skillsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort()
+  const roles = readdirSync(rolesDir)
+    .filter((file) => file.endsWith(".md"))
+    .map((file) => file.slice(0, -3))
+    .sort()
+  const manifest = readJsonSafe(join(resourcesRoot, "agents.json"))
+  const declaredAgents =
+    manifest && typeof manifest.agents === "object" && manifest.agents !== null
+      ? Object.keys(manifest.agents as Record<string, unknown>)
+      : []
+
+  for (const failure of [
+    rosterFailure("skills", rig.skills, skills),
+    rosterFailure("agents", rig.agents, declaredAgents),
+  ]) {
+    if (failure) failures.push(failure)
+  }
+  const manifestDiff = diffRoster(
+    SKILLS.map((skill) => skill.id),
+    skills,
+  )
+  if (manifestDiff) failures.push(`assets: skill manifest does not match shipped cards (${manifestDiff})`)
+  const roleDiff = diffRoster(declaredAgents, roles)
+  if (roleDiff) failures.push(`assets: role files do not match agents.json (${roleDiff})`)
+
+  const prose = new Map<string, string[]>()
+  for (const skill of skills) {
+    const path = join(skillsDir, skill, "SKILL.md")
+    if (!existsSync(path)) {
+      failures.push(`assets: ${skill}/SKILL.md is missing`)
+      continue
+    }
+    const text = readFileSync(path, "utf8")
+    const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)?.[1]
+    if (!frontmatter) {
+      failures.push(`assets: ${skill}/SKILL.md has no frontmatter`)
+    } else {
+      const name = /^name: (.+)$/m.exec(frontmatter)?.[1]?.trim()
+      if (!name) failures.push(`assets: ${skill}/SKILL.md has no frontmatter name`)
+      if (!/^description: .+/m.test(frontmatter)) failures.push(`assets: ${skill}/SKILL.md has no description`)
+      if (name && !new RegExp(`^# ${name}$`, "m").test(text)) {
+        failures.push(`assets: ${skill}/SKILL.md heading does not match '${name}'`)
+      }
+    }
+    if (!SKILLS.some((definition) => definition.id === skill)) {
+      failures.push(`assets: ${skill} is missing from the skill manifest`)
+    }
+    for (const match of text.matchAll(/\]\((\.[^)#]+)\)/g)) {
+      const target = match[1]
+      if (target && !existsSync(join(skillsDir, skill, target))) {
+        failures.push(`assets: ${skill}/SKILL.md references missing ${target}`)
+      }
+    }
+    const lineCount = text.split("\n").length
+    if (lineCount > MAX_SKILL_LINES) {
+      warnings.push(`assets: ${skill}/SKILL.md has ${lineCount} lines (soft limit ${MAX_SKILL_LINES})`)
+    }
+    for (const line of text.split("\n")) {
+      const key = skillProseKey(line)
+      if (!key) continue
+      const cards = prose.get(key) ?? []
+      if (!cards.includes(skill)) cards.push(skill)
+      prose.set(key, cards)
+    }
+  }
+
+  for (const role of roles) {
+    const text = readFileSync(join(rolesDir, `${role}.md`), "utf8")
+    if (!text.trim()) failures.push(`assets: roles/${role}.md is empty`)
+    const lineCount = text.split("\n").length
+    if (lineCount > MAX_ROLE_LINES) {
+      warnings.push(`assets: roles/${role}.md has ${lineCount} lines (soft limit ${MAX_ROLE_LINES})`)
+    }
+  }
+
+  const duplicates = [...prose.entries()].filter(([, cards]) => cards.length > 1)
+  for (const [line, cards] of duplicates.slice(0, MAX_REPORTED_DUPLICATES)) {
+    const excerpt = line.length > 80 ? `${line.slice(0, 80)}…` : line
+    warnings.push(`assets: repeated prose in ${cards.join(", ")}: "${excerpt}"`)
+  }
+  if (duplicates.length > MAX_REPORTED_DUPLICATES) {
+    warnings.push(`assets: ${duplicates.length - MAX_REPORTED_DUPLICATES} more repeated prose line(s)`)
+  }
+
+  return {
+    failures,
+    warnings,
+    summary: `assets: ${skills.length} skills, ${roles.length} role agents, ${duplicates.length} repeated prose line(s)`,
+  }
+}
+
 export function staleRuns(runsRoot: string, ttlDays: number, now: Date = new Date()): string[] {
   if (!existsSync(runsRoot)) return []
   const stale: string[] = []
@@ -129,12 +287,13 @@ function isIgnored(projectRoot: string, artifactRoot: string): boolean {
   const gitignore = join(projectRoot, ".gitignore")
   if (!existsSync(gitignore)) return false
   const text = readFileSync(gitignore, "utf8")
-  const relative = artifactRoot.startsWith(projectRoot)
-    ? artifactRoot.slice(projectRoot.length).replace(/^[/\\]/, "")
-    : artifactRoot
+  const artifactPath = relative(projectRoot, artifactRoot).split(sep).join("/")
   return text
     .split("\n")
-    .some((line) => line.trim() === `${relative}/` || line.trim() === relative || line.trim() === `/${relative}/`)
+    .some(
+      (line) =>
+        line.trim() === `${artifactPath}/` || line.trim() === artifactPath || line.trim() === `/${artifactPath}/`,
+    )
 }
 
 export function doctorReport(input: DoctorInput): DoctorReport {
@@ -178,6 +337,14 @@ export function doctorReport(input: DoctorInput): DoctorReport {
   const gates = detectGates(input.projectRoot, input.options.gates)
   if (gates.length > 0) pass(`gates: ${gates.map((gate) => gate.id).join(", ")} (${gates[0]?.source})`)
   else warn("no configured gates detected; completion will require an explicit gate exemption")
+
+  if (input.assets) {
+    const assets = checkAssets(join(input.packageRoot, "src", "resources"))
+    if (assets.failures.length === 0) pass(assets.summary)
+    else fail(assets.summary)
+    for (const failure of assets.failures) fail(failure)
+    for (const warning of assets.warnings) warn(warning)
+  }
 
   const stale = staleRuns(input.artifactRoot ? join(input.artifactRoot, "runs") : "", input.options.ttlDays)
   if (stale.length > 0)

@@ -2,6 +2,18 @@
 
 All notable changes to this package are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.2.0
+
+- Enforce `correctness` as a mandatory review axis for `rig-review` runs; `rig_findings` now normalizes `axes`/`aspects` (case/duplicates), validates allowed dimensions, and requires coverage when correctness is included. Update `rig-review`, `rig-reviewer`, and `rig-remediate`/`rig-challenge` guidance accordingly.
+- Add `rig-research` with `docs`, `sota`, `paper`, and `code-fidelity` modes. Every claim is recorded as `sourced`, `inferred`, or `unknown`, contradictions are reported rather than averaged, and a research run requires a `rig-scientist` review before completion.
+- Add `rig-distill`, which mines this project's recorded runs or a supplied external inventory for recurring signatures, applies an explicit evidence threshold, rejects proposals that duplicate an existing asset, and proposes without installing or pruning anything.
+- Add `rig-optimize`, a guarded benchmark campaign. The benchmark must already be a configured gate, a win must clear the recorded noise band and the declared minimum improvement, every correctness gate still has to pass, and a kept round must be independently recomputed by `rig-optimizer`.
+- Extend `rig-release` with read-only release-note, migration-note, and contributor-reply drafts. Every draft line traces to a commit, finding, or changelog entry; nothing is posted.
+- Add `rig-scientist` and `rig-optimizer` role cards. Both are read-only, and `rig-scientist` is the only role with `webfetch` allowed.
+- Add `rig_doctor` action `assets` and `opencode-rig doctor --assets`: roster drift and dead relative links fail; duplicated prose and oversized cards warn.
+- `pack_check` now derives the required skill and role files from `rig.json` instead of a hard-coded list, so the tarball contract follows the roster.
+- Refuse to finalize new skill runs without their evidence: research and optimize require review, optimize additionally requires gates, and distill stays advisory.
+
 ## 0.1.1
 
 - A first `init` now exits successfully after installing the five role agents. It previously counted every freshly written file as a problem, so a scripted install such as `make sync-opencode` stopped on a clean machine.

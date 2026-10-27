@@ -161,6 +161,7 @@ interface FindingsInput {
   readonly action: "write" | "read"
   readonly run_id?: string
   readonly axes?: readonly string[]
+  readonly aspects?: readonly string[]
   readonly coverage?: readonly string[]
   readonly reviewer?: string
   readonly findings?: readonly unknown[]
@@ -191,7 +192,7 @@ interface DispatchInputTool {
 }
 
 interface DoctorInputTool {
-  readonly action: "report" | "clean"
+  readonly action: "report" | "clean" | "assets"
   readonly confirm?: boolean
 }
 
@@ -258,6 +259,7 @@ const FINDINGS_INPUT = {
     },
     run_id: { type: "string", description: "Run that owns the findings artifact." },
     axes: { ...strArray, description: "Review axes that actually ran." },
+    aspects: { ...strArray, description: "Alias for axes (review aspects). Use axes/aspects as appropriate." },
     coverage: { ...strArray, description: "Files or areas actually covered." },
     reviewer: { type: "string", description: "Independent reviewer identity. Required for a rig-review write." },
     findings: {
@@ -366,8 +368,9 @@ const DOCTOR_INPUT = {
   properties: {
     action: {
       type: "string",
-      enum: ["report", "clean"],
-      description: "report is read-only; clean removes stale run directories.",
+      enum: ["report", "clean", "assets"],
+      description:
+        "report is read-only; assets also curates shipped skill and role cards; clean removes stale run directories.",
     },
     confirm: { type: "boolean", description: "Required by clean: true after the user approves deleting stale runs." },
   },
@@ -614,7 +617,7 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
     editor.add({
       name: "rig_findings",
       description:
-        "Write or read a validated findings inventory with bucket accounting. Findings are untrusted until verified against source; every finding must end in one terminal bucket.",
+        "Write or read a validated findings inventory with bucket accounting. Findings are untrusted until verified against source; every finding must end in one terminal bucket. For rig-review, correctness is mandatory and axes/aspects must be recorded with coverage.",
       input: FINDINGS_INPUT,
       options: { codemode: true },
       execute: async (raw: unknown, context: any) => {
@@ -632,10 +635,32 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
         if (!input.findings)
           throw new Error("write requires findings: an array, empty only when review genuinely found nothing")
         const incoming = validateFindings(input.findings)
-        const axes = input.axes ?? existing?.axes ?? []
-        if (axes.length === 0) throw new Error("write requires axes: the review axes that actually ran")
-        const coverage = input.coverage ?? existing?.coverage ?? []
+        const rawAxes = (input.axes ?? input.aspects ?? existing?.axes ?? []) as readonly string[]
+        if (rawAxes.length === 0)
+          throw new Error("write requires axes/aspects: the review axes that actually ran (include 'correctness')")
+        const normalizedAxes = [...new Set(rawAxes.map((a) => String(a).trim().toLowerCase()))].filter(Boolean)
+        const allowed = new Set(["correctness", "security", "tests", "api", "performance", "docs", "data"])
+        for (const axis of normalizedAxes) {
+          if (!allowed.has(axis)) {
+            throw new Error(
+              `unknown review axis/aspect '${axis}'; allowed: correctness, security, tests, api, performance, docs, data`,
+            )
+          }
+        }
+        if (normalizedAxes.length === 0)
+          throw new Error("write requires axes/aspects: the review axes that actually ran (include 'correctness')")
+        if (run.skill === "rig-review" && !normalizedAxes.includes("correctness")) {
+          throw new Error(
+            "rig-review requires correctness axis/aspect (must run correctness review). Add 'correctness' to axes or aspects.",
+          )
+        }
+        const coverage = (input.coverage ?? existing?.coverage ?? []) as readonly string[]
         if (coverage.length === 0) throw new Error("write requires coverage: the files or areas actually reviewed")
+        if (run.skill === "rig-review" && normalizedAxes.includes("correctness") && coverage.length === 0) {
+          throw new Error(
+            "rig-review with correctness axis requires non-empty coverage of files/areas actually inspected",
+          )
+        }
         if (run.skill === "rig-review" && !input.reviewer) {
           throw new Error("a rig-review findings write requires reviewer: the independent reviewer identity")
         }
@@ -656,7 +681,7 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
           schema: 1,
           run_id: run.run_id,
           target_digest: run.scope.digest,
-          axes,
+          axes: normalizedAxes,
           coverage,
           findings: merged,
         }
@@ -676,7 +701,7 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
         return {
           content: [
             `Findings written: ${path}`,
-            `axes: ${axes.join(", ")}`,
+            `axes: ${normalizedAxes.join(", ")}`,
             `coverage: ${coverage.length} area(s)`,
             `counts: open ${summary.open}, fixed ${summary.fixed}, rejected ${summary.rejected}, deferred ${summary.deferred}, accepted-risk ${summary.accepted_risk}`,
           ].join("\n"),
@@ -938,7 +963,7 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
     editor.add({
       name: "rig_doctor",
       description:
-        "Check opencode-rig install health: plugin load, version agreement, agent installation, Git grant, artifact ignore, configured gates, and stale runs.",
+        "Check opencode-rig install health: plugin load, version agreement, agent installation, Git grant, artifact ignore, configured gates, and stale runs. action=assets also curates shipped skill and role cards for roster drift, dead links, duplicated prose, and size.",
       input: DOCTOR_INPUT,
       options: { codemode: true },
       execute: async (raw: unknown, context: any) => {
@@ -957,9 +982,10 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
           commonDir,
           agentDir,
           options,
+          assets: input.action === "assets",
         })
 
-        if (input.action === "report") {
+        if (input.action === "report" || input.action === "assets") {
           return {
             content: [
               report.ok ? "opencode-rig doctor: healthy" : "opencode-rig doctor: problems found",

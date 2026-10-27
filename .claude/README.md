@@ -1,8 +1,8 @@
 # 🤖 Claude Code plugins in Borda's AI-Rig
 
-← [Back to root README](../README.md) · [Codex Rig deep reference](../plugins/codex-rig/README.md)
+← [Back to root README](../README.md) · [Codex Rig deep reference](../plugins/codex-rig/README.md) · [OpenCode Rig deep reference](../plugins/opencode-rig/README.md)
 
-AI-Rig gives Claude Code five independently installable plugins for Python, ML, and open-source maintenance. Each one packages a bounded set of skills and, where useful, agents, rules, and hooks. Install the smallest set that solves today's problem; add the others when their workflow earns its place.
+AI-Rig gives Claude Code five independently installable plugins for Python, ML, and open-source maintenance. Each one packages a bounded set of skills and, where useful, agents, rules, and hooks. Install the smallest set that solves today's problem; add the others when their workflow earns its place. For OpenCode, use the [OpenCode Rig](../plugins/opencode-rig/README.md) npm package instead.
 
 <details>
 <summary><strong>Contents</strong></summary>

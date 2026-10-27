@@ -49,6 +49,27 @@
         { "action": "read", "resource": "*", "effect": "allow" },
         { "action": "shell", "resource": "*", "effect": "ask" }
       ]
+    },
+    "rig-scientist": {
+      "description": "Read-only evidence scientist that grades claims against their sources",
+      "mode": "subagent",
+      "steps": 30,
+      "permissions": [
+        { "action": "edit", "resource": "*", "effect": "deny" },
+        { "action": "read", "resource": "*", "effect": "allow" },
+        { "action": "webfetch", "resource": "*", "effect": "allow" },
+        { "action": "shell", "resource": "*", "effect": "ask" }
+      ]
+    },
+    "rig-optimizer": {
+      "description": "Read-only performance analyst that recomputes benchmark deltas and judges methodology",
+      "mode": "subagent",
+      "steps": 30,
+      "permissions": [
+        { "action": "edit", "resource": "*", "effect": "deny" },
+        { "action": "read", "resource": "*", "effect": "allow" },
+        { "action": "shell", "resource": "*", "effect": "ask" }
+      ]
     }
   }
 }

@@ -24,7 +24,7 @@ description: Verify and resolve review findings, account for every finding in a 
 4. **Assign owners.** Use `rig-implementer` for changes, `rig-verifier` for adversarial verification. One writer per path.
 5. **Fix and verify.** Implement the smallest correct change. Add or update the test that proves the finding. Re-run the focused check per finding.
 6. **Reconcile and gate.** Refresh the run scope with `rig_evidence` (`action: "refresh"`) after the last edit, then run the configured gates with `rig_gate` (`action: "run"`). If a gate rewrites files, refresh again and rerun it.
-7. **Re-review fixed areas.** An independent reviewer checks the changed source against the original finding. Record that review with `rig_evidence` (`action: "record"`, `reviewer`) after the refresh, so the evidence binds to the current digest. The implementer's own report is not verification.
+7. **Re-review fixed areas.** An independent reviewer checks the changed source against the original finding (include correctness). Record that review with `rig_evidence` (`action: "record"`, `reviewer`) after the refresh, so the evidence binds to the current digest. The implementer's own report is not verification. For the re-review, require axes including `correctness`.
 8. **Reconcile.** Every finding ID must appear in exactly one terminal bucket. Write the final statuses with `rig_findings`; counts must match the input inventory.
 9. **Finalize.** `rig_evidence` with `action: "finalize"`; an open finding, a stale review digest, or a failed gate blocks completion.
 

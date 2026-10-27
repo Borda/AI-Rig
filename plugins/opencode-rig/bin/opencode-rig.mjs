@@ -40,6 +40,7 @@ Options:
   --check         Verify only; never write
   --upgrade       Rewrite stamped files whose content changed
   --force         Overwrite a conflicting agent file (init only)
+  --assets        Doctor: also curate shipped skill and role cards
   -h, --help      Show this help
 `
 
@@ -244,6 +245,113 @@ function remove(flags) {
   return 0
 }
 
+const MAX_SKILL_LINES = 160
+const MAX_ROLE_LINES = 80
+const DUPLICATE_MIN_LENGTH = 60
+const MAX_REPORTED_DUPLICATES = 3
+
+function rosterDiff(expected, actual) {
+  const left = [...new Set(expected)].sort()
+  const right = [...new Set(actual)].sort()
+  const missing = left.filter((name) => !right.includes(name))
+  const extra = right.filter((name) => !left.includes(name))
+  if (missing.length === 0 && extra.length === 0) return undefined
+  return [
+    missing.length > 0 ? `missing ${missing.join(", ")}` : "",
+    extra.length > 0 ? `unlisted ${extra.join(", ")}` : "",
+  ]
+    .filter(Boolean)
+    .join("; ")
+}
+
+function assetReport() {
+  const rig = JSON.parse(readFileSync(join(PACKAGE_ROOT, "rig.json"), "utf8"))
+  const failures = []
+  const warnings = []
+  const skillsDir = join(RESOURCES, "skills")
+  const rolesDir = join(RESOURCES, "roles")
+  const skills = readdirSync(skillsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort()
+  const roles = readdirSync(rolesDir)
+    .filter((file) => file.endsWith(".md"))
+    .map((file) => file.slice(0, -3))
+    .sort()
+  const agents = Object.keys(JSON.parse(readFileSync(join(RESOURCES, "agents.json"), "utf8")).agents).sort()
+
+  const compare = (label, expected, actual) => {
+    const diff = rosterDiff(expected, actual)
+    if (diff) failures.push(`assets: ${label} do not match shipped files (${diff})`)
+  }
+  compare("skills", rig.skills, skills)
+  compare("agents", rig.agents, agents)
+  const roleDiff = rosterDiff(agents, roles)
+  if (roleDiff) failures.push(`assets: role files do not match agents.json (${roleDiff})`)
+
+  const prose = new Map()
+  for (const skill of skills) {
+    const path = join(skillsDir, skill, "SKILL.md")
+    if (!existsSync(path)) {
+      failures.push(`assets: ${skill}/SKILL.md is missing`)
+      continue
+    }
+    const text = readFileSync(path, "utf8")
+    const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)?.[1]
+    if (!frontmatter) {
+      failures.push(`assets: ${skill}/SKILL.md has no frontmatter`)
+    } else {
+      const name = /^name: (.+)$/m.exec(frontmatter)?.[1]?.trim()
+      if (!name) failures.push(`assets: ${skill}/SKILL.md has no frontmatter name`)
+      if (!/^description: .+/m.test(frontmatter)) failures.push(`assets: ${skill}/SKILL.md has no description`)
+      if (name && !new RegExp(`^# ${name}$`, "m").test(text)) {
+        failures.push(`assets: ${skill}/SKILL.md heading does not match '${name}'`)
+      }
+    }
+    for (const match of text.matchAll(/\]\((\.[^)#]+)\)/g)) {
+      const target = match[1]
+      if (target && !existsSync(join(skillsDir, skill, target))) {
+        failures.push(`assets: ${skill}/SKILL.md references missing ${target}`)
+      }
+    }
+    const lineCount = text.split("\n").length
+    if (lineCount > MAX_SKILL_LINES) {
+      warnings.push(`assets: ${skill}/SKILL.md has ${lineCount} lines (soft limit ${MAX_SKILL_LINES})`)
+    }
+    for (const line of text.split("\n")) {
+      const key = line.trim()
+      if (key.length < DUPLICATE_MIN_LENGTH || /^[>#|`]/.test(key)) continue
+      const cards = prose.get(key) ?? []
+      if (!cards.includes(skill)) cards.push(skill)
+      prose.set(key, cards)
+    }
+  }
+
+  for (const role of roles) {
+    const text = readFileSync(join(rolesDir, `${role}.md`), "utf8")
+    if (!text.trim()) failures.push(`assets: roles/${role}.md is empty`)
+    const lineCount = text.split("\n").length
+    if (lineCount > MAX_ROLE_LINES) {
+      warnings.push(`assets: roles/${role}.md has ${lineCount} lines (soft limit ${MAX_ROLE_LINES})`)
+    }
+  }
+
+  const duplicates = [...prose.entries()].filter(([, cards]) => cards.length > 1)
+  for (const [line, cards] of duplicates.slice(0, MAX_REPORTED_DUPLICATES)) {
+    const excerpt = line.length > 80 ? `${line.slice(0, 80)}…` : line
+    warnings.push(`assets: repeated prose in ${cards.join(", ")}: "${excerpt}"`)
+  }
+  if (duplicates.length > MAX_REPORTED_DUPLICATES) {
+    warnings.push(`assets: ${duplicates.length - MAX_REPORTED_DUPLICATES} more repeated prose line(s)`)
+  }
+
+  return {
+    failures,
+    warnings,
+    summary: `assets: ${skills.length} skills, ${roles.length} role agents, ${duplicates.length} repeated prose line(s)`,
+  }
+}
+
 function doctor(flags) {
   const dir = targetDir(flags)
   const specs = loadAgentSpecs()
@@ -274,6 +382,14 @@ function doctor(flags) {
       else if (stamp.version !== VERSION) fail(`agents: ${spec.name} is v${stamp.version}, expected v${VERSION}`)
       else pass(`agents: ${spec.name} v${stamp.version}`)
     }
+  }
+
+  if (flags.has("--assets")) {
+    const assets = assetReport()
+    if (assets.failures.length === 0) pass(assets.summary)
+    else fail(assets.summary)
+    for (const failure of assets.failures) fail(failure)
+    for (const warning of assets.warnings) lines.push(`WARN  ${warning}`)
   }
 
   const configPath = join(configRoot(), "opencode.jsonc")

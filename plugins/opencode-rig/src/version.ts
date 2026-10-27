@@ -6,6 +6,6 @@
  */
 
 export const PLUGIN_ID = "opencode-rig"
-export const PLUGIN_VERSION = "0.1.1"
+export const PLUGIN_VERSION = "0.2.0"
 export const SCHEMA_VERSION = 1
 export const MIN_OPENCODE_VERSION = "2.1.0"

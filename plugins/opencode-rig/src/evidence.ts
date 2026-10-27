@@ -9,7 +9,7 @@
 
 import { spawnSync } from "node:child_process"
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs"
-import { join, relative } from "node:path"
+import { join, relative, sep } from "node:path"
 import { scopeDigest, sha256, type ScopeEntry } from "./digest.ts"
 import type { ScopeRecord } from "./run.ts"
 
@@ -41,7 +41,7 @@ function walk(root: string, current: string, out: string[]): void {
     if (IGNORED_SEGMENTS.has(entry.name)) continue
     const absolute = join(current, entry.name)
     if (entry.isDirectory()) walk(root, absolute, out)
-    else if (entry.isFile()) out.push(relative(root, absolute))
+    else if (entry.isFile()) out.push(relative(root, absolute).split(sep).join("/"))
   }
 }
 
@@ -106,10 +106,11 @@ export function scopeBase(cwd: string): string | null {
  * review of an unchanged file still has authoritative source.
  */
 export function collectScope(cwd: string, paths: readonly string[] = []): ScopeRecord {
-  const entries = mergeEntries(collectChanged(cwd, paths), collectExplicit(cwd, paths))
+  const normalizedPaths = paths.map((path) => path.split(sep).join("/"))
+  const entries = mergeEntries(collectChanged(cwd, normalizedPaths), collectExplicit(cwd, normalizedPaths))
   return {
     base: scopeBase(cwd),
-    paths: [...paths],
+    paths: normalizedPaths,
     dirty: entries.length > 0,
     entries,
     digest: scopeDigest(entries),
@@ -121,6 +122,7 @@ export function collectScope(cwd: string, paths: readonly string[] = []): ScopeR
  * not the working tree, so later edits cannot change what was reviewed.
  */
 export function collectCommitScope(cwd: string, commit: string, paths: readonly string[] = []): ScopeRecord {
+  const normalizedPaths = paths.map((path) => path.split(sep).join("/"))
   const listing = git(cwd, ["diff-tree", "--no-commit-id", "--name-status", "-r", "--root", commit])
   if (listing === undefined) throw new Error(`cannot read commit ${commit}`)
   const entries: ScopeEntry[] = []
@@ -129,14 +131,18 @@ export function collectCommitScope(cwd: string, commit: string, paths: readonly 
     const [code, ...parts] = line.split("\t")
     const path = parts[parts.length - 1]
     if (!code || !path) continue
-    if (paths.length > 0 && !paths.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))) continue
+    if (
+      normalizedPaths.length > 0 &&
+      !normalizedPaths.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))
+    )
+      continue
     const blob = code.startsWith("D") ? undefined : gitBuffer(cwd, ["show", `${commit}:${path}`])
     entries.push({ path, status: code, sha256: blob ? sha256(blob) : EMPTY_SHA256 })
   }
   return {
     base: scopeBase(cwd),
     commit,
-    paths: [...paths],
+    paths: normalizedPaths,
     dirty: entries.length > 0,
     entries,
     digest: scopeDigest(entries),

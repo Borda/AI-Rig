@@ -16,6 +16,8 @@ export const ROLE_IDS = [
   "rig-reviewer",
   "rig-challenger",
   "rig-verifier",
+  "rig-scientist",
+  "rig-optimizer",
 ] as const
 
 export type RoleId = (typeof ROLE_IDS)[number]

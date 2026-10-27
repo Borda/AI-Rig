@@ -1,6 +1,6 @@
 # 🤖 Codex plugins in Borda's AI-Rig
 
-← [Back to the project overview](../README.md) · [Codex Rig reference](../plugins/codex-rig/README.md) · [Codemap-py reference](../plugins/codemap-py/README.md) · [bridge_CC-Codex reference](../plugins/bridge_cc-codex/README.md)
+← [Back to the project overview](../README.md) · [Codex Rig reference](../plugins/codex-rig/README.md) · [Codemap-py reference](../plugins/codemap-py/README.md) · [bridge_CC-Codex reference](../plugins/bridge_cc-codex/README.md) · [OpenCode Rig reference](../plugins/opencode-rig/README.md)
 
 AI-Rig gives Codex three independently installable products:
 
@@ -9,6 +9,8 @@ AI-Rig gives Codex three independently installable products:
 - **bridge_CC-Codex** sends bounded implementation, advice, and review requests from Codex to Claude Code through a host-launched MCP transport.
 
 Install Codex Rig when you want a disciplined workflow. Add Codemap-py when Python structure is part of the uncertainty. Add bridge_CC-Codex when a task benefits from an independent Claude Code implementation, answer, or adversarial review.
+
+**OpenCode Rig** is a separate npm package for [OpenCode](https://opencode.ai) (`@opencode/plugin`, Node 20+). It is not installed via `codex plugin add` — install it with `opencode plugin add opencode-rig@<version>` or from the repo as shown below. See the [OpenCode Rig reference](../plugins/opencode-rig/README.md) for full details.
 
 This checkout selects native automatic approval review for required plugin workflow commands. Its additive `[auto_review].extra_policy` treats executable recipes, inline helper invocations, normal parameter substitutions, configured gates and already-authorized local commits as preapproved across every skill in `codex-rig@borda-ai-rig`, `codemap-py@borda-ai-rig`, and `bridge@borda-ai-rig`. Other installed plugins retain their existing policy. The reviewer evaluates complete commands, including nested gates; no blanket interpreter or gate-runner rule is installed. Actual managed restrictions, denials, protected actions and scope limits remain effective. Automatic review can reject an action with a concrete reason; configuration and source tests do not guarantee every live decision. Code Review's ephemeral dependency overlay is excluded by name: its dependency support check, fetch and any escalated test run over it are never approved as recipe or dependency-download work, and a single command that downloads a dependency and runs reviewed code is never approved.
 
@@ -474,5 +476,6 @@ For Codex Rig, remove authenticated legacy shims first, then use the guarded syn
 - [Codemap-py manifest](../plugins/codemap-py/.codex-plugin/plugin.json)
 - [bridge_CC-Codex product and transport reference](../plugins/bridge_cc-codex/README.md)
 - [bridge_CC-Codex manifest](../plugins/bridge_cc-codex/.codex-plugin/plugin.json)
+- [OpenCode Rig product and workflow reference](../plugins/opencode-rig/README.md)
 
 License: [Apache-2.0](../LICENSE).

@@ -8,10 +8,12 @@
  */
 
 import { spawnSync } from "node:child_process"
+import { readFileSync } from "node:fs"
 import { dirname, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..")
+const rig = JSON.parse(readFileSync(resolve(ROOT, "rig.json"), "utf8"))
 
 const REQUIRED = [
   "package.json",
@@ -27,19 +29,8 @@ const REQUIRED = [
   "src/resources/references/commit-handoff.md",
   "src/resources/references/convergence.md",
   "src/resources/references/evidence.md",
-  ...[
-    "rig-plan",
-    "rig-investigate",
-    "rig-implement",
-    "rig-review",
-    "rig-remediate",
-    "rig-challenge",
-    "rig-release",
-    "rig-doctor",
-  ].map((skill) => `src/resources/skills/${skill}/SKILL.md`),
-  ...["rig-investigator", "rig-implementer", "rig-reviewer", "rig-challenger", "rig-verifier"].map(
-    (role) => `src/resources/roles/${role}.md`,
-  ),
+  ...rig.skills.map((skill) => `src/resources/skills/${skill}/SKILL.md`),
+  ...rig.agents.map((role) => `src/resources/roles/${role}.md`),
 ]
 
 const FORBIDDEN = [
@@ -84,7 +75,13 @@ function check() {
   }
 
   const skills = [...files].filter((path) => /^src\/resources\/skills\/[^/]+\/SKILL\.md$/.test(path))
-  if (skills.length !== 8) problems.push(`expected 8 skill cards, found ${skills.length}`)
+  if (skills.length !== rig.skills.length) {
+    problems.push(`expected ${rig.skills.length} skill cards, found ${skills.length}`)
+  }
+  const roles = [...files].filter((path) => /^src\/resources\/roles\/[^/]+\.md$/.test(path))
+  if (roles.length !== rig.agents.length) {
+    problems.push(`expected ${rig.agents.length} role cards, found ${roles.length}`)
+  }
 
   if (problems.length > 0) {
     console.error("opencode-rig package check failed:")
@@ -92,7 +89,9 @@ function check() {
     console.error(`\nFiles (${files.size}):\n${[...files].sort().join("\n")}`)
     return 1
   }
-  console.log(`opencode-rig package check passed: ${files.size} files, 8 skills, no tests or local artifacts`)
+  console.log(
+    `opencode-rig package check passed: ${files.size} files, ${rig.skills.length} skills, ${rig.agents.length} role cards, no tests or local artifacts`,
+  )
   return 0
 }
 

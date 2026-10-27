@@ -166,10 +166,13 @@ export interface SkillRequirements {
 export const SKILL_REQUIREMENTS: Readonly<Record<string, SkillRequirements>> = {
   "rig-plan": { gates: false, review: true, findings: false, closedFindings: false, loop: false },
   "rig-investigate": { gates: false, review: false, findings: false, closedFindings: false, loop: false },
+  "rig-research": { gates: false, review: true, findings: false, closedFindings: false, loop: false },
   "rig-implement": { gates: true, review: false, findings: false, closedFindings: false, loop: false },
   "rig-review": { gates: false, review: true, findings: true, closedFindings: false, loop: false },
   "rig-remediate": { gates: true, review: true, findings: true, closedFindings: true, loop: false },
   "rig-challenge": { gates: true, review: true, findings: false, closedFindings: false, loop: true },
+  "rig-optimize": { gates: true, review: true, findings: false, closedFindings: false, loop: false },
+  "rig-distill": { gates: false, review: false, findings: false, closedFindings: false, loop: false },
   "rig-release": { gates: true, review: false, findings: false, closedFindings: false, loop: false },
   "rig-doctor": { gates: false, review: false, findings: false, closedFindings: false, loop: false },
 }

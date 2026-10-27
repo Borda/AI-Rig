@@ -17,6 +17,8 @@ Run `rig_doctor` and interpret the report. Doctor is read-only.
 - Configured gates are detectable.
 - Stale run directories older than the configured TTL are reported.
 
+Use `action: "assets"` (CLI: `opencode-rig doctor --assets`) to curate the shipped cards: `rig.json` roster agreement, skill frontmatter and headings, relative reference links, duplicated prose, and oversized skill or role cards. Roster drift and dead links fail; duplication and size warn.
+
 ## Response
 
 Report each line as pass, warn, or fail. For every failure, give the exact command or edit that fixes it:
@@ -25,5 +27,7 @@ Report each line as pass, warn, or fail. For every failure, give the exact comma
 - Missing Git grant: answer **Approve always** once in the main checkout, or keep per-commit questions.
 - Missing artifact ignore: add `.opencode-rig/` to `.gitignore`.
 - No gates: configure a Makefile or package script, or set `options.gates`.
+- Asset roster drift: update `rig.json` and `src/resources/agents.json` together with the card.
+- Dead reference link or duplicated prose: fix the link, or move the shared text into a reference file.
 
 Do not change files while diagnosing. Do not run paid checks.
