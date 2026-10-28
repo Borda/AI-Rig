@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from _skill_text import read_with_references
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 SKILL = "skills/code-remediate/SKILL.md"
@@ -23,7 +24,15 @@ NATIVE = "shared/native-skill-contract.md"
 
 def _text(relative: str) -> str:
     """Return one contract file with wrapping collapsed so assertions survive reflow."""
-    return " ".join((PLUGIN_ROOT / relative).read_text(encoding="utf-8").split())
+    return " ".join(
+        (
+            read_with_references(
+                PLUGIN_ROOT / relative, "intake.md", "selection.md", "implementation.md", "completion.md"
+            )
+            if relative == "skills/code-remediate/SKILL.md"
+            else (PLUGIN_ROOT / relative).read_text(encoding="utf-8")
+        ).split()
+    )
 
 
 @pytest.mark.parametrize(

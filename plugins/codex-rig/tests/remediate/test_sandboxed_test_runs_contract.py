@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from _skill_text import read_with_references
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 NATIVE_CONTRACT = PLUGIN_ROOT / "shared" / "native-skill-contract.md"
@@ -14,7 +15,15 @@ SECTION_LINK = "native-skill-contract.md#sandboxed-test-runs"
 
 def _section(path: Path, start: str, end: str) -> str:
     """Return one Markdown span with wrapping collapsed so assertions survive reflow."""
-    text = path.read_text(encoding="utf-8").split(start, maxsplit=1)[1].split(end, maxsplit=1)[0]
+    text = (
+        (
+            read_with_references(path, "intake.md", "selection.md", "implementation.md", "completion.md")
+            if path == CODE_REMEDIATE_SKILL
+            else path.read_text(encoding="utf-8")
+        )
+        .split(start, maxsplit=1)[1]
+        .split(end, maxsplit=1)[0]
+    )
     return " ".join(text.split())
 
 

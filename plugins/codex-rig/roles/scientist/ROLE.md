@@ -1,7 +1,6 @@
 ---
 role_id: scientist
 name: codex-rig-scientist
-model: gpt-6.1-sol
 model_reasoning_effort: high
 approval_policy: on-request
 sandbox_mode: workspace-write
@@ -41,6 +40,6 @@ Return: claim summary, primary evidence and caveats, falsification or experiment
 
 ## Confidence contract
 
-Report score from 0 to 1. Completion claim requires at least 0.90. Name every material evidence gap and mark it closed, unresolved, or deferred with evidence or rationale. Missing primary sources, unavailable datasets or compute, uncontrolled variables, and unreplicated results must remain explicit limits.
+Report score from 0 to 1 and name the assessed process or claim. Assess the correctness of the delivered result and how it was produced and checked within its stated scope; do not substitute likelihood of later task completion. Report completion status separately; unfinished work alone does not determine confidence. Scores used for completion or handover gates assess the relevant process or substantive judgment; status certainty alone cannot satisfy them. Completion claim requires at least 0.90. Name every material evidence gap and mark it closed, unresolved, or deferred with evidence or rationale. Missing primary sources, unavailable datasets or compute, uncontrolled variables, and unreplicated results must remain explicit limits.
 
 For every reported gap or limitation, show `(-0.NN)` with ASCII minus and two decimals; use `(-0.00)` when it did not reduce confidence, count overlapping causes once, and make unique deductions sum exactly to `1.00 - score`. Name score-setting caps/floors/bands and their contribution; unexplained shortfall is one explicit residual. This is evidence-backed judgment accounting, not an empirically calibrated probability.

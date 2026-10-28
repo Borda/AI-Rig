@@ -4,7 +4,7 @@
 
 > **Agent budget** — each teammate costs ~120,851 tok fixed overhead (~73 tool-calls' worth) plus ~12.0 s/call, so work under ~73 calls is cheaper done inline: spawn nothing — work-displacement only; an isolation-motivated spawn (adversarial reviewer, distinct specialist role, model tier, worktree) runs regardless of size. Keep each teammate near ~55 tool-calls; past ~60 they stall without returning an envelope, forcing reconstruction from disk. Every spawn prompt requires an envelope even on exhaustion — `partial: true` plus what was finished.
 
-Loaded only when `TEAM_MODE=true`. Steps 1–2 complete solo (teammates need scope + coverage context). Spawn both teammates now; skip Steps 3–4 and Step 5's review loop (sw-engineer runs them); after results run Step 5's quality stack and final gate, then the Final Report.
+Loaded only when `TEAM_MODE=true`. Steps 1–2 complete solo (teammates need scope + coverage context). Spawn both teammates now; skip Steps 3–4 and Step 5's local review (sw-engineer runs it); after results run Step 5's quality stack and final gate, then the Final Report.
 
 Compute run directory — its first line is the team-protocol guard shared by every develop team mode: printed `! BLOCKED` → stop the skill and relay that line as the final reply; never fall back to solo, never spawn teammates told to read a missing file:
 
@@ -48,6 +48,6 @@ IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/dev-refactor-run-dir-${CSID}" 2>/dev/nul
 
 Apply to each teammate independently — arm batch `team` in each spawn response (deliverables `$RUN_DIR/refactor-qa-specialist.md`, `$RUN_DIR/refactor-sw-engineer.md`). Spawn, **end the turn**, resume on the completion notification and run the check block (`agent_watch.py`) once (`agent-resolution.md` §Agent waits — no polling, per-agent deadlines) — never a fixed-interval check, never a liveness probe (`find -newer` or similar): the armed deadline (1800 s) is the only liveness mechanism; a `timed_out` row, or a notification without its deliverable, means timed out. On timeout: read `tail -100` of stalled file; surface partial results with ⏱; never omit.
 
-After both complete: read output files from `$RUN_DIR/`, synthesize outputs, run quality stack, then the final gate — Step 5's "Foundry availability check", `foundry--quality-stack.md` load and "Final gate" blocks, executed as written (the quality stack's wide run is the gate's first full-suite run only when `$TEST_CMD` is that same pytest invocation, else run the final gate once; sw-engineer already ran the Step 5 review loop). Produce Final Report only after that; never report the suite green before the gate passes.
+After both complete: read output files from `$RUN_DIR/`, synthesize outputs, run quality stack, then the final gate — Step 5's "Foundry availability check", `foundry--quality-stack.md` load, "Bounded independent implementation challenge" and "Final gate" blocks, executed as written (the quality stack's wide run is the gate's first full-suite run only when `$TEST_CMD` is that same pytest invocation, else run the final gate once; sw-engineer already ran the Step 5 local review; the parent still runs its bounded independent implementation challenge). Produce Final Report only after that; never report the suite green before the gate passes.
 
-Exit after the Final Report — do not continue to Steps 3–4 or Step 5's review loop.
+Exit after the Final Report — do not continue to Steps 3–4 or Step 5's local review.

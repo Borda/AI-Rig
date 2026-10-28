@@ -5,6 +5,7 @@ from functools import partialmethod
 from pathlib import Path
 
 import pytest
+from _skill_text import read_with_references
 from test_code_remediate_work_bucket_validation import VALIDATOR, _parallel_metadata, _write_workplan
 from test_finding_presentation import _selection
 from test_remediation_finalize import HELPER, _stale_metadata
@@ -382,7 +383,13 @@ def test_missing_or_invalid_outcome_never_gets_default_counts(
 @pytest.mark.usefixtures("legacy_text_encoding")
 def test_preflight_contract_precedes_question_and_edits() -> None:
     """Keep executable early gates at the skill boundaries that consume their evidence."""
-    skill = (HELPER.SHARED_DIRECTORY.parent / "skills/code-remediate/SKILL.md").read_text(encoding="utf-8")
+    skill = read_with_references(
+        HELPER.SHARED_DIRECTORY.parent / "skills/code-remediate/SKILL.md",
+        "intake.md",
+        "selection.md",
+        "implementation.md",
+        "completion.md",
+    )
     assert skill.index("--stage selection") < skill.index("### Terminal Scope Context Contract")
     assert skill.index("--stage plan") < skill.index("### 07:")
     assert "Final status counts derive" in (HELPER.SHARED_DIRECTORY.parent / "README.md").read_text(encoding="utf-8")
@@ -536,3 +543,92 @@ def test_occurrence_contract_preserves_historical_intake(valid_run: tuple[Path, 
                 result, run, current_contract=False, candidate=generation == "new-candidate"
             )
     assert {path: path.read_bytes() for path in before} == before
+
+
+def test_obligations_exposes_complete_finding_for_selection(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Preserve every canonical finding field when building the selection source."""
+    record = {
+        "id": "F1",
+        "title": "Unicode é title",
+        "summary": "First line\nSecond line",
+        "required_change": "Fix it",
+        "closure_evidence": "Regression passes",
+        "evidence": ["a.py:1", "review.md"],
+    }
+    report = {
+        "schema_version": 3,
+        "artifact_path": "review/result.json",
+        "checks_failed": [],
+        "follow_up": [],
+        "metadata": {"review_findings": [record], "confidence_gaps": ["Coverage limit"]},
+    }
+    (tmp_path / "findings-input.txt").write_text(json.dumps(report), encoding="utf-8")
+    assert HELPER.main(["obligations", "--run", str(tmp_path)]) == 0
+    source = json.loads(capsys.readouterr().out)["finding_sources"][0]
+    assert source["source_id"] == "review/result.json#F1"
+    assert all(
+        value in source["body"]
+        for value in [
+            record["title"],
+            record["summary"],
+            record["required_change"],
+            record["closure_evidence"],
+            *record["evidence"],
+        ]
+    )
+    assert len(json.loads((tmp_path / "report-obligations.json").read_text(encoding="utf-8"))["sources"]) == 1
+    inventory = _selection()
+    inventory["items"] = inventory["items"][:1]
+    inventory["items"][0].update(input_item_id="F1", sources=[source])
+    (tmp_path / "selection.json").write_text(json.dumps(inventory), encoding="utf-8")
+    assert HELPER.main(["preflight", "--run", str(tmp_path), "--stage", "selection", "--report"]) == 0
+
+
+@pytest.mark.parametrize("damage", ["duplicate", "invalid-id", "evidence", "title", "producer"])
+def test_obligations_reports_unavailable_finding_sources(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], damage: str
+) -> None:
+    """Keep context available without manufacturing incomplete or ambiguous sources."""
+    record = {
+        "id": "F1",
+        "title": "Problem",
+        "summary": "Context",
+        "required_change": "Fix",
+        "closure_evidence": "Pass",
+        "evidence": ["source.py:1"],
+    }
+    report = {"schema_version": 3, "artifact_path": "review/result.json", "metadata": {"review_findings": [record]}}
+    if damage == "duplicate":
+        report["metadata"]["operational_blockers"] = [record.copy()]
+    elif damage == "producer":
+        del report["artifact_path"]
+    elif damage == "invalid-id":
+        record["id"] = "invalid id"
+    else:
+        record[damage] = [] if damage == "evidence" else ""
+    (tmp_path / "findings-input.txt").write_text(json.dumps(report), encoding="utf-8")
+    assert HELPER.main(["obligations", "--run", str(tmp_path)]) == 0
+    output = json.loads(capsys.readouterr().out)
+    assert output["finding_sources"] == []
+    assert output["finding_source_gaps"]
+    assert (tmp_path / "report-obligations.json").exists()
+
+
+def test_obligations_keeps_historical_partial_blocker_context(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Historical partial blockers remain readable without claiming a complete source."""
+    report = {
+        "schema_version": 3,
+        "artifact_path": "review/result.json",
+        "metadata": {
+            "operational_blockers": [{"id": "B1", "title": "Missing check"}],
+            "confidence_gaps": ["Coverage limit"],
+        },
+    }
+    (tmp_path / "findings-input.txt").write_text(json.dumps(report), encoding="utf-8")
+    assert HELPER.main(["obligations", "--run", str(tmp_path)]) == 0
+    output = json.loads(capsys.readouterr().out)
+    assert output["finding_sources"] == []
+    assert output["finding_source_gaps"]
+    assert len(json.loads((tmp_path / "report-obligations.json").read_text(encoding="utf-8"))["sources"]) == 1

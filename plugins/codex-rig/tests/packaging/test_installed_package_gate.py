@@ -14,6 +14,7 @@ import pytest
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 PACKAGE_SAFE_TEST_MARKER = "installed_plugin"
 INSTALLED_PACKAGE_SELECTION_TIMEOUT_SECONDS = 180
+INSTALLED_PACKAGE_SHARDS = 4
 
 
 def test_installed_package_selection_timeout_is_bounded_for_native_windows() -> None:
@@ -54,8 +55,8 @@ def _copied_package_root(tmp_path: Path) -> Path:
 @pytest.mark.packaging
 @pytest.mark.integration
 @pytest.mark.timeout(INSTALLED_PACKAGE_SELECTION_TIMEOUT_SECONDS + 60)
-@pytest.mark.flaky(reruns=1, reruns_delay=1, condition=sys.platform == "win32", only_rerun="^TimeoutExpired:")
-def test_installed_package_runs_the_explicit_package_safe_selection(tmp_path: Path) -> None:
+@pytest.mark.parametrize("shard", range(INSTALLED_PACKAGE_SHARDS))
+def test_installed_package_runs_the_explicit_package_safe_selection(tmp_path: Path, shard: int) -> None:
     """Prevent checkout-only tests from being mistaken for installed-package coverage.
 
     The marker selects staged execution manifests, privacy-minimized telemetry, the complete parallel-write lifecycle,
@@ -63,12 +64,12 @@ def test_installed_package_runs_the_explicit_package_safe_selection(tmp_path: Pa
     scoring. The complete worktree module carries the marker because the shipped lifecycle contract requires it. A
     separate source-checkout suite retains the valid sync, CI-harness, and Git metadata contracts.
 
-    Two child workers run the complete selection concurrently. Work stealing keeps a worker that finishes the short
-    contracts available for queued subprocess-heavy lifecycle cases instead of leaving a serial tail on Windows.
+    Four deterministic partitions cover every selected node exactly once. Each partition runs with two child workers and
+    work stealing, keeping subprocess-heavy lifecycle coverage within independently bounded acceptance tests as the
+    installed suite grows. Partitioning never changes marker membership or skips Windows cases.
 
     The outer deadline includes package copying and child cleanup; sharing the child's deadline lets the Windows pytest-
-    timeout thread terminate the worker before subprocess.run can reap and report a timed-out selection. One Windows
-    subprocess-timeout retry mitigates unconfirmed runner timing sensitivity; assertion failures are final.
+    timeout thread terminate the worker before subprocess.run can reap and report a timed-out selection.
 
     Flushed phase timings retain completed work and active cases in the timeout failure, including teardown stalls.
     """
@@ -97,6 +98,8 @@ def test_installed_package_runs_the_explicit_package_safe_selection(tmp_path: Pa
                 "--durations=20",
                 "-m",
                 PACKAGE_SAFE_TEST_MARKER,
+                "--installed-package-shard",
+                f"{shard}/{INSTALLED_PACKAGE_SHARDS}",
             ],
             cwd=installed_root,
             check=False,
@@ -106,7 +109,7 @@ def test_installed_package_runs_the_explicit_package_safe_selection(tmp_path: Pa
             timeout=INSTALLED_PACKAGE_SELECTION_TIMEOUT_SECONDS,
         )
     except subprocess.TimeoutExpired as error:
-        # TimeoutExpired retains bytes even with text=True; keep its type so the Windows retry still applies.
+        # TimeoutExpired retains bytes even with text=True; preserve the exception and its diagnostics.
         for stream, output in (("stdout", error.stdout), ("stderr", error.stderr)):
             if output:
                 text = output.decode("utf-8", errors="replace") if isinstance(output, bytes) else output
@@ -121,7 +124,7 @@ def test_installed_package_runs_the_explicit_package_safe_selection(tmp_path: Pa
 def test_installed_package_timeout_prints_partial_streams_and_preserves_exception(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Display partial child diagnostics without changing the Windows retry's exception type."""
+    """Display partial child diagnostics without changing the timeout's exception type."""
     error = subprocess.TimeoutExpired([sys.executable, "-m", "pytest"], 180, b"completed case\n\xff", b"child stderr\n")
 
     def timeout(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
@@ -135,7 +138,7 @@ def test_installed_package_timeout_prints_partial_streams_and_preserves_exceptio
 
     monkeypatch.setattr(subprocess, "run", timeout)
     with pytest.raises(subprocess.TimeoutExpired) as raised:
-        test_installed_package_runs_the_explicit_package_safe_selection(tmp_path)
+        test_installed_package_runs_the_explicit_package_safe_selection(tmp_path, 0)
 
     assert raised.value is error
     output = capsys.readouterr().out

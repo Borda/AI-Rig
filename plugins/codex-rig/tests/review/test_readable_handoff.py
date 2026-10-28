@@ -318,8 +318,8 @@ def test_current_verification_links_existing_relative_log(tmp_path: Path) -> Non
     assert f"- format: pass — {prose}" in rendered
 
 
-def test_current_assessed_review_retains_report_binding(tmp_path: Path) -> None:
-    """Review overviews retain evidence validation and the current readable sections."""
+def test_historical_assessed_review_retains_report_binding(tmp_path: Path) -> None:
+    """Historical review overviews retain their wording and evidence validation."""
     finalizer = _load_finalizer()
     payload = _handoff_payload()
     payload.update(skill="code-review", branch="assessed", presentation_version=10)

@@ -70,6 +70,79 @@ def _lint_check(output: Path) -> dict[str, object]:
     return next(check for check in payload["checks"] if check["id"] == "lint")
 
 
+def test_missing_pytest_reports_recovery_without_masking_failure(tmp_path: Path) -> None:
+    """A source-bound gate missing pytest keeps its failure and directs review work to continue."""
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    head = _initialize_repository(repository)
+    environment = tmp_path / "environment"
+    subprocess.run([sys.executable, "-m", "venv", str(environment)], check=True, capture_output=True)
+    interpreter = environment / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+    output = tmp_path / "gates"
+    command = [
+        sys.executable,
+        str(RUN_GATES),
+        "--out",
+        str(output),
+        "--expected-head",
+        head,
+        "--worktree",
+        str(repository),
+        "--pytest-python",
+        str(interpreter),
+        "--pytest-import",
+        "example",
+    ]
+    for gate_id in ("lint", "format", "types", "review"):
+        command.extend((f"--skip-{gate_id}", "out of scope"))
+
+    result = subprocess.run(command, capture_output=True, text=True, check=False)
+
+    assert result.returncode == 1
+    assert "ModuleNotFoundError: No module named 'pytest'" in (output / "checks/tests.stderr.txt").read_text()
+    assert json.loads((output / "gates.json").read_text())["checks_failed"] == ["tests"]
+    assert "dependency preparation" in result.stderr
+    assert "continue independent review" in result.stderr
+
+
+def test_missing_collection_dependency_reports_recovery(tmp_path: Path) -> None:
+    """An import failure during collection also retains its failure and recovery guidance."""
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    _initialize_repository(repository)
+    (repository / "conftest.py").write_text("import nonexistent_review_fixture_dependency\n", encoding="utf-8")
+    _git(repository, "add", "conftest.py")
+    _git(repository, "commit", "-m", f"collection fixture\n\n{CODEX_TRAILER}")
+    head = _git(repository, "rev-parse", "HEAD")
+    output = tmp_path / "gates"
+    command = [
+        sys.executable,
+        str(RUN_GATES),
+        "--out",
+        str(output),
+        "--expected-head",
+        head,
+        "--worktree",
+        str(repository),
+        "--pytest-python",
+        sys.executable,
+        "--pytest-import",
+        "example",
+        "--pytest-args-json",
+        '["-p", "no:xdist"]',
+    ]
+    for gate_id in ("lint", "format", "types", "review"):
+        command.extend((f"--skip-{gate_id}", "out of scope"))
+
+    result = subprocess.run(command, capture_output=True, text=True, check=False)
+
+    assert result.returncode == 1
+    assert "nonexistent_review_fixture_dependency" in (output / "checks/tests.stderr.txt").read_text()
+    assert json.loads((output / "gates.json").read_text())["checks_failed"] == ["tests"]
+    assert "dependency preparation" in result.stderr
+    assert "continue independent review" in result.stderr
+
+
 def test_gate_uses_explicit_project_environment_in_isolated_worktree(tmp_path: Path) -> None:
     """Run a declared checker from the source environment against the selected review worktree."""
     repository = tmp_path / "repository"
@@ -310,6 +383,17 @@ def test_post_command_source_change_fails_an_otherwise_passing_gate(tmp_path: Pa
         "after": {"head": expected_head, "status": "?? during-gate.txt"},
     }
     assert "source-dirty" in (output / str(check["stderr"])).read_text(encoding="utf-8")
+    spec = importlib.util.spec_from_file_location(
+        "guard_failure_validator", PLUGIN_ROOT / "shared/validate-artifacts.py"
+    )
+    validator = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(validator)
+    assert validator._validate_gates(output)["status"] == "fail"
+    payload = json.loads((output / "gates.json").read_text(encoding="utf-8"))
+    payload["checks"][0]["source"]["after"] = payload["checks"][0]["source"]["before"]
+    (output / "gates.json").write_text(json.dumps(payload), encoding="utf-8", newline="\n")
+    with pytest.raises(SystemExit, match="gate-check-invalid-fail-exit-code"):
+        validator._validate_gates(output)
 
 
 def test_expected_head_rejects_non_git_directory_without_executing_command(tmp_path: Path) -> None:
@@ -620,6 +704,40 @@ def test_editable_source_from_selected_worktree_passes_gate(
     }
 
 
+def test_source_bound_gate_disables_bytecode_for_overlay_execution(
+    editable_checkout: _EditableCheckout, tmp_path: Path
+) -> None:
+    """Recover a failed source-bound gate with an overlay while preserving its failed attempt."""
+    editable_checkout.editable_path.write_text(
+        f"{(editable_checkout.selected / 'src').as_posix()}\n", encoding="utf-8", newline="\n"
+    )
+    editable_checkout.environment["PYTEST_ADDOPTS"] = "-p overlay_probe"
+    editable_checkout.environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    output = tmp_path / "overlay-gates"
+
+    failed = editable_checkout.run_tests(output)
+
+    assert failed.returncode == 1
+    assert "overlay_probe" in (output / "checks/tests.stderr.txt").read_text(encoding="utf-8")
+    overlay = tmp_path / "overlay"
+    overlay.mkdir()
+    (overlay / "overlay_probe.py").write_text("VALUE = 1\n", encoding="utf-8")
+    bootstrap = Path(editable_checkout.environment["PYTHONPATH"])
+    editable_checkout.environment["PYTHONPATH"] = os.pathsep.join((str(overlay), str(bootstrap)))
+
+    completed = editable_checkout.run_tests(output)
+
+    assert completed.returncode == 0, completed.stderr
+    check = _gate_check(output, "tests")
+    assert check["python_imports"]["status"] == "pass"
+    invocation = (output / "checks/tests.command.txt").read_text(encoding="utf-8").removeprefix("argv-json:")
+    assert json.loads(invocation)[1] == "-B"
+    assert not list(overlay.rglob("*.pyc"))
+    assert not list(editable_checkout.selected.rglob("*.pyc"))
+    prior = json.loads((output / "gate-attempts/001/gates.json").read_text(encoding="utf-8"))
+    assert prior["checks_failed"] == ["tests"]
+
+
 @pytest.mark.parametrize("editable_checkout", ["-n 2"], indirect=True)
 @pytest.mark.parametrize("parallel_source", ["cli", "project", "environment"])
 def test_parallel_source_bound_pytest_proves_worker_sources(
@@ -825,7 +943,7 @@ def test_ignored_submodule_changes_block_guarded_execution(tmp_path: Path, mutat
     assert "source-dirty" in (output / str(check["stderr"])).read_text(encoding="utf-8")
 
 
-def _local_gate_inputs(tmp_path: Path, variant: str) -> tuple[Path, Path, Path, list[str]]:
+def _local_gate_inputs(tmp_path: Path, variant: str, conftest: str = "") -> tuple[Path, Path, Path, list[str]]:
     """Build a real collector mirror and its explicit import-bound gate invocation."""
     repository = tmp_path / "repository"
     repository.mkdir()
@@ -848,6 +966,8 @@ def _local_gate_inputs(tmp_path: Path, variant: str) -> tuple[Path, Path, Path, 
             (repository / "dependency").mkdir()
         _git(repository, "commit", "-m", f"runtime files\n\n{CODEX_TRAILER}")
     module.write_text("value = 2\n", encoding="utf-8")
+    if conftest:
+        (repository / "conftest.py").write_text(conftest, encoding="utf-8", newline="\n")
     output = tmp_path / "review"
     collected = subprocess.run(
         [
@@ -928,6 +1048,86 @@ def test_local_gate_rejects_source_binding_changes(tmp_path: Path, mutation: str
     assert marker.exists() is (mutation == "during-run")
     if mutation == "during-run":
         assert _lint_check(output)["status"] == "fail"
+        spec = importlib.util.spec_from_file_location(
+            "local_guard_validator", PLUGIN_ROOT / "shared/validate-artifacts.py"
+        )
+        validator = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(validator)
+        assert validator._validate_gates(output)["status"] == "fail"
+        payload = json.loads((output / "gates.json").read_text(encoding="utf-8"))
+        del payload["checks"][0]["source"]["guard_error"]
+        (output / "gates.json").write_text(json.dumps(payload), encoding="utf-8", newline="\n")
+        with pytest.raises(SystemExit, match="gate-check-invalid-fail-exit-code"):
+            validator._validate_gates(output)
+
+
+@pytest.mark.parametrize(
+    ("body", "raw_prefix", "gate_status", "exit_code", "runner_exit"),
+    [
+        pytest.param("sys.stderr.buffer.write(b'\\xff')", b"\xff", "fail", 0, 1, id="invalid-utf8"),
+        pytest.param(
+            "sys.stderr.buffer.write(b'x' * (1048576 - 1) + b'\\xe2\\x82\\xac')",
+            b"x" * (1048576 - 1) + b"\xe2\n[output truncated after 1048576 bytes]\n",
+            "fail",
+            0,
+            1,
+            id="truncated-utf8",
+        ),
+        pytest.param("sys.exit(1)", b"", "fail", 1, 1, id="command-failed"),
+        pytest.param("sys.exit(127)", b"", "missing-command", 127, 1, id="missing-command"),
+        pytest.param("time.sleep(20)", b"", "timeout", 124, 124, id="timeout"),
+    ],
+)
+def test_local_source_guard_preserves_external_output_and_failure(
+    tmp_path: Path, body: str, raw_prefix: bytes, gate_status: str, exit_code: int, runner_exit: int
+) -> None:
+    """Retain raw child bytes and command failure disposition alongside the post-run source guard."""
+    repository, output, mirror, _args = _local_gate_inputs(tmp_path, "added")
+    command = _python_command(
+        "import sys,time;from pathlib import Path;"
+        f"Path({str(mirror / 'localmod.py')!r}).write_bytes(b'value = 99\\n');{body}"
+    )
+    arguments = [
+        sys.executable,
+        str(RUN_GATES),
+        "--out",
+        str(output),
+        "--worktree",
+        str(mirror),
+        "--timeout-seconds",
+        "1" if gate_status == "timeout" else "20",
+        "--lint",
+        command,
+    ]
+    for gate in GATE_IDS[1:]:
+        arguments.extend((f"--skip-{gate}", "out of scope"))
+    completed = subprocess.run(arguments, cwd=repository, capture_output=True, text=True, check=False)
+    assert completed.returncode == runner_exit, completed.stderr
+    check = _lint_check(output)
+    assert check["status"] == gate_status
+    assert check["exit_code"] == exit_code
+    guard_error = check["source"]["guard_error"]
+    assert guard_error
+    stderr = (output / str(check["stderr"])).read_bytes()
+    assert stderr.startswith(raw_prefix)
+    assert guard_error.encode("utf-8") in stderr
+    assert check["source"]["artifacts"][check["stderr"]] == hashlib.sha256(stderr).hexdigest()
+    if gate_status in {"missing-command", "timeout"}:
+        assert check["reason"]
+    if gate_status == "timeout":
+        assert check["reason"] == "timeout after 1 seconds"
+    spec = importlib.util.spec_from_file_location(
+        "external_output_guard_validator", PLUGIN_ROOT / "shared/validate-artifacts.py"
+    )
+    validator = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(validator)
+    gates = validator._validate_gates(output)
+    assert gates["status"] == ("timeout" if gate_status == "timeout" else "fail")
+    assert gates["checks_failed"] == ["lint"]
+    if exit_code == 0:
+        (output / str(check["stderr"])).write_bytes(stderr.replace(guard_error.encode("utf-8"), b""))
+        with pytest.raises(SystemExit, match="gate-check-invalid-fail-exit-code"):
+            validator._validate_gates(output)
 
 
 def test_parallel_local_added_source_proof_binds_every_worker(tmp_path: Path) -> None:
@@ -945,9 +1145,17 @@ def test_parallel_local_added_source_proof_binds_every_worker(tmp_path: Path) ->
 
 
 @pytest.mark.parametrize("mutation", ["changed", "deleted"])
-def test_local_gate_rejects_child_sidecar_drift(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str) -> None:
+@pytest.mark.parametrize("command_status", ["pass", "missing-command", "timeout"])
+def test_local_gate_rejects_child_sidecar_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str, command_status: str
+) -> None:
     """Reject child proof changes during real post-run source capture instead of hashing mixed evidence."""
-    _repository, output, mirror, _args = _local_gate_inputs(tmp_path, "added")
+    conftest = {
+        "pass": "",
+        "missing-command": "def pytest_sessionfinish(session):\n    session.exitstatus = 127\n",
+        "timeout": "import time\ndef pytest_unconfigure(config):\n    time.sleep(20)\n",
+    }[command_status]
+    _repository, output, mirror, _args = _local_gate_inputs(tmp_path, "added", conftest)
     monkeypatch.syspath_prepend(str(PLUGIN_ROOT / "shared"))
     spec = importlib.util.spec_from_file_location("sidecar_gate_runner", RUN_GATES)
     gates = importlib.util.module_from_spec(spec)
@@ -1004,7 +1212,7 @@ def test_local_gate_rejects_child_sidecar_drift(tmp_path: Path, monkeypatch: pyt
         "tests",
         "",
         "",
-        60,
+        3 if command_status == "timeout" else 60,
         output,
         None,
         mirror,
@@ -1016,6 +1224,9 @@ def test_local_gate_rejects_child_sidecar_drift(tmp_path: Path, monkeypatch: pyt
     )
     assert result["python_imports"]["status"] == "pass"
     assert result["source"]["before"] == result["source"]["after"]
-    assert result["status"] == "fail"
+    assert result["status"] == ("fail" if command_status == "pass" else command_status)
+    assert result["exit_code"] == {"pass": 0, "missing-command": 127, "timeout": 124}[command_status]
+    if command_status in {"missing-command", "timeout"}:
+        assert result["reason"]
     assert observations == (1 if mutation == "deleted" else 2)
     assert "local-gate-proof-artifact-changed" in (output / "checks/tests.stderr.txt").read_text()

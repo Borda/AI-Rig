@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from test_candidate_validation_contract import _candidate
 from test_code_remediate_final_outcome_validation import _metadata, _status_counts, _write_action_items
 from test_code_remediate_work_bucket_validation import _parallel_metadata, _write_workplan
 from test_review_remediation_handoff import (
@@ -26,6 +27,135 @@ assert SPEC is not None
 assert SPEC.loader is not None
 VALIDATOR = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(VALIDATOR)
+
+
+def _direct_origin_report(disposition: str | None) -> dict:
+    """Build the current direct producer's list relations with two distinct online originals for one candidate."""
+    candidate = _candidate(disposition)
+    candidate.update(
+        id="C_INPUT",
+        claim="The empty input bypasses the guard.",
+        owner="input maintainer",
+        next_check="Run the empty-input regression on the native backend.",
+        closure_condition="Both empty-input paths reject unchecked values.",
+        missing_prerequisite="Native backend unavailable." if disposition == "unverified" else "",
+        feasible_checks_complete=disposition is not None,
+    )
+    origins = [
+        {
+            "id": f"review-comment-{index}",
+            "parent_id": f"review-thread-{index}",
+            "path": "widget.py",
+            "line": index + 6,
+            "body": body,
+            "artifact": "review-threads.json",
+            "candidate_id": candidate["id"],
+            "disposition": disposition,
+        }
+        for index, body in enumerate(("Guard the empty input.", "Guard the repeated empty input."), 1)
+    ]
+    return {
+        "schema_version": 3,
+        "artifact_path": "review/result.json",
+        "checks_failed": [],
+        "follow_up": [],
+        "metadata": {
+            "review_status": None,
+            "review_decision": {},
+            "confidence_gaps": [],
+            "confidence_recovery": {},
+            "review_validation": {"schema_version": 1, "candidates": [candidate]},
+            "source_findings": origins,
+            "source_finding_mapping": [
+                {"source_id": origin["id"], "candidate_id": candidate["id"]} for origin in origins
+            ],
+        },
+    }
+
+
+@pytest.mark.parametrize("disposition", [pytest.param(None, id="pending"), "unverified"])
+@pytest.mark.parametrize("supplemental", ["two-origins", "absent", "empty"])
+def test_direct_open_candidate_obligation_preserves_all_source_context(
+    disposition: str | None, supplemental: str
+) -> None:
+    """Keep pending concerns and every original online claim without turning them into confirmed fix requests."""
+    report = _direct_origin_report(disposition)
+    metadata = report["metadata"]
+    candidate = metadata["review_validation"]["candidates"][0]
+    origins = metadata["source_findings"] if supplemental == "two-origins" else []
+    if supplemental == "absent":
+        del metadata["source_findings"], metadata["source_finding_mapping"]
+    elif supplemental == "empty":
+        metadata.update(source_findings=[], source_finding_mapping=[])
+    original = json.dumps(report, sort_keys=True)
+
+    sources = VALIDATOR.report_obligation_sources(report)
+
+    assert len(sources) == 1
+    source = sources[0]
+    assert source["source_id"] == "review/result.json#/metadata/review_validation/candidates/0"
+    assert source["location"] == source["source_id"]
+    assert source["evidence"] == "findings-input.txt#/metadata/review_validation/candidates/0"
+    assert "not a confirmed defect or automatic edit request" in source["body"]
+    assert json.dumps(candidate, sort_keys=True) in source["body"]
+    for origin in origins:
+        assert json.dumps(origin, sort_keys=True) in source["body"]
+    assert json.dumps(report, sort_keys=True) == original
+
+
+@pytest.mark.parametrize("disposition", ["confirmed", "refuted", "already-fixed", "optional-out-of-scope"])
+def test_direct_closed_candidates_do_not_create_context_obligations(disposition: str) -> None:
+    """Do not reject completed direct reports or recreate resolved concerns as automatic remediation work."""
+    report = _direct_origin_report(disposition)
+
+    assert VALIDATOR.report_obligation_sources(report) == []
+
+
+@pytest.mark.parametrize("damage", ["missing-relation", "conflicting-relation", "missing-origin"])
+def test_direct_open_obligation_rejects_lost_source_relations(damage: str) -> None:
+    """Fail deliberately when a relevant direct relation loses or contradicts an original concern."""
+    report = _direct_origin_report("unverified")
+    metadata = report["metadata"]
+    if damage == "missing-relation":
+        metadata["source_finding_mapping"].pop()
+    elif damage == "conflicting-relation":
+        metadata["source_finding_mapping"].append({"source_id": "review-comment-1", "candidate_id": "C_OTHER"})
+    else:
+        metadata["source_findings"].pop()
+
+    with pytest.raises(SystemExit):
+        VALIDATOR.report_obligation_sources(report)
+
+
+@pytest.mark.parametrize("disposition", [pytest.param(None, id="pending"), "unverified"])
+def test_batched_open_obligation_keeps_each_original(disposition: str | None) -> None:
+    """Keep existing batched source obligations intact when accepting direct producer relations."""
+    report = _direct_origin_report(disposition)
+    metadata = report["metadata"]
+    origins = [
+        {
+            "finding_id": f"source.sw-engineer.origin-{index}",
+            "original": {"id": f"origin-{index}", "summary": origin["body"]},
+            "original_text": json.dumps(origin),
+            "manifest_path": "source/specialist-manifest.json",
+            "manifest_sha256": "a" * 64,
+            "output_sha256": "b" * 64,
+            "pass": {"role": "sw-engineer", "output_path": "specialists/engineer.md"},
+            "disposition": "unresolved",
+        }
+        for index, origin in enumerate(metadata["source_findings"], 1)
+    ]
+    metadata.update(
+        source_findings=origins,
+        source_finding_mapping={origin["finding_id"]: ["C_INPUT"] for origin in origins},
+    )
+
+    sources = VALIDATOR.report_obligation_sources(report)
+
+    assert len(sources) == 1
+    assert sources[0]["source_id"] == "review/result.json#/metadata/review_validation/candidates/0"
+    for origin in origins:
+        assert json.dumps(origin, sort_keys=True) in sources[0]["body"]
 
 
 @pytest.fixture
@@ -70,6 +200,63 @@ def completed_report(tmp_path: Path) -> tuple[dict, Path, Path]:
         },
     }
     return {"status": "fail", "metadata": metadata}, consumer, producer
+
+
+@pytest.mark.integration
+def test_admitted_direct_report_reaches_obligation_cli_and_context_coverage(
+    completed_report: tuple[dict, Path, Path],
+) -> None:
+    """Prevent the obligation consumer from rejecting unchanged bytes already admitted by the real producer gates."""
+    result, consumer, producer = completed_report
+    producer_path = producer / "result.json"
+    report = json.loads(producer_path.read_bytes())
+    direct = _direct_origin_report("refuted")["metadata"]
+    routing = json.loads((producer / "pr-routing.json").read_text(encoding="utf-8"))
+    direct["review_validation"]["candidates"][0]["source_revision"] = "head:" + routing["head_oid"]
+    report["metadata"].update(
+        source_findings=direct["source_findings"], source_finding_mapping=direct["source_finding_mapping"]
+    )
+    report["metadata"]["review_validation"]["candidates"] = direct["review_validation"]["candidates"]
+    producer_path.write_text(json.dumps(report), encoding="utf-8", newline="\n")
+    copied = consumer / "findings-input.txt"
+    copied.write_bytes(producer_path.read_bytes())
+    before = {path: path.read_bytes() for path in producer.iterdir() if path.is_file()}
+    expected_context = result["metadata"]["final_resolution_table"]["items"][0]["sources"]
+
+    admitted = subprocess.run(
+        [sys.executable, str(PLUGIN_ROOT / "shared/find-review-report.py"), "--result", str(producer_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert admitted.returncode == 0, admitted.stderr
+    assert admitted.stdout.strip() == str(producer_path)
+    obligations = subprocess.run(
+        [
+            sys.executable,
+            str(PLUGIN_ROOT / "shared/remediation_finalize.py"),
+            "obligations",
+            "--run",
+            str(consumer),
+            "--producer-result-path",
+            str(producer_path),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert obligations.returncode == 0, obligations.stdout + obligations.stderr
+    context = json.loads((consumer / "report-obligations.json").read_bytes())
+    assert context == {"schema_version": 1, "sources": expected_context}
+    metadata = {
+        "final_resolution_table": {"items": []},
+        "review_report_intake": {"obligation_records_version": 2, "context_sources": context["sources"]},
+    }
+    VALIDATOR._validate_code_remediate_report_coverage(metadata, consumer)
+    VALIDATOR._validate_code_remediate_report_intake(result, consumer, current_contract=True)
+    assert copied.read_bytes() == producer_path.read_bytes()
+    assert {path: path.read_bytes() for path in before} == before
 
 
 @pytest.mark.integration

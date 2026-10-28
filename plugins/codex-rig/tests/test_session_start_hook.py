@@ -76,10 +76,10 @@ def _hook_input() -> bytes:
 
 
 def test_default_hook_config_is_exact_and_diagnostic_only() -> None:
-    """Declare one trusted-by-choice SessionStart command and no mutating event."""
+    """Declare trusted-by-choice startup and one-shot review/remediation diagnostics only."""
     value = json.loads(HOOK_CONFIG.read_text())
     assert set(value) == {"description", "hooks"}
-    assert set(value["hooks"]) == {"SessionStart"}
+    assert set(value["hooks"]) == {"SessionStart", "Stop"}
     group = value["hooks"]["SessionStart"][0]
     assert group["matcher"] == "startup|resume"
     assert group["hooks"] == [
@@ -89,6 +89,19 @@ def test_default_hook_config_is_exact_and_diagnostic_only() -> None:
             "commandWindows": '& "$env:PLUGIN_ROOT\\bin\\python.cmd" "$env:PLUGIN_ROOT\\hooks\\session_start.py"; exit $LASTEXITCODE',
             "timeout": 30,
             "statusMessage": "Checking Codex Rig shim health",
+        }
+    ]
+    assert value["hooks"]["Stop"] == [
+        {
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": '"$PLUGIN_ROOT/bin/python" "$PLUGIN_ROOT/hooks/review_stop.py"',
+                    "commandWindows": '& "$env:PLUGIN_ROOT\\bin\\python.cmd" "$env:PLUGIN_ROOT\\hooks\\review_stop.py"; exit $LASTEXITCODE',
+                    "timeout": 5,
+                    "statusMessage": "Checking unfinished review or remediation work",
+                }
+            ]
         }
     ]
     plugin = json.loads((PLUGIN_ROOT / ".codex-plugin" / "plugin.json").read_text())

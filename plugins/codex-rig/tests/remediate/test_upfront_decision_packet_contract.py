@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from _skill_text import read_with_references
+
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 CODE_REMEDIATE_SKILL = PLUGIN_ROOT / "skills" / "code-remediate" / "SKILL.md"
 COMMIT_VALUES = (
@@ -18,7 +20,11 @@ COMMIT_VALUES = (
 
 def _span(start: str, end: str) -> str:
     """Return one skill span with wrapping collapsed so assertions survive reflow."""
-    text = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8").split(start, maxsplit=1)[1].split(end, maxsplit=1)[0]
+    text = (
+        read_with_references(CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md")
+        .split(start, maxsplit=1)[1]
+        .split(end, maxsplit=1)[0]
+    )
     return " ".join(text.split())
 
 
@@ -31,7 +37,9 @@ def test_packet_is_part_of_scope_checkpoint_and_keeps_rendered_scope() -> None:
     scope_step = _span("### 05: Ask For Resolution Scope Before Editing", "### 06:")
     packet = _span("### Upfront Decision Packet", "### 06:")
 
-    assert "### Upfront Decision Packet" in CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    assert "### Upfront Decision Packet" in read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md"
+    )
     assert packet in scope_step
     assert "steps 06–11 run without another conversational question on the normal path" in packet
     assert "`How should verified remediation-owned changes be grouped into commits?`" in packet
@@ -90,7 +98,9 @@ def test_commit_step_reuses_packet_answer_and_names_material_changes() -> None:
 
 def test_packet_owns_native_discovery_and_single_delivery_before_scope_prompt() -> None:
     """Prevent the earlier scope template from being asked again as part of the packet."""
-    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md"
+    )
     context = skill.split("### Terminal Scope Context Contract", 1)[1].split("### Upfront Decision Packet", 1)[0]
     packet = _span("### Upfront Decision Packet", "### 06:")
     assert "resolve the Upfront Decision Packet route before emitting context or opening any question" in context
@@ -131,7 +141,9 @@ def test_single_selected_actionable_item_skips_grouping_without_granting_consent
     packet = _span("### Upfront Decision Packet", "### 06:")
     row = next(
         line
-        for line in CODE_REMEDIATE_SKILL.read_text(encoding="utf-8").splitlines()
+        for line in read_with_references(
+            CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md"
+        ).splitlines()
         if "| Commit preference |" in line
     )
 

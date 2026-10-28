@@ -27,7 +27,16 @@ NATIVE_CONTRACT = PLUGIN_ROOT / "shared" / "native-skill-contract.md"
 # sessions that load no workflow skill, so a skill-local pointer cannot establish the requested default.
 # Raised by 420 bytes for the dependency-preparation trigger: skills and roles can report blocked checks before
 # loading the shared workflow contract, so the parent-owned preparation rule must remain always-loaded.
-TEMPLATE_BYTE_BUDGET = 39442
+# Raised by 14 bytes for root-cause and model-neutral dispatch principles that apply even without a skill.
+# Raised by 534 bytes: confidence must describe the delivered result and stay separate from completion even before a
+# workflow skill loads, so a lazy skill-local rule cannot govern early status handoffs.
+# Raised by 391 bytes for the user-requested proportional execution, controlled-first validation and accurate
+# confidence reporting instructions. These govern ordinary sessions before any skill loads; an independent
+# followability audit rejected moving the dependency and resume gates out of the template.
+# Raised by 570 bytes for the user-required universal lifecycle: ordinary sessions without a skill must plan and
+# challenge, accept within existing authority, assign execution, and consolidate verified delivery without creating
+# an automatic user approval gate. These pre-skill obligations must remain always-loaded.
+TEMPLATE_BYTE_BUDGET = 40951
 
 
 @pytest.mark.packaging

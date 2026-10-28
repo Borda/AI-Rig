@@ -176,7 +176,7 @@ Writeback happens in-bash above (`settings_json.py` atomic rename — no Write-t
 
 Merge `$PLUGIN_ROOT/.claude-plugin/permissions-allow.json` and `permissions-deny.json` into `~/.claude/settings.json` via `merge_settings_permissions.py` below — one atomic write covers both arrays. A missing or invalid shipped file aborts the block with settings unchanged.
 
-- **allow**: add only entries not already present (exact string match). Before merging, remove only the obsolete `Bash(gh api repos/*:*)` entry; the shipped `Bash(gh api repos/*)` replaces it.
+- **allow**: add only entries not already present (exact string match). Before merging, remove exactly the entries in `permissions-allow-retired.json`: the obsolete `Bash(gh api repos/*:*)` entry and the broad `Bash(claude:*)`, `Bash(find:*)`, `Bash(node:*)`, `Bash(sed:*)` and `Bash(eval:*)` shell grants. The shipped `Bash(gh api repos/*)` replaces only the obsolete repository API form; nothing replaces the retired shell grants.
 - **deny**: first remove exactly the retired entries listed in `permissions-deny-retired.json` (exact string match): the deny entries earlier versions shipped for `gh` writes — a settings deny rule still applies after a hook `allow`, so they would defeat the user's one-time `gh-write` approval, and `hooks/gh-write-guard.js` now gates every gh write — and for local `git branch -D`/`-d` and `git tag -d`, since local Git runs freely. Then add only entries not already present.
 - Preserve every other user allow and deny entry, and unrelated settings.
 
@@ -186,10 +186,10 @@ Writes merged `permissions.allow` and `permissions.deny` arrays:
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r PLUGIN_ROOT < "${TMPDIR:-/tmp}/setup-plugin-root-${CSID}" 2>/dev/null || PLUGIN_ROOT=""  # reload: fresh shell (Check 43)
 [ -n "$PLUGIN_ROOT" ] || { printf "! PLUGIN_ROOT sentinel missing — re-run /foundry:setup\n"; exit 1; }
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/merge_settings_permissions.py" --allow "$PLUGIN_ROOT/.claude-plugin/permissions-allow.json" --drop-allow 'Bash(gh api repos/*:*)' --drop-allow 'Bash(claude:*)' --drop-allow 'Bash(find:*)' --drop-allow 'Bash(node:*)' --drop-allow 'Bash(sed:*)' --drop-allow 'Bash(eval:*)' --deny "$PLUGIN_ROOT/.claude-plugin/permissions-deny.json" --retire-deny-file "$PLUGIN_ROOT/.claude-plugin/permissions-deny-retired.json" || { printf "! permissions merge failed — settings.json unchanged\n"; exit 1; }  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/merge_settings_permissions.py" --allow "$PLUGIN_ROOT/.claude-plugin/permissions-allow.json" --drop-allow-file "$PLUGIN_ROOT/.claude-plugin/permissions-allow-retired.json" --deny "$PLUGIN_ROOT/.claude-plugin/permissions-deny.json" --retire-deny-file "$PLUGIN_ROOT/.claude-plugin/permissions-deny-retired.json" || { printf "! permissions merge failed — settings.json unchanged\n"; exit 1; }  # timeout: 5000
 ```
 
-Writeback happens in-bash above (atomic rename). Report from the script's two output lines: "Added N new permissions.allow entries (M already present)." plus whether the exact obsolete repository API rule was replaced (`dropped`), and "Added N new permissions.deny entries (M already present)." plus how many retired deny entries were removed (`retired`).
+Writeback happens in-bash above (atomic rename). Report from the script's two output lines: "Added N new permissions.allow entries (M already present)." plus the total retired allow entries removed (`dropped`), and "Added N new permissions.deny entries (M already present)." plus how many retired deny entries were removed (`retired`).
 
 ## Step 6: Copy permissions-guide.md
 

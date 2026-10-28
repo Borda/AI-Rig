@@ -243,7 +243,7 @@ def test_no_shipped_allow_rule_preapproves_overlay_fetch(plugin: str) -> None:
 #: Shared script every setup runs to merge its shipped permission lists; its call line is the executable contract.
 MERGE_SCRIPT = "bin/merge_settings_permissions.py"
 #: Flags of that call belonging to each array, so one merge can be executed without touching the other.
-MERGE_FLAGS = {"allow": ("--allow", "--drop-allow"), "deny": ("--deny", "--retire-deny-file")}
+MERGE_FLAGS = {"allow": ("--allow", "--drop-allow", "--drop-allow-file"), "deny": ("--deny", "--retire-deny-file")}
 
 
 def _setup_source(plugin: str) -> tuple[Path, str]:
@@ -256,7 +256,7 @@ def _setup_source(plugin: str) -> tuple[Path, str]:
 def _merge_call_flags(text: str, root: Path) -> dict[str, list[str]]:
     """Return ``{flag: values}`` from the ``python …/merge_settings_permissions.py`` lines of a setup; empty if none.
 
-    Flags are read from the shipped call itself, so a lost ``--drop-allow`` or ``--retire-deny-file`` changes the
+    Flags are read from the shipped call itself, so a lost ``--drop-allow-file`` or ``--retire-deny-file`` changes the
     executed migration and fails the assertions below. ``$PLUGIN_ROOT`` expands to the plugin under test.
     """
     flags: dict[str, list[str]] = {}
@@ -268,6 +268,62 @@ def _merge_call_flags(text: str, root: Path) -> dict[str, list[str]]:
             if flag.startswith("--"):
                 flags.setdefault(flag, []).append(value)
     return flags
+
+
+#: PreToolUse hook that blocks a ``python`` Bash call whose arguments name ``gh`` with ``api`` or a write verb.
+GH_WRITE_GUARD = ROOT / "plugins" / "cc_foundry" / "hooks" / "gh-write-guard.js"
+#: Plugins whose setup skill runs the shared permissions merge script.
+MERGE_SCRIPT_PLUGINS = ["cc_foundry", "cc_oss", "cc_develop", "cc_research"]
+_requires_node = pytest.mark.skipif(shutil.which("node") is None, reason="requires node to run the gh-write guard")
+
+
+def _guard_exit_code(command: str) -> tuple[int, str]:
+    """Return the gh-write guard's exit code and stderr for ``command`` sent as a Bash PreToolUse payload."""
+    payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(ROOT)})
+    result = subprocess.run(
+        ["node", str(GH_WRITE_GUARD)], input=payload, capture_output=True, encoding="utf-8", check=False
+    )
+    return result.returncode, result.stderr
+
+
+@pytest.mark.integration
+@_requires_node
+@pytest.mark.parametrize("expand_root", [pytest.param(False, id="unexpanded"), pytest.param(True, id="expanded")])
+@pytest.mark.parametrize("plugin", MERGE_SCRIPT_PLUGINS)
+def test_setup_merge_call_passes_gh_write_guard(plugin: str, expand_root: bool) -> None:
+    """Each shipped setup merge block, as the Bash tool receives it, is not blocked by the gh-write guard.
+
+    The guard reads every argument of a ``python`` call as interpreter code and blocks one that names ``gh api``, so a
+    retired ``Bash(gh api …)`` rule on the command line stops setup before ``settings.json`` is merged. The whole fenced
+    block, continuation lines included, is run through the real guard with ``$PLUGIN_ROOT`` left as written and
+    expanded, so the symptom cannot return in one plugin while another still passes.
+    """
+    root, text = _setup_source(plugin)
+    fences = re.finditer(r"^[ \t]*((`|~)\2{2,})[^\n]*\n(.*?)^[ \t]*\1\2*[ \t]*$", text, flags=re.DOTALL | re.MULTILINE)
+    blocks = [fence.group(3) for fence in fences if MERGE_SCRIPT in fence.group(3)]
+    calls = [line.strip() for line in text.splitlines() if MERGE_SCRIPT in line]
+    assert len(blocks) == 1
+    assert all(call in blocks[0] for call in calls)
+    command = blocks[0].replace("$PLUGIN_ROOT", root.as_posix()) if expand_root else blocks[0]
+
+    code, stderr = _guard_exit_code(command)
+
+    assert (code, stderr) == (0, "")
+
+
+@pytest.mark.integration
+@_requires_node
+def test_gh_write_guard_blocks_a_python_call_naming_gh_api() -> None:
+    """The guard still blocks a ``python`` call carrying ``gh api`` text, so the shipped-call test can fail.
+
+    Without this control a guard that stopped inspecting ``python`` arguments would make the shipped-call test pass for
+    any command line and the retired-rule workaround would look verified when it is not needed.
+    """
+    command = f"python bin/merge_settings_permissions.py --allow a.json --drop-allow '{OLD_RULE}'"
+
+    code, _ = _guard_exit_code(command)
+
+    assert code == 2
 
 
 def _run_merge_script(

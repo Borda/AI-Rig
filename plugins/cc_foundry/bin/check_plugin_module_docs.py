@@ -42,12 +42,16 @@ RICH_DOC_SECTIONS = ("## Purpose", "## Scope", "## Usage", "## Outputs", "## Fai
 #: Minimum module docstring length, in characters, for modules in the rich-docstring plugin.
 RICH_DOC_MINIMUM_CHARACTERS = 700
 #: Directory names whose Python files are not checked for module docstrings.
-EXCLUDED_DIRECTORY_NAMES = frozenset({"tests", "__pycache__", ".reports"})
+EXCLUDED_DIRECTORY_NAMES = frozenset({"tests", "__pycache__", ".reports", "node_modules"})
 
 
 def production_modules(plugins_dir: Path) -> list[Path]:
-    """Return shipped plugin modules, excluding tests, caches, and generated reports."""
-    return sorted(path for path in plugins_dir.rglob("*.py") if not EXCLUDED_DIRECTORY_NAMES.intersection(path.parts))
+    """Return shipped plugin modules, excluding tests, caches, generated reports, and vendored deps."""
+    return sorted(
+        path
+        for path in plugins_dir.rglob("*.py")
+        if not EXCLUDED_DIRECTORY_NAMES.intersection(path.relative_to(plugins_dir).parts)
+    )
 
 
 def findings_for_module(module: Path, plugins_dir: Path) -> list[str]:

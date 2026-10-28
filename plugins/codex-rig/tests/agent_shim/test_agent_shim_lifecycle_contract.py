@@ -366,7 +366,7 @@ class TestLifecycleApprovalContract:
             "python_executable_hash": "64-character lowercase SHA-256 over exact Python executable bytes",
             "codex_binary_path": "absolute canonical UTF-8 path to the held verified regular executable",
             "codex_binary_hash": "64-character lowercase SHA-256 over exact Codex executable bytes",
-            "generator_version": "JSON integer exactly 1",
+            "generator_version": "JSON integer exactly 2 for the active package",
             "install_id": "canonical lowercase RFC 4122 UUID string",
             "transaction_nonce": "canonical lowercase RFC 4122 UUID string generated once before approval",
             "roster_hash": "64-character lowercase SHA-256 over the exact hash_preimages.roster_hash preimage",

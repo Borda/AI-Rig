@@ -246,13 +246,24 @@ def _write_wave(out: Path, plan: dict[str, Any], contexts: dict[str, bytes], car
     files: dict[Path, bytes] = {}
     calls = []
     for role, context in sorted(contexts.items()):
+        card_path = out.parent.parent / "role-cards" / role / "ROLE.md"
+        try:
+            card_bytes = card_path.read_bytes()
+        except OSError as error:
+            raise ValueError(f"review-batch-retained-card-missing-rerun-fresh:{role}") from error
+        if _digest(card_bytes) != cards[role]["role_card_sha256"] or not context.startswith(card_bytes):
+            raise ValueError(f"review-batch-retained-card-changed-rerun-fresh:{role}")
+        if ("model_selection" not in wave_plan) != ("model" in cards[role]):
+            raise ValueError(f"review-batch-card-model-contract-rerun-fresh:{role}")
         if len(context) > CONTEXT_LIMIT:
             raise ValueError(f"review-batch-context-capacity-exceeded:{role}:{len(context)}")
-        if any(pattern.search(context.decode("utf-8")) for pattern in validator._SECRET_PATTERNS):
+        if validator.review_input_has_sensitive_material(
+            context.decode("utf-8"), wave_plan.get("inert_fixture_admissions", [])
+        ):
             raise ValueError(f"review-context-sensitive-material:{role}")
         path = f"specialists/{role}-context.md"
         files[out / path] = context
-        files[out / "role-cards" / role / "ROLE.md"] = (validator.PLUGIN_ROOT / "roles" / role / "ROLE.md").read_bytes()
+        files[out / "role-cards" / role / "ROLE.md"] = card_bytes
         wave_plan["contexts"].append({"role_id": role, "context_path": path, "context_sha256": _digest(context)})
     files[out / "review-routing.json"] = producer._json_bytes({"sol_selection": selection})
     files[out / "inspection-plan.json"] = producer._json_bytes(wave_plan)
@@ -267,7 +278,15 @@ def _write_wave(out: Path, plan: dict[str, Any], contexts: dict[str, bytes], car
                 "arguments": {
                     "task_name": f"review_{role.replace('-', '_')}_{entry['context_sha256'][:12]}_a1",
                     "fork_turns": "none",
-                    "model": cards[role]["model"],
+                    **(
+                        {"model": cards[role]["model"]}
+                        if "model_selection" not in wave_plan
+                        else (
+                            {"model": wave_plan["model_selection"]["model"]}
+                            if wave_plan["model_selection"]["mode"] == "explicit"
+                            else {}
+                        )
+                    ),
                     "reasoning_effort": cards[role]["model_reasoning_effort"],
                     "message": producer._dispatch_message(out / "inspection-plan.json", role),
                 },
@@ -285,6 +304,25 @@ def _write_wave(out: Path, plan: dict[str, Any], contexts: dict[str, bytes], car
     return dispatch
 
 
+def _continuation_cards(out: Path, plan: dict[str, Any], contexts: dict[str, list[bytes]]) -> dict[str, Any]:
+    """Load cards authenticated by the already admitted first source wave before creating more waves."""
+    _, validator = _helpers()
+    try:
+        manifest = validator._load_json(out / "batches" / "source-001" / "specialist-manifest.json")
+        passes = {item["role"]: item for item in manifest["passes"]}
+        cards = {role: validator._load_role_card(out / "role-cards", role) for role in contexts}
+        if any(
+            cards[role]["role_card_sha256"] != passes[role]["role_card_sha256"]
+            or (("model_selection" not in plan) != ("model" in cards[role]))
+            or any(not context.startswith((out / "role-cards" / role / "ROLE.md").read_bytes()) for context in packets)
+            for role, packets in contexts.items()
+        ):
+            raise ValueError("review-batch-retained-card-mismatch")
+    except (OSError, KeyError, TypeError, ValueError, SystemExit) as error:
+        raise ValueError("review-batch-retained-cards-unavailable-rerun-fresh") from error
+    return cards
+
+
 def prepare_source_batches(
     out: Path,
     plan: dict[str, Any],
@@ -296,9 +334,12 @@ def prepare_source_batches(
     source_arguments: dict[str, Any],
     routing_bytes: bytes,
     briefs_bytes: bytes,
+    *,
+    fixture_discovery: bool = False,
+    fixture_selections: object = None,
 ) -> dict[str, Any]:
     """Split complete role contexts into exact UTF-8 intervals and freeze serial bounded waves."""
-    producer, _ = _helpers()
+    producer, validator = _helpers()
     # The caller verified this source moments ago; keep that exact state for the final inventory check.
     verified_source = (copy.deepcopy(snapshot), set(changed))
     sections = producer._diff_sections((out / "diff.patch").read_bytes())
@@ -390,6 +431,29 @@ def prepare_source_batches(
                 }
             )
             offset += len(chunk)
+    # Missing fragment approvals must leave the run unfrozen so an authorized correction can retry in place.
+    for contexts in wave_contexts:
+        for role, context in sorted(contexts.items()):
+            if len(context) > CONTEXT_LIMIT:
+                raise ValueError(f"review-batch-context-capacity-exceeded:{role}:{len(context)}")
+            sensitive = validator.review_input_has_sensitive_material(
+                context.decode("utf-8"), plan.get("inert_fixture_admissions", [])
+            )
+            if sensitive and not fixture_discovery:
+                raise ValueError(f"review-context-sensitive-material:{role}")
+    if fixture_discovery:
+        inputs = {
+            f"source-context:{role}": files[out / f"specialists/{role}-context.md"].decode("utf-8")
+            for role in sorted(selections)
+        }
+        inputs.update(
+            {
+                f"batch:source-{index:03d}:{role}": context.decode("utf-8")
+                for index, contexts in enumerate(wave_contexts, 1)
+                for role, context in sorted(contexts.items())
+            }
+        )
+        return producer.review_fixture_discovery(inputs, fixture_selections)
     inventory = {
         "schema_version": 3,
         "plan": plan,
@@ -452,7 +516,7 @@ def validate_inventory(out: Path, *, verified_source: tuple[dict[str, Any], set[
             selected,
             arguments["expected_diff_base"],
             arguments["scope_path"],
-        )
+        )[:2]
         if verified_source is None
         else verified_source
     )
@@ -466,11 +530,7 @@ def validate_inventory(out: Path, *, verified_source: tuple[dict[str, Any], set[
         raise ValueError("review-batch-source-review-identity-mismatch")
     records = {record["path"]: record for record in snapshot["files"]}
     sections = producer._diff_sections((out / "diff.patch").read_bytes())
-    untracked = (
-        set((out / "untracked.txt").read_text(encoding="utf-8").splitlines())
-        if (out / "untracked.txt").exists()
-        else set()
-    )
+    untracked = producer.collect_diff.read_git_path_lines(out / "untracked.txt")
     scopes = (
         producer.collect_diff._normalize_scope_paths(Path(arguments["source_root"]), [arguments["scope_path"]])
         if arguments["scope_path"] is not None
@@ -489,7 +549,9 @@ def validate_inventory(out: Path, *, verified_source: tuple[dict[str, Any], set[
         raise ValueError("review-batch-source-coverage-incomplete")
     for role, entries in inventory["segments"].items():
         original = (out / "source-contexts" / f"{role}.md").read_bytes()
-        if any(pattern.search(original.decode("utf-8")) for pattern in validator._SECRET_PATTERNS):
+        if validator.review_input_has_sensitive_material(
+            original.decode("utf-8"), inventory["plan"].get("inert_fixture_admissions", [])
+        ):
             raise ValueError(f"review-context-sensitive-material:{role}")
         reconstructed = bytearray()
         for index, entry in enumerate(entries, 1):
@@ -857,7 +919,7 @@ def prepare_interactions(out: Path, codex_home: Path) -> dict[str, Any]:
     briefs_path = out / "interaction-briefs.json"
     contexts = interaction_contexts(out, inventory, validator._load_json(briefs_path), _wave_outputs(out, directories))
     waves = []
-    cards = {role: validator._load_role_card(validator.PLUGIN_ROOT / "roles", role) for role in contexts}
+    cards = _continuation_cards(out, inventory["plan"], contexts)
     for index in range(max(map(len, contexts.values()))):
         directory = out / "batches" / f"interaction-{index + 1:03d}"
         producer._freeze({directory / "diff.patch": (out / "diff.patch").read_bytes()})
@@ -944,20 +1006,21 @@ def consolidation_contexts(out: Path, inventory: dict[str, Any]) -> dict[str, by
 
 def prepare_consolidation(out: Path, codex_home: Path) -> dict[str, Any]:
     """Dispatch final consolidation only after every bounded interaction wave is independently admitted."""
-    producer, validator = _helpers()
+    producer, _ = _helpers()
     out = out.resolve()
     inventory = validate_inventory(out)
     if inventory["plan"].get("review_topology") == "source-only":
         raise ValueError("review-source-only-parent-reconciliation")
+    _admit_waves(out, inventory, _source_wave_paths(out, inventory), codex_home)
     _admit_waves(out, inventory, _interaction_wave_paths(out), codex_home)
     schedule, parts = consolidation_parts(out, inventory)
+    cards = _continuation_cards(out, inventory["plan"], parts)
     if schedule is not None:
         waves = []
         for index in range(max(map(len, parts.values()))):
             directory = out / "batches" / f"consolidation-{index + 1:03d}"
             contexts = {role: packets[index] for role, packets in parts.items() if len(packets) > index}
             producer._freeze({directory / "diff.patch": (out / "diff.patch").read_bytes()})
-            cards = {role: validator._load_role_card(validator.PLUGIN_ROOT / "roles", role) for role in contexts}
             waves.append(
                 {
                     "directory": directory.relative_to(out).as_posix(),
@@ -969,7 +1032,6 @@ def prepare_consolidation(out: Path, codex_home: Path) -> dict[str, Any]:
     contexts = {role: packets[0] for role, packets in parts.items()}
     directory = out / "batches" / "interactions"
     producer._freeze({directory / "diff.patch": (out / "diff.patch").read_bytes()})
-    cards = {role: validator._load_role_card(validator.PLUGIN_ROOT / "roles", role) for role in contexts}
     return _write_wave(directory, inventory["plan"], contexts, cards)
 
 

@@ -93,7 +93,7 @@ ROLE_IDS = (
     "web-explorer",
 )
 #: Role card frontmatter keys that must be non-empty and are recorded as the role's runtime settings.
-RUNTIME_KEYS = ("model", "model_reasoning_effort", "approval_policy", "sandbox_mode")
+RUNTIME_KEYS = ("model_reasoning_effort", "approval_policy", "sandbox_mode")
 #: Directory names skipped when inventorying package files (caches and generated report folders).
 EXCLUDED_PARTS = frozenset({"__pycache__", ".pytest_cache", ".reports"})
 #: File names skipped when inventorying package files, including the manifest that records the inventory.
@@ -188,6 +188,8 @@ def build_manifest() -> dict[str, Any]:
             raise ValueError(f"role identity mismatch: {role_id}")
         if frontmatter.get("fallback_modes") != "[shim, built-in-injected, inline]":
             raise ValueError(f"role fallback modes mismatch: {role_id}")
+        if "model" in frontmatter:
+            raise ValueError(f"role model must be inherited: {role_id}")
         runtime = {key: frontmatter.get(key) for key in RUNTIME_KEYS}
         if not all(isinstance(value, str) and value for value in runtime.values()):
             raise ValueError(f"role runtime defaults incomplete: {role_id}")
@@ -207,7 +209,7 @@ def build_manifest() -> dict[str, Any]:
     if not generator.is_file():
         raise ValueError("missing thin-role generator")
     return {
-        "schema": 1,
+        "schema": 2,
         "plugin": "codex-rig",
         "version": plugin["version"],
         "release_profile": "role-card-injected",
@@ -220,7 +222,7 @@ def build_manifest() -> dict[str, Any]:
             "sha256": sha256(helper.read_bytes()),
         },
         "generator": {
-            "version": 1,
+            "version": 2,
             "path": "scripts/generate_roles.py",
             "sha256": sha256(generator.read_bytes()),
         },
@@ -248,7 +250,7 @@ def enforces_posix_modes() -> bool:
 
 
 def manifests_match(current: dict[str, Any], generated: dict[str, Any], *, enforce_modes: bool) -> bool:
-    """Compare schema-1 manifests while optionally excluding filesystem mode values."""
+    """Compare package manifests while optionally excluding filesystem mode values."""
     if enforce_modes:
         return current == generated
 

@@ -264,7 +264,7 @@
     ],
     "source_state_schema": {
       "bootstrap": "object with exactly state.bootstrap_fields and state.bootstrap_schema from the authenticated prior state",
-      "generator_version": "JSON integer exactly 1 from the authenticated prior state",
+      "generator_version": "JSON integer 1 or 2 from the authenticated prior state",
       "package_hash": "64-character lowercase SHA-256 from the authenticated prior state",
       "plugin_root_identity": "object with exactly state.root_identity_fields and state.root_identity_schema from the authenticated prior state",
       "plugin_version": "SemVer string from the authenticated prior state",
@@ -301,7 +301,7 @@
       "codex_home_observation": "object with exactly root_observation_fields and root_observation_schema",
       "coordination_lock_intent": "string exactly open-existing or create-if-absent",
       "coordination_lock_observation": "object with exactly coordination_lock_observation_fields and coordination_lock_observation_schema",
-      "generator_version": "JSON integer exactly 1",
+      "generator_version": "JSON integer exactly 2 for the active package",
       "install_id": "canonical lowercase RFC 4122 UUID string",
       "journal_observation": "object with exactly journal_observation_fields and journal_observation_schema",
       "mode": "string exactly converge or recovery",
@@ -380,7 +380,7 @@
   },
   "marker": {
     "encoding": "UTF-8 without BOM",
-    "grammar": "# codex-rig-shim schema=1 plugin=codex-rig install_id=<uuid> role_id=<role> package_hash=sha256:<hex> role_hash=sha256:<hex> bootstrap=1 generator=1",
+    "grammar": "# codex-rig-shim schema=1 plugin=codex-rig install_id=<uuid> role_id=<role> package_hash=sha256:<hex> role_hash=sha256:<hex> bootstrap=1 generator=<1-or-2>; 1 is historical, 2 is current, and the marker version must match authenticated state",
     "line": 1,
     "maximum_bytes": 1024,
     "newline": "LF",
@@ -623,7 +623,7 @@
   "shim_format": {
     "dynamic_fields": {
       "description": "Thin linked Codex Rig <role_id> role; unavailable unless the current installed plugin verifies.",
-      "model_effort_approval_sandbox": "exact canonical role-card frontmatter values",
+      "effort_approval_sandbox": "exact canonical role-card frontmatter values; model is inherited from the host",
       "name": "codex-rig-<role_id>",
       "toml_escaped_verifier_argv_json": "take the compact verifier argv JSON text, replace each backslash with two backslashes and then each double quote with backslash-double-quote before interpolation into the TOML multiline basic string; parsing TOML must reproduce the exact original JSON text",
       "verifier_argv_json": "compact ensure_ascii=true JSON array of the absolute Python executable and fixed verifier arguments; no shell string is generated"
@@ -644,7 +644,6 @@
       "{marker}",
       "name = {encoded_name}",
       "description = {encoded_description}",
-      "model = {encoded_model}",
       "model_reasoning_effort = {encoded_effort}",
       "approval_policy = {encoded_approval}",
       "sandbox_mode = {encoded_sandbox}",
@@ -727,7 +726,7 @@
     "encoding": "UTF-8 canonical JSON without trailing data; duplicate keys and non-finite numbers rejected",
     "extra_fields": "rejected at every object level",
     "field_schema": {
-      "generator_version": "integer exactly 1",
+      "generator_version": "integer 1 for historical state or 2 for current state",
       "install_id": "lowercase RFC 4122 UUID string",
       "package_hash": "64-character lowercase SHA-256 string",
       "plugin": "string exactly codex-rig",

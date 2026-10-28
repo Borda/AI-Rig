@@ -50,6 +50,7 @@ def test_hook_payload_and_registrations_keep_only_research_modules() -> None:
     assert {path.name for path in (_PLUGIN / ".claude-plugin").glob("*.json")} == {
         "plugin.json",
         "permissions-allow.json",
+        "permissions-allow-retired.json",
         "permissions-deny.json",
     }
     hooks = json.loads((_PLUGIN / "hooks/hooks.json").read_text(encoding="utf-8"))["hooks"]
@@ -133,7 +134,7 @@ def test_readme_and_setup_explain_the_upgrade_boundary() -> None:
     assert "Existing settings keep these four allow entries" in readme
     assert all(f"`{entry}`" in readme for entry in _TRIMMED_ALLOWS)
     assert "stale gh deny entries from older versions: run /foundry:setup" in setup
-    assert "nothing replaces it" in setup
+    assert "Nothing replaces those retired entries." in setup
 
 
 @pytest.mark.integration

@@ -7,6 +7,7 @@ import json
 import os
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -31,7 +32,11 @@ def _load_module(path: Path, name: str) -> Any:
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    sys.path.insert(0, str(path.parent))
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.pop(0)
     return module
 
 
@@ -131,24 +136,44 @@ def test_source_snapshot_records_staged_deletion(tmp_path: Path) -> None:
 
 def test_collect_diff_uses_only_git_argv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep collection shell-free and bind every subprocess to Git argv."""
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    _initialize_repository(repository)
+    monkeypatch.chdir(repository)
     module = _load_module(COLLECT_DIFF, "codex_rig_portable_collect_diff")
     calls: list[list[str]] = []
+    run = subprocess.run
 
-    def _record_run(arguments: list[str], **_: object) -> Any:
-        """Record shell-free collection argv and return a successful process stub."""
+    def _record_run(arguments: list[str], **kwargs: Any) -> Any:
+        """Record shell-free collection argv while executing the actual Git commands."""
+        assert not kwargs.get("shell", False)
         calls.append(arguments)
-        return type("Completed", (), {"returncode": 0})()
+        return run(arguments, **kwargs)
 
     monkeypatch.setattr(module.subprocess, "run", _record_run)
 
     assert module.collect_diff("working-tree", "", tmp_path / "artifacts") == 0
+    canonical_options = [
+        "--no-color",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--src-prefix=a/",
+        "--dst-prefix=b/",
+        "--unified=3",
+        "--inter-hunk-context=0",
+        "--diff-algorithm=myers",
+        "--no-renames",
+        "--no-relative",
+        "--ignore-submodules=none",
+    ]
     assert calls == [
         ["git", "status", "--short"],
-        ["git", "diff", "HEAD"],
-        ["git", "diff", "--name-only", "HEAD"],
-        ["git", "diff", "--stat", "HEAD"],
-        ["git", "diff", "--numstat", "HEAD"],
-        ["git", "ls-files", "--others", "--exclude-standard"],
+        *[
+            ["git", "-c", "core.quotePath=true", "diff", option, "HEAD", *canonical_options]
+            for option in ("--binary", "--name-only", "--stat", "--numstat")
+        ],
+        ["git", "-C", str(repository.resolve()), "--literal-pathspecs", "rev-parse", "--show-toplevel"],
+        ["git", "-C", str(repository.resolve()), "ls-files", "--others", "--exclude-standard"],
     ]
 
 
@@ -221,6 +246,38 @@ def test_run_gates_terminates_simulated_windows_process_trees_with_taskkill(
     module.terminate_process(Process(), "win32")
 
     assert calls == [["taskkill", "/PID", "42", "/T", "/F"]]
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    [pytest.param(b"\xc3\xa9", id="truncated-valid-utf8"), pytest.param(b"\xff", id="invalid-external-byte")],
+)
+def test_gate_report_survives_non_utf8_failure_output(tmp_path: Path, suffix: bytes) -> None:
+    """Retain a canonical failed gate when bounded external stderr is not valid UTF-8."""
+    script = tmp_path / "failure.py"
+    script.write_text(
+        f"import sys\nsys.stderr.buffer.write(b'a' * (1024 * 1024 - 1) + {suffix!r})\nsys.exit(127)\n",
+        encoding="utf-8",
+    )
+    command = (
+        f'& "{sys.executable}" "{script}"' if sys.platform == "win32" else shlex.join((sys.executable, str(script)))
+    )
+    output = tmp_path / "gates"
+    completed = subprocess.run(
+        [sys.executable, str(RUN_GATES), "--out", str(output), "--lint", command, *_skipped_gate_args()[2:]],
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    assert completed.returncode == 1, completed.stderr
+    report = json.loads((output / "gates.json").read_text(encoding="utf-8"))
+    lint = report["checks"][0]
+    assert report["status"] == "fail"
+    assert report["checks_failed"] == ["lint"]
+    assert lint["status"] == "missing-command"
+    assert lint["exit_code"] == 127
+    assert "\ufffd" in lint["reason"]
+    assert len((output / lint["stderr"]).read_bytes()) < 1024 * 1024 + 100
 
 
 def test_run_gates_writes_exact_five_gate_artifacts(tmp_path: Path) -> None:
@@ -450,6 +507,73 @@ def test_run_gates_times_out_and_terminates_native_process(tmp_path: Path) -> No
     assert payload["checks"][0]["exit_code"] == 124
     assert payload["checks"][0]["reason"] == "timeout after 1 seconds"
     assert "timeout: exceeded 1 seconds" in (output / "checks" / "lint.stderr.txt").read_text()
+
+
+@pytest.mark.skipif(not hasattr(os, "killpg") or not hasattr(signal, "SIGTERM"), reason="requires POSIX process groups")
+@pytest.mark.parametrize("leader_exits_before_timeout", [False, True])
+def test_timeout_kills_descendant_after_leader_exits(tmp_path: Path, leader_exits_before_timeout: bool) -> None:
+    """Stop a signal-resistant descendant even when its leader exits before the deadline.
+
+    Inherited output pipes keep a command unfinished after its leader exits. Waiting for the leader first used to bypass
+    the timeout and leave that descendant running, so the early-exit case must retain timeout evidence and prevent its
+    delayed filesystem write. The other case protects escalation after SIGTERM exits the leader.
+    """
+    child = tmp_path / "child.py"
+    child.write_text(
+        "import pathlib, signal, sys, time\n"
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        "time.sleep(3)\n"
+        "pathlib.Path(sys.argv[1]).write_text('survived')\n",
+        encoding="utf-8",
+    )
+    marker = tmp_path / "survived"
+    parent = tmp_path / "parent.py"
+    parent.write_text(
+        "import subprocess, sys, time\nsubprocess.Popen([sys.executable, sys.argv[1], sys.argv[2]])\n"
+        + ("" if leader_exits_before_timeout else "time.sleep(20)\n"),
+        encoding="utf-8",
+    )
+    module = _load_module(RUN_GATES, "timeout_descendant_runner")
+    result, duration = module.execute_command(
+        [sys.executable, str(parent), str(child), str(marker)], 1, tmp_path / "stdout", tmp_path / "stderr"
+    )
+    time.sleep(3)
+    assert result == 124
+    assert duration < 3
+    assert "timeout: exceeded 1 seconds" in (tmp_path / "stderr").read_text(encoding="utf-8")
+    assert not marker.exists()
+
+
+def test_gate_waits_for_inherited_output_before_the_deadline(tmp_path: Path) -> None:
+    """Preserve a successful descendant's output when its leader has already exited.
+
+    An early leader exit alone is not a timeout. The capture deadline must allow a short-lived descendant to finish,
+    retain its output on both streams, and preserve the leader's successful exit status.
+    """
+    module = _load_module(RUN_GATES, "inherited_output_runner")
+    child = "import sys,time; time.sleep(0.2); print('child stdout'); print('child stderr', file=sys.stderr)"
+    leader = f"import subprocess,sys; subprocess.Popen([sys.executable, '-c', {child!r}])"
+    stdout, stderr = tmp_path / "stdout", tmp_path / "stderr"
+
+    result, _ = module.execute_command([sys.executable, "-c", leader], 10, stdout, stderr)
+
+    assert result == 0
+    assert stdout.read_text(encoding="utf-8") == "child stdout\n"
+    assert stderr.read_text(encoding="utf-8") == "child stderr\n"
+
+
+def test_gate_output_capture_is_bounded_on_both_streams(tmp_path: Path) -> None:
+    """Drain both streams and mark truncation without letting logs grow without bound."""
+    module = _load_module(RUN_GATES, "bounded_output_runner")
+    command = "import sys; sys.stdout.write('x' * 2097152); sys.stderr.write('y' * 2097152)"
+    stdout, stderr = tmp_path / "stdout", tmp_path / "stderr"
+    result, _ = module.execute_command([sys.executable, "-c", command], 10, stdout, stderr)
+    assert result == 0
+    for path, prefix in ((stdout, b"x"), (stderr, b"y")):
+        content = path.read_bytes()
+        assert content.startswith(prefix * 1024)
+        assert len(content) <= 1024 * 1024 + 256
+        assert b"truncated" in content.lower()
 
 
 @pytest.mark.parametrize("wrapper_name", ["collect-diff.sh", "run-gates.sh"])

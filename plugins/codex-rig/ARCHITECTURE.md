@@ -4,7 +4,7 @@
 
 This document is maintainer-facing architecture contract for bounded multi-agent execution in Codex Rig. It explains what may run concurrently, which records make execution verifiable, where synchronization is mandatory, and which claims remain deliberately unavailable. The host schedules agents; plugin validates evidence and consumers retain final acceptance.
 
-The current generic runtime promotion tier is `portable-read-restricted`. New generic runtime promotion requires schema-v2 evidence, non-sensitive task, read-only nodes, restricted network mode, approval policy `never`, passed context/output common-secret scanning, and explicitly unverified filesystem credential isolation. Code Review also has separate instruction-bounded native inspection route: current schema-eight reviewers receive the full role card, scope inventory and relevant source/diff/evidence through generated audited context-page reads, then return text without further tools. Repository execution, edits, installation, network, credentials and escalation remain prohibited; runtime detects violations without claiming isolation. Historical schema-five inline inspection retains its original no-child-tools contract. This route is review evidence, not generic runtime promotion. The generic resolver's parallel-write mode and stronger `host-isolated` tier remain disabled. Implement's separate task-authorized native bounded delegation is not generic runtime promotion, and its instruction boundaries do not prove filesystem isolation. Code-remediate has a separate local production lifecycle with its own schema-v2, approval, source-application, and containment contract below.
+The current generic runtime promotion tier is `portable-read-restricted`. New generic runtime promotion requires schema-v3 evidence, non-sensitive task, read-only nodes, restricted network mode, approval policy `never`, passed context/output common-secret scanning, and explicitly unverified filesystem credential isolation. Code Review also has a separate instruction-bounded native inspection route: current schema-ten direct reviewers receive role-card and brief pointers with assigned source paths and use ordinary scoped read-only inspection tools; coverage is reviewer-reported. Explicitly selected schema-eight paged compatibility retains complete role-card, scope and source delivery through audited context-page reads, followed by text without further tools. Repository execution, edits, installation, network, credentials and escalation remain prohibited; runtime detects violations without claiming isolation. Historical schema-five inline inspection retains its original no-child-tools contract. This route is review evidence, not generic runtime promotion. The generic resolver's parallel-write mode and stronger `host-isolated` tier remain disabled. Implement's separate task-authorized native bounded delegation is not generic runtime promotion, and its instruction boundaries do not prove filesystem isolation. Code-remediate has a separate local production lifecycle with its own schema-v2, approval, source-application, and containment contract below.
 
 ## Maintainer navigation
 
@@ -55,7 +55,7 @@ The code-remediate-local lifecycle and Implement/Manage portable read-only route
 
 ### Portable read-only tier
 
-`portable-read-restricted` is only runtime promotion tier currently available. It accepts only non-sensitive work and requires frozen parent plan to carry `capability_policy.task_sensitivity=non-sensitive`. The v2 manifest must carry portable capability record with restricted network mode, approval policy `never`, no external events, passed context scan, and `filesystem_isolation=unverified`.
+`portable-read-restricted` is only runtime promotion tier currently available. It accepts only non-sensitive work and requires frozen parent plan to carry `capability_policy.task_sensitivity=non-sensitive`. The v3 manifest must carry portable capability record with restricted network mode, approval policy `never`, no external events, passed context scan, and `filesystem_isolation=unverified`.
 
 Persisted v2 node controls use literal observed values: `sandbox_mode=read-only`, `write_paths=[]`, `network=restricted`, and `credentials=unverified`. The validator may create internal schema-v1-compatible projection to reuse structural checks, but it never promotes legacy `network=false` or `credentials=false` values as runtime evidence.
 
@@ -67,7 +67,7 @@ The tier proves recorded configuration and observed rollout binding required by 
 
 ### Write tier
 
-Generic write-capable parallel execution is not promoted: v2 manifest for shared resolver containing write node is rejected before structural acceptance. Code-remediate-local production remediation is separately promoted consumer-owned lifecycle, not generic runtime promotion. Its exact schema-v2 plan and dispatch record bind the authoritative source repository and baseline `HEAD` and tree, two to four independent buckets, actual context-pack paths and SHA-256 values, resource locks, a supported detached-worktree location, fixed new state basename and output names under run root, fixed `code-remediate-shared-quality-gates` verification reference, rollback policy, and non-force cleanup policy. Existing unrelated tracked, staged, or untracked source changes may remain outside operation and owned paths. Worktrees use the supported sibling `.codex-rig-worktrees/<run-id>` location or a source-local Git-ignored `.reports/codex/code-remediate-worktrees/<run-id>` root, preferring source-local when available; roots that escape, traverse symlinks, or already exist are rejected. Plan, dispatch record, state, patch, rollback, and lifecycle artifacts remain in authoritative repository's normal `.reports/codex/code-remediate/...` run directory. The lifecycle's completed evidence is hash-bound into remediation result; it does not change generic resolver's `write_parallel_promoted` value or grant authority to another consumer.
+Generic write-capable parallel execution is not promoted: v3 manifest for shared resolver containing write node is rejected before structural acceptance. Code-remediate-local production remediation is separately promoted consumer-owned lifecycle, not generic runtime promotion. Its exact schema-v2 plan and dispatch record bind the authoritative source repository and baseline `HEAD` and tree, two to four independent buckets, actual context-pack paths and SHA-256 values, resource locks, a supported detached-worktree location, fixed new state basename and output names under run root, fixed `code-remediate-shared-quality-gates` verification reference, rollback policy, and non-force cleanup policy. Existing unrelated tracked, staged, or untracked source changes may remain outside operation and owned paths. Worktrees use the supported sibling `.codex-rig-worktrees/<run-id>` location or a source-local Git-ignored `.reports/codex/code-remediate-worktrees/<run-id>` root, preferring source-local when available; roots that escape, traverse symlinks, or already exist are rejected. Plan, dispatch record, state, patch, rollback, and lifecycle artifacts remain in authoritative repository's normal `.reports/codex/code-remediate/...` run directory. The lifecycle's completed evidence is hash-bound into remediation result; it does not change generic resolver's `write_parallel_promoted` value or grant authority to another consumer.
 
 ## Frozen execution plan
 
@@ -78,6 +78,8 @@ Parent writes `execution-plan.json`, role-specific context packs, and `freeze-re
 - `execution-manifest.json` is constructed after terminal joins. It binds plan digest, capability evidence, structural DAG, attempts, output hashes, observed controls, host lineage, joins, and claimed mode for executable validator.
 
 A skill with multiple static stages must freeze every stage and dependency before dispatch, but current portable pilot plan uses one bounded wave. No later manifest may add node, dependency, owner, lock, or acceptance requirement absent from frozen intent. Paths are relative to run directory, normalized across POSIX and Windows forms, and rejected when absolute, traversing, aliased, duplicated, or pattern-bearing.
+
+A schema-3 runtime plan binds `dispatch_choices` for every node: each entry has exactly `role_id`, `model`, and `reasoning_effort`. A nonempty model or effort specifies the spawn argument; `null` omits it and inherits the observed parent turn. Missing or ambiguous observed controls fail closed.
 
 Neutral frozen plan:
 
@@ -99,6 +101,10 @@ Neutral frozen plan:
   "write_policy": {
     "parent_writes": "none",
     "approval_requirement": "not-required"
+  },
+  "dispatch_choices": {
+    "qa": {"role_id": "qa-specialist", "model": null, "reasoning_effort": null},
+    "challenge": {"role_id": "challenger", "model": null, "reasoning_effort": null}
   },
   "requested_mode": "parallel-read",
   "wave": {
@@ -173,7 +179,7 @@ Parallel scheduling never expands authority already granted to parent task. Gene
 
 | Action | Accepted authority | Never sufficient |
 | -- | -- | -- |
-| Local non-sensitive read-only fan-out | Existing authorized workflow plus schema-v2 portable policy, observed `read-only`, network `restricted`, and approval `never` | Requested mode, child assertion, missing approval data, or prior unrelated approval |
+| Local non-sensitive read-only fan-out | Existing authorized workflow plus schema-v3 portable policy, observed `read-only`, network `restricted`, and approval `never` | Requested mode, child assertion, missing approval data, or prior unrelated approval |
 | Paid/external parent invocation | Explicit user approval after five-field capability brief; one attempt unless brief authorizes bounded retry | Local fan-out eligibility, saved CLI prefix alone, or exhausted earlier approval |
 | External network/browser/MCP/connector/app use inside portable wave | None; portable execution forbids it and rollout validator fails closed on such events | Restricted network metadata, empty output, or approval policy `never` |
 | Code-remediate-local production remediation | Exact schema-v2 consumer plan and dispatch record bound to plan digest and source baseline; eligible parallel work records `workflow-default`/`approve`, while ineligible parent-only or sequential work records `workflow-default`/`parent-only` without a prompt | Generic `parallel-write`, `auto`, environment variables, child requests, requested controls, schema-v1 planning evidence, or different consumer |
@@ -191,7 +197,7 @@ Promotion is therefore two-phase:
 
 ## Canonical G0–G8 execution flow
 
-This is the versioned G0–G8 gate taxonomy for routes that need bounded multi-agent dispatch. G0 applies each workflow's selector before portable-helper admission; for Implement and Manage, invocation `--execution` wins over `CODEX_RIG_EXECUTION`, then `auto`. The helper's own `auto` only resolves an already-selected portable request and never selects a workflow route. G0 through G8 are parent-owned synchronization gates; host may schedule an approved read-only wave, but only parent can integrate, verify, issue verdict, or promote evidence. The Code Review instruction-bounded native inspection route is a review-only exception to strict child-control admission: current schema-eight delivery supplies the complete role card, scope inventory and relevant evidence through generated audited context-page reads, then returns text without further tools. It detects prohibited execution and does not claim sandbox or approval isolation. Historical inline evidence retains its original reader and no-tools contract. A route that cannot satisfy a gate stops or uses explicitly recorded equal-gate serial fallback.
+This is the versioned G0–G8 gate taxonomy for routes that need bounded multi-agent dispatch. G0 applies each workflow's selector before portable-helper admission; for Implement and Manage, invocation `--execution` wins over `CODEX_RIG_EXECUTION`, then `auto`. The helper's own `auto` only resolves an already-selected portable request and never selects a workflow route. G0 through G8 are parent-owned synchronization gates; host may schedule an approved read-only wave, but only parent can integrate, verify, issue verdict, or promote evidence. The Code Review instruction-bounded native inspection route is a review-only exception to strict child-control admission: current schema-ten direct delivery supplies role-card and brief pointers plus assigned source paths for ordinary scoped read-only inspection, with reviewer-reported coverage. Explicitly selected schema-eight paged compatibility supplies the complete role card, scope inventory and relevant evidence through audited context-page reads, then returns text without further tools. It detects prohibited execution and does not claim sandbox or approval isolation. Historical inline evidence retains its original reader and no-tools contract. A route that cannot satisfy a gate stops or uses explicitly recorded equal-gate serial fallback.
 
 ```text
                              ┌─────┬──────────────────────┐
@@ -285,9 +291,9 @@ The flow's endpoint meanings are fixed: `STOP` means no safe continuation, `re-p
 
 No dependent node starts before its dependency join. No parent acceptance occurs before every required node joins. A user cancellation stops new dispatch, preserves terminal evidence and worktrees, and never integrates partial writes automatically.
 
-## Schema-v2 manifest and authoritative rollout binding
+## Schema-v3 manifest and authoritative rollout binding
 
-Schema-v1 remains readable for historical structural validation. New runtime promotion requires schema-v2. The v2 capability record has exact shape below:
+Schema-v1 remains readable for historical structural validation. New runtime promotion requires schema-v3. Schema-v2 remains a historical runtime format. The v3 capability record has exact shape below:
 
 ```json
 {
@@ -305,7 +311,7 @@ Schema-v1 remains readable for historical structural validation. New runtime pro
 }
 ```
 
-The runtime validator binds manifest bytes to recorded manifest digest and plan bytes to `plan_sha256`. It then binds each node to unique parent spawn call, parent-observed start activity, child session metadata, child terminal event, exact output, and delivery to authoritative parent collaboration path. It verifies role model/effort against installed role card and retains only safe projections and hashes in result.
+The runtime validator binds manifest bytes to recorded manifest digest and plan bytes to `plan_sha256`. It then binds each node to unique parent spawn call, parent-observed start activity, child session metadata, child terminal event, exact output, and delivery to authoritative parent collaboration path. It binds each node to the plan’s `dispatch_choices`, actual spawn arguments, observed parent turn for inherited values, and observed child controls, retaining only safe projections and hashes in result.
 
 Current child terminal endpoints are whole-second values while `duration_ms` retains sub-second precision. The validator therefore requires positive endpoints and duration plus strict residual below one second; residual of one second or more fails closed. Parent delivery likewise requires response author to match child, recipient to equal authoritative parent path, envelope and output bytes to match, and delivery timestamp to follow child completion.
 
@@ -330,7 +336,7 @@ The structural validator derives `parallel` only when two or more substantive co
 
 [`shared/parallel_telemetry.py`](shared/parallel_telemetry.py) accepts sanitized rollout rows and emits compact attempt and wave records. It validates cumulative token counters, reconstructs deltas when terminal totals are unavailable, records task timing when present, and HMACs runtime identifiers. It never reads or stores prompts, reasoning, tool arguments, paths, credentials, full environments, raw child messages, or provider prices.
 
-Before wave dispatches, parent calls `admit_wave_token_budget` with frozen positive wave ceiling, stable node order, and positive per-node token reservations. Completed and active reservations must form stable prefix and remain charged; admission stops at first reservation that would exceed ceiling, and that node plus every later unstarted node move to same-gate serial re-planning. Active children are not terminated merely because admission budget is exhausted. Schema-v2 runtime acceptance reads `token_budgets` from exact digest-bound plan and rejects any retained wave whose spawned nodes, wave identity, lexical node order, or reservations were not fully admitted. Earlier schema-v2 evidence without token budgets remains readable only through explicit `historical_unbudgeted=True` path, which returns `acceptance_blocked=true` and `runtime_promotion_eligible=false`; default acceptance path still fails closed. This is hard boundary on pre-dispatch reservations, not provider-enforced cap on actual child consumption: current host exposes no enforceable per-child token limit, so retained telemetry reports `actual_over_budget_tokens` instead of claiming actual usage was capped.
+Before wave dispatches, parent calls `admit_wave_token_budget` with frozen positive wave ceiling, stable node order, and positive per-node token reservations. Completed and active reservations must form stable prefix and remain charged; admission stops at first reservation that would exceed ceiling, and that node plus every later unstarted node move to same-gate serial re-planning. Active children are not terminated merely because admission budget is exhausted. Schema-v3 runtime acceptance reads `token_budgets` from exact digest-bound plan and rejects any retained wave whose spawned nodes, wave identity, lexical node order, or reservations were not fully admitted. Earlier schema-v2 evidence without token budgets remains readable only through explicit `historical_unbudgeted=True` path, which returns `acceptance_blocked=true` and `runtime_promotion_eligible=false`; default acceptance path still fails closed. This is hard boundary on pre-dispatch reservations, not provider-enforced cap on actual child consumption: current host exposes no enforceable per-child token limit, so retained telemetry reports `actual_over_budget_tokens` instead of claiming actual usage was capped.
 
 Wave telemetry records `dispatch_to_final_join` wall time, token counters, mode, attempt count, SHA-256 digest of normalized workload key, unavailable fields, and child-duration maximum as diagnostic proxy. The child-duration maximum is not wall-time envelope and cannot support savings claim.
 
@@ -394,7 +400,7 @@ The consumer should expose compact wave ledger containing stage, node/role, actu
 
 | Failure | Required response |
 | -- | -- |
-| Missing or unsupported schema | Keep historical reads on schema-v1; fail new runtime promotion unless schema-v2 is complete. |
+| Missing or unsupported schema | Keep historical reads on schema-v1; fail new runtime promotion unless schema-v3 is complete. |
 | Sensitive task or missing frozen policy | Do not dispatch portable runtime work; classify or re-plan serially. |
 | Network mode, approval, external event, or credential-scan mismatch | Fail closed; do not reinterpret restricted as denial or missing evidence as approval. |
 | Host-isolated requested without authoritative proof | Report unavailable; remain on portable boundary or serialize. |

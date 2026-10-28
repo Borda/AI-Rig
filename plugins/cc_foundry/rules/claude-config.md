@@ -144,7 +144,7 @@ Always on, format bullets included: the full commit rule (`git-commit.md`) is in
 
 - Never commit without authority: skill workflow step, explicit same-turn user request, local Git grant, or same-turn `git-approve` answer
 - Never `git add -A` / `git add .` (stage by name); never `--no-verify`; never `--no-gpg-sign` unless the user asks
-- Subject `type(scope): detail` ≤50 chars naming the highest-tier change in `git diff HEAD` + `git diff --stat HEAD`; never draft from session memory
+- Subject `type(scope): detail` or `type: detail` ≤50 chars naming the highest-tier change in `git diff HEAD` + `git diff --stat HEAD`; never draft from session memory; omit redundant scope
 - Evidence-only body: every clause traces to a `+`/`-` line in `git diff HEAD`; no body line wrap; no GitHub auto-links (`#N`, `@name`); no non-VCS paths (`/tmp/`, `~/.claude/`)
 - Force-push (`-f`/`--force`/`--force-with-lease`) forbidden on any branch, always; regular `git push` asks via `AskUserQuestion` every time, skill workflows included
 - Detect the default branch dynamically, never hardcode `main`/`master`; prefer `git revert` over `reset --hard`, merge commits over rebase

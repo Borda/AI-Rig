@@ -73,7 +73,8 @@ from typing import Any, NamedTuple
 #: Schema revision of the parallel-execution preflight records.
 SCHEMA_VERSION = 1
 #: Schema revision of the parallel-execution runtime records.
-RUNTIME_SCHEMA_VERSION = 2
+RUNTIME_SCHEMA_VERSION = 3
+HISTORICAL_RUNTIME_SCHEMA_VERSION = 2
 #: Execution modes a wave may claim; any other claimed mode is rejected.
 _MODES = {"parallel", "independent-spawned", "serial", "serial-fallback"}
 #: Task statuses that mean a child task has finished and will not change again.
@@ -101,6 +102,156 @@ _SECRET_PATTERNS = (
     re.compile(r"\b(?:gh[pousr]|github_pat)_[A-Za-z0-9_]{20,}\b"),
     re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b"),
 )
+
+
+def review_input_has_sensitive_material(text: str, admissions: object) -> bool:
+    """Reject credential shapes except exact fixture occurrences explicitly admitted by the parent.
+
+    Admissions bind the complete input digest, character span and matched-byte digest, with strictly scanned approval
+    evidence/rationale. They belong in the frozen review plan, never in untrusted source. A digest binds declared
+    authority, not human consent or credential validity; the parent must verify inert material and obtain explicit
+    approval before recording it. Hash the exact UTF-8 input and match, preserving line endings and punctuation. Changed
+    contexts and batch fragments receive no inherited exception; distinct overlapping matches each require approval.
+
+    Full-input binding prevents an inert private-key header approval from transferring to a context containing a key.
+    Output, telemetry and execution-context scanners do not call this review-input-only helper.
+    """
+    if not isinstance(admissions, list):
+        raise ValueError("review-inert-fixture-admissions-invalid")
+    approved: set[tuple[str, int, int, str]] = set()
+    for record in admissions:
+        if (
+            not isinstance(record, dict)
+            or set(record)
+            != {"input_sha256", "match_start", "match_end", "match_sha256", "approval_evidence", "rationale"}
+            or any(
+                not isinstance(record[key], str) or re.fullmatch(r"[0-9a-f]{64}", record[key]) is None
+                for key in ("input_sha256", "match_sha256")
+            )
+            or type(record["match_start"]) is not int
+            or type(record["match_end"]) is not int
+            or not 0 <= record["match_start"] < record["match_end"]
+            or any(
+                not isinstance(record[key], str) or not record[key].strip()
+                for key in ("approval_evidence", "rationale")
+            )
+        ):
+            raise ValueError("review-inert-fixture-admissions-invalid")
+        if any(
+            pattern.search(record[key]) for key in ("approval_evidence", "rationale") for pattern in _SECRET_PATTERNS
+        ):
+            raise ValueError("review-inert-fixture-evidence-sensitive")
+        binding = (record["input_sha256"], record["match_start"], record["match_end"], record["match_sha256"])
+        if binding in approved:
+            raise ValueError("review-inert-fixture-admissions-invalid")
+        approved.add(binding)
+    input_sha256 = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return any(
+        (input_sha256, match.start(), match.end(), hashlib.sha256(match.group(0).encode("utf-8")).hexdigest())
+        not in approved
+        for pattern in _SECRET_PATTERNS
+        for match in pattern.finditer(text)
+    )
+
+
+def review_fixture_discovery(inputs: Mapping[str, str], selections: object = None) -> dict[str, Any]:
+    """Describe credential-shaped spans, exporting bindings only for complete parent-verified selections.
+
+    This is a local parent-owned operation, never a reviewer or untrusted-source capability. Metadata contains no source
+    text or hashes. Export requires an explicit parent attestation verifying the complete current input, including
+    material outside matches such as a private-key body. Every match in each selected input, including overlaps, must
+    also agree with parent-supplied expected digests before any input digest is returned. The attestation is a human
+    assertion, never machine proof of inertness. Proposals neither authenticate consent nor grant admission. Unselected
+    inputs never expose hashes. Expected-digest equality is a success/failure oracle; this helper does not isolate
+    secrets from an untrusted caller.
+    """
+    matches = {
+        identity: [(index, match) for index, pattern in enumerate(_SECRET_PATTERNS) for match in pattern.finditer(text)]
+        for identity, text in inputs.items()
+    }
+    if selections is None:
+        return {
+            "schema_version": 1,
+            "mode": "fixture-discovery",
+            "inputs": [
+                {
+                    "input_id": identity,
+                    "matches": [
+                        {"pattern_index": index, "match_start": match.start(), "match_end": match.end()}
+                        for index, match in entries
+                    ],
+                }
+                for identity, entries in sorted(matches.items())
+            ],
+        }
+    if (
+        not isinstance(selections, dict)
+        or set(selections) != {"schema_version", "inputs"}
+        or type(selections["schema_version"]) is not int
+        or selections["schema_version"] != 1
+        or not isinstance(selections["inputs"], list)
+        or not selections["inputs"]
+    ):
+        raise ValueError("review-fixture-selection-invalid")
+    verified = {}
+    for entry in selections["inputs"]:
+        if (
+            not isinstance(entry, dict)
+            or set(entry) != {"input_id", "matches", "complete_input_verified", "verification_evidence"}
+            or not isinstance(entry["input_id"], str)
+            or entry["input_id"] not in inputs
+            or entry["input_id"] in verified
+            or not isinstance(entry["matches"], list)
+            or not entry["matches"]
+            or entry["complete_input_verified"] is not True
+            or not isinstance(entry["verification_evidence"], str)
+            or not entry["verification_evidence"].strip()
+            or any(pattern.search(entry["verification_evidence"]) for pattern in _SECRET_PATTERNS)
+        ):
+            raise ValueError("review-fixture-selection-invalid")
+        expected = set()
+        for record in entry["matches"]:
+            if (
+                not isinstance(record, dict)
+                or set(record) != {"pattern_index", "match_start", "match_end", "match_sha256"}
+                or any(type(record[key]) is not int for key in ("pattern_index", "match_start", "match_end"))
+                or not 0 <= record["pattern_index"] < len(_SECRET_PATTERNS)
+                or not 0 <= record["match_start"] < record["match_end"] <= len(inputs[entry["input_id"]])
+                or not isinstance(record["match_sha256"], str)
+                or re.fullmatch(r"[0-9a-f]{64}", record["match_sha256"]) is None
+            ):
+                raise ValueError("review-fixture-selection-invalid")
+            expected.add((record["pattern_index"], record["match_start"], record["match_end"], record["match_sha256"]))
+        if len(expected) != len(entry["matches"]):
+            raise ValueError("review-fixture-selection-invalid")
+        actual = {
+            (index, match.start(), match.end(), hashlib.sha256(match.group(0).encode("utf-8")).hexdigest())
+            for index, match in matches[entry["input_id"]]
+        }
+        if expected != actual:
+            raise ValueError("review-fixture-selection-unverified")
+        verified[entry["input_id"]] = actual
+    # Verify every selected input before returning any credential or complete-input fingerprint.
+    input_digests = {identity: hashlib.sha256(inputs[identity].encode("utf-8")).hexdigest() for identity in verified}
+    return {
+        "schema_version": 1,
+        "mode": "fixture-bindings",
+        "inputs": [
+            {
+                "input_id": identity,
+                "bindings": [
+                    {
+                        "input_sha256": input_digests[identity],
+                        "match_start": start,
+                        "match_end": end,
+                        "match_sha256": digest,
+                    }
+                    for start, end, digest in sorted({(start, end, digest) for _, start, end, digest in entries})
+                ],
+            }
+            for identity, entries in sorted(verified.items())
+        ],
+    }
 
 
 def resolve_execution_mode(
@@ -956,12 +1107,12 @@ def validate_inspection_contexts(
             raise ValueError("review-inspection-context-path-duplicate")
         _sha256(context_path, "review-inspection-context", role, entry["context_sha256"])
         try:
-            context = context_path.read_text(encoding="utf-8")
+            context = context_path.read_bytes().decode("utf-8")
         except (OSError, UnicodeError) as error:
             raise ValueError(f"review-inspection-context-unreadable:{role}") from error
         if not context.strip():
             raise ValueError(f"review-inspection-context-empty:{role}")
-        if any(pattern.search(context) for pattern in _SECRET_PATTERNS):
+        if review_input_has_sensitive_material(context, plan.get("inert_fixture_admissions", [])):
             raise ValueError(f"review-inspection-context-sensitive-material:{role}")
         by_role[role] = context_path
     return by_role
@@ -1141,6 +1292,75 @@ def _runtime_structural_manifest(manifest: dict[str, object]) -> dict[str, objec
     return structural
 
 
+def _runtime_parent_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Project an explicitly bounded native subagent rollout to its owner's evidence.
+
+    Historical rollouts without a boundary retain their original validation path. A declared boundary requires the
+    supported native format and a complete, unambiguous metadata lineage before inherited events can be discarded.
+    """
+    owner = rows[0].get("payload") if rows and rows[0].get("type") == "session_meta" else None
+    if not isinstance(owner, dict) or "subagent_history_start_ordinal" not in owner:
+        return rows
+    boundary = owner["subagent_history_start_ordinal"]
+    if (
+        owner.get("multi_agent_version") != "v2"
+        or owner.get("thread_source") != "subagent"
+        or owner.get("history_mode") != "paginated"
+        or type(boundary) is not int
+        or not 1 <= boundary <= len(rows)
+        or any(type(row.get("ordinal")) is not int or row["ordinal"] != index for index, row in enumerate(rows))
+        or any(row.get("type") == "session_meta" for row in rows[boundary:])
+    ):
+        raise ValueError("runtime-parent-history-invalid")
+    metadata = [row.get("payload") for row in rows[:boundary] if row.get("type") == "session_meta"]
+    by_id = {}
+    for session in metadata:
+        if not isinstance(session, dict) or not isinstance(session.get("id"), str) or not session["id"]:
+            raise ValueError("runtime-parent-history-invalid")
+        if session["id"] in by_id:
+            raise ValueError("runtime-parent-history-invalid")
+        by_id[session["id"]] = session
+    # Follow identity links rather than record order: nested native history can interleave ancestor metadata.
+    visited = set()
+    session = owner
+    while True:
+        identity = session["id"]
+        if identity in visited:
+            raise ValueError("runtime-parent-history-invalid")
+        visited.add(identity)
+        source = session.get("source")
+        subagent = source.get("subagent") if isinstance(source, dict) else None
+        spawn = subagent.get("thread_spawn") if isinstance(subagent, dict) else None
+        parent = session.get("parent_thread_id")
+        fork = session.get("forked_from_id")
+        source_parent = spawn.get("parent_thread_id") if isinstance(spawn, dict) else None
+        if fork is None:
+            # A no-history subagent still has an execution parent. Its copied history
+            # ends here; that parent's metadata was never inherited into this transcript.
+            if (
+                session is owner
+                or "subagent_history_start_ordinal" in session
+                or (
+                    (parent is not None or source_parent is not None)
+                    and (not isinstance(parent, str) or not parent or parent != source_parent)
+                )
+            ):
+                raise ValueError("runtime-parent-history-invalid")
+            break
+        if (
+            not isinstance(parent, str)
+            or not parent
+            or parent != fork
+            or parent != source_parent
+            or parent not in by_id
+        ):
+            raise ValueError("runtime-parent-history-invalid")
+        session = by_id[parent]
+    if visited != set(by_id):
+        raise ValueError("runtime-parent-history-invalid")
+    return [rows[0], *rows[boundary:]]
+
+
 def _runtime_parent_identity(rows: list[dict[str, Any]]) -> tuple[str, str]:
     """Return the unique parent thread and collaboration path from session metadata."""
     metadata = [
@@ -1154,6 +1374,35 @@ def _runtime_parent_identity(rows: list[dict[str, Any]]) -> tuple[str, str]:
     return metadata[0]["id"], agent_path
 
 
+def _runtime_plan_dispatch_choices(plan_path: Path, stages: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Read one explicit or inherited dispatch choice for each manifest node from the frozen plan."""
+    try:
+        plan = json.loads(plan_path.read_bytes())
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError("runtime-plan-dispatch-choices-invalid") from error
+    choices = plan.get("dispatch_choices") if isinstance(plan, dict) else None
+    expected = {
+        _text(node.get("node_id"), "node-id"): _text(node.get("role_id"), "role-id")
+        for stage in stages
+        for node in (_object(raw_node, "node") for raw_node in stage["nodes"])
+    }
+    if not isinstance(choices, dict) or set(choices) != set(expected):
+        raise ValueError("runtime-plan-dispatch-choices-invalid")
+    for node_id, choice in choices.items():
+        if (
+            not isinstance(choice, dict)
+            or set(choice) != {"role_id", "model", "reasoning_effort"}
+            or choice["role_id"] != expected[node_id]
+        ):
+            raise ValueError("runtime-plan-dispatch-choices-invalid")
+        if any(
+            value is not None and (not isinstance(value, str) or not value.strip())
+            for value in (choice["model"], choice["reasoning_effort"])
+        ):
+            raise ValueError("runtime-plan-dispatch-choices-invalid")
+    return choices
+
+
 def _runtime_spawn_call(
     rows: list[dict[str, Any]],
     *,
@@ -1161,6 +1410,8 @@ def _runtime_spawn_call(
     role_id: str,
     agent_path: str,
     node_id: str,
+    historical: bool = False,
+    choice: dict[str, Any] | None = None,
 ) -> dict[str, str]:
     """Bind one spawn call while retaining only a hash and safe argument projection."""
     matches = [
@@ -1186,6 +1437,40 @@ def _runtime_spawn_call(
     if arguments.get("agent_type") != role_id or arguments.get("task_name") != task_name:
         raise ValueError(f"runtime-spawn-lineage-mismatch:{node_id}")
     projection = {"agent_type": role_id, "task_name": task_name}
+    if not historical:
+        if choice is None or any(
+            (field in arguments) != (choice[field] is not None)
+            or (field in arguments and arguments[field] != choice[field])
+            for field in ("model", "reasoning_effort")
+        ):
+            raise ValueError(f"runtime-spawn-plan-choice-mismatch:{node_id}")
+        # Explicit spawn settings are authoritative; omitted settings inherit the active parent turn.
+        context_rows = []
+        for row in rows:
+            if row["payload"] is matches[0]:
+                break
+            if row["type"] == "turn_context":
+                context_rows.append(row["payload"])
+        context = context_rows[-1] if context_rows else {}
+        for field, context_field in (("model", "model"), ("reasoning_effort", "effort")):
+            value = arguments.get(field)
+            if value is None:
+                value = context.get(context_field)
+                turn_id = context.get("turn_id")
+                call_metadata = matches[0].get("internal_chat_message_metadata_passthrough", {})
+                call_turn = call_metadata.get("turn_id") if isinstance(call_metadata, dict) else None
+                if call_turn is not None and call_turn != turn_id:
+                    raise ValueError(f"runtime-parent-controls-turn-mismatch:{node_id}")
+                same_turn = [item for item in context_rows if item.get("turn_id") == turn_id]
+                if (
+                    not isinstance(turn_id, str)
+                    or not turn_id
+                    or any(item.get(context_field) != value for item in same_turn)
+                ):
+                    raise ValueError(f"runtime-parent-controls-ambiguous:{node_id}")
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"runtime-spawn-controls-invalid:{node_id}")
+            projection[field] = value
     message = arguments.get("message")
     if isinstance(message, str) and message:
         projection["message_sha256"] = hashlib.sha256(message.encode("utf-8")).hexdigest()
@@ -1517,7 +1802,7 @@ def validate_read_only_runtime(
     historical_unbudgeted: bool = False,
     expected_consumer_id: str | None = None,
 ) -> dict[str, object]:
-    """Bind schema-v2 portable-read-restricted evidence to observed rollout records.
+    """Bind portable-read-restricted evidence to observed rollout records.
 
     This validator returns literal observed host facts, never a global guarantee about network, command, filesystem
     credential, or host isolation. Pass ``expected_consumer_id`` only for a promoted consumer route; the exact frozen
@@ -1527,8 +1812,8 @@ def validate_read_only_runtime(
     """
     if not isinstance(historical_unbudgeted, bool):
         raise ValueError("runtime-historical-reader-flag-invalid")
-    if manifest.get("schema_version") != RUNTIME_SCHEMA_VERSION:
-        raise ValueError("runtime-schema-v2-required")
+    if manifest.get("schema_version") not in {HISTORICAL_RUNTIME_SCHEMA_VERSION, RUNTIME_SCHEMA_VERSION}:
+        raise ValueError("runtime-schema-unsupported")
     capability_evidence = _runtime_capability_evidence(manifest)
     write_node = _runtime_write_node(manifest)
     if write_node is not None:
@@ -1559,11 +1844,16 @@ def validate_read_only_runtime(
     # Adapt only an in-memory copy; the retained schema-v2 evidence keeps literal host values.
     structural_manifest = _runtime_structural_manifest(manifest)
     structural = validate_execution_manifest(structural_manifest, run_dir=run_dir, roles_dir=roles_dir)
-    parent_rows = _runtime_rows(parent_rollout, "parent-rollout")
+    parent_rows = _runtime_parent_rows(_runtime_rows(parent_rollout, "parent-rollout"))
     parent_thread_id, parent_path = _runtime_parent_identity(parent_rows)
     stages = [_object(stage, "stage") for stage in manifest["stages"]]
     stage_order = _topological_stage_ids(stages)
     stages_by_id = {_text(stage.get("stage_id"), "stage-id"): stage for stage in stages}
+    choices = (
+        _runtime_plan_dispatch_choices(plan_path, stages)
+        if manifest["schema_version"] == RUNTIME_SCHEMA_VERSION
+        else {}
+    )
     runtime_intervals: list[tuple[str, int, int]] = []
     runtime_nodes: list[dict[str, object]] = []
     used_child_files: set[Path] = set()
@@ -1588,6 +1878,8 @@ def validate_read_only_runtime(
                 role_id=role_id,
                 agent_path=agent_path,
                 node_id=node_id,
+                historical=manifest["schema_version"] == HISTORICAL_RUNTIME_SCHEMA_VERSION,
+                choice=choices.get(node_id),
             )
             parent_started_ms = _runtime_parent_start(
                 parent_rows,
@@ -1617,9 +1909,12 @@ def validate_read_only_runtime(
                 expected_approval_policy=capability_evidence["approval_policy"],
                 expected_network=capability_evidence["network"],
             )
-            expected_model, expected_effort = _runtime_role_model_effort(roles_dir, role_id, node_id)
+            if manifest["schema_version"] == HISTORICAL_RUNTIME_SCHEMA_VERSION:
+                expected_model, expected_effort = _runtime_role_model_effort(roles_dir, role_id, node_id)
+            else:
+                expected_model, expected_effort = spawn["model"], spawn["reasoning_effort"]
             if controls["model"] != expected_model or controls["effort"] != expected_effort:
-                raise ValueError(f"runtime-role-model-effort-mismatch:{node_id}")
+                raise ValueError(f"runtime-spawn-model-effort-mismatch:{node_id}")
             # A parent activity may precede actual work while a serial fallback queues a child.
             # A parallel claim needs the observed launch and work start to agree within one second.
             if manifest.get("claimed_mode") == "parallel" and abs(parent_started_ms - started * 1000) > 1000:

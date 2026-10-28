@@ -67,8 +67,8 @@ ROLE_IDS = (
     "sw-engineer",
     "web-explorer",
 )
-#: Role runtime settings (model, reasoning effort, approval policy, sandbox mode) that card and manifest must agree on.
-RUNTIME_KEYS = ("model", "model_reasoning_effort", "approval_policy", "sandbox_mode")
+#: Role runtime settings that card and manifest must agree on.
+RUNTIME_KEYS = ("model_reasoning_effort", "approval_policy", "sandbox_mode")
 #: Exact key set allowed in a role card's frontmatter.
 FRONTMATTER_KEYS = frozenset({"role_id", "name", *RUNTIME_KEYS, "fallback_modes"})
 #: Exact top-level key set required in the plugin manifest (plus mcpServers when native questions are enabled).
@@ -339,7 +339,7 @@ def _load_manifest(root_fd: int) -> tuple[dict[str, Any], bytes, dict[str, dict[
         )
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise ValueError("invalid package manifest JSON") from error
-    if not isinstance(manifest, dict) or manifest.get("schema") != 1 or manifest.get("plugin") != "codex-rig":
+    if not isinstance(manifest, dict) or manifest.get("schema") not in (1, 2) or manifest.get("plugin") != "codex-rig":
         raise ValueError("package manifest identity mismatch")
     features = manifest.get("features")
     profile = manifest.get("release_profile")
@@ -430,7 +430,7 @@ def _parse_frontmatter(payload: bytes, role_id: str) -> dict[str, str]:
         if not separator or not key or key in values or not value or _has_control(value):
             raise ValueError(f"invalid role frontmatter: {role_id}")
         values[key] = value
-    if set(values) != FRONTMATTER_KEYS:
+    if set(values) not in (FRONTMATTER_KEYS, FRONTMATTER_KEYS | {"model"}):
         raise ValueError(f"role frontmatter fields mismatch: {role_id}")
     if (
         values["role_id"] != role_id
@@ -475,14 +475,15 @@ def _validated_roles(
         if role.get("id") != role_id or role.get("path") != relative:
             raise ValueError(f"role record mismatch: {role_id}")
         runtime = role.get("runtime")
-        if not isinstance(runtime, dict) or set(runtime) != set(RUNTIME_KEYS):
+        expected_runtime = set(RUNTIME_KEYS) | ({"model"} if manifest["schema"] == 1 else set())
+        if not isinstance(runtime, dict) or set(runtime) != expected_runtime:
             raise ValueError(f"role runtime mismatch: {role_id}")
-        runtime_values = {key: _require_text(runtime[key], f"role runtime {key}: {role_id}") for key in RUNTIME_KEYS}
+        runtime_values = {key: _require_text(value, f"role runtime {key}: {role_id}") for key, value in runtime.items()}
         role_bytes = _require_file_record(root_fd, relative, records, MAX_ROLE_BYTES, f"role card: {role_id}")
         if digest_bytes(role_bytes) != role_hash:
             raise ValueError(f"role hash mismatch: {role_id}")
         frontmatter = _parse_frontmatter(role_bytes, role_id)
-        if any(frontmatter[key] != runtime_values[key] for key in RUNTIME_KEYS):
+        if any(frontmatter.get(key) != runtime_values.get(key) for key in (*RUNTIME_KEYS, "model")):
             raise ValueError(f"role runtime mismatch: {role_id}")
         validated.append({"id": role_id, "sha256": role_hash, "runtime": runtime_values})
     return validated, helper_hash
@@ -497,7 +498,7 @@ def _validate_generator(
     generator = manifest.get("generator")
     if not isinstance(generator, dict) or set(generator) != {"version", "path", "sha256"}:
         raise ValueError("invalid generator manifest")
-    if generator.get("version") != 1 or generator.get("path") != "scripts/generate_roles.py":
+    if generator.get("version") != manifest["schema"] or generator.get("path") != "scripts/generate_roles.py":
         raise ValueError("generator manifest mismatch")
     expected_hash = _require_digest(generator.get("sha256"), "generator hash")
     payload = _require_file_record(
@@ -582,7 +583,7 @@ def _render_shim(
     marker = (
         "# codex-rig-shim schema=1 plugin=codex-rig "
         f"install_id={install_id} role_id={role_id} package_hash=sha256:{package_hash} "
-        f"role_hash=sha256:{role_hash} bootstrap=1 generator=1"
+        f"role_hash=sha256:{role_hash} bootstrap=1 generator=2"
     )
     verifier_argv = [
         str(python_executable),
@@ -608,7 +609,6 @@ def _render_shim(
         marker,
         f"name = {_toml_string(f'codex-rig-{role_id}')}",
         f"description = {_toml_string(f'Thin linked Codex Rig {role_id} role; unavailable unless the current installed plugin verifies.')}",
-        f"model = {_toml_string(runtime['model'])}",
         f"model_reasoning_effort = {_toml_string(runtime['model_reasoning_effort'])}",
         f"approval_policy = {_toml_string(runtime['approval_policy'])}",
         f"sandbox_mode = {_toml_string(runtime['sandbox_mode'])}",
@@ -725,7 +725,7 @@ def load_generated_roster(
         plugin_version=manifest["version"],
         package_hash=package_hash,
         bootstrap_hash=helper_hash,
-        generator_version=1,
+        generator_version=2,
         roles=generated_roles,
     )
 

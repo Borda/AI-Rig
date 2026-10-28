@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.46.0
+
+- Require proportional planning and challenge before accepted execution, then consolidate actual results with independent review and verification; routine authorized work gains no user approval prompt. Validate bounded outcomes, decompose larger work, and complete branches depth-first with focused context and useful disjoint sibling delegation; parent consolidation retains valid-evidence and mandatory acceptance gates.
+- The loop cost log moves to schema 2 and adds `tokens_total`, so a Claude review round records the background agent's `subagent_tokens` total and `duration_ms` (as `duration_s`) instead of leaving tokens null; schema 1 records stay accepted.
+- Review loops record the failing-before/passing-after check as a literal command line in the pre-baseline attestation and as a `probe:` entry on `fix` actions, so the parent can rerun it after later edits; the helper never executes it and reviewers do not receive it as a resolver account.
+- Assess confidence in the delivered result and how it was checked separately from completion status, while retaining required gates.
+- Accept case variations in reviewer invariant labels while preserving the original evidence, so valid challenge findings can proceed to action validation.
+- `/develop:setup` no longer stops at the permissions merge when the gh-write guard reads the retired `Bash(gh api repos/*:*)` allow rule in the command text as a gh write. The retired allow rules now ship in `permissions-allow-retired.json` and reach `merge_settings_permissions.py` through the new `--drop-allow-file` option, so `settings.json` loses the same rules and the command no longer names `gh api`. The merge also stops with settings unchanged when a retired-rules file is null or holds a non-string entry or an option path is empty, and refuses a drop or retire option given without the allow or deny merge it modifies.
+
 ## 0.45.0
 
 - Review loops add a pre-baseline attestation: before the first review of a diff the parent or its resolver wrote, the author lists each changed behavior's invariant, sibling routes, consumer and failing-before/passing-after check, and fixes the gaps within scope. Fewer avoidable defects reach a paid independent review. The reviewer never sees the attestation, it never counts toward scoring or clean acceptance, and it is skipped for review-only requests, unauthored code and continuations of a prior ledger.

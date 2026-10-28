@@ -9,12 +9,11 @@ scheduler, or provenance replacement.
 
 ## Scope
 
-This module reads schema-version-one historical plans for direct evidence inspection and requires schema-version-two
-plans for one to four canonical Sol, Terra or Luna roles. Before launch it validates complete source/diff inclusion and
-bounded operator capacity evidence, discovers configured MCP server identifiers without retaining configuration content,
-restarts with every simple identifier disabled, and rejects any control, event, output, path, hash, or cleanup
-deviation. It never changes global configuration, home directories, credentials, plugin state, or a parent result
-artifact.
+This module reads historical schema-one and schema-two plans for inspection and requires schema-three plans for one to
+four reviewers. Before launch it validates complete source/diff inclusion and bounded operator capacity evidence,
+discovers configured MCP server identifiers without retaining configuration content, restarts with every simple
+identifier disabled, and rejects any control, event, output, path, hash, or cleanup deviation. It never changes global
+configuration, home directories, credentials, plugin state, or a parent result artifact.
 
 ## Usage
 
@@ -67,7 +66,8 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, TextIO
 
 #: Current schema revision of the local reviewer-wave plan.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
+PREVIOUS_PLAN_SCHEMA_VERSION = 2
 #: Older plan schema revision that is still accepted when reading a plan.
 LEGACY_PLAN_SCHEMA_VERSION = 1
 #: Schema revision of the evidence records written for a reviewer wave.
@@ -107,8 +107,9 @@ HEX_DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 SECRET_PATTERNS = (
     re.compile(r"-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----"),
     re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b"),
-    re.compile(r"\bgh[opsu]_[A-Za-z0-9]{20,}\b"),
-    re.compile(r"\bsk-[A-Za-z0-9]{20,}\b"),
+    re.compile(r"(?i)authorization\s*:\s*bearer\s+\S+"),
+    re.compile(r"\b(?:gh[pousr]|github_pat)_[A-Za-z0-9_]{20,}\b"),
+    re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b"),
     re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"),
 )
 #: Capabilities that must be reported as switched off for a reviewer to count as read-only and isolated.
@@ -531,7 +532,7 @@ def _source_snapshot(source_bytes: bytes) -> dict[str, Any]:
 
 def _live_source_unchanged(plan: Mapping[str, object], phase: str) -> None:
     """Require the selected checkout to match the frozen source at a dispatch boundary."""
-    if plan.get("schema_version") != SCHEMA_VERSION:
+    if plan.get("schema_version") not in {PREVIOUS_PLAN_SCHEMA_VERSION, SCHEMA_VERSION}:
         return
     source_bytes = plan.get("_source_bytes")
     if not isinstance(source_bytes, bytes):
@@ -596,7 +597,7 @@ class _PlanSourceMaterials:
 def _validate_plan_shape(plan: dict[str, object], *, require_dispatch: bool) -> list[object]:
     """Check plan schema, consumer, identifiers, and working directory; return the raw node list."""
     plan_schema = plan.get("schema_version")
-    if plan_schema not in {LEGACY_PLAN_SCHEMA_VERSION, SCHEMA_VERSION}:
+    if plan_schema not in {LEGACY_PLAN_SCHEMA_VERSION, PREVIOUS_PLAN_SCHEMA_VERSION, SCHEMA_VERSION}:
         raise ReviewRouteError("plan-schema-version-invalid")
     if require_dispatch and plan_schema != SCHEMA_VERSION:
         raise ReviewRouteError("plan-legacy-dispatch-forbidden")
@@ -658,22 +659,26 @@ def _validate_plan_source_and_diff(
     )
 
 
-def _resolve_node_role(node: dict[str, object], roles_dir: Path, role_ids: set[str]) -> tuple[Path, bytes]:
-    """Bind one node to its role card and confirm the declared model settings match it."""
+def _resolve_node_role(
+    node: dict[str, object], roles_dir: Path, role_ids: set[str], plan_schema: object
+) -> tuple[Path, bytes]:
+    """Bind one node to its role card and require explicit dispatch settings."""
     role_id = _text(node.get("role_id"), "plan-role-id")
     if not ROLE_IDENTIFIER.fullmatch(role_id) or role_id in role_ids:
         raise ReviewRouteError("plan-role-id-invalid-or-duplicate")
     role_ids.add(role_id)
     role_path = roles_dir / role_id / "ROLE.md"
     role_bytes = _read_bytes(role_path, "role-card")
-    model, effort = _role_settings(role_bytes)
-    if model not in {"gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-luna"} or role_id in {
-        "security-auditor",
-        "solution-architect",
-    }:
+    if plan_schema != SCHEMA_VERSION:
+        model, effort = _role_settings(role_bytes)
+        if model not in {"gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-luna"}:
+            raise ReviewRouteError("plan-role-model-unsupported")
+        if node.get("model") != model or node.get("reasoning_effort") != effort:
+            raise ReviewRouteError("plan-role-settings-mismatch")
+    _text(node.get("model"), "plan-model")
+    _text(node.get("reasoning_effort"), "plan-reasoning-effort")
+    if role_id in {"security-auditor", "solution-architect"}:
         raise ReviewRouteError("plan-role-model-unsupported")
-    if node.get("model") != model or node.get("reasoning_effort") != effort:
-        raise ReviewRouteError("plan-role-settings-mismatch")
     if _digest(node.get("role_card_sha256"), "plan-role-card-sha256") != _sha256_bytes(role_bytes):
         raise ReviewRouteError("plan-role-card-sha256-mismatch")
     return role_path, role_bytes
@@ -824,7 +829,7 @@ def _validate_and_resolve_node(
 ) -> dict[str, object]:
     """Validate one reviewer node end to end and return it with its resolved file bindings."""
     node = dict(_mapping(raw_node, "plan-node"))
-    role_path, role_bytes = _resolve_node_role(node, roles_dir, role_ids)
+    role_path, role_bytes = _resolve_node_role(node, roles_dir, role_ids, plan.get("schema_version"))
     context_path, context, context_text = _resolve_node_context(node, plan_root, role_bytes, source_bytes, diff_bytes)
     if source_bytes is not None:
         capacity_path, capacity_bytes = _validate_node_capacity_receipt(node, plan, plan_root, context)
@@ -847,7 +852,7 @@ def _validated_plan(
     plan_root = plan_path.parent.resolve()
     source_bytes: bytes | None = None
     diff_bytes: bytes | None = None
-    if plan.get("schema_version") == SCHEMA_VERSION:
+    if plan.get("schema_version") in {PREVIOUS_PLAN_SCHEMA_VERSION, SCHEMA_VERSION}:
         materials = _validate_plan_source_and_diff(plan, plan_root, require_dispatch=require_dispatch)
         source_bytes = materials.source_bytes
         diff_bytes = materials.diff_bytes
@@ -866,7 +871,7 @@ def _validated_plan(
 
 def _source_materials_unchanged(plan: Mapping[str, object], nodes: list[dict[str, object]], phase: str) -> None:
     """Reject source, diff, or any reviewer's capacity evidence drift before dispatch or acceptance."""
-    if plan.get("schema_version") != SCHEMA_VERSION:
+    if plan.get("schema_version") not in {PREVIOUS_PLAN_SCHEMA_VERSION, SCHEMA_VERSION}:
         return
     source_file = plan.get("_source_file")
     source_bytes = plan.get("_source_bytes")
@@ -992,7 +997,7 @@ def validate_evidence(
             raise ReviewRouteError("evidence-output-empty-or-secret")
         if _digest(node.get("output_sha256"), "evidence-output-sha256") != _sha256_bytes(output):
             raise ReviewRouteError("evidence-output-sha256-mismatch")
-        if plan["schema_version"] == SCHEMA_VERSION:
+        if plan["schema_version"] in {PREVIOUS_PLAN_SCHEMA_VERSION, SCHEMA_VERSION}:
             _validate_review_output(output_text, plan, require_assessment=require_assessment)
         thread_id = _text(node.get("thread_id"), "evidence-thread-id")
         turn_id = _text(node.get("turn_id"), "evidence-turn-id")

@@ -53,6 +53,7 @@ def test_hook_inventory_and_registrations_keep_only_oss_modules() -> None:
     assert {path.name for path in (_PLUGIN / ".claude-plugin").glob("*.json")} == {
         "plugin.json",
         "permissions-allow.json",
+        "permissions-allow-retired.json",
         "permissions-deny.json",
     }
     hooks = json.loads((_PLUGIN / "hooks/hooks.json").read_text(encoding="utf-8"))["hooks"]

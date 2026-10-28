@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 
 import pytest
+from _skill_text import read_with_references
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 INSTRUCTION_ROOTS = ("skills", "shared", "roles", "assets")
@@ -21,14 +22,22 @@ NEGATION = re.compile(r"(?i)\b(?:never|no|not|do not|don't|without)\b")
 
 def _text(relative: str) -> str:
     """Return one contract file with wrapping collapsed so assertions survive reflow."""
-    return " ".join((PLUGIN_ROOT / relative).read_text(encoding="utf-8").split())
+    return " ".join(
+        (
+            read_with_references(
+                PLUGIN_ROOT / relative, "intake.md", "selection.md", "implementation.md", "completion.md"
+            )
+            if relative == "skills/code-remediate/SKILL.md"
+            else (PLUGIN_ROOT / relative).read_text(encoding="utf-8")
+        ).split()
+    )
 
 
 @pytest.mark.parametrize(
     ("relative", "phrase"),
     [
         pytest.param(
-            "skills/code-review/SKILL.md",
+            "skills/code-review/references/source-and-scope.md",
             "or request runtime approval for the complete owning command when required capability is unavailable",
             id="review-collection-runtime-approval",
         ),
@@ -38,7 +47,7 @@ def _text(relative: str) -> str:
             id="review-pr-not-found",
         ),
         pytest.param(
-            "skills/code-review/SKILL.md",
+            "skills/code-review/references/legacy-dispatch.md",
             "Ask for decision only when explicit independence requirement cannot be met after completing available "
             "inspection",
             id="review-independence-decision",
@@ -54,7 +63,7 @@ def _text(relative: str) -> str:
             id="review-protected-repair-decision",
         ),
         pytest.param(
-            "skills/code-review/SKILL.md",
+            "skills/code-review/references/findings-and-completion.md",
             "If a required async question is accepted, yield immediately",
             id="review-pending-question",
         ),
@@ -67,12 +76,12 @@ def _text(relative: str) -> str:
         ),
         pytest.param(
             "skills/challenge-resolve/SKILL.md",
-            "ask the user for direction before another affected dispatch or fix",
+            "Ask only for a specific missing decision or authority, never repeat a decision the user already made.",
             id="challenge-blocker-direction",
         ),
         pytest.param(
             "skills/challenge-resolve/SKILL.md",
-            "ask for a remediation or retry decision before a new paid attempt",
+            "No paid retry follows from an older wave approval.",
             id="challenge-paid-retry",
         ),
         pytest.param(
@@ -93,7 +102,7 @@ def test_review_test_gate_runs_the_full_selection() -> None:
     The review gate is that skill's final gate, so it runs once with the repository's own settings. Fresh CI evidence
     may be cited but must never replace or skip the local gate.
     """
-    review = _text("skills/code-review/SKILL.md")
+    review = _text("skills/code-review/references/findings-and-completion.md")
 
     assert "pass the project's full test selection with its own settings, never a changed-file subset" in review
     assert "record the exact pytest arguments in `review-notes.md`" in review
@@ -156,7 +165,7 @@ def test_instructions_contain_no_polling_directive(path: str) -> None:
 
 def test_review_finalizes_in_one_call_without_skipping_completion() -> None:
     """Fold review render, write, and both validators into one call while keeping the finder completion step."""
-    review = _text("skills/code-review/SKILL.md")
+    review = _text("skills/code-review/references/findings-and-completion.md")
 
     assert "Run steps 1–5 as one command" in review
     assert "`--skill code-review`" in review

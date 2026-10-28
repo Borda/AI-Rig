@@ -40,21 +40,21 @@ EXPECTED_SKILLS = (
     "sync",
 )
 EXPECTED_ROLES = {
-    "challenger": ("gpt-6.1-sol", "high", "read-only"),
-    "cicd-steward": ("gpt-6-luna", "high", "workspace-write"),
-    "curator": ("gpt-6-luna", "high", "workspace-write"),
-    "data-steward": ("gpt-6.1-sol", "high", "workspace-write"),
-    "delegation-lead": ("gpt-6-luna", "high", "workspace-write"),
-    "doc-scribe": ("gpt-6.1-terra", "high", "workspace-write"),
-    "linting-expert": ("gpt-6-luna", "medium", "workspace-write"),
-    "oss-shepherd": ("gpt-6-luna", "high", "read-only"),
-    "qa-specialist": ("gpt-6.1-sol", "medium", "workspace-write"),
-    "scientist": ("gpt-6.1-sol", "high", "workspace-write"),
-    "security-auditor": ("gpt-6.1-sol", "high", "read-only"),
-    "solution-architect": ("gpt-6.1-sol", "high", "read-only"),
-    "squeezer": ("gpt-6.1-sol", "medium", "read-only"),
-    "sw-engineer": ("gpt-6.1-sol", "medium", "workspace-write"),
-    "web-explorer": ("gpt-6.1-terra", "medium", "read-only"),
+    "challenger": ("high", "read-only"),
+    "cicd-steward": ("high", "workspace-write"),
+    "curator": ("high", "workspace-write"),
+    "data-steward": ("high", "workspace-write"),
+    "delegation-lead": ("high", "workspace-write"),
+    "doc-scribe": ("high", "workspace-write"),
+    "linting-expert": ("medium", "workspace-write"),
+    "oss-shepherd": ("high", "read-only"),
+    "qa-specialist": ("medium", "workspace-write"),
+    "scientist": ("high", "workspace-write"),
+    "security-auditor": ("high", "read-only"),
+    "solution-architect": ("high", "read-only"),
+    "squeezer": ("medium", "read-only"),
+    "sw-engineer": ("medium", "workspace-write"),
+    "web-explorer": ("medium", "read-only"),
 }
 EXPECTED_KAGGLE_REFERENCES = {
     "composition.md",
@@ -397,7 +397,7 @@ def test_role_roster_runtime_records_are_exact() -> None:
     assert discovered == set(EXPECTED_ROLES)
 
     expected_records = []
-    for role_id, (model, effort, sandbox_mode) in EXPECTED_ROLES.items():
+    for role_id, (effort, sandbox_mode) in EXPECTED_ROLES.items():
         role_path = role_root / role_id / "ROLE.md"
         expected_records.append(
             {
@@ -405,7 +405,6 @@ def test_role_roster_runtime_records_are_exact() -> None:
                 "path": f"roles/{role_id}/ROLE.md",
                 "sha256": hashlib.sha256(role_path.read_bytes()).hexdigest(),
                 "runtime": {
-                    "model": model,
                     "model_reasoning_effort": effort,
                     "approval_policy": "on-request",
                     "sandbox_mode": sandbox_mode,
@@ -418,22 +417,19 @@ def test_role_roster_runtime_records_are_exact() -> None:
 
 
 @pytest.mark.parametrize(
-    ("role_id", "model", "effort", "sandbox_mode"),
+    ("role_id", "effort", "sandbox_mode"),
     [
-        pytest.param(role_id, model, effort, sandbox_mode, id=role_id)
-        for role_id, (model, effort, sandbox_mode) in EXPECTED_ROLES.items()
+        pytest.param(role_id, effort, sandbox_mode, id=role_id)
+        for role_id, (effort, sandbox_mode) in EXPECTED_ROLES.items()
     ],
 )
-def test_role_frontmatter_matches_its_declared_runtime(
-    role_id: str, model: str, effort: str, sandbox_mode: str
-) -> None:
+def test_role_frontmatter_matches_its_declared_runtime(role_id: str, effort: str, sandbox_mode: str) -> None:
     """Require each role document's frontmatter to match its declared runtime."""
     fields = _parse_frontmatter(PLUGIN_ROOT / "roles" / role_id / "ROLE.md")
 
     assert fields == {
         "role_id": role_id,
         "name": f"codex-rig-{role_id}",
-        "model": model,
         "model_reasoning_effort": effort,
         "approval_policy": "on-request",
         "sandbox_mode": sandbox_mode,

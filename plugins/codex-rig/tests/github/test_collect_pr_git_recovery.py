@@ -5,8 +5,10 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -304,6 +306,91 @@ def test_review_isolates_exact_pr_head_from_dirty_main_checkout(
     assert (output / "diff.patch").read_text(encoding="utf-8").strip() == _git(
         review, "diff", "--binary", f"{base}...{head}", "--"
     )
+
+
+@pytest.mark.parametrize("driver", ["external", "textconv"])
+def test_pr_review_diff_does_not_execute_configured_git_driver(
+    tmp_path: Path, repository_template: RepositoryTemplate, monkeypatch: pytest.MonkeyPatch, driver: str
+) -> None:
+    """Collect the exact PR patch without executing configured external or text conversion drivers."""
+    module = _load_collector()
+    source, main, base, _old, head = _setup_repositories(tmp_path, repository_template)
+    marker = tmp_path / "diff-driver-ran"
+    script = tmp_path / "diff-driver.py"
+    script.write_text(
+        "from pathlib import Path\n"
+        f"Path({str(marker)!r}).write_text('executed')\n"
+        "print('diff --git a/module.py b/module.py\\n--- a/module.py\\n+++ b/module.py\\n"
+        "@@ -1 +1 @@\\n-value = 1\\n+value = 99')\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    command = f"{shlex.quote(sys.executable)} {shlex.quote(str(script))}"
+    _git(main, "config", "diff.external" if driver == "external" else "diff.fixture.textconv", command)
+    if driver == "textconv":
+        (main / ".git/info/attributes").write_text("module.py diff=fixture\n", encoding="utf-8", newline="\n")
+    output = tmp_path / "collected"
+
+    code, _ = _collect(module, source, main, output, base, head)
+
+    assert code == 0
+    checkout = json.loads((output / "local-checkout.json").read_bytes())
+    review = Path(checkout["worktree"])
+    expected = _git(review, "diff", "--binary", "--no-ext-diff", "--no-textconv", f"{base}...{head}", "--")
+    assert (output / "diff.patch").read_text(encoding="utf-8").strip() == expected
+    assert "value = 'new'" in expected
+    assert "--no-ext-diff --no-textconv" in checkout["diff_command"]
+    monkeypatch.syspath_prepend(str(PLUGIN_ROOT / "shared"))
+    monkeypatch.syspath_prepend(str(PLUGIN_ROOT / "skills/code-review"))
+    producer = importlib.import_module("review_prepare")
+    snapshot, changed, comparison_base = producer._source_snapshot(output, review, head, ["module.py"], None, None)
+    assert changed == {"module.py"}
+    assert comparison_base == base
+    assert snapshot["files"][0]["content"] == "value = 'new'\n"
+    assert not marker.exists()
+
+
+@pytest.mark.parametrize(
+    ("setting", "value"),
+    [pytest.param("diff.noprefix", "true", id="no-prefix"), pytest.param("color.diff", "always", id="forced-color")],
+)
+def test_pr_patch_is_canonical_through_preparation(
+    tmp_path: Path, repository_template: RepositoryTemplate, monkeypatch: pytest.MonkeyPatch, setting: str, value: str
+) -> None:
+    """Preserve verified PR patch inventory and source binding despite Git display configuration."""
+    module = _load_collector()
+    source, main, base, _old, head = _setup_repositories(tmp_path, repository_template)
+    (source / "binary.dat").write_bytes(b"\x00new binary")
+    _git(source, "add", "binary.dat")
+    _git(source, "update-index", "--chmod=+x", "notes.txt")
+    _git(source, "commit", "-m", "binary and mode changes")
+    head = _git(source, "rev-parse", "HEAD")
+    _git(source, "update-ref", "refs/pull/17/head", head)
+    paths = ["module.py", "binary.dat", "notes.txt"]
+    _git(main, "config", setting, value)
+    output = tmp_path / "collected"
+    code, calls = _collect(module, source, main, output, base, head)
+    assert code == 0
+    checkout = json.loads((output / "local-checkout.json").read_bytes())
+    review = Path(checkout["worktree"])
+    monkeypatch.syspath_prepend(str(PLUGIN_ROOT / "shared"))
+    monkeypatch.syspath_prepend(str(PLUGIN_ROOT / "skills/code-review"))
+    producer = importlib.import_module("review_prepare")
+    patch = (output / "diff.patch").read_bytes()
+    assert b"\x1b[" not in patch
+    assert set(producer._diff_sections(patch)) == set(paths)
+    assert producer.review_routing.read_review_paths(output, "files.txt") == set(paths)
+    assert b"GIT binary patch" in patch
+    assert b"old mode 100644\nnew mode 100755" in patch
+    diff_call = next(call for call in calls if "--binary" in call)
+    assert checkout["diff_command"] == " ".join(diff_call)
+    assert producer._source_snapshot(output, review, head, paths, None, None)[1] == set(paths)
+    _git(main, "config", "diff.noprefix", "false")
+    _git(main, "config", "color.diff", "never")
+    assert producer._source_snapshot(output, review, head, paths, None, None)[1] == set(paths)
+    (output / "diff.patch").write_bytes(patch.replace(b"+value = 'new'", b"+value = 'wrong'"))
+    with pytest.raises(ValueError, match="review-source-diff-stale"):
+        producer._source_snapshot(output, review, head, paths, None, None)
 
 
 def test_review_reuses_only_clean_exact_registered_worktree(

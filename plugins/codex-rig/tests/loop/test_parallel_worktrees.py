@@ -237,13 +237,17 @@ def _approved_code_remediate_plan(
     *,
     pin_lf: bool = False,
     baseline_a: str = "baseline-a\n",
+    authored_owned_paths: list[str] | None = None,
 ) -> tuple[Path, Path, Path]:
-    """Write one lifecycle plan, optionally pinning tracked text to LF."""
+    """Write an approved plan with optional authored spellings for a multi-path bucket."""
     repository = workspace / "authoritative-repository"
     text_attributes = "*.txt text eol=lf\n" if pin_lf else "*.txt text\n"
+    files = {".gitattributes": text_attributes, "bucket-a.txt": baseline_a, "bucket-b.txt": "baseline-b\n"}
+    if authored_owned_paths is not None:
+        files["bucket-c.txt"] = "baseline-c\n"
     baseline_head, baseline_tree = repository_templates.copy(
         repository,
-        {".gitattributes": text_attributes, "bucket-a.txt": baseline_a, "bucket-b.txt": "baseline-b\n"},
+        files,
         "production fixture baseline\n\nCo-authored-by: Codex <codex@openai.com>",
     )
     evidence = repository / ".reports" / "codex" / "code-remediate" / "fixture"
@@ -273,7 +277,7 @@ def _approved_code_remediate_plan(
                 "selected_indexes": [1, 2, 3],
                 "owner": "sw-engineer",
                 "verifier": "qa-specialist",
-                "owned_paths": ["bucket-a.txt"],
+                "owned_paths": authored_owned_paths if authored_owned_paths is not None else ["bucket-a.txt"],
                 "resource_locks": [],
                 "context_pack_path": context_paths[0].relative_to(evidence).as_posix(),
                 "context_sha256": _sha256(context_paths[0]),
@@ -1295,13 +1299,27 @@ def test_code_remediate_apply_rejects_tampered_integration_before_source_apply(
 
 @pytest.mark.installed_plugin
 @pytest.mark.integration
-@pytest.mark.parametrize("promoted", [False, True])
+@pytest.mark.parametrize(
+    ("promoted", "authored_owned_paths"),
+    [
+        pytest.param(False, None, id="sorted-plan"),
+        pytest.param(True, None, id="promoted-sorted-plan"),
+        pytest.param(False, ["bucket-c.txt", "bucket-a.txt"], id="authored-unsorted-paths"),
+        pytest.param(False, [".\\bucket-c.txt", ".//bucket-a.txt"], id="portable-authored-spellings"),
+    ],
+)
 def test_code_remediate_cli_drives_the_supported_parent_lifecycle(
-    tmp_path: Path, repository_templates: RepositoryTemplates, capsys: pytest.CaptureFixture[str], promoted: bool
+    tmp_path: Path,
+    repository_templates: RepositoryTemplates,
+    capsys: pytest.CaptureFixture[str],
+    promoted: bool,
+    authored_owned_paths: list[str] | None,
 ) -> None:
-    """Keep the skill-callable CLI equivalent to the validated function lifecycle."""
+    """Accept producer-sorted portable receipts without weakening exact recorded ownership checks."""
     lifecycle = _load_lifecycle()
-    plan_path, approval_path, repository = _approved_code_remediate_plan(tmp_path, repository_templates)
+    plan_path, approval_path, repository = _approved_code_remediate_plan(
+        tmp_path, repository_templates, authored_owned_paths=authored_owned_paths
+    )
     if promoted:
         created = subprocess.run(
             [
@@ -1361,10 +1379,13 @@ def test_code_remediate_cli_drives_the_supported_parent_lifecycle(
         == 0
     )
     state = json.loads(state_path.read_text(encoding="utf-8"))
+    expected_owned_paths = ["bucket-a.txt", "bucket-c.txt"] if authored_owned_paths is not None else ["bucket-a.txt"]
+    assert state["nodes"][0]["owned_paths"] == expected_owned_paths
     handover_paths: list[Path] = []
     for node, content in zip(state["nodes"], ("child-a\n", "child-b\n"), strict=True):
         worktree = tmp_path / str(node["worktree_path"])
-        (worktree / str(node["owned_paths"][0])).write_text(content, encoding="utf-8", newline="\n")
+        for owned_path in node["owned_paths"]:
+            (worktree / str(owned_path)).write_text(content, encoding="utf-8", newline="\n")
         handover_path = state_path.parent / f"{node['node_id']}-handover.json"
         assert (
             lifecycle.main(
@@ -1405,18 +1426,52 @@ def test_code_remediate_cli_drives_the_supported_parent_lifecycle(
             ".codex-rig-worktrees/fixture/integration",
         ],
     }
-    _load_validator()._validate_code_remediate_production_lifecycle(
-        {
-            "production_lifecycle": {
-                "path": state_path.name,
-                "sha256": _sha256(state_path),
-                "status": "completed",
-            }
-        },
-        json.loads(plan_path.read_text(encoding="utf-8")),
-        state_path.parent,
-        _sha256(plan_path),
-    )
+    validator = _load_validator()
+    bucket_plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    plan_sha256 = _sha256(plan_path)
+    reference = {
+        "production_lifecycle": {"path": state_path.name, "sha256": _sha256(state_path), "status": "completed"}
+    }
+    validator._validate_code_remediate_production_lifecycle(reference, bucket_plan, state_path.parent, plan_sha256)
+
+    # Reuse completed real evidence; receipt mutations must never be normalized into acceptance.
+    for surface, error in (
+        ("nodes", "code-remediate-production-lifecycle-child-patch-path-invalid"),
+        ("joined_nodes", "code-remediate-production-lifecycle-node-mismatch"),
+    ):
+        for invalid_paths in (
+            ["unowned.txt"],
+            [*expected_owned_paths, expected_owned_paths[0]],
+            [expected_owned_paths[0].upper(), *expected_owned_paths[1:]],
+            expected_owned_paths[0],
+        ):
+            mutated = json.loads(json.dumps(persisted))
+            mutated[surface][0]["owned_paths"] = invalid_paths
+            state_path.write_text(json.dumps(mutated, indent=2) + "\n", encoding="utf-8", newline="\n")
+            reference["production_lifecycle"]["sha256"] = _sha256(state_path)
+            with pytest.raises(SystemExit, match=rf"^{error}$"):
+                validator._validate_code_remediate_production_lifecycle(
+                    reference, bucket_plan, state_path.parent, plan_sha256
+                )
+
+    state_path.write_text(json.dumps(persisted, indent=2) + "\n", encoding="utf-8", newline="\n")
+    reference["production_lifecycle"]["sha256"] = _sha256(state_path)
+    for invalid_path, producer_error in (
+        ("bucket-a.txt:stream", "owned-path-invalid"),
+        ("bucket-a.txt\x00", "owned-path-invalid"),
+        ("bucket-a.txt.", "owned-path-nonportable"),
+        ("bucket-a.txt ", "owned-path-nonportable"),
+    ):
+        invalid_plan = json.loads(json.dumps(bucket_plan))
+        invalid_plan["work_buckets"][0]["owned_paths"] = [invalid_path]
+        with pytest.raises(lifecycle.PilotError, match=rf"^{producer_error}$"):
+            lifecycle._code_remediate_nodes(
+                invalid_plan, repository, state_path.parent.relative_to(repository).as_posix()
+            )
+        with pytest.raises(SystemExit, match=r"^code-remediate-production-lifecycle-owned-path-invalid$"):
+            validator._validate_code_remediate_production_lifecycle(
+                reference, invalid_plan, state_path.parent, plan_sha256
+            )
 
 
 @pytest.mark.installed_plugin

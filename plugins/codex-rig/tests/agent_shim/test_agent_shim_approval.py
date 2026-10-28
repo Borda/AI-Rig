@@ -63,7 +63,7 @@ def _generated_roster(generator: ModuleType) -> object:
                 hashlib.sha256(payload).hexdigest(),
             )
         )
-    return generator.GeneratedRoster("0.2.0", DIGEST, "c" * 64, 1, tuple(roles))
+    return generator.GeneratedRoster("0.2.0", DIGEST, "c" * 64, 2, tuple(roles))
 
 
 def _root(observer: ModuleType, path: str, inode: int) -> object:

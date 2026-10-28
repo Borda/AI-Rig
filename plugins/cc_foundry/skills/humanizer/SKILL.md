@@ -76,7 +76,7 @@ One line per category with hit count and net edits made (e.g. "vocabulary: 4 rem
 - This skill governs **artifacts** headed for human eyes, not conversational chat turns or ultra-caveman-tier handover files — see SKIP list in `description:` for exact destination-based cutoff.
 - Never invent facts while trimming a vague-attribution sentence — name the real source (if known from context) or cut the claim entirely. Don't launder a weasel-worded claim into a confident unsourced one.
 - Dense co-occurrence (5+ flagged patterns in one passage) is the real signal — a single "robust" or one bolded term isn't worth flagging in isolation; don't over-trigger on incidental matches.
-- Commit messages: `rules/git-commit.md` structural rules are inviolable (subject ≤50 chars, `type(scope): detail`, no line-wrap, mandatory co-author trailers, self-contained no internal labels) — on a commit message, humanizer touches only word choice inside those constraints, never subject length, wrapping, or trailer lines.
+- Commit messages: `rules/git-commit.md` structural rules are inviolable (subject ≤50 chars, `type(scope): detail` or `type: detail` without redundant scope, no line-wrap, mandatory co-author trailers, self-contained no internal labels) — on a commit message, humanizer touches only word choice inside those constraints, never subject length, wrapping, or trailer lines.
 - Checklist deliberately excludes Wikipedia-only categories (broken wikitext, DOI/ISBN citation format, AfC submission-statement framing, non-existent Wikipedia templates) — those don't apply outside Wikipedia; don't re-add them.
 
 </notes>

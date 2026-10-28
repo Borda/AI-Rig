@@ -114,8 +114,26 @@ case "\${1:-}" in
         ;;
     esac
     ;;
+  -c)
+    # The collector pins patch formatting without enabling arbitrary Git configuration.
+    if [[ "\${2:-}" == core.quotePath=true && "\${3:-}" == diff ]]; then
+      exec "$REAL_GIT" "\$@"
+    fi
+    echo "blocked by offline Codex harness: git \$*" >&2
+    exit 125
+    ;;
   -C)
     case "\${3:-}" in
+      ls-files)
+        exec "$REAL_GIT" "\$@"
+        ;;
+      --literal-pathspecs)
+        if [[ "\${4:-}" == rev-parse ]]; then
+          exec "$REAL_GIT" "\$@"
+        fi
+        echo "blocked by offline Codex harness: git \$*" >&2
+        exit 125
+        ;;
       remote)
         case "\${4:-}" in
           add|get-url|"")

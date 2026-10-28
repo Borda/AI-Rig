@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
 from types import ModuleType
 
 import pytest
+from _skill_text import read_with_references
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 VALIDATOR_PATH = PLUGIN_ROOT / "skills" / "code-review" / "validate_artifacts.py"
@@ -141,7 +143,7 @@ def test_attributed_review_notes_bind_authors_to_canonical_findings(
         metadata["specialist_passes"] = [{"role": "sw-engineer", "mode": "substituted"}]
         metadata["review_findings"][0]["authors"][0] = "Software engineer (parent substitute)"
     if damage == "documented-template":
-        skill = (PLUGIN_ROOT / "skills" / "code-review" / "SKILL.md").read_text(encoding="utf-8")
+        skill = read_with_references(PLUGIN_ROOT / "skills" / "code-review" / "SKILL.md", "findings-and-completion.md")
         header = "| Finding / area | Author | Required change | Evidence | Status |"
         template = skill[skill.index(header) :].splitlines()
         body = body.replace(header + "\n| --- | --- | --- | --- | --- |", "\n".join(template[:2]))
@@ -235,6 +237,22 @@ def test_candidate_assessments_bind_role_and_retained_output(
 
     with pytest.raises(SystemExit, match=error):
         _load_validator()._validate_reviewer_assessments(tmp_path, metadata, passes)
+
+
+def test_unbound_assessment_reports_canonical_reviewer_labels(tmp_path: Path) -> None:
+    """An invalid display label identifies the actual assessment labels needed for recovery."""
+    passes = {
+        "cicd-steward": {"role": "cicd-steward", "mode": "inspection", "output_path": "ci.md"},
+        "qa-specialist": {"role": "qa-specialist", "mode": "substituted", "output_path": "qa.md"},
+    }
+    metadata = {"reviewer_assessments": [{"role": "CI/CD steward", "rating": 3, "evidence": "ci.md"}]}
+
+    with pytest.raises(SystemExit) as exc:
+        _load_validator()._validate_reviewer_assessments(tmp_path, metadata, passes)
+    assert str(exc.value) == (
+        "review-assessment-role-unbound:CI/CD steward; expected: CICD steward, "
+        "QA specialist (parent substitute); optional: Main reviewer"
+    )
 
 
 def test_candidate_assessments_allow_one_explicit_main_reviewer(tmp_path: Path) -> None:
@@ -346,6 +364,8 @@ def test_current_assessed_result_validates_reviewer_provenance_for_both_filename
     """An assessed rating cannot bypass retained-output checks after promotion."""
     validator = _load_validator()
     result_path = tmp_path / filename
+    (tmp_path / "diff.patch").write_bytes(b"")
+    input_hash = hashlib.sha256(b"").hexdigest()
     (tmp_path / "qa.md").write_text(
         "## Reviewer Assessment\n\nRating: 2\nRationale: A minor gap remains.\n", encoding="utf-8"
     )
@@ -365,7 +385,7 @@ def test_current_assessed_result_validates_reviewer_provenance_for_both_filename
                     "reviewer_assessments": [{"role": "QA specialist", "rating": 1, "evidence": "qa.md"}],
                     "finding_records_version": 2,
                     "review_run_id": "current-run",
-                    "review_input_sha256": "a" * 64,
+                    "review_input_sha256": input_hash,
                     "fanout_substituted": False,
                     "independence_required": False,
                     "independence_satisfied": False,
@@ -385,7 +405,7 @@ def test_current_assessed_result_validates_reviewer_provenance_for_both_filename
     def load_result_or_manifest(path: Path) -> dict[str, object]:
         """Supply the matching manifest while retaining the real result loader."""
         if path.name == "specialist-manifest.json":
-            return {"schema_version": 3, "review_run_id": "current-run", "review_input_sha256": "a" * 64}
+            return {"schema_version": 3, "review_run_id": "current-run", "review_input_sha256": input_hash}
         if path.name == "review-routing.json":
             return {"sol_selection": None}
         return original_load_json(path)

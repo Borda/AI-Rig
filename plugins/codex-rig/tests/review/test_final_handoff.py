@@ -153,7 +153,12 @@ def test_standard_handoff_renders_complete_deterministic_markdown() -> None:
         pytest.param(2, "concise", id="historical-v2-concise"),
         pytest.param(3, "legacy", id="historical-v3-legacy"),
         pytest.param(3, "concise", id="historical-v3-concise"),
-        pytest.param(7, "concise", id="current-v7-concise"),
+        pytest.param(7, "concise", id="historical-v7-concise"),
+        pytest.param(8, "concise", id="historical-v8-concise"),
+        pytest.param(9, "concise", id="historical-v9-concise"),
+        pytest.param(10, "concise", id="historical-v10-concise"),
+        pytest.param(11, "concise", id="historical-v11-concise"),
+        pytest.param(12, "concise", id="current-v12-concise"),
     ],
 )
 @pytest.mark.parametrize("suffix", ["", " (parent substitute)"])
@@ -195,7 +200,7 @@ def test_review_attribution_preserves_summary_and_renders_ratings_and_authors(
     ]
 
     (tmp_path / "review-notes.md").write_text("Full finding evidence: config.py:12.\n", encoding="utf-8")
-    if presentation == 7:
+    if presentation >= 7:
         payload["tables"][1]["overview_only"] = True
         (tmp_path / "review-notes.md").write_text(
             "Full finding evidence: config.py:12.\n\n" + finalizer.render_review_report_details(payload),
@@ -203,16 +208,23 @@ def test_review_attribution_preserves_summary_and_renders_ratings_and_authors(
         )
     rendered = finalizer.render_handoff(payload, report_root=tmp_path)
 
-    assert "This review needs more work before it can be accepted." in rendered
+    summary = (
+        "The reviewed change needs more work before it can be accepted."
+        if presentation == 12
+        else "This review needs more work before it can be accepted."
+    )
+    assert summary in rendered
+    if presentation >= 8:
+        return
     assert "Configuration needs a boundary fix." in rendered
-    if presentation == 7:
+    if presentation in {7, 12}:
         assert "| Reviewers | Software engineer [3], QA specialist [2]. |\n| Report |" in rendered
         assert "parent substitute" not in rendered
     else:
         assert f"| Reviewers | Software engineer{suffix} (3), QA specialist (2). |\n\nLegend: 1 = Approve" in rendered
     assert payload["tables"][0]["reviewers"][0]["role"] == f"Software engineer{suffix}"
     assert "4 = Insufficient evidence · 5 = Block / Reject." in rendered
-    displayed_author = "Software engineer" if presentation == 7 else f"Software engineer{suffix}"
+    displayed_author = "Software engineer" if presentation in {7, 12} else f"Software engineer{suffix}"
     if layout == "concise":
         assert "| ID | Author | Finding | Resolution proposal | Status |" in rendered
         assert (
@@ -224,7 +236,7 @@ def test_review_attribution_preserves_summary_and_renders_ratings_and_authors(
         assert (
             f"| CR-1 | {displayed_author}, QA specialist | Handle empty input | config.py:12 | Required |" in rendered
         )
-    if presentation != 7:
+    if presentation not in {7, 12}:
         assert "config.py:12" in rendered
     else:
         assert "config.py:12" in (tmp_path / "review-notes.md").read_text()
@@ -566,7 +578,7 @@ def test_assessed_code_review_handoff_requires_a_canonical_outcome() -> None:
         finalizer.validate_handoff(payload)
 
 
-@pytest.mark.parametrize("version", [None, 10, 11])
+@pytest.mark.parametrize("version", [None, 10, 11, 12])
 def test_caller_contract_renders_exact_requested_bytes(version: int | None) -> None:
     """Keep an explicit strict output contract free of added workflow prose."""
     finalizer = _load_finalizer()
@@ -1000,6 +1012,29 @@ def test_schema_v2_result_requires_digest_bound_final_output(tmp_path: Path) -> 
     (tmp_path / "final.md").write_text("truncated\n", encoding="utf-8")
     with pytest.raises(SystemExit, match=r"final-handoff-validation-failed:.*rendered-final-mismatch"):
         validator.validate("assess", tmp_path, result_path)
+
+
+@pytest.mark.parametrize("status", ["fail", "timeout"])
+def test_failed_v12_handoff_requires_action(tmp_path: Path, status: str) -> None:
+    """Reject a failed result whose final handoff gives no owner or next step."""
+    candidate_path = _write_schema_v2_assess(tmp_path)
+    result = json.loads(candidate_path.read_text(encoding="utf-8"))
+    binding = result["metadata"]["final_handoff"]
+    handoff_path = Path(binding["handoff_path"])
+    handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+    handoff["presentation_version"] = 12
+    handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
+    validation = _load_finalizer().render_files(
+        handoff_path, Path(binding["rendered_path"]), Path(binding["validation_path"])
+    )
+    binding.update(handoff_sha256=validation["handoff_sha256"], rendered_sha256=validation["rendered_sha256"])
+    gates = json.loads((tmp_path / "gates.json").read_text(encoding="utf-8"))
+    validator = _load_shared_validator()
+    validator._validate_final_handoff(result, "assess", tmp_path, gates, candidate=True)
+    result["status"] = status
+
+    with pytest.raises(SystemExit, match="failed-handoff-next-action-required"):
+        validator._validate_final_handoff(result, "assess", tmp_path, gates, candidate=True)
 
 
 def test_schema_v2_candidate_promotes_to_the_canonical_result_path(tmp_path: Path) -> None:

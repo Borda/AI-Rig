@@ -39,15 +39,15 @@ PR-scoped run supersedes flat timestamped artifacts. Target lookup requires PR s
 recognized ``metadata.review_decision.recommendation`` in addition to PR identity. Explicit intake accepts all four
 declared review scopes without requiring PR identity; current intake artifacts must be canonical schema-3
 ``result.json`` files that pass both validators. Existing ``--parent-thread-id`` and ``--codex-home`` options identify
-evidence from another producer session. PR intake defaults to the recorded producer thread, not the consuming session,
-while revalidating its evidence.
+evidence from another producer session. Completion and intake default to the recorded producer thread while
+revalidating its evidence, so a later consuming session does not replace the original identity.
 ``--archive-result <path>`` reports a schema-2 or schema-3 result as unverified data and never returns a
 remediation-eligible path. ``--finding-evidence <result.json> --finding-id <id>`` prints one admitted finding's
 canonical record plus its contained reviewer artifacts (author assessments, ``specialists/`` responses,
 ``review-notes.md``) for remediation to read when a claim no longer matches source. ``--prior-resolutions <run>``
 prints the newest earlier same-PR run's ``resolution.jsonl`` outcomes, latest per finding, for the next review's
 reviewer briefs. Both are read-only and print JSON.
-Local completion retains current runtime defaults. It does not broaden target lookup.
+Explicit thread overrides remain authoritative. Completion does not broaden target lookup.
 
 ## Failure
 
@@ -71,11 +71,11 @@ from pathlib import Path
 from typing import Any, NamedTuple
 
 
-def _read_pr_identity(pr_path: Path) -> tuple[str, str] | None:
+def _read_pr_identity(pr_path: Path) -> tuple[str, str, bool] | None:
     """Read a PR identity without mistaking malformed collector output for a match."""
     try:
         payload: dict[str, Any] = json.loads(pr_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, ValueError, RecursionError):
         return None
 
     if not isinstance(payload, dict):
@@ -84,11 +84,11 @@ def _read_pr_identity(pr_path: Path) -> tuple[str, str] | None:
     if type(raw_number) is not int or raw_number <= 0:
         return None
     raw_url = payload.get("url", "")
-    if not isinstance(raw_url, str):
-        return None
     number = str(raw_number)
-    url = raw_url.rstrip("/")
-    return number, url
+    url = raw_url.rstrip("/") if isinstance(raw_url, str) else ""
+    match = PR_URL_PATTERN.fullmatch(url) if url else None
+    valid = isinstance(raw_url, str) and (not url or (match is not None and match.group("number") == number))
+    return number, url, valid
 
 
 def _matches_target(target: str, number: str, url: str) -> bool:
@@ -113,7 +113,7 @@ def review_result_kind(result_path: Path, *, allow_local: bool = False) -> str:
     """Classify review disposition, accepting local scopes only for explicit-path intake."""
     try:
         payload: dict[str, Any] = json.loads(result_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, ValueError, RecursionError):
         return "invalid"
     if not isinstance(payload, dict):
         return "invalid"
@@ -126,19 +126,24 @@ def review_result_kind(result_path: Path, *, allow_local: bool = False) -> str:
     if metadata.get("review_status") == "closed":
         return "closed"
     decision = metadata.get("review_decision")
-    if not isinstance(decision, dict) or (
-        decision.get("recommendation")
-        not in {
-            "accept-as-is",
-            "minor-changes",
-            "needs-more-work",
-            "insufficient-but-promising",
-            "reject",
-            "not-aligned",
-        }
-        and not (
-            decision.get("recommendation") is None and metadata.get("review_validation", {}).get("schema_version") == 1
+    if not isinstance(decision, dict):
+        return "invalid"
+    recommendation = decision.get("recommendation")
+    validation = metadata.get("review_validation")
+    if not (
+        (
+            isinstance(recommendation, str)
+            and recommendation
+            in {
+                "accept-as-is",
+                "minor-changes",
+                "needs-more-work",
+                "insufficient-but-promising",
+                "reject",
+                "not-aligned",
+            }
         )
+        or (recommendation is None and isinstance(validation, dict) and validation.get("schema_version") == 1)
     ):
         return "invalid"
     return "assessed"
@@ -157,29 +162,21 @@ def require_assessed_review_result(
         raise LookupError(f"matching-review-candidate-unpromoted:{result_path}")
     kind = review_result_kind(result_path, allow_local=True)
     if kind == "unavailable":
-        raise LookupError("matching-review-unavailable-rerun-code-review")
+        raise LookupError(f"matching-review-unavailable-rerun-code-review:{result_path}")
     if kind == "closed":
-        raise LookupError("matching-review-closed-not-remediable")
+        raise LookupError(f"matching-review-closed-not-remediable:{result_path}")
     if kind != "assessed":
-        raise LookupError("invalid-review-report-rerun-code-review")
+        raise LookupError(f"invalid-review-report-rerun-code-review:{result_path}")
     if result_path.name != "result.json":
-        raise LookupError("invalid-review-report-rerun-code-review")
+        raise LookupError(f"invalid-review-report-rerun-code-review:{result_path}")
     payload = json.loads(result_path.read_text(encoding="utf-8"))
     if payload.get("schema_version") != 3:
         raise LookupError("historical-review-unverified-archive:use --archive-result for read-only access")
-    # Every assessed scope can be consumed in a later session with a different current thread.
-    manifest_path = result_path.parent / "specialist-manifest.json"
-    if parent_thread_id is None and manifest_path.is_file():
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        producer = manifest.get("parent_thread_id") if isinstance(manifest, dict) else None
-        if not isinstance(producer, str) or not producer.strip():
-            raise LookupError("review-validation-failed:missing-producer-thread")
-        parent_thread_id = producer
     complete_review_run(result_path.parent, codex_home=codex_home, parent_thread_id=parent_thread_id)
     if payload["metadata"].get("scope") == "pr":
         run_dir = result_path.resolve().parent
         identity = _read_pr_identity(run_dir / "pr.json")
-        if identity is None:
+        if identity is None or not identity[2]:
             raise LookupError("review-completion-missing-pr-identity")
         reports_root = run_dir.parent.parent if PR_DIRECTORY_PATTERN.fullmatch(run_dir.parent.name) else run_dir.parent
         reports_dirs = [reports_root]
@@ -304,18 +301,24 @@ def _artifact_matches_target(
     )
     identity = _read_pr_identity(artifact.path.parent / "pr.json")
     if identity is not None:
-        number, url = identity
+        number, url, valid = identity
         if artifact.pull_number is not None and artifact.pull_number != number:
             return directory_matches
-        if _matches_target(target, number, url):
+        if valid:
+            if _matches_target(target, number, url):
+                return True
+            return directory_matches and not url
+        if allow_unverified_directory and target_number == number:
             return True
-        return directory_matches and not url
     if directory_matches:
         return True
     if not allow_target_file:
         return False
     target_path = artifact.path.parent / "pr-target.txt"
-    stored_target = target_path.read_text(encoding="utf-8").strip() if target_path.is_file() else ""
+    try:
+        stored_target = target_path.read_text(encoding="utf-8").strip() if target_path.is_file() else ""
+    except (OSError, UnicodeError):
+        return False
     if _matches_target(target, stored_target, stored_target):
         return True
     return (
@@ -331,7 +334,7 @@ def find_latest_review_report(target: str, reports_dirs: list[Path]) -> Path:
     matches: list[ReviewArtifact] = []
     candidate_matches: list[ReviewArtifact] = []
     promoted_matches: list[ReviewArtifact] = []
-    unavailable_matches = False
+    unavailable_matches: list[ReviewArtifact] = []
     invalid_matches: list[ReviewArtifact] = []
     closed_matches: list[ReviewArtifact] = []
     incomplete_matches: list[ReviewArtifact] = []
@@ -357,18 +360,23 @@ def find_latest_review_report(target: str, reports_dirs: list[Path]) -> Path:
             kind = review_result_kind(result_path)
             if kind == "unavailable":
                 if _artifact_matches_target(artifact, normalized_target, allow_target_file=True):
-                    unavailable_matches = True
+                    unavailable_matches.append(artifact)
                 # Collection failures contain no assessment and cannot clear an intervening incomplete review.
                 continue
             if not _artifact_matches_target(
                 artifact, normalized_target, allow_target_file=True, allow_unverified_directory=True
             ):
                 continue
+            # Damaged identity blocks admission, but must not let an older run choose the recovery anchor.
+            promoted_matches.append(artifact)
             identity = _read_pr_identity(result_path.parent / "pr.json")
-            if identity is None or (artifact.pull_number is not None and artifact.pull_number != identity[0]):
+            if (
+                identity is None
+                or not identity[2]
+                or (artifact.pull_number is not None and artifact.pull_number != identity[0])
+            ):
                 invalid_matches.append(artifact)
                 continue
-            promoted_matches.append(artifact)
             if kind == "closed":
                 closed_matches.append(artifact)
                 continue
@@ -382,6 +390,7 @@ def find_latest_review_report(target: str, reports_dirs: list[Path]) -> Path:
     candidate_matches.sort(key=lambda artifact: artifact.order, reverse=True)
     promoted_matches.sort(key=lambda artifact: artifact.order, reverse=True)
     incomplete_matches.sort(key=lambda artifact: artifact.order, reverse=True)
+    invalid_matches.sort(key=lambda artifact: artifact.order, reverse=True)
     completed_or_candidate = promoted_matches + candidate_matches
     if incomplete_matches and (
         not completed_or_candidate
@@ -391,15 +400,14 @@ def find_latest_review_report(target: str, reports_dirs: list[Path]) -> Path:
     # A candidate beside a promoted result in one run is still pending and blocks findings intake.
     if candidate_matches and (not promoted_matches or candidate_matches[0].order >= promoted_matches[0].order):
         raise LookupError(f"matching-review-candidate-unpromoted:{candidate_matches[0].path}")
+    if invalid_matches and invalid_matches[0] == promoted_matches[0]:
+        raise LookupError(f"invalid-review-report-rerun-code-review:{invalid_matches[0].path}")
     if closed_matches and (not matches or closed_matches[0].order > matches[0].order):
-        raise LookupError("matching-review-closed-not-remediable")
-    if invalid_matches and (not matches or max(artifact.order for artifact in invalid_matches) > matches[0].order):
-        raise LookupError("invalid-review-report-rerun-code-review")
+        raise LookupError(f"matching-review-closed-not-remediable:{closed_matches[0].path}")
     if not matches:
         if unavailable_matches:
-            raise LookupError("matching-review-unavailable-rerun-code-review")
-        if invalid_matches:
-            raise LookupError("invalid-review-report-rerun-code-review")
+            unavailable = max(unavailable_matches, key=lambda artifact: artifact.order)
+            raise LookupError(f"matching-review-unavailable-rerun-code-review:{unavailable.path}")
         raise LookupError("missing-matching-review-report")
     return matches[0].path
 
@@ -438,7 +446,7 @@ def validate_review_result(
         completed = subprocess.run(command, capture_output=True, text=True, check=False, timeout=120)  # noqa: S603 - argv list, no shell
         if completed.returncode:
             diagnostic = (completed.stderr or completed.stdout).strip()
-            raise LookupError(f"review-validation-failed:{diagnostic}")
+            raise LookupError(f"review-validation-failed:{result_path}:{diagnostic}")
     payload = json.loads(result_bytes)
     if result_path.read_bytes() != result_bytes:
         raise LookupError("review-completion-result-changed")
@@ -450,13 +458,21 @@ def complete_review_run(run_dir: Path, *, codex_home: Path | None = None, parent
 
     This read-only boundary never repairs or promotes artifacts. Intake shares its validators, but only new producer
     completion requires bound schema-v3 final bytes for every disposition. Historical reports remain readable as
-    unverified archives, not completion or remediation evidence.
+    unverified archives, not completion or remediation evidence. Without an explicit override, retained manifest
+    identity selects the producer thread; validators still authenticate that producer's execution and source.
     """
     run_dir = run_dir.resolve()
     result_path = run_dir / "result.json"
     if not result_path.is_file():
         raise LookupError(f"review-result-not-promoted:{run_dir}")
     result_bytes = result_path.read_bytes()
+    manifest_path = run_dir / "specialist-manifest.json"
+    if parent_thread_id is None and manifest_path.is_file():
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        producer = manifest.get("parent_thread_id") if isinstance(manifest, dict) else None
+        if not isinstance(producer, str) or not producer.strip():
+            raise LookupError("review-validation-failed:missing-producer-thread")
+        parent_thread_id = producer
     payload = validate_review_result(result_path, codex_home=codex_home, parent_thread_id=parent_thread_id)
     if payload.get("schema_version") != 3:
         raise LookupError("review-completion-requires-bound-schema-v3")
@@ -545,6 +561,34 @@ def finding_evidence(result_path: Path, finding_id: str) -> dict[str, Any]:
         else:
             artifact_evidence.append({"evidence": evidence, "path": str(path)})
     notes = run_dir / "review-notes.md"
+    origins = metadata.get("source_findings") or []
+    mapping = metadata.get("source_finding_mapping", {})
+    if mapping is None:
+        mapping = {}
+    if not isinstance(origins, list) or any(not isinstance(origin, dict) for origin in origins):
+        raise LookupError("finding-evidence-source-origins-invalid")
+    if isinstance(mapping, list):
+        # Direct supplemental records preserve their own IDs and can share one canonical finding.
+        if any(not isinstance(link, dict) for link in mapping):
+            raise LookupError("finding-evidence-source-mapping-invalid")
+        origin_ids = [origin.get("id") for origin in origins if origin.get("candidate_id") == finding_id]
+        linked_ids = [link.get("source_id") for link in mapping if link.get("candidate_id") == finding_id]
+        if (
+            any(not isinstance(value, str) or not value for value in origin_ids + linked_ids)
+            or len(set(origin_ids)) != len(origin_ids)
+            or len(set(linked_ids)) != len(linked_ids)
+            or set(origin_ids) != set(linked_ids)
+            or any(link.get("source_id") in origin_ids and link.get("candidate_id") != finding_id for link in mapping)
+            or any(origin.get("id") in origin_ids and origin.get("candidate_id") != finding_id for origin in origins)
+        ):
+            raise LookupError("finding-evidence-source-mapping-invalid")
+        source_origins = [origin for origin in origins if origin.get("id") in origin_ids]
+    elif isinstance(mapping, dict):
+        if any(origin.get("candidate_id") == finding_id for origin in origins):
+            raise LookupError("finding-evidence-source-mapping-invalid")
+        source_origins = [origin for origin in origins if mapping.get(origin.get("finding_id")) == [finding_id]]
+    else:
+        raise LookupError("finding-evidence-source-mapping-invalid")
     return {
         "review_run": str(run_dir),
         "finding": record,
@@ -552,11 +596,7 @@ def finding_evidence(result_path: Path, finding_id: str) -> dict[str, Any]:
         "artifact_evidence": artifact_evidence,
         "source_evidence": source_evidence,
         "review_notes": str(notes) if notes.is_file() else None,
-        "source_origins": [
-            origin
-            for origin in metadata.get("source_findings") or []
-            if (metadata.get("source_finding_mapping") or {}).get(origin["finding_id"]) == [finding_id]
-        ],
+        "source_origins": source_origins,
         "source_reconciliation": (metadata.get("source_finding_reconciliation") or {}).get(finding_id),
     }
 

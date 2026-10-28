@@ -55,7 +55,7 @@ PLUGIN_ID = "codex-rig@borda-ai-rig"
 PLUGIN_NAME = "codex-rig"
 #: Name of the plugin marketplace used to query and locate the installed plugin.
 MARKETPLACE = "borda-ai-rig"
-#: Revision of the role-link protocol; must match the manifest schema and bootstrap protocol, and is echoed in output.
+#: Revision of the role-link protocol; must match the manifest bootstrap protocol and is echoed in output.
 PROTOCOL = 1
 #: Line written between the JSON status header and the role card text in successful output.
 CARD_SEPARATOR = "--- codex-rig-role-card ---\n"
@@ -352,7 +352,7 @@ def load_verified_role(args: argparse.Namespace) -> tuple[bytes, str]:
         if digest_bytes(manifest_bytes) != require_digest(args.manifest_sha256):
             raise RoleUnavailable("manifest-hash-mismatch")
         manifest = json.loads(manifest_bytes)
-        if not isinstance(manifest, dict) or manifest.get("schema") != PROTOCOL:
+        if not isinstance(manifest, dict) or manifest.get("schema") not in (1, 2):
             raise RoleUnavailable("manifest-invalid")
 
         plugin_bytes = read_relative(root_fd, ".codex-plugin/plugin.json", ".codex-plugin/plugin.json")

@@ -17,7 +17,7 @@ Deliver oss's rules to Claude's user-level rule namespace, and its own permissio
 | Link whose source left the plugin | removed |
 | Real file or foreign link at a destination | preserved, reported as conflict |
 | Anything outside `~/.claude/rules/` | never touched |
-| `.claude-plugin/permissions-{allow,deny}.json` → `~/.claude/settings.json` | merged additively except for two exact retired allow rules |
+| `.claude-plugin/permissions-{allow,deny}.json` → `~/.claude/settings.json` | merged additively except for the exact shipped retired allow entries |
 | Any other key of `~/.claude/settings.json` | never touched |
 
 **Why namespaced?** Claude loads user rules from one flat directory. Four plugins ship a `rules/quality-gates.md`; installing source basenames would collide. Every rule installs as `<plugin>-<source-name>.md`, so `quality-gates.md` becomes `oss-quality-gates.md`. The prefix is inert — verified against Claude Code 2.1.220 that a filename prefix changes neither unconditional loading nor `paths:` frontmatter matching.
@@ -26,7 +26,7 @@ Deliver oss's rules to Claude's user-level rule namespace, and its own permissio
 
 **Why does oss deliver only its own rules?** Each plugin installs independently. A plugin that shipped a sibling's rules would break standalone installation and couple releases. Still true with the delta variant: `oss-quality-gates.md` links either `rules/quality-gates-delta.md` (when a foundry-owned `foundry-quality-gates.md` is already delivered) or the complete `rules/quality-gates.md` (when it is not) — both sources belong to this plugin, and the delta only *points* at foundry's copy for the shared obligations rather than delivering it. Standalone install loses no rule; all four `quality-gates.md` copies loading at once was 51,274 B of context on every turn.
 
-NOT for: statusLine, `TEAM_PROTOCOL.md`, or plugin-cache purging — those are `/foundry:setup` (requires `foundry` plugin). Of `~/.claude/settings.json` only `permissions.allow` and `permissions.deny` arrays are touched, additively except for removing two exact retired allow rules (`Bash(gh api repos/*:*)` and `Bash(uv pip install:*)`). Writes nothing under `~/.codex/`.
+NOT for: statusLine, `TEAM_PROTOCOL.md`, or plugin-cache purging — those are `/foundry:setup` (requires `foundry` plugin). Of `~/.claude/settings.json` only `permissions.allow` and `permissions.deny` arrays are touched, additively except for removing exactly the retired allow entries listed in `permissions-allow-retired.json`. Writes nothing under `~/.codex/`.
 
 </objective>
 
@@ -93,12 +93,13 @@ On **(b)**, re-run Step 3's command with `--approve` appended and report the res
 
 This plugin ships its own `permissions-allow.json` and `permissions-deny.json`. Claude Code doesn't read them from plugin manifest, so without this step they're inert files — allow entries never suppress a prompt, deny entries never block anything.
 
-Merge is idempotent: existing entries never duplicate. Each plugin merges only its own pair; the allow merge removes the two exact retired allow rules and preserves every other entry.
+Merge is idempotent: existing entries never duplicate. Each plugin merges only its own pair; the allow merge removes exactly the entries in `permissions-allow-retired.json` and preserves every other entry.
 
-The merge removes only two exact retired allow entries, each shipped by an earlier oss version:
+The merge removes exactly the retired allow entries listed in `permissions-allow-retired.json`, each shipped by an earlier oss version:
 
 - `Bash(gh api repos/*:*)` — nothing replaces it; the broad repository API allow entry is no longer shipped.
 - `Bash(uv pip install:*)` — nothing replaces it. It auto-approved every `uv pip install`, including the review overlay's support check and wheel fetch, which must each reach their own permission prompt, and project-environment installs or source builds the overlay forbids.
+- The broad `Bash(claude:*)`, `Bash(find:*)`, `Bash(node:*)`, `Bash(sed:*)` and `Bash(eval:*)` shell grants — nothing replaces them.
 
 Preserve every other user allow entry, all deny entries, and unrelated settings.
 
@@ -112,11 +113,11 @@ SETUP_BAK_TS=$(date -u +%Y-%m-%dT%H-%M-%SZ)
 cp ~/.claude/settings.json "$HOME/.claude/settings.json.bak-${SETUP_BAK_TS}"  # timeout: 5000
 printf "Backed up ~/.claude/settings.json → ~/.claude/settings.json.bak-%s\n" "$SETUP_BAK_TS"
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/merge_settings_permissions.py" --allow "$PLUGIN_ROOT/.claude-plugin/permissions-allow.json" --drop-allow 'Bash(gh api repos/*:*)' --drop-allow 'Bash(uv pip install:*)' --drop-allow 'Bash(claude:*)' --drop-allow 'Bash(find:*)' --drop-allow 'Bash(node:*)' --drop-allow 'Bash(sed:*)' --drop-allow 'Bash(eval:*)' --deny "$PLUGIN_ROOT/.claude-plugin/permissions-deny.json" || { printf "! permissions merge failed — settings.json unchanged\n"; exit 1; }  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/merge_settings_permissions.py" --allow "$PLUGIN_ROOT/.claude-plugin/permissions-allow.json" --drop-allow-file "$PLUGIN_ROOT/.claude-plugin/permissions-allow-retired.json" --deny "$PLUGIN_ROOT/.claude-plugin/permissions-deny.json" || { printf "! permissions merge failed — settings.json unchanged\n"; exit 1; }  # timeout: 5000
 python -m json.tool ~/.claude/settings.json > /dev/null || { cp "$HOME/.claude/settings.json.bak-${SETUP_BAK_TS}" ~/.claude/settings.json; printf "! settings.json no longer parses — restored from backup\n"; exit 1; }  # timeout: 5000 — Step 1 guarantees python; jq may be absent (native Windows), and its exit 127 would restore the backup over a good merge
 ```
 
-Report the backup path the block printed. From the script's two output lines report "Added N new permissions.allow entries (M already present)." plus how many of the two retired allow rules were removed (`dropped`), and "Added N new permissions.deny entries (M already present)." Zero exit → continue to Step 6. Non-zero exit → the block already restored (validation failure) or left settings unchanged (merge failure); report the failure and stop.
+Report the backup path the block printed. From the script's two output lines report "Added N new permissions.allow entries (M already present)." plus the total retired allow entries removed (`dropped`), and "Added N new permissions.deny entries (M already present)." Zero exit → continue to Step 6. Non-zero exit → the block already restored (validation failure) or left settings unchanged (merge failure); report the failure and stop.
 
 ## Step 6: Report
 

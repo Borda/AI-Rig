@@ -146,7 +146,7 @@ def _validate_roster(roster: object) -> GeneratedRoster:
         not isinstance(roster.plugin_version, str)
         or SEMVER_PATTERN.fullmatch(roster.plugin_version) is None
         or type(roster.generator_version) is not int
-        or roster.generator_version != 1
+        or roster.generator_version != 2
     ):
         _fail("invalid generated package identity")
     _digest(roster.package_hash, "package hash")

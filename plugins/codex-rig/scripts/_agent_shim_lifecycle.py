@@ -63,7 +63,7 @@ MARKER = re.compile(
     r"# codex-rig-shim schema=1 plugin=codex-rig "
     r"install_id=([0-9a-f-]{36}) role_id=([a-z][a-z0-9-]{0,63}) "
     r"package_hash=sha256:([0-9a-f]{64}) role_hash=sha256:([0-9a-f]{64}) "
-    r"bootstrap=1 generator=1"
+    r"bootstrap=1 generator=([12])"
 )
 #: Pattern for a role identifier: a lowercase letter then up to 63 lowercase letters, digits, or hyphens.
 ROLE_ID = re.compile(r"[a-z][a-z0-9-]{0,63}")
@@ -107,6 +107,7 @@ class Marker:
     role_id: str
     package_hash: str
     role_hash: str
+    generator_version: int = 1
 
 
 @dataclass(frozen=True)
@@ -200,10 +201,10 @@ def parse_marker(line: bytes) -> Marker:
     match = MARKER.fullmatch(text)
     if match is None:
         raise LifecycleDataError("invalid marker grammar")
-    install_id, role_id, package_hash, role_hash = match.groups()
+    install_id, role_id, package_hash, role_hash, generator_version = match.groups()
     if ROLE_ID.fullmatch(role_id) is None:
         raise LifecycleDataError("invalid marker role")
-    return Marker(_uuid(install_id, "marker install ID"), role_id, package_hash, role_hash)
+    return Marker(_uuid(install_id, "marker install ID"), role_id, package_hash, role_hash, int(generator_version))
 
 
 def _root(value: object, label: str) -> None:
@@ -249,7 +250,7 @@ def parse_state(payload: bytes) -> dict[str, Any]:
     if bootstrap["helper_path"] != "scripts/verify_role_link.py":
         raise LifecycleDataError("bootstrap identity mismatch")
     _digest(bootstrap["helper_hash"], "helper hash")
-    if type(state["generator_version"]) is not int or state["generator_version"] != 1:
+    if type(state["generator_version"]) is not int or state["generator_version"] not in (1, 2):
         raise LifecycleDataError("state protocol mismatch")
     if state["transaction_status"] not in {"current", "removed"}:
         raise LifecycleDataError("state protocol mismatch")
@@ -310,6 +311,7 @@ def classify_targets(
             and marker.role_id == record["role_id"]
             and marker.package_hash == state["package_hash"]
             and marker.role_hash == record["role_hash"]
+            and marker.generator_version == state["generator_version"]
         )
         modified = modified or not is_exact
     if modified:

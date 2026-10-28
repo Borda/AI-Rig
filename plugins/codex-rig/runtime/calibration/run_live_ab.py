@@ -56,8 +56,6 @@ from live_contract import Layout, build_prompt, candidate_findings, prompt_sha25
 
 #: Label of the normalized token-cost formula, recorded with each live record's estimated cost.
 PRICING_REF = "normalized-token-v1:uncached+0.1*cached+4*output"
-#: Models the live A/B runner accepts for a campaign; any other model is rejected.
-SUPPORTED_LIVE_MODELS = ("gpt-6-luna", "gpt-6-sol", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-astra")
 
 
 class BoundedProcessResult(NamedTuple):
@@ -531,12 +529,17 @@ def main() -> int:
     unknown_routes = sorted(set(selected_routes) - set(policy))
     if unknown_routes:
         raise ValueError(f"unknown routes: {unknown_routes}")
-    # Historical route evidence stays readable, but only selected supported models may become live plans or calls.
+    # The host owns model availability; reject malformed identifiers before constructing its argv.
     for route_id in selected_routes:
         for field in ("baseline_model", "candidate_model"):
             model = policy[route_id].get(field)
-            if model not in SUPPORTED_LIVE_MODELS:
-                raise ValueError(f"unsupported live model: {route_id}:{field}={model!r}")
+            if (
+                not isinstance(model, str)
+                or not model
+                or model.startswith("-")
+                or any(char.isspace() or not char.isprintable() for char in model)
+            ):
+                raise ValueError(f"invalid live model identifier: {route_id}:{field}={model!r}")
     context_root = _context_root(args.layout, args.root)
     roles: set[str] = set()
     for route_id in selected_routes:

@@ -220,7 +220,7 @@ def verify_package(root: Path | str, *, enforce_modes: bool | None = None) -> Pa
     try:
         manifest_file = read_safe_file(package_root, "package-manifest.json", maximum=MAX_MANIFEST_BYTES)
         manifest = _json_object(manifest_file.payload, "package manifest")
-        if manifest.get("schema") != 1 or manifest.get("plugin") != "codex-rig":
+        if manifest.get("schema") not in (1, 2) or manifest.get("plugin") != "codex-rig":
             raise PackageIdentityError("package manifest identity mismatch")
         version = manifest.get("version")
         if not isinstance(version, str) or not version:

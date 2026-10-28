@@ -1614,6 +1614,39 @@ def test_release_without_canonical_changelog_records_explicit_absence(
     validate_run(validator, release_run)
 
 
+@pytest.mark.integration
+@pytest.mark.parametrize("stdout", ["", "not JSON\n"])
+def test_demo_execution_reports_recorder_crashes(
+    validator: ModuleType, release_run: tuple, monkeypatch: pytest.MonkeyPatch, stdout: str
+) -> None:
+    """Keep a recorder crash visible when its exit code matches an expected demo failure."""
+    crashed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            f"import sys; sys.stdout.write({stdout!r}); raise RuntimeError('recorder cleanup failed')",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    def failed_recorder(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        """Supply the real crash result at the recorder subprocess boundary."""
+        assert command[1] == str(PLUGIN_ROOT / "shared/release_evidence.py")
+        assert command[2] == "record-demo"
+        return crashed
+
+    monkeypatch.setattr(subprocess, "run", failed_recorder)
+    with pytest.raises(pytest.fail.Exception, match="Demo recorder did not produce a JSON receipt") as raised:
+        test_demo_execution_receipt_is_produced_and_verified(validator, release_run, "timeout")
+
+    failure = str(raised.value)
+    assert "returncode=1" in failure
+    assert f"stdout={stdout!r}" in failure
+    assert "RuntimeError: recorder cleanup failed" in failure
+
+
 @pytest.mark.parametrize(
     "scenario", ["success", "silent-success", "failure", "missing", "output-drift", "script-drift", "timeout"]
 )
@@ -1668,8 +1701,12 @@ def test_demo_execution_receipt_is_produced_and_verified(
             timeout=10,
             check=False,
         )
-        assert completed.returncode == (1 if scenario in {"failure", "timeout"} else 0), completed.stderr
-        receipt["demo"] = json.loads(completed.stdout)
+        diagnostics = f"returncode={completed.returncode}\nstdout={completed.stdout!r}\nstderr={completed.stderr}"
+        assert completed.returncode == (1 if scenario in {"failure", "timeout"} else 0), diagnostics
+        try:
+            receipt["demo"] = json.loads(completed.stdout)
+        except json.JSONDecodeError:
+            pytest.fail(f"Demo recorder did not produce a JSON receipt:\n{diagnostics}")
         if scenario == "output-drift":
             Path(receipt["demo"]["output"]).write_bytes(b"forged output")
         elif scenario == "script-drift":

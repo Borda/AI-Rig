@@ -160,6 +160,59 @@ def test_historical_four_cannot_be_relabelled_as_source_reject(tmp_path: Path) -
         )
 
 
+@pytest.mark.parametrize("missing_source", [False, True])
+@pytest.mark.parametrize("readiness", ["complete", "blocked", "incomplete"])
+def test_direct_parent_can_close_checks_but_not_missing_source(
+    tmp_path: Path, missing_source: bool, readiness: str
+) -> None:
+    """Blocked checks remain admissible, but no readiness label completes uninspected source."""
+    validator = _load_validator()
+    metadata = _new_metadata()
+    metadata["review_validation"]["verification_readiness"] = readiness
+    metadata["reviewer_assessments"] = [{"role": "Doc scribe", "rating": 2, "evidence": "doc.md"}]
+    response = tmp_path / "doc.md"
+    response.write_text(
+        "## Reviewer Assessment\nSource rating version: 1\nRating: 2\n"
+        "Verification readiness: incomplete\nRationale: Parent must execute examples and build docs.\n",
+        encoding="utf-8",
+    )
+    original = response.read_bytes()
+    passes = {"doc-scribe": {"mode": "inspection", "output_path": "doc.md"}}
+    coverage = {
+        "doc-scribe": {
+            "reviewed": [] if missing_source else ["docs.md"],
+            "missing": ["docs.md — source was not inspected"] if missing_source else [],
+        }
+    }
+    if missing_source:
+        with pytest.raises(SystemExit, match="review-direct-missing-source-cannot-complete"):
+            validator._validate_reviewer_assessments(tmp_path, metadata, passes, direct_coverage=coverage)
+    else:
+        validator._validate_reviewer_assessments(tmp_path, metadata, passes, direct_coverage=coverage)
+    assert response.read_bytes() == original
+
+
+def test_direct_absent_independence_flag_keeps_prepared_default(tmp_path: Path) -> None:
+    """Final validation uses the same absent-false routing default as direct preparation."""
+    validator = _load_validator()
+    evidence = validator._SpecialistEvidence(
+        triggered_roles=set(),
+        manifest={"schema_version": 10},
+        routing={},
+        passes=[],
+        by_role={},
+        runtime_summary={
+            "independence_required": False,
+            "independence_requirement_evidence": None,
+            "independence_satisfied": False,
+        },
+    )
+    env = validator._ReviewEnvironment(codex_home=tmp_path, parent_thread_id="parent", project_root=tmp_path)
+    assert validator._validate_inspection_independence(
+        tmp_path, evidence, {"independence_requirement_evidence": None}, "fail", env
+    ) == (False, False)
+
+
 @pytest.mark.parametrize("readiness", ["blocked", "incomplete"])
 @pytest.mark.parametrize("structured", [False, True])
 def test_retained_readiness_prevents_complete_aggregate(tmp_path: Path, readiness: str, structured: bool) -> None:
@@ -576,7 +629,7 @@ def test_old_ordinary_completion_rejects_new_records_version(tmp_path: Path) -> 
         check=False,
     )
     assert old.returncode == 1
-    assert "review-validation-failed:review-finding-records-version-invalid" in old.stderr
+    assert f"review-validation-failed:{run / 'result.json'}:review-finding-records-version-invalid" in old.stderr
 
 
 def test_ordinary_completion_rejects_dropped_reviewer_readiness(tmp_path: Path) -> None:
@@ -594,7 +647,7 @@ def test_ordinary_completion_rejects_dropped_reviewer_readiness(tmp_path: Path) 
     )
     blocked = subprocess.run(command, capture_output=True, text=True, check=False)
     assert blocked.returncode == 1
-    assert "review-validation-failed:review-assessment-readiness-mismatch" in blocked.stderr
+    assert f"review-validation-failed:{run / 'result.json'}:review-assessment-readiness-mismatch" in blocked.stderr
 
 
 def test_qualified_minor_source_judgment_does_not_clear_blocked_verification() -> None:

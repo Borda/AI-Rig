@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import sys
@@ -52,8 +53,37 @@ def test_wording_diagnostics_do_not_block_structurally_valid_instructions(
 
 
 _LIGHTWEIGHT = """## Lightweight Local Work
-Use parent-only execution for one bounded change. Routing examples are optional; tests and documentation for one change do not create separate domains.
+Use parent-owned implementation for one bounded change. Routing examples are optional; tests and documentation for one change do not create separate domains.
+Define a concise plan. Perform a parent self-challenge (not independent). Accept the challenged plan under existing authority. Assign execution to the parent. Make the authorized change. Consolidate the actual result. Obtain one bounded independent challenge of the changed behavior. Verify core acceptance.
 """
+
+
+def test_lightweight_policy_accepts_parent_owned_work_with_independent_challenge() -> None:
+    """Recognize the updated route without requiring the parent to perform its own challenge."""
+    assert _runner().workflow_policy_findings("", _LIGHTWEIGHT) == []
+
+
+def test_lightweight_policy_rejects_missing_independent_challenge() -> None:
+    """A route that silently omits the mandatory independent challenge is incomplete."""
+    missing = _LIGHTWEIGHT.replace("one bounded independent challenge", "omitted")
+    assert "lightweight-local-work" in _runner().workflow_policy_findings("", missing)
+
+
+@pytest.mark.parametrize(
+    "missing",
+    ["concise plan", "parent self-challenge", "Accept the challenged plan", "Assign execution", "Consolidate"],
+)
+def test_lightweight_policy_rejects_missing_preparation(missing: str) -> None:
+    """Result review cannot retroactively replace a missing preparation stage."""
+    assert "lightweight-local-work" in _runner().workflow_policy_findings("", _LIGHTWEIGHT.replace(missing, "omitted"))
+
+
+def test_lightweight_policy_rejects_reversed_preparation() -> None:
+    """Reject a self-challenge recorded only after source mutation."""
+    reversed_order = _LIGHTWEIGHT.replace("Perform a parent self-challenge (not independent). ", "").replace(
+        "Make the authorized change.", "Make the authorized change. Perform a parent self-challenge (not independent)."
+    )
+    assert "lightweight-local-work" in _runner().workflow_policy_findings("", reversed_order)
 
 
 @pytest.mark.parametrize(
@@ -111,7 +141,7 @@ def test_historical_stop_quotation_preserves_active_policy_checks(label: str, ru
     "implementation",
     [
         "",
-        pytest.param(_LIGHTWEIGHT.replace("parent-only", "delegated"), id="parent-branch-removed"),
+        pytest.param(_LIGHTWEIGHT.replace("parent-owned", "delegated"), id="parent-branch-removed"),
         pytest.param(
             _LIGHTWEIGHT + "\nAlways require sw-engineer and qa-specialist for every task.", id="mandatory-specialists"
         ),
@@ -496,6 +526,101 @@ def test_shipped_behavioral_case_rejects_false_progress_escalation() -> None:
 
 
 @pytest.mark.integration
+def test_review_validator_selftest_accepts_neutral_runtime_and_rejects_tampering(tmp_path: Path) -> None:
+    """Keep calibration's real consumer aligned with model-neutral plans and its provenance tampering checks.
+
+    A current portable runtime previously failed because the consumer looked for a model in the role card instead of the
+    frozen dispatch plan. The selftest also checks that altered reviewer identity and model do not pass.
+    """
+    runner = _runner()
+    run = runner.CalibrationRun(runner.Paths.create("plugin", tmp_path))
+
+    runner.selftest_review_validator(run, tmp_path / "review-selftest")
+
+    assert run.checks_failed == []
+
+
+@pytest.mark.integration
+def test_review_validator_selftest_with_windows_newlines(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep Git patch bytes portable when native text writes use CRLF."""
+    runner = _runner()
+    run = runner.CalibrationRun(runner.Paths.create("plugin", tmp_path))
+    write_text = Path.write_text
+
+    def windows_write(path, data, encoding=None, errors=None, newline=None):
+        return write_text(path, data, encoding=encoding, errors=errors, newline="\r\n" if newline is None else newline)
+
+    monkeypatch.setattr(Path, "write_text", windows_write)
+    runner.selftest_review_validator(run, tmp_path / "review-selftest")
+    assert run.checks_failed == []
+
+
+@pytest.mark.integration
+def test_review_validator_rejects_rehashed_runtime_model_change(tmp_path: Path) -> None:
+    """A rehashed frozen model choice cannot override the actual specialist spawn."""
+    runner = _runner()
+    run = runner.CalibrationRun(runner.Paths.create("plugin", tmp_path))
+    root = tmp_path / "review-selftest"
+    runner.selftest_review_validator(run, root)
+    assert run.checks_failed == []
+    out = root / "review-validator"
+    command = [
+        sys.executable,
+        run.paths.code_review_validate_artifacts,
+        "--out",
+        out,
+        "--result",
+        out / "result.json",
+        "--codex-home",
+        out / "codex-home",
+        "--project-root",
+        run.paths.root,
+        "--parent-thread-id",
+        "parent-selftest",
+    ]
+    assert runner.run_command(command).returncode == 0
+
+    plan_path = out / "execution-plan.json"
+    plan = json.loads(plan_path.read_bytes())
+    plan["dispatch_choices"]["qa-specialist"]["model"] = "different-test-model"
+    plan_path.write_text(json.dumps(plan) + "\n", encoding="utf-8")
+    execution_path = out / "execution-manifest.json"
+    execution = json.loads(execution_path.read_bytes())
+    execution["plan_sha256"] = hashlib.sha256(plan_path.read_bytes()).hexdigest()
+    execution_path.write_text(json.dumps(execution) + "\n", encoding="utf-8")
+    manifest_path = out / "specialist-manifest.json"
+    manifest = json.loads(manifest_path.read_bytes())
+    manifest["runtime_execution"]["manifest_sha256"] = hashlib.sha256(execution_path.read_bytes()).hexdigest()
+    manifest_path.write_text(json.dumps(manifest) + "\n", encoding="utf-8")
+
+    rejected = runner.run_command(command)
+    assert rejected.returncode != 0
+    assert "review-inspection-spawn-model-selection-mismatch:qa-specialist" in rejected.stderr
+
+    plan["dispatch_choices"]["qa-specialist"]["model"] = None
+    plan_path.write_text(json.dumps(plan) + "\n", encoding="utf-8")
+    execution["plan_sha256"] = hashlib.sha256(plan_path.read_bytes()).hexdigest()
+    execution_path.write_text(json.dumps(execution) + "\n", encoding="utf-8")
+    manifest["runtime_execution"]["manifest_sha256"] = hashlib.sha256(execution_path.read_bytes()).hexdigest()
+    manifest_path.write_text(json.dumps(manifest) + "\n", encoding="utf-8")
+    parent_path = out / "codex-home" / "sessions" / "rollout-parent-selftest.jsonl"
+    rows = [json.loads(line) for line in parent_path.read_text(encoding="utf-8").splitlines()]
+    spawn = next(row for row in rows if row.get("payload", {}).get("name") == "spawn_agent")
+    arguments = json.loads(spawn["payload"]["arguments"])
+    arguments.pop("model")
+    spawn["payload"]["arguments"] = json.dumps(arguments)
+    rows.insert(1, {"type": "turn_context", "payload": {"turn_id": "parent-turn", "model": runner.DEFAULT_MODEL}})
+    parent_path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+    inherited = runner.run_command(command)
+    assert inherited.returncode == 0, inherited.stderr
+    arguments["model"] = runner.DEFAULT_MODEL
+    spawn["payload"]["arguments"] = json.dumps(arguments)
+    parent_path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+    rejected = runner.run_command(command)
+    assert rejected.returncode != 0
+    assert "review-inspection-spawn-model-selection-mismatch:qa-specialist" in rejected.stderr
+
+
 def test_live_guard_selftests_use_only_synthetic_current_model_policy(tmp_path: Path) -> None:
     """Plan supported models and reach CI/API guards without rewriting archived evidence."""
     runner = _runner()
@@ -504,12 +629,12 @@ def test_live_guard_selftests_use_only_synthetic_current_model_policy(tmp_path: 
     archived_bytes = paths.live_route_policy.read_bytes()
     live_dir = tmp_path / "guard-selftest"
     policy_path = runner.synthetic_live_guard_policy(run, live_dir)
-    assert policy_path.name == "synthetic-gpt6-guard-policy.json"
+    assert policy_path.name == "synthetic-guard-policy.json"
     archived = json.loads(archived_bytes)
     synthetic = json.loads(policy_path.read_bytes())
     for route_id, route in synthetic["routes"].items():
-        assert route["baseline_model"] == "gpt-6.1-sol"
-        assert route["candidate_model"] == "gpt-6-luna"
+        assert route["baseline_model"] == "baseline-test-model"
+        assert route["candidate_model"] == "candidate-test-model"
         assert {key: value for key, value in route.items() if key not in {"baseline_model", "candidate_model"}} == {
             key: value
             for key, value in archived["routes"][route_id].items()
@@ -523,7 +648,7 @@ def test_live_guard_selftests_use_only_synthetic_current_model_policy(tmp_path: 
     assert "selftest:live-ab-synthetic-plan=64-calls:unconfirmed:no-output" in checks
     assert "selftest:live-ab-synthetic-ci-guard=blocked:no-output" in checks
     assert "selftest:live-ab-synthetic-api-key-guard=blocked:no-output" in checks
-    assert "selftest:live-ab-archived-policy=blocked-before-auth:no-output" in checks
+    assert "selftest:live-ab-archived-policy=ci-blocked:no-output" in checks
     assert paths.live_route_policy.read_bytes() == archived_bytes
     assert not any(
         (live_dir / name).exists()

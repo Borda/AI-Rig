@@ -34,12 +34,13 @@ disposition. The helper never decides a finding, runs gates, changes Git state, 
 ``metadata --run <run> --metadata <draft.json> --out <derived.json>`` writes merged metadata. ``workplan --run <run>
 --metadata <draft.json>`` rewrites the four managed sections of ``resolution-workplan.md``, including each bucket's
 latest status, and keeps every other section. ``ledger --run <run> --metadata <draft.json>`` rewrites the resolution
-table and source records of ``action-items.md`` from ``selection.json`` identity plus the latest item outcomes.
+table, source records and numeric completeness section of ``action-items.md`` from ``selection.json`` identity plus
+the latest item outcomes; authored summaries and intake sections remain unchanged.
 ``append --run <run> --ledger closure-log.md|resolution-events.jsonl`` appends the staged ``<ledger>.rec`` record and
 removes it; status events are validated first. ``resolutions --run <run> --review-run <review run> [--sha <commit>]``
 appends one outcome per admitted review finding to that review run's ``resolution.jsonl``. ``finalize --run <run>
 --metadata <draft.json> --handoff <draft.json> --status <status> --confidence <score> --artifact-path <result path>``
-derives metadata and handoff, renders ``final.md``, writes ``result.candidate.json``
+derives metadata and handoff, refreshes the remediation ledger, renders ``final.md``, writes ``result.candidate.json``
 through the shared result writer, and runs the shared validator in all-errors mode; ``--promote`` renames a passing
 candidate to ``result.json``.
 
@@ -100,7 +101,7 @@ GATE_IDS = ("lint", "format", "types", "tests", "review")
 #: Workplan section headings this helper regenerates; any other section is preserved as written.
 MANAGED_SECTIONS = ("Work Bucket Plan", "Parallel Approval", "Execution Order", "Ungrouped Items")
 #: Action-items section headings this helper regenerates from the resolution ledger.
-LEDGER_SECTIONS = ("Review Item Resolution Table", "Expanded Source Records")
+LEDGER_SECTIONS = ("Review Item Resolution Table", "Expanded Source Records", "Final Resolution Table Completeness")
 #: File name of the append-only log of item and bucket resolution events.
 EVENTS_LEDGER = "resolution-events.jsonl"
 #: File name of the append-only closure evidence log.
@@ -334,14 +335,17 @@ def append_record(run: Path, ledger: str, record: Path | None = None) -> dict[st
 
 
 def derive_selection(run: Path, metadata: dict[str, Any]) -> None:
-    """Copy scope, relevance, and item identity from the frozen selection inventory.
+    """Derive scope, identities and complete table counts from the validated frozen inventory.
 
     Example:
         >>> import tempfile
         >>> run = Path(tempfile.mkdtemp())
-        >>> _ = (run / "selection.json").write_text(json.dumps({"selected_indexes": [1], "items": [
+        >>> _ = (run / "selection.json").write_text(json.dumps({"schema_version": 1,
+        ...     "selected_indexes": [1], "items": [
         ...     {"input_item_id": "R1", "item_name": "n", "item_type": "code", "severity": "high",
-        ...      "selectable": True, "sources": []}]}))
+        ...      "summary": "Add the guard.", "closure_evidence": "Boundary regression passes.",
+        ...      "selectable": True, "sources": [{"kind": "report", "source_id": "review.json#F1",
+        ...      "location": "widget.py:1", "body": "Missing guard.", "evidence": "review.json"}]}]}))
         >>> metadata = {}
         >>> derive_selection(run, metadata)
         >>> item = metadata["final_resolution_table"]["items"][0]
@@ -355,7 +359,8 @@ def derive_selection(run: Path, metadata: dict[str, Any]) -> None:
         raise DeriveError("selection-items-invalid")
     if not isinstance(selected, list):
         raise DeriveError("selection-not-confirmed")
-    selectable_total = sum(1 for item in items if item.get("selectable"))
+    _, selectable, counts = final_handoff._validate_selection(inventory)
+    selectable_total = len(selectable)
     scope = metadata.setdefault("resolution_scope", {})
     scope["selected_indexes"] = selected
     scope["deferred_indexes"] = [index for index in range(1, selectable_total + 1) if index not in selected]
@@ -368,6 +373,20 @@ def derive_selection(run: Path, metadata: dict[str, Any]) -> None:
         {**existing.get(item.get("input_item_id"), {}), **{field: item.get(field) for field in IDENTITY_FIELDS}}
         for item in items
     ]
+    # Every frozen row/source is copied above; original-input coverage remains an independent admission check.
+    validator = _load_module("codex_rig_validate_artifacts", "validate-artifacts.py")
+    table.update(
+        ingested_entries_total=counts["items_total"],
+        table_rows_total=counts["items_total"],
+        omitted_entries_total=0,
+        selectable_rows_total=selectable_total,
+        nonselectable_rows_total=counts["items_total"] - selectable_total,
+        source_records_total=counts["source_records_total"],
+        represented_source_records_total=counts["source_records_total"],
+        omitted_source_records_total=0,
+        grouped_items_total=counts["grouped_items_total"],
+        required_columns=sorted(validator.CODE_REMEDIATE_FINAL_TABLE_REQUIRED_COLUMNS),
+    )
 
 
 def _execution_mode(buckets: list[dict[str, Any]]) -> str:
@@ -607,14 +626,16 @@ def _ledger_row(position: int, index: str, item: dict[str, Any], extra: dict[str
 
 
 def render_ledger(run: Path, metadata: dict[str, Any]) -> Path:
-    """Rewrite the resolution table and source records of ``action-items.md`` from selection identity and events.
+    """Rewrite resolution rows, source records and completeness counts from selection identity and events.
 
     Item outcomes come from the latest appended ``item`` events, falling back to the metadata draft; a missing outcome
-    field fails instead of rendering an empty cell. Every other section, including the summary, completeness counts,
-    review-report intake, and expanded item records, stays agent-owned and unchanged.
+    field fails instead of rendering an empty cell. The numeric completeness section is derived from those same rows;
+    Authored summaries, existing review-report intake and expanded item records stay unchanged. A missing intake section
+    can be derived from a complete current inventory without inventing report evidence or findings.
     """
     derive_metadata(run, metadata)
-    items = metadata["final_resolution_table"]["items"]
+    resolution_table = metadata["final_resolution_table"]
+    items = resolution_table["items"]
     for item in items:
         missing = [field for field in ITEM_OUTCOME_FIELDS if not isinstance(item.get(field), str) or not item[field]]
         if missing:
@@ -656,12 +677,79 @@ def render_ledger(run: Path, metadata: dict[str, Any]) -> Path:
         )
     path = run / "action-items.md"
     title, kept = _unmanaged_sections(path, LEDGER_SECTIONS, None)
+    intake = metadata.get("review_report_intake")
+    grouped = metadata.get("resolution_scope", {}).get("presentation_version") in {2, 3, 4, 5}
+    intake_sections = [
+        i for i, section in enumerate(kept) if section.splitlines()[0].strip().casefold() == "## review report intake"
+    ]
+    begin = "<!-- codex-rig:review-intake begin -->"
+    end = "<!-- codex-rig:review-intake end -->"
+    generated = [i for i in intake_sections if begin in kept[i] or end in kept[i]]
+    if len(generated) > 1 or (generated and len(intake_sections) != 1):
+        raise DeriveError("review-report-intake-generated-ambiguous")
+    if not intake_sections or generated:
+        if not isinstance(intake, dict) or not grouped:
+            if generated:
+                raise DeriveError("review-report-intake-generated-input-missing")
+        else:
+            report_items = [
+                item for item in items if any(source.get("kind") == "report" for source in item.get("sources", []))
+            ]
+            gate_items = [item for item in report_items if item.get("item_type") in {"review-gate", "confidence-gap"}]
+            counts = {
+                "report_items_total": len(report_items),
+                "review_gate_items_total": len(gate_items),
+                "review_gate_items_selectable": sum(item.get("selectable") is True for item in gate_items),
+                "report_items_marked_out_of_scope": sum(
+                    item.get("triage_status") == "out-of-scope" for item in report_items
+                ),
+            }
+            requested = intake.get("requested_report")
+            if (
+                type(requested) is not bool
+                or (not requested and report_items)
+                or any(type(intake.get(key)) is not int or intake[key] != value for key, value in counts.items())
+            ):
+                raise DeriveError("review-report-intake-inventory-mismatch")
+            block = (
+                f"{begin}\n"
+                f"Requested report: {str(requested).lower()}. Report-origin items: {counts['report_items_total']}. "
+                f"Report-origin review-gate and follow-up items: {counts['review_gate_items_total']}. "
+                f"Selectable review-gate and follow-up items: {counts['review_gate_items_selectable']}. "
+                f"Report-origin items marked out of scope: {counts['report_items_marked_out_of_scope']}.\n{end}"
+            )
+            if generated:
+                index = generated[0]
+                section = kept[index]
+                if section.count(begin) != 1 or section.count(end) != 1 or section.index(begin) > section.index(end):
+                    raise DeriveError("review-report-intake-generated-invalid")
+                kept[index] = section[: section.index(begin)] + block + section[section.index(end) + len(end) :]
+            else:
+                kept.append("## Review Report Intake\n\n" + block)
     table = ["| " + " | ".join(header) + " |", "| " + " | ".join("---" for _ in header) + " |", *rows]
+    completeness = [
+        f"- {label}: {resolution_table[field]}"
+        for label, field in (
+            ("Ingested entries", "ingested_entries_total"),
+            ("Final table rows", "table_rows_total"),
+            ("Omitted entries", "omitted_entries_total"),
+            ("Selectable rows", "selectable_rows_total"),
+            ("Non-selectable rows", "nonselectable_rows_total"),
+            ("Source records", "source_records_total"),
+            ("Represented source records", "represented_source_records_total"),
+            ("Omitted source records", "omitted_source_records_total"),
+            ("Grouped items", "grouped_items_total"),
+        )
+    ]
+    for label, field in (("Triage", "triage_status_counts"), ("Resolution", "resolution_status_counts")):
+        counts = ", ".join(f"{status}={count}" for status, count in resolution_table[field].items())
+        completeness.append(f"- {label} status counts: {counts}")
     blocks = [
         *([title] if title else []),
         "\n".join(["## Review Item Resolution Table", "", *table, "", *details]),
         "\n".join(["## Expanded Source Records", "", *records]),
         *kept,
+        "\n".join(["## Final Resolution Table Completeness", "", *completeness]),
     ]
     path.write_text("\n\n".join(blocks) + "\n", encoding="utf-8", newline="\n")
     return path
@@ -936,7 +1024,7 @@ def derive_handoff(
         {"check": check.get("id"), "status": check.get("status"), "evidence": check.get("stdout")} for check in checks
     ]
     handoff["confidence"] = _confidence_block(metadata, score)
-    handoff["presentation_version"] = 11
+    handoff["presentation_version"] = 12
     if handoff.get("skill") != "code-remediate":
         handoff["artifacts"] = _result_artifact(handoff.get("artifacts") or [], artifact_path)
         if handoff.get("skill") == "code-review" and handoff.get("branch") == "assessed":
@@ -1068,7 +1156,7 @@ def _derive_review_actions(run: Path, metadata: dict[str, Any], handoff: dict[st
         raise DeriveError("review-action-notes-identity-mismatch")
     if any(len(cells) not in {4, 5} or authored_status.get(cells[0]) != cells[-1] for cells in parsed[2:]):
         raise DeriveError("review-action-notes-status-mismatch")
-    if handoff.get("presentation_version") in {7, 8, 9, 10, 11}:
+    if handoff.get("presentation_version") in {7, 8, 9, 10, 11, 12}:
         detail_sections = list(re.finditer(r"(?ms)^## Finding Details[^\S\r\n]*\r?\n.*?(?=^## |\Z)", notes))
         if len(detail_sections) > 1:
             raise DeriveError("review-report-details-ambiguous")
@@ -1082,9 +1170,9 @@ def _derive_review_actions(run: Path, metadata: dict[str, Any], handoff: dict[st
         rows,
         by_id,
         metadata.get("reviewer_assessments") is not None,
-        role_only=handoff.get("presentation_version") in {7, 8, 9, 10, 11},
+        role_only=handoff.get("presentation_version") in {7, 8, 9, 10, 11, 12},
     )
-    if handoff.get("presentation_version") in {7, 8, 9, 10, 11}:
+    if handoff.get("presentation_version") in {7, 8, 9, 10, 11, 12}:
         # Keep authored prose byte-exact while owning one deterministic, complete detail section.
         notes = notes_path.read_bytes().decode("utf-8")
         details = final_handoff.render_review_report_details(handoff) + "\n"
@@ -1209,7 +1297,10 @@ def finalize(arguments: argparse.Namespace) -> dict[str, Any]:
 
     def derive() -> dict[str, str]:
         draft = _load(arguments.metadata)
-        state["metadata"] = derive_metadata(run, draft) if arguments.skill == "code-remediate" else draft
+        if arguments.skill == "code-remediate":
+            # Fold the final events into both machine and displayed counts before validating either consumer.
+            render_ledger(run, draft)
+        state["metadata"] = draft
         handoff = derive_handoff(
             run, state["metadata"], _load(arguments.handoff), arguments.confidence, arguments.artifact_path
         )
@@ -1322,13 +1413,75 @@ def _obligations_action(arguments: argparse.Namespace) -> dict[str, Any]:
         "assessed",
     }:
         raise DeriveError("code-remediate-report-input-not-assessed")
+    finding_sources = []
+    finding_source_gaps = []
+    producer = arguments.producer_result_path or report.get("artifact_path")
+    metadata = report.get("metadata", {})
+    groups = [(field, metadata.get(field, [])) for field in ("review_findings", "operational_blockers")]
+    identities = [
+        record.get("id")
+        for _, records in groups
+        if isinstance(records, list)
+        for record in records
+        if isinstance(record, dict) and isinstance(record.get("id"), str)
+    ]
+    for field, records in groups:
+        if not isinstance(records, list):
+            finding_source_gaps.append({"field": field, "reason": "records-invalid"})
+            continue
+        for index, record in enumerate(records):
+            coordinate = {"field": field, "index": index}
+            if not isinstance(record, dict):
+                finding_source_gaps.append({**coordinate, "reason": "record-invalid"})
+                continue
+            identity = record.get("id")
+            source_id = f"{producer}#{identity}"
+            if (
+                not isinstance(identity, str)
+                or identities.count(identity) != 1
+                or not isinstance(producer, str)
+                or source_id != source_id.strip()
+                or re.search(r"[\r\n\[\]]", source_id)
+                or re.fullmatch(r".+?\.json#[^#\s]+", source_id, re.IGNORECASE) is None
+            ):
+                finding_source_gaps.append({**coordinate, "reason": "identity-invalid-or-ambiguous"})
+                continue
+            fields = ("title", "summary", "required_change", "closure_evidence")
+            required = fields if field == "review_findings" else ("title", "required_change")
+            evidence = record.get("evidence")
+            values = [record[key] for key in fields if key in record]
+            if (
+                any(not isinstance(record.get(key), str) or not record[key].strip() for key in required)
+                or any(not isinstance(value, str) for value in values)
+                or not isinstance(evidence, list)
+                or not evidence
+                or any(not isinstance(value, str) or not value.strip() for value in evidence)
+            ):
+                finding_source_gaps.append({**coordinate, "reason": "details-unavailable"})
+                continue
+            finding_sources.append(
+                {
+                    "kind": "report",
+                    "source_id": source_id,
+                    "finding_id": identity,
+                    "location": "general",
+                    "body": "\n".join([*values, *evidence]),
+                    "evidence": producer,
+                }
+            )
     payload = {
         "schema_version": 1,
         "sources": validator.report_obligation_sources(report, arguments.producer_result_path),
     }
     path = run / "report-obligations.json"
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8", newline="\n")
-    return {"status": "pass", "obligations": str(path), "occurrences": len(payload["sources"])}
+    return {
+        "status": "pass",
+        "obligations": str(path),
+        "occurrences": len(payload["sources"]),
+        "finding_sources": finding_sources,
+        "finding_source_gaps": finding_source_gaps,
+    }
 
 
 def _preflight_action(arguments: argparse.Namespace) -> dict[str, Any]:
@@ -1337,6 +1490,34 @@ def _preflight_action(arguments: argparse.Namespace) -> dict[str, Any]:
     validator = _load_module("codex_rig_validate_artifacts", "validate-artifacts.py")
     inventory = _load(run / "selection.json")
     final_handoff._validate_selection(inventory)
+    if (run / "pr").exists():
+        # PR relevance is required at finalization; catch missing triage before the scope prompt or edits.
+        relevance = inventory.get("pr_relevance")
+        if not isinstance(relevance, dict):
+            raise DeriveError("preflight-pr-relevance-missing")
+        if relevance.get("evaluated") is not True:
+            raise DeriveError("preflight-pr-relevance-not-evaluated")
+        keys = (
+            "connected_open_items_total",
+            "connected_selectable_items_total",
+            "connected_required_followup_total",
+            "connected_items_marked_out_of_scope",
+        )
+        if any(type(relevance.get(key)) is not int or relevance[key] < 0 for key in keys):
+            raise DeriveError("preflight-pr-relevance-count-invalid")
+        if relevance["connected_items_marked_out_of_scope"] > 0 or (
+            relevance["connected_selectable_items_total"] + relevance["connected_required_followup_total"]
+            < relevance["connected_open_items_total"]
+        ):
+            raise DeriveError("preflight-pr-relevance-coverage-invalid")
+        action_path = run / "action-items.md"
+        action_text = action_path.read_text(encoding="utf-8").lower() if action_path.is_file() else ""
+        if "pr relevance summary" not in action_text:
+            raise DeriveError("preflight-pr-relevance-summary-missing")
+        if relevance["connected_open_items_total"] and not any(
+            relation in action_text for relation in ("direct-diff", "pr-intent", "adjacent", "unknown")
+        ):
+            raise DeriveError("preflight-pr-relevance-relation-missing")
     if arguments.stage == "selection":
         if arguments.report:
             context_sources = validator.report_obligation_sources(
@@ -1383,7 +1564,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse one helper action and its options."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     actions = parser.add_subparsers(dest="action", required=True)
-    obligations = actions.add_parser("obligations", help="Derive exact report obligation source records.")
+    obligations = actions.add_parser(
+        "obligations",
+        help="Derive report context and coverage-ready finding sources.",
+        description="Write report context and return finding sources and any source-generation gaps as JSON.",
+    )
     preflight = actions.add_parser("preflight", help="Validate selection or frozen planning before source edits.")
     preflight.add_argument("--stage", choices=("selection", "plan"), required=True)
     preflight.add_argument("--report", action="store_true", help="Require retained assessed report coverage.")

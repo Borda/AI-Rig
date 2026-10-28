@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from _skill_text import read_with_references
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 SHARED_CONTRACT = PLUGIN_ROOT / "shared" / "native-skill-contract.md"
@@ -16,7 +17,19 @@ CODE_REMEDIATE_SKILL = PLUGIN_ROOT / "skills" / "code-remediate" / "SKILL.md"
 @pytest.mark.parametrize("skill", ["code-review", "code-remediate", "assess", "release"])
 def test_github_workflows_use_opted_in_profile_without_flag(skill: str) -> None:
     """Prevent skill inputs or prose from restoring invocation-level read approval."""
-    content = (PLUGIN_ROOT / "skills" / skill / "SKILL.md").read_text(encoding="utf-8")
+    content = (
+        read_with_references(PLUGIN_ROOT / "skills" / skill / "SKILL.md", "source-and-scope.md")
+        if skill == "code-review"
+        else read_with_references(
+            PLUGIN_ROOT / "skills" / skill / "SKILL.md",
+            "intake.md",
+            "selection.md",
+            "implementation.md",
+            "completion.md",
+        )
+        if skill == "code-remediate"
+        else (PLUGIN_ROOT / "skills" / skill / "SKILL.md").read_text(encoding="utf-8")
+    )
 
     assert "--approve-gh" not in content
     assert "approve_gh" not in content
@@ -30,7 +43,11 @@ def test_github_workflows_use_opted_in_profile_without_flag(skill: str) -> None:
 )
 def test_pr_skills_use_collector_runtime_boundary(skill_path: Path) -> None:
     """Keep collector execution and remediation scope distinct from read permission."""
-    skill = skill_path.read_text(encoding="utf-8")
+    skill = (
+        read_with_references(skill_path, "source-and-scope.md")
+        if skill_path == CODE_REVIEW_SKILL
+        else read_with_references(skill_path, "intake.md", "selection.md", "implementation.md", "completion.md")
+    )
 
     assert "native-skill-contract.md#pr-collection-runtime-boundary" in skill
     assert "Do not create or modify runtime approval rules files" in skill

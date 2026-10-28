@@ -12,7 +12,6 @@ _SKILLS = Path(__file__).resolve().parents[1] / "skills"
     [
         "debug/SKILL.md",
         "feature/SKILL.md",
-        "feature/modes/team-mode.md",
         "fix/SKILL.md",
         "refactor/SKILL.md",
     ],
@@ -50,16 +49,23 @@ def test_analysis_is_saved_and_shown_once_at_the_next_gate(skill: str) -> None:
     assert text.index(delivery) < text.index(next_gate)
 
 
-def test_inline_plan_is_printed_once_and_the_question_carries_its_summary() -> None:
-    """The saved plan is shown before Proceed, Stop or Abort without identical option previews."""
+def test_feature_team_uses_the_same_challenger_blocker_gate() -> None:
+    """Team mode retains the solo gate's evidence delivery and authorized-resolution rules."""
+    team = (_SKILLS / "feature" / "modes" / "team-mode.md").read_text(encoding="utf-8")
+    assert "feature/SKILL.md §Challenger gate" in team
+    assert "same blocker resolution, protected-decision and authorized plan hash refresh" in team
+
+
+def test_inline_plan_reuses_authorization_and_keeps_protected_decisions() -> None:
+    """Ordinary plans proceed while explicit waits and protected decisions remain gated."""
     text = (_SKILLS / "_shared" / "plan-inline.md").read_text(encoding="utf-8")
-    assert "print the saved plan once as the last reply text before" in text
-    assert "counts, headline" in text
-    assert "target 600 characters, hard cap 1,500" in text
-    assert "one-line description" in text
-    assert "no `preview`" in text
-    assert "On (b) or (c): stop" in text
-    assert "`preview` of every option" not in text
+    assert "Reuse the user's existing authorization" in text
+    assert "do not ask for routine plan approval" in text
+    assert "plan-only, wait, or explicit plan approval" in text
+    assert "genuinely missing protected decision or authority" in text
+    assert "architecture, security, data" in text
+    assert "plan_hash.py" in text
+    assert "(a) **Proceed**" not in text
 
 
 def test_worktree_removal_shows_the_exact_list_before_asking() -> None:

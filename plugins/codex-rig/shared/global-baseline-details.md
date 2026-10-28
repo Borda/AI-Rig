@@ -14,7 +14,7 @@ Applies only to instruction files an LLM host loads (`AGENTS.md`, `CLAUDE.md`, r
 
 ## Review cycle routing
 
-- Code Remediate's single-pass contract takes precedence over generic plan-challenge and review-to-fix convergence rules: collect findings, resolve selected work, verify, and report without convergence scoring. Start a challenge/resolve loop in remediation only when the user explicitly requests it; bounded closure verification never implies that request. For other independent review → authorized-fix cycles, follow packaged `shared/adversarial-loop.md`; read it before dispatch. Its scope, evidence ledger, strictly decreasing nonnegative integer score after baseline `W_0`, independent final snapshot, score weights (`20/10/6/4/2/1`), trend, stop and remediation rules are mandatory. Never fork the implementing conversation for review or treat a loop's local fix as closed before later independent verification.
+- Code Remediate remains single-pass: collect findings, resolve selected work, obtain the bounded independent implementation challenge, verify, and report without convergence scoring. One plan or implementation challenge does not start a multi-round review → fix loop. When the user explicitly requests such a loop, follow packaged `shared/adversarial-loop.md`; read it before dispatch. Its scope, evidence ledger, strictly decreasing nonnegative integer score after baseline `W_0`, independent final snapshot, score weights (`20/10/6/4/2/1`), trend, stop and remediation rules are mandatory. Never fork the implementing conversation for review or treat a loop's local fix as closed before later independent verification.
 
 ## Reasoning-progress escalation
 
@@ -33,21 +33,23 @@ Continues the template's reasoning-progress bullets; the trigger bullet that nam
 3. Read-only advisory route unavailable/unverified → ask human for missing advisory-route decision; never claim enforced isolation. Keep that route stopped while continuing unrelated authorized work or already-permitted source-inspection alternative with its limitations disclosed.
 4. Parent may run that one action.
 5. Action makes no evidence-backed material primary progress and closure condition remains unmet → stop that workstream and ask human with ledger, advisory evidence, current hypotheses, rejected alternatives, one recommended next step with alternatives, and evidence or decision needed to resume. Explain which unaffected work can continue.
-6. Evidence-backed material primary progress permits useful unfinished recovery to continue and resets unsuccessful-attempt sequence; auxiliary success never does. Never reset/weaken separate repeated-obstacle policy; Luna never escalates bounded support to Sol, and Astra requires a separate evidenced escalation.
+6. Evidence-backed material primary progress permits useful unfinished recovery to continue and resets unsuccessful-attempt sequence; auxiliary success never does. Never reset/weaken separate repeated-obstacle policy; any model change requires a separate evidenced escalation.
 
 ## Runtime effort policy
 
-- Normal parent, implementation, verification, data, performance, research, and adversarial roles use `gpt-6.1-sol`; parent, implementation, verification, and performance start at `medium`, while data, research, and adversarial challenge use `high`.
+- Preserve the user's explicit model choice. Role cards and skills do not pin models; select a concrete model only when dispatching a subagent, subject to the user's instructions and available runtime controls.
 
-- Documentation uses `gpt-6.1-terra` at `high`; external evidence, including visual/browser inspection, uses `gpt-6.1-terra` at `medium`.
+- A material unresolved plan or implementation decision calls for one bounded higher-capability advisory pass when a permitted route exists. This is distinct from the stalled-workstream escalation procedure: preserve its ledger and observed-sandbox requirements when that trigger applies. Advice is evidence for the parent, never execution or acceptance authority; requested read-only behavior alone does not prove enforced isolation.
 
-- Delegation, CI/CD, OSS triage, static analysis, and curation use `gpt-6-luna`; static analysis starts at `medium`, the others at `high`.
+- Parent, implementation, verification, and performance start at `medium`; data, research, and adversarial challenge use `high`.
 
-- Bounded native task work follows the task routing in `shared/specialist-orchestration.md` §"Delegation Lead And Model Routing": Terra/medium may draft known-cause fixes or tests under Sol verification; canonical specialist pins, skill-specific ownership and final acceptance remain unchanged. Simple retrieval may use Luna/medium when no specialist pass is required.
+- Documentation uses `high`; external evidence, including visual/browser inspection, uses `medium`.
 
-- `security-auditor` and `solution-architect` use `gpt-6.1-sol` at `high`, only after explicit user request or agent selection; both remain read-only advisory passes.
+- Delegation, CI/CD, OSS triage, and curation use `high`; static analysis starts at `medium`.
 
-- Terra assignments are a user-directed rollout with paired local quality/cost evidence pending. Historical GPT-5.6 routing evidence remains archived, not proof of GPT-6 quality or cost. Astra has no standing role assignment.
+- Bounded native task work follows `shared/specialist-orchestration.md` §"Delegation Lead And Model Routing". Preserve skill-specific ownership, required specialist evidence, and parent final acceptance.
+
+- `security-auditor` and `solution-architect` use `high`, only after explicit user request or agent selection; both remain read-only advisory passes.
 
 - `medium`: normal coding, verification, performance analysis, linting, and web-evidence work.
 
@@ -104,6 +106,8 @@ Applies when the project supports more than one OS — declared by a CI OS matri
 
 ## Testing details
 
+- For costly, nondeterministic, or external workflow validation, first run realistic controlled cases with independently specified expected outcomes, including relevant failure and recovery cases and negative controls. Only after all applicable controlled cases pass, run bounded representative real or live validation. Controlled cases and synthetic receipts do not prove live or independent behavior. Examine an actual reported incident as needed for diagnosis before this validation sequence; retain the representative real-case acceptance requirement.
+- Keep a representative real case alongside TDD: retain any available pre-fix incident evidence, verify with real inputs, components and affected environment after the applicable controlled cases pass, and recheck real behavior before completion. Controlled cases may use test doubles where needed; they do not substitute for understanding and validating real behavior. An unavailable real case remains an unmet acceptance check. Never weaken assertions, remove coverage, or alter user-authorized behavior to get green tests; correct a mistaken test only with independent specification or real-case proof and a recorded reason. Requirement changes need the user's decision.
 - Coverage follows public contract, regression risk, blast radius. Cover applicable `None`, empty, boundary, negative, ML tensor NaN/Inf/dtype/shape cases; don't manufacture unrelated matrices.
 - Parametrize cases when only inputs/expected outputs vary and arrange/action/assert use same behavioral oracle; keep distinct behaviors in named tests. Pytest parametrization IDs and shape:
   - Keep single, simple `str`, `bool`, `int`, and `float` cases bare with pytest's default IDs; descriptive IDs alone do not justify wrappers. Use concise semantic IDs for generated oversized strings whose default IDs would be unreadable.
@@ -209,7 +213,7 @@ def compute_score(predictions: torch.Tensor, targets: torch.Tensor) -> torch.Ten
 
 ## Delegation default mode
 
-Use `delegation-lead` when task has multiple separable workstreams and routing across configured Luna, Terra and Sol roles expected to cut total cost or elapsed time after coordination overhead.
+Use `delegation-lead` when task has multiple separable workstreams and routing across configured roles expected to cut total cost or elapsed time after coordination overhead.
 
 Stay in main agent when:
 
@@ -221,7 +225,7 @@ Stay in main agent when:
 Use delegation lead when:
 
 - 2+ independent domains, file sets, evidence searches, or verification commands can proceed w/o overlapping ownership
-- Lower-cost registered Luna role can own bounded support work while the Sol parent retains behavior, architecture, security, and executable acceptance
+- A registered role can own bounded support work while the parent retains behavior, architecture, security, and executable acceptance
 - Parallel work likely cuts wall time w/o flooding every specialist w/ same context
 - Task needs explicit routing ledger + consolidated handover
 

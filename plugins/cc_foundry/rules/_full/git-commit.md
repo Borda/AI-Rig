@@ -6,7 +6,7 @@ paths:
 
 ## Commit Message Format
 
-Subject line format: `type(scope): detail` — ≤50 chars total; name up to 3 most significant changes only.
+Subject line format: `type(scope): detail` or `type: detail` — ≤50 chars total; name up to 3 most significant changes only.
 
 **type** — pick lowest that fits:
 
@@ -23,7 +23,7 @@ Subject line format: `type(scope): detail` — ≤50 chars total; name up to 3 m
 | `refine` | Improvement to existing behaviour (not pure fix, not new feature) |
 | `compress` | Compression / caveman reformatting pass |
 
-**scope** — affected area: `plugins`, `oss`, `foundry`, `docs`, `cli`, `<module_name>`, etc. Omit only when change cross-cutting.
+**scope** — affected area: `plugins`, `oss`, `foundry`, `docs`, `cli`, `<module_name>`, etc. Omit when the change is cross-cutting or the scope repeats the type or means the same thing; use `ci: ...` instead of `ci(ci): ...` and `test: ...` instead of `test(tests): ...`. Keep a distinct scope when it adds affected-area information.
 
 **Subject priority — classify before drafting**
 

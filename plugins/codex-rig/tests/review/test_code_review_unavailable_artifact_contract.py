@@ -461,13 +461,7 @@ def test_blocked_preflight_receipt_reaches_actionable_unavailable_finalization(
     result_path = _write_unavailable_artifact(tmp_path)
     result = json.loads(result_path.read_bytes())
     result_path.unlink()
-    result["metadata"]["confidence_gap_closures"][0]["rationale"] = (
-        "(-0.10) " + result["metadata"]["confidence_gap_closures"][0]["rationale"]
-    )
-    result["metadata"]["confidence_recovery"]["remaining_limits"] = [
-        "(-0.00) PR correctness was not assessed. No additional deduction; "
-        "the canonical source-verification gap accounts for this limitation."
-    ]
+    _judged_profile(result["metadata"])
     code = "collector:dirty-pr-worktree-before-pr-checkout"
     action = "Preserve or move the local changes that overlap PR files, then start a fresh collector run."
     (tmp_path / "pr-error.txt").write_text(code + "\n", encoding="utf-8", newline="\n")
@@ -520,7 +514,7 @@ def test_blocked_preflight_receipt_reaches_actionable_unavailable_finalization(
                 "row_id": "collection-recovery",
                 "owner": "code-review",
                 "item": f"PR collection stopped at `{code}`.",
-                "next_action": f"Inspect the `dirty-pr-worktree-before-pr-checkout` receipt. {action} Resume only after a fresh collector run produces and validates the PR source bundle.",
+                "next_action": f"Inspect the classified `dirty-pr-worktree-before-pr-checkout` collector failure. {action} Resume only after a fresh collector run produces and validates the PR source bundle.",
             }
         ],
         "next_steps": ["collection-recovery"],
@@ -595,6 +589,37 @@ def test_blocked_preflight_receipt_reaches_actionable_unavailable_finalization(
     )
     assert completed.returncode == 0, completed.stderr.decode()
     assert completed.stdout == final_bytes
+
+
+def _judged_profile(metadata: dict, checkout_started: bool = False) -> None:
+    """Prepare explicit report-correctness judgment for current unavailable handoffs."""
+    gap = "(-0.10) Residual uncertainty in the failure report and its production and checks."
+    metadata["confidence_gaps"] = [gap]
+    metadata["confidence_gap_closures"] = [
+        {
+            "gap": gap,
+            "status": "unresolved",
+            "rationale": "The retained records do not establish every aspect of report correctness; this is the operator's subjective judgment, not a substitute for a known gap.",
+        }
+    ]
+    metadata["confidence_recovery"] = {
+        "initial_confidence": 0.9,
+        "final_confidence": 0.9,
+        "status": "fair",
+        "evidence": [
+            "Confidence assesses the correctness of this failure report and its production and checks; the score is a subjective judgment.",
+            "The classified collection failure and conservative checkout-state evidence were retained."
+            if checkout_started
+            else "The classified collection failure and any current-attempt collector artifacts were retained.",
+        ],
+        "recovery_actions": ["Stopped before source review."],
+        "remaining_limits": [
+            "(-0.00) PR correctness was not assessed; inspect local checkout state before retrying."
+            if checkout_started
+            else "(-0.00) PR correctness was not assessed.",
+            "(-0.00) Confidence is a subjective judgment of report correctness and its production and checks.",
+        ],
+    }
 
 
 @pytest.mark.integration
@@ -688,3 +713,476 @@ def test_fresh_unavailable_candidate_requires_visible_confidence_deductions(
     ]
     validator._validate_result(tmp_path, historical_path, tmp_path, "thread", tmp_path)
     assert historical_path.read_bytes() == historical_bytes
+
+
+@pytest.mark.parametrize(
+    "attack",
+    [
+        "none",
+        "action",
+        "artifact-label",
+        "artifact-path",
+        "artifact-path-traversal",
+        "artifact-path-windows-traversal",
+        "summary",
+        "title",
+        "item",
+        "owner",
+        "row-id",
+        "commit",
+        "confidence-limit",
+        "verification-evidence",
+    ],
+)
+def test_v12_unavailable_bounded_text_finalizer(tmp_path: Path, attack: str) -> None:
+    """Keep classified recovery and reject free-text PR claims in fresh unavailable results."""
+    dirty = changed = recorded = ["pkg/item.py"]
+    status, admissible = "blocked-pr-dirty-paths", True
+
+    result_path = _write_unavailable_artifact(tmp_path)
+    result = json.loads(result_path.read_bytes())
+    result_path.unlink()
+    _judged_profile(result["metadata"])
+    code = "collector:dirty-pr-worktree-before-pr-checkout"
+    action = "Preserve or move the local changes that overlap PR files, then start a fresh collector run."
+    (tmp_path / "pr-error.txt").write_text(code + "\n", encoding="utf-8", newline="\n")
+    notes_path = tmp_path / "review-notes.md"
+    notes = notes_path.read_text(encoding="utf-8").replace("github-network:gh-pr-view", code)
+    notes = notes.replace(
+        "Check effective runtime access; if required access is missing or unknown and requests are allowed, request runtime approval for the complete collector. Respect an explicit denial or non-overridable restriction; retry only after approval or an evidenced state change.",
+        action,
+    )
+    notes_path.write_text(notes, encoding="utf-8", newline="\n")
+    metadata = result["metadata"]
+    metadata["collection_failure"]["code"] = code
+    current_head, expected_head = "a" * 40, "b" * 40
+    preflight_path = tmp_path / "worktree-preflight.json"
+    preflight = {
+        "status": status,
+        "current_head": current_head,
+        "expected_head": expected_head,
+        "dirty_paths": dirty,
+        "checkout_paths": changed,
+        "overlapping_paths": recorded,
+        "pr_paths": changed,
+        "overlapping_pr_paths": recorded,
+        "unmerged_paths": [],
+        "phase": "before-checkout",
+    }
+    preflight_path.write_text(json.dumps(preflight), encoding="utf-8", newline="\n")
+    head_diagnostic = f"Worktree preflight: local head `{current_head}`; expected PR head `{expected_head}`."
+    handoff = {
+        "schema_version": 1,
+        "presentation_version": 3,
+        "skill": "code-review",
+        "branch": "unavailable",
+        "outcome": {
+            "title": "PR Review Availability",
+            "summary": (
+                "I stopped before checkout because local changes overlap PR files, so the review has not started. "
+                f"Reason: `{code}`. {head_diagnostic} The collector did not retain a more specific cause."
+            ),
+        },
+        "tables": [],
+        "source_records": [],
+        "source_coverage": {
+            "source_records_total": 0,
+            "represented_source_records_total": 0,
+            "omitted_source_records_total": 0,
+        },
+        "remaining": [
+            {
+                "row_id": "collection-recovery",
+                "owner": "code-review",
+                "item": f"PR collection stopped at `{code}`.",
+                "next_action": f"Inspect the classified `dirty-pr-worktree-before-pr-checkout` collector failure. {action} Resume only after a fresh collector run produces and validates the PR source bundle.",
+            }
+        ],
+        "next_steps": ["collection-recovery"],
+        "artifacts": [
+            {"label": "Collection failure", "path": "pr-error.txt"},
+            {"label": "Worktree preflight", "path": "worktree-preflight.json"},
+        ],
+        "caller_contract": None,
+    }
+    claim = "The PR was reviewed and approved for merging."
+    if attack == "action":
+        handoff["remaining"][0]["next_action"] += " " + claim
+    elif attack == "artifact-label":
+        handoff["artifacts"][0]["label"] = claim
+    elif attack == "artifact-path":
+        handoff["artifacts"][0]["path"] = claim
+    elif attack == "artifact-path-traversal":
+        handoff["artifacts"][0]["path"] = f"{claim}/../pr-error.txt"
+    elif attack == "artifact-path-windows-traversal":
+        handoff["artifacts"][0]["path"] = f"{claim}\\..\\pr-error.txt"
+    elif attack == "summary":
+        handoff["outcome"]["summary"] += " " + claim
+    elif attack == "title":
+        handoff["outcome"]["title"] = claim
+    elif attack == "item":
+        handoff["remaining"][0]["item"] += " " + claim
+    elif attack == "owner":
+        handoff["remaining"][0]["owner"] = claim
+    elif attack == "row-id":
+        handoff["remaining"][0]["row_id"] = claim
+        handoff["next_steps"] = [claim]
+    elif attack == "commit":
+        handoff["commit_disposition"] = {"status": "none", "reason": claim, "evidence": "x"}
+    elif attack == "confidence-limit":
+        handoff["confidence"] = {"score": 0.9, "band": "fair", "limits": [claim], "gaps": []}
+    elif attack == "verification-evidence":
+        handoff["verification"] = [{"check": "lint", "status": "pass", "evidence": claim}]
+    metadata_path, handoff_path = tmp_path / "metadata-draft.json", tmp_path / "handoff-draft.json"
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8", newline="\n")
+    handoff_path.write_text(json.dumps(handoff), encoding="utf-8", newline="\n")
+    retained = {path: path.read_bytes() for path in (preflight_path, tmp_path / "pr-error.txt", notes_path)}
+    finalized = subprocess.run(
+        [
+            sys.executable,
+            str(PLUGIN_ROOT / "shared/remediation_finalize.py"),
+            "finalize",
+            "--skill",
+            "code-review",
+            "--parent-thread-id",
+            "thread",
+            "--run",
+            str(tmp_path),
+            "--metadata",
+            str(metadata_path),
+            "--handoff",
+            str(handoff_path),
+            "--status",
+            "fail",
+            "--confidence",
+            "0.9",
+            "--artifact-path",
+            str(result_path),
+            "--promote",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    outcome = json.loads(finalized.stdout)
+    if attack not in {"none", "confidence-limit", "verification-evidence"}:
+        assert finalized.returncode != 0, outcome
+        assert outcome["promoted"] is False
+        return
+    assert {path: path.read_bytes() for path in retained} == retained
+    if not admissible:
+        assert finalized.returncode == 1, outcome
+        assert outcome["promoted"] is False, outcome
+        assert "unavailable-review-worktree-preflight-invalid" in json.dumps(outcome), outcome
+        assert not result_path.exists()
+        return
+    assert finalized.returncode == 0, outcome
+    assert outcome["promoted"] is True, outcome
+    promoted = json.loads(result_path.read_bytes())
+    assert promoted["status"] == "fail"
+    assert promoted["metadata"]["review_status"] == "unavailable"
+    assert promoted["findings"] == dict.fromkeys(("critical", "high", "medium", "low"), 0)
+    assert "review_decision" not in promoted["metadata"]
+    assert "Source findings: not assessed" in notes_path.read_text(encoding="utf-8")
+    final_bytes = (tmp_path / "final.md").read_bytes()
+    assert claim.encode() not in final_bytes
+    assert head_diagnostic.encode("utf-8") in final_bytes
+    assert action.encode("utf-8") in final_bytes
+    assert all(path.encode("utf-8") not in final_bytes for path in dirty)
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(PLUGIN_ROOT / "shared/find-review-report.py"),
+            "--complete-run",
+            str(tmp_path),
+            "--parent-thread-id",
+            "thread",
+        ],
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr.decode()
+    assert completed.stdout == final_bytes
+
+
+@pytest.mark.parametrize("absolute_diagnostics", [False, True])
+@pytest.mark.parametrize("relative_result", [False, True])
+def test_v12_equivalent_artifact_paths(tmp_path: Path, absolute_diagnostics: bool, relative_result: bool) -> None:
+    """Keep classified recovery and reject free-text PR claims in fresh unavailable results."""
+    dirty = changed = recorded = ["pkg/item.py"]
+    status = "blocked-pr-dirty-paths"
+
+    result_path = _write_unavailable_artifact(tmp_path)
+    result = json.loads(result_path.read_bytes())
+    result_path.unlink()
+    _judged_profile(result["metadata"])
+    code = "collector:dirty-pr-worktree-before-pr-checkout"
+    action = "Preserve or move the local changes that overlap PR files, then start a fresh collector run."
+    (tmp_path / "pr-error.txt").write_text(code + "\n", encoding="utf-8", newline="\n")
+    notes_path = tmp_path / "review-notes.md"
+    notes = notes_path.read_text(encoding="utf-8").replace("github-network:gh-pr-view", code)
+    notes = notes.replace(
+        "Check effective runtime access; if required access is missing or unknown and requests are allowed, request runtime approval for the complete collector. Respect an explicit denial or non-overridable restriction; retry only after approval or an evidenced state change.",
+        action,
+    )
+    notes_path.write_text(notes, encoding="utf-8", newline="\n")
+    metadata = result["metadata"]
+    metadata["collection_failure"]["code"] = code
+    current_head, expected_head = "a" * 40, "b" * 40
+    preflight_path = tmp_path / "worktree-preflight.json"
+    preflight = {
+        "status": status,
+        "current_head": current_head,
+        "expected_head": expected_head,
+        "dirty_paths": dirty,
+        "checkout_paths": changed,
+        "overlapping_paths": recorded,
+        "pr_paths": changed,
+        "overlapping_pr_paths": recorded,
+        "unmerged_paths": [],
+        "phase": "before-checkout",
+    }
+    preflight_path.write_text(json.dumps(preflight), encoding="utf-8", newline="\n")
+    head_diagnostic = f"Worktree preflight: local head `{current_head}`; expected PR head `{expected_head}`."
+    handoff = {
+        "schema_version": 1,
+        "presentation_version": 3,
+        "skill": "code-review",
+        "branch": "unavailable",
+        "outcome": {
+            "title": "PR Review Availability",
+            "summary": (
+                "I stopped before checkout because local changes overlap PR files, so the review has not started. "
+                f"Reason: `{code}`. {head_diagnostic} The collector did not retain a more specific cause."
+            ),
+        },
+        "tables": [],
+        "source_records": [],
+        "source_coverage": {
+            "source_records_total": 0,
+            "represented_source_records_total": 0,
+            "omitted_source_records_total": 0,
+        },
+        "remaining": [
+            {
+                "row_id": "collection-recovery",
+                "owner": "code-review",
+                "item": f"PR collection stopped at `{code}`.",
+                "next_action": f"Inspect the classified `dirty-pr-worktree-before-pr-checkout` collector failure. {action} Resume only after a fresh collector run produces and validates the PR source bundle.",
+            }
+        ],
+        "next_steps": ["collection-recovery"],
+        "artifacts": [
+            {"label": "Collection failure", "path": "pr-error.txt"},
+            {"label": "Worktree preflight", "path": "worktree-preflight.json"},
+        ],
+        "caller_contract": None,
+    }
+    if absolute_diagnostics:
+        for artifact in handoff["artifacts"]:
+            artifact["path"] = str(tmp_path / artifact["path"])
+    metadata_path, handoff_path = tmp_path / "metadata-draft.json", tmp_path / "handoff-draft.json"
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8", newline="\n")
+    handoff_path.write_text(json.dumps(handoff), encoding="utf-8", newline="\n")
+    finalized = subprocess.run(
+        [
+            sys.executable,
+            str(PLUGIN_ROOT / "shared/remediation_finalize.py"),
+            "finalize",
+            "--skill",
+            "code-review",
+            "--parent-thread-id",
+            "thread",
+            "--run",
+            str(tmp_path),
+            "--metadata",
+            str(metadata_path),
+            "--handoff",
+            str(handoff_path),
+            "--status",
+            "fail",
+            "--confidence",
+            "0.9",
+            "--artifact-path",
+            "result.json" if relative_result else str(result_path),
+            "--promote",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    outcome = json.loads(finalized.stdout)
+    assert finalized.returncode == 0, outcome
+    assert outcome["promoted"] is True, outcome
+    promoted = json.loads(result_path.read_bytes())
+    assert promoted["status"] == "fail"
+    assert promoted["metadata"]["review_status"] == "unavailable"
+    assert promoted["findings"] == dict.fromkeys(("critical", "high", "medium", "low"), 0)
+    assert "review_decision" not in promoted["metadata"]
+    assert "Source findings: not assessed" in notes_path.read_text(encoding="utf-8")
+    final_bytes = (tmp_path / "final.md").read_bytes()
+    assert head_diagnostic.encode("utf-8") in final_bytes
+    assert action.encode("utf-8") in final_bytes
+    assert all(path.encode("utf-8") not in final_bytes for path in dirty)
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(PLUGIN_ROOT / "shared/find-review-report.py"),
+            "--complete-run",
+            str(tmp_path),
+            "--parent-thread-id",
+            "thread",
+        ],
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr.decode()
+    assert completed.stdout == final_bytes
+
+
+@pytest.mark.parametrize("absolute_diagnostics", [False, True])
+@pytest.mark.parametrize("result_mode", ["absolute", "run-relative", "repo-relative", "foreign", "traversal"])
+def test_v12_result_path_anchors(tmp_path: Path, absolute_diagnostics: bool, result_mode: str) -> None:
+    """Keep classified recovery and reject free-text PR claims in fresh unavailable results."""
+    repo = tmp_path
+    tmp_path = repo / ".reports" / "codex" / "code-review" / "run-001"
+    tmp_path.mkdir(parents=True)
+    dirty = changed = recorded = ["pkg/item.py"]
+    status = "blocked-pr-dirty-paths"
+
+    result_path = _write_unavailable_artifact(tmp_path)
+    result = json.loads(result_path.read_bytes())
+    result_path.unlink()
+    _judged_profile(result["metadata"])
+    code = "collector:dirty-pr-worktree-before-pr-checkout"
+    action = "Preserve or move the local changes that overlap PR files, then start a fresh collector run."
+    (tmp_path / "pr-error.txt").write_text(code + "\n", encoding="utf-8", newline="\n")
+    notes_path = tmp_path / "review-notes.md"
+    notes = notes_path.read_text(encoding="utf-8").replace("github-network:gh-pr-view", code)
+    notes = notes.replace(
+        "Check effective runtime access; if required access is missing or unknown and requests are allowed, request runtime approval for the complete collector. Respect an explicit denial or non-overridable restriction; retry only after approval or an evidenced state change.",
+        action,
+    )
+    notes_path.write_text(notes, encoding="utf-8", newline="\n")
+    metadata = result["metadata"]
+    metadata["collection_failure"]["code"] = code
+    current_head, expected_head = "a" * 40, "b" * 40
+    preflight_path = tmp_path / "worktree-preflight.json"
+    preflight = {
+        "status": status,
+        "current_head": current_head,
+        "expected_head": expected_head,
+        "dirty_paths": dirty,
+        "checkout_paths": changed,
+        "overlapping_paths": recorded,
+        "pr_paths": changed,
+        "overlapping_pr_paths": recorded,
+        "unmerged_paths": [],
+        "phase": "before-checkout",
+    }
+    preflight_path.write_text(json.dumps(preflight), encoding="utf-8", newline="\n")
+    head_diagnostic = f"Worktree preflight: local head `{current_head}`; expected PR head `{expected_head}`."
+    handoff = {
+        "schema_version": 1,
+        "presentation_version": 3,
+        "skill": "code-review",
+        "branch": "unavailable",
+        "outcome": {
+            "title": "PR Review Availability",
+            "summary": (
+                "I stopped before checkout because local changes overlap PR files, so the review has not started. "
+                f"Reason: `{code}`. {head_diagnostic} The collector did not retain a more specific cause."
+            ),
+        },
+        "tables": [],
+        "source_records": [],
+        "source_coverage": {
+            "source_records_total": 0,
+            "represented_source_records_total": 0,
+            "omitted_source_records_total": 0,
+        },
+        "remaining": [
+            {
+                "row_id": "collection-recovery",
+                "owner": "code-review",
+                "item": f"PR collection stopped at `{code}`.",
+                "next_action": f"Inspect the classified `dirty-pr-worktree-before-pr-checkout` collector failure. {action} Resume only after a fresh collector run produces and validates the PR source bundle.",
+            }
+        ],
+        "next_steps": ["collection-recovery"],
+        "artifacts": [
+            {"label": "Collection failure", "path": "pr-error.txt"},
+            {"label": "Worktree preflight", "path": "worktree-preflight.json"},
+        ],
+        "caller_contract": None,
+    }
+    if absolute_diagnostics:
+        for artifact in handoff["artifacts"]:
+            artifact["path"] = str(tmp_path / artifact["path"])
+    metadata_path, handoff_path = tmp_path / "metadata-draft.json", tmp_path / "handoff-draft.json"
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8", newline="\n")
+    handoff_path.write_text(json.dumps(handoff), encoding="utf-8", newline="\n")
+    finalized = subprocess.run(
+        [
+            sys.executable,
+            str(PLUGIN_ROOT / "shared/remediation_finalize.py"),
+            "finalize",
+            "--skill",
+            "code-review",
+            "--parent-thread-id",
+            "thread",
+            "--run",
+            str(tmp_path),
+            "--metadata",
+            str(metadata_path),
+            "--handoff",
+            str(handoff_path),
+            "--status",
+            "fail",
+            "--confidence",
+            "0.9",
+            "--artifact-path",
+            {
+                "absolute": str(result_path),
+                "run-relative": "result.json",
+                "repo-relative": str(result_path.relative_to(repo)),
+                "foreign": str(repo / "other" / "result.json"),
+                "traversal": "../../foreign/result.json",
+            }[result_mode],
+            "--promote",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    outcome = json.loads(finalized.stdout)
+    if result_mode in {"foreign", "traversal"}:
+        assert finalized.returncode != 0, outcome
+        assert not result_path.exists()
+        return
+    assert finalized.returncode == 0, outcome
+    assert outcome["promoted"] is True, outcome
+    promoted = json.loads(result_path.read_bytes())
+    assert promoted["status"] == "fail"
+    assert promoted["metadata"]["review_status"] == "unavailable"
+    assert promoted["findings"] == dict.fromkeys(("critical", "high", "medium", "low"), 0)
+    assert "review_decision" not in promoted["metadata"]
+    assert "Source findings: not assessed" in notes_path.read_text(encoding="utf-8")
+    final_bytes = (tmp_path / "final.md").read_bytes()
+    assert head_diagnostic.encode("utf-8") in final_bytes
+    assert action.encode("utf-8") in final_bytes
+    assert all(path.encode("utf-8") not in final_bytes for path in dirty)
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(PLUGIN_ROOT / "shared/find-review-report.py"),
+            "--complete-run",
+            str(tmp_path),
+            "--parent-thread-id",
+            "thread",
+        ],
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr.decode()
+    assert completed.stdout == final_bytes

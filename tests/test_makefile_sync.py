@@ -73,7 +73,7 @@ def available_rtk(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.mark.integration
 @pytest.mark.skipif(GNU_MAKE is None, reason="GNU make is not available on this host")
 @pytest.mark.skipif(BASH is None, reason="Bash is required for the Makefile recipes")
-@pytest.mark.parametrize("target", ["sync-all", "sync-claude", "sync-codex", "default"])
+@pytest.mark.parametrize("target", ["sync-all", "sync-claude", "sync-codex", "sync-opencode", "default"])
 @pytest.mark.parametrize("keep_going", [False, True])
 @pytest.mark.parametrize("rtk_available", [False, True])
 def test_sync_requires_rtk_before_any_mutation(
@@ -90,14 +90,15 @@ def test_sync_requires_rtk_before_any_mutation(
     stages = (
         "migrate-marketplace uninstall-claude-plugins refresh-ext-marketplace update-ext-plugins "
         "register-marketplace install-claude-plugins verify-claude-plugins prune-claude-cache "
-        "warn-stale-claude-sessions install-codex-plugins sync-codex-home-policy sync-codex-bridge-consent"
+        "warn-stale-claude-sessions install-codex-plugins sync-codex-home-policy sync-codex-bridge-consent "
+        "register-opencode-rig install-opencode-agents"
     )
     # Isolate RTK lookup only: native make needs the host toolchain for direct printf/echo execution.
     # Retain real recursive sync recipes and require their harmless stage replacements to retain Bash discovery.
     (tmp_path / "Makefile").write_text(
         MAKEFILE.read_text(encoding="utf-8")
         + f"\npreflight-sync: export PATH := {bin_dir.as_posix()}\n"
-        + f"\n{stages}:\n\t@command -v bash >/dev/null && echo stage >> stages.log\n",
+        + f"\n{stages}:\n\t@command -v bash >/dev/null && echo $@ >> stages.log\n",
         encoding="utf-8",
     )
     result = subprocess.run(
@@ -120,6 +121,10 @@ def test_sync_requires_rtk_before_any_mutation(
     )
     assert (result.returncode == 0) == rtk_available, result.stdout + result.stderr
     assert (tmp_path / "stages.log").exists() == rtk_available
+    if rtk_available and target in {"sync-all", "sync-opencode", "default"}:
+        stage_log = (tmp_path / "stages.log").read_text(encoding="utf-8").splitlines()
+        assert "register-opencode-rig" in stage_log
+        assert "install-opencode-agents" in stage_log
     if not rtk_available:
         assert "RTK is required for sync" in result.stderr
         assert "sync complete" not in result.stdout
@@ -494,7 +499,7 @@ def test_sync_consent_defaults_and_overrides(
     config = home / "config.toml"
     original = 'model = "retained"\n'
     config.write_text(original, encoding="utf-8")
-    env = {**os.environ, "CODEX_HOME": str(home)}
+    env = {**os.environ, "HOME": str(home), "CODEX_HOME": str(home)}
     env.pop("APPROVE_CLAUDE_CONSENT", None)
     env.pop("BRIDGE_OPERATOR_TOKEN", None)
     if with_token:
@@ -503,11 +508,15 @@ def test_sync_consent_defaults_and_overrides(
         "CODEX_SYNC_SCRIPT": str(fake_codex_sync_script.path),
         "CODEX_HOME_SYNC_SCRIPT": str(fake_codex_home_sync_script.path),
     }
-    # Stub only the unrelated Claude installation; retain actual recursive Codex recipes.
+    # Keep recursive Codex recipes, but fail closed on any unrelated sync target not explicitly stubbed.
     dispatcher = tmp_path / "make_dispatch.py"
+    dispatched = tmp_path / "dispatched.log"
     dispatcher.write_text(
         "import subprocess, sys\n"
-        "if sys.argv[1:] == ['sync-claude']: raise SystemExit(0)\n"
+        f"with open({str(dispatched)!r}, 'a', encoding='utf-8') as log: log.write(sys.argv[1] + '\\n')\n"
+        "if sys.argv[1:] in (['sync-claude'], ['sync-opencode']): raise SystemExit(0)\n"
+        "if sys.argv[1] not in ('sync-codex', 'install-codex-plugins', "
+        "'sync-codex-home-policy', 'sync-codex-bridge-consent'): raise SystemExit(2)\n"
         f"raise SystemExit(subprocess.call([{GNU_MAKE!r}, *sys.argv[1:]]))\n",
         encoding="utf-8",
     )
@@ -528,6 +537,7 @@ def test_sync_consent_defaults_and_overrides(
     assert (CONSENT_PROOF_ERROR in result.stderr) == explicit_without_proof
     assert fake_codex_sync_script.log.read_text(encoding="utf-8") == "install"
     assert fake_codex_home_sync_script.log.exists()
+    assert ("sync-opencode" in dispatched.read_text(encoding="utf-8").splitlines()) == (target == "sync-all")
     token_file = home / ".bridge-consent-operator-token"
     assert "Type Approve" not in result.stdout
     if consent_requested and with_token:

@@ -12,7 +12,7 @@ Team-protocol guard, shared by every develop team mode — run first, before Ste
 echo "✓ TEAM_PROTOCOL.md present"
 ```
 
-Run Step 1 scope analysis inline (same as solo Step 1, including its Source Verification subsection) — teammates need orientation context. Then run feature/SKILL.md §Challenger gate against that analysis before any teammate spawn; its two-state decision applies unchanged (`--no-challenge` skips; otherwise always run, `--challenge` is a no-op). Blockers found → STOP; Write the blocker findings (one line each: claim · file:line · evidence) to `$DEV_DIR/blockers.md` first; print them once as the last reply text before invoking `AskUserQuestion`, as normal Markdown. The question text carries the blocker count, headline and `→ $DEV_DIR/blockers.md`, at most 6 plain lines (target 600 characters, hard cap 1,500), no table, pipe layout or code fence. Options carry a label and a one-line description, no `preview` — "Challenger raised N blocker(s) on the implementation approach. How to proceed?" · (a) **Revise scope** — return to Step 1 analysis with the blockers as input · (b) **Accept risk** — proceed to Wave 1 with each blocker documented in the Final Report Follow-up · (c) **Abort**. On Abort: stop. Never proceed to Wave 1 on prose alone. After Step 1, broadcast to teammates: `{feature: <desc>, scope: <modules>, API: <proposed signature>}`.
+Run Step 1 scope analysis inline (same as solo Step 1, including its Source Verification subsection) — teammates need orientation context. Then run feature/SKILL.md §Challenger gate against that analysis before any teammate spawn; its proportional decision and explicit overrides apply unchanged. Follow the same blocker resolution, protected-decision and authorized plan hash refresh instructions in that gate. After Step 1, broadcast to teammates: `{feature: <desc>, scope: <modules>, API: <proposed signature>}`.
 
 ```bash
 # timeout: 5000
@@ -111,7 +111,7 @@ done
 After all teammates complete: read output files from `.temp/develop/$TS/`, synthesize, then run only these solo blocks, in order:
 
 1. CHANGELOG entry — the lead inserts it under `Unreleased` with the Edit tool, as in Step 5 (doc-scribe wrote none).
-2. Step 5's `foundry--quality-stack.md` load block and the steps it lists (Branch Safety Guard, Quality Stack, Codex Pre-pass, Progressive Review Loop, Codex Mechanical Delegation) — the Progressive Review Loop is team mode's review; the Step 4 review loop does not run.
+2. Step 5's `foundry--quality-stack.md` load block and the steps it lists (Branch Safety Guard, Quality Stack, bounded implementation challenge, Codex Mechanical Delegation; Codex Pre-pass only when selected as the challenge, Progressive Review Loop only on explicit request) — run the bounded implementation challenge in the calling skill; the Step 4 review does not run.
 3. Step 5's Final gate rerun block (full suite with `$TEST_CMD`) — the quality stack's wide run is its first full-suite run only when `$TEST_CMD` is that same pytest invocation (else run the block once); rerun after any later code change, max 3 gate iterations.
 
 Then the solo `## Final Report` section in full (plan drift check, report template, worktree exit, contract cleanup). Never report the suite green before block 3 passes. Exit after the Final Report — do not continue to solo Steps 1-4 or Step 5's doc-scribe spawn.

@@ -22,13 +22,25 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 _MOVED_REFERENCES = {
     "challenge-resolve": ("chunk-path.md",),
     "code-review": (
+        "source-and-scope.md",
+        "routing.md",
+        "legacy-dispatch.md",
+        "findings-and-completion.md",
         "batched-review.md",
         "collection-failure.md",
         "historical-routes.md",
         "report-recovery.md",
         "validation-recovery.md",
     ),
-    "code-remediate": ("existing-conflict.md", "missing-review-decision.md", "source-recovery.md"),
+    "code-remediate": (
+        "intake.md",
+        "selection.md",
+        "implementation.md",
+        "completion.md",
+        "existing-conflict.md",
+        "missing-review-decision.md",
+        "source-recovery.md",
+    ),
 }
 HEAD_ARTIFACTS = json.loads(Path(__file__).with_name("head_observable_artifacts.json").read_text(encoding="utf-8"))
 
@@ -139,7 +151,9 @@ def test_targeted_selection_is_recorded_in_the_run_directory(tmp_path: Path) -> 
     assert completed.returncode == 0, completed.stderr
     assert json.loads(out.read_text(encoding="utf-8"))["sources"] == {"tests/test_mod.py": "heuristic"}
     assert "--out <run-directory>/test-targets-<NN>.json" in _text("shared/native-skill-contract.md")
-    assert "record the exact pytest arguments in `review-notes.md`" in _text("skills/code-review/SKILL.md")
+    assert "record the exact pytest arguments in `review-notes.md`" in _text(
+        "skills/code-review/references/findings-and-completion.md"
+    )
 
 
 def test_waits_still_report_pending_and_timed_out_agents() -> None:
@@ -168,7 +182,7 @@ def test_empty_wait_requires_evidence_based_status_before_another_wait() -> None
     [
         "assets/AGENTS.md",
         "shared/specialist-orchestration.md",
-        "skills/code-review/SKILL.md",
+        "skills/code-review/references/legacy-dispatch.md",
         "skills/challenge-resolve/SKILL.md",
     ],
 )

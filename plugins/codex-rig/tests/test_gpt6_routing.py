@@ -31,12 +31,12 @@ EXPECTED = {
 }
 
 
-def test_gpt6_role_model_and_effort_map() -> None:
-    """Keep each specialist on its separately selected capability and effort axes."""
+def test_role_cards_inherit_model_and_keep_effort() -> None:
+    """Let the host choose each role model while preserving its effort setting."""
     assert {path.parent.name for path in ROLES.glob("*/ROLE.md")} == set(EXPECTED)
-    for role, (model, effort) in EXPECTED.items():
+    for role, (_, effort) in EXPECTED.items():
         card = (ROLES / role / "ROLE.md").read_text(encoding="utf-8")
-        assert re.search(rf"^model: {re.escape(model)}$", card, re.MULTILINE), role
+        assert not re.search(r"^model\s*:", card, re.MULTILINE), role
         assert re.search(rf"^model_reasoning_effort: {effort}$", card, re.MULTILINE), role
 
 
@@ -128,21 +128,15 @@ def live_cli(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Any, Path
 @pytest.mark.parametrize(
     "model",
     [
-        "gpt-5.6-terra",
-        "gpt-5.6-luna",
-        "gpt-5.6-sol",
-        "gpt-4",
-        "gpt-60-sol",
-        "gpt-6.9-sol",
-        "gpt-6-terra",
-        "GPT-6-sol",
-        "gpt-6-sol ",
         "",
+        "-option",
+        "model name",
+        "model\nname",
         None,
-        pytest.param(["gpt-6-sol"], id="non-string-model"),
+        pytest.param(["example-model"], id="non-string-model"),
     ],
 )
-def test_live_cli_rejects_unsupported_models_before_side_effects(
+def test_live_cli_rejects_invalid_model_identifiers_before_side_effects(
     live_cli: tuple[Any, Path, Path], model: Any, field: str, paid: bool, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Reject either invalid paired model before planning, authentication, or output writes."""
@@ -154,7 +148,7 @@ def test_live_cli_rejects_unsupported_models_before_side_effects(
         sys.argv.extend(["--confirm-paid-run", "chatgpt-subscription"])
     before = {path.relative_to(output): path.read_bytes() for path in output.rglob("*") if path.is_file()}
 
-    with pytest.raises(ValueError, match=rf"unsupported live model: selected:{field}"):
+    with pytest.raises(ValueError, match=rf"invalid live model identifier: selected:{field}"):
         runner.main()
 
     assert capsys.readouterr().out == ""
@@ -302,11 +296,11 @@ def test_live_timeout_consumers_persist_windows_timeout_evidence(
     assert "detail\ntimeout after 7 seconds\n" in evidence
 
 
-@pytest.mark.parametrize("model", ["gpt-6-luna", "gpt-6-sol", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-astra"])
-def test_live_cli_plans_supported_selected_route_with_unselected_archive(
+@pytest.mark.parametrize("model", ["gpt-6-luna", "gpt-5.6-terra", "custom-model", "provider/model:latest"])
+def test_live_cli_plans_valid_selected_route_with_unselected_archive(
     live_cli: tuple[Any, Path, Path], model: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Accept supported paired models without reactivating unrelated historical routes."""
+    """Accept host-selected model identifiers without reactivating unrelated historical routes."""
     runner, policy, output = live_cli
     policy.write_text(
         json.dumps(

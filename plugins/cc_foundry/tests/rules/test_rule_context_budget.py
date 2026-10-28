@@ -49,7 +49,13 @@ EAGER_GLOBS = frozenset({"**", "**/*"})
 # Raised from 61223 by 44 bytes: the stub's recurrence clause names "a repeated invariant (same
 # signature or same invariant evidence)". Already eager, it said "repeated signature" alone, which
 # contradicts the full rule's per-invariant count; dropping it would leave no eager recurrence trigger.
-EAGER_BUDGET_BYTES = 61267
+# Raised by 22 bytes: the existing eager subject rule must permit omitting a redundant scope;
+# the injected full rule arrives only after the first Git call, potentially after drafting.
+# Raised by 707 bytes: confidence and its gate must assess the delivered result in every workflow,
+# including early handoffs, so a lazily loaded rule cannot prevent status-score substitution.
+# Raised by 581 net bytes: proportional implementation and controlled-first validation must be known
+# before planning, editing, or external dispatch; activity-triggered rules arrive after those decisions.
+EAGER_BUDGET_BYTES = 62577
 #: Rules ``hooks/rule-inject.js`` injects on their activity; eager loading would duplicate them.
 HOOK_INJECTED_RULES = ("agent-spawn.md", "git-commit.md")
 

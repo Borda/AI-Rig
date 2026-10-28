@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import sys
+from collections.abc import Generator
 from pathlib import Path
 
 import pytest
@@ -47,6 +49,37 @@ def pytest_configure(config: pytest.Config) -> None:
         "packaging: validates plugin build and distribution contracts",
     ):
         config.addinivalue_line("markers", marker)
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    """Expose deterministic partitions for the copied-package acceptance harness."""
+    parser.addoption("--installed-package-shard", help="Run one zero-based INDEX/COUNT partition of selected tests")
+
+
+@pytest.hookimpl(wrapper=True, tryfirst=True)
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> Generator[None, None, None]:
+    """Partition the final marker-selected collection identically on every child worker."""
+    shard = config.getoption("--installed-package-shard")
+    coordinates = None
+    if shard is not None:
+        try:
+            index, count = map(int, shard.split("/"))
+            if not 0 <= index < count:
+                raise ValueError
+        except ValueError as error:
+            raise pytest.UsageError("shard must be INDEX/COUNT with 0 <= INDEX < COUNT") from error
+        coordinates = index, count
+    yield
+    if coordinates is None:
+        return
+    index, count = coordinates
+    selected, deselected = [], []
+    for item in items:
+        # Stable node IDs include parameter values; Python's randomized hash differs between workers.
+        destination = int.from_bytes(hashlib.sha256(item.nodeid.encode("utf-8")).digest(), "big") % count
+        (selected if destination == index else deselected).append(item)
+    items[:] = selected
+    config.hook.pytest_deselected(items=deselected)
 
 
 def pytest_runtest_logstart(nodeid: str, location: tuple[str, int | None, str]) -> None:

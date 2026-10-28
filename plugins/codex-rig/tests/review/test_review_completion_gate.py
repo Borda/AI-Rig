@@ -8,6 +8,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -270,6 +271,23 @@ def test_completed_pr_emits_bound_final_then_separate_finder_finds_it(assessed_p
     )
     assert lookup.returncode == 0, lookup.stderr
     assert Path(lookup.stdout.strip()) == assessed_pr / "result.json"
+
+
+def test_completion_reuses_producer_thread_and_preserves_explicit_override(assessed_pr: Path) -> None:
+    """Later sessions must authenticate the retained producer rather than substitute their current thread."""
+    completed = subprocess.run(
+        [sys.executable, str(FINDER), "--complete-run", str(assessed_pr)], capture_output=True, check=False
+    )
+    assert completed.returncode == 0, completed.stderr.decode()
+    assert completed.stdout == (assessed_pr / "final.md").read_bytes()
+    wrong_producer = subprocess.run(
+        [sys.executable, str(FINDER), "--complete-run", str(assessed_pr), "--parent-thread-id", "other-session"],
+        capture_output=True,
+        check=False,
+    )
+    assert wrong_producer.returncode != 0
+    assert wrong_producer.stdout == b""
+    assert b"manifest-parent-thread-mismatch" in wrong_producer.stderr
 
 
 @pytest.mark.parametrize("disposition", ["unavailable", "closed"])
@@ -1192,6 +1210,15 @@ def _finalize_parent_fallback(run: Path, *, independent_required: bool = False) 
     handoff["source_records"].append({"id": "gate:types", "evidence": "gates.json"})
     total = len(handoff["source_records"])
     handoff["source_coverage"].update(source_records_total=total, represented_source_records_total=total)
+    handoff["remaining"] = [
+        {
+            "row_id": blocker["id"],
+            "item": blocker["title"],
+            "owner": "reviewer",
+            "next_action": blocker["required_change"],
+        }
+    ]
+    handoff["next_steps"] = [blocker["id"]]
     drafts = run / "fallback-drafts"
     drafts.mkdir()
     (drafts / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8", newline="\n")
@@ -1285,6 +1312,82 @@ def test_local_multi_role_review_cannot_pass_with_parent_substitutes(assessed_pr
     validator = _module(PLUGIN_ROOT / "skills/code-review/validate_artifacts.py")
     with pytest.raises(SystemExit, match="parallel-review-required-for-pass"):
         validator._validate_result(assessed_pr, result_path, assessed_pr, "thread", assessed_pr)
+
+
+@pytest.mark.integration
+def test_local_parent_review_completes_without_claiming_independence(assessed_pr: Path) -> None:
+    """A low-risk parent-only result reaches the real completion gate with its coverage disclosed."""
+    _add_substituted_broad_passes(assessed_pr, "LOCAL", independent_required=False)
+    routing_path = assessed_pr / "review-routing.json"
+    routing = json.loads(routing_path.read_text(encoding="utf-8"))
+    routing["signals"].update(behavior_change=True, explicit_adversarial=True)
+    routing_path.write_text(json.dumps(routing), encoding="utf-8")
+    result_path = assessed_pr / "result.json"
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    handoff_path = assessed_pr / "final-handoff.json"
+    handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+    result["metadata"]["review_decision"]["summary"] = (
+        "The parent inspected every selected axis; no independent specialists participated."
+    )
+    handoff["tables"][0]["reviewers"] = result["metadata"]["reviewer_assessments"]
+    handoff["tables"][0]["summary"] = result["metadata"]["review_decision"]["summary"]
+    handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
+    finalizer = _module(PLUGIN_ROOT / "shared/final_handoff.py")
+    finalizer.render_files(handoff_path, assessed_pr / "final.md", assessed_pr / "final-handoff.validation.json")
+    validation = json.loads((assessed_pr / "final-handoff.validation.json").read_text(encoding="utf-8"))
+    result["metadata"]["final_handoff"].update(
+        handoff_sha256=validation["handoff_sha256"], rendered_sha256=validation["rendered_sha256"]
+    )
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+
+    completed = subprocess.run(
+        [sys.executable, str(FINDER), "--complete-run", str(assessed_pr), "--parent-thread-id", "thread"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "no independent specialists participated" in completed.stdout
+    assert result["metadata"]["independence_satisfied"] is False
+
+
+def test_local_parent_review_can_pass_without_requested_independence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Allow fully covered low-risk parent review without inventing independent specialists."""
+    validator = _module(PLUGIN_ROOT / "skills/code-review/validate_artifacts.py")
+    evidence = SimpleNamespace(
+        manifest={"schema_version": 5},
+        triggered_roles={"sw-engineer", "qa-specialist", "doc-scribe"},
+        runtime_summary={"actual_mode": "serial-fallback"},
+        passes=[{"mode": "substituted"}] * 3,
+    )
+    monkeypatch.setattr(validator, "_validate_inspection_independence", lambda *args: (False, False))
+    metadata = {"fanout_substituted": True, "independence_required": False, "independence_satisfied": False}
+    validator._validate_independence_requirement(tmp_path, evidence, metadata, "pass", "LOCAL", None)
+
+
+@pytest.mark.parametrize(
+    ("tier", "modes"),
+    [
+        pytest.param("BROAD", ("substituted", "substituted"), id="broad-parent-review"),
+        pytest.param("LOCAL", ("substituted", "inspection"), id="mixed-parent-and-child"),
+    ],
+)
+def test_parent_review_exception_does_not_cover_other_routes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tier: str, modes: tuple[str, ...]
+) -> None:
+    """Keep higher-risk and mixed multi-role routes subject to their existing evidence gate."""
+    validator = _module(PLUGIN_ROOT / "skills/code-review/validate_artifacts.py")
+    evidence = SimpleNamespace(
+        manifest={"schema_version": 5},
+        triggered_roles={"sw-engineer", "qa-specialist"},
+        runtime_summary={"actual_mode": "serial-fallback"},
+        passes=[{"mode": mode} for mode in modes],
+    )
+    monkeypatch.setattr(validator, "_validate_inspection_independence", lambda *args: (False, False))
+    with pytest.raises(SystemExit, match="parallel-review-required-for-pass"):
+        validator._validate_independence_requirement(tmp_path, evidence, {}, "pass", tier, None)
 
 
 @pytest.mark.parametrize("proof", ["retained", "missing", "altered"])

@@ -13,7 +13,7 @@ does not decide workflow findings, execute project gates, inspect chat transcrip
 
 ## Usage
 
-New handoffs set ``presentation_version=11`` for remediation resolution explanations, readable actions, confidence
+New handoffs set ``presentation_version=12`` for remediation resolution explanations, readable actions, confidence
 bullets, linked artifacts, terminal status tables and paths outside terminal tables.
 Historical versions retain their exact presentation.
 Run ``render`` after gates and handoff creation, then run ``check``
@@ -128,7 +128,7 @@ HANDOFF_FIELDS = {
     "caller_contract",
 }
 #: Current presentation layout revision for rendered handoffs, written into new handoff documents.
-PRESENTATION_VERSION = 11
+PRESENTATION_VERSION = 12
 #: One-sentence plain-English summary shown for each code-review recommendation.
 REVIEW_PLAIN_SUMMARIES = {
     "accept-as-is": "This review found no blocking change requests.",
@@ -306,7 +306,9 @@ def _validate_review_attribution(tables: list[dict[str, Any]], skill: str) -> No
                 raise HandoffError("finding-authors-unbound")
 
 
-def _validate_tables(payload: dict[str, Any], skill: str, branch: str) -> tuple[set[str], set[str]]:
+def _validate_tables(
+    payload: dict[str, Any], skill: str, branch: str, *, allow_empty_remediation: bool = False
+) -> tuple[set[str], set[str]]:
     """Validate tables and return represented row and source identifiers."""
     tables = payload.get("tables")
     if not isinstance(tables, list):
@@ -373,7 +375,8 @@ def _validate_tables(payload: dict[str, Any], skill: str, branch: str) -> tuple[
         if expected is None or tuple(columns) != expected:
             raise HandoffError(f"table-columns-mismatch:{skill}:{heading}")
         rows = table.get("rows")
-        if not isinstance(rows, list) or not rows:
+        empty_remediation = skill == "code-remediate" and branch == "standard" and allow_empty_remediation
+        if not isinstance(rows, list) or (not rows and not empty_remediation):
             raise HandoffError(f"table-rows-empty:{heading}")
         table_cells: list[str] = []
         for row_index, raw_row in enumerate(rows):
@@ -673,14 +676,22 @@ def _validate_commit_disposition(handoff: dict[str, Any]) -> None:
 
 def validate_handoff(payload: object) -> dict[str, Any]:
     """Validate and return one canonical final-handoff payload."""
+    return _validate_handoff(payload)
+
+
+def _validate_handoff(payload: object, *, allow_empty_remediation: bool = False) -> dict[str, Any]:
+    """Validate a handoff while preserving the original presentation's empty-result rule."""
     handoff = _require_object(payload, "handoff")
     presentation_version = handoff.get("presentation_version")
-    if type(presentation_version) is int and presentation_version in {8, 9, 10, 11}:
+    if type(presentation_version) is int and presentation_version in {8, 9, 10, 11, 12}:
         # Only terminal layout changes; use the existing branch's complete factual contract.
         previous = 7 if handoff.get("skill") == "code-review" and handoff.get("branch") == "assessed" else 3
         if handoff.get("skill") == "code-remediate":
             previous = 6
-        validate_handoff({**handoff, "presentation_version": previous})
+        _validate_handoff(
+            {**handoff, "presentation_version": previous},
+            allow_empty_remediation=handoff.get("skill") == "code-remediate" and presentation_version in {11, 12},
+        )
         return handoff
     expected_fields = HANDOFF_FIELDS if presentation_version is None else HANDOFF_FIELDS | {"presentation_version"}
     if "commit_disposition" in handoff:
@@ -732,7 +743,9 @@ def validate_handoff(payload: object) -> dict[str, Any]:
                 or ("reason" in run and (not isinstance(run["reason"], str) or not run["reason"].strip()))
             ):
                 raise HandoffError("challenge-child-runs-invalid")
-    row_ids, represented_sources = _validate_tables(handoff, skill, branch)
+    row_ids, represented_sources = _validate_tables(
+        handoff, skill, branch, allow_empty_remediation=allow_empty_remediation
+    )
     if "child_runs" in handoff and [row["cells"] for table in handoff["tables"] for row in table["rows"]] != [
         ["not-run", *(["N/A"] * 7), "chunk-only", "chunks/results.json"]
     ]:
@@ -875,6 +888,9 @@ def _render_grouped_table(
     """Render bound rows, retaining historical bytes and separating concise facts from evidence."""
     remediation = tuple(table["columns"]) == STANDARD_COLUMNS["code-remediate"]
     concise = table.get("layout") == "concise"
+    if remediation and not table["rows"]:
+        lines = [] if suppress_heading else [f"**{table['heading']}**", ""]
+        return [*lines, "No findings to remediate."]
     columns = ["ID", "Severity", "Finding", "Outcome"] if remediation else ["ID", "Finding", "Status"]
     if concise:
         columns.insert(-1, "Selected" if show_selection else "Resolution" if remediation else "Resolution proposal")
@@ -1352,7 +1368,7 @@ def render_handoff(payload: object, *, report_root: Path | None = None) -> str:
     if handoff["branch"] == "caller-contract":
         return handoff["caller_contract"]["output"]
 
-    if handoff.get("presentation_version") in {8, 9, 10, 11}:
+    if handoff.get("presentation_version") in {8, 9, 10, 11, 12}:
         previous = 7 if handoff["skill"] == "code-review" and handoff["branch"] == "assessed" else 3
         if handoff["skill"] == "code-remediate":
             previous = 6
@@ -1360,9 +1376,11 @@ def render_handoff(payload: object, *, report_root: Path | None = None) -> str:
             _render_v2_handoff(
                 {**handoff, "presentation_version": previous},
                 report_root=report_root,
-                readable=handoff["presentation_version"] in {9, 10, 11},
-                show_resolution=handoff["presentation_version"] in {10, 11},
-                status_table=handoff["presentation_version"] == 11,
+                readable=handoff["presentation_version"] in {9, 10, 11, 12},
+                show_resolution=handoff["presentation_version"] in {10, 11, 12},
+                status_table=handoff["presentation_version"] in {11, 12},
+                actions_last=handoff["presentation_version"] == 12,
+                current_review_summary=handoff["presentation_version"] == 12,
             )
         )
 
@@ -1422,12 +1440,18 @@ def _render_v2_handoff(
     readable: bool = False,
     show_resolution: bool = False,
     status_table: bool = False,
+    actions_last: bool = False,
+    current_review_summary: bool = False,
 ) -> str:
     """Render a plain-English-first report while retaining the validated machine fields."""
     outcome = handoff["outcome"]
     if handoff["skill"] == "code-review" and handoff["branch"] == "assessed":
         recommendation = outcome["summary"].removeprefix("Recommendation: ").removesuffix(".")
-        plain_summary = REVIEW_PLAIN_SUMMARIES[recommendation]
+        plain_summary = (
+            "The reviewed change needs more work before it can be accepted."
+            if current_review_summary and recommendation == "needs-more-work"
+            else REVIEW_PLAIN_SUMMARIES[recommendation]
+        )
         technical_summary = None
     else:
         plain_summary, separator, technical_detail = outcome["summary"].partition(" Reason: ")
@@ -1508,21 +1532,22 @@ def _render_v2_handoff(
         )
 
     remaining_by_id = {item["row_id"]: item for item in handoff["remaining"]}
-    if remaining_by_id:
-        lines.extend(("", "**Next steps**", ""))
+    action_lines = [] if actions_last else lines
+    if remaining_by_id and (not actions_last or handoff["branch"] != "closed"):
+        action_lines.extend(("", "**Next steps**", ""))
         if readable:
             for number, item in enumerate(remaining_by_id.values(), start=1):
                 if number > 1:
-                    lines.append("")
+                    action_lines.append("")
                 indent = " " * (len(str(number)) + 2)
                 owner, status, action = (
                     item[field].replace("\n", f"\n{indent}") for field in ("owner", "item", "next_action")
                 )
-                lines.extend(
+                action_lines.extend(
                     (f"{number}. **Owner: {owner}**", "", f"{indent}Status: {status}", "", f"{indent}Action: {action}")
                 )
         else:
-            lines.extend(
+            action_lines.extend(
                 f"- {row_id} — {item['item']} — owner: {item['owner']} — next: {item['next_action']}"
                 if handoff["presentation_version"] in {3, 4, 5, 6, 7}
                 else f"- {item['item']} — owner: {item['owner']} — next: {item['next_action']}"
@@ -1559,6 +1584,8 @@ def _render_v2_handoff(
         else f"{artifact['label']}: {artifact['path']}"
         for artifact in handoff["artifacts"]
     )
+    if actions_last:
+        lines.extend(action_lines)
     return "\n".join(lines) + "\n"
 
 

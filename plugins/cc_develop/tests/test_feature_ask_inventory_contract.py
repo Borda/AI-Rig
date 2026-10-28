@@ -54,7 +54,29 @@ _ASKS = [
 ]
 
 
+# Feasible authorized blockers no longer force a user question; protected and unresolved stops retain evidence delivery.
+_EQUIVALENTS = {
+    # The proportional lifecycle replaces this routine scope prompt with parent acceptance; actual decisions still stop.
+    "Plan-inline skipped because `--plan` was supplied or `ACCEPT_NO_PLAN=true`, **and**": (
+        "Plan-inline skipped because `--plan` was supplied or `ACCEPT_NO_PLAN=true`, and complexity classified `large`",
+        "retain the medium/large plan challenge and parent acceptance.",
+        "A supplied artifact or its waiver alone creates no user approval prompt.",
+        "Stop only for an actual unresolved scope decision, protected decision or missing authority.",
+        "For medium/large work, reuse a still-valid independent challenge of that exact plan and scope; otherwise run this gate once.",
+        "Approve the challenged plan within existing authority before assigning bounded execution",
+    ),
+    "- **Blockers found** → STOP. Write the blocker findings": (
+        "Resolve feasible authorized blockers without asking",
+        "Stop for a protected decision or authority, an explicit user wait, or a blocker that remains unresolved.",
+        "Write the blocker findings (one line each: claim · file:line · evidence) to `$DEV_DIR/blockers.md` first",
+        "print them once as the last reply text before invoking `AskUserQuestion`",
+        "The question text carries the blocker count, headline and `→ $DEV_DIR/blockers.md`",
+    ),
+}
+
+
 @pytest.mark.parametrize(("relative", "marker"), _ASKS)
 def test_baseline_ask_line_still_present(relative: str, marker: str) -> None:
-    """Every ask line the skill carried at HEAD is still present verbatim."""
-    assert marker in (_PLUGIN / relative).read_text(encoding="utf-8")
+    """Retain each historical ask or its authorized equivalent, including evidence delivery."""
+    text = (_PLUGIN / relative).read_text(encoding="utf-8")
+    assert all(item in text for item in _EQUIVALENTS.get(marker, (marker,)))

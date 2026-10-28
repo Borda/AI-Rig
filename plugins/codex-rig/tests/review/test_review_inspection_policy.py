@@ -79,7 +79,11 @@ def test_helper_help_is_batched_for_selected_workflow_path() -> None:
 )
 def test_each_skill_references_the_shared_helper_contract(skill_path: Path) -> None:
     """Require each packaged skill document to retain its closing helper contract."""
-    text = skill_path.read_text(encoding="utf-8")
+    text = (
+        read_with_references(skill_path, "intake.md", "completion.md")
+        if skill_path.parent.name == "code-remediate"
+        else skill_path.read_text(encoding="utf-8")
+    )
 
     assert "helper-cli-contract.md" in text, skill_path.parent.name
 
@@ -106,7 +110,7 @@ def test_calibration_covers_plain_explanations_and_owned_freshness() -> None:
 @pytest.mark.installed_plugin
 def test_public_api_alone_does_not_force_high_risk() -> None:
     """Prevent ordinary compatibility review from reintroducing an automatic risk barrier."""
-    skill = (PLUGIN_ROOT / "skills/code-review/SKILL.md").read_text(encoding="utf-8")
+    skill = read_with_references(PLUGIN_ROOT / "skills/code-review/SKILL.md", "source-and-scope.md")
     classification = skill.split("Classify diff;", 1)[1].split("For `scope=pr`", 1)[0]
     high_risk = next(line for line in classification.splitlines() if line.startswith("- `HIGH_RISK`:"))
     assert "public API" not in high_risk

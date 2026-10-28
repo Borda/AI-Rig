@@ -144,6 +144,9 @@ def _build_review_inputs(
     large_source: bool = False,
     large_patch: bool = False,
     unchanged: bool = False,
+    fixture_source: str = "",
+    unchanged_caller_content: str = "caller = 5\n",
+    untracked_name: str = "new.txt",
 ) -> Path:
     """Build reviewer evidence without background maintenance mutating the copyable Git template."""
     spec = importlib.util.spec_from_file_location("prepare_validator", SKILL / "validate_artifacts.py")
@@ -163,17 +166,20 @@ def _build_review_inputs(
     ):
         subprocess.run(["git", "-C", str(repository), *command], check=True, capture_output=True)
     stable_source = "unchanged = 'café'\n" * 18000 if large_source else ""
+    (repository / source_name).parent.mkdir(parents=True, exist_ok=True)
     (repository / source_name).write_text("value = 1\n" + stable_source, encoding="utf-8", newline="\n")
     subprocess.run(["git", "-C", str(repository), "add", source_name], check=True, capture_output=True)
     if second_file:
         (repository / "other.py").write_text("other = 1\n", encoding="utf-8", newline="\n")
         subprocess.run(["git", "-C", str(repository), "add", "other.py"], check=True, capture_output=True)
     if unchanged_caller:
-        (repository / "stable.py").write_text("caller = 5\n", encoding="utf-8", newline="\n")
+        (repository / "stable.py").write_text(unchanged_caller_content, encoding="utf-8", newline="\n")
         subprocess.run(["git", "-C", str(repository), "add", "stable.py"], check=True, capture_output=True)
     subprocess.run(["git", "-C", str(repository), "commit", "-qm", "Initial"], check=True, capture_output=True)
     (repository / source_name).write_text(
-        "value = 2\n" + ("changed = 'café'\n" * 18000 if large_patch else stable_source), encoding="utf-8", newline="\n"
+        "value = 2\n" + fixture_source + ("changed = 'café'\n" * 18000 if large_patch else stable_source),
+        encoding="utf-8",
+        newline="\n",
     )
     if unchanged:
         (repository / source_name).write_text("value = 1\n" + stable_source, encoding="utf-8", newline="\n")
@@ -182,7 +188,7 @@ def _build_review_inputs(
     if deleted:
         (repository / source_name).unlink()
     if untracked:
-        (repository / "new.txt").write_text("new_value = 7\n", encoding="utf-8", newline="\n")
+        (repository / untracked_name).write_text("new_value = 7\n", encoding="utf-8", newline="\n")
     if unchanged:
         subprocess.run(["git", "-C", str(repository), "checkout", "--detach", "-q"], check=True, capture_output=True)
         (run / "diff.patch").write_bytes(b"")
@@ -204,9 +210,24 @@ def _build_review_inputs(
         )
         assert collected.returncode == 0, collected.stderr
         (run / "diff.patch").write_bytes((run / "local-source/diff.patch").read_bytes())
+        inventory = subprocess.run(
+            ["git", "-C", str(repository), "diff", "--no-renames", "--name-only", "HEAD", "--"],
+            check=True,
+            capture_output=True,
+        ).stdout
+        (run / "files.txt").write_bytes(inventory)
     if untracked:
-        (run / "untracked.txt").write_text("new.txt\n", encoding="utf-8", newline="\n")
+        inventory = subprocess.run(
+            ["git", "-C", str(repository), "ls-files", "--others", "--exclude-standard"],
+            check=True,
+            capture_output=True,
+        ).stdout
+        (run / "untracked.txt").write_bytes(inventory)
     roles = ["challenger", "qa-specialist"]
+    if not unchanged and any(
+        path.endswith((".py", ".pyi")) and not path.startswith("test_") for path in (source_name,)
+    ):
+        roles.append("sw-engineer")
     routing = {
         "schema_version": 1,
         "risk_tier": "HIGH_RISK",
@@ -308,6 +329,9 @@ def _prepare(
     scope_path: str | None = None,
     challenge_only: bool = False,
     batches: bool = False,
+    paged: bool = True,
+    discover_fixtures: bool = False,
+    export_fixture_bindings: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Invoke the shipped producer as an installed-path command."""
     if source_root is None:
@@ -327,10 +351,16 @@ def _prepare(
         "--source-root",
         str(source_root),
     ]
+    if paged:
+        command.append("--paged")
     if challenge_only:
         command.append("--challenge-only")
     if batches:
         command.append("--batches")
+    if discover_fixtures:
+        command.append("--discover-fixtures")
+    if export_fixture_bindings is not None:
+        command.extend(["--export-fixture-bindings", str(export_fixture_bindings)])
     if expected_head is not None:
         command.extend(["--expected-head", expected_head])
         base = subprocess.run(
@@ -369,6 +399,92 @@ def test_prepare_rejects_missing_signals_without_rewriting_routing(tmp_path: Pat
     assert not (run / "specialists").exists()
 
 
+@pytest.mark.integration
+def test_direct_prepare_accepts_one_complete_mechanical_routing_repair(tmp_path: Path) -> None:
+    """Let one diagnosed repair reach ordinary dispatch instead of revealing setup defects one at a time."""
+    source_name = ".github/migration.py"
+    run = _review_inputs(tmp_path, source_name=source_name)
+    source_root = Path(json.loads((run / "local-source/review-worktree.json").read_bytes())["review_worktree"])
+    (run / "files.txt").write_text(source_name + "\n", encoding="utf-8", newline="\n")
+    (run / "untracked.txt").write_bytes(b"")
+    (run / "numstat.txt").write_text(f"1\t1\t{source_name}\n", encoding="utf-8", newline="\n")
+    routing_path = run / "review-routing.json"
+    routing = json.loads(routing_path.read_bytes())
+    initial_roles = ["qa-specialist", "sw-engineer"]
+    routing.update(
+        risk_tier="BROAD",
+        triggered_roles=initial_roles,
+        trigger_reasons={role: [f"Changed Python source {source_name} requires inspection."] for role in initial_roles},
+    )
+    routing_path.write_text(json.dumps(routing), encoding="utf-8", newline="\n")
+    briefs_path = run / "review-briefs.json"
+    briefs = {
+        role: {"axis": role, "evidence_path": "qa-specialist-evidence.md", "source_paths": [source_name]}
+        for role in initial_roles
+    }
+    briefs_path.write_text(json.dumps(briefs), encoding="utf-8", newline="\n")
+    command = [
+        sys.executable,
+        str(HELPER),
+        "prepare",
+        "--out",
+        str(run),
+        "--run-id",
+        "mechanical-routing-repair",
+        "--parent-thread-id",
+        "parent",
+        "--source-root",
+        str(source_root),
+    ]
+
+    rejected = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", check=False)
+
+    assert rejected.returncode != 0
+    assert "review-routing-tier-underclassified:HIGH_RISK:BROAD" in rejected.stderr
+    assert "mandatory signals=axis_cicd_steward" in rejected.stderr
+    assert "required roles=challenger,cicd-steward,qa-specialist,sw-engineer." in rejected.stderr
+    assert not (run / "direct-plan.json").exists()
+    assert not (run / "dispatch.json").exists()
+    retained = json.loads(routing_path.read_bytes())
+    assert retained["risk_tier"] == "BROAD"
+    assert retained["signals"] == routing["signals"]
+    assert retained["triggered_roles"] == initial_roles
+    assert json.loads(briefs_path.read_bytes()) == briefs
+
+    # The first diagnostic names this complete repair; retain the actual source and all semantic decisions.
+    roles = ["challenger", "cicd-steward", "qa-specialist", "sw-engineer"]
+    retained["signals"]["axis_cicd_steward"] = True
+    retained["signal_evidence"]["axis_cicd_steward"] = [f"Collected source {source_name} is inside .github/."]
+    retained.update(
+        risk_tier="HIGH_RISK",
+        triggered_roles=roles,
+        trigger_reasons={
+            role: [f"Collected migration source {source_name} requires this review axis."] for role in roles
+        },
+    )
+    routing_path.write_text(json.dumps(retained), encoding="utf-8", newline="\n")
+    briefs = {
+        role: {"axis": role, "evidence_path": "qa-specialist-evidence.md", "source_paths": [source_name]}
+        for role in roles
+    }
+    briefs_path.write_text(json.dumps(briefs), encoding="utf-8", newline="\n")
+
+    prepared = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", check=False)
+
+    assert prepared.returncode == 0, prepared.stderr
+    plan = json.loads((run / "direct-plan.json").read_bytes())
+    dispatch = json.loads((run / "dispatch.json").read_bytes())
+    assert dispatch["mode"] == "direct-review"
+    assert [entry["role_id"] for entry in plan["contexts"]] == roles
+    assert [call["role"] for call in dispatch["calls"]] == roles
+    assert all(entry["source_paths"] == [source_name] for entry in plan["contexts"])
+    assert plan["source_root"] == source_root.resolve().as_posix()
+    assert plan["routing_sha256"] == hashlib.sha256(routing_path.read_bytes()).hexdigest()
+    assert plan["briefs_sha256"] == hashlib.sha256(briefs_path.read_bytes()).hexdigest()
+    assert (source_root / source_name).read_bytes() == b"value = 2\n"
+    assert not (run / "inspection-plan.json").exists()
+
+
 def test_prepare_rejects_omitted_local_diff(tmp_path: Path) -> None:
     """Reject a complete checkout paired with an incomplete admitted patch."""
     run = _review_inputs(tmp_path, second_file=True)
@@ -401,6 +517,7 @@ def test_prepare_accepts_declared_local_path_scope(tmp_path: Path) -> None:
         ["git", "-C", root, "diff", "--binary", "HEAD", "--", "widget.py"], check=True, capture_output=True
     ).stdout
     (run / "diff.patch").write_bytes(patch)
+    (run / "files.txt").write_text("widget.py\n", encoding="utf-8", newline="\n")
     (run / "untracked.txt").write_bytes(b"")
     result = _prepare(run, scope_path="widget.py")
     assert result.returncode == 0, result.stderr
@@ -820,6 +937,13 @@ def _assembly_evidence(
             final = '## Reviewer Findings\n```json\n[]\n```\n\n## Reviewer Confidence\n```json\n{"score": 0.95, "scope": "Frozen source and declared interactions.", "gaps": [{"gap": "Synthetic offline client.", "status": "unresolved", "rationale": "Fixture proves admission without a live semantic reviewer (-0.05)."}]}\n```\n\n## Reviewer Assessment\nSource rating version: 1\nRating: 1\nVerification readiness: complete\nRationale: The inspected scope is clean.'
         if findings and role in findings:
             final = ("" if run.parent.name == "batches" else header + "\n") + findings[role]
+        # Inherited dispatches bind the child's model to the parent turn, not to the role card.
+        parent_rows.append(
+            {
+                "type": "turn_context",
+                "payload": {"turn_id": f"parent-turn-{len(parent_rows)}", "model": "test-parent-model"},
+            }
+        )
         parent_rows.extend(
             [
                 {
@@ -870,7 +994,11 @@ def _assembly_evidence(
                 },
                 {
                     "type": "turn_context",
-                    "payload": {"turn_id": turn, "model": arguments["model"], "effort": arguments["reasoning_effort"]},
+                    "payload": {
+                        "turn_id": turn,
+                        "model": arguments.get("model", "test-parent-model"),
+                        "effort": arguments["reasoning_effort"],
+                    },
                 },
                 {
                     "type": "response_item",
@@ -1853,8 +1981,10 @@ def _check_opaque_repair_damage(run: Path, home: Path, children: dict[str, Path]
     )
     assert result.returncode != 0
     expected = (
-        "provenance-parent-spawn-mismatch:challenger:1"
-        if damage in {"missing-delivery", "different-delivery", "duplicate-delivery", "changed-model"}
+        "review-inspection-spawn-model-selection-mismatch:challenger"
+        if damage == "changed-model"
+        else "provenance-parent-spawn-mismatch:challenger:1"
+        if damage in {"missing-delivery", "different-delivery", "duplicate-delivery"}
         else f"review-repair-dispatch-cause-unproven:challenger:{page}"
         if damage == "changed-role"
         else "review-repair-dispatch-cause-unproven:challenger:1"
@@ -2215,8 +2345,8 @@ def test_prepare_freezes_complete_wave_and_keeps_source_out_of_dispatch(tmp_path
     assert (run / "reviewed-commit.txt").read_text(encoding="utf-8").strip() == source["revision"]
     assert dispatch["routing_sha256"] == hashlib.sha256((run / "review-routing.json").read_bytes()).hexdigest()
     assert dispatch["briefs_sha256"] == hashlib.sha256((run / "review-briefs.json").read_bytes()).hexdigest()
-    assert [entry["role_id"] for entry in plan["contexts"]] == ["challenger", "qa-specialist"]
-    assert len(dispatch["calls"]) == 2
+    assert [entry["role_id"] for entry in plan["contexts"]] == ["challenger", "qa-specialist", "sw-engineer"]
+    assert len(dispatch["calls"]) == 3
     queued_roles = [
         call["arguments"]["task_name"].removeprefix("review_").rsplit("_", 2)[0].replace("_", "-")
         for call in dispatch["calls"]
@@ -2292,6 +2422,57 @@ def test_prepare_includes_exact_untracked_source(tmp_path: Path) -> None:
     assert "new_value = 7\n" in context
     assert "Untracked file: exact source bytes" in context
     assert "value = 2\n" not in context
+
+
+@pytest.mark.parametrize("paged", [False, True])
+def test_prepare_accepts_git_quoted_untracked_name(tmp_path: Path, paged: bool) -> None:
+    """Decode the collector's quoted filename in both direct and paged review routes."""
+    name = "café.txt"
+    run = _build_review_inputs(tmp_path, untracked=True, untracked_name=name)
+    briefs = json.loads((run / "review-briefs.json").read_text(encoding="utf-8"))
+    briefs["challenger"]["source_paths"] = [name]
+    (run / "review-briefs.json").write_text(json.dumps(briefs), encoding="utf-8", newline="\n")
+
+    result = _prepare(run, paged=paged)
+
+    assert result.returncode == 0, result.stderr
+    if paged:
+        assert "new_value = 7" in (run / "specialists/challenger-context.md").read_text(encoding="utf-8")
+    else:
+        plan = json.loads((run / "direct-plan.json").read_text(encoding="utf-8"))
+        assert name in next(item for item in plan["contexts"] if item["role_id"] == "challenger")["source_paths"]
+
+
+def test_prepare_rejects_changed_file_inventory_disagreeing_with_source(tmp_path: Path) -> None:
+    """A forged listing cannot omit a changed production file from reviewer routing."""
+    run = _review_inputs(tmp_path)
+    (run / "files.txt").write_text("data.txt\n", encoding="utf-8", newline="\n")
+    routing = json.loads((run / "review-routing.json").read_bytes())
+    routing["triggered_roles"].remove("sw-engineer")
+    routing["trigger_reasons"].pop("sw-engineer")
+    (run / "review-routing.json").write_text(json.dumps(routing), encoding="utf-8")
+    briefs = json.loads((run / "review-briefs.json").read_bytes())
+    briefs.pop("sw-engineer")
+    (run / "review-briefs.json").write_text(json.dumps(briefs), encoding="utf-8")
+    result = _prepare(run, paged=False)
+    assert result.returncode != 0
+    assert "review-source-file-inventory-stale" in result.stderr
+
+
+def test_prepare_rejects_missing_changed_file_inventory(tmp_path: Path) -> None:
+    """Missing inventory cannot hide a tracked production change from reviewer routing."""
+    run = _review_inputs(tmp_path)
+    (run / "files.txt").unlink()
+    routing = json.loads((run / "review-routing.json").read_bytes())
+    routing["triggered_roles"].remove("sw-engineer")
+    routing["trigger_reasons"].pop("sw-engineer")
+    (run / "review-routing.json").write_text(json.dumps(routing), encoding="utf-8")
+    briefs = json.loads((run / "review-briefs.json").read_bytes())
+    briefs.pop("sw-engineer")
+    (run / "review-briefs.json").write_text(json.dumps(briefs), encoding="utf-8")
+    result = _prepare(run, paged=False)
+    assert result.returncode != 0
+    assert "review-source-file-inventory-stale" in result.stderr
 
 
 @pytest.mark.parametrize("forged_diff", [False, True])
@@ -2403,15 +2584,32 @@ def test_prepare_delivers_committed_destination(tmp_path: Path, destination: str
     head = subprocess.run(
         ["git", "-C", str(review), "rev-parse", "HEAD"], check=True, capture_output=True, text=True
     ).stdout.strip()
-    patch = subprocess.run(
+    raw_patch = subprocess.run(
         ["git", "-C", str(review), "diff", "--binary", "HEAD^", "HEAD"], check=True, capture_output=True
     ).stdout
-    assert (b"rename to " in patch) is rename
-    (run / "diff.patch").write_bytes(patch)
+    assert (b"rename to " in raw_patch) is rename
+    # Use the real producer: canonical patches represent a rename as deletion plus addition.
+    subprocess.run(
+        [
+            sys.executable,
+            str(PLUGIN_ROOT / "shared/collect_diff.py"),
+            "--scope",
+            "commit",
+            "--target",
+            "HEAD^..HEAD",
+            "--out",
+            str(run),
+        ],
+        cwd=review,
+        check=True,
+        capture_output=True,
+    )
+    patch = (run / "diff.patch").read_bytes()
+    assert (b"deleted file mode" in patch) is rename
     (run / "local-source/review-worktree.json").unlink()
     briefs = json.loads((run / "review-briefs.json").read_text(encoding="utf-8"))
     for brief in briefs.values():
-        brief["source_paths"] = [destination]
+        brief["source_paths"] = [original, destination] if rename else [destination]
     (run / "review-briefs.json").write_text(json.dumps(briefs), encoding="utf-8", newline="\n")
 
     result = _prepare(run, source_root=review, expected_head=head)
@@ -2420,7 +2618,9 @@ def test_prepare_delivers_committed_destination(tmp_path: Path, destination: str
     context = (run / "specialists/challenger-context.md").read_text(encoding="utf-8")
     assert destination in context
     assert f"return {17 if rename else 18}" in context
-    assert ("rename to " in context) is rename
+    for section in re.split(r"(?m)(?=^diff --git )", patch.decode("utf-8")):
+        if section:
+            assert section in context
     assert (run / "dispatch.json").exists()
 
 
@@ -2517,7 +2717,11 @@ def test_prepare_automatically_batches_large_context(tmp_path: Path, evidence_li
     assert len(context) > 65536
     assert context.count(b"bounded evidence\n") == evidence_lines
     schedule = json.loads((run / "batch-dispatch.json").read_bytes())
-    assert {call["role"] for wave in schedule["waves"] for call in wave["calls"]} == {"challenger", "qa-specialist"}
+    assert {call["role"] for wave in schedule["waves"] for call in wave["calls"]} == {
+        "challenger",
+        "qa-specialist",
+        "sw-engineer",
+    }
     assert not (run / "inspection-plan.json").exists()
     assert not (run / "specialists").exists()
 
@@ -2547,7 +2751,7 @@ def test_prepare_routes_by_each_complete_context_utf8_bytes(tmp_path: Path, cont
     baseline = _review_inputs(baseline_dir)
     assert _prepare(baseline).returncode == 0
     run = _review_inputs(target_dir)
-    for role in ("challenger", "qa-specialist"):
+    for role in ("challenger", "qa-specialist", "sw-engineer"):
         padding = context_bytes - len((baseline / f"specialists/{role}-context.md").read_bytes())
         assert padding > 0
         evidence = run / f"{role}-evidence.md"
@@ -2557,10 +2761,10 @@ def test_prepare_routes_by_each_complete_context_utf8_bytes(tmp_path: Path, cont
 
     assert result.returncode == 0, result.stderr
     summary = json.loads(result.stdout)
-    assert summary["roles"] == 2
+    assert summary["roles"] == 3
     if context_bytes == 65536:
         assert Path(summary["dispatch_path"]) == run / "dispatch.json"
-        assert summary["context_bytes"] == 2 * context_bytes
+        assert summary["context_bytes"] == 3 * context_bytes
     else:
         assert Path(summary["dispatch_path"]) == run / "batch-dispatch.json"
 
@@ -2576,7 +2780,7 @@ def test_prepare_retains_frozen_ordinary_route_above_new_batch_threshold(
     # Model the historical producer's ordinary context allowance only while issuing the frozen fixture.
     with monkeypatch.context() as historical:
         historical.setattr(producer["review_batches"], "CONTEXT_LIMIT", 262144)
-        producer["prepare"](run, "bounded-review", "parent", source)
+        producer["prepare"](run, "bounded-review", "parent", source, paged=True)
     frozen = {p: p.read_bytes() for p in run.rglob("*") if p.is_file()}
 
     result = _prepare(run)
@@ -3480,12 +3684,13 @@ def _check_opaque_delivery_damage(run: Path, home: Path, children: dict[str, Pat
         elif damage in {"page", "later-page"}:
             page = 1 if damage == "page" else 2
             assert f"review-inspection-context-read-call-mismatch:challenger:{page}" in result.stderr
+        elif damage == "changed-model":
+            assert "review-inspection-spawn-model-selection-mismatch:challenger" in result.stderr
         elif damage in {
             "missing-delivery",
             "different-delivery",
             "duplicate-delivery",
             "missing-argument",
-            "changed-model",
         }:
             assert "provenance-parent-spawn-mismatch:challenger:1" in result.stderr
         else:
@@ -3589,7 +3794,14 @@ def test_native_assembly_recovers_only_preexecution_rejected_wait_calls(tmp_path
     run, home, _children = _assembly_evidence(tmp_path)
     parent_path = home / "sessions/rollout-parent.jsonl"
     rows = [json.loads(line) for line in parent_path.read_text(encoding="utf-8").splitlines()]
-    rows[5:5] = [
+    spawn_ids = [row["payload"]["call_id"] for row in rows if row.get("payload", {}).get("name") == "spawn_agent"]
+    last_receipt = next(
+        index
+        for index, row in enumerate(rows)
+        if row.get("payload", {}).get("call_id") == spawn_ids[-1]
+        and row["payload"].get("type") == "function_call_output"
+    )
+    rows[last_receipt + 1 : last_receipt + 1] = [
         {
             "type": "response_item",
             "timestamp": "2026-01-01T10:00:00.400Z",
@@ -3650,7 +3862,7 @@ def test_native_assembly_recovers_only_preexecution_rejected_wait_calls(tmp_path
     if case == "rejected":
         assert result.returncode == 0, result.stderr
         manifest = json.loads((run / "specialist-manifest.json").read_bytes())
-        assert {item["role"] for item in manifest["passes"]} == {"challenger", "qa-specialist"}
+        assert {item["role"] for item in manifest["passes"]} == {"challenger", "qa-specialist", "sw-engineer"}
     else:
         assert result.returncode != 0
         assert "review-inspection-schedule-wait-invalid" in result.stderr
@@ -4435,3 +4647,44 @@ def _finding_id_recovery_evidence(tmp_path: Path) -> tuple[Path, Path, dict[str,
         blocking_counts={"qa-specialist": 1},
     )
     return run, home, children, original, original.replace(json.dumps(identity), json.dumps(record["id"]), 1)
+
+
+def _direct_no_child_failure(tmp_path: Path, receipt_output: str) -> tuple[Path, Path, list[dict], str, str]:
+    """Retain a genuine failed-spawn receipt beside unaffected completed direct reviewer evidence."""
+    import test_review_direct as direct  # Reuse the established native evidence boundary.
+
+    run, home = direct._direct_evidence(tmp_path)
+    child_path = home / "sessions/rollout-child-0.jsonl"
+    child = [json.loads(line) for line in child_path.read_bytes().decode().splitlines()]
+    final = child[-1]["payload"]["last_agent_message"]
+    parent_path = home / "sessions/rollout-parent.jsonl"
+    parent = [json.loads(line) for line in parent_path.read_bytes().decode().splitlines()]
+    parent = [row for row in parent if row.get("payload", {}).get("author") != child[0]["payload"]["agent_path"]]
+    receipt = next(
+        row
+        for row in parent
+        if row.get("payload", {}).get("call_id") == "spawn-0" and row["payload"].get("type") == "function_call_output"
+    )
+    receipt["payload"]["output"] = receipt_output
+    _write_jsonl(parent_path, parent)
+    child_path.unlink()
+    role = json.loads((run / "dispatch.json").read_bytes())["calls"][0]["role"]
+    return run, home, child, final, role
+
+
+def _direct_aborted_child_failure(tmp_path: Path) -> tuple:
+    """Retain authenticated child evidence for consumer-side retry validation."""
+    import test_review_direct as direct
+
+    run, home = direct._direct_evidence(tmp_path)
+    child_path = home / "sessions/rollout-child-0.jsonl"
+    child = [json.loads(line) for line in child_path.read_bytes().decode().splitlines()]
+    final = child[-1]["payload"]["last_agent_message"]
+    child[-1]["payload"] = {"type": "turn_aborted", "turn_id": "turn-0"}
+    _write_jsonl(child_path, child)
+    parent_path = home / "sessions/rollout-parent.jsonl"
+    parent = [json.loads(line) for line in parent_path.read_bytes().decode().splitlines()]
+    parent = [row for row in parent if row.get("payload", {}).get("author") != child[0]["payload"]["agent_path"]]
+    _write_jsonl(parent_path, parent)
+    role = json.loads((run / "dispatch.json").read_bytes())["calls"][0]["role"]
+    return run, home, child, final, role

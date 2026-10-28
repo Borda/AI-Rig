@@ -12,7 +12,9 @@ CODE_REMEDIATE_SKILL = PLUGIN_ROOT / "skills" / "code-remediate" / "SKILL.md"
 
 def test_remediation_recovers_late_baseline_from_retained_pre_edit_evidence_only() -> None:
     """Prevent agent-created dirtiness from being called user work or silently cleared."""
-    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md"
+    )
     assert "Late baseline capture is an agent process error" in skill
     assert "commit-ownership-recovery.md" in skill
     assert "retained pre-edit status and source snapshots" in skill
@@ -22,7 +24,9 @@ def test_remediation_recovers_late_baseline_from_retained_pre_edit_evidence_only
 
 def test_remediation_classifies_confidence_and_prepares_backend_evidence() -> None:
     """Keep real coverage actionable without making statistical disclaimers impossible chores."""
-    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md"
+    )
     assert "Project Dependency Preparation" in skill
     assert "before closing a missing-backend item as environment-blocked" in skill
     assert "A statistical-confidence disclaimer requires no invented calibration experiment" in skill
@@ -87,35 +91,54 @@ def test_review_and_remediation_require_explicit_convergence_authorization() -> 
     """Keep ordinary workflow invocation from silently starting an extra review-and-fix loop."""
     for name in ("code-review", "code-remediate"):
         skill = (PLUGIN_ROOT / "skills" / name / "SKILL.md").read_text(encoding="utf-8")
-        assert "Challenge Resolve is opt-in" in skill
-        assert "invocation alone does not authorize" in skill
-        assert "Existing explicit approval for the same scope remains valid" in skill
         if name == "code-review":
-            assert "ask before entering that workflow or loop" in skill
-    remediation = read_with_references(CODE_REMEDIATE_SKILL, "source-recovery.md")
+            assert "A review alone does not authorize Challenge Resolve or a review-and-fix loop" in skill
+            assert "Ask before adding an unapproved loop" in skill
+            assert "reuse existing explicit approval for the same scope" in skill
+            assert "If authorized, apply `../../shared/adversarial-loop.md`" in skill
+        else:
+            assert "Challenge Resolve is opt-in" in skill
+            assert "invocation alone does not authorize" in skill
+            assert "Existing explicit approval for the same scope remains valid" in skill
+    remediation = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md", "source-recovery.md"
+    )
     fork = remediation.split("- **Fork PR:**", 1)[1].split("####", 1)[0]
     assert "separate explicit approval for the adversarial recovery loop" in fork
 
 
 def test_remediation_single_pass_overrides_generic_convergence_rules() -> None:
     """Prevent closure verification or newly found work from starting an unsolicited loop."""
-    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md"
+    )
     baseline = (PLUGIN_ROOT / "assets" / "AGENTS.md").read_text(encoding="utf-8")
     shared = (PLUGIN_ROOT / "shared" / "native-skill-contract.md").read_text(encoding="utf-8")
-    assert "single pass: collect findings, resolve the selected work, verify, and report" in skill
+    assert (
+        "single pass: collect findings, resolve the selected work, obtain one bounded independent challenge of any implemented change, verify, and report"
+        in skill
+    )
     assert "Do not propose or ask approval for an unsolicited loop" in skill
     assert "No convergence score, loop ledger, or score-based stop applies" in skill
     assert "Newly discovered in-scope defects do not trigger another review wave" in skill
     assert "at most one closure-verification pass" in skill
-    assert "Code Remediate's single-pass contract takes precedence" in baseline
-    assert "Code Remediate's single-pass contract takes precedence" in shared
+    assert "Code Remediate remains single-pass with the bounded independent implementation challenge" in baseline
+    shared_remediation = shared.split("Code Remediate remains a single pass:", 1)[1].split("\n\n", 1)[0]
+    assert "collect findings, select authorized work before edits" in shared_remediation
+    assert "resolve selected work, obtain the bounded independent implementation challenge" in shared_remediation
+    assert (
+        "normal remediation and its closure checks never imply that request or require convergence scoring"
+        in shared_remediation
+    )
     assert "only when the user explicitly requests it" in baseline
     assert "only when the user explicitly requests it" in shared
 
 
 def test_remediation_offers_post_gate_commit_modes() -> None:
     """Keep the commit decision after validated remediation work."""
-    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md"
+    )
     commit_section = skill.split("### 12: Offer An Opt-In Commit After Verified Remediation", maxsplit=1)[1]
 
     assert "shared quality gates and result validation finish" in commit_section
@@ -143,7 +166,9 @@ def test_remediation_offers_post_gate_commit_modes() -> None:
 
 def test_remediation_finalization_cannot_skip_commit_disposition() -> None:
     """Keep failed and successful closeouts on the explicit commit checkpoint."""
-    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md"
+    )
     preparation = skill.split("### 11: Write And Validate Result Artifact", maxsplit=1)[1].split("### 12:")[0]
     commit = skill.split("### 12: Offer An Opt-In Commit After Verified Remediation", maxsplit=1)[1]
     shared = "\n\n".join(
@@ -162,7 +187,9 @@ def test_remediation_finalization_cannot_skip_commit_disposition() -> None:
 
 def test_explicit_commit_overrides_verification_readiness_and_discloses_failures() -> None:
     """Keep a user-requested commit actionable while making every refusal auditable."""
-    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md"
+    )
     preparation = skill.split("### 11: Write And Validate Result Artifact", maxsplit=1)[1].split("### 12:")[0]
     commit = skill.split("### 12: Offer An Opt-In Commit After Verified Remediation", maxsplit=1)[1]
     shared = "\n\n".join(
@@ -193,7 +220,9 @@ def test_explicit_commit_overrides_verification_readiness_and_discloses_failures
 
 def test_remediation_commit_stages_only_proven_owned_paths() -> None:
     """Reject commits that could absorb user or overlapping worktree changes."""
-    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md"
+    )
     commit_section = skill.split("### 12: Offer An Opt-In Commit After Verified Remediation", maxsplit=1)[1]
     fail_fast = skill.split("## Fail-fast Rules", maxsplit=1)[1].split("## Quality Gates", maxsplit=1)[0]
 
@@ -211,9 +240,35 @@ def test_remediation_commit_stages_only_proven_owned_paths() -> None:
     assert "code-remediate-commit-grouping-unsafe" in fail_fast
 
 
+def test_early_commit_keeps_required_checks_without_requiring_snapshot_success() -> None:
+    """Prevent early commit instructions from overriding the failed-check snapshot exception."""
+    completion = (PLUGIN_ROOT / "skills/code-remediate/references/completion.md").read_text(encoding="utf-8")
+    early_commit = completion.split("### 12:", 1)[1].split("\n\n", 2)[1]
+
+    assert "Run and report required checks and retain their evidence" in early_commit
+    assert "Ordinary readiness requires passing checks" in early_commit
+    assert "explicit local snapshot may proceed with failed verification under step 11" in early_commit
+    assert "ownership, destination and runtime restrictions remain binding" in early_commit
+    assert "This exception does not waive required checks" not in early_commit
+
+
+def test_commit_fail_fast_preserves_explicit_failed_verification_snapshot() -> None:
+    """Keep fail-fast sequencing from restoring a passing-check prerequisite for snapshots."""
+    completion = (PLUGIN_ROOT / "skills/code-remediate/references/completion.md").read_text(encoding="utf-8")
+    sequencing = completion.split("43a.", 1)[1].split("43b.", 1)[0]
+
+    assert "Run and report required checks and retain their evidence" in sequencing
+    assert "Ordinary readiness requires passing checks" in sequencing
+    assert "explicit local snapshot may proceed with failed verification under step 11" in sequencing
+    assert "ownership, destination and runtime restrictions remain binding" in sequencing
+    assert "after applicable verification and shared commit checks pass" not in sequencing
+
+
 def test_pr_remediation_establishes_destination_before_merge_and_rechecks_before_commit() -> None:
     """Keep source collection separate from mutation authority and preserve resumed work."""
-    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md"
+    )
     prepare = skill.index("run its `prepare` action")
     merge = skill.index("git merge --no-commit --no-ff")
     commit = skill.split("### 12: Offer An Opt-In Commit After Verified Remediation", maxsplit=1)[1]
@@ -226,8 +281,10 @@ def test_pr_remediation_establishes_destination_before_merge_and_rechecks_before
 
 def test_legacy_resume_recovers_before_committing_without_repeating_mode_choice() -> None:
     """Keep an authorized topic commit reachable after legacy branch recovery."""
-    own = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
-    skill = read_with_references(CODE_REMEDIATE_SKILL, "source-recovery.md")
+    own = read_with_references(CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md")
+    skill = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md", "source-recovery.md"
+    )
     resume = own.split("On resume, inspect", maxsplit=1)[1].split("\n\n", maxsplit=1)[0]
     commit = own.split("### 12: Offer An Opt-In Commit After Verified Remediation", maxsplit=1)[1]
     assert "remediation-branch-recovered.json" in resume
@@ -241,7 +298,9 @@ def test_legacy_resume_recovers_before_committing_without_repeating_mode_choice(
 
 def test_explicit_commit_sequence_override_reaches_handoff_consumer() -> None:
     """Allow a verified requested commit before report validation without bypassing source or ownership gates."""
-    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md"
+    )
     handoff = (PLUGIN_ROOT / "shared/final-handoff-code-remediate.md").read_text(encoding="utf-8")
     commit = skill.split("### 12:", 1)[1].split("## Fail-fast Rules", 1)[0]
     assert "Do not wait solely for final report validation" in commit
@@ -255,7 +314,9 @@ def test_explicit_commit_sequence_override_reaches_handoff_consumer() -> None:
 
 def test_selected_commit_cannot_finish_with_owned_residue() -> None:
     """Keep new files, incomplete fixes and late worktree changes from escaping a selected commit."""
-    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md"
+    )
     gate = skill.split("### Selected commit completion gate", maxsplit=1)[1].split(
         "### Return remediation", maxsplit=1
     )[0]

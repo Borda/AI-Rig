@@ -591,6 +591,29 @@ def test_check_host_rejects_invalid_utf8_context_before_process_launch(
 
 
 @pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param(b"Authorization: " + b"Bearer " + b"fixture", id="bearer"),
+        pytest.param(b"github" + b"_pat_" + b"a_b" * 9, id="github-fine-grained"),
+        pytest.param(b"gh" + b"r_" + b"a_b" * 9, id="github-refresh"),
+        pytest.param(b"sk" + b"-" + b"a_b-" * 6, id="api-token-punctuation"),
+    ],
+)
+def test_check_host_rejects_native_sensitive_shapes_before_process_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, payload: bytes
+) -> None:
+    """Reject native credential shapes in frozen input before launching a reviewer."""
+    plan_path, _ = review_evidence_files(tmp_path)
+    _replace_context_bytes(plan_path, 0, b"\n" + payload)
+    factory = _fake_public_processes(monkeypatch, _launches_for_plan(plan_path))
+
+    with pytest.raises(_adapter().ReviewRouteError, match="plan-context-secret-or-role-prefix-invalid"):
+        _adapter().check_host(plan_path, Path("codex"), 10)
+
+    assert factory.processes == []
+
+
+@pytest.mark.parametrize(
     ("tamper", "match"),
     [
         pytest.param("missing-source", "plan-source-path-invalid", id="missing-source-binding"),
@@ -983,14 +1006,25 @@ def test_direct_evidence_validation_keeps_legacy_plan_readable_but_dispatch_reje
     plan["schema_version"] = 1
     for key in ("source_path", "source_sha256", "diff_path", "diff_sha256"):
         del plan[key]
-    for node in plan["nodes"]:
-        del node["capacity_receipt"]
-    _write_json(plan_path, plan)
     evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    historical_roles = tmp_path / "historical-roles"
+    for node, evidence_node in zip(plan["nodes"], evidence["nodes"], strict=True):
+        del node["capacity_receipt"]
+        role_dir = historical_roles / node["role_id"]
+        role_dir.mkdir(parents=True)
+        card = (CANONICAL_ROLES / node["role_id"] / "ROLE.md").read_bytes()
+        historical_card = card.replace(b"---\n", f"---\nmodel: {node['model']}\n".encode(), 1)
+        (role_dir / "ROLE.md").write_bytes(historical_card)
+        node["role_card_sha256"] = evidence_node["role_card_sha256"] = _sha256(historical_card)
+        context_path = plan_path.parent / node["context_path"]
+        context = context_path.read_bytes().replace(card, historical_card, 1)
+        context_path.write_bytes(context)
+        node["context_sha256"] = evidence_node["context_sha256"] = _sha256(context)
+    _write_json(plan_path, plan)
     evidence["plan_sha256"] = _sha256(plan_path.read_bytes())
     _write_json(evidence_path, evidence)
 
-    assert _adapter().validate_evidence(plan_path, evidence_path, CANONICAL_ROLES)["consumer_id"] == "code-review"
+    assert _adapter().validate_evidence(plan_path, evidence_path, historical_roles)["consumer_id"] == "code-review"
     factory = _fake_public_processes(monkeypatch, [])
 
     with pytest.raises(_adapter().ReviewRouteError, match="plan-legacy-dispatch-forbidden"):
@@ -2308,7 +2342,11 @@ def review_evidence_files(
     for index, role_id in enumerate(roles):
         role_card = (CANONICAL_ROLES / role_id / "ROLE.md").read_bytes()
         role_text = role_card.decode("utf-8")
-        model = next(line.split(": ", 1)[1] for line in role_text.splitlines() if line.startswith("model: "))
+        model = {
+            "cicd-steward": "gpt-6-luna",
+            "doc-scribe": "gpt-6.1-terra",
+            "web-explorer": "gpt-6.1-terra",
+        }.get(role_id, "gpt-6.1-sol")
         effort = next(
             line.split(": ", 1)[1] for line in role_text.splitlines() if line.startswith("model_reasoning_effort: ")
         )
@@ -2380,7 +2418,7 @@ def review_evidence_files(
             }
         )
     plan = {
-        "schema_version": 2,
+        "schema_version": 3,
         "consumer_id": "code-review",
         "review_run_id": "review-17",
         "parent_thread_id": "parent-17",
@@ -2481,19 +2519,38 @@ def test_validate_evidence_binds_canonical_roles_and_outputs(tmp_path: Path) -> 
 def test_historical_schema_two_output_revalidates_without_later_assessment(tmp_path: Path) -> None:
     """Retain a prior source-bound response whose original schema had three fields."""
     plan_path, evidence_path = review_evidence_files(tmp_path)
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    plan["schema_version"] = 2
     evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
-    for node in evidence["nodes"]:
+    historical_roles = tmp_path / "historical-roles"
+    for plan_node, node in zip(plan["nodes"], evidence["nodes"], strict=True):
+        role_dir = historical_roles / plan_node["role_id"]
+        role_dir.mkdir(parents=True)
+        card = (CANONICAL_ROLES / plan_node["role_id"] / "ROLE.md").read_bytes()
+        historical_card = card.replace(b"---\n", f"---\nmodel: {plan_node['model']}\n".encode(), 1)
+        (role_dir / "ROLE.md").write_bytes(historical_card)
+        plan_node["role_card_sha256"] = node["role_card_sha256"] = _sha256(historical_card)
+        context_path = plan_path.parent / plan_node["context_path"]
+        context = context_path.read_bytes().replace(card, historical_card, 1)
+        context_path.write_bytes(context)
+        plan_node["context_sha256"] = node["context_sha256"] = _sha256(context)
+        plan_node["capacity_receipt"]["context_sha256"] = _sha256(context)
+        plan_node["capacity_receipt"]["input_tokens"] = len(context)
         output_path = evidence_path.parent / node["output_path"]
         output = json.loads(output_path.read_text(encoding="utf-8"))
         del output["assessment"]
         output_path.write_text(json.dumps(output), encoding="utf-8", newline="\n")
         node["output_sha256"] = _sha256(output_path.read_bytes())
+    _write_json(plan_path, plan)
+    evidence["plan_sha256"] = _sha256(plan_path.read_bytes())
     _write_json(evidence_path, evidence)
 
     with pytest.raises(_adapter().ReviewRouteError, match="app-server-review-output-schema-mismatch"):
-        _adapter().validate_evidence(plan_path, evidence_path, CANONICAL_ROLES)
+        _adapter().validate_evidence(plan_path, evidence_path, historical_roles)
     assert (
-        _adapter().validate_evidence(plan_path, evidence_path, CANONICAL_ROLES, require_assessment=False)["consumer_id"]
+        _adapter().validate_evidence(plan_path, evidence_path, historical_roles, require_assessment=False)[
+            "consumer_id"
+        ]
         == "code-review"
     )
 
@@ -2524,7 +2581,7 @@ def test_local_reviewer_accepts_terra_role_evidence(tmp_path: Path, role: str) -
 
     plan["nodes"][0]["model"] = "gpt-6.1-sol"
     _write_json(plan_path, plan)
-    with pytest.raises(_adapter().ReviewRouteError, match="plan-role-settings-mismatch"):
+    with pytest.raises(_adapter().ReviewRouteError, match="plan-capacity-receipt-binding-invalid"):
         _adapter().validate_evidence(plan_path, evidence_path, CANONICAL_ROLES)
 
 
@@ -2583,6 +2640,30 @@ def test_validate_evidence_rejects_nonfinal_output_bytes(tmp_path: Path, payload
     _write_json(evidence_path, evidence)
 
     with pytest.raises(_adapter().ReviewRouteError, match=match):
+        _adapter().validate_evidence(plan_path, evidence_path, CANONICAL_ROLES)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param("Authorization: " + "Bearer " + "fixture", id="bearer"),
+        pytest.param("github" + "_pat_" + "a_b" * 9, id="github-fine-grained"),
+        pytest.param("gh" + "r_" + "a_b" * 9, id="github-refresh"),
+        pytest.param("sk" + "-" + "a_b-" * 6, id="api-token-punctuation"),
+    ],
+)
+def test_validate_evidence_rejects_native_sensitive_shapes_in_valid_output(tmp_path: Path, payload: str) -> None:
+    """Reject credential-shaped material even inside otherwise valid reviewer output."""
+    plan_path, evidence_path = review_evidence_files(tmp_path)
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    output = evidence_path.parent / evidence["nodes"][0]["output_path"]
+    answer = json.loads(_review_answer(plan_path))
+    answer["assessment"]["rationale"] = payload
+    output.write_text(json.dumps(answer), encoding="utf-8", newline="\n")
+    evidence["nodes"][0]["output_sha256"] = _sha256(output.read_bytes())
+    _write_json(evidence_path, evidence)
+
+    with pytest.raises(_adapter().ReviewRouteError, match="evidence-output-empty-or-secret"):
         _adapter().validate_evidence(plan_path, evidence_path, CANONICAL_ROLES)
 
 

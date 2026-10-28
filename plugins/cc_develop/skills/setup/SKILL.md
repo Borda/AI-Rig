@@ -17,12 +17,12 @@ Deliver develop's rules to Claude's user-level rule namespace, and its own permi
 | Link whose source left the plugin | removed |
 | Real file or foreign link at a destination | preserved, reported as conflict |
 | Anything outside `~/.claude/rules/` | never touched |
-| `.claude-plugin/permissions-{allow,deny}.json` → `~/.claude/settings.json` | merged additively except for the exact obsolete repository API rule |
+| `.claude-plugin/permissions-{allow,deny}.json` → `~/.claude/settings.json` | merged additively except for the exact shipped retired allow entries |
 | Any other key of `~/.claude/settings.json` | never touched |
 
 Every rule installs as `<plugin>-<source-name>.md` — `quality-gates.md` becomes `develop-quality-gates.md`, linking either `rules/quality-gates-delta.md` (when a foundry-owned `foundry-quality-gates.md` is already delivered) or the complete `rules/quality-gates.md` (when it is not); both sources belong to this plugin. The form is chosen on each run, so re-run `/develop:setup` after foundry's rules are delivered or removed — the owned link then switches form. Rationale (namespacing, symlink over copy, own-rules-only delivery, delta variant): README §`/develop:setup`.
 
-NOT for: statusLine, `TEAM_PROTOCOL.md`, or plugin-cache purging — those are `/foundry:setup` (requires `foundry` plugin). Of `~/.claude/settings.json` only the `permissions.allow` and `permissions.deny` arrays are touched, additively except for removing the exact obsolete `Bash(gh api repos/*:*)` rule. Writes nothing under `~/.codex/`.
+NOT for: statusLine, `TEAM_PROTOCOL.md`, or plugin-cache purging — those are `/foundry:setup` (requires `foundry` plugin). Of `~/.claude/settings.json` only the `permissions.allow` and `permissions.deny` arrays are touched, additively except for removing exactly the entries listed in the shipped `permissions-allow-retired.json`. Writes nothing under `~/.codex/`.
 
 </objective>
 
@@ -89,7 +89,7 @@ On **(b)**, re-run Step 3's command with `--approve` appended and report the res
 
 This plugin ships its own `permissions-allow.json` and `permissions-deny.json`. Claude Code doesn't read them from the plugin manifest, so without this step they're inert files — allow entries never suppress a prompt, deny entries never block anything.
 
-Merge is idempotent: existing entries never duplicate. Each plugin merges only its own pair; the allow merge removes the exact obsolete repository API rule and preserves every other entry.
+Merge is idempotent: existing entries never duplicate. Each plugin merges only its own pair; the allow merge removes exactly the entries in `permissions-allow-retired.json` and preserves every other entry.
 
 Create the file on first install, back it up before any write — a standalone install may reach this step with no `~/.claude/settings.json` at all:
 
@@ -103,16 +103,16 @@ cp ~/.claude/settings.json "$HOME/.claude/settings.json.bak-develop-${SETUP_BAK_
 
 Report: "Backed up ~/.claude/settings.json → ~/.claude/settings.json.bak-<timestamp>"
 
-Before merging, remove only the obsolete `Bash(gh api repos/*:*)` entry; no broad repository API allow is added. Preserve every other user allow entry, all deny entries, and unrelated settings, including existing repository API, GraphQL, branch and tag allows that foundry may also have installed.
+Before merging, remove exactly the entries in `permissions-allow-retired.json`: the obsolete `Bash(gh api repos/*:*)` entry and the broad `Bash(claude:*)`, `Bash(find:*)`, `Bash(node:*)`, `Bash(sed:*)` and `Bash(eval:*)` shell grants. Nothing replaces those retired entries. Preserve every other user allow entry, all deny entries, and unrelated settings, including existing repository API, GraphQL, branch and tag allows that foundry may also have installed.
 
 Writes merged `permissions.allow` and `permissions.deny` arrays via `merge_settings_permissions.py` — one atomic write covers both arrays, so allow never lands without deny. A missing or invalid shipped file aborts the block with settings unchanged:
 
 ```bash
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/merge_settings_permissions.py" --allow "$PLUGIN_ROOT/.claude-plugin/permissions-allow.json" --drop-allow 'Bash(gh api repos/*:*)' --drop-allow 'Bash(claude:*)' --drop-allow 'Bash(find:*)' --drop-allow 'Bash(node:*)' --drop-allow 'Bash(sed:*)' --drop-allow 'Bash(eval:*)' --deny "$PLUGIN_ROOT/.claude-plugin/permissions-deny.json" || { printf "! permissions merge failed — settings.json unchanged\n"; exit 1; }  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/merge_settings_permissions.py" --allow "$PLUGIN_ROOT/.claude-plugin/permissions-allow.json" --drop-allow-file "$PLUGIN_ROOT/.claude-plugin/permissions-allow-retired.json" --deny "$PLUGIN_ROOT/.claude-plugin/permissions-deny.json" || { printf "! permissions merge failed — settings.json unchanged\n"; exit 1; }  # timeout: 5000
 ```
 
-Writeback happens in-bash above (atomic rename). Report from the script's two output lines: "Added N new permissions.allow entries (M already present)." plus whether the exact obsolete repository API rule was removed (`dropped`), and "Added N new permissions.deny entries (M already present)."
+Writeback happens in-bash above (atomic rename). Report from the script's two output lines: "Added N new permissions.allow entries (M already present)." plus the total retired allow entries removed (`dropped`), and "Added N new permissions.deny entries (M already present)."
 
 Validate what was written; settings.json that no longer parses is restored from the backup taken above:
 

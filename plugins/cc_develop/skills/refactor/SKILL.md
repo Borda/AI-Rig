@@ -1,6 +1,6 @@
 ---
 name: refactor
-description: 'Test-first refactoring — audit coverage, add characterization tests, apply changes with safety net, run quality stack and review loop. TRIGGER when: user wants to restructure existing Python code without changing behaviour; phrases: "refactor X", "clean up Y", "extract Z", "restructure this module", "improve code quality". SKIP when: bug fixes (use `/develop:fix`); new features (use `/develop:feature`); mixed refactor+feature — run `/develop:refactor` first, then `/develop:feature`; non-Python projects.'
+description: 'Test-first refactoring — audit coverage, add characterization tests, apply changes with safety net, run quality stack and a bounded independent challenge. TRIGGER when: user wants to restructure existing Python code without changing behaviour; phrases: "refactor X", "clean up Y", "extract Z", "restructure this module", "improve code quality". SKIP when: bug fixes (use `/develop:fix`); new features (use `/develop:feature`); mixed refactor+feature — run `/develop:refactor` first, then `/develop:feature`; non-Python projects.'
 argument-hint: <target file or directory> <goal> [--repo <owner/repo>] [--plan <path>] [--no-challenge] [--challenge] [--codemap] [--no-codemap] [--accept-no-plan] [--team] [--worktree] [--no-batch] [--keep "<items>"]
 effort: xhigh
 allowed-tools: Read, Write, Edit, Bash, Grep, Glob, Agent, Skill, TaskList, TaskCreate, TaskUpdate, AskUserQuestion, EnterWorktree, ExitWorktree
@@ -213,24 +213,30 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" plan-inline.md  # timeout: 5000
 ```
 
-§Inline Plan Generation Protocol. Apply using **refactor** context from Skill contexts table. On proceed: set `PLAN_FILE=<path>`; continue to Step 2. On small complexity or `ACCEPT_NO_PLAN=true`: skip and continue to Step 2.
+§Inline Plan Generation Protocol. Apply using **refactor** context from Skill contexts table. On proceed: set `PLAN_FILE=<path>`; continue through the challenger gate before Step 2. On small complexity or `ACCEPT_NO_PLAN=true`: skip the standalone artifact, retain a concise plan, and continue through the proportional challenger gate before Step 2.
 
 ## Challenger gate
 
-**Decision** (default runs at any size — a small refactor of a main-path helper can still change behaviour; size never skips the gate):
+**Decision**: `--no-challenge` explicitly waives this challenge gate; disclose skipped coverage without claiming a challenge passed. `--accept-no-plan` waives only the supplied plan artifact, never concise planning or the proportional challenge. Small work requires a concise plan and brief parent self-challenge (not independent); resolve findings, accept the challenged plan within existing authority, and assign parent execution or useful bounded disjoint owners before editing. Small work then continues to Step 2 without the independent plan-review dispatch below, but retains the bounded post-implementation challenge unless explicitly waived. For medium/large work, reuse a still-valid independent challenge of that exact plan and scope; otherwise run this gate once. Resolve feasible findings and use one bounded higher-capability advisory pass when material uncertainty remains and a permitted route exists. Approve the challenged plan within existing authority before assigning bounded execution; ask only for an actual protected decision or missing authority, never routine approval. Consolidate actual source and handoffs, independent result coverage and verification against every accepted criterion. `--challenge` remains a compatibility flag.
 
-1. `--no-challenge` (`CHALLENGE_ENABLED=false`) → **skip gate entirely**.
-2. else → **always run**. `--challenge` (`CHALLENGE_FORCED`) is accepted for compatibility and changes nothing.
-
-Arm batch `challenge` in the spawn response (`agent-resolution.md` §Agent waits). Spawn `foundry:challenger` with scope analysis from Step 1 (affected files, dependencies, coupling, risks):
+Arm batch `challenge` in the spawn response (`agent-resolution.md` §Agent waits). Spawn `foundry:challenger` with the current plan and scope evidence (affected files, dependencies, coupling, risks):
 
 > "Review the refactoring scope and approach. Challenge across all 5 dimensions: Assumptions, Missing Cases, Security Risks, Architectural Concerns, Complexity Creep. Apply mandatory refutation step."
 
 Parse result:
 
-- **Blockers found** → STOP. Write the blocker findings (one line each: claim · file:line · evidence) to `$DEV_DIR/blockers.md` first; print them once as the last reply text before invoking `AskUserQuestion`, as normal Markdown. The question text carries the blocker count, headline and `→ $DEV_DIR/blockers.md`, at most 6 plain lines (target 600 characters, hard cap 1,500), no table, pipe layout or code fence. Options carry a label and a one-line description, no `preview` — "Challenger raised N blocker(s) on the refactoring approach. How to proceed?" · (a) **Revise scope** — return to Step 1 with the blocker as a constraint · (b) **Accept risk** — proceed, record acceptance in `$DEV_DIR/checkpoint.md` (staged `.rec` record, appended by `append_ledger.py`) · (c) **Abort**. On Abort: stop. Never proceed on prose alone.
+- **Blockers found** → Resolve feasible authorized blockers without asking; verify the revision and preserve findings and evidence. Stop for a protected decision or authority, an explicit user wait, or a blocker that remains unresolved. Only then Write the blocker findings (one line each: claim · file:line · evidence) to `$DEV_DIR/blockers.md` first; print them once as the last reply text before invoking `AskUserQuestion`, as normal Markdown. The question text carries the blocker count, headline and `→ $DEV_DIR/blockers.md`, at most 6 plain lines (target 600 characters, hard cap 1,500), no table, pipe layout or code fence. Options carry a label and a one-line description, no `preview` — "Challenger raised N blocker(s) on the refactoring approach. How to proceed?" · (a) **Revise scope** — return to Step 1 with the blocker as a constraint · (b) **Accept risk** — proceed, record acceptance in `$DEV_DIR/checkpoint.md` (staged `.rec` record, appended by `append_ledger.py`) · (c) **Abort**. On Abort: stop. Proceed only when the blocker is resolved or its risk explicitly accepted within applicable safety boundaries.
 - **Concerns only** → surface as advisory before coverage audit; continue.
 - **No findings / all refuted** → proceed.
+
+**Authorized plan revisions**: The hash commands below apply only when a plan artifact exists; a concise inline plan does not require creating one. Before editing a recorded plan, run `plan_hash.py check` and stop for unexplained drift; verify the intended edits are limited to authorized findings. After those revisions and before implementation, record the revised plan's hash using the block below. Never re-record an unexplained or unauthorized change: retain the drift evidence and resolve it first. No plan revision → do not re-record.
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r PLAN_FILE < "${TMPDIR:-/tmp}/dev-plan-file-${CSID}" 2>/dev/null || PLAN_FILE=""
+[ -f "$PLAN_FILE" ] || { echo "! BLOCKED — revised plan missing"; exit 1; }
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/plan_hash.py" record "$PLAN_FILE"  # timeout: 5000
+```
 
 ## Step 2: Audit test coverage
 
@@ -284,7 +290,7 @@ Audit incomplete → re-examine before Step 3. Gaps found mid-refactoring (Step 
 
 <!-- Only active when --team flag passed (~10% of invocations) -->
 
-**Team mode branch** — if `TEAM_MODE=true`: Steps 1–2 complete solo (teammates need scope + coverage context). Spawn both teammates now; skip Steps 3–4 and Step 5's review loop (sw-engineer runs them); after results run Step 5's quality stack and final gate, then the Final Report.
+**Team mode branch** — if `TEAM_MODE=true`: Steps 1–2 complete solo (teammates need scope + coverage context). Spawn both teammates now; skip Steps 3–4 and Step 5's local review (sw-engineer runs them); parent runs Step 5's bounded independent implementation challenge; after results run Step 5's quality stack and final gate, then the Final Report.
 
 > loads: team-mode.md — gated; ~90% of runs (`--team` absent) skip the load entirely
 
@@ -423,9 +429,9 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" "
 
 ## Step 5: Review and close gaps
 
-Full review of refactored code. **Loop** — review -> targeted refactoring (return to Step 4) -> re-review until only nits remain. Max 3 outer cycles. (Step 4's "max 5 change-test cycles" bound applies within each pass through Step 4, independent of outer loop.)
+Review the refactored code once and resolve feasible gaps. Only an explicitly requested iterative review-and-fix loop may repeat the steps below, up to 3 outer cycles. (Step 4's "max 5 change-test cycles" bound applies within each pass through Step 4, independent of outer loop.)
 
-**Each cycle:**
+**First pass (repeat only for an explicitly requested iterative loop):**
 
 1. Evaluate against all criteria:
 
@@ -451,7 +457,7 @@ Full review of refactored code. **Loop** — review -> targeted refactoring (ret
 
 5. **Only nits remain** (variable naming, comment clarity, minor formatting): document in Follow-up, exit loop.
 
-6. **Substantive gaps remain**: start next cycle (max 3 total).
+6. **Substantive gaps remain**: report unresolved gaps; start another cycle only for an explicitly requested loop (max 3 total).
 
 **After 3 cycles**: substantive issues remain → stop, surface to user.
 
@@ -474,7 +480,9 @@ echo "$_SHARED" > "${TMPDIR:-/tmp}/qs-shared-dir-${CSID}"  # quality-stack fence
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" foundry--quality-stack.md  # timeout: 5000
 ```
 
-Not found → skip quality stack entirely, note the message above in Final Report, and run the final gate below instead. Otherwise execute Branch Safety Guard, Quality Stack, Codex Pre-pass, Progressive Review Loop, and Codex Mechanical Delegation steps — the quality stack's directory-wide pytest run counts as the final gate's full-suite run only when `$TEST_CMD` is that same pytest invocation (`pytest`, `python -m pytest`, `uv run pytest`, `poetry run pytest`); a `tox -q` or `make test` repository never ran its own command in the stack, so run the final gate once even when no code changed. Otherwise do not run it again unless code changes after it (§Final gate).
+**Bounded independent implementation challenge**: After implementation and before the final gate, unless the user explicitly passed `--no-challenge`, dispatch one independent reviewer through the permitted `foundry:challenger` or available `bridge:review` route; never fork the implementation conversation. Supply only the current scoped diff, task acceptance and relevant evidence, allowing targeted source inspection. Reuse still-valid independent coverage for this exact result instead of dispatching again. Validate findings, apply feasible authorized fixes, rerun affected checks and report unresolved findings or missing independent coverage. Do not start another challenge or convergence loop automatically; after fixes, honestly report that the revised result lacks independent coverage. If no independent route is available, report the gap and do not claim the challenge passed.
+
+Not found → skip quality stack entirely and note the message above in Final Report; still run the bounded independent implementation challenge above unless explicitly waived, record missing independent coverage if no permitted route is available, and run the final gate below. Otherwise execute Branch Safety Guard, Quality Stack, the bounded implementation challenge above, and Codex Mechanical Delegation; use Codex Pre-pass as that challenge only when selected, and run Progressive Review Loop only when explicitly requested — the quality stack's directory-wide pytest run counts as the final gate's full-suite run only when `$TEST_CMD` is that same pytest invocation (`pytest`, `python -m pytest`, `uv run pytest`, `poetry run pytest`); a `tox -q` or `make test` repository never ran its own command in the stack, so run the final gate once even when no code changed. Otherwise do not run it again unless code changes after it (§Final gate).
 
 **Final gate — full suite with the repository's own command.** Runs when the quality stack was skipped, when `$TEST_CMD` is not the stack's pytest invocation, and again after any code change that follows the quality stack's wide run — a Progressive Review fix, or any fix to a full-suite failure (the stack halting on a genuine failure, or this block failing) — a fix can break something outside the targeted set, and the stack's own re-checks are scoped. A suite that may outlive the ~10 min foreground cap runs as a background Bash call (`run_in_background: true`): end the turn, its exit re-invokes you, no polling. Non-zero → fix (rerun the failing node ids while fixing — never the verification), then rerun this block in full. Max 3 gate iterations; at the cap stop, surface the remaining failures, and never report the suite green. A green full suite is the last test evidence before the Final Report:
 

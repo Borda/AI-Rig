@@ -8,6 +8,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from _skill_text import read_with_references
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 CODE_REMEDIATE_SKILL = PLUGIN_ROOT / "skills" / "code-remediate" / "SKILL.md"
@@ -66,7 +67,9 @@ def test_merge_step_updates_local_target_before_merging_fetched_object() -> None
     Keeping the maintainer's target branch current is best effort; the merge source must stay the immutable fetched
     target so a stale or diverged local branch never reaches the PR.
     """
-    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md"
+    )
 
     assert "run `git fetch . <base-remote-ref>:refs/heads/<base_ref>` as argv" in skill
     assert "with no second network fetch" in skill

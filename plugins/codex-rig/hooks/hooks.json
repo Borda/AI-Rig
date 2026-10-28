@@ -1,5 +1,5 @@
 {
-  "description": "Optional read-only Codex Rig shim health diagnostic.",
+  "description": "Read-only shim health and one-shot review/remediation continuation diagnostics.",
   "hooks": {
     "SessionStart": [
       {
@@ -13,6 +13,19 @@
           }
         ],
         "matcher": "startup|resume"
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "command": "\"$PLUGIN_ROOT/bin/python\" \"$PLUGIN_ROOT/hooks/review_stop.py\"",
+            "commandWindows": "& \"$env:PLUGIN_ROOT\\bin\\python.cmd\" \"$env:PLUGIN_ROOT\\hooks\\review_stop.py\"; exit $LASTEXITCODE",
+            "statusMessage": "Checking unfinished review or remediation work",
+            "timeout": 5,
+            "type": "command"
+          }
+        ]
       }
     ]
   }

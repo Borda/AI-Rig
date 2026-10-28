@@ -4,7 +4,7 @@ paths:
   - '**'
 ---
 
-> §Evidence Grounding, §Python Code Complexity, §Output Routing, §Report File Format have worked detail (tier tables, citation tracing, per-limit rationale, exact bash/example snippets) in `_full/quality-gates.md`; §Pre-Handover Check and §Write-Delegation Checklist live there in full (trigger-scoped — read at their trigger, summaries below). Resolve + Read when that section's own trigger applies — not needed for routine work:
+> §Evidence Grounding, §Python Code Complexity, §Output Routing, §Report File Format have worked detail (tier tables, citation tracing, per-limit rationale, exact bash/example snippets) in `_full/quality-gates.md`; §Pre-Handover Check and §Write-Delegation Checklist live there in full (trigger-scoped — read at their trigger, summaries below). Resolve + Read when that section's own trigger applies:
 >
 > ```bash
 > RULE_FULL="$(ls -td ~/.claude/plugins/cache/borda-ai-rig/foundry/*/rules/_full/quality-gates.md 2>/dev/null | head -1)"; [ -z "$RULE_FULL" ] && RULE_FULL="plugins/cc_foundry/rules/_full/quality-gates.md"  # timeout: 5000
@@ -25,22 +25,30 @@ While producing output — not only after — ask "what would make this wrong?".
 ## Evidence and real-case acceptance
 
 - Every factual, causal, and completion claim must attach its Evidence Grounding source or recorded proof at the claim. Keep conclusions within that evidence: source text proves only what it states; passing unit tests prove only their exercised contract, not an untested workflow or host. Missing proof stays blocked or unverified.
-- Keep a representative real case alongside the TDD loop. Establish the failure and intended result with real inputs, real components, and the actual affected environment before relying on a test double; retain commands, environment/source identity, outputs and before/after evidence. Recheck that real case after the fix and before completion. An unavailable real environment remains an explicit unmet acceptance check; mocks cannot replace it or justify a completion claim.
-- Mocks belong only to subsequent polishing after the real behavior is understood and validated. Use fast regression tests to shorten iteration while the real case remains the acceptance oracle. Never weaken assertions, remove failing coverage, or change expected outputs or user-authorized behavior merely to turn tests green. Correct a mistaken test only from independent specification or real-case evidence, record why, and preserve the intended contract; a changed requirement needs the user's decision.
+- For costly, nondeterministic, or external workflow validation, first run realistic controlled cases with independently specified expected outcomes, relevant failure and recovery cases, and negative controls. Only after all applicable controlled cases pass, run bounded representative real or live validation. Controlled cases and test doubles do not prove live or independent behavior. Examine an actual incident as needed for diagnosis.
+- Keep a representative real case alongside TDD: retain available pre-fix incident evidence and, after controlled cases pass, verify the intended result with real inputs, components and affected environment; retain commands, environment/source identity, outputs and before/after evidence, and recheck before completion. An unavailable real environment remains an unmet acceptance check. Never weaken assertions, remove failing coverage, or change expected outputs or user-authorized behavior merely to turn tests green. Correct a mistaken test only from independent specification or real-case evidence, record why, and preserve the intended contract; a changed requirement needs the user's decision.
 
-## Adversarial Convergence Loop (any review → fix cycle)
+## Proportional Execution
+
+> Before planning or implementation, including small parent-owned tasks, resolve + Read `_full/quality-gates.md` §Proportional Execution; its full policy binds as if inline.
+
+Validate bounded outcome; decompose if needed. Detail active piece/context; work depth-first through verified closure. Delegate ready disjoint siblings. Plan → challenge → approve within existing authority → delegate/parent execution → parent consolidate. Reuse accepted leaf plans; no repeated formal ceremony or new routine approval.
+
+## Adversarial Convergence Loop (explicitly invoked)
 
 <!-- policy-sibling: plugins/cc_oss/rules/quality-gates.md, plugins/cc_develop/rules/quality-gates.md, plugins/cc_research/rules/quality-gates.md, AGENTS.md -->
 
-Read `_full/adversarial-loop.md` before every independent review → authorized-fix cycle. Its scope, evidence ledger, strictly decreasing nonnegative integer score after baseline `W_0`, independent final snapshot, score weights (`20/10/6/4/2/1`), trend, and remediation rules are mandatory. Before dispatching a challenger round, read `_full/quality-gates.md` §Challenger Rounds.
+An explicitly invoked iterative convergence workflow retains all its existing rules. Read `_full/adversarial-loop.md` before that loop: its scope, evidence ledger, strictly decreasing nonnegative integer score after baseline `W_0`, independent final snapshot, score weights (`20/10/6/4/2/1`), trend, and remediation rules are mandatory. Before dispatching a challenger round, read `_full/quality-gates.md` §Challenger Rounds.
 
-Never fork the implementing conversation for review or close a local fix before later independent verification. Resolve every feasible authorized finding; a structural flag alone is not a stop, and a repeated invariant (same signature or same invariant evidence) requires shared-root-cause investigation before another fix. Any score decrease converges (`0 < r_n < 1`); equal scores plateau and increases do not converge. Unavailable independent coverage, stale final evidence, an unmet approval boundary, plateau/non-convergence with open findings, or exhaustion of a stricter caller budget stops the dependent route. Open `security` or `critical` findings forbid completion and commit; unresolved `high` findings require escalation rather than deferral. At a stop, report only completed-round scores (for example `W_0 → W_1 → W_2`), or `not-run` when no review completed, plus per-tier residue, evidence, owner and next action; invoke `AskUserQuestion` only for the concrete missing decision or authorization. A clean loop still requires the owning workflow's remaining gates.
+For the explicitly invoked loop, never fork the implementing conversation for review or close a local fix before later independent verification. Resolve every feasible authorized finding; a structural flag alone is not a stop, and a repeated invariant (same signature or same invariant evidence) requires shared-root-cause investigation before another fix. Any score decrease converges (`0 < r_n < 1`); equal scores plateau and increases do not converge. Unavailable independent coverage, stale final evidence, an unmet approval boundary, plateau/non-convergence with open findings, or exhaustion of a stricter caller budget stops the dependent route. Open `security` or `critical` findings forbid completion and commit; unresolved `high` findings require escalation rather than deferral. At a stop, report only completed-round scores (for example `W_0 → W_1 → W_2`), or `not-run` when no review completed, plus per-tier residue, evidence, owner and next action; invoke `AskUserQuestion` only for the concrete missing decision or authorization. A clean loop still requires the owning workflow's remaining gates.
 
 After each validated round, print the progress table exactly: `| Iteration | Security | Critical | High | Medium | Low | Nits | Weighted score |`, all rows kept, each cell `old + new`; never reshape or reduce it.
 
 ## Confidence Block (required on all analysis tasks)
 
 <!-- policy-sibling: plugins/cc_oss/rules/quality-gates.md, plugins/cc_develop/rules/quality-gates.md, plugins/cc_research/rules/quality-gates.md -->
+
+Name the process or claim being assessed. Assess the correctness of the delivered result and how it was produced and checked within its stated scope; do not substitute likelihood of later task completion. When process confidence is requested, score the process rather than certainty about status. Report completion status separately: unfinished work alone does not determine confidence, and a high score never marks incomplete work complete. Scores for acceptance or handover gates must assess the relevant process or substantive judgment; status certainty alone cannot satisfy them. Deduct only for evidence gaps that materially limit the assessed claim; retain other relevant limitations with `(-0.00)`.
 
 Every analysis agent **must** end with:
 

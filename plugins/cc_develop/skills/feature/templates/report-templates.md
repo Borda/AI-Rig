@@ -32,7 +32,7 @@
 - Lint: clean / N issues fixed
 - Types: clean / N issues fixed
 - Doctests: pass / fail / not-merged — derived from `quality-stack.md`'s `DOCTEST_MERGED` state; `not-merged` means the runner degraded to a separate doctest pass (see Quality Stack)
-- Review: pass / N issues fixed (N cycles)
+- Review: pass / N issues fixed / incomplete / not run — include independent coverage and evidence
 
 ### Follow-up
 - [deferred items, known limitations, suggested next steps]
@@ -47,16 +47,16 @@
 
 ## Incomplete Report Variant
 
-Use when stopping after 3 review cycles with unresolved substantive issues:
+Use when stopping with unresolved substantive issues or missing required independent coverage, including after one bounded challenge:
 
 ```markdown
 ## Feature Report: [feature name] [INCOMPLETE]
 
 ### Status
-Implementation incomplete -- stopped after 3 review cycles.
+Implementation incomplete -- [actual stop reason and completed passes].
 
 ### Remaining Issues
-- [each unresolved substantive gap]
+- [each unresolved substantive gap and missing evidence]
 
 ### What Works
 - [completed parts, passing tests]

@@ -116,7 +116,9 @@ def test_default_historical_inspection_context_limit_remains_four(tmp_path: Path
         module.validate_inspection_contexts(plan, run / "inspection-plan.json")
 
 
-@pytest.mark.parametrize("case", ["failed-peak-five", "missing-failed-timing", "sequential-selected"])
+@pytest.mark.parametrize(
+    "case", ["failed-peak-five", "missing-failed-timing", "sequential-selected", "unproven-failure"]
+)
 def test_native_retry_timing_cannot_evade_capacity_or_fabricate_parallelism(tmp_path: Path, case: str) -> None:
     """Count every launched attempt while deriving parallel review only from selected completions."""
     run = _five_role_review_inputs(tmp_path)
@@ -208,6 +210,8 @@ def test_native_retry_timing_cannot_evade_capacity_or_fabricate_parallelism(tmp_
         started_at=epoch + (0.2 if case == "sequential-selected" else 105),
         completed_at=epoch + (1.5 if case == "sequential-selected" else 110),
     )
+    if case == "unproven-failure":
+        failed_completion["last_agent_message"] = ""
     if case == "missing-failed-timing":
         failed_rows = [row for row in failed_rows if row.get("payload", {}).get("type") != "task_complete"]
     _write_jsonl(children["sw-engineer"], failed_rows)
@@ -261,13 +265,32 @@ def test_native_retry_timing_cannot_evade_capacity_or_fabricate_parallelism(tmp_
     validator = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = validator
     spec.loader.exec_module(validator)
-    if case != "sequential-selected":
+    if case == "unproven-failure":
+        manifest["passes"].sort(key=lambda entry: entry["role"] != "sw-engineer")
+        for error_type in ("timeout", "transport_error", "rate_limited"):
+            failed["error_type"] = error_type
+            with pytest.raises(SystemExit, match="manifest-unverified-transient-failure:sw-engineer:1"):
+                validator._validate_manifest_entries(
+                    run,
+                    manifest,
+                    manifest["passes"],
+                    set(children),
+                    home,
+                    "parent",
+                    tmp_path,
+                    require_role_card_receipts=True,
+                )
+    elif case != "sequential-selected":
         expected = (
             "review-inspection-active-capacity-exceeded"
             if case == "failed-peak-five"
             else "review-inspection-attempt-timing-missing:sw-engineer:1"
         )
         with pytest.raises(SystemExit, match=expected):
+            validator._validate_review_runtime(run, manifest, manifest["passes"], home, "parent")
+    else:
+        # A completed first attempt is not a transport failure merely because its manifest says so.
+        with pytest.raises(SystemExit, match="manifest-invalid-failed-attempt:sw-engineer:1"):
             validator._validate_manifest_entries(
                 run,
                 manifest,
@@ -278,12 +301,6 @@ def test_native_retry_timing_cannot_evade_capacity_or_fabricate_parallelism(tmp_
                 tmp_path,
                 require_role_card_receipts=True,
             )
-    else:
-        validator._validate_manifest_entries(
-            run, manifest, manifest["passes"], set(children), home, "parent", tmp_path, require_role_card_receipts=True
-        )
-        summary = validator._validate_review_runtime(run, manifest, manifest["passes"], home, "parent")
-        assert summary["actual_mode"] == "independent-spawned"
 
 
 def test_actual_native_parent_sequence_controls_allocation_order_and_refill(
@@ -445,7 +462,8 @@ def _check_fast_native_interruption(
         for row in rows
         if row.get("payload", {}).get("type") == "function_call" and row["payload"].get("name") == "spawn_agent"
     ]
-    assert len(launches) == 2
+    assert set(children) == {"challenger", "qa-specialist", "sw-engineer"}
+    assert len(launches) == len(children)
     if interruption != "none":
         next_launch = datetime.fromisoformat(launches[1]["timestamp"].replace("Z", "+00:00")).timestamp()
         call_type = "function_call" if interruption == "wait" else "custom_tool_call"
@@ -782,6 +800,7 @@ def test_shared_parent_capacity_release_requires_bound_active_turn_and_notified_
     assembled = _tree_state(tmp_path)
     for damage in [
         "none",
+        "two-releases",
         "unrelated",
         "metadata-conflict",
         "inactive-at-refusal",
@@ -949,6 +968,23 @@ def _check_shared_parent_release(run: Path, home: Path, children: dict[str, Path
             },
         },
     ]
+    if damage == "two-releases":
+        second = json.loads(json.dumps(sibling))
+        second[0]["payload"]["id"] = "pool-second"
+        second[0]["payload"]["agent_path"] = "/root/second_slot_owner"
+        second[0]["payload"]["source"]["subagent"]["thread_spawn"]["agent_path"] = "/root/second_slot_owner"
+        ancestor.append(
+            {
+                "timestamp": stamp(-0.39),
+                "type": "response_item",
+                "payload": {
+                    "type": "agent_message",
+                    "author": "/root/second_slot_owner",
+                    "content": [{"type": "input_text", "text": "Message Type: FINAL_ANSWER\nPayload:\nSlot finished."}],
+                },
+            }
+        )
+        _write_jsonl(home / "sessions/rollout-pool-second.jsonl", second)
     if damage == "unrelated":
         sibling[0]["payload"]["source"]["subagent"]["thread_spawn"]["parent_thread_id"] = "unrelated-root"
     elif damage == "metadata-conflict":
@@ -1000,12 +1036,28 @@ def _check_shared_parent_release(run: Path, home: Path, children: dict[str, Path
             *children.values(),
         ]
     }
-    if damage == "none":
+    if damage in {"none", "two-releases"}:
         summary = prepare.assemble(run, home)
         assert summary["capacity_limited"] is True
         assert summary["actual_mode"] == "parallel"
         manifest = json.loads((run / "specialist-manifest.json").read_bytes())
         assert {p["role"] for p in manifest["passes"]} == set(children)
+        if damage == "two-releases":
+            execution = prepare.review_execution_validation
+            refusal_record = {
+                "called_at": execution._parent_timestamp(refusal),
+                "returned_at": datetime.fromtimestamp(epoch - 1.99, timezone.utc),
+            }
+            next_at = execution._parent_timestamp(launch)
+            first = execution._related_capacity_release(home, "parent", parent, refusal_record, next_at, set())
+            second = execution._related_capacity_release(home, "parent", parent, refusal_record, next_at, {first})
+            assert first is not None
+            assert second is not None
+            assert first != second
+            assert (
+                execution._related_capacity_release(home, "parent", parent, refusal_record, next_at, {first, second})
+                is None
+            )
     else:
         with pytest.raises(SystemExit, match="review-inspection-capacity-refusal-no-state-change"):
             prepare.assemble(run, home)

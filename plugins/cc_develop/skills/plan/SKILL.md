@@ -204,6 +204,8 @@ Agent returns findings inline (no file handoff — output short).
 
 Breaking change criteria — change is breaking when it affects **public API** (exported from `__init__.py`, documented in README, or stable interface used by external consumers) and any of these apply: removed public API (function, class, method, or module), changed function signatures (parameter names, types, order, or defaults), changed config key names or schema, changed output format (return type, serialization structure, CLI output shape). Internal/private signature changes (functions prefixed `_`, classes not exported) do NOT count as breaking — list under `risks` instead.
 
+**Debug classification handoff**: After the depth checkpoint and any applicable breaking change gate, when the cause is unknown, recommend `/develop:debug <goal>` directly, clear the skill contract using Step 5's contract-clear block, and skip Steps 2–5; do not write or challenge an implementation plan. If the user chose **Write the plan anyway** at the depth cap, continue to Step 2 with the unconfirmed root cause recorded as a risk. If the user resets the cap, make the direct debug recommendation; on Abort, stop.
+
 ## Step 2: Structured plan
 
 Derive filename slug from goal: first 4-5 meaningful words, lowercase, hyphen-separated (e.g. `"improve caching in data loader"` -> `plan_improve-caching-data-loader.md`). If `.plans/active/<slug>` already exists, append counter suffix (`-2`, `-3`, etc.) before writing — never silently overwrite. Run this block once per plan: a Revise (breaking-gate (b), Step 4 blocker fix) edits the existing `PLAN_FILE` in place and does not re-run it — a second run would mint `plan_<slug>-2.md` and leave Step 3's reviewer reading the superseded plan. Store full path as `PLAN_FILE` — used in Steps 3 and Final output.
@@ -267,10 +269,12 @@ echo "$PLAN_FILE" > "$PLAN_NS/plan-file"
 
 ## Step 3: Agent feasibility review
 
+Skip this separate feasibility review and its resolution loop by default; the single Step 4 challenger covers implementation feasibility and testability. Run Step 3 only when the user explicitly requests this additional review, then continue to Step 4.
+
 Arm batch `other` in the spawn response (`agent-resolution.md` §Agent waits). Spawn ONE `foundry:sw-engineer` feasibility agent covering both role perspectives in a single pass (merged spawn unit — two role-labelled verdicts, one file read, ~300 bytes JSON; two spawns would each pay ~120,851 tok fixed overhead for the same read):
 
 - **feature / fix / refactor**: one spawn, roles `sw-engineer` (implementation feasibility) + `qa-specialist` (testability, coverage feasibility)
-- **debug**: skip feasibility review — no implementation plan to review; proceed directly to Final output with debug recommendation
+- **debug** with an explicitly requested plan: skip this feasibility review and continue to Step 4.
 
 > `foundry:linting-expert` intentionally excluded — its role is post-implementation static analysis (ruff/mypy), not pre-plan architectural feasibility. Including it produces noise (trivial `ok: true`) or false blockers on linting-config concerns. Surface lint-specific notes (e.g. "target module has no type annotations — mypy will flag everything") in Final output advisory notes instead. The two surviving roles are dimensions of one review, not cross-checks — merging into one spawn preserves both checklists.
 
@@ -363,6 +367,8 @@ Do not escalate: items resolvable from codebase, items that are risks (not block
 
 ## Step 4: Challenger gate
 
+Resolve feasible plan findings. If material uncertainty remains, seek one bounded higher-capability advisory pass when a permitted route exists; record its evidence and remaining limits.
+
 **Two states** (plan has no diff yet — no small-diff auto-skip, no `--challenge` flag, unlike fix/feature/refactor/debug): by **default** challenger always reviews plan design; `--no-challenge` (`CHALLENGE_ENABLED=false`) **skips gate entirely**.
 
 ```bash
@@ -382,11 +388,11 @@ fi
 
 Block printed the skip line → skip rest of Step 4, go to Step 5. Otherwise spawn `foundry:challenger` to adversarially review written plan before user commits — arm batch `challenge` in the spawn response (`agent-resolution.md` §Agent waits); a timed-out challenger is never read as "no findings" (`AskUserQuestion` per §Agent waits):
 
-> "Read `<PLAN_FILE>`. Challenge plan across all 5 dimensions: Assumptions, Missing Cases, Security Risks, Architectural Concerns, Complexity Creep. Apply mandatory refutation step per your instructions."
+> "Read `<PLAN_FILE>`. Challenge plan across all 5 dimensions: Assumptions, Missing Cases, Security Risks, Architectural Concerns, Complexity Creep. Include implementation feasibility, testability and verification blockers. Apply mandatory refutation step per your instructions."
 
 Parse result:
 
-- **Blockers found** → STOP. Update `<PLAN_FILE>` with blocker annotations first, then present findings through `AskUserQuestion` — run the Idle-gate contract block right before it (findings summary as question text, `→ <PLAN_FILE>`, ending with the `/compact` hint line): (a) **Revise the plan** — edit `PLAN_FILE` in place for each blocker, re-run Step 3 · (b) **Accept risk and continue** — blockers recorded under Risks · (c) **Abort**. Don't print `/develop` handoff until user resolves each blocker or explicitly accepts risk.
+- **Blockers found** → Resolve feasible authorized blockers without asking, update `<PLAN_FILE>` with the evidence and verify the revision. Stop for a protected decision or authority, an explicit user wait, or a blocker that remains unresolved. Only then present findings through `AskUserQuestion` — run the Idle-gate contract block right before it (findings summary as question text, `→ <PLAN_FILE>`, ending with the `/compact` hint line): (a) **Revise the plan** — edit `PLAN_FILE` in place for each blocker and verify the revision; do not repeat the challenge unless the user explicitly requests an iterative review · (b) **Accept risk and continue** — blockers recorded under Risks · (c) **Abort**. Don't print `/develop` handoff until user resolves each blocker or explicitly accepts risk.
 - **Concerns only** → append `### Challenger concerns` to `<PLAN_FILE>` as advisory; continue to Final output.
 - **No findings / all refuted** → proceed.
 
@@ -403,7 +409,7 @@ Classification : [feature | fix | refactor | debug]
 Complexity     : [small | medium | large]
 Affected files : [file count] files across [module count] modules
 Key risks      : [key risk or none]
-Agent review   : ✓ agents ready ([correction count] corrections incorporated)  |  ⚠ see below
+Agent review   : [challenge and optional feasibility review status; report skipped or unavailable coverage explicitly]
 
 [Steps table — columns `# | Step | Verification` for simple plans, `# | Stage | What changes | Stop condition | Verification` for staged or large plans, `# | Action | Target | Verification` for fixes; Verification = the command or observable check that proves the step done]
 
@@ -451,7 +457,7 @@ rm -f .temp/state/skill-contract.md  # clear contract — skill complete (compac
 **Handoff contract**: plan file at `<PLAN_FILE>` consumable by downstream skills. Pass via `--plan <PLAN_FILE>` when invoking `/develop:feature`, `/develop:fix`, or `/develop:refactor`. `debug` classification: no downstream plan file — invoke `/develop:debug <goal>` directly; it hands off to `/develop:fix --diagnosis <path>` on completion, never back to `/develop:plan` — re-running `/develop:plan` afterwards is a user choice, only when the fix needs its own scoped plan. Skill receives `--plan <path>` → reads plan file at Step 1 and:
 
 - Extracts `Classification`, `Affected files`, `Risks`, `Suggested approach` — skips cold codebase exploration
-- Inherits agent feasibility verdicts already applied
+- Includes feasibility findings from the plan challenge and any explicitly requested feasibility review
 - Uses `Suggested approach` as implementation roadmap
 
 No quality stack, no Codex pre-pass, no review loop. Exit after printing summary.
@@ -478,7 +484,7 @@ End plan document with:
 
 | Temptation | Reality |
 | -- | -- |
-| "The plan is obvious — no need for agent feasibility review" | Feasibility review catches domain-specific blockers (missing test infrastructure, incompatible library constraints, API changes) obvious only in hindsight. |
+| "The plan is obvious — no need for feasibility review" | The independent plan challenge checks feasibility and testability as well as design risks. |
 | "I can scope this during implementation — no need to plan first" | Scope discovered mid-implementation inflates PRs, obscures intent. Plan mode exists to prevent exactly this. |
 
 </notes>

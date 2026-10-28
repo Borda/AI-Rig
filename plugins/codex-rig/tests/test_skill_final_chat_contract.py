@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
+from _skill_text import read_with_references
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 SKILLS_ROOT = PLUGIN_ROOT / "skills"
@@ -62,7 +63,13 @@ def _output_contract(text: str) -> str:
 )
 def test_skill_final_chat_names_its_primary_result(skill: str, result_schema: str) -> None:
     """Prevent artifact-complete runs whose final chat omits the actual outcome."""
-    text = (SKILLS_ROOT / skill / "SKILL.md").read_text(encoding="utf-8")
+    text = (
+        read_with_references(SKILLS_ROOT / skill / "SKILL.md", "findings-and-completion.md")
+        if skill == "code-review"
+        else read_with_references(SKILLS_ROOT / skill / "SKILL.md", "completion.md")
+        if skill == "code-remediate"
+        else (SKILLS_ROOT / skill / "SKILL.md").read_text(encoding="utf-8")
+    )
     output_contract = _output_contract(text)
     assert "Final chat" in output_contract
     assert result_schema in output_contract
@@ -90,11 +97,21 @@ def test_shared_final_chat_frame_keeps_artifacts_supplemental() -> None:
 @pytest.mark.parametrize("skill", ARTIFACT_SKILLS)
 def test_artifact_skill_final_chat_is_an_executable_versioned_handoff(skill: str) -> None:
     """Require every artifact workflow to bind and emit the validated final render."""
-    skill_text = (SKILLS_ROOT / skill / "SKILL.md").read_text(encoding="utf-8")
+    skill_text = (
+        read_with_references(SKILLS_ROOT / skill / "SKILL.md", "findings-and-completion.md")
+        if skill == "code-review"
+        else read_with_references(SKILLS_ROOT / skill / "SKILL.md", "completion.md")
+        if skill == "code-remediate"
+        else (SKILLS_ROOT / skill / "SKILL.md").read_text(encoding="utf-8")
+    )
     output_contract = _output_contract(skill_text)
     template = json.loads((SKILLS_ROOT / skill / "result-template.json").read_text(encoding="utf-8"))
 
-    assert "../../shared/final-handoff-contract.md" in output_contract
+    assert (
+        "../../../shared/final-handoff-contract.md"
+        if skill in {"code-review", "code-remediate"}
+        else "../../shared/final-handoff-contract.md"
+    ) in output_contract
     assert "emit `final.md` verbatim" in output_contract
     assert template["schema_version"] == (3 if skill == "code-review" else 2)
     assert template["metadata"]["final_handoff"]["schema_version"] == 1
@@ -129,7 +146,13 @@ def test_agent_shims_declares_the_non_artifact_handoff_exception() -> None:
 )
 def test_final_chat_contracts_include_next_steps(skill: str) -> None:
     """Require the delivery section without treating paragraph length as a correctness signal."""
-    text = (SKILLS_ROOT / skill / "SKILL.md").read_text(encoding="utf-8")
+    text = (
+        read_with_references(SKILLS_ROOT / skill / "SKILL.md", "findings-and-completion.md")
+        if skill == "code-review"
+        else read_with_references(SKILLS_ROOT / skill / "SKILL.md", "completion.md")
+        if skill == "code-remediate"
+        else (SKILLS_ROOT / skill / "SKILL.md").read_text(encoding="utf-8")
+    )
     output_contract = _output_contract(text)
     assert "Next steps" in output_contract
 
@@ -161,12 +184,13 @@ def test_confidence_deductions_are_accounted_once_in_existing_text_fields() -> N
     assert "existing closure evidence/rationale displayed by the renderer" in handoff
     assert "both gap identity and closure text are fixed" in handoff
     assert "editable corresponding existing limit string" in handoff
-    assert "New Code Review `unavailable` output" in handoff
-    assert "confidence `0.90`" in handoff
-    assert "closure rationale with `(-0.10)`" in handoff
-    assert "remaining limit with `(-0.00)`" in handoff
-    assert "never mix historical and new closure/limit strings" in handoff
-    assert "historical compatibility is not available for a fresh candidate" in handoff
+    assert "For presentation 12 Code Review `unavailable` output" in handoff
+    assert "Select the numeric score as an evidence-backed operator judgment" in handoff
+    assert "do not deduct for an unreviewed PR merely because collection stopped" in handoff
+    assert "Record each material limitation separately" in handoff
+    assert "Unique contributions sum to exactly `1.00 - score`" in handoff
+    assert "(-0.00) PR correctness was not assessed." in handoff
+    assert "Keep the prior unavailable profile readable for earlier presentations" in handoff
     assert "Historical rendered bytes" in handoff
     baseline = (PLUGIN_ROOT / "assets/AGENTS.md").read_text(encoding="utf-8")
     assert "exactly `1.00 - score`" in baseline

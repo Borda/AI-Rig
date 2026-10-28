@@ -32,9 +32,9 @@ Before marking fix complete: "Could this symptom have a second independent root 
 
 **Never dispatch challenger as `subagent_type: "fork"`.** A fork inherits the full implementer conversation — its reasoning, self-assessment of success, framing of the symptom. Verification inside that inherited context tends toward confirming the implementer's own conclusion rather than independently re-deriving it. Challenger **must get** only the diff, the original symptom description, and the spec — no implementer reasoning trail — matching the "reviewer doesn't inherit implementer's conversation" isolation principle.
 
-**Stakes gate — fires before every rule below.** Dispatch is not routine. Fires on: user-visible behaviour change, hard-to-reverse action, or a fix resting on an unproven premise. Ordinary multi-file work whose own tests cover the change does **not** qualify: a routine verifier spawn over work the tests already cover compounds effort without adding independent signal. When the gate doesn't fire, run the external proof (tests, logs, diff) once and close. A re-scan gated on a named, checkable trigger (e.g. a scope-boundary check against a stated rule) is targeted verification, not the routine recheck this gate excludes.
+**Bounded independent challenge.** After an implementation, use one independent post-fix challenge under the proportional workflow in `quality-gates.md`, subject to the user's instructions and actual permissions. A single challenge does not start an iterative review-and-fix loop. Preserve tests, logs and diff evidence; a re-scan gated on a named, checkable trigger (e.g. a scope-boundary check against a stated rule) is targeted verification, not another independent challenge.
 
-When the gate fires:
+For that challenge:
 
 1. Invoke `foundry:challenger` with diff and original symptom description
 2. Challenger confirms: (a) root cause structurally consistent with diff, (b) all original symptoms resolved, (c) no new failure modes introduced
@@ -44,7 +44,7 @@ When the gate fires:
 
 **Delegation + file-handoff**: always delegate batch to `foundry:challenger` via `Agent()` — not inline. Challenger writes full findings to a `.temp/` file, returns only a compact JSON envelope to the orchestrator. Orchestrator reads envelope verdict; reads file only on FAIL or low confidence. Never accumulate full challenger output in main context.
 
-**Threshold**: the stakes gate above, not file count. A 12-file refactor with green tests and no user-visible change does not dispatch; a one-line change to a payment path or a migration does.
+**Scope**: use one bounded challenge for the implementation, regardless of file count; preserve any stricter user instructions, permissions and workflow-specific gates.
 
 ### Anti-patterns
 
@@ -52,7 +52,7 @@ When the gate fires:
 - **First-plausible-cause stop**: accepting first root cause that sounds reasonable without confirming with evidence
 - **Partial validation**: checking only primary symptom after fix, not all reported symptoms
 - **Fix-before-confirm**: writing fix before confirming root cause — risk of fixing wrong thing
-- **Skipping challenger on an "obvious" fix that clears the stakes gate** — obviousness isn't an exemption once stakes are in play; obvious fixes have the highest rate of incomplete root-cause identification. (Below the gate, not dispatching is the rule, not a skip.)
+- **Skipping the bounded independent challenge on an "obvious" implementation** — obviousness is not an exemption; obvious fixes can hide incomplete root-cause identification.
 - **Ungrounded premise as design pillar**: using any assumption, constraint claim, recalled fact, or hypothesis as foundation for design or fix without first reading an authoritative source that proves it.
   - Covers: technical constraints ("X can't do Y"), behavioral assumptions ("this function returns Z"), facts from memory or training ("I know this library does…").
   - Memory and training knowledge are never evidence.

@@ -17,6 +17,15 @@ When a top-level policy changes, review lower layers for conflicts or obsolete d
 
 **This file is for maintaining this repository only and is never shipped** — plugin users never see it. Anything general, meant for every project or every install, must be distributed in the plugin that ships it (`plugins/cc_foundry/rules/` or `plugins/cc_foundry/CLAUDE.src.md` for Claude, `plugins/codex-rig/assets/AGENTS.md` or `plugins/codex-rig/shared/` for Codex), never added here. This file holds only this repository's own conventions and pointers to those shipped rules.
 
+## Plugin Design Principles
+
+Apply these repository product principles to every plugin built here:
+
+- Make everyday workflows consistent, reliable, efficient, and focused on completing the user's practical goal. Choose the simplest design that meets the actual contract; avoid machinery that adds fragility without a current need.
+- Fix the proven root cause of plugin failures, never just patch their symptoms. Establish the cause with evidence and a falsification check before changing behavior; if it is unproven, continue investigating. Verify the original failure and affected sibling workflows before calling the fix complete.
+- Correct and recover automatically when authorized: reuse all still-valid, verifiable evidence and rerun missing, stale, or unusable work through the current workflow. Do not require repair or acceptance of older formats merely to resume.
+- Treat routine incomplete handoffs and self-created process blockers as defects, not successful outcomes. Stop honestly for genuine permission denials, unavailable prerequisites, or decisions that require the user; preserve safety, provenance, and required verification.
+
 ## Version Continuity
 
 This repository's own convention, not shipped policy: other projects commonly decide SemVer at release time rather than per commit.

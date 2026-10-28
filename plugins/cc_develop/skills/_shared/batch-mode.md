@@ -114,10 +114,10 @@ A batch writes all N members' red tests up front; **one run** confirms all N red
 
 - A batch member = one Step-2-shaped demo/test-writing act (one piece of functionality).
 - Red-green test ownership stays lead / `foundry:sw-engineer` per `feature/SKILL.md` §Step 3: TDD implementation loop — batching changes run *count*, never who writes the tests.
-- Scope: this loop only, never the Step 4 review loop (which keeps its own `test-impact`-scoped per-cycle re-runs, unbatched).
+- Scope: this loop only, never the Step 4 review loop, when explicitly requested (which keeps its own `test-impact`-scoped per-cycle re-runs, unbatched).
 
 **refactor** (Step 4, refactor-with-safety-net loop):
 
 - A batch member = one focused change (`refactor/SKILL.md` §Step 4: Refactor with safety net — "one focused change per edit," now applied per *batch member* rather than per test run).
 - No red-green ownership rule to reconcile — refactor has no red-test step; a batch member's "confirm it fails" is not part of this loop.
-- Scope: this loop only, never Step 5's review loop (which keeps its own per-cycle re-run, unbatched).
+- Scope: this loop only, never Step 5's review loop, when explicitly requested (which keeps its own per-cycle re-run, unbatched).

@@ -17,6 +17,9 @@ the full file once foundry's copy is already installed, so one shared body loads
 plugin states is therefore spread over two files, and every check below reads them as one text. A delta may only
 restate what its own full file already says — it is a delivery optimisation, never a place to put policy, which
 :func:`test_a_delta_states_no_rule_its_full_file_lacks` enforces.
+
+Foundry additionally binds its own full-detail Proportional Execution section before planning; only that section is
+assembled when its eager mandatory trigger is present. The three satellite policies remain self-contained.
 """
 
 from __future__ import annotations
@@ -35,8 +38,8 @@ SATELLITES = tuple(plugin for plugin in PLUGINS if plugin != "cc_foundry")
 
 
 @pytest.mark.parametrize("plugin", [*PLUGINS, "codex-rig"])
-def test_evidence_and_tdd_keep_real_behavior_as_the_oracle(plugin: str) -> None:
-    """Keep standalone plugin policy from substituting mocked agreement for real acceptance."""
+def test_evidence_and_tdd_keep_controlled_first_and_real_acceptance(plugin: str) -> None:
+    """Require controlled validation before bounded real acceptance without weakening coverage."""
     policy_path = (
         REPO_ROOT / "plugins" / plugin / "shared/native-skill-contract.md"
         if plugin == "codex-rig"
@@ -45,13 +48,63 @@ def test_evidence_and_tdd_keep_real_behavior_as_the_oracle(plugin: str) -> None:
     policy = policy_path.read_text(encoding="utf-8")
     for obligation in (
         "Every factual, causal, and completion claim",
-        "representative real case alongside the TDD loop",
-        "Mocks belong only to subsequent polishing",
+        "first run realistic controlled cases",
+        "Only after all applicable controlled cases pass",
+        "representative real case alongside",
+        "An unavailable real environment remains",
         "Never weaken assertions",
         "user-authorized behavior",
         "blocked or unverified",
     ):
         assert obligation in policy, (plugin, obligation)
+    assert policy.index("first run realistic controlled cases") < policy.index(
+        "Only after all applicable controlled cases pass"
+    )
+
+
+@pytest.mark.parametrize("plugin", PLUGINS)
+def test_implementation_routes_keep_bounded_challenges_and_explicit_loops(plugin: str) -> None:
+    """Keep ordered plan acceptance, bounded execution, and independent result checks in each plugin."""
+    policy = _delivered_text(plugin)
+    small, medium = policy.split("Small implementation:", 1)[1].split("Medium/large:", 1)
+    small_steps = (
+        "concise plan",
+        "brief parent self-challenge (not independent)",
+        "accept challenged plan within existing authority",
+        "assign parent execution for indivisible work or useful bounded disjoint owners",
+        "implement core acceptance",
+        "consolidate actual source and handoffs, one bounded independent result challenge, verification and outcome",
+    )
+    medium_steps = (
+        "one scoped plan",
+        "independent plan challenge",
+        "bounded higher-capability advice only for material unresolved uncertainty",
+        "approve challenged plan within existing authority",
+        "delegate useful bounded disjoint work or retain indivisible parent execution",
+        "implement",
+        "consolidate integrated result, independent implementation challenge and verification against every criterion",
+    )
+    assert " → ".join(small_steps) in small
+    assert " → ".join(medium_steps) in medium
+    for obligation in (
+        "Approval never creates a routine user prompt",
+        "actual missing authority, protected decisions or an explicit user approval gate",
+        "Reuse still-current parent plans and challenges for covered children",
+        "Preserve actual independence, permissions, safety, read-only boundaries, explicit user waivers, "
+        "single-pass remediation with pre-edit selection, and workflow gates",
+        "clear inputs, owner, scope, and acceptance",
+        "bounded investigation or decision prerequisites before implementation",
+        "a fix plus its regression stays one leaf",
+        "detail only the active piece, its dependencies, and interfaces",
+        "Work depth-first: complete the active piece's applicable implementation, required independent result "
+        "challenge, and acceptance verification before opening the next dependent piece",
+        "Delegate useful dependency-ready siblings only with agreed stable interfaces and disjoint ownership",
+        "serialize coupled work, parent integration, and shared acceptance",
+        "the parent reconciles actual source, handover, and evidence",
+        "required source fixes, independent coverage, source-bound or live checks, and final project gates remain mandatory",
+    ):
+        assert obligation in policy, (plugin, obligation)
+    assert "An explicitly invoked iterative convergence workflow retains all its existing rules" in policy
 
 
 # ``Output Routing`` states the same obligations in two shapes: foundry inlines the terminal-print
@@ -189,7 +242,7 @@ def _delta_files() -> dict[str, Path]:
 
 
 def _delivered_text(plugin: str) -> str:
-    """Everything one plugin states about quality gates: its full rule plus its delta.
+    """Read each plugin's rule, explicitly bound proportional detail, and optional delta.
 
     Only one of the two is ever delivered, but both are the plugin's own statement of policy, so
     the rule set it must keep in step with its siblings is the union.
@@ -198,13 +251,41 @@ def _delivered_text(plugin: str) -> str:
         plugin: Plugin directory name.
 
     Returns:
-        The full rule's text, with the delta's appended when the plugin ships one.
+        The rule text, with mandatory bound detail and the plugin's delta appended where applicable.
     """
     text = _rule_files()[plugin].read_text(encoding="utf-8")
+    if plugin == "cc_foundry":
+        stub = _sections(text)["Proportional Execution"]
+        trigger = (
+            "Before planning or implementation, including small parent-owned tasks, resolve + Read "
+            "`_full/quality-gates.md` §Proportional Execution; its full policy binds as if inline."
+        )
+        if trigger in stub:
+            full = _rule_files()[plugin].parent / "_full" / RULE_NAME
+            body = _sections(full.read_text(encoding="utf-8"))["Proportional Execution"]
+            text = f"{text}\n## Proportional Execution\n\n{body}\n"
     delta = _delta_files().get(plugin)
     if delta is not None and delta.is_file():
         text = f"{text}\n{delta.read_text(encoding='utf-8')}"
     return text
+
+
+def test_foundry_proportional_detail_binds_before_planning_and_parent_execution() -> None:
+    """Keep the eager read mandatory before decisions, including routine parent-owned tasks."""
+    text = _rule_files()["cc_foundry"].read_text(encoding="utf-8")
+    stub = _sections(text)["Proportional Execution"]
+    trigger = (
+        "Before planning or implementation, including small parent-owned tasks, resolve + Read "
+        "`_full/quality-gates.md` §Proportional Execution; its full policy binds as if inline."
+    )
+    assert trigger in stub
+    assert stub.index(trigger) < stub.index("Validate bounded outcome")
+    assert "not needed for routine work" not in text
+    assert 'RULE_FULL="$(ls -td ' in text
+    assert (
+        "Plan → challenge → approve within existing authority → delegate/parent execution → parent consolidate" in stub
+    )
+    assert "Reuse accepted leaf plans; no repeated formal ceremony or new routine approval" in stub
 
 
 def test_every_plugin_ships_the_shared_rule_file() -> None:

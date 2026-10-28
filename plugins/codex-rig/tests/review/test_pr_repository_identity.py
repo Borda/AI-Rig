@@ -6,7 +6,7 @@ import copy
 import json
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import pytest
 from test_code_remediate_final_outcome_validation import VALIDATOR as REMEDIATION
@@ -89,6 +89,65 @@ def test_identity_receipts_isolate_nested_mutations(
     identity_receipts[0]["base_repo"] = "Different/Project"
     assert identity_receipts_template[1]["expected"]["repository"] == "example/widgets"
     assert identity_receipts_template[0]["base_repo"] == "Example/Widgets"
+
+
+@pytest.mark.parametrize("route", ["review", "remediation"])
+@pytest.mark.parametrize(
+    ("flags", "valid"),
+    [
+        pytest.param("", True, id="historical-command"),
+        pytest.param("--no-ext-diff --no-textconv ", True, id="current-command"),
+        pytest.param("--no-ext-diff ", False, id="partial-command"),
+        pytest.param("--no-textconv ", False, id="other-partial-command"),
+    ],
+)
+def test_diff_receipts_require_exact_historical_or_current_command(
+    identity_receipts: tuple, route: str, flags: str, valid: bool
+) -> None:
+    """Retain old receipts and accept the new command without admitting partial driver protections."""
+    routing, remote, target, checkout = identity_receipts
+    checkout["diff_command"] = f"git diff --binary {flags}{routing['base_oid']}...{routing['head_oid']} --"
+
+    def validate() -> None:
+        if route == "review":
+            REVIEW._validate_pr_diff_provenance(checkout, routing)
+        else:
+            REMEDIATION._validate_code_remediate_pr_identity(routing, remote, target, checkout)
+
+    if valid:
+        validate()
+    else:
+        with pytest.raises(SystemExit, match="diff-provenance-invalid"):
+            validate()
+
+
+@pytest.mark.parametrize("flags", ["", "--no-ext-diff --no-textconv "])
+def test_detached_review_diff_receipt_preserves_worktree_path(
+    tmp_path: Path, identity_receipts: tuple, flags: str
+) -> None:
+    """Git option text inside the worktree path must not change the command identity."""
+    routing, _remote, _target, checkout = identity_receipts
+    routing["checkout_method"] = "git-detached-review-worktree"
+    checkout["worktree"] = (tmp_path / "literal diff --binary directory").as_posix()
+    checkout["diff_command"] = (
+        f"git -C {checkout['worktree']} diff --binary {flags}{routing['base_oid']}...{routing['head_oid']} --"
+    )
+    REVIEW._validate_pr_diff_provenance(checkout, routing)
+
+
+@pytest.mark.installed_plugin
+def test_detached_review_preserves_windows_receipt_path(
+    identity_receipts: tuple, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Compare the recorded cross-host path without changing its separators."""
+    routing, _, _, checkout = identity_receipts
+    routing["checkout_method"] = "git-detached-review-worktree"
+    checkout["worktree"] = "C:/review/worktree"
+    checkout["diff_command"] = (
+        f"git -C C:/review/worktree diff --binary {routing['base_oid']}...{routing['head_oid']} --"
+    )
+    monkeypatch.setattr(REVIEW, "Path", PureWindowsPath)
+    REVIEW._validate_pr_diff_provenance(checkout, routing)
 
 
 @pytest.mark.installed_plugin

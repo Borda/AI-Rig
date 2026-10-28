@@ -78,7 +78,7 @@ def _generated_roster(
                 file_hash=hashlib.sha256(payload).hexdigest(),
             )
         )
-    return generator.GeneratedRoster(version, package_hash, BOOTSTRAP_HASH, 1, tuple(roles))
+    return generator.GeneratedRoster(version, package_hash, BOOTSTRAP_HASH, 2, tuple(roles))
 
 
 def _root_identity(path: str) -> dict[str, object]:
@@ -115,7 +115,7 @@ def _validated_state(roster: object, *, missing: set[str] | None = None) -> tupl
             else lifecycle.TargetObservation(
                 "regular",
                 old_hash,
-                lifecycle.Marker(INSTALL_ID, role.role_id, PACKAGE_HASH, role.role_hash),
+                lifecycle.Marker(INSTALL_ID, role.role_id, PACKAGE_HASH, role.role_hash, roster.generator_version),
             )
         )
     roster_preimage = [
@@ -138,7 +138,7 @@ def _validated_state(roster: object, *, missing: set[str] | None = None) -> tupl
             "helper_path": "scripts/verify_role_link.py",
             "helper_hash": BOOTSTRAP_HASH,
         },
-        "generator_version": 1,
+        "generator_version": roster.generator_version,
         "roles": state_roles,
         "transaction_status": "current",
     }

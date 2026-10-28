@@ -160,3 +160,39 @@ def test_calibration_rejects_a_copied_card_without_deduction_accounting(tmp_path
     assert run.checks_failed == ["confidence-policy"]
     assert run.fails == 1
     assert f"role-confidence-deductions-missing:{role}" in run.paths.leaks.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "tokens",
+    [
+        pytest.param(("result-template.json",), id="result-template"),
+        pytest.param(("helper-cli-contract",), id="helper-contract"),
+        pytest.param((".reports/codex/code-remediate/", "create_run.py --skill code-remediate"), id="run-location"),
+    ],
+)
+def test_skill_schema_checks_relocated_phase_obligations(tmp_path: Path, tokens: tuple[str, ...]) -> None:
+    """Accept a phase-loaded contract while still rejecting an obligation removed from its references."""
+    runner = _load_runner()
+    copied_skills = tmp_path / "skills"
+    shutil.copytree(PLUGIN_ROOT / "skills", copied_skills)
+    paths = runner.Paths.create("plugin", tmp_path)
+    paths.skills_dir = copied_skills
+    complete = runner.CalibrationRun(paths=paths)
+
+    runner.check_core_configs(complete)
+
+    assert "skill-schema-all" not in complete.checks_failed
+    for reference in (copied_skills / "code-remediate" / "references").glob("*.md"):
+        text = reference.read_text(encoding="utf-8")
+        for token in tokens:
+            text = text.replace(token, "removed-obligation")
+        reference.write_text(text, encoding="utf-8", newline="\n")
+    broken = runner.CalibrationRun(paths=runner.Paths.create("plugin", tmp_path))
+    broken.paths.skills_dir = copied_skills
+
+    runner.check_core_configs(broken)
+
+    assert "skill-schema-all" in broken.checks_failed
+    leaks = broken.paths.leaks.read_text(encoding="utf-8")
+    assert "missing:" in leaks
+    assert "code-remediate/SKILL.md" in leaks.replace("\\", "/")

@@ -184,10 +184,9 @@ def _expected_challenger_bytes(
     ]
     argv_json = json.dumps(argv, ensure_ascii=True, separators=(",", ":"))
     escaped_argv = argv_json.replace("\\", "\\\\").replace('"', '\\"')
-    text = f'''# codex-rig-shim schema=1 plugin=codex-rig install_id={INSTALL_ID} role_id=challenger package_hash=sha256:{manifest_hash} role_hash=sha256:{role["sha256"]} bootstrap=1 generator=1
+    text = f'''# codex-rig-shim schema=1 plugin=codex-rig install_id={INSTALL_ID} role_id=challenger package_hash=sha256:{manifest_hash} role_hash=sha256:{role["sha256"]} bootstrap=1 generator=2
 name = "codex-rig-challenger"
 description = "Thin linked Codex Rig challenger role; unavailable unless the current installed plugin verifies."
-model = "gpt-6.1-sol"
 model_reasoning_effort = "high"
 approval_policy = "on-request"
 sandbox_mode = "read-only"
@@ -256,7 +255,7 @@ def test_generation_is_exact_deterministic_and_round_trips_argv(tmp_path: Path) 
             (
                 "# codex-rig-shim schema=1 plugin=codex-rig "
                 f"install_id={INSTALL_ID} role_id={role_id} package_hash=sha256:{_digest(manifest_path)} "
-                f"role_hash=sha256:{role_records[role_id]['sha256']} bootstrap=1 generator=1\n"
+                f"role_hash=sha256:{role_records[role_id]['sha256']} bootstrap=1 generator=2\n"
             ).encode()
         )
         assert payload.endswith(b"\n")
@@ -285,7 +284,7 @@ def test_generated_roster_exposes_immutable_manager_identities(tmp_path: Path) -
     assert roster.plugin_version == manifest["version"]
     assert roster.package_hash == _digest(plugin_root / "package-manifest.json")
     assert roster.bootstrap_hash == manifest["bootstrap"]["sha256"]
-    assert roster.generator_version == manifest["generator"]["version"] == 1
+    assert roster.generator_version == manifest["generator"]["version"] == 2
     assert tuple(role.role_id for role in roster.roles) == ROLE_IDS
     for role in roster.roles:
         assert role.target_name == f"codex-rig-{role.role_id}.toml"

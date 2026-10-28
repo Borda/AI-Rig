@@ -1,0 +1,8 @@
+[
+  "Bash(gh api repos/*:*)",
+  "Bash(claude:*)",
+  "Bash(find:*)",
+  "Bash(node:*)",
+  "Bash(sed:*)",
+  "Bash(eval:*)"
+]

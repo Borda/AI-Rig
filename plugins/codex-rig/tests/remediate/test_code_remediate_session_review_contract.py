@@ -12,7 +12,9 @@ CODE_REMEDIATE_SKILL = PLUGIN_ROOT / "skills" / "code-remediate" / "SKILL.md"
 
 def test_report_discussion_stays_before_source_mutation_gates() -> None:
     """Keep accepted report discussion useful without pretending source remediation completed."""
-    skill = read_with_references(CODE_REMEDIATE_SKILL, "source-recovery.md")
+    skill = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md", "source-recovery.md"
+    )
     discussion = skill.split("## Report discussion after deferred source recovery", 1)[1].split("### 03:", 1)[0]
     for boundary in (
         "An admitted assessed report plus the user's accepted source deferral",
@@ -40,7 +42,9 @@ def test_session_review_shortcut_reuses_local_review_without_pr_refresh() -> Non
     A user who has just completed code review may deliberately remediate its artifact before checking online comments
     again. The shortcut must therefore select that assessed artifact in report mode and state its fail-closed boundary.
     """
-    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md"
+    )
     assert "$code-remediate review" in skill
     assert "`mode=report`" in skill
     assert "latest assessed `code-review` result created in the current session" in skill
@@ -56,7 +60,9 @@ def test_final_summary_includes_all_ingested_items_with_outcomes() -> None:
     A user needs to see the disposition of every review item, including rows skipped by their selection rather than only
     the unresolved work.
     """
-    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md"
+    )
     assert "Final Outcome Table" in skill
     assert "every ingested item" in skill
     assert "Implemented:" in skill
@@ -70,7 +76,9 @@ def test_final_summary_includes_all_ingested_items_with_outcomes() -> None:
 
 def test_visible_tables_use_compact_sources_without_dropping_details() -> None:
     """Keep selection and outcome tables readable without weakening the full ledger."""
-    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md"
+    )
     assert "Item | Severity | Finding | Sources | Outcome | Evidence / next action" in skill
     assert "Every source has one owning item" in skill
     assert "complete body" in skill
@@ -88,7 +96,9 @@ def test_visible_tables_use_compact_sources_without_dropping_details() -> None:
 
 def test_work_buckets_default_to_parallel_with_guarded_overlap() -> None:
     """Keep parallel remediation bounded without forcing parent-owned small scopes."""
-    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md"
+    )
     assert "Work Bucket Plan" in skill
     assert "at most five selected items" in skill
     assert "Plan parallel dispatch by default after selection" in skill
@@ -102,9 +112,9 @@ def test_work_buckets_default_to_parallel_with_guarded_overlap() -> None:
 
 def test_parallel_specialists_require_verified_production_lifecycle() -> None:
     """Prevent approved work buckets from masquerading as completed parallel writes."""
-    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8") + (
-        CODE_REMEDIATE_SKILL.parent / "references" / "parallel-lifecycle.md"
-    ).read_text(encoding="utf-8")
+    skill = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md"
+    ) + (CODE_REMEDIATE_SKILL.parent / "references" / "parallel-lifecycle.md").read_text(encoding="utf-8")
     assert "Production Parallel Lifecycle" in skill
     assert "`parallel-specialists` is planning-only until" in skill
     assert "`schema_version=2`" in skill
@@ -151,10 +161,12 @@ def test_parallel_preflight_does_not_require_future_implementation() -> None:
 
 def test_parallel_details_load_only_for_a_selected_parallel_route() -> None:
     """Keep optional production mechanics out of the parent-only instruction load."""
-    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md"
+    )
     reference = "references/parallel-lifecycle.md"
     assert "read [parallel-lifecycle.md]" in skill
-    assert reference in skill
+    assert "](parallel-lifecycle.md)" in skill
     assert "Only when evaluating or executing `parallel-specialists`" in skill
     assert "parent-owned and sequential routes do not load it" in skill
     assert "Only the parent may apply the integrated bundle" not in skill
@@ -170,7 +182,9 @@ def test_parallel_details_load_only_for_a_selected_parallel_route() -> None:
 
 def test_pr_preparation_parallelism_stops_at_verified_merge_barrier() -> None:
     """Allow only read-only preparation to overlap before merge disposition is joined."""
-    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md"
+    )
     preparation = skill.split("After successful remediation-mode collection", maxsplit=1)[1].split(
         "Write `<run-directory>/merge-prestage.md`", maxsplit=1
     )[0]
@@ -191,7 +205,9 @@ def test_pr_preparation_parallelism_stops_at_verified_merge_barrier() -> None:
 
 def test_scope_selection_question_keeps_options_with_visible_context() -> None:
     """Require the complete terminal table before one native control or a complete prose fallback."""
-    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md"
+    )
     scope_contract = skill.split("### Terminal Scope Context Contract", maxsplit=1)[1].split(
         "Record in `<run-directory>/resolution-scope.md`", maxsplit=1
     )[0]
@@ -228,7 +244,9 @@ def test_scope_selection_question_keeps_options_with_visible_context() -> None:
 
 def test_parallel_default_uses_workflow_selected_fallback_without_prompt() -> None:
     """Keep eligible parallel work default and record fallback without an approval prompt."""
-    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md"
+    )
     workplan_contract = skill.split("### 06: Build And Approve The Work Bucket Plan", maxsplit=1)[1].split(
         "### 07: Apply Fixes In Selected Scope", maxsplit=1
     )[0]
@@ -246,7 +264,9 @@ def test_parallel_default_uses_workflow_selected_fallback_without_prompt() -> No
 
 def test_parent_only_fallback_is_recorded_without_requesting_user_approval() -> None:
     """Require a concrete, evidence-checked workflow reason for fallback without a new prompt."""
-    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md"
+    )
     quality_gates = skill.split("## Quality Gates", maxsplit=1)[1].split("## Calibration Hooks", maxsplit=1)[0]
 
     assert "requires an approval question" in skill
@@ -260,7 +280,11 @@ def test_parent_only_fallback_is_recorded_without_requesting_user_approval() -> 
 def test_blocked_opening_requires_current_cause_and_recovery() -> None:
     """Prevent abstract blocked headlines despite an otherwise detailed ledger."""
     for path in (CODE_REMEDIATE_SKILL, PLUGIN_ROOT / "shared" / "final-handoff-code-remediate.md"):
-        contract = path.read_text(encoding="utf-8")
+        contract = (
+            read_with_references(path, "completion.md")
+            if path == CODE_REMEDIATE_SKILL
+            else path.read_text(encoding="utf-8")
+        )
         assert "Never use bare `Blocked`" in contract
         assert "Both `outcome.title` and `outcome.summary` must name the specific current blocker" in contract
         assert "cite current-run gate or unresolved-item evidence" in contract
@@ -270,7 +294,9 @@ def test_blocked_opening_requires_current_cause_and_recovery() -> None:
 
 def test_scope_validation_preserves_obligation_groups() -> None:
     """Keep downstream validation from reclassifying optional medium or required low items."""
-    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md"
+    )
     validation = skill.split("Validate before edit:", 1)[1].split("Each `out-of-scope`", 1)[0]
     assert "recorded obligation-based indexes" in validation
     assert "never recompute either group from severity" in validation
@@ -279,9 +305,23 @@ def test_scope_validation_preserves_obligation_groups() -> None:
     assert "selectable low items" not in validation
 
 
+def test_report_context_does_not_automatically_become_selectable_work() -> None:
+    """Keep review limitations visible without turning them into unsolicited work."""
+    selection = (CODE_REMEDIATE_SKILL.parent / "references" / "selection.md").read_text(encoding="utf-8")
+    choices = selection.split("Selectable items:", 1)[1].split("### Terminal Scope Context Contract", 1)[0]
+
+    assert "confirmed source defects or genuine project-required checks" in choices
+    assert "retain other report context as review limitations" in choices
+    assert "include report-origin failed checks, follow-ups, required next work, confidence gaps" not in choices
+    assert "Historical obligation version 1 still requires its original source-body coverage" in selection
+    assert "`context_sources` directly from original bytes" in selection
+
+
 def test_terminal_selection_omits_item_details_but_preserves_saved_evidence() -> None:
     """Keep selection compact without dropping table rows, relevance counts or durable evidence."""
-    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md"
+    )
     context = skill.split("### Terminal Scope Context Contract", 1)[1].split("### Upfront Decision Packet", 1)[0]
     assert "list each path as `- <item>: <file-path>`" in context
     assert "Then append `## PR Relevance Summary`" in context

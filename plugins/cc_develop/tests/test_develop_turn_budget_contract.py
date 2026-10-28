@@ -254,13 +254,101 @@ def test_review_depth_follows_impact_not_diff_size() -> None:
     assert "review_impact_tier.py" in skill
 
 
-@pytest.mark.parametrize("skill", ["feature", "fix", "refactor", "debug"])
-def test_challenger_gate_ignores_change_size(skill: str) -> None:
-    """The pre-implementation challenger runs at any change size unless the user passes --no-challenge.
-
-    Each gate once auto-skipped single-file changes under ~50 lines, which are exactly the small main-path edits that
-    carry the most hidden risk.
-    """
+@pytest.mark.parametrize("skill", ["feature", "fix", "refactor"])
+def test_implementation_challenge_is_independent_at_every_size(skill: str) -> None:
+    """Small work retains concise planning and self-challenge before accepted execution."""
     text = _read(f"{skill}/SKILL.md")
+    plan_gate = text.split("\n## Challenger gate\n", 1)[1].split("## Step 2", 1)[0]
+    result_gate = text.split("**Bounded independent implementation challenge**", 1)[1]
+    assert "Small work" in plan_gate
+    assert "parent self-challenge" in plan_gate
+    assert "accept the challenged plan" in plan_gate
+    assert "waives only the supplied plan artifact" in plan_gate
+    assert "not independent" in plan_gate
+    assert "bounded post-implementation challenge" in plan_gate
+    assert "one independent reviewer" in result_gate
+    assert "current scoped diff, task acceptance and relevant evidence" in result_gate
+    assert "do not claim the challenge passed" in result_gate
+    assert "Do not start another challenge or convergence loop automatically" in result_gate
+
+
+def test_debug_challenger_retains_its_diagnosis_gate() -> None:
+    """The read-only debugging workflow retains its independent hypothesis challenge."""
+    text = _read("debug/SKILL.md")
     assert "size never skips the gate" in text
     assert "auto-skip when" not in text
+
+
+def test_prepass_preserves_required_challenge_and_explicit_loops() -> None:
+    """Formatting and an unavailable bridge cannot silently satisfy a required independent challenge."""
+    text = _read("_shared/codex-prepass.md")
+    assert "formatting-only skip does not apply" in text
+    assert "another permitted independent route" in text
+    assert "only when the caller explicitly invokes an iterative loop" in text
+
+
+def test_feature_report_records_incomplete_single_pass() -> None:
+    """Unresolved findings or missing independent coverage cannot become a clean feature report."""
+    text = _read("feature/templates/report-templates.md")
+    assert "unresolved substantive issues or missing required independent coverage" in text
+    assert "[each unresolved substantive gap and missing evidence]" in text
+    assert "[actual stop reason and completed passes]" in text
+
+
+@pytest.mark.parametrize("skill", ["feature", "fix", "refactor"])
+def test_plan_challenge_resolves_authorized_findings_and_refreshes_hash(skill: str) -> None:
+    """Routine plan revisions must not create false drift or trigger automatic user approval."""
+    text = _read(f"{skill}/SKILL.md")
+    gate = text.split("\n## Challenger gate\n", 1)[1].split("## Step 2", 1)[0]
+    assert "Resolve feasible authorized blockers without asking" in gate
+    assert "protected decision or authority" in gate
+    assert "record the revised plan's hash" in gate
+    assert 'bin/plan_hash.py" record "$PLAN_FILE"' in gate
+    assert "Never re-record an unexplained or unauthorized change" in gate
+
+
+def test_standalone_plan_resolves_feasible_blockers_before_asking() -> None:
+    """Plan challenges ask only when they encounter a real decision or authority boundary."""
+    text = _read("plan/SKILL.md").split("## Step 4: Challenger gate", 1)[1].split("## Step 5", 1)[0]
+    assert "Resolve feasible authorized blockers without asking" in text
+    assert "protected decision or authority" in text
+    assert "explicit user wait" in text
+
+
+def test_debug_classification_hands_off_before_plan_and_challenge() -> None:
+    """Unknown causes route to diagnosis without creating a speculative implementation plan."""
+    text = _read("plan/SKILL.md")
+    route = text.split("**Debug classification handoff**", 1)[1].split("## Step 2: Structured plan", 1)[0]
+    assert "depth checkpoint" in route
+    assert "Write the plan anyway" in route
+    assert "skip Steps 2–5" in route
+    assert "/develop:debug" in route
+    assert "clear the skill contract" in route
+
+
+def test_plan_summary_reports_actual_review_coverage() -> None:
+    """A waived challenge or skipped feasibility review cannot appear as completed agent coverage."""
+    summary = _read("plan/SKILL.md").split("## Step 5: Final output", 1)[1]
+    assert "report skipped or unavailable coverage explicitly" in summary
+    assert "✓ agents ready" not in summary
+
+
+def test_fix_diagnosis_uses_the_proportional_challenge_decision() -> None:
+    """A diagnosis reuses root-cause evidence while retaining planning and explicit challenge waivers."""
+    text = _read("fix/SKILL.md")
+    diagnosis = text.split("## Fix Mode", 1)[1].split("## Flag parsing", 1)[0]
+    assert "apply the challenger gate's proportional decision" in diagnosis
+    assert "Do NOT skip challenger gate" not in diagnosis
+    assert "explicit user waivers" in diagnosis
+    assert "retaining concise planning and preimplementation challenge" in diagnosis
+    assert "Do not repeat still-valid root-cause investigation" in diagnosis
+
+
+def test_refactor_missing_stack_keeps_independent_challenge() -> None:
+    """A broken quality-stack install cannot silently skip result review or the final suite."""
+    text = _read("refactor/SKILL.md")
+    branch = text.split("Not found → skip quality stack entirely", 1)[1].split("**Final gate", 1)[0]
+    assert "still run the bounded independent implementation challenge" in branch
+    assert "unless explicitly waived" in branch
+    assert "record missing independent coverage" in branch
+    assert "run the final gate" in branch

@@ -99,7 +99,6 @@ def test_representative_skill_and_role_are_cache_portable() -> None:
     assert "../_shared/" not in skill
     for required in (
         "role_id: challenger",
-        "model: gpt-6.1-sol",
         "model_reasoning_effort: high",
         "approval_policy: on-request",
         "sandbox_mode: read-only",
@@ -111,6 +110,7 @@ def test_representative_skill_and_role_are_cache_portable() -> None:
         "## Confidence contract",
     ):
         assert required in role
+    assert not any(line.startswith("model:") for line in role.splitlines())
     assert "/Users/" not in skill + role
     assert "/home/" not in skill + role
     assert "plugins/codex-rig" not in skill + role
@@ -118,7 +118,6 @@ def test_representative_skill_and_role_are_cache_portable() -> None:
     package_manifest = json.loads((PLUGIN_ROOT / "package-manifest.json").read_text(encoding="utf-8"))
     role_entry = package_manifest["roles"][0]
     assert role_entry["runtime"] == {
-        "model": "gpt-6.1-sol",
         "model_reasoning_effort": "high",
         "approval_policy": "on-request",
         "sandbox_mode": "read-only",
@@ -305,7 +304,7 @@ def test_verifier_rejects_plugin_manifest_content_not_bound_by_package_manifest(
     assert CARD_SEPARATOR not in result.stdout
 
 
-@pytest.mark.parametrize("schema", [pytest.param(None, id="missing"), 2])
+@pytest.mark.parametrize("schema", [pytest.param(None, id="missing"), 3])
 @_requires_posix_descriptors
 @pytest.mark.packaging
 def test_verifier_rejects_unsupported_package_schema(tmp_path: Path, schema: int | None) -> None:

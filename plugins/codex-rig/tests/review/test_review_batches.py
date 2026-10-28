@@ -977,6 +977,7 @@ def _build_batches(
         routing = json.loads((run / "review-routing.json").read_text(encoding="utf-8"))
         routing["signals"]["axis_" + advisor.replace("-", "_")] = True
         routing["triggered_roles"].append(advisor)
+        routing["triggered_roles"].sort()
         routing["trigger_reasons"][advisor] = ["Explicit advisory selection."]
         routing["sol_selection"] = {
             advisor: {
@@ -1207,7 +1208,7 @@ def test_bounded_final_union_retains_early_adverse_part(tmp_path: Path, monkeypa
         run,
         manifest,
         manifest["passes"],
-        {"challenger", "qa-specialist"},
+        {"challenger", "qa-specialist", "sw-engineer"},
         home,
         "parent",
         tmp_path,
@@ -1397,7 +1398,7 @@ def test_batches_reconstruct_large_complete_unicode_source(tmp_path: Path) -> No
     assert result.returncode == 0, result.stderr
     summary = json.loads(result.stdout)
     assert Path(summary["dispatch_path"]) == run / "batch-dispatch.json"
-    assert summary["roles"] == 2
+    assert summary["roles"] == 3
     assert not (run / "inspection-plan.json").exists()
     assert not (run / "dispatch.json").exists()
     inventory = json.loads((run / "batch-inventory.json").read_text(encoding="utf-8"))
@@ -1486,18 +1487,18 @@ def test_aggregate_admits_every_native_wave_and_interaction_output(tmp_path: Pat
         run,
         manifest,
         manifest["passes"],
-        {"challenger", "qa-specialist"},
+        {"challenger", "qa-specialist", "sw-engineer"},
         home,
         "parent",
         tmp_path,
         require_role_card_receipts=True,
     )
-    assert set(by_role) == {"challenger", "qa-specialist"}
+    assert set(by_role) == {"challenger", "qa-specialist", "sw-engineer"}
     retained = validator._validate_manifest_entries(
         run,
         manifest,
         manifest["passes"],
-        {"challenger", "qa-specialist"},
+        {"challenger", "qa-specialist", "sw-engineer"},
         home,
         "parent",
         tmp_path,
@@ -1528,7 +1529,9 @@ def test_aggregate_admits_each_native_wave_once(tmp_path: Path, monkeypatch: pyt
         return original(*args, **kwargs)
 
     monkeypatch.setattr(validate_artifacts, "_validate_review_runtime", counted_runtime)
-    summary = review_batches.validate_aggregate(run, manifest, {"challenger", "qa-specialist"}, home, "parent")
+    summary = review_batches.validate_aggregate(
+        run, manifest, {"challenger", "qa-specialist", "sw-engineer"}, home, "parent"
+    )
     assert summary == json.loads((run / "inspection-summary.json").read_text(encoding="utf-8"))
     assert len(calls) == len(manifest["batch_execution"]["waves"])
 
@@ -1810,6 +1813,7 @@ def test_batch_wave_preserves_explicit_advisor_selection(tmp_path: Path, role: s
     routing = json.loads((run / "review-routing.json").read_text(encoding="utf-8"))
     routing["signals"]["axis_" + role.replace("-", "_")] = True
     routing["triggered_roles"].append(role)
+    routing["triggered_roles"].sort()
     routing["trigger_reasons"][role] = ["Explicit advisory selection."]
     selection = {
         role: {"source": "explicit-user-selection", "parent_event_id": "user-selection", "selection_sha256": "a" * 64}
@@ -2163,7 +2167,7 @@ def test_complete_result_rejects_lost_findings_from_every_successful_phase(
         },
         "reviewer_assessments": [
             {"role": validator._readable_review_role(item["role"]), "rating": 1, "evidence": item["output_path"]}
-            for item in manifest["passes"]
+            for item in sorted(manifest["passes"], key=lambda item: item["role"] != "sw-engineer")
         ],
         "specialist_passes": manifest["passes"],
         "specialist_manifest": "specialist-manifest.json",
@@ -2313,7 +2317,7 @@ def _canonical_report(
                 ),
                 "evidence": item["output_path"],
             }
-            for item in manifest["passes"]
+            for item in sorted(manifest["passes"], key=lambda item: item["role"] != "sw-engineer")
         ],
         "specialist_passes": manifest["passes"],
         "specialist_manifest": "specialist-manifest.json",
@@ -3596,3 +3600,152 @@ def test_local_source_gate_evidence_reaches_ordinary_confidence_intake(tmp_path:
     with pytest.raises(LookupError, match="local-confidence-tests-artifact-invalid"):
         finder.require_assessed_review_result(path, codex_home=home, parent_thread_id="parent")
     (run / "checks/tests.stdout.txt").write_bytes(original_log)
+
+
+@pytest.mark.integration
+def test_batch_fragment_admission_retry_preserves_unfrozen_run(tmp_path: Path) -> None:
+    """Reject a later unapproved fragment before freezing anything, then accept an exact authorized retry."""
+    control = _batch_inputs(tmp_path / "control")
+    run = _batch_inputs(tmp_path / "retry")
+    neutral = "fx-" + "c" * 24
+    fixture = "sk-" + "c" * 24
+    for directory, marker in ((control, neutral), (run, fixture)):
+        for role in ("challenger", "qa-specialist", "sw-engineer"):
+            evidence = directory / f"{role}-evidence.md"
+            evidence.write_bytes(evidence.read_bytes() + b"Additional context.\n" * 4500 + marker.encode() + b"\n")
+    prepared = _batch_command(control, "prepare", source_only=True)
+    assert prepared.returncode == 0, prepared.stderr
+    _, batches = _batch_producer()
+    inventory = batches.validate_inventory(control)
+    assert inventory["wave_count"] > 1
+    full_contexts = {}
+    fragments = []
+    for role, segments in inventory["segments"].items():
+        original = (control / "source-contexts" / f"{role}.md").read_bytes()
+        full = original.replace(neutral.encode(), fixture.encode())
+        assert full.count(fixture.encode()) == 1
+        full_contexts[role] = full
+        for index, segment in enumerate(segments, 1):
+            context = (control / "batches" / f"source-{index:03d}" / "specialists" / f"{role}-context.md").read_bytes()
+            if neutral.encode() not in context:
+                continue
+            assert index > 1
+            assert segment["end"] == len(full)
+            fragments.append(
+                context.replace(neutral.encode(), fixture.encode()).replace(
+                    hashlib.sha256(original).hexdigest().encode(), hashlib.sha256(full).hexdigest().encode()
+                )
+            )
+    assert len(fragments) == len(full_contexts)
+
+    def admission(content: bytes) -> dict[str, object]:
+        """Declare approval for this exact synthetic occurrence without changing the scanner."""
+        text = content.decode("utf-8")
+        start = text.index(fixture)
+        return {
+            "input_sha256": hashlib.sha256(content).hexdigest(),
+            "match_start": start,
+            "match_end": start + len(fixture),
+            "match_sha256": hashlib.sha256(fixture.encode()).hexdigest(),
+            "approval_evidence": "Parent approved this exact inert test fixture input.",
+            "rationale": "Synthetic fixture without credential authority.",
+        }
+
+    routing_path = run / "review-routing.json"
+    routing = json.loads(routing_path.read_bytes())
+    routing["inert_fixture_admissions"] = [admission(content) for content in full_contexts.values()]
+    routing_path.write_text(json.dumps(routing), encoding="utf-8", newline="\n")
+    rejected = _batch_command(run, "prepare", source_only=True)
+    assert rejected.returncode != 0
+    assert "review-context-sensitive-material:" in rejected.stderr
+    for name in ("batch-inventory.json", "batch-dispatch.json", "source-contexts", "role-cards", "batches"):
+        assert not (run / name).exists(), name
+    routing["inert_fixture_admissions"].extend(admission(content) for content in fragments)
+    routing_path.write_text(json.dumps(routing), encoding="utf-8", newline="\n")
+    retried = _batch_command(run, "prepare", source_only=True)
+    assert retried.returncode == 0, retried.stderr
+    admitted = batches.validate_inventory(run)
+    assert admitted["plan"]["inert_fixture_admissions"] == routing["inert_fixture_admissions"]
+    for role, content in full_contexts.items():
+        assert (run / "source-contexts" / f"{role}.md").read_bytes() == content
+    actual_fragments = {
+        path.read_bytes()
+        for path in (run / "batches").glob("source-*/specialists/*-context.md")
+        if fixture.encode() in path.read_bytes()
+    }
+    assert actual_fragments == set(fragments)
+
+
+@pytest.mark.integration
+def test_batch_fragment_requires_its_own_fixture_admission(tmp_path: Path) -> None:
+    """A full-context approval cannot silently authorize a changed native wave fragment."""
+    run = _batch_inputs(tmp_path)
+    _in_process_step(run, "prepare", source_only=True)
+    _, batches = _batch_producer()
+    _, validator = batches._helpers()
+    inventory = batches.validate_inventory(run)
+    role = "challenger"
+    fixture = "sk-" + "c" * 24
+    full = (run / "source-contexts" / f"{role}.md").read_text(encoding="utf-8") + "\n" + fixture
+    card = (run / "role-cards" / role / "ROLE.md").read_text(encoding="utf-8")
+    fragment = card + "\nWave fragment:\n" + fixture + "\n"
+
+    def admission(text: str) -> dict[str, object]:
+        """Bind approval to this complete input and its exact synthetic match."""
+        start = text.index(fixture)
+        return {
+            "input_sha256": hashlib.sha256(text.encode()).hexdigest(),
+            "match_start": start,
+            "match_end": start + len(fixture),
+            "match_sha256": hashlib.sha256(fixture.encode()).hexdigest(),
+            "approval_evidence": "Parent approved this inert test fixture.",
+            "rationale": "Synthetic fixture without credential authority.",
+        }
+
+    plan = dict(inventory["plan"], inert_fixture_admissions=[admission(full)])
+    cards = {role: validator._load_role_card(validator.PLUGIN_ROOT / "roles", role)}
+    wave = run / "batches" / "fixture-wave"
+    with pytest.raises(ValueError, match="review-context-sensitive-material:challenger"):
+        batches._write_wave(wave, plan, {role: fragment.encode()}, cards)
+    plan["inert_fixture_admissions"].append(admission(fragment))
+    batches._write_wave(wave, plan, {role: fragment.encode()}, cards)
+    frozen = json.loads((wave / "inspection-plan.json").read_bytes())
+    validator.validate_inspection_contexts(frozen, wave / "inspection-plan.json", context_limit=None)
+    frozen["inert_fixture_admissions"][1]["match_end"] += 1
+    with pytest.raises((SystemExit, ValueError), match="sensitive"):
+        validator.validate_inspection_contexts(frozen, wave / "inspection-plan.json", context_limit=None)
+    frozen["inert_fixture_admissions"][1] = admission(fragment)
+    context_path = wave / "specialists" / f"{role}-context.md"
+    context_path.write_text(fragment + "changed\n", encoding="utf-8", newline="\n")
+    with pytest.raises((SystemExit, ValueError), match=r"(sensitive|hash|changed)"):
+        validator.validate_inspection_contexts(frozen, wave / "inspection-plan.json", context_limit=None)
+
+
+@pytest.mark.parametrize("route", ["batch", "paged"])
+def test_batch_source_with_instruction_literals_is_byte_exact(tmp_path: Path, route: str) -> None:
+    """Instruction normalization must never rewrite source or its matching Git patch."""
+    literals = [
+        "Rating scale: 1 Approve, 2 Minor changes, 3 Changes required, 4 Insufficient evidence, 5 Block / Reject.",
+        "`Rating: <integer>` and `Rationale: <explanation>`",
+        "`Rating: <integer>` and `Rationale: <one-line explanation>`",
+    ]
+    fixture_source = "\n".join(f"literal_{index} = {value!r}" for index, value in enumerate(literals)) + "\n"
+    run = preparation._build_review_inputs(tmp_path, fixture_source=fixture_source)
+    result = preparation._prepare(run, batches=route == "batch")
+    assert result.returncode == 0, result.stderr
+    snapshot = json.loads((run / "local-source/source-snapshot.json").read_text(encoding="utf-8"))
+    record = next(item for item in snapshot["files"] if item["path"] == "widget.py")
+    source = record["content"].encode("utf-8")
+    diff = (run / "diff.patch").read_bytes()
+    assert fixture_source.encode() in source
+    roles = json.loads((run / "review-briefs.json").read_text(encoding="utf-8"))
+    for role in roles:
+        context = (
+            run
+            / ("source-contexts" if route == "batch" else "specialists")
+            / (f"{role}.md" if route == "batch" else f"{role}-context.md")
+        ).read_bytes()
+        assert source in context
+        assert diff in context
+        assert b"Source rating version: 1" in context
+        assert b"Verification readiness: <complete|blocked|incomplete>" in context

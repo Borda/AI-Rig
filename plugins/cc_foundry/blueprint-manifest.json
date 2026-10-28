@@ -872,10 +872,6 @@
       "kind": "command",
       "src": "skills/setup/SKILL.md:317"
     },
-    "306340167ae4231f822442c2fda8022d0e5a373c3c9db079e0badc163e952d8c": {
-      "kind": "command",
-      "src": "skills/setup/SKILL.md:185"
-    },
     "30865fc8212cad617e3c6fe5f7a4e5588ab89ec79e0ee19f15c6d57ffc094942": {
       "kind": "block",
       "src": "skills/audit/templates/checks-shared.md:374"
@@ -1472,6 +1468,10 @@
       "kind": "command",
       "src": "skills/audit/templates/checks-setup.md:191"
     },
+    "5388e7ea620cc8c45963edbf1690c2bf89e572981b6db61f5033386a4e5f8c7c": {
+      "kind": "command",
+      "src": "skills/setup/SKILL.md:185"
+    },
     "53894800fa77973f1b53a19a857d141b78a2f4c498fe05a6aa7c7c9a3e154637": {
       "kind": "command",
       "src": "agents/perf-optimizer.md:288"
@@ -1722,7 +1722,7 @@
     },
     "5f7f572eaddc7649a92f7caac61646e84e068b7b55c0c915e76b64b06b25a262": {
       "kind": "block",
-      "src": "rules/debugging.md:23"
+      "src": "rules/debugging.md:22"
     },
     "5f83ff6f28527fa90761145c31a77b92ed8b5ad18af600c004fa1eb6804bef13": {
       "kind": "command",
@@ -1751,10 +1751,6 @@
     "60b6fec6792e127d70fbbca357dcfc8e88bd9ce150d86bc6a7aa863e88c0dab0": {
       "kind": "command",
       "src": "skills/setup/SKILL.md:365"
-    },
-    "60bf4584379d66fe2623ccdd3753e904c93762c2a3dec691e87010feedbd4e56": {
-      "kind": "block",
-      "src": "skills/setup/SKILL.md:185"
     },
     "60f9d8c62c3f64429b30064d389bb60bf838abe53baa8e1b15b16b33d373e301": {
       "kind": "command",
@@ -3572,6 +3568,10 @@
       "kind": "command",
       "src": "agents/qa-specialist.md:230"
     },
+    "c4c281dddbaa4df763d1b8782b790aac54c1802c12508135b206b008337de961": {
+      "kind": "block",
+      "src": "skills/setup/SKILL.md:185"
+    },
     "c4cb1fec5781f53898c94e8d4c1e6172423b2cdfdd3ec0803297b338b4419ae5": {
       "kind": "command",
       "src": "skills/audit/SKILL.md:155"
@@ -4569,6 +4569,6 @@
       "src": "skills/audit/templates/checks-skills-gaps.md:49"
     }
   },
-  "plugin": "cc_foundry@0.73.0",
+  "plugin": "cc_foundry@0.74.0",
   "schema": 1
 }

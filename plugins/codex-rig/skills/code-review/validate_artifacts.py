@@ -12,6 +12,8 @@ specialist outputs it claims to use.
 reads a completed local review artifact and rejects contract violations; it neither collects GitHub data nor performs a
 source-code review itself. Validation covers normal reviewed results, explicitly unavailable-review results, and
 proposal-level close results, including path containment and provenance checks for referenced files.
+Assessed direct reviews require complete assigned source inspection even when executable checks remain blocked;
+manifest-only validation retains honest missing-source evidence for recovery without certifying a completed review.
 
 ## Usage
 
@@ -53,7 +55,7 @@ import json
 import os
 import re
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, NamedTuple
 
 #: Keep the installed skill helper importable when pytest loads this validator by file path.
@@ -81,9 +83,11 @@ from codemap_adapter import provider_rejected_input as codemap_provider_rejected
 from codemap_adapter import read_diff_text as codemap_read_diff_text  # noqa: E402
 from codemap_adapter import reduce_status as codemap_reduce_status  # noqa: E402
 from codemap_adapter import unquote_git_path as codemap_unquote_git_path  # noqa: E402
+from collect_diff import canonical_diff_arguments, diff_sections  # noqa: E402
 from collect_pr import dirty_path_record_is_consistent  # noqa: E402
 from local_reviewer_wave import ReviewRouteError as ReviewRouteError  # noqa: E402
 from parallel_execution import _SECRET_PATTERNS as _SECRET_PATTERNS  # noqa: E402
+from parallel_execution import review_input_has_sensitive_material as review_input_has_sensitive_material  # noqa: E402
 from parallel_execution import validate_inspection_contexts as validate_inspection_contexts  # noqa: E402
 from parallel_execution import validate_read_only_runtime as validate_read_only_runtime  # noqa: E402
 from review_context import context_pages as context_pages  # noqa: E402
@@ -110,6 +114,7 @@ from review_execution_validation import _closure_shape_repair as _closure_shape_
 from review_execution_validation import _event_payloads as _event_payloads  # noqa: E402
 from review_execution_validation import _find_rollout as _find_rollout  # noqa: E402
 from review_execution_validation import _finding_id_namespace_repair as _finding_id_namespace_repair  # noqa: E402
+from review_execution_validation import _inherited_parent_model as _inherited_parent_model  # noqa: E402
 from review_execution_validation import _inspection_child_called_tool as _inspection_child_called_tool  # noqa: E402
 from review_execution_validation import _joined_terminal_result as _joined_terminal_result  # noqa: E402
 from review_execution_validation import _joined_terminal_timestamp as _joined_terminal_timestamp  # noqa: E402
@@ -137,6 +142,7 @@ from review_execution_validation import _retained_reviewer_rating as _retained_r
 from review_execution_validation import _sha256 as _sha256  # noqa: E402
 from review_execution_validation import _text_reviewer_assessment as _text_reviewer_assessment  # noqa: E402
 from review_execution_validation import _validate_context_read as _validate_context_read  # noqa: E402
+from review_execution_validation import _validate_direct_review as _validate_direct_review  # noqa: E402
 from review_execution_validation import _validate_inspection_plan as _validate_inspection_plan  # noqa: E402
 from review_execution_validation import (  # noqa: E402
     _validate_instruction_bounded_review as _validate_instruction_bounded_review,
@@ -147,7 +153,7 @@ from review_execution_validation import _validate_spawn_attempts as _validate_sp
 from review_execution_validation import (  # noqa: E402
     validate_local_reviewer_evidence as validate_local_reviewer_evidence,
 )
-from review_routing import ROUTING_SIGNALS, derive_mechanical_risk  # noqa: E402
+from review_routing import ROUTING_SIGNALS, derive_mechanical_risk, literal_patch_paths, read_review_paths  # noqa: E402
 from run_gates import (  # noqa: E402
     _aggregate_worker_proofs,
     _local_snapshot_bytes,
@@ -212,7 +218,7 @@ ALL_MANIFEST_ROLES = {
 INDEPENDENT_PASS_TIERS = {"BROAD", "HIGH_RISK"}
 #: Execution modes a specialist pass may record.
 VALID_MODES = {"spawned", "substituted", "app-server", "inspection"}
-#: Roles that need a recorded explicit user selection of the Sol model when routed.
+#: Advisory roles that require a recorded explicit user selection when routed.
 SOL_ROLES = {"solution-architect", "security-auditor"}
 #: Three lines of the note written when PR review is unavailable, stating that nothing was assessed or decided.
 UNAVAILABLE_NOTE_LINES = (
@@ -244,7 +250,7 @@ UNAVAILABLE_METADATA_KEYS = {
 }
 #: Artifact names that must not exist when review is unavailable, as source review never ran.
 UNAVAILABLE_FORBIDDEN_ARTIFACTS = {"local-checkout.json", "specialist-manifest.json"}
-#: The only confidence gap text an unavailable-review result may report.
+#: Historical confidence gap text for unavailable-review results.
 UNAVAILABLE_CONFIDENCE_GAP = (
     "Core PR source verification did not complete; no source review or merge decision was made."
 )
@@ -402,7 +408,7 @@ WORKTREE_FAILURE_RECOVERY_ACTIONS = {
 
 
 def _validate_sol_selections(payload: dict[str, Any], roles: set[str], *, label: str) -> dict[str, dict[str, str]]:
-    """Validate immutable explicit-user-selection records for every routed Sol role."""
+    """Validate immutable explicit-user-selection records for each restricted advisory role."""
     selected_roles = SOL_ROLES & roles
     raw_selections = payload.get("sol_selection")
     if not selected_roles:
@@ -467,12 +473,6 @@ def _validate_routing(out_dir: Path, risk_tier: str) -> set[str]:
         raise SystemExit("review-routing-risk-tier-mismatch")
     mechanical_tier, mechanical_evidence, mandatory_signals = derive_mechanical_risk(out_dir)
     tier_rank = {"TRIVIAL": 0, "LOCAL": 1, "BROAD": 2, "HIGH_RISK": 3}
-    if tier_rank[risk_tier] < tier_rank[mechanical_tier]:
-        raise SystemExit(f"review-routing-tier-underclassified:{mechanical_tier}:{risk_tier}")
-    if routing.get("mechanical_risk_tier") != mechanical_tier:
-        raise SystemExit("review-routing-mechanical-tier-mismatch")
-    if routing.get("mechanical_risk_evidence") != mechanical_evidence:
-        raise SystemExit("review-routing-mechanical-evidence-mismatch")
     signals = routing.get("signals")
     if not isinstance(signals, dict) or set(signals) != ROUTING_SIGNALS:
         raise SystemExit("review-routing-signal-set-mismatch")
@@ -486,18 +486,18 @@ def _validate_routing(out_dir: Path, risk_tier: str) -> set[str]:
         for value in signal_evidence.values()
     ):
         raise SystemExit("review-routing-signal-evidence-empty")
-    missing_mandatory = sorted(signal for signal in mandatory_signals if not signals[signal])
-    if missing_mandatory:
-        raise SystemExit("review-routing-mechanical-signals-false:" + ",".join(missing_mandatory))
-
+    # Derive the complete required roster before rejecting a tier/signal mismatch, so one repair sees its dependents.
+    # These effective values describe requirements only; authored inputs must still satisfy every check below.
+    required_tier = max((risk_tier, mechanical_tier), key=tier_rank.__getitem__)
+    required_signals = {name: signals[name] or name in mandatory_signals for name in ROUTING_SIGNALS}
     triggered: set[str] = set()
     # Source paths select the primary code reviewer; test modules remain QA's review surface.
     for filename in ("files.txt", "untracked.txt"):
         changed_file = out_dir / filename
         if not changed_file.exists():
             continue
-        for raw_path in changed_file.read_text(encoding="utf-8").splitlines():
-            parts = raw_path.strip().replace("\\", "/").lower().split("/")
+        for raw_path in read_review_paths(out_dir, filename):
+            parts = raw_path.replace("\\", "/").lower().split("/")
             name = parts[-1]
             if (
                 name.endswith((".py", ".pyi"))
@@ -508,14 +508,14 @@ def _validate_routing(out_dir: Path, risk_tier: str) -> set[str]:
                 break
         if "sw-engineer" in triggered:
             break
-    if risk_tier in INDEPENDENT_PASS_TIERS:
+    if required_tier in INDEPENDENT_PASS_TIERS:
         triggered.update(REQUIRED_ROLES)
-    if risk_tier in {"TRIVIAL", "LOCAL"} and any(
-        signals[name] for name in ("behavior_change", "bug_fix", "test_or_error_path", "data_tensor_boundary")
+    if required_tier in {"TRIVIAL", "LOCAL"} and any(
+        required_signals[name] for name in ("behavior_change", "bug_fix", "test_or_error_path", "data_tensor_boundary")
     ):
         triggered.add("qa-specialist")
-    if risk_tier in {"TRIVIAL", "LOCAL"} and any(
-        signals[name]
+    if required_tier in {"TRIVIAL", "LOCAL"} and any(
+        required_signals[name]
         for name in (
             "high_candidate",
             "unresolved_material_assumption",
@@ -524,13 +524,33 @@ def _validate_routing(out_dir: Path, risk_tier: str) -> set[str]:
         )
     ):
         triggered.add("challenger")
-    triggered.update(role for role, signal in CONDITIONAL_SIGNALS.items() if signals[signal])
+    triggered.update(role for role, signal in CONDITIONAL_SIGNALS.items() if required_signals[signal])
+
+    mechanical_repair = (
+        f"\nMechanical requirements: minimum risk_tier={mechanical_tier}; "
+        f"mandatory signals={','.join(sorted(mandatory_signals)) or 'none'}; "
+        f"required roles={','.join(sorted(triggered)) or 'none'}. "
+        "Reconcile risk_tier, signals, signal_evidence, triggered_roles, trigger_reasons and review-briefs.json "
+        "together against collected source before retrying. "
+        "Keep stronger semantic risk and explicit-user-selection requirements; do not invent evidence or briefs."
+    )
+    if tier_rank[risk_tier] < tier_rank[mechanical_tier]:
+        raise SystemExit(f"review-routing-tier-underclassified:{mechanical_tier}:{risk_tier}" + mechanical_repair)
+    if routing.get("mechanical_risk_tier") != mechanical_tier:
+        raise SystemExit("review-routing-mechanical-tier-mismatch")
+    if routing.get("mechanical_risk_evidence") != mechanical_evidence:
+        raise SystemExit("review-routing-mechanical-evidence-mismatch")
+    missing_mandatory = sorted(signal for signal in mandatory_signals if not signals[signal])
+    if missing_mandatory:
+        raise SystemExit("review-routing-mechanical-signals-false:" + ",".join(missing_mandatory) + mechanical_repair)
 
     _validate_sol_selections(routing, triggered, label="review-routing-sol-selection")
 
     declared = routing.get("triggered_roles")
     if not isinstance(declared, list) or declared != sorted(triggered):
-        raise SystemExit("review-routing-triggered-role-mismatch")
+        raise SystemExit(
+            "review-routing-triggered-role-mismatch:expected=" + ",".join(sorted(triggered)) + mechanical_repair
+        )
     reasons = routing.get("trigger_reasons")
     if not isinstance(reasons, dict) or set(reasons) != triggered:
         raise SystemExit("review-routing-trigger-reason-mismatch")
@@ -664,8 +684,14 @@ def _validate_reviewer_assessments(
     passes_by_role: dict[str, dict[str, Any]],
     *,
     batch_response: bool = False,
+    direct_coverage: dict[str, Any] | None = None,
 ) -> None:
-    """Bind each supplied assessment to a validated reviewer and retained output."""
+    """Bind assessments to retained output without certifying uninspected assigned source.
+
+    A direct review can finish source inspection while executable checks remain blocked or incomplete. Missing
+    assigned source is different: preserve it in manifest preflight for recovery, but reject an assessed result
+    regardless of the parent's readiness label.
+    """
     assessments = metadata.get("reviewer_assessments")
     if not isinstance(assessments, list) or not assessments:
         raise SystemExit("review-assessments-invalid")
@@ -693,7 +719,13 @@ def _validate_reviewer_assessments(
             raise SystemExit("review-assessment-role-duplicate")
         seen.add(label)
         if label not in expected and label != "main reviewer":
-            raise SystemExit(f"review-assessment-role-unbound:{assessment['role']}")
+            labels = ", ".join(
+                _readable_review_role(role) + (" (parent substitute)" if item["mode"] == "substituted" else "")
+                for role, item in expected.values()
+            )
+            raise SystemExit(
+                f"review-assessment-role-unbound:{assessment['role']}; expected: {labels}; optional: Main reviewer"
+            )
         pointer = assessment.get("evidence")
         if not isinstance(pointer, str):
             raise SystemExit(f"review-assessment-evidence-invalid:{assessment['role']}")
@@ -733,6 +765,14 @@ def _validate_reviewer_assessments(
         if label not in seen:
             raise SystemExit(f"review-assessment-role-missing:{role}")
     if metadata.get("review_validation") is not None:
+        if direct_coverage is not None:
+            # Direct specialists inspect source; the parent owns subsequent executable checks. Keep their original
+            # assessments, but do not turn checks the parent has since completed into a permanent readiness floor.
+            if set(direct_coverage) != set(passes_by_role):
+                raise SystemExit("review-direct-coverage-role-mismatch")
+            if any(item["missing"] for item in direct_coverage.values()):
+                raise SystemExit("review-direct-missing-source-cannot-complete")
+            return
         # Aggregate selection cannot erase an earlier source or interaction review's unfinished checks.
         manifest_path = out_dir / "specialist-manifest.json"
         manifest = _load_json(manifest_path) if batch_response and manifest_path.is_file() else {}
@@ -883,7 +923,12 @@ def _validate_candidate_source(out_dir: Path, metadata: dict[str, Any]) -> None:
             head = _load_json(path).get("head_oid")
             if isinstance(head, str) and re.fullmatch(r"[0-9a-f]{40}", head):
                 identities.add(f"head:{head}")
-    for name in ("local-source/source-snapshot.json", "batch-inventory.json", "inspection-plan.json"):
+    for name in (
+        "local-source/source-snapshot.json",
+        "batch-inventory.json",
+        "inspection-plan.json",
+        "direct-plan.json",
+    ):
         path = out_dir / name
         if path.is_file() and not path.is_symlink():
             identities.add(f"sha256:{_sha256(path)}")
@@ -1105,11 +1150,9 @@ def _validate_action_table(notes_path: Path, result: dict[str, Any], metadata: d
 def _validate_unavailable_result(
     out_dir: Path, result: dict[str, Any], metadata: dict[str, Any], scope: str, *, require_deductions: bool = False
 ) -> None:
-    """Validate terminal collection failure with complete historical or deduction text.
+    """Validate terminal collection failure and bounded report-confidence judgments.
 
-    Keep canonical gap identity and process evidence exact; admit the new accounting profile only when its closure and
-    overlapping limit carry consistent deductions. Fresh candidates require that profile; canonical historical results
-    remain readable.
+    Current handoffs use the report-confidence profile; older presentations retain the historical fixed-score reader.
     """
     if scope != "pr":
         raise SystemExit("unavailable-review-non-pr-scope")
@@ -1176,6 +1219,90 @@ def _validate_unavailable_result(
     )
     if notes.strip() != expected_notes:
         raise SystemExit("unavailable-review-notes-must-be-operational-only")
+    recovery = metadata.get("confidence_recovery")
+    claim = "Confidence assesses the correctness of this failure report and its production and checks; the score is a subjective judgment."
+    if (
+        isinstance(recovery, dict)
+        and isinstance(recovery.get("evidence"), list)
+        and recovery["evidence"][:1] == [claim]
+    ):
+        score = result.get("confidence")
+        if type(score) not in (int, float) or not 0 <= score <= 1 or abs(round(score, 2) - score) > 1e-9:
+            raise SystemExit("unavailable-review-judged-confidence-invalid")
+        gaps = metadata.get("confidence_gaps")
+        closures = metadata.get("confidence_gap_closures")
+        if not isinstance(gaps, list) or not isinstance(closures, list) or len(gaps) != len(closures):
+            raise SystemExit("unavailable-review-judged-confidence-invalid")
+        categories = {
+            "No command-failure.json was retained.": (
+                not (out_dir / "command-failure.json").exists(),
+                "No command-failure.json was retained; pr-error.txt records the classification. Other diagnostics may exist.",
+            ),
+            "Checkout state is changed or unknown.": (
+                checkout_state is not None,
+                "checkout-state.json records the changed-or-unknown checkout state.",
+            ),
+            "Residual uncertainty in the failure report and its production and checks.": (
+                True,
+                "The retained records do not establish every aspect of report correctness; this is the operator's subjective judgment, not a substitute for a known gap.",
+            ),
+        }
+        seen = set()
+        deductions = 0
+        for gap, closure in zip(gaps, closures):
+            if not isinstance(gap, str):
+                raise SystemExit("unavailable-review-judged-confidence-invalid")
+            match = re.fullmatch(r"\(-(0\.\d{2})\) (.+)", gap)
+            if match is None or match[2] not in categories or match[2] in seen:
+                raise SystemExit("unavailable-review-judged-confidence-invalid")
+            present, rationale = categories[match[2]]
+            if not present or closure != {"gap": gap, "status": "unresolved", "rationale": rationale}:
+                raise SystemExit("unavailable-review-judged-confidence-invalid")
+            seen.add(match[2])
+            deductions += round(float(match[1]) * 100)
+        if deductions != round((1 - score) * 100) or (score < 1 and not gaps):
+            raise SystemExit("unavailable-review-judged-confidence-invalid")
+        expected = {
+            "initial_confidence": score,
+            "final_confidence": score,
+            "status": "not-acceptable-failed"
+            if score <= 0.8
+            else "very-questionable"
+            if score < 0.85
+            else "cautious-low"
+            if score < 0.9
+            else "fair",
+            "evidence": [
+                claim,
+                "The classified collection failure and conservative checkout-state evidence were retained."
+                if checkout_state is not None
+                else "The classified collection failure and any current-attempt collector artifacts were retained.",
+            ],
+            "recovery_actions": ["Stopped before source review."],
+            "remaining_limits": [
+                "(-0.00) PR correctness was not assessed; inspect local checkout state before retrying."
+                if checkout_state is not None
+                else "(-0.00) PR correctness was not assessed.",
+                "(-0.00) Confidence is a subjective judgment of report correctness and its production and checks.",
+            ],
+        }
+        if recovery != expected:
+            raise SystemExit("unavailable-review-judged-confidence-invalid")
+        _validate_unavailable_gates(out_dir, result)
+        _validate_unavailable_final_handoff(out_dir, metadata)
+        return
+    binding = metadata.get("final_handoff")
+    handoff_path = (
+        _resolve_path(out_dir, binding["handoff_path"])
+        if isinstance(binding, dict) and isinstance(binding.get("handoff_path"), str)
+        else None
+    )
+    if (
+        handoff_path is not None
+        and handoff_path.is_file()
+        and _load_json(handoff_path).get("presentation_version") == 12
+    ):
+        raise SystemExit("unavailable-review-judged-confidence-required")
     if metadata.get("confidence_gaps") != [UNAVAILABLE_CONFIDENCE_GAP]:
         raise SystemExit("unavailable-review-confidence-gaps-must-be-canonical")
     expected_closure_rationale = (
@@ -1252,6 +1379,21 @@ def _validate_unavailable_gates(out_dir: Path, result: dict[str, Any]) -> None:
         raise SystemExit("unavailable-review-gates-must-be-not-applicable")
 
 
+def _unavailable_artifact_matches(out_dir: Path, raw_path: str, filename: str) -> bool:
+    """Match a retained artifact using the result writer's anchors, before promotion too."""
+    if ".." in PurePosixPath(raw_path).parts or ".." in PureWindowsPath(raw_path).parts:
+        return False
+    root = out_dir.resolve()
+    expected = (root / filename).resolve()
+    if not expected.is_relative_to(root):
+        return False
+    declared = Path(raw_path)
+    candidates = (
+        [declared] if declared.is_absolute() else [root / declared, *(parent / declared for parent in root.parents)]
+    )
+    return any(path.resolve() == expected for path in candidates)
+
+
 def _validate_unavailable_final_handoff(out_dir: Path, metadata: dict[str, Any]) -> None:
     """Bind versioned unavailable-review explanations to classified, non-secret local diagnostics."""
     binding = metadata.get("final_handoff")
@@ -1261,7 +1403,7 @@ def _validate_unavailable_final_handoff(out_dir: Path, metadata: dict[str, Any])
     if not handoff_path.is_file():
         return
     handoff = _load_json(handoff_path)
-    if handoff.get("presentation_version") not in {2, 3, 8, 9, 10, 11}:
+    if handoff.get("presentation_version") not in {2, 3, 8, 9, 10, 11, 12}:
         return
     failure = metadata["collection_failure"]
     code = failure["code"]
@@ -1312,6 +1454,64 @@ def _validate_unavailable_final_handoff(out_dir: Path, metadata: dict[str, Any])
     row_id = recovery.get("row_id")
     next_action = recovery.get("next_action")
     resume_condition = "Resume only after a fresh collector run produces and validates the PR source bundle."
+    if handoff.get("presentation_version") == 12:
+        expected_action = (
+            f"Inspect the classified `{label}` collector failure. "
+            f"{_unavailable_recovery_action(code, checkout_diagnostic is not None, command_reason)} {resume_condition}"
+        )
+        allowed_artifacts = {
+            "Collection failure": "pr-error.txt",
+            "Command failure": "command-failure.json",
+            "Checkout state": "checkout-state.json",
+            "Worktree preflight": "worktree-preflight.json",
+            "PR head fetch": "pr-head-fetch.json",
+            "Target branch": "target-branch.json",
+            "Review notes": "review-notes.md",
+            "Result": "result.json",
+        }
+        gates = _load_json(out_dir / "gates.json")
+        checks = gates.get("checks")
+        if not isinstance(checks, list) or any(
+            not isinstance(check, dict) or not isinstance(check.get("stdout"), str) or not check["stdout"]
+            for check in checks
+        ):
+            raise SystemExit("unavailable-review-final-handoff-verification-invalid")
+        expected_verification = [
+            {"check": check["id"], "status": check["status"], "evidence": check["stdout"]} for check in checks
+        ]
+        expected_confidence = {
+            "score": metadata["confidence_recovery"]["final_confidence"],
+            "band": metadata["confidence_recovery"]["status"],
+            "gaps": metadata["confidence_gap_closures"],
+            "limits": metadata["confidence_recovery"]["remaining_limits"],
+        }
+        if (
+            handoff.get("verification") != expected_verification
+            or handoff.get("confidence") != expected_confidence
+            or next_action != expected_action
+            or row_id != "collection-recovery"
+            or "commit_disposition" in handoff
+            or handoff.get("source_records") != []
+            or any(
+                not isinstance(artifact, dict)
+                or set(artifact) != {"label", "path"}
+                or not isinstance(artifact["label"], str)
+                or not isinstance(artifact["path"], str)
+                or artifact["label"] not in allowed_artifacts
+                or not _unavailable_artifact_matches(out_dir, artifact["path"], allowed_artifacts[artifact["label"]])
+                or any(char in artifact["path"] for char in "<>\r\n")
+                or (artifact["label"] != "Result" and not (out_dir / allowed_artifacts[artifact["label"]]).is_file())
+                for artifact in artifacts
+            )
+            or not {
+                artifact_label
+                for artifact_label, path in allowed_artifacts.items()
+                if _resolve_path(out_dir, path).resolve()
+                in {item.resolve() for item in required_paths | {out_dir / "result.json"}}
+            }
+            <= {artifact["label"] for artifact in artifacts}
+        ):
+            raise SystemExit("unavailable-review-final-handoff-bounded-text-invalid")
     if (
         not isinstance(row_id, str)
         or recovery.get("owner") != "code-review"
@@ -2312,6 +2512,10 @@ def _validate_review_runtime(
     roles_dir: Path = PLUGIN_ROOT / "roles",
 ) -> dict[str, object]:
     """Validate route-specific execution evidence before granting reviewer independence."""
+    if manifest.get("schema_version") == 10:
+        return _validate_direct_review(
+            out_dir, manifest, passes, {item["role"] for item in passes}, codex_home, parent_thread_id
+        )
     if manifest.get("schema_version") in {7, 8, 9} and manifest.get("manifest_kind") == "batched-review":
         import review_batches  # Verified circular producer/validator boundary; resolve after initialization.
 
@@ -2421,6 +2625,12 @@ def _validate_manifest_entries(
     runtime_summary: dict[str, Any] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Bind every triggered pass to its evidence and expose the native runtime summary when requested."""
+    if manifest.get("schema_version") == 10:
+        _validate_sol_selections(manifest, triggered_roles, label="manifest-sol-selection")
+        summary = _validate_direct_review(out_dir, manifest, passes, triggered_roles, codex_home, parent_thread_id)
+        if runtime_summary is not None:
+            runtime_summary.update(summary)
+        return {item["role"]: item for item in passes}
     schema_version = manifest.get("schema_version")
     if schema_version not in {2, 3, 4, 5, 6, 7, 8, 9}:
         raise SystemExit("manifest-schema-version")
@@ -2805,17 +3015,34 @@ def _validate_pr_local_checkout_state(checkout: dict[str, Any], routing: dict[st
 def _validate_pr_diff_provenance(checkout: dict[str, Any], routing: dict[str, Any]) -> None:
     """Check the recorded diff came from the verified local checkout at the PR's own commit range."""
     if routing.get("checkout_method") == "git-detached-review-worktree":
-        review_worktree = Path(checkout["worktree"]) if isinstance(checkout.get("worktree"), str) else None
-        expected_diff_command = (
-            f"git -C {review_worktree} diff --binary {routing.get('base_oid')}...{routing.get('head_oid')} --"
+        review_worktree = checkout["worktree"] if isinstance(checkout.get("worktree"), str) else None
+        command_prefix = f"git -C {review_worktree}"
+        # Receipts serialize coordinates with slashes, but the collector formats its actual
+        # command with native Windows separators. Preserve both issued representations.
+        native_prefix = (
+            f"git -C {PureWindowsPath(review_worktree)}"
+            if review_worktree and PureWindowsPath(review_worktree).drive
+            else command_prefix
         )
     else:
-        expected_diff_command = f"git diff --binary {routing.get('base_oid')}...{routing.get('head_oid')} --"
+        command_prefix = "git"
+        native_prefix = command_prefix
+    revision_range = f"{routing.get('base_oid')}...{routing.get('head_oid')}"
+    commands = {
+        f"{prefix} {' '.join(arguments)}"
+        for prefix in (command_prefix, native_prefix)
+        for arguments in (
+            ("diff", "--binary", revision_range, "--"),
+            ("diff", "--binary", "--no-ext-diff", "--no-textconv", revision_range, "--"),
+            canonical_diff_arguments(("diff", "--binary", revision_range, "--")),
+        )
+    }
     if (
         checkout.get("diff_source") != "verified-local-checkout"
         or checkout.get("diff_base_oid") != routing.get("base_oid")
         or checkout.get("diff_head_oid") != routing.get("head_oid")
-        or checkout.get("diff_command") != expected_diff_command
+        or not isinstance(checkout.get("diff_command"), str)
+        or checkout.get("diff_command") not in commands
     ):
         raise SystemExit("pr-local-diff-provenance-invalid")
 
@@ -2910,7 +3137,7 @@ def _validate_runtime_summary_metadata(
         ):
             if metadata.get(key) != expected:
                 raise SystemExit(f"metadata-{key.replace('_', '-')}-mismatch")
-        if manifest.get("schema_version") in {5, 6, 7, 8, 9}:
+        if manifest.get("schema_version") in {5, 6, 7, 8, 9, 10}:
             if metadata.get("execution_observed_controls") != runtime_summary.get("observed_controls"):
                 raise SystemExit("metadata-execution-observed-controls-mismatch")
     if metadata.get("review_run_id") != manifest.get("review_run_id"):
@@ -2928,6 +3155,15 @@ def _validate_specialist_manifest(
     env: _ReviewEnvironment,
 ) -> _SpecialistEvidence:
     """Validate routing, the specialist manifest, and the recorded review runtime evidence."""
+    try:
+        patch = (out_dir / "diff.patch").read_bytes()
+        changed = set(diff_sections(patch))
+        if (patch and not changed) or (changed and not (out_dir / "files.txt").is_file()):
+            raise ValueError("review-source-file-inventory-stale")
+        if (out_dir / "files.txt").is_file() and read_review_paths(out_dir, "files.txt") != changed:
+            raise ValueError("review-source-file-inventory-stale")
+    except (OSError, ValueError) as error:
+        raise SystemExit(f"review-source-file-inventory-invalid:{error}") from error
     triggered_roles = _validate_routing(out_dir, risk_tier)
     manifest_path = _resolve_path(out_dir, metadata.get("specialist_manifest"))
     manifest = _load_json(manifest_path)
@@ -2954,7 +3190,7 @@ def _validate_specialist_manifest(
     )
     runtime_summary = (
         runtime_summary
-        if manifest.get("schema_version") in {7, 8, 9}
+        if manifest.get("schema_version") in {7, 8, 9, 10}
         else _validate_review_runtime(
             out_dir,
             manifest,
@@ -3028,17 +3264,19 @@ def _validate_inspection_independence(
     triggered_required = REQUIRED_ROLES & evidence.triggered_roles
     plan_dir = out_dir
     plan_manifest = evidence.manifest
-    if plan_manifest.get("schema_version") == 9:
+    if plan_manifest.get("schema_version") in {9, 10}:
         independence_required = evidence.runtime_summary["independence_required"]
         requirement_evidence = evidence.runtime_summary["independence_requirement_evidence"]
     elif plan_manifest.get("manifest_kind") == "batched-review":
         plan_dir = out_dir / "batches" / "interactions"
         plan_manifest = _load_json(plan_dir / "specialist-manifest.json")
-    if plan_manifest.get("schema_version") != 9:
+    if plan_manifest.get("schema_version") not in {9, 10}:
         _, _, independence_required, requirement_evidence = _validate_inspection_plan(
             plan_dir, plan_manifest, env.parent_thread_id
         )
-    routing_requirement = evidence.routing.get("independent_review_required")
+    routing_requirement = evidence.routing.get(
+        "independent_review_required", False if evidence.manifest.get("schema_version") == 10 else None
+    )
     if routing_requirement is not independence_required:
         raise SystemExit("routing-inspection-independence-required-mismatch")
     if evidence.routing.get("independence_requirement_evidence") != requirement_evidence:
@@ -3078,7 +3316,7 @@ def _validate_independence_requirement(
     env: _ReviewEnvironment,
 ) -> None:
     """Check the review's independence requirement and the metadata that claims it was satisfied."""
-    if evidence.manifest.get("schema_version") in {5, 6, 7, 8, 9}:
+    if evidence.manifest.get("schema_version") in {5, 6, 7, 8, 9, 10}:
         independence_required, required_independent = _validate_inspection_independence(
             out_dir, evidence, metadata, status, env
         )
@@ -3091,6 +3329,13 @@ def _validate_independence_requirement(
         evidence.manifest.get("schema_version") in {3, 4, 5, 6, 7, 8, 9}
         and status == "pass"
         and len(evidence.triggered_roles) >= 2
+        and not (
+            risk_tier in {"TRIVIAL", "LOCAL"}
+            and evidence.manifest.get("schema_version") == 5
+            and not independence_required
+            and evidence.runtime_summary.get("actual_mode") == "serial-fallback"
+            and all(item["mode"] == "substituted" for item in evidence.passes)
+        )
         and (
             (
                 evidence.runtime_summary.get("actual_mode") != "parallel"
@@ -3322,8 +3567,8 @@ def _python_diff_paths(out_dir: Path) -> list[str]:
     Only ``files.txt`` names paths that ``diff.patch`` contains: untracked files are listed separately and never reach
     the provider. The provider maps only case-sensitive ``.py`` post-image paths, so stub-only or untracked-only Python
     changes do not require a probe whose answer could only be empty. Git C-quotes a non-ASCII path in this listing
-    (``"pkg/mod\\303\\251.py"``), which would otherwise end in ``"`` and silently skip the required probe, so each line
-    is unquoted the way the adapter reads the diff before Windows separators are normalized.
+    (``"pkg/mod\\303\\251.py"``), which would otherwise end in ``"`` and silently skip the required probe, so local
+    Git lines are unquoted before Windows separators are normalized. PR collector names are already literal.
 
     Example:
         >>> import tempfile
@@ -3336,6 +3581,9 @@ def _python_diff_paths(out_dir: Path) -> list[str]:
     listing = out_dir / "files.txt"
     if not listing.is_file():
         return []
+    literal = literal_patch_paths(out_dir)
+    if literal is not None:
+        return sorted(path.replace("\\", "/") for path in literal if path.endswith(CODEMAP_PYTHON_SUFFIX))
     paths = (
         codemap_unquote_git_path(raw_path.strip()).replace("\\", "/")
         for raw_path in listing.read_text(encoding="utf-8").splitlines()
@@ -3672,6 +3920,9 @@ def _assessed_review_steps(
                 and (
                     manifest.get("manifest_kind") == "batched-review" or manifest.get("reviewer_findings_version") == 1
                 ),
+                direct_coverage=state["evidence"].runtime_summary["source_coverage"]
+                if manifest.get("schema_version") == 10
+                else None,
             )
 
     def decision() -> None:

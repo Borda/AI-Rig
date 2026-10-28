@@ -229,6 +229,26 @@ class FakeRunner:
         assert isinstance(argv, list)
         assert kwargs.get("shell", False) is False
         self.calls.append((argv, kwargs))
+        if "core.quotePath=true" in argv:
+            start = argv.index("core.quotePath=true") - 1
+            assert argv[start : start + 3] == ["-c", "core.quotePath=true", "diff"]
+            boundary = argv.index("--", start)
+            presentation = [
+                "--no-color",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--src-prefix=a/",
+                "--dst-prefix=b/",
+                "--unified=3",
+                "--inter-hunk-context=0",
+                "--diff-algorithm=myers",
+                "--no-renames",
+                "--no-relative",
+                "--ignore-submodules=none",
+            ]
+            assert argv[boundary - len(presentation) : boundary] == presentation
+            assert "GIT_DIFF_OPTS" not in kwargs["env"]
+            argv = [*argv[:start], *argv[start + 2 : boundary - len(presentation)], *argv[boundary:]]
         stdout = b""
         if argv[:2] == ["git", "-C"]:
             review = Path(argv[2])
@@ -908,9 +928,22 @@ def test_collect_pr_uses_verified_local_diff_when_review_thread_fetch_fails(
             "git",
             "-C",
             output.with_name(f"{output.name}-review-worktree").as_posix(),
+            "-c",
+            "core.quotePath=true",
             "diff",
             "--binary",
             f"{BASE_OID}...{HEAD_OID}",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--src-prefix=a/",
+            "--dst-prefix=b/",
+            "--unified=3",
+            "--inter-hunk-context=0",
+            "--diff-algorithm=myers",
+            "--no-renames",
+            "--no-relative",
+            "--ignore-submodules=none",
             "--",
         ]
         for argv, _ in _runner.calls

@@ -69,6 +69,7 @@ SHARED_DIRECTORY = Path(__file__).resolve().parent
 if str(SHARED_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(SHARED_DIRECTORY))
 
+from collect_diff import canonical_diff_arguments, canonical_diff_environment  # noqa: E402
 from github_read import GitHubReadError, read_with_fallback, run_gh_read  # noqa: E402
 
 #: Largest stdout or stderr, in bytes, accepted from a git or gh command run by the collector.
@@ -261,6 +262,7 @@ def _run(run: RunCommand, argv: list[str], timeout: int, label: str, *, input_by
             check=False,
             shell=False,
             timeout=timeout,
+            env=canonical_diff_environment() if argv[0] == "git" else None,
         )
     except subprocess.TimeoutExpired as error:
         raise CollectionError(f"command-timeout:{label}") from error
@@ -1206,7 +1208,14 @@ def _review_worktree_checkout(
         "diff_source": "verified-local-checkout",
         "diff_base_oid": base_oid,
         "diff_head_oid": head_oid,
-        "diff_command": f"git -C {review} diff --binary {base_oid}...{head_oid} --",
+        "diff_command": " ".join(
+            [
+                "git",
+                "-C",
+                review.as_posix(),
+                *canonical_diff_arguments(("diff", "--binary", f"{base_oid}...{head_oid}", "--")),
+            ]
+        ),
         "force_policy": "no --force was used; ask the user before any forced checkout",
         "source_policy": "isolated detached worktree is authoritative for read-only code inspection",
     }
@@ -1531,7 +1540,9 @@ def _finalize_checkout_evidence(
         "diff_source": "verified-local-checkout",
         "diff_base_oid": base_oid,
         "diff_head_oid": head_oid,
-        "diff_command": f"git diff --binary {base_oid}...{head_oid} --",
+        "diff_command": " ".join(
+            ["git", *canonical_diff_arguments(("diff", "--binary", f"{base_oid}...{head_oid}", "--"))]
+        ),
         "force_policy": "no --force was used; ask the user before any forced checkout",
         "source_policy": "local checkout is authoritative for code inspection and edits",
     }
@@ -1732,7 +1743,7 @@ def collect_pr(
             diff_prefix = ["git", "-C", checkout_evidence["worktree"]] if checkout_mode == "review" else ["git"]
             diff = _run(
                 command_runner,
-                [*diff_prefix, "diff", "--binary", revision_range, "--"],
+                [*diff_prefix, *canonical_diff_arguments(("diff", "--binary", revision_range, "--"))],
                 timeout_seconds,
                 "local-pr-diff",
             )
@@ -1740,7 +1751,7 @@ def collect_pr(
             # The verified comparison is complete even when GitHub CLI truncates its file metadata.
             changed = _run(
                 command_runner,
-                [*diff_prefix, "diff", "--name-only", "-z", revision_range, "--"],
+                [*diff_prefix, *canonical_diff_arguments(("diff", "--name-only", "-z", revision_range, "--"))],
                 timeout_seconds,
                 "local-pr-files",
             )
@@ -1749,7 +1760,7 @@ def collect_pr(
             (output / "diffstat.txt").write_bytes(
                 _optional_command_output(
                     command_runner,
-                    [*diff_prefix, "diff", "--stat", revision_range, "--"],
+                    [*diff_prefix, *canonical_diff_arguments(("diff", "--stat", revision_range, "--"))],
                     timeout_seconds,
                     "diff-stat",
                 )
@@ -1757,7 +1768,7 @@ def collect_pr(
             (output / "numstat.txt").write_bytes(
                 _optional_command_output(
                     command_runner,
-                    [*diff_prefix, "diff", "--numstat", revision_range, "--"],
+                    [*diff_prefix, *canonical_diff_arguments(("diff", "--numstat", revision_range, "--"))],
                     timeout_seconds,
                     "diff-numstat",
                 )

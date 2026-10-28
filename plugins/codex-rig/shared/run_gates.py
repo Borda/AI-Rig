@@ -73,6 +73,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -360,32 +361,43 @@ def default_commands(platform: str) -> dict[str, str]:
 
 def terminate_process(process: subprocess.Popen[str], platform: str) -> None:
     """Terminate a timed-out command and its descendants on the current platform."""
-    if process.poll() is not None:
-        return
     if platform == "win32":
-        subprocess.run(  # noqa: S603 - argv list, no shell
-            ["taskkill", "/PID", str(process.pid), "/T", "/F"],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
+        completed = subprocess.run(  # noqa: S603 - argv list, no shell
+            ["taskkill", "/PID", str(process.pid), "/T", "/F"],  # noqa: S607 - native system tool
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            timeout=2,
             check=False,
         )
-    else:
+        if completed.returncode != 0:
+            raise RuntimeError("windows-process-tree-cleanup-unproven")
         try:
-            os.killpg(process.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            return
-    try:
-        process.wait(timeout=2)
+            process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
         return
-    except subprocess.TimeoutExpired:
+
+    # Keep the leader unreaped while signaling its group, preventing its PID from being reused.
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        process.wait()
+        return
+    time.sleep(0.2)
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
         pass
-    if platform == "win32":
-        process.kill()
-    else:
+    except PermissionError:
+        # Some hosts reject signals to a group containing only an exited leader.
+        # Reap it, then accept the denial only if the group no longer exists.
+        process.wait(timeout=2)
         try:
-            os.killpg(process.pid, signal.SIGKILL)
+            os.killpg(process.pid, 0)
         except ProcessLookupError:
             return
+        raise RuntimeError("process-group-cleanup-unproven") from None
     process.wait()
 
 
@@ -397,7 +409,7 @@ def execute_command(
     worktree: Path | None = None,
     environment: dict[str, str] | None = None,
 ) -> tuple[int, float]:
-    """Execute one command with bounded runtime and captured output."""
+    """Execute one command with a shared deadline for exit and bounded stream capture."""
     started = time.monotonic()
     platform = sys.platform
     creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) if platform == "win32" else 0
@@ -405,27 +417,69 @@ def execute_command(
     if environment is not None and platform != "win32" and isinstance(command, str):
         # A login shell may replace PATH and hide the explicitly selected project environment.
         argv = ["bash", "-c", command]
-    with stdout_path.open("w", encoding="utf-8") as stdout, stderr_path.open("w", encoding="utf-8") as stderr:
+    try:
+        process = subprocess.Popen(  # noqa: S603 - argv list, no shell
+            argv,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            cwd=worktree,
+            env=environment,
+            start_new_session=platform != "win32",
+            creationflags=creationflags,
+        )
+    except FileNotFoundError:
+        stdout_path.write_bytes(b"")
+        stderr_path.write_text(f"missing-command:{argv[0]}\n", encoding="utf-8")
+        return 127, time.monotonic() - started
+
+    errors: list[str] = []
+
+    def capture(stream: Any, path: Path) -> None:
+        """Drain one stream, retaining its prefix and an explicit truncation marker."""
+        limit = 1024 * 1024
+        written = 0
+        truncated = False
         try:
-            process = subprocess.Popen(  # noqa: S603 - argv list, no shell
-                argv,
-                stdout=stdout,
-                stderr=stderr,
-                text=True,
-                cwd=worktree,
-                env=environment,
-                start_new_session=platform != "win32",
-                creationflags=creationflags,
-            )
-        except FileNotFoundError:
-            stderr.write(f"missing-command:{argv[0]}\n")
-            return 127, time.monotonic() - started
-        try:
-            return process.wait(timeout=timeout), time.monotonic() - started
-        except subprocess.TimeoutExpired:
-            terminate_process(process, platform)
-            stderr.write(f"timeout: exceeded {timeout} seconds\n")
-            return 124, time.monotonic() - started
+            with path.open("wb") as output, stream:
+                while chunk := stream.read1(65536):
+                    remaining = max(0, limit - written)
+                    output.write(chunk[:remaining])
+                    written += min(len(chunk), remaining)
+                    if len(chunk) > remaining and not truncated:
+                        output.write(b"\n[output truncated after 1048576 bytes]\n")
+                        truncated = True
+        except OSError as error:
+            errors.append(f"capture-failed:{path.name}:{error}")
+
+    threads = [
+        threading.Thread(target=capture, args=(stream, path), daemon=True)
+        for stream, path in ((process.stdout, stdout_path), (process.stderr, stderr_path))
+    ]
+    for thread in threads:
+        thread.start()
+    deadline = started + timeout
+    try:
+        # Descendants may inherit the pipes after the leader exits. Keep its PID unreaped
+        # until capture finishes so timeout cleanup can still identify the original group.
+        for thread in threads:
+            thread.join(timeout=max(0, deadline - time.monotonic()))
+        if any(thread.is_alive() for thread in threads):
+            raise subprocess.TimeoutExpired(argv, timeout)
+        exit_code = process.wait(timeout=max(0, deadline - time.monotonic()))
+    except subprocess.TimeoutExpired:
+        terminate_process(process, platform)
+        exit_code = 124
+    for thread in threads:
+        thread.join(timeout=2)
+    if any(thread.is_alive() for thread in threads):
+        errors.append("capture-incomplete:stream remained open after command exit")
+    if exit_code == 124:
+        append_stderr(stderr_path, f"timeout: exceeded {timeout} seconds")
+    for error in errors:
+        append_stderr(stderr_path, error)
+    if errors and exit_code == 0:
+        exit_code = 1
+    return exit_code, time.monotonic() - started
 
 
 def _local_origin_membership(origin: Path, worktree: Path, snapshot: dict[str, Any]) -> dict[str, Any]:
@@ -851,6 +905,7 @@ def run_check(
         proof_path.unlink(missing_ok=True)
         python_test_argv = [
             str(python_test.interpreter),
+            "-B",
             str(Path(__file__).resolve()),
             "--_python-tests-child",
             worktree.as_posix(),
@@ -918,6 +973,9 @@ def run_check(
                 "stdout": recorded["stdout"],
                 "stderr": recorded["stderr"],
             }
+    if python_test_argv is not None:
+        # Pytest can start worker and project subprocesses; keep their bytecode out of review overlays and source.
+        environment = {**(environment if environment is not None else os.environ), "PYTHONDONTWRITEBYTECODE": "1"}
     exit_code, duration = execute_command(
         python_test_argv or command, timeout, paths["stdout"], paths["stderr"], worktree, environment
     )
@@ -987,8 +1045,10 @@ def run_check(
             if digest != local_source["snapshot_sha256"]:
                 raise ValueError("local-gate-source-changed")
         except (OSError, ValueError, RuntimeError, KeyError) as error:
-            append_stderr(paths["stderr"], str(error))
-            result["status"] = "fail"
+            source["guard_error"] = str(error) or type(error).__name__
+            append_stderr(paths["stderr"], source["guard_error"])
+            if result["status"] == "pass":
+                result["status"] = "fail"
         if python_test_argv is not None and proof_bytes is not None:
             try:
                 if (
@@ -999,8 +1059,10 @@ def run_check(
                 ):
                     raise ValueError("local-gate-proof-artifact-changed")
             except (OSError, ValueError) as error:
-                append_stderr(paths["stderr"], str(error))
-                result["status"] = "fail"
+                source["guard_error"] = str(error) or type(error).__name__
+                append_stderr(paths["stderr"], source["guard_error"])
+                if result["status"] == "pass":
+                    result["status"] = "fail"
         source["artifacts"] = {
             recorded[key]: hashlib.sha256(path.read_bytes()).hexdigest() for key, path in paths.items()
         }
@@ -1019,7 +1081,7 @@ def run_check(
     if status == "timeout":
         result["reason"] = f"timeout after {timeout} seconds"
     elif status == "missing-command":
-        first_line = paths["stderr"].read_text(encoding="utf-8").splitlines()
+        first_line = paths["stderr"].read_text(encoding="utf-8", errors="replace").splitlines()
         result["reason"] = first_line[0] if first_line else "command exited 127"
     return result
 
@@ -1157,6 +1219,15 @@ def main() -> int:
     result_path = output / "gates.json"
     result_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     print(result_path)
+    if arguments.python_test is not None and "tests" in failed:
+        test_errors = (output / CHECKS_DIRNAME / "tests.stderr.txt").read_text(encoding="utf-8", errors="replace")
+        if "ModuleNotFoundError: No module named " in test_errors:
+            print(
+                "Test gate failed on an import. Check the declared dependency and follow the owning workflow's "
+                "dependency preparation rules; retain the failure and continue independent review work where "
+                "authorized. A missing package alone does not complete recovery.",
+                file=sys.stderr,
+            )
     return 124 if status == "timeout" else 1 if status == "fail" else 0
 
 

@@ -202,6 +202,150 @@ class TestClosureLogAppend:
 class TestRenderedTablesFromEvents:
     """Protect the durable tables rebuilt from appended events."""
 
+    @pytest.mark.parametrize("completeness", ["missing", "stale"])
+    def test_ledger_render_repairs_completeness_from_all_latest_outcomes(
+        self, selected_run: tuple[Path, dict], completeness: str
+    ) -> None:
+        """Rebuild numeric closure evidence instead of requiring forbidden hand edits to derived counts.
+
+        Counts must include unselected rows and zero-valued statuses; retaining stale counts can block an otherwise
+        valid run even when its machine metadata already reflects the latest events.
+        """
+        run, result = selected_run
+        summary = "## Final Resolution Summary\n\nThe selected guard is closed; retain this authored explanation."
+        intake = "## Review Report Intake\n\nTwo report items already closed."
+        stale = (
+            "## Final Resolution Table Completeness\n\n- Ingested entries: 99\n"
+            "- Triage status counts: valid=99\n- Resolution status counts: implemented=99\n\n"
+        )
+        (run / "action-items.md").write_text(
+            "# Action Items\n\n" + (stale if completeness == "stale" else "") + summary + "\n\n" + intake + "\n",
+            encoding="utf-8",
+        )
+        _stage(
+            run,
+            "resolution-events.jsonl",
+            [
+                {"kind": "item", "id": "R1", "triage_status": "resolved", "resolution_status": "resolved"},
+                {
+                    "kind": "item",
+                    "id": "R1",
+                    "triage_status": "already-applied",
+                    "resolution_status": "already-applied",
+                },
+                {"kind": "item", "id": "R2", "triage_status": "duplicate", "resolution_status": "duplicate"},
+            ],
+        )
+        HELPER.append_record(run, "resolution-events.jsonl")
+        metadata = copy.deepcopy(result["metadata"])
+        table = metadata["final_resolution_table"]
+        numeric_fields = (
+            "ingested_entries_total",
+            "table_rows_total",
+            "omitted_entries_total",
+            "selectable_rows_total",
+            "nonselectable_rows_total",
+            "source_records_total",
+            "represented_source_records_total",
+            "omitted_source_records_total",
+            "grouped_items_total",
+        )
+        if completeness == "missing":
+            metadata["final_resolution_table"] = {"items": table["items"]}
+        else:
+            table.update({field: 99 for field in numeric_fields}, required_columns=["stale"])
+
+        HELPER.render_ledger(run, metadata)
+
+        text = (run / "action-items.md").read_text(encoding="utf-8")
+        table = metadata["final_resolution_table"]
+        expected_triage = {
+            "already-applied": 1,
+            "already-fixed": 0,
+            "duplicate": 1,
+            "needs-clarification": 0,
+            "out-of-scope": 0,
+            "resolved": 0,
+            "stale": 0,
+            "valid": 0,
+        }
+        expected_resolution = {
+            "already-applied": 1,
+            "already-fixed": 0,
+            "duplicate": 1,
+            "implemented": 0,
+            "needs-clarification": 0,
+            "not-applicable": 0,
+            "rejected": 0,
+            "resolved": 0,
+            "stale": 0,
+            "unresolved": 0,
+        }
+        sources = result["metadata"]["final_resolution_table"]["items"]
+        source_total = sum(len(item["sources"]) for item in sources)
+        grouped_total = sum(len(item["sources"]) > 1 for item in sources)
+        expected = [
+            "## Final Resolution Table Completeness",
+            "",
+            "- Ingested entries: 2",
+            "- Final table rows: 2",
+            "- Omitted entries: 0",
+            "- Selectable rows: 1",
+            "- Non-selectable rows: 1",
+            f"- Source records: {source_total}",
+            f"- Represented source records: {source_total}",
+            "- Omitted source records: 0",
+            f"- Grouped items: {grouped_total}",
+            "- Triage status counts: " + ", ".join(f"{status}={count}" for status, count in expected_triage.items()),
+            "- Resolution status counts: "
+            + ", ".join(f"{status}={count}" for status, count in expected_resolution.items()),
+        ]
+        assert [table[field] for field in numeric_fields] == [
+            2,
+            2,
+            0,
+            1,
+            1,
+            source_total,
+            source_total,
+            0,
+            grouped_total,
+        ]
+        assert table["required_columns"] == sorted(VALIDATOR.CODE_REMEDIATE_FINAL_TABLE_REQUIRED_COLUMNS)
+        assert table["triage_status_counts"] == expected_triage
+        assert table["resolution_status_counts"] == expected_resolution
+        assert text[text.index("## Final Resolution Table Completeness") :] == "\n".join(expected) + "\n"
+        assert text.count("## Final Resolution Table Completeness") == 1
+        assert text.count(summary) == text.count(intake) == 1
+        assert text.index(summary) < text.index("## Final Resolution Table Completeness")
+        assert [(item["input_item_id"], item["selectable"]) for item in table["items"]] == [
+            ("R1", True),
+            ("R2", False),
+        ]
+        VALIDATOR._validate_code_remediate_final_resolution_table(metadata, run)
+        first = (run / "action-items.md").read_bytes()
+
+        HELPER.render_ledger(run, metadata)
+
+        assert (run / "action-items.md").read_bytes() == first
+
+    @pytest.mark.parametrize("defect", ["contradictory-count", "duplicate-source"])
+    def test_ledger_render_rejects_invalid_frozen_inventory(self, selected_run: tuple[Path, dict], defect: str) -> None:
+        """Prevent derived completeness from masking contradictory or duplicate frozen source evidence."""
+        run, result = selected_run
+        path = run / "selection.json"
+        inventory = json.loads(path.read_text(encoding="utf-8"))
+        if defect == "contradictory-count":
+            inventory["source_records_total"] = 999
+            error = "selection-count-mismatch:source_records_total"
+        else:
+            inventory["items"][1]["sources"].append(copy.deepcopy(inventory["items"][0]["sources"][0]))
+            error = "selection-source-duplicate"
+        path.write_text(json.dumps(inventory), encoding="utf-8")
+
+        with pytest.raises(HELPER.final_handoff.HandoffError, match=error):
+            HELPER.render_ledger(run, copy.deepcopy(result["metadata"]))
+
     def test_ledger_render_reflects_latest_item_event_and_passes_table_validation(
         self, selected_run: tuple[Path, dict]
     ) -> None:
@@ -396,17 +540,19 @@ class TestReviewResolutionFeedback:
 def test_finalize_derives_item_outcomes_from_events(
     selected_run: tuple[Path, dict], tmp_path_factory: pytest.TempPathFactory, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A run whose outcome changed only through an appended event finalizes into one consistent, valid result.
+    """Refresh a previously rendered ledger when finalization sees a later outcome event.
 
-    The durable ledger and metadata items must show the event's value; the compact terminal handoff shows the bound
-    disposition while preserving the concrete reason in the linked resolution ledger.
+    Requiring another explicit ledger command leaves ordinary finalization vulnerable to stale displayed outcomes. The
+    durable ledger and promoted metadata must both reflect the newest event without that repair command.
     """
     from test_remediation_finalize import _draft_handoff, _stale_metadata
 
     run, result = selected_run
+    HELPER.render_ledger(run, copy.deepcopy(result["metadata"]))
+    before = (run / "action-items.md").read_bytes()
     _stage(run, "resolution-events.jsonl", {"kind": "item", "id": "R1", "resolved_how": "Guard added after review."})
     HELPER.append_record(run, "resolution-events.jsonl")
-    HELPER.render_ledger(run, copy.deepcopy(result["metadata"]))
+    assert (run / "action-items.md").read_bytes() == before
     drafts = tmp_path_factory.mktemp("drafts")
     (drafts / "metadata.json").write_text(json.dumps(_stale_metadata(result)), encoding="utf-8")
     (drafts / "handoff.json").write_text(json.dumps(_draft_handoff(run)), encoding="utf-8")
@@ -419,5 +565,6 @@ def test_finalize_derives_item_outcomes_from_events(
     summary = json.loads(capsys.readouterr().out)
     promoted = json.loads((run / "result.json").read_text(encoding="utf-8"))
     assert (exit_code, summary["errors"]) == (0, [])
+    assert summary["promoted"] is True
     assert promoted["metadata"]["final_resolution_table"]["items"][0]["resolved_how"] == "Guard added after review."
     assert "Guard added after review." in (run / "action-items.md").read_text(encoding="utf-8")

@@ -31,6 +31,9 @@
 docs/specs/
 .codemapignore
 
+# OpenCode Rig run artifacts (ephemeral, TTL-managed)
+.opencode-rig/
+
 # Agent auto-memory (machine-local, not source)
 .codex/caveman-compress/
 .claude/agent-memory/

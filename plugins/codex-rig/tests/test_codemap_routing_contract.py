@@ -13,6 +13,8 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
+from _skill_text import read_with_references
+
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 CONTRACT_PATH = PLUGIN_ROOT / "shared" / "codemap-contract.md"
 SKILLS_ROOT = PLUGIN_ROOT / "skills"
@@ -44,7 +46,14 @@ def _skills_invoking_adapter() -> dict[str, str]:
     """
     invocations: dict[str, str] = {}
     for skill_file in sorted(SKILLS_ROOT.glob("*/SKILL.md")):
-        for line in skill_file.read_text(encoding="utf-8").splitlines():
+        text = (
+            read_with_references(skill_file, "source-and-scope.md")
+            if skill_file.parent.name == "code-review"
+            else read_with_references(skill_file, "selection.md")
+            if skill_file.parent.name == "code-remediate"
+            else skill_file.read_text(encoding="utf-8")
+        )
+        for line in text.splitlines():
             if _ADAPTER_INVOCATION in line:
                 invocations[skill_file.parent.name] = line
                 break
@@ -125,7 +134,14 @@ def test_python_scope_probe_is_required_in_change_producing_skills() -> None:
         "implement": "**Structural context (required for Python targets)**",
     }
     texts = {
-        skill: (SKILLS_ROOT / skill / "SKILL.md").read_text(encoding="utf-8") for skill in _skills_invoking_adapter()
+        skill: (
+            read_with_references(SKILLS_ROOT / skill / "SKILL.md", "source-and-scope.md")
+            if skill == "code-review"
+            else read_with_references(SKILLS_ROOT / skill / "SKILL.md", "selection.md")
+            if skill == "code-remediate"
+            else (SKILLS_ROOT / skill / "SKILL.md").read_text(encoding="utf-8")
+        )
+        for skill in _skills_invoking_adapter()
     }
 
     assert {skill: heading in texts[skill] for skill, heading in required.items()} == dict.fromkeys(required, True)

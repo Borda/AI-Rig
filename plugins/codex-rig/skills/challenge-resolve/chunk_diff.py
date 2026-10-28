@@ -11,7 +11,9 @@ Inventory changed files or a complete selected scope under optional literal repo
 stable order and verify that their disjoint union still equals the current requested scope. Clean final checking binds
 independent results for every pair decision and declared larger interaction to complete member-chunk source. A separate
 stopped check binds supplied partial results and identifies unfinished review slots.
-The helper does not launch agents, approve paid routes, judge no-interaction rationales, change source, or certify
+The schema-two scoped plan records exact whole-file change units and assigned interaction endpoints. A pinned-base,
+origin-bound, first-run text profile admits review and checks authenticated component and independent audit results;
+unsupported profiles fail closed. The helper does not launch agents, approve paid routes, change source, or certify
 comprehension.
 
 ## Usage:
@@ -27,6 +29,11 @@ to the specification so every reviewer receives the earlier counterexamples.
 Run ``chunk_diff.py check --manifest <out>/chunks.json`` before dispatch and final acceptance; replan after edits.
 Pass ``--results <out>/results.json --summary`` to emit a validated clean child-backed JSON summary, or use
 ``check-stopped --manifest <out>/chunks.json --results <out>/results.json --summary`` for partial stopped evidence.
+For scoped planning, pass a full commit OID as ``--diff-base`` and the invoking checkout as ``--origin-repository``
+while ``--repository`` names its detached review mirror. Then run ``scoped-plan --manifest <out>/chunks.json
+--assignments <file> --out <out>/scoped-chunks.json`` to record source units, interactions, and independent audits.
+Check that manifest before dispatch, then check it with its results before acceptance. Scoped continuations, oversized
+files, binary or symlink source, hidden index flags, and base-only deletions remain unsupported.
 
 ## Outputs:
 Write ``chunks.json`` and one exact source JSON and diff patch per chunk. The manifest records scope inventory, sizes,
@@ -51,13 +58,19 @@ import hashlib
 import itertools
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared"))
 from adversarial_loop import ledger_digest, load_ledger, rounds_path, validate_ledger
-from collect_diff import capture_source_snapshot
+from collect_diff import (
+    canonical_diff_arguments,
+    canonical_diff_environment,
+    capture_source_snapshot,
+    reject_gitlink_changes,
+)
 
 #: Default per-chunk size budget, in bytes, for the --budget-bytes planner option.
 DEFAULT_BUDGET_BYTES = 1_000_000
@@ -66,23 +79,27 @@ DEFAULT_BUDGET_BYTES = 1_000_000
 def _git(repository: Path, *arguments: str) -> bytes:
     """Read one local Git result and fail when source inspection is incomplete."""
     result = subprocess.run(  # noqa: S603 - argv list, no shell
-        ["git", "-C", os.fspath(repository), "--literal-pathspecs", *arguments],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
+        ["git", "-C", os.fspath(repository), "--literal-pathspecs", *canonical_diff_arguments(arguments)],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
         capture_output=True,
         check=False,
+        env=canonical_diff_environment() if arguments and arguments[0] == "diff" else None,
     )
     if result.returncode:
         raise ValueError(f"git-inspection-failed:{arguments[0]}")
     return result.stdout
 
 
-def _inventory(repository: Path, scopes: list[str], scope_mode: str) -> list[str]:
+def _inventory(repository: Path, scopes: list[str], scope_mode: str, base: str = "HEAD") -> list[str]:
     """List changed files or all selected HEAD, index, and non-ignored worktree files."""
+    reject_gitlink_changes(repository, (base, "--", *scopes))
     if scope_mode == "changed":
-        tracked = _git(repository, "diff", "HEAD", "--no-renames", "--name-only", "-z", "--", *scopes)
+        tracked = _git(repository, "diff", base, "--no-renames", "--name-only", "-z", "--", *scopes)
         untracked = _git(repository, "ls-files", "--others", "--exclude-standard", "-z", "--", *scopes)
     elif scope_mode == "all":
         tracked = _git(repository, "ls-tree", "-r", "--name-only", "-z", "HEAD", "--", *scopes)
         tracked += _git(repository, "ls-files", "--cached", "-z", "--", *scopes)
+        if base != "HEAD":
+            tracked += _git(repository, "diff", base, "--no-renames", "--name-only", "-z", "--", *scopes)
         untracked = _git(repository, "ls-files", "--others", "--exclude-standard", "-z", "--", *scopes)
     else:
         raise ValueError("scope-mode-invalid")
@@ -92,11 +109,11 @@ def _inventory(repository: Path, scopes: list[str], scope_mode: str) -> list[str
     return paths
 
 
-def _material(repository: Path, paths: list[str]) -> tuple[bytes, bytes]:
+def _material(repository: Path, paths: list[str], base: str = "HEAD") -> tuple[bytes, bytes]:
     """Capture the exact source serializer and patch that a reviewer must receive."""
     snapshot = capture_source_snapshot(repository, paths)
     source = (json.dumps(snapshot, indent=2, sort_keys=True, ensure_ascii=True) + "\n").encode("utf-8")
-    diff = _git(repository, "diff", "HEAD", "--binary", "--no-renames", "--", *paths)
+    diff = _git(repository, "diff", base, "--binary", "--no-renames", "--", *paths)
     return source, diff
 
 
@@ -167,6 +184,193 @@ def _prior_request_block(ledger: dict[str, object], coverage: list[dict[str, obj
     )
 
 
+def _scoped_units(repository: Path, chunks: list[dict[str, object]], base: str = "HEAD") -> list[dict[str, object]]:
+    """Derive conservative whole-file change units from captured bytes and each exact patch."""
+    units = []
+    for chunk in chunks:
+        for path in chunk["scope_paths"]:
+            source, diff = _material(repository, [path], base)
+            record = json.loads(source)["files"][0]
+            if base != "HEAD" and record.get("encoding") == "utf-8" and "\x00" in record["content"]:
+                raise ValueError("scoped-unsupported-source-unreviewed")
+            diff_lines = diff.splitlines()
+            identity = {
+                "path": path,
+                "chunk_id": chunk["id"],
+                "kind": record["kind"],
+                "encoding": record.get("encoding"),
+                "record_sha256": hashlib.sha256(
+                    json.dumps(record, sort_keys=True, ensure_ascii=True).encode("utf-8")
+                ).hexdigest(),
+                "diff_sha256": hashlib.sha256(diff).hexdigest(),
+                "binary_diff": b"GIT binary patch" in diff_lines
+                or any(line.startswith(b"Binary files ") and line.endswith(b" differ") for line in diff_lines),
+                "symlink_diff": any(
+                    line
+                    in {b"new file mode 120000", b"deleted file mode 120000", b"old mode 120000", b"new mode 120000"}
+                    or (line.startswith(b"index ") and line.endswith(b" 120000"))
+                    for line in diff_lines
+                ),
+            }
+            digest = hashlib.sha256(json.dumps(identity, sort_keys=True, ensure_ascii=True).encode("utf-8")).hexdigest()
+            units.append({"id": digest, **identity})
+    return sorted(units, key=lambda item: item["path"])
+
+
+def _scoped_supporting_units(manifest: dict[str, object]) -> list[dict[str, object]]:
+    """Bind unchanged interaction and pinned-continuation source bytes independently of Git status."""
+    paths = set()
+    for assignment in manifest["interaction_assignments"]:
+        paths.update(assignment["requirement"]["source_paths"])
+    prior_paths: set[str] = set()
+    if manifest.get("diff_base_oid"):
+        prior = manifest.get("prior_findings")
+        coverage = prior.get("coverage") if isinstance(prior, dict) else None
+        if not isinstance(coverage, list) or any(
+            not isinstance(item, dict)
+            or not isinstance(item.get("source_paths"), list)
+            or any(not _literal_source_path(path) for path in item["source_paths"])
+            for item in coverage
+        ):
+            raise ValueError("prior-coverage-invalid")
+        for item in coverage:
+            prior_paths.update(item["source_paths"])
+        paths.update(prior_paths)
+    paths.difference_update(manifest["inventory"])
+    prior_paths.difference_update(manifest["inventory"])
+    if not paths:
+        return []
+    records = capture_source_snapshot(Path(manifest["repository"]), sorted(paths))["files"]
+    if manifest.get("diff_base_oid") and any(
+        record["kind"] == "symlink"
+        or record.get("encoding") == "base64"
+        or (record.get("encoding") == "utf-8" and "\x00" in record["content"])
+        for record in records
+    ):
+        raise ValueError("scoped-supporting-source-unsupported")
+    present = {record["path"] for record in records if record["kind"] != "missing"}
+    if not prior_paths.issubset(present):
+        raise ValueError("scoped-prior-supporting-source-missing")
+    return [
+        {
+            "path": record["path"],
+            "kind": record["kind"],
+            "encoding": record.get("encoding"),
+            "record_sha256": hashlib.sha256(
+                json.dumps(record, sort_keys=True, ensure_ascii=True).encode("utf-8")
+            ).hexdigest(),
+        }
+        for record in records
+    ]
+
+
+def _validate_scoped_assignments(manifest: dict[str, object]) -> None:
+    """Reject ambiguous assignments and require real captured records for interaction endpoints."""
+    assignments = manifest["interaction_assignments"]
+    audits = manifest["audit_assignments"]
+    chunks = {chunk["id"]: chunk for chunk in manifest["chunks"]}
+    if not isinstance(assignments, list) or not isinstance(audits, list) or not audits:
+        raise ValueError("scoped-assignment-invalid")
+    ids = []
+    repository = Path(manifest["repository"])
+    audit_ids = []
+    audited_chunks = []
+    for audit in audits:
+        if not isinstance(audit, dict) or set(audit) != {"id", "chunk_ids"}:
+            raise ValueError("scoped-audit-assignment-invalid")
+        identity, chunk_ids = audit["id"], audit["chunk_ids"]
+        if (
+            not isinstance(identity, str)
+            or not identity.strip()
+            or not isinstance(chunk_ids, list)
+            or not chunk_ids
+            or any(not isinstance(chunk_id, str) or chunk_id not in chunks for chunk_id in chunk_ids)
+            or chunk_ids != sorted(set(chunk_ids))
+        ):
+            raise ValueError("scoped-audit-assignment-invalid")
+        audit_ids.append(identity)
+        audited_chunks.extend(chunk_ids)
+    if audit_ids != sorted(set(audit_ids)) or sorted(audited_chunks) != sorted(chunks):
+        raise ValueError("scoped-audit-assignment-invalid")
+    for assignment in assignments:
+        if not isinstance(assignment, dict) or set(assignment) != {"chunk_id", "requirement"}:
+            raise ValueError("scoped-assignment-invalid")
+        chunk_id = assignment["chunk_id"]
+        requirement = assignment["requirement"]
+        if not isinstance(chunk_id, str) or chunk_id not in chunks or not isinstance(requirement, dict):
+            raise ValueError("scoped-assignment-invalid")
+        if set(requirement) != {"id", "source_paths", "claim"}:
+            raise ValueError("scoped-assignment-invalid")
+        identity, paths, claim = requirement["id"], requirement["source_paths"], requirement["claim"]
+        if (
+            not isinstance(identity, str)
+            or not identity.strip()
+            or identity == "interaction-inventory-audit"
+            or not isinstance(paths, list)
+            or not paths
+            or any(not _literal_source_path(path) for path in paths)
+            or paths != sorted(set(paths))
+            or not set(paths).intersection(chunks[chunk_id]["scope_paths"])
+            or not isinstance(claim, str)
+            or not claim.strip()
+        ):
+            raise ValueError("scoped-assignment-invalid")
+        records = capture_source_snapshot(repository, paths)["files"]
+        if len(records) != len(paths) or any(
+            record["kind"] == "missing" and record["path"] not in manifest["inventory"] for record in records
+        ):
+            raise ValueError("scoped-endpoint-missing")
+        ids.append(identity)
+    if ids != sorted(set(ids)):
+        raise ValueError("scoped-assignment-invalid")
+
+
+def scoped_plan(manifest_path: Path, assignments_path: Path, output: Path) -> Path:
+    """Create an additive source-derived scoped inventory without changing its schema-one plan."""
+    check(manifest_path, allow_draft=True)
+    manifest = json.loads(manifest_path.read_bytes())
+    assignments = json.loads(assignments_path.read_bytes())
+    if not isinstance(assignments, dict) or set(assignments) != {"interactions", "audit_assignments"}:
+        raise ValueError("scoped-assignment-invalid")
+    destination = output.resolve()
+    if destination.parent != manifest_path.resolve().parent or destination == manifest_path.resolve():
+        raise ValueError("scoped-output-invalid")
+    if "diff_base_oid" in manifest and "origin_repository" not in manifest:
+        raise ValueError("chunk-origin-binding-required")
+    manifest.pop("draft", None)
+    manifest.update(
+        schema_version=2,
+        changed_units=_scoped_units(
+            Path(manifest["repository"]), manifest["chunks"], manifest.get("diff_base_oid", "HEAD")
+        ),
+        interaction_assignments=assignments["interactions"],
+        audit_assignments=assignments["audit_assignments"],
+    )
+    _validate_scoped_assignments(manifest)
+    manifest["supporting_units"] = _scoped_supporting_units(manifest)
+    if manifest.get("diff_base_oid") and manifest["supporting_units"]:
+        support_paths = [unit["path"] for unit in manifest["supporting_units"]]
+        origin_support = capture_source_snapshot(Path(manifest["origin_repository"]), support_paths)
+        mirror_support = capture_source_snapshot(Path(manifest["repository"]), support_paths)
+        if (
+            origin_support["revision"] != mirror_support["revision"]
+            or origin_support["files"] != mirror_support["files"]
+            or len(origin_support["files"]) != len(support_paths)
+        ):
+            raise ValueError("chunk-origin-supporting-source-mismatch")
+        support_bytes = (json.dumps(origin_support, indent=2, sort_keys=True, ensure_ascii=True) + "\n").encode("utf-8")
+        support_path = destination.with_name(destination.stem + "-origin-supporting-source.json")
+        with support_path.open("xb") as stream:
+            stream.write(support_bytes)
+        manifest.update(
+            origin_supporting_snapshot_path=support_path.name,
+            origin_supporting_snapshot_sha256=hashlib.sha256(support_bytes).hexdigest(),
+        )
+    with destination.open("x", encoding="utf-8", newline="\n") as stream:
+        stream.write(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    return destination
+
+
 def plan(
     repository: Path,
     output: Path,
@@ -177,6 +381,8 @@ def plan(
     prior_ledger: Path | None = None,
     prior_coverage: Path | None = None,
     caller_run: Path | None = None,
+    diff_base_oid: str | None = None,
+    origin_repository: Path | None = None,
 ) -> Path:
     """Freeze disjoint chunks and declare whether this review resumes a caller run."""
     if budget_bytes <= 0:
@@ -194,7 +400,23 @@ def plan(
     for _ in filter(None, prefix.split("/")):
         repository = repository.parent
     scopes = scopes or ["."]
-    inventory = _inventory(repository, scopes, scope_mode)
+    base = "HEAD"
+    if diff_base_oid is not None:
+        if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", diff_base_oid):
+            raise ValueError("chunk-diff-base-invalid")
+        try:
+            resolved = _git(repository, "rev-parse", "--verify", diff_base_oid + "^{commit}").decode("ascii").strip()
+        except ValueError as exc:
+            raise ValueError("chunk-diff-base-invalid") from exc
+        if resolved != diff_base_oid:
+            raise ValueError("chunk-diff-base-invalid")
+        base = diff_base_oid
+    inventory = _inventory(repository, scopes, scope_mode, base)
+    # A base-only deletion has no current source record; fail before publishing partial coverage.
+    if base != "HEAD":
+        captured = {record["path"] for record in capture_source_snapshot(repository, inventory)["files"]}
+        if not set(inventory).issubset(captured):
+            raise ValueError("chunk-base-only-deletion-unsupported")
     output = _safe_output(repository, output)
     if output.exists() and any(output.iterdir()):
         raise ValueError("chunk-output-already-populated")
@@ -217,7 +439,7 @@ def plan(
     current: list[str] = []
     for path in inventory:
         candidate = [*current, path]
-        source, diff = _material(repository, candidate)
+        source, diff = _material(repository, candidate, base)
         if current and len(source) + len(diff) > budget_bytes:
             groups.append(current)
             current = [path]
@@ -274,7 +496,7 @@ def plan(
             raise ValueError("prior-ledger-changed")
     chunks = []
     for index, paths in enumerate(groups, 1):
-        source, diff = _material(repository, paths)
+        source, diff = _material(repository, paths, base)
         name = f"chunk-{index:03d}"
         source_path = f"{name}-source.json"
         diff_path = f"{name}.diff"
@@ -312,13 +534,48 @@ def plan(
             "coverage": coverage,
         },
     }
+    if diff_base_oid is not None:
+        manifest.update(schema_version=2, diff_base_oid=diff_base_oid, draft=True)
+        if origin_repository is not None:
+            origin = origin_repository.resolve(strict=True)
+            if (
+                origin == repository
+                or _git(repository, "branch", "--show-current").strip()
+                or (origin / os.fsdecode(_git(origin, "rev-parse", "--git-common-dir").strip())).resolve()
+                != (repository / os.fsdecode(_git(repository, "rev-parse", "--git-common-dir").strip())).resolve()
+            ):
+                raise ValueError("chunk-origin-repository-invalid")
+            original = capture_source_snapshot(origin, inventory)
+            mirror = capture_source_snapshot(repository, inventory)
+            if original["repository"] != origin.as_posix() or mirror["repository"] != repository.as_posix():
+                raise ValueError("chunk-origin-repository-invalid")
+            if original["revision"] != mirror["revision"] or original["files"] != mirror["files"]:
+                raise ValueError("chunk-origin-source-mismatch")
+            if _inventory(origin, scopes, scope_mode, base) != inventory:
+                raise ValueError("chunk-origin-inventory-mismatch")
+            if _git(origin, "diff", base, "--binary", "--no-renames", "--", *inventory) != _git(
+                repository, "diff", base, "--binary", "--no-renames", "--", *inventory
+            ):
+                raise ValueError("chunk-origin-diff-mismatch")
+            original_bytes = (json.dumps(original, indent=2, sort_keys=True, ensure_ascii=True) + "\n").encode("utf-8")
+            (output / "origin-source.json").write_bytes(original_bytes)
+            manifest.update(
+                origin_repository=origin.as_posix(),
+                origin_snapshot_path="origin-source.json",
+                origin_snapshot_sha256=hashlib.sha256(original_bytes).hexdigest(),
+                origin_index_sha256=hashlib.sha256(
+                    _git(origin, "ls-files", "--stage", "-z", "--", *scopes)
+                ).hexdigest(),
+            )
     manifest_path = output / "chunks.json"
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
-    check(manifest_path)
+    check(manifest_path, allow_draft=diff_base_oid is not None)
     return manifest_path
 
 
-def check(manifest_path: Path, results_path: Path | None = None) -> dict[str, object] | None:
+def check(
+    manifest_path: Path, results_path: Path | None = None, *, allow_draft: bool = False
+) -> dict[str, object] | None:
     """Reject stale chunk evidence and summarize validated result references when supplied."""
     root = manifest_path.resolve().parent
     manifest_bytes = manifest_path.read_bytes()
@@ -337,10 +594,88 @@ def check(manifest_path: Path, results_path: Path | None = None) -> dict[str, ob
     if (
         not isinstance(manifest, dict)
         or type(manifest.get("schema_version")) is not int
-        or manifest["schema_version"] != 1
-        or set(manifest) != base_keys | {"prior_findings", "origin"}
+        or manifest["schema_version"] not in {1, 2}
+        or set(manifest)
+        != base_keys
+        | {"prior_findings", "origin"}
+        | ({"diff_base_oid"} if "diff_base_oid" in manifest else set())
+        | (
+            {"origin_repository", "origin_snapshot_path", "origin_snapshot_sha256", "origin_index_sha256"}
+            if "origin_repository" in manifest
+            else set()
+        )
+        | (
+            {"origin_supporting_snapshot_path", "origin_supporting_snapshot_sha256"}
+            if "origin_supporting_snapshot_path" in manifest
+            else set()
+        )
+        | (
+            {"draft"}
+            if manifest.get("draft") is True
+            else {"changed_units", "interaction_assignments", "audit_assignments", "supporting_units"}
+            if manifest["schema_version"] == 2
+            else set()
+        )
     ):
         raise ValueError("chunk-manifest-invalid")
+    if "diff_base_oid" in manifest:
+        base = manifest["diff_base_oid"]
+        if (
+            manifest["schema_version"] != 2
+            or not isinstance(base, str)
+            or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", base)
+        ):
+            raise ValueError("chunk-diff-base-invalid")
+        if (
+            _git(Path(manifest["repository"]), "rev-parse", "--verify", base + "^{commit}").decode("ascii").strip()
+            != base
+        ):
+            raise ValueError("chunk-diff-base-invalid")
+    else:
+        base = "HEAD"
+    if ("origin_repository" in manifest or manifest.get("draft") is True) and "diff_base_oid" not in manifest:
+        raise ValueError("chunk-origin-binding-invalid")
+    if manifest.get("draft") is True and not allow_draft:
+        raise ValueError("scoped-comparison-profile-unverified")
+    if manifest.get("diff_base_oid") is not None and not manifest.get("draft") and "origin_repository" not in manifest:
+        raise ValueError("chunk-origin-binding-required")
+    if "origin_repository" in manifest:
+        source_repo = Path(manifest["origin_repository"])
+        if not source_repo.is_absolute() or source_repo.resolve().as_posix() != manifest["origin_repository"]:
+            raise ValueError("chunk-origin-repository-invalid")
+        mirror_repo = Path(manifest["repository"])
+        if (
+            source_repo == mirror_repo
+            or _git(mirror_repo, "branch", "--show-current").strip()
+            or (source_repo / os.fsdecode(_git(source_repo, "rev-parse", "--git-common-dir").strip())).resolve()
+            != (mirror_repo / os.fsdecode(_git(mirror_repo, "rev-parse", "--git-common-dir").strip())).resolve()
+        ):
+            raise ValueError("chunk-origin-repository-invalid")
+        origin_bytes = _artifact(root, manifest["origin_snapshot_path"]).read_bytes()
+        if hashlib.sha256(origin_bytes).hexdigest() != manifest["origin_snapshot_sha256"]:
+            raise ValueError("chunk-origin-source-changed")
+        saved = json.loads(origin_bytes)
+        current = capture_source_snapshot(source_repo, manifest["inventory"])
+        if current.get("repository") != source_repo.as_posix():
+            raise ValueError("chunk-origin-repository-invalid")
+        if (
+            saved != current
+            or hashlib.sha256(
+                _git(source_repo, "ls-files", "--stage", "-z", "--", *manifest["requested_scope_paths"])
+            ).hexdigest()
+            != manifest["origin_index_sha256"]
+            or _inventory(source_repo, manifest["requested_scope_paths"], manifest["scope_mode"], base)
+            != manifest["inventory"]
+        ):
+            raise ValueError("chunk-origin-source-changed")
+        if (
+            saved != capture_source_snapshot(source_repo, manifest["inventory"])
+            or hashlib.sha256(
+                _git(source_repo, "ls-files", "--stage", "-z", "--", *manifest["requested_scope_paths"])
+            ).hexdigest()
+            != manifest["origin_index_sha256"]
+        ):
+            raise ValueError("chunk-origin-source-changed")
     origin = manifest["origin"]
     if not isinstance(origin, dict) or set(origin) != {"kind", "caller_run"}:
         raise ValueError("chunk-origin-invalid")
@@ -383,7 +718,7 @@ def check(manifest_path: Path, results_path: Path | None = None) -> dict[str, ob
     ):
         raise ValueError("chunk-manifest-invalid")
     if (
-        _inventory(repository, scopes, scope_mode) != inventory
+        _inventory(repository, scopes, scope_mode, base) != inventory
         or _git(repository, "rev-parse", "HEAD").decode("ascii").strip() != manifest["revision"]
     ):
         raise ValueError("chunk-inventory-changed")
@@ -409,7 +744,7 @@ def check(manifest_path: Path, results_path: Path | None = None) -> dict[str, ob
         if not isinstance(paths, list) or not paths or paths != sorted(set(paths)):
             raise ValueError("chunk-scope-invalid")
         covered.extend(paths)
-        source, diff = _material(repository, paths)
+        source, diff = _material(repository, paths, base)
         if (
             _artifact(root, chunk["source_path"]).read_bytes() != source
             or hashlib.sha256(source).hexdigest() != chunk["source_sha256"]
@@ -425,6 +760,29 @@ def check(manifest_path: Path, results_path: Path | None = None) -> dict[str, ob
             raise ValueError("chunk-size-invalid")
     if sorted(covered) != inventory or len(covered) != len(set(covered)):
         raise ValueError("chunk-coverage-invalid")
+    if manifest["schema_version"] == 2 and not manifest.get("draft"):
+        if manifest["changed_units"] != _scoped_units(repository, chunks, base):
+            raise ValueError("scoped-units-changed")
+        _validate_scoped_assignments(manifest)
+        if manifest["supporting_units"] != _scoped_supporting_units(manifest):
+            raise ValueError("scoped-supporting-source-changed")
+        if manifest.get("diff_base_oid") and manifest["supporting_units"]:
+            if "origin_supporting_snapshot_path" not in manifest:
+                raise ValueError("chunk-origin-supporting-source-unbound")
+            support_bytes = _artifact(root, manifest["origin_supporting_snapshot_path"]).read_bytes()
+            support_paths = [unit["path"] for unit in manifest["supporting_units"]]
+            saved_support = json.loads(support_bytes)
+            original_support = capture_source_snapshot(Path(manifest["origin_repository"]), support_paths)
+            mirror_support = capture_source_snapshot(repository, support_paths)
+            if (
+                hashlib.sha256(support_bytes).hexdigest() != manifest["origin_supporting_snapshot_sha256"]
+                or saved_support != original_support
+                or original_support["revision"] != mirror_support["revision"]
+                or original_support["files"] != mirror_support["files"]
+            ):
+                raise ValueError("chunk-origin-supporting-source-changed")
+        elif "origin_supporting_snapshot_path" in manifest:
+            raise ValueError("chunk-origin-supporting-source-invalid")
     _check_prior_manifest(root, manifest)
     if manifest["origin"]["kind"] == "continuation":
         caller_ledger = Path(manifest["origin"]["caller_run"]) / "loop-ledger.json"
@@ -437,6 +795,28 @@ def check(manifest_path: Path, results_path: Path | None = None) -> dict[str, ob
         copied = _prior_ledger_artifact(root, manifest["prior_findings"]["ledger_path"])
         if caller_digest != ledger_digest(copied):
             raise ValueError("caller-ledger-changed")
+    if manifest.get("draft") is True and allow_draft:
+        return None
+    if manifest["schema_version"] == 2:
+        # Only a source-bound, first-run text profile can reach independent review; other routes keep their gates.
+        if not manifest.get("diff_base_oid") or not manifest.get("origin_repository") or origin["kind"] != "first-run":
+            raise ValueError("scoped-comparison-profile-unverified")
+        for checkout in (Path(manifest["origin_repository"]), repository):
+            index_entries = _git(checkout, "ls-files", "-v", "-z", "--", *scopes).split(b"\0")
+            if any(entry and (entry[:1] == b"S" or entry[:1].islower()) for entry in index_entries):
+                raise ValueError("chunk-origin-index-flags-unsupported")
+        if any(chunk["oversize"] for chunk in chunks):
+            raise ValueError("scoped-oversize-source-unreviewed")
+        if any(
+            unit["kind"] != "file" or unit["encoding"] != "utf-8" or unit["binary_diff"] or unit["symlink_diff"]
+            for unit in manifest["changed_units"]
+        ):
+            raise ValueError("scoped-unsupported-source-unreviewed")
+        if any(unit["kind"] != "file" or unit["encoding"] != "utf-8" for unit in manifest["supporting_units"]):
+            raise ValueError("scoped-supporting-source-unsupported")
+        if results_path is None:
+            return None
+        return _check_scoped_results(root, manifest, manifest_bytes, results_path)
     if results_path is not None:
         runs, results_digest = _check_results(root, manifest, results_path)
         _check_prior_results(root, manifest, results_path)
@@ -869,6 +1249,187 @@ def _check_results(root: Path, manifest: dict[str, object], results_path: Path) 
     return runs, hashlib.sha256(results_bytes).hexdigest()
 
 
+def _scoped_audit_requirements(manifest: dict[str, object], audit: dict[str, object]) -> list[dict[str, object]]:
+    """Bind an independent auditor to its source units and the complete interaction inventory."""
+    inventory = {
+        "changed_units": manifest["changed_units"],
+        "supporting_units": manifest["supporting_units"],
+        "interaction_assignments": manifest["interaction_assignments"],
+    }
+    units = [unit for unit in manifest["changed_units"] if unit["chunk_id"] in audit["chunk_ids"]]
+    audit_requirement = {
+        "id": "interaction-inventory-audit",
+        "source_paths": sorted(unit["path"] for unit in units),
+        "claim": "Assess this complete source-derived inventory and declared interactions: "
+        + json.dumps(inventory, sort_keys=True, ensure_ascii=True),
+        "unit_ids": sorted(unit["id"] for unit in units),
+    }
+    material = [
+        assignment["requirement"]
+        for assignment in manifest["interaction_assignments"]
+        if assignment["chunk_id"] in audit["chunk_ids"]
+    ]
+    return sorted([audit_requirement, *material], key=lambda item: item["id"])
+
+
+def _scoped_review_identities(root: Path, result_path: str) -> set[str]:
+    """Read every reviewer identity from an already authenticated child result."""
+    run = _artifact(root, result_path).parent
+    ledger = load_ledger(run / "loop-ledger.json")
+    identities = [round_["reviewer"]["identity"] for round_ in ledger["rounds"]]
+    if not identities or any(not isinstance(identity, str) or not identity.strip() for identity in identities):
+        raise ValueError("scoped-reviewer-identity-invalid")
+    return set(identities)
+
+
+def _scoped_delivered_paths(root: Path, result_path: str) -> set[str]:
+    """Return records from current snapshots bound by the child's evidence validator."""
+    run = _artifact(root, result_path).parent
+    evidence = json.loads((run / "loop-evidence.json").read_bytes())
+    visible = set()
+    for field in ("current_source_path", "current_supporting_source_path"):
+        source = evidence.get(field)
+        if source is not None:
+            snapshot = json.loads(_artifact(run, source).read_bytes())
+            visible.update(record["path"] for record in snapshot["files"])
+    return visible
+
+
+def _check_scoped_results(
+    root: Path, manifest: dict[str, object], manifest_bytes: bytes, results_path: Path
+) -> dict[str, object]:
+    """Require every scoped child and independently sourced audits of all change units."""
+    results_bytes = results_path.read_bytes()
+    results = json.loads(results_bytes)
+    chunks = manifest["chunks"]
+    if (
+        not isinstance(results, dict)
+        or set(results) != {"schema_version", "chunks", "audits"}
+        or type(results.get("schema_version")) is not int
+        or results["schema_version"] != 2
+        or not isinstance(results["chunks"], list)
+        or len(results["chunks"]) != len(chunks)
+        or not isinstance(results["audits"], list)
+        or len(results["audits"]) != len(manifest["audit_assignments"])
+    ):
+        raise ValueError("scoped-results-invalid")
+    if any(chunk["oversize"] for chunk in chunks):
+        raise ValueError("scoped-oversize-source-unreviewed")
+    if any(
+        unit["kind"] == "symlink" or unit["encoding"] == "base64" or unit["binary_diff"] or unit["symlink_diff"]
+        for unit in manifest["changed_units"]
+    ):
+        raise ValueError("scoped-unsupported-source-unreviewed")
+    if any(unit["kind"] == "symlink" or unit["encoding"] == "base64" for unit in manifest["supporting_units"]):
+        raise ValueError("scoped-supporting-source-unsupported")
+    result_paths = []
+    for chunk, result in zip(chunks, results["chunks"], strict=True):
+        if (
+            not isinstance(result, dict)
+            or set(result) != {"id", "result_path"}
+            or result["id"] != chunk["id"]
+            or not isinstance(result["result_path"], str)
+        ):
+            raise ValueError("scoped-results-coverage-invalid")
+        result_paths.append(result["result_path"])
+    for audit, result in zip(manifest["audit_assignments"], results["audits"], strict=True):
+        if (
+            not isinstance(result, dict)
+            or set(result) != {"id", "result_path"}
+            or result["id"] != audit["id"]
+            or not isinstance(result["result_path"], str)
+        ):
+            raise ValueError("scoped-audit-results-coverage-invalid")
+        result_paths.append(result["result_path"])
+    if len(result_paths) != len(set(result_paths)):
+        raise ValueError("scoped-result-path-reused")
+
+    repository = Path(manifest["repository"])
+    runs = []
+    reviewers = {}
+    child_paths = {}
+    for chunk, result in zip(chunks, results["chunks"], strict=True):
+        path = result["result_path"]
+        requirements = [
+            assignment["requirement"]
+            for assignment in manifest["interaction_assignments"]
+            if assignment["chunk_id"] == chunk["id"]
+        ]
+        runs.append(
+            _check_clean_run(
+                root,
+                manifest["repository"],
+                chunk["scope_paths"],
+                _artifact(root, chunk["source_path"]).read_bytes(),
+                _artifact(root, chunk["diff_path"]).read_bytes(),
+                path,
+                chunk["id"],
+                manifest["request"],
+                interaction_requirements=requirements,
+                expected_base=manifest.get("diff_base_oid"),
+            )
+        )
+        delivered = _scoped_delivered_paths(root, path)
+        if any(not set(requirement["source_paths"]).issubset(delivered) for requirement in requirements):
+            raise ValueError(f"scoped-interaction-endpoint-missing:{chunk['id']}")
+        reviewers[chunk["id"]] = _scoped_review_identities(root, path)
+        child_paths[chunk["id"]] = path
+
+    for audit, result in zip(manifest["audit_assignments"], results["audits"], strict=True):
+        audit_paths = sorted(
+            unit["path"] for unit in manifest["changed_units"] if unit["chunk_id"] in audit["chunk_ids"]
+        )
+        audit_source, audit_diff = _material(repository, audit_paths, manifest.get("diff_base_oid", "HEAD"))
+        requirements = _scoped_audit_requirements(manifest, audit)
+        path = result["result_path"]
+        runs.append(
+            _check_clean_run(
+                root,
+                manifest["repository"],
+                audit_paths,
+                audit_source,
+                audit_diff,
+                path,
+                audit["id"],
+                manifest["request"],
+                interaction_requirements=requirements,
+                expected_base=manifest.get("diff_base_oid"),
+            )
+        )
+        delivered = _scoped_delivered_paths(root, path)
+        if any(not set(requirement["source_paths"]).issubset(delivered) for requirement in requirements):
+            raise ValueError(f"scoped-audit-endpoint-missing:{audit['id']}")
+        audited_reviewers = set().union(*(reviewers[chunk_id] for chunk_id in audit["chunk_ids"]))
+        if _scoped_review_identities(root, path).intersection(audited_reviewers):
+            raise ValueError("scoped-auditor-not-independent")
+
+    prior_path = manifest["prior_findings"]["ledger_path"]
+    if prior_path is not None:
+        prior = load_ledger(_prior_ledger_artifact(root, prior_path))
+        expected = {finding["signature"]: finding for finding in prior["rounds"][-1]["findings"]}
+        prior_map = {
+            "chunks": [{"id": key, "result_path": value} for key, value in child_paths.items()],
+            "interactions": [],
+            "groups": [],
+        }
+        for item in manifest["prior_findings"]["coverage"]:
+            if item["review_kind"] != "chunk":
+                key = "interactions" if item["review_kind"] == "interaction" else "groups"
+                prior_map[key].append(
+                    {"chunk_ids": item["chunk_ids"], "result_path": child_paths[item["chunk_ids"][0]]}
+                )
+            issue = _prior_result_issue(root, prior_map, item, expected[item["signature"]])
+            if issue is not None:
+                raise ValueError(f"{issue}:{item['signature']}")
+    return {
+        "schema_version": 2,
+        "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
+        "results_sha256": hashlib.sha256(results_bytes).hexdigest(),
+        "runs": runs,
+        "coverage_limit": "Independent source-aware review cannot prove every semantic interaction was discovered.",
+    }
+
+
 def _check_clean_run(
     root: Path,
     repository: str,
@@ -881,6 +1442,8 @@ def _check_clean_run(
     decisions: list[dict[str, object]] | None = None,
     *,
     require_clean: bool = True,
+    interaction_requirements: list[dict[str, object]] | None = None,
+    expected_base: str | None = None,
 ) -> dict[str, object]:
     """Bind one validated loop to its request and source, requiring clean when requested."""
     result_path = _artifact(root, result_ref)
@@ -912,6 +1475,8 @@ def _check_clean_run(
     ):
         raise ValueError(f"chunk-result-score-invalid:{label}")
     evidence = json.loads((run / "loop-evidence.json").read_text(encoding="utf-8"))
+    if evidence.get("diff_base_oid") != expected_base:
+        raise ValueError(f"chunk-result-diff-base-mismatch:{label}")
     if evidence.get("repository") != repository or evidence.get("scope_paths") != paths:
         raise ValueError(f"chunk-result-scope-mismatch:{label}")
     request = evidence.get("request")
@@ -922,7 +1487,18 @@ def _check_clean_run(
         or any(not isinstance(value, str) or not value.strip() for value in request.values())
     ):
         raise ValueError(f"chunk-result-request-missing:{label}")
-    if decisions is not None:
+    if decisions is not None and interaction_requirements is not None:
+        raise ValueError("chunk-assessment-contract-conflict")
+    if interaction_requirements is not None:
+        assessment = "Interaction assessment:\n" + json.dumps(
+            interaction_requirements, sort_keys=True, ensure_ascii=True
+        )
+        expected_request = coordinator_request | {
+            "specification": coordinator_request["specification"] + "\n" + assessment
+        }
+        if evidence.get("schema_version") != 3 or evidence.get("interaction_requirements") != interaction_requirements:
+            raise ValueError(f"scoped-interaction-requirements-mismatch:{label}")
+    elif decisions is not None:
         assessment = "Interaction assessment:\n" + json.dumps(decisions, sort_keys=True, ensure_ascii=True)
         if assessment not in request["specification"]:
             raise ValueError(f"chunk-interaction-assessment-missing:{label}")
@@ -969,6 +1545,8 @@ def main() -> int:
     planner.add_argument("--out", type=Path, required=True)
     planner.add_argument("--scope-path", action="append", default=[])
     planner.add_argument("--scope-mode", choices=("changed", "all"), default="changed")
+    planner.add_argument("--diff-base", help="Full immutable comparison commit ID")
+    planner.add_argument("--origin-repository", type=Path, help="Original checkout backing the detached review mirror")
     planner.add_argument("--budget-bytes", type=int, default=DEFAULT_BUDGET_BYTES)
     planner.add_argument("--goal", required=True)
     planner.add_argument("--specification", required=True)
@@ -978,6 +1556,10 @@ def main() -> int:
     )
     planner.add_argument("--prior-coverage", type=Path, help="JSON assignments for every prior final-round signature")
     planner.add_argument("--caller-run", type=Path, help="Existing run whose reviewed findings this plan continues")
+    scoped = commands.add_parser("scoped-plan")
+    scoped.add_argument("--manifest", type=Path, required=True)
+    scoped.add_argument("--assignments", type=Path, required=True)
+    scoped.add_argument("--out", type=Path, required=True)
     checker = commands.add_parser("check")
     checker.add_argument("--manifest", type=Path, required=True)
     checker.add_argument("--results", type=Path, help="Ordered chunk result map for final coverage validation")
@@ -1004,8 +1586,12 @@ def main() -> int:
                     arguments.prior_ledger,
                     arguments.prior_coverage,
                     arguments.caller_run,
+                    arguments.diff_base,
+                    arguments.origin_repository,
                 )
             )
+        elif arguments.command == "scoped-plan":
+            print(scoped_plan(arguments.manifest, arguments.assignments, arguments.out))
         elif arguments.command == "check-stopped":
             summary = check_stopped(arguments.manifest, arguments.results)
             if arguments.summary:
@@ -1022,7 +1608,7 @@ def main() -> int:
                 print("chunk source inventory current")
             else:
                 print("declared interaction evidence current; undeclared interactions unverified")
-    except (OSError, ValueError, UnicodeError, json.JSONDecodeError) as error:
+    except (OSError, ValueError, RuntimeError, UnicodeError, json.JSONDecodeError) as error:
         print(f"chunk-diff-error:{error}", file=sys.stderr)
         return 2
     return 0

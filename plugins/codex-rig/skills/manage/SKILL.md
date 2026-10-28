@@ -29,9 +29,9 @@ The installed plugin tree is immutable input. Resolve requested targets against 
 
 Use a parent-only path for a small, understood, reversible local change with bounded impact and existing task authorization. A code fix plus its regression test remains one change. Routing examples are optional; tests and documentation for one change do not create separate domains.
 
-1. Inspect the affected flow and applicable instructions; define the requested outcome. Investigate an unknown cause before editing.
-2. Make the smallest authorized change. Run the relevant acceptance check and configured lint/format checks; inspect the diff.
-3. Report the outcome, verification, and material limits concisely. Do not create execution plans, specialist packs, confidence worksheets, five-entry gate bundles, or final-handoff/result artifacts solely for this path. Reuse still-valid checks for unchanged source and environment.
+1. Inspect the affected flow and applicable instructions; define a concise plan with core acceptance and deferred scope. Investigate an unknown cause before editing. Perform a brief parent self-challenge (not independent); accept the challenged plan under existing authority. Assign execution to the parent for indivisible work; management mutations remain parent-serial.
+2. Make the authorized change with the smallest coherent core. Consolidate the actual result and handoffs; reconcile conflicts and integrate before result review. Obtain one bounded independent challenge of the actual result and retain its findings and independence limits. Run the relevant acceptance check and configured lint/format checks; inspect the diff.
+3. Report the outcome, verification, and material limits concisely. Do not create unnecessary standalone execution-plan artifacts, specialist packs, confidence worksheets, five-entry gate bundles, or final-handoff/result artifacts solely for this path. Reuse still-valid checks for unchanged source and environment.
 
 This path takes precedence over the detailed workflow and role examples below. Select the detailed workflow for medium/large or unexpectedly nontrivial work under Proportional Execution, an explicitly requested structured report/review, or work requiring independent specialist coverage. Actual runtime permissions, protected-state decisions, and project-required checks still apply. Missing parallel controls select parent-serial work; they do not require another permission request for already-authorized local edits.
 
@@ -60,6 +60,8 @@ The promoted route permits read-only inventory, reference, ownership, and policy
 Before any dispatch, freeze intent, target, baseline, ownership map, exact references, calibration and routing impact, context packs, role-card hashes, checks, resource locks, and plan digest. Dispatch at most one fixed dependency-ready wave, then join every terminal scan before edits, propagation, gates, or acceptance; changed scope requires new plan.
 
 The frozen `<run-directory>/execution-plan.json` must include exact `consumer_policy` values `consumer_id=manage`, `capability=portable-read-only`, `promotion_status=promoted`, `parent_mutations=serial`, and `canonical_gates=serial`.
+
+The plan must also freeze schema-3 `dispatch_choices` for each node as specified in [portable-parallel-read.md](../../shared/portable-parallel-read.md#required-barrier); omitted spawn settings are represented by `null` and inherit observed parent controls.
 
 Bootstrap exception: run-directory creation (Step 01), the `inventory.txt`/`references.txt`/`ownership.md` writes from Step 03, and the `write-approval.json` write itself are exempt from requiring a prior approved plan digest — these precursor writes must exist before a plan digest can be computed or approved.
 

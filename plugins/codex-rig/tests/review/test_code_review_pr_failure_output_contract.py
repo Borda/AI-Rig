@@ -46,7 +46,7 @@ def test_terminal_pr_collection_failure_is_review_unavailable_not_merge_decision
     assert "`pr review availability: unavailable`" in normalized
     assert "`merge decision: not made`" in normalized
     assert "plain diagnostic prose" in normalized
-    assert "emit the presentation-11 display-only status table" in normalized
+    assert "emit the presentation-12 display-only status table" in normalized
     assert "do not invent assessed findings or a merge recommendation" in normalized
     assert "## PR Evidence Collection Recovery" not in terminal_gate
     assert "| Operational area |" not in terminal_gate
@@ -89,7 +89,11 @@ def test_pr_workflow_uses_effective_grants_before_terminal_network_failure(
     Review collects under its effective grants before reporting unavailability, and remediation keeps its collector from
     escalating allowed reads before findings intake.
     """
-    skill = skill_path.read_text(encoding="utf-8")
+    skill = (
+        read_with_references(skill_path, "source-and-scope.md")
+        if skill_path == CODE_REVIEW_SKILL
+        else read_with_references(skill_path, "intake.md", "selection.md", "implementation.md", "completion.md")
+    )
 
     assert (
         "run the direct collector under current effective network and filesystem grants or request runtime approval "

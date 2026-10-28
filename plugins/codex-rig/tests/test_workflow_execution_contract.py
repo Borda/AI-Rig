@@ -43,7 +43,14 @@ def test_local_merge_approval_reaches_remediation_without_waiving_checks() -> No
     """Prevent routine integration commits from reopening consent or bypassing source checks."""
     native = (PLUGIN_ROOT / "shared/native-skill-contract.md").read_text(encoding="utf-8")
     assets = (PLUGIN_ROOT / "assets/AGENTS.md").read_text(encoding="utf-8")
-    skill = read_with_references(PLUGIN_ROOT / "skills/code-remediate/SKILL.md", "existing-conflict.md")
+    skill = read_with_references(
+        PLUGIN_ROOT / "skills/code-remediate/SKILL.md",
+        "intake.md",
+        "selection.md",
+        "implementation.md",
+        "completion.md",
+        "existing-conflict.md",
+    )
     section = native.split("### Local merge approval", 1)[1].split("\n## ", 1)[0]
     for invariant in (
         "A task-owned local merge that the current authorized write task needs and that is non-destructive to "
@@ -88,14 +95,22 @@ def test_nested_review_exits_and_fallback_limits_reach_remediation() -> None:
     a serial parent-fallback report. Remediation needs a defined exit for the first and a visible residual limit for the
     second, otherwise it either reruns the review or certifies coverage it never received.
     """
-    skill = read_with_references(PLUGIN_ROOT / "skills/code-remediate/SKILL.md", "missing-review-decision.md")
+    skill = read_with_references(
+        PLUGIN_ROOT / "skills/code-remediate/SKILL.md",
+        "intake.md",
+        "selection.md",
+        "implementation.md",
+        "completion.md",
+        "missing-review-decision.md",
+    )
     handoff = (PLUGIN_ROOT / "shared/final-handoff-contract.md").read_text(encoding="utf-8")
     assert "A review that completes but cannot be admitted keeps its terminal status" in skill
-    assert "Never rerun the review or repeat the fresh-review question for this unchanged target" in skill
-    assert "`Continue with available findings` (the **No** branch below) and `Stop remediation`" in skill
+    assert "Preserve prior answers and stopped-route limits" in skill
+    assert "exactly `New review`, `Resume last one`, `Stop`" in skill
     assert 'An admitted report recording `execution_mode="serial-fallback"`' in skill
     assert "never as independent review coverage" in skill
-    assert "An ineligible returned result follows the remediation's own exit" in handoff
+    assert "An ineligible returned result follows the remediation's owning status decision" in handoff
+    assert "without automatically restarting review or rediscovering another report" in handoff
 
 
 #: Commit message satisfying the shared commit template, reused by every disposable fixture commit.
@@ -231,7 +246,15 @@ def test_local_workflow_commands_use_effective_permissions() -> None:
 @pytest.mark.parametrize("relative", ["shared/commit-response-template.md", "assets/AGENTS.md"])
 def test_commit_recovery_keeps_authority_and_checks_state(relative: str) -> None:
     """Require an evidence-bound parse repair without authorizing replay after a real denial."""
-    contract = " ".join((PLUGIN_ROOT / relative).read_text(encoding="utf-8").split())
+    contract = " ".join(
+        (
+            read_with_references(
+                PLUGIN_ROOT / relative, "intake.md", "selection.md", "implementation.md", "completion.md"
+            )
+            if relative == "skills/code-remediate/SKILL.md"
+            else (PLUGIN_ROOT / relative).read_text(encoding="utf-8")
+        ).split()
+    )
     for required in (
         "pre-execution syntax failure",
         "HEAD",
@@ -286,7 +309,11 @@ def test_hook_failure_recovery_repairs_root_cause_before_resuming_commit() -> No
 @pytest.mark.parametrize("relative", ["shared/native-skill-contract.md", "skills/code-remediate/SKILL.md"])
 def test_hook_failure_consumers_link_the_canonical_recovery(relative: str) -> None:
     """Keep global, ordinary commit and snapshot workflows on the same root-cause repair route."""
-    text = (PLUGIN_ROOT / relative).read_text(encoding="utf-8")
+    text = (
+        read_with_references(PLUGIN_ROOT / relative, "intake.md", "selection.md", "implementation.md", "completion.md")
+        if relative == "skills/code-remediate/SKILL.md"
+        else (PLUGIN_ROOT / relative).read_text(encoding="utf-8")
+    )
     assert "commit-response-template.md#hook-failure-recovery" in text
 
 
@@ -320,13 +347,19 @@ def test_hook_comparison_and_owned_staged_resume_preserve_boundaries() -> None:
         "causal attribution inconclusive",
     ):
         assert required in comparison
-    remediation = (PLUGIN_ROOT / "skills/code-remediate/SKILL.md").read_text(encoding="utf-8")
+    remediation = read_with_references(
+        PLUGIN_ROOT / "skills/code-remediate/SKILL.md",
+        "intake.md",
+        "selection.md",
+        "implementation.md",
+        "completion.md",
+    )
     preflight = remediation.split("Before staging each chosen unit", 1)[1].split("The resulting commit", 1)[0]
     assert "on initial entry" in preflight
     assert "only this unit's proven staged content" in preflight
     assert "paths, blobs and modes" in preflight
     assert "Unrelated or uncertain entries stop execution" in preflight
-    review = (PLUGIN_ROOT / "skills/code-review/SKILL.md").read_text(encoding="utf-8")
+    review = read_with_references(PLUGIN_ROOT / "skills/code-review/SKILL.md", "source-and-scope.md")
     assert "commit-response-template.md#pr-and-target-hook-comparison" in review
     assert "read-only review does not authorize source/config repairs" in review
 
@@ -334,7 +367,13 @@ def test_hook_comparison_and_owned_staged_resume_preserve_boundaries() -> None:
 def test_required_gate_and_review_do_not_invent_consent_holds() -> None:
     """Keep required checks authorized while retaining real runtime capability boundaries."""
     contract = (PLUGIN_ROOT / "shared/native-skill-contract.md").read_text(encoding="utf-8")
-    skill = (PLUGIN_ROOT / "skills/code-remediate/SKILL.md").read_text(encoding="utf-8")
+    skill = read_with_references(
+        PLUGIN_ROOT / "skills/code-remediate/SKILL.md",
+        "intake.md",
+        "selection.md",
+        "implementation.md",
+        "completion.md",
+    )
     assert "Runnable plugin code blocks are preapproved workflow recipes" in contract
     assert "Existing grants or an applicable preapproval satisfy that capability" in contract
     assert "A timestamp-specific whole-command prefix is not reusable approval" in contract
@@ -381,7 +420,11 @@ def test_git_reads_and_local_configuration_reuse_authorization() -> None:
 @pytest.mark.parametrize("relative", ["shared/native-skill-contract.md", "skills/sync/SKILL.md"])
 def test_setup_guidance_names_current_generated_default(relative: str) -> None:
     """Prevent callers from expecting the retired generated workspace-only profile."""
-    text = (PLUGIN_ROOT / relative).read_text(encoding="utf-8")
+    text = (
+        read_with_references(PLUGIN_ROOT / relative, "intake.md", "selection.md", "implementation.md", "completion.md")
+        if relative == "skills/code-remediate/SKILL.md"
+        else (PLUGIN_ROOT / relative).read_text(encoding="utf-8")
+    )
     assert "`local-workflow` when no default exists" in text
     assert "supplying `:workspace` when no default exists" not in text
     assert 'adds `default_permissions = ":workspace"` when no default exists' not in text
@@ -393,7 +436,13 @@ def test_local_git_grant_reaches_ordinary_commits_and_grouping() -> None:
     native = (PLUGIN_ROOT / "shared/native-skill-contract.md").read_text(encoding="utf-8")
     assets = (PLUGIN_ROOT / "assets/AGENTS.md").read_text(encoding="utf-8")
     template = (PLUGIN_ROOT / "shared/commit-response-template.md").read_text(encoding="utf-8")
-    skill = (PLUGIN_ROOT / "skills/code-remediate/SKILL.md").read_text(encoding="utf-8")
+    skill = read_with_references(
+        PLUGIN_ROOT / "skills/code-remediate/SKILL.md",
+        "intake.md",
+        "selection.md",
+        "implementation.md",
+        "completion.md",
+    )
     assert "Task-scoped local Git work other than a plain commit runs without an authorization question" in native
     assert "A local Git approval grant covers plain commits." in native
     assert "ordinary finding-fix commits" in native
@@ -653,7 +702,7 @@ def test_local_git_grant_reaches_ordinary_commits_and_grouping() -> None:
         ),
         pytest.param(
             "skills/code-remediate/SKILL.md",
-            "Before the commit question, run the [Local Git approval grant](../../shared/native-skill-contract.md"
+            "Before the commit question, run the [Local Git approval grant](../../../shared/native-skill-contract.md"
             "#local-git-approval-grant) check in the remediation checkout and record its result under "
             "`## Upfront Decisions`",
             id="remediate-grant-check-before-commit-question",
@@ -704,7 +753,7 @@ def test_local_git_grant_reaches_ordinary_commits_and_grouping() -> None:
         pytest.param(
             "skills/code-remediate/SKILL.md",
             "necessary task-owned local integration and its merge commit proceed under [Local merge approval]"
-            "(../../shared/native-skill-contract.md#local-merge-approval) without a question and without a grant check",
+            "(../../../shared/native-skill-contract.md#local-merge-approval) without a question and without a grant check",
             id="remediate-merge-never-asks",
         ),
         pytest.param(
@@ -856,7 +905,11 @@ def test_local_git_approval_requires_a_recorded_grant(relative: str, marker: str
     grant file committed into a reviewed pull-request head, or one the agent writes without the user's answer, would
     otherwise give a contributor or the agent itself commit authority.
     """
-    assert marker in (PLUGIN_ROOT / relative).read_text(encoding="utf-8")
+    assert marker in (
+        read_with_references(PLUGIN_ROOT / relative, "intake.md", "selection.md", "implementation.md", "completion.md")
+        if relative == "skills/code-remediate/SKILL.md"
+        else (PLUGIN_ROOT / relative).read_text(encoding="utf-8")
+    )
 
 
 @pytest.mark.installed_plugin
@@ -877,7 +930,11 @@ def test_retired_declaration_check_is_gone(relative: str) -> None:
     A leftover ``#local-git-preapproval`` link or ``declaration: declared`` brief record would send an agent looking for
     a declaration that no longer grants anything, or let it cite one as standing approval.
     """
-    text = (PLUGIN_ROOT / relative).read_text(encoding="utf-8")
+    text = (
+        read_with_references(PLUGIN_ROOT / relative, "intake.md", "selection.md", "implementation.md", "completion.md")
+        if relative == "skills/code-remediate/SKILL.md"
+        else (PLUGIN_ROOT / relative).read_text(encoding="utf-8")
+    )
     for retired in ("#local-git-preapproval", "#local-merge-preapproval", "declaration check", "declaration: declared"):
         assert retired not in text
 
@@ -932,7 +989,11 @@ def test_retired_push_and_commit_authority_claims_are_gone(relative: str, retire
     preparation never asks or checks a grant. A leftover sentence would tell a user that the stricter rule still holds
     somewhere.
     """
-    assert retired not in (PLUGIN_ROOT / relative).read_text(encoding="utf-8")
+    assert retired not in (
+        read_with_references(PLUGIN_ROOT / relative, "intake.md", "selection.md", "implementation.md", "completion.md")
+        if relative == "skills/code-remediate/SKILL.md"
+        else (PLUGIN_ROOT / relative).read_text(encoding="utf-8")
+    )
 
 
 @pytest.mark.installed_plugin
@@ -1182,13 +1243,23 @@ def test_grant_location_is_not_claimed_unreachable_by_repository_content(relativ
     a directory that content controls; the grant check's resolution conditions, not Git's tracking rules, keep such a
     directory from supplying a grant.
     """
-    assert "repository content cannot place a grant" not in (PLUGIN_ROOT / relative).read_text(encoding="utf-8")
+    assert "repository content cannot place a grant" not in (
+        read_with_references(PLUGIN_ROOT / relative, "intake.md", "selection.md", "implementation.md", "completion.md")
+        if relative == "skills/code-remediate/SKILL.md"
+        else (PLUGIN_ROOT / relative).read_text(encoding="utf-8")
+    )
 
 
 @pytest.mark.installed_plugin
 def test_upfront_grouping_does_not_trigger_early_commit_failure() -> None:
     """Allow early preferences while retaining the fail-fast for staging before verified gates and a bound plan."""
-    skill = (PLUGIN_ROOT / "skills/code-remediate/SKILL.md").read_text(encoding="utf-8")
+    skill = read_with_references(
+        PLUGIN_ROOT / "skills/code-remediate/SKILL.md",
+        "intake.md",
+        "selection.md",
+        "implementation.md",
+        "completion.md",
+    )
     fail_fast = skill.split("## Fail-fast Rules", 1)[1].split("## Quality Gates", 1)[0]
     assert "commit mode is selected before gates/result validation" not in fail_fast
     assert "must not stage or commit before gates/result validation" in fail_fast
@@ -1199,8 +1270,15 @@ def test_upfront_grouping_does_not_trigger_early_commit_failure() -> None:
 @pytest.mark.installed_plugin
 def test_rule_43a_distinguishes_automatic_requested_and_integration_commits() -> None:
     """Keep automatic ordering from overriding explicit commit requests or earlier checked integration."""
-    skill = (PLUGIN_ROOT / "skills/code-remediate/SKILL.md").read_text(encoding="utf-8")
+    skill = read_with_references(
+        PLUGIN_ROOT / "skills/code-remediate/SKILL.md",
+        "intake.md",
+        "selection.md",
+        "implementation.md",
+        "completion.md",
+    )
     rule = skill.split("43a.", 1)[1].split("43b.", 1)[0]
+    result = skill.split("### 11:", 1)[1].split("### 12:", 1)[0]
     commit = skill.split("### 12:", 1)[1].split("## Fail-fast Rules", 1)[0]
     template = (PLUGIN_ROOT / "shared/commit-response-template.md").read_text(encoding="utf-8")
     assert "Automatic finding-fix commit units governed by steps 11–12" in rule
@@ -1208,5 +1286,21 @@ def test_rule_43a_distinguishes_automatic_requested_and_integration_commits() ->
     assert "Step 03 target integration follows its own merge checks" in rule
     assert "A missing commit plan or unbound scope still fails" in rule
     assert "Do not wait solely for final report validation" in commit
-    assert "does not waive required checks, ownership, destination or runtime restrictions" in commit
+    for section in (rule, commit):
+        assert "Run and report required checks and retain their evidence" in section
+        assert "Ordinary readiness requires passing checks" in section
+        assert "an explicit local snapshot may proceed with failed verification under step 11" in section
+    assert "ownership, destination and runtime restrictions remain binding" in commit
+    assert (
+        "a standing grant, default/preselected grouping, plan prose or silence alone does not invoke this exception"
+        in result
+    )
+    assert "Keep the result `fail` or `timeout`, preserve raw gate evidence" in result
+    assert (
+        "never relabel a source regression as environment failure or claim remediation complete merely because it was committed"
+        in result
+    )
+    assert (
+        "runtime denial, hook failure and open security/critical findings still block the affected mutation" in result
+    )
     assert "record the explicit request and remaining report checkpoint" in template

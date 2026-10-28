@@ -13,6 +13,15 @@
 - Lower-scope instruction files inherit it and must add only narrower rules or explicit exceptions, never repeat the same policy; when a top-level policy changes, review lower layers for conflicts or obsolete duplication rather than copying the new text into them.
 - **This file is for maintaining this repository only and is never shipped** — plugin users never see it. Anything general, meant for every project or every install, must be distributed in the plugin that ships it (the Codex Rig global template [plugins/codex-rig/assets/AGENTS.md](plugins/codex-rig/assets/AGENTS.md) or `plugins/codex-rig/shared/`; foundry rules for Claude), never added here. This file holds only this repository's own conventions and restates none of the shipped baseline.
 
+## Plugin Design Principles
+
+Apply these repository product principles to every plugin built here:
+
+- Make everyday workflows consistent, reliable, efficient, and focused on completing the user's practical goal. Choose the simplest design that meets the actual contract; avoid machinery that adds fragility without a current need.
+- Fix the proven root cause of plugin failures, never just patch their symptoms. Establish the cause with evidence and a falsification check before changing behavior; if it is unproven, continue investigating. Verify the original failure and affected sibling workflows before calling the fix complete.
+- Correct and recover automatically when authorized: reuse all still-valid, verifiable evidence and rerun missing, stale, or unusable work through the current workflow. Do not require repair or acceptance of older formats merely to resume.
+- Treat routine incomplete handoffs and self-created process blockers as defects, not successful outcomes. Stop honestly for genuine permission denials, unavailable prerequisites, or decisions that require the user; preserve safety, provenance, and required verification.
+
 ## Shipped Global Baseline
 
 These generic rules ship in the global template (section names as in that file) and are not restated here: core principles and focused delegation (§Execution Discipline, §Subagent Spawn Rules, §Code Quality), internal record types (packaged `shared/global-baseline-details.md` §"Code standard details", **Internal records**), docstring opening line (§Docstring Style Resolution), Multi-OS Executables, Markdown Authoring, the lossless instruction compression gate (§Scope And Layering), pytest parametrization, marker discipline and xdist isolation (§Testing), pre-commit hooks over bare lint tools (§Code Quality, **Project hygiene**), benchmark isolation (§Testing), plan isolation (§Work Handover) and Notebook Authoring. Sections below add only this repository's specifics. This repository supports Linux, macOS, and native Windows, so the conditional Multi-OS Executables rule always applies here.

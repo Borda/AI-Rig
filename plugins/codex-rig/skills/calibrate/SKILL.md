@@ -38,7 +38,7 @@ Legacy: `--layout source --root <source-project>` validates only a project that 
 
 ### 04: Inspect `../../runtime/calibration/run.py --help`, then run plugin layout against the consuming project
 
-Use `--require-live-routes` only for strict-live gate. Default offline scoring remains fixture-backed and makes no paid model calls. Composition/outcome checks reject known redundant orchestration, conflicting active instructions, false progress stalls, and premature review plateaus; they are bounded regressions rather than a general natural-language policy proof. Historical GPT-5.6 observations stay archived. The live runner rejects selected models outside its supported GPT 6+ lineup before planning, authentication, or calls; fresh GPT-6 paired route evidence requires a separately supplied policy and authorized collection.
+Use `--require-live-routes` only for strict-live gate. Default offline scoring remains fixture-backed and makes no paid model calls. Composition/outcome checks reject known redundant orchestration, conflicting active instructions, false progress stalls, and premature review plateaus; they are bounded regressions rather than a general natural-language policy proof. Historical observations stay archived. Fresh paired route evidence requires a separately supplied policy and authorized collection.
 
 ### 05: Inspect `checks_failed`, `leaks_found`, and `behavioral`
 
@@ -82,11 +82,10 @@ Skill checks:
 Role checks:
 
 - installed layout requires every packaged `roles/<role>/ROLE.md`; source layout requires each configured source agent.
-- role-card frontmatter contains role ID, namespaced name, active model, reasoning effort, approval policy, sandbox, and fallback modes; package-manifest skill/role rosters contain every calibrated target.
-- normal parent, review model, implementation, runtime, research, data, adversarial, performance, and executable verification use `gpt-6.1-sol`; delegation/docs/CI-CD/web/OSS/static analysis/curation use `gpt-6-luna`.
-- `accepted-route-evidence.json` binds `active_assignments` to every GPT-6 role model/effort pair and direct parent/deep-review routes; `active_assignment_basis` marks paired quality/cost evidence pending. Preserve archived GPT-5.6 strict failures and reject unsupported GPT-6 quality claims.
+- role-card frontmatter contains role ID, namespaced name, reasoning effort, approval policy, sandbox, and fallback modes; package-manifest skill/role rosters contain every calibrated target.
+- Preserve archived route evidence and strict failures; do not treat historical assignments as current role requirements or make unsupported quality claims.
 - `model_reasoning_effort` follows the agent-effort-policy: normal parent, implementation, verification, performance, static analysis, and web evidence use `medium`; deep review, data/research method, challenge, coordination, documentation, CI/CD, OSS, curation, architecture, and security use `high`. `xhigh`/`max` require evidenced task escalation.
-- high-stakes roles use high-capability tier; bounded support may lower-cost tier. No deprecated model string in active config/TOML.
+- Concrete model selection occurs at actual subagent dispatch and respects explicit user choice.
 - role has clear trigger/skip/not-for boundaries, evidence ownership, execution constraints, handover, and confidence contracts; sensitive roles retain sandbox, especially read-only security audit; packaged roles require no external runtime path variable.
 - plugin-layout calibration checks one distinct task cue in each of the fifteen shipped role-card `Trigger` lines; a missing or multiply owned cue fails `agent-task-routing`. This checks declared routing only; live task selection still needs live observations.
 
@@ -99,7 +98,7 @@ Role checks:
 - Compare thresholds with `gate_metrics_raw`, not rounded display.
 - Paid paired campaigns: `../../runtime/calibration/run_live_ab.py`; plans by default, executes only `--confirm-paid-run=chatgpt-subscription`, verified local ChatGPT subscription login, no API key env, no `CI`/`GITHUB_ACTIONS`. An executing campaign applies full networked CLI approval and denial contract in [Networked CLI Approval](../../shared/native-skill-contract.md#networked-cli-approval) and [Approval Brief](../../shared/native-skill-contract.md#approval-brief) to complete owning command because it spawns `codex exec`. The operation-specific brief is: `Action and purpose`: run confirmed paid paired calibration; `External capability`: paid ChatGPT subscription execution through `codex exec`; `Credential behavior`: use verified local ChatGPT subscription login without reading API keys or credentials; `Filesystem and worktree effects`: write calibration artifacts only to selected run directory; `Retry policy and safe denial outcome`: stop turn on denial, retain sandboxed planning or offline scoring only. Planning and offline scoring remain sandboxed.
 - Each live task names canonical role. Plugin layout prepends exact packaged role card to both prompts; source layout preserves project-instruction plus source-agent prompt construction. Tool pairs can accept candidate passing executable gate when successfully invoked baseline fails; infrastructure timeout is never candidate win.
-- Archived GPT-5.6 paired evidence and `live-route-policy.json` keep their original Sol/Terra quality rule; that legacy campaign must not be used to validate GPT-6 routing. Define a new model-and-effort paired campaign before claiming GPT-6 quality or cost acceptance.
+- Archived paired evidence and `live-route-policy.json` retain their original quality rule; that legacy campaign does not establish quality or cost acceptance for a different route. Define a new model-and-effort paired campaign before making such a claim.
 - Never claim currency savings from `normalized-token-v1`; need dated authoritative model-specific price.
 - Fixture `schema_version` is a committed-history marker: compare the actual shipped path with `git show HEAD:<path>`; dirty tree stays committed or one-next version until commit. An absent source-layout fixture records a skip, not a completed check.
 - Missing registration/pattern mismatch: inspect named file and expected registration or pattern first; record observed mismatch. Apply smallest evidenced correction only within authorized edit scope, then rerun that failed check before widening. Otherwise ask for exact missing file, scope approval, or owner decision; never offer only "fix configuration and retry".

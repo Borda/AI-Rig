@@ -11,13 +11,8 @@
    - Risks: [RISK_FOCUS] — filled by calling skill context below
    - Approach: ordered steps with clear checkpoints
    - Write to `.plans/active/plan-<slug>-$(date -u +%Y-%m-%dT%H-%M-%SZ).md` where slug = first 4 words of task/goal
-3. Build a short plain summary from the saved plan: counts, headline and `→ full plan: <path>`; print the saved plan once as the last reply text before step 4's question, as normal Markdown. Never put the plan in option previews.
-4. Invoke `AskUserQuestion` with that summary in the question text, at most 6 plain lines (target 600 characters, hard cap 1,500), no table, pipe layout or code fence. Each option carries its label and a one-line description, no `preview`:
-   - (a) **Proceed** — [PROCEED_TEXT]
-   - (b) **Stop** — review/edit plan at `<path>` before continuing; re-invoke with `--plan <path>` when ready
-   - (c) **Abort** — cancel
-5. On (b) or (c): stop
-6. On (a): set `PLAN_FILE=<path>`, persist it (`echo "$PLAN_FILE" > "${TMPDIR:-/tmp}/dev-plan-file-${CSID}"`) so compaction-contract boundary reads in feature/fix/refactor resolve it across Bash calls, then record its hash (`python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/plan_hash.py" record "$PLAN_FILE"  # timeout: 5000`) for the Final Report drift check; continue to next step
+3. Build and share a short plan summary, including the path to the complete plan. Reuse the user's existing authorization to proceed with the calling skill; do not ask for routine plan approval. If the user requested plan-only, wait, or explicit plan approval, honor that instruction. Ask only for a genuinely missing protected decision or authority, preserving architecture, security, data and other applicable permission boundaries.
+4. Set `PLAN_FILE=<path>`, persist it (`echo "$PLAN_FILE" > "${TMPDIR:-/tmp}/dev-plan-file-${CSID}"`) so compaction-contract boundaries resolve it, then record its hash (`python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/plan_hash.py" record "$PLAN_FILE"  # timeout: 5000`) for the Final Report drift check; continue to the calling skill's plan challenge.
 
 ### Skill contexts (substitute when calling this protocol)
 

@@ -10,6 +10,10 @@ Practical agent workflows for Python, ML, and open-source maintenance. AI-Rig tu
 
 Eight packages serve three runtimes: six marketplace plugins for Claude Code, three for Codex, and one npm plugin for OpenCode, with `codemap-py` and `bridge_CC-Codex` shared by two hosts each.
 
+Our plugins aim to make everyday work consistent, reliable, and efficient. They favor simple workflows that complete the user's goal, recover from routine problems, and reuse valid evidence. Routine incomplete handoffs and self-created blockers are defects to fix, not successful outcomes. Genuine permission, prerequisite, and user-decision boundaries remain explicit, with safety and verification intact.
+
+Fix the proven root cause, never just patch the symptom. Establish the cause with evidence and a falsification check before changing behavior; if it is unproven, keep investigating. A fix is complete only after the original failure and affected sibling workflows are verified.
+
 <details>
 <summary><strong>Contents</strong></summary>
 

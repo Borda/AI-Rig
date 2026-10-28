@@ -23,8 +23,12 @@ MISSING_REVIEW_DECISION = CODE_REMEDIATE_SKILL.parent / "references" / "missing-
 @pytest.mark.parametrize("skill_name", ["code-review", "code-remediate"])
 def test_pr_state_preflight_precedes_workflow_intake(skill_name: str) -> None:
     """Stop closed PRs before allocating work or offering a redundant review workflow."""
-    skill = (PLUGIN_ROOT / "skills" / skill_name / "SKILL.md").read_text(encoding="utf-8")
-    workflow = skill.split("## Workflow (Exact Commands)", 1)[1]
+    skill_path = PLUGIN_ROOT / "skills" / skill_name / "SKILL.md"
+    workflow = (
+        read_with_references(skill_path, "source-and-scope.md").split("## Workflow (Exact Commands)", 1)[1]
+        if skill_name == "code-review"
+        else (skill_path.parent / "references/intake.md").read_text(encoding="utf-8")
+    )
     preflight = workflow.index("#pr-state-preflight")
 
     assert preflight < workflow.index("### 01:")
@@ -60,7 +64,7 @@ def test_pr_state_preflight_covers_identity_terminal_states_and_unknown_state() 
 @pytest.mark.installed_plugin
 def test_review_prior_choice_precedes_run_creation() -> None:
     """Avoid superseding a reusable completed report before offering the entry choice."""
-    skill = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(CODE_REVIEW_SKILL, "source-and-scope.md")
     entry = skill.split("### Entry: resume or previous completed review", 1)[1].split("### 01:", 1)[0]
 
     assert "--target" in entry
@@ -71,7 +75,7 @@ def test_review_prior_choice_precedes_run_creation() -> None:
         "For a new review request without requested report recovery, no eligible completed report means fresh review"
         " without a question" in entry
     )
-    assert "A failed requested-report recovery instead returns to the substantive repair/fresh decision" in entry
+    assert "A failed requested-report recovery instead returns to the Incomplete review decision" in entry
     assert "before creating or promoting another run" in entry
     assert "recorded revision" in entry
     assert "current-head" in entry
@@ -81,12 +85,12 @@ def test_review_prior_choice_precedes_run_creation() -> None:
 @pytest.mark.installed_plugin
 def test_review_shorthand_identity_resolves_before_previous_report_lookup() -> None:
     """Keep numeric and current-branch invocation on the same pre-allocation reuse route."""
-    skill = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(CODE_REVIEW_SKILL, "source-and-scope.md")
     entry = skill.split("### Entry: resume or previous completed review", 1)[1].split("### 01:", 1)[0]
 
     lookup = entry.index("--target <canonical PR URL>")
     assert entry.index("--canonical-pr-url <positive PR number>") < lookup
-    assert entry.index("-- gh pr view --json url") < lookup
+    assert entry.index("-- gh pr view --json url,state") < lookup
     assert "temporary identity file" in entry
     assert "all PR input forms" in entry
     assert "known canonical PR identity" not in entry
@@ -95,8 +99,10 @@ def test_review_shorthand_identity_resolves_before_previous_report_lookup() -> N
 @pytest.mark.installed_plugin
 def test_review_and_remediation_routes_remain_distinct_during_incomplete_handoff() -> None:
     """Keep calibrated checkout routes and incomplete-report continuation aligned with skills."""
-    review = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
-    remediation = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    review = read_with_references(CODE_REVIEW_SKILL, "source-and-scope.md")
+    remediation = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md"
+    )
     readme = (PLUGIN_ROOT / "README.md").read_text(encoding="utf-8")
     cases = json.loads((PLUGIN_ROOT / "runtime" / "calibration" / "behavioral-cases.json").read_text(encoding="utf-8"))[
         "cases"
@@ -110,10 +116,10 @@ def test_review_and_remediation_routes_remain_distinct_during_incomplete_handoff
     assert "Remediation first invokes `gh pr checkout <canonical PR URL>`" in remediation
     assert "uses `git worktree add --detach`" in prompt
     assert "it does not call `gh pr checkout`" in prompt
-    assert "continue current-online/user findings" in incomplete_handoff
-    assert "keeping the missing report limitation explicit" in incomplete_handoff
+    assert "only then use current-online/user findings" in incomplete_handoff
+    assert "with the missing report limitation explicit" in incomplete_handoff
     assert "missing requested pr review decision" in incomplete_handoff
-    assert "only after the user explicitly chooses to continue without a completed report" in incomplete_handoff
+    assert "continuing without a completed report still requires the user's explicit choice" in incomplete_handoff
     assert "fresh review" in readme.lower()
     assert "requested report limitation disclosed" in readme.lower()
     assert "silently switch to online-only remediation" not in readme.lower()
@@ -122,7 +128,7 @@ def test_review_and_remediation_routes_remain_distinct_during_incomplete_handoff
 @pytest.mark.installed_plugin
 def test_new_native_review_context_files_are_owned_by_the_preparation_producer() -> None:
     """Prevent parent-authored context files from colliding with frozen producer output."""
-    skill = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(CODE_REVIEW_SKILL, "legacy-dispatch.md")
     readme = (PLUGIN_ROOT / "README.md").read_text(encoding="utf-8")
     preparation = skill.split("#### Prepare and dispatch the complete wave", 1)[1].split("#### ", 1)[0]
     historical = read_with_references(CODE_REVIEW_SKILL, "historical-routes.md")
@@ -194,7 +200,7 @@ def test_dispatch_order_failure_uses_existing_fallback_without_recollection() ->
         "not a supported `prepare-repair` kind",
         "revalidate the retained source receipts",
         "do not recollect GitHub evidence solely for this failure",
-        "[Current parent fallback](../SKILL.md#current-parent-fallback)",
+        "[Current parent fallback](legacy-dispatch.md#current-parent-fallback)",
         "independence is not required in the current user-authorized scope",
         "including an explicit coverage waiver",
         "complete its nonapproval report and normal closing gates",
@@ -207,7 +213,9 @@ def test_dispatch_order_failure_uses_existing_fallback_without_recollection() ->
 @pytest.mark.installed_plugin
 def test_nested_review_branch_drift_keeps_remediation_owner_and_incomplete_status() -> None:
     """Prevent a completed child review from becoming a completed no-op remediation handoff."""
-    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md"
+    )
     handoff = (PLUGIN_ROOT / "shared/final-handoff-contract.md").read_text(encoding="utf-8")
     supplement = (PLUGIN_ROOT / "shared/final-handoff-code-remediate.md").read_text(encoding="utf-8")
     nested = handoff.split("## Nested review delivery", 1)[1].split("\n## ", 1)[0]
@@ -226,7 +234,9 @@ def test_nested_review_branch_drift_keeps_remediation_owner_and_incomplete_statu
 @pytest.mark.installed_plugin
 def test_source_drift_recovery_preserves_commits_and_owns_safe_refresh() -> None:
     """Require recovery of stale source without pulling the wrong branch or overwriting local fixes."""
-    skill = read_with_references(CODE_REMEDIATE_SKILL, "source-recovery.md")
+    skill = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md", "source-recovery.md"
+    )
     recovery = skill.split("## Source drift recovery", 1)[1].split("\n## ", 1)[0]
 
     for invariant in (
@@ -246,7 +256,7 @@ def test_source_drift_recovery_preserves_commits_and_owns_safe_refresh() -> None
     ):
         assert invariant in recovery
     assert "never automatically switch, reset" not in skill
-    assert "references/source-recovery.md#legacy-receipt-recovery" in skill
+    assert "source-recovery.md#legacy-receipt-recovery" in skill
     legacy = skill.split("## Legacy receipt recovery\n\n", 1)[1].split("\n\n", 1)[0]
     assert legacy.startswith("For a schema-1 legacy receipt")
     assert "[Source drift recovery](#source-drift-recovery) before `recover`" in legacy
@@ -267,8 +277,8 @@ def test_source_drift_pulls_verified_branch_before_remote_metadata_gate() -> Non
     assert "a metadata-check approval timeout is not a pull failure" in recovery
     assert "no active writer" in recovery
     assert "no local remediation commits" in recovery
-    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
-    entry = skill.split("## Workflow (Exact Commands)", 1)[1].split("### 01:", 1)[0]
+    intake = (CODE_REMEDIATE_SKILL.parent / "references/intake.md").read_text(encoding="utf-8")
+    entry = intake.split("### 01:", 1)[0]
     assert "guarded-pull exception" in entry
     preflight = (PLUGIN_ROOT / "shared/native-skill-contract.md").read_text(encoding="utf-8")
     preflight = preflight.split("## PR State Preflight", 1)[1].split("\n## ", 1)[0]
@@ -279,10 +289,12 @@ def test_source_drift_pulls_verified_branch_before_remote_metadata_gate() -> Non
 @pytest.mark.installed_plugin
 def test_approved_nested_review_recovers_before_returning_to_remediation() -> None:
     """Prevent an approved nested review failure from becoming a generic resume request."""
-    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md"
+    )
     decision = read_reference_body(MISSING_REVIEW_DECISION, "Missing requested PR review decision")
-    assert "references/missing-review-decision.md" in skill
-    affirmative = decision.split("**Yes / Run fresh code review:**", 1)[1].split("\n- **No /", 1)[0]
+    assert "missing-review-decision.md" in skill
+    affirmative = decision.split("**New review:**", 1)[1].split("\n- **Explicit free-text", 1)[0]
 
     assert "[Reviewer validation recovery](../../code-review/references/validation-recovery.md)" in affirmative
     assert "[GitHub Read Execution](../../../shared/native-skill-contract.md#github-read-execution)" in affirmative
@@ -294,7 +306,9 @@ def test_approved_nested_review_recovers_before_returning_to_remediation() -> No
 @pytest.mark.installed_plugin
 def test_approved_review_returns_exact_completed_report_to_waiting_remediation() -> None:
     """Prevent successful nested review from ending the caller or selecting another report."""
-    remediation = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    remediation = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md"
+    )
     review = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
     handoff = (PLUGIN_ROOT / "shared/final-handoff-contract.md").read_text(encoding="utf-8")
     helpers = (PLUGIN_ROOT / "shared/helper-cli-contract.md").read_text(encoding="utf-8")
@@ -311,7 +325,7 @@ def test_approved_review_returns_exact_completed_report_to_waiting_remediation()
     ):
         assert invariant in nested
     decision = read_reference_body(MISSING_REVIEW_DECISION, "Missing requested PR review decision")
-    assert "references/missing-review-decision.md" in remediation
+    assert "missing-review-decision.md" in remediation
     for invariant in (
         "Set `FINDINGS_SOURCE` to that exact returned canonical result path",
         "`find-review-report.py --result <path>`",
@@ -326,7 +340,7 @@ def test_approved_review_returns_exact_completed_report_to_waiting_remediation()
 
 def test_code_review_preflights_specialist_manifest_before_candidate() -> None:
     """Prevent malformed spawned-attempt bookkeeping from leaving a candidate."""
-    skill = CODE_REVIEW_SKILL.read_text(encoding="utf-8").lower()
+    skill = read_with_references(CODE_REVIEW_SKILL, "findings-and-completion.md").lower()
 
     assert "--manifest-only" in skill
     assert "before writing `result.candidate.json`" in skill
@@ -337,7 +351,7 @@ def test_code_review_preflights_specialist_manifest_before_candidate() -> None:
 @pytest.mark.installed_plugin
 def test_review_closure_is_ordered_at_the_execution_checkpoint() -> None:
     """Prevent manifest preflight or drafted output from becoming the final review step."""
-    skill = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(CODE_REVIEW_SKILL, "findings-and-completion.md")
     checkpoint = skill.split("### 12:", 1)[1].split("## Fail-fast Rules", 1)[0]
     actions = (
         "final_handoff.py render",
@@ -356,7 +370,7 @@ def test_review_closure_is_ordered_at_the_execution_checkpoint() -> None:
 @pytest.mark.installed_plugin
 def test_review_gate_failure_keeps_artifact_closure_required() -> None:
     """Prevent direct check receipts from bypassing canonical failed-gate reconciliation."""
-    skill = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(CODE_REVIEW_SKILL, "findings-and-completion.md")
     gates = skill.split("### 07:", 1)[1].split("### 08:", 1)[0]
     assert "direct-check receipts do not replace `gates.json`" in gates
     assert "status=fail" in gates
@@ -368,7 +382,9 @@ def test_review_gate_failure_keeps_artifact_closure_required() -> None:
 def test_execution_failure_cannot_be_reclassified_as_inapplicable() -> None:
     """Keep failed execution visible when recovery hands a review to remediation."""
     quality = (PLUGIN_ROOT / "shared" / "quality-gates.md").read_text(encoding="utf-8")
-    remediation = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    remediation = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md"
+    )
 
     assert "execution failure never makes an applicable check `not-applicable`" in quality
     assert "archive runner-owned receipts under `gate-attempts/<NNN>`" in quality
@@ -385,7 +401,9 @@ def test_execution_failure_cannot_be_reclassified_as_inapplicable() -> None:
 
 def test_remediation_validates_unpromoted_candidate_read_only() -> None:
     """Diagnose candidates read-only, then resume the producer for feasible automatic recovery."""
-    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8").lower()
+    skill = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md"
+    ).lower()
 
     assert "matching-review-candidate-unpromoted" in skill
     assert (
@@ -403,7 +421,9 @@ def test_remediation_validates_unpromoted_candidate_read_only() -> None:
 
 def test_remediation_preserves_exact_candidate_validation_failure() -> None:
     """Replace generic rerun advice with the actionable upstream validator code."""
-    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8").lower()
+    skill = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md"
+    ).lower()
 
     assert "review-candidate-validation.txt" in skill
     assert "manifest-invalid-attempt-count:<role>" in skill
@@ -435,7 +455,9 @@ def test_review_recovery_explains_rejection_and_declined_repair() -> None:
 @pytest.mark.installed_plugin
 def test_fetch_recovery_separates_unknown_cause_from_missing_source() -> None:
     """Keep download failures actionable without inventing access failure or unsafe fallback."""
-    assert "[source-recovery.md](references/source-recovery.md)" in CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    assert "[source-recovery.md](source-recovery.md)" in read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md"
+    )
     body = read_reference_body(SOURCE_RECOVERY, "Source recovery")
     recovery = body.split("\n## Collection failure recovery\n", 1)[1].split("\n## ", 1)[0]
 
@@ -455,8 +477,10 @@ def test_fetch_recovery_separates_unknown_cause_from_missing_source() -> None:
 @pytest.mark.installed_plugin
 def test_existing_merge_recovery_requires_an_owned_concrete_choice() -> None:
     """Prevent unexplained cleanup demands, automatic aborts, and dirty-worktree overclaims."""
-    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
-    assert "[Existing merge or conflict recovery](references/existing-conflict.md)" in skill
+    skill = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md"
+    )
+    assert "[Existing merge or conflict recovery](existing-conflict.md)" in skill
     recovery = read_reference_body(EXISTING_CONFLICT_RECOVERY, "Existing merge or conflict recovery")
 
     for requirement in (
@@ -491,7 +515,9 @@ def test_readme_preserves_the_existing_rejected_evidence_review_exception() -> N
 @pytest.mark.installed_plugin
 def test_successful_remediation_recovery_resumes_the_active_workflow() -> None:
     """Keep verified conflict recovery from ending before the user's original remediation finishes."""
-    skill = read_with_references(CODE_REMEDIATE_SKILL, "existing-conflict.md")
+    skill = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md", "existing-conflict.md"
+    )
 
     assert "Once an authorized recovery succeeds, resume the active code-remediate workflow" in skill
     assert "first unmet checkpoint" in skill
@@ -506,7 +532,7 @@ def test_review_reports_existing_merge_and_hands_it_to_remediation() -> None:
     Finish/abort/defer choices mutate the invoking worktree, which belongs to remediation; review inspects its own
     detached worktree and keeps going.
     """
-    skill = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(CODE_REVIEW_SKILL, "source-and-scope.md")
     guidance = skill.split("For an existing merge or conflict in the invoking worktree", 1)[1].split("\n\n", 1)[0]
 
     assert "never finishes, aborts, or resolves that merge" in guidance
@@ -520,7 +546,9 @@ def test_review_reports_existing_merge_and_hands_it_to_remediation() -> None:
 @pytest.mark.installed_plugin
 def test_remediation_distinguishes_patches_from_evidence_only_closure() -> None:
     """Prevent a target merge or green checks from being reported as implemented fixes."""
-    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md"
+    )
 
     assert "No review findings were fixed by a new code change" in skill
     assert "target integration is not finding implementation" in skill
@@ -533,7 +561,9 @@ def test_remediation_distinguishes_patches_from_evidence_only_closure() -> None:
 @pytest.mark.installed_plugin
 def test_remediation_prepares_usable_context_and_recovers_missing_evidence() -> None:
     """Prevent artifact-only text reviewers and missing coverage from ending safe recovery."""
-    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md"
+    )
 
     assert "no-tools reviewer must receive the relevant source, diff, and evidence inline" in skill
     assert "artifact paths alone are not readable context" in skill
@@ -544,7 +574,9 @@ def test_remediation_prepares_usable_context_and_recovers_missing_evidence() -> 
 @pytest.mark.installed_plugin
 def test_merge_resume_preserves_both_checkpoints_and_protected_path_redaction() -> None:
     """Prevent redaction conflicts or partial conflict resolution from bypassing merge gates."""
-    remediation = read_with_references(CODE_REMEDIATE_SKILL, "existing-conflict.md")
+    remediation = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md", "existing-conflict.md"
+    )
     review = read_with_references(
         CODE_REVIEW_SKILL, "validation-recovery.md", "report-recovery.md", "collection-failure.md"
     )
@@ -556,20 +588,38 @@ def test_merge_resume_preserves_both_checkpoints_and_protected_path_redaction() 
 
 
 @pytest.mark.installed_plugin
-@pytest.mark.parametrize("section", ["Routing rules:", "## Fail-fast Rules"])
-def test_broad_routing_and_fail_fast_admit_complete_fast_native_coverage(section: str) -> None:
+@pytest.mark.parametrize(
+    ("reference", "section"),
+    [
+        pytest.param("routing.md", "Routing rules:", id="routing"),
+        pytest.param("findings-and-completion.md", "## Fail-fast Rules", id="fail-fast"),
+    ],
+)
+def test_broad_routing_and_fail_fast_admit_complete_fast_native_coverage(reference: str, section: str) -> None:
     """Prevent mandatory broad-review rules from rejecting already validated fast native coverage."""
-    skill = (PLUGIN_ROOT / "skills/code-review/SKILL.md").read_text(encoding="utf-8")
-    contract = skill.split(section, 1)[1].split("\n\n", 1)[1].split("\n\n", 1)[0]
-    assert "validated current native all-role evidence" in contract
-    assert "naturally fast uninterrupted dispatch" in contract.casefold()
+    skill = read_with_references(CODE_REVIEW_SKILL, reference)
+    contract = skill.split(section, 1)[1].split("\n## ", 1)[0]
+    if reference == "routing.md":
+        assert "actual independent children, joined results" in contract
+        assert "complete required role and assigned-path coverage" in contract
+        assert "Children may queue serially when capacity requires it" in contract
+        assert "never claim unobserved overlap" in contract
+        assert "Historical schemas 2–9 retain their issued scheduling and overlap gates" in contract
+        historical = read_with_references(CODE_REVIEW_SKILL, "legacy-dispatch.md")
+        assert "validated ordered queue/refill evidence cover every role" in historical
+        assert "even if a child finishes before the next consecutive dispatch" in historical
+    else:
+        assert "complete required role and assigned-path coverage" in contract
+        assert "Direct schema-ten runs require authentic child and join evidence" in contract
+        assert "without claiming parallel overlap that did not occur" in contract
+        assert "Historical overlap and scheduling gates remain unchanged" in contract
     assert "narrowly validated capacity-limited schema-eight" not in contract
 
 
 @pytest.mark.installed_plugin
 def test_finalization_failure_delivers_evidence_without_repeating_declined_review() -> None:
     """A failed artifact route cannot become a bare-code dead end for authorized source work."""
-    review = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
+    review = read_with_references(CODE_REVIEW_SKILL, "findings-and-completion.md")
     contract = (PLUGIN_ROOT / "shared/final-handoff-contract.md").read_text(encoding="utf-8")
     assert "Deliver all supported findings as explicitly preliminary evidence" in review
     assert "Do not repeat a declined additional review in next actions" in review
@@ -584,21 +634,32 @@ def test_review_completion_is_distinct_from_failed_quality_gates() -> None:
     contract = (PLUGIN_ROOT / "shared/final-handoff-contract.md").read_text(encoding="utf-8")
     assert "review completed even when `result.status=fail`" in contract
     assert "never infer it from `status=fail` alone" in contract
-    remediation = read_with_references(CODE_REMEDIATE_SKILL, "missing-review-decision.md")
+    remediation = read_with_references(
+        CODE_REMEDIATE_SKILL,
+        "intake.md",
+        "selection.md",
+        "implementation.md",
+        "completion.md",
+        "missing-review-decision.md",
+    )
     assert "A failed or incomplete review lifecycle checkpoint" in remediation
     assert "An admitted report with `status=fail` from quality gates" in remediation
 
 
 def test_report_recovery_preserves_evidence_and_distinguishes_substantive_gaps() -> None:
     """Recovery may regenerate proven bookkeeping but cannot manufacture review completion."""
-    skill = read_with_references(CODE_REVIEW_SKILL, "report-recovery.md")
+    skill = read_with_references(
+        CODE_REVIEW_SKILL, "source-and-scope.md", "findings-and-completion.md", "report-recovery.md"
+    )
     assert "[Report compatibility and recovery](references/report-recovery.md)" in CODE_REVIEW_SKILL.read_text(
         encoding="utf-8"
     )
-    recovery = read_reference_body(REVIEW_REPORT_RECOVERY, "Report compatibility and recovery")
-    assert "A failed requested-report recovery instead returns to the substantive repair/fresh decision" in skill
+    recovery = REVIEW_REPORT_RECOVERY.read_text(encoding="utf-8")
+    assert "A failed requested-report recovery instead returns to the Incomplete review decision" in skill
     assert "An incompatible reader requires capability diagnosis" in skill
-    assert "Do not prescribe a review rerun for the version alone" in CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    assert "Do not prescribe a review rerun for the version alone" in read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md"
+    )
     for obligation in (
         "A version number selects a reader and its semantics",
         "Automatically repair deterministic derived presentation or bookkeeping",
@@ -606,8 +667,8 @@ def test_report_recovery_preserves_evidence_and_distinguishes_substantive_gaps()
         "Never rewrite frozen dispatch, contexts, source receipts or raw reviewer output",
         "A schema-2 archive or another unsupported representation stays unverified",
         "Never transplant evidence between runs",
-        "Repair existing review and add missing coverage",
-        "never promise a partial rerun that the producer cannot validate",
+        "`Resume last one`",
+        "never relabel rejected output as valid",
         "run both producer artifact validators, normal promotion and `--complete-run`",
         "Resume the waiting remediation at its first unmet checkpoint in the same turn",
     ):

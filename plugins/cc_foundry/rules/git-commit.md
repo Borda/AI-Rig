@@ -17,7 +17,7 @@ paths:
 
 Always-on constraints (apply even without reading full rule):
 
-- Subject `type(scope): detail` ≤50 chars; classify ALL changes from `git diff HEAD` + `git diff --stat HEAD` into tiers — subject names highest-tier change; **never draft from session memory**
+- Subject `type(scope): detail` or `type: detail` ≤50 chars; omit a scope that repeats the type or means the same thing, such as `ci(ci)` or `test(tests)`; classify ALL changes from `git diff HEAD` + `git diff --stat HEAD` into tiers — subject names highest-tier change; **never draft from session memory**
 - **Evidence-only body**: every clause must trace to a `+`/`-` line in `git diff HEAD` — pick distinctive token per bullet, confirm it's in diff, before finalizing. Conversation context may explain *why* a diff-confirmed change happened; it may never assert a change, action, or removal not actually in diff (reverted-then-narrated edits are the classic trap)
 - No line wrapping in body; no GitHub auto-links (`#N`, `@name`) — default ban: commit messages travel across repos (fork → merge → mirror → cherry-pick) so "same-repo" rarely holds; narrow exception only when the generating code explicitly tracks and confirms destination repo (see full rule); no non-VCS paths (`/tmp/`, `~/.claude/`) <!-- policy-sibling: plugins/CLAUDE.md (canonical), plugins/cc_foundry/rules/_full/git-commit.md, plugins/cc_oss/skills/_shared/shepherd-voice.md, plugins/cc_oss/skills/release/guidelines/writing-rules.md -->
 - No skill-internal phase, step or branch labels in the subject or body (the reader never saw them) — name the behaviour in plain words

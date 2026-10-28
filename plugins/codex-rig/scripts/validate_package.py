@@ -109,6 +109,8 @@ def validate_semantics() -> None:
     """Validate feature boundaries and exact public rosters."""
     manifest = load_json(PACKAGE_ROOT / "package-manifest.json")
     plugin = load_json(PACKAGE_ROOT / ".codex-plugin" / "plugin.json")
+    if manifest.get("schema") != 2:
+        raise ValueError("package manifest schema mismatch")
     skill_ids = {item["id"] for item in manifest.get("skills", [])}
     role_ids = {item["id"] for item in manifest.get("roles", [])}
     if skill_ids != EXPECTED_SKILLS or role_ids != EXPECTED_ROLES:

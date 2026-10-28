@@ -1,0 +1,9 @@
+[
+  "Bash(gh api repos/*:*)",
+  "Bash(uv pip install:*)",
+  "Bash(claude:*)",
+  "Bash(find:*)",
+  "Bash(node:*)",
+  "Bash(sed:*)",
+  "Bash(eval:*)"
+]

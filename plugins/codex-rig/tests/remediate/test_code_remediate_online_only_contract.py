@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
-from _skill_text import read_reference_body
+from _skill_text import read_reference_body, read_with_references
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 CODE_REMEDIATE_SKILL = PLUGIN_ROOT / "skills" / "code-remediate" / "SKILL.md"
@@ -17,7 +17,9 @@ MISSING_REVIEW_DECISION = CODE_REMEDIATE_SKILL.parent / "references" / "missing-
 @pytest.mark.installed_plugin
 def test_remediation_delivers_to_original_checkout_after_source_checks() -> None:
     """Prevent isolated remediation from finishing with fixes stranded outside the user's checkout."""
-    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md"
+    )
     contract = (PLUGIN_ROOT / "shared" / "native-skill-contract.md").read_text(encoding="utf-8")
     policy = contract.split("## Worktree lifecycle", maxsplit=1)[1].split("\n## ", maxsplit=1)[0]
 
@@ -58,9 +60,14 @@ def test_result_template_uses_allocated_run_for_all_artifact_paths() -> None:
 @pytest.mark.parametrize("skill_name", ["code-review", "code-remediate"])
 def test_embedded_review_findings_are_individually_inventoried(skill_name: str) -> None:
     """Prevent a collected bot review from masking its independent nested findings."""
-    skill = (PLUGIN_ROOT / "skills" / skill_name / "SKILL.md").read_text(encoding="utf-8")
+    skill_path = PLUGIN_ROOT / "skills" / skill_name / "SKILL.md"
+    skill = (
+        read_with_references(skill_path, "source-and-scope.md")
+        if skill_name == "code-review"
+        else read_with_references(skill_path, "intake.md", "selection.md", "implementation.md", "completion.md")
+    )
 
-    assert "### Embedded review findings" in skill
+    assert ("#### Embedded review findings" if skill_name == "code-review" else "### Embedded review findings") in skill
     assert "<parent-id>#finding-<ordinal>" in skill
     assert "before deduplication" in skill
     assert "Comments generated" in skill
@@ -71,7 +78,9 @@ def test_embedded_review_findings_are_individually_inventoried(skill_name: str) 
 
 def test_bare_pr_targets_collect_online_evidence_without_review_artifact() -> None:
     """Keep bare PR remediation usable when no assessed report exists."""
-    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md"
+    )
 
     assert "bare number, `#number`, PR URL, and natural-language bare PR targets" in skill
     assert "collect current online items and verified local checkout" in skill
@@ -81,7 +90,9 @@ def test_bare_pr_targets_collect_online_evidence_without_review_artifact() -> No
 
 def test_missing_findings_source_does_not_fail_bare_pr_route() -> None:
     """Keep the report-source fail-fast rule scoped to report aliases."""
-    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md"
+    )
     fail_fast = skill.split("## Fail-fast Rules", maxsplit=1)[1].split("## Quality Gates", maxsplit=1)[0]
 
     assert "Missing findings source in report mode, an explicit report path, or a report alias" in fail_fast
@@ -99,7 +110,9 @@ def test_missing_findings_source_does_not_fail_bare_pr_route() -> None:
 
 def test_requested_review_does_not_replace_primary_remediation() -> None:
     """Require the missing-review decision before continuing authorized fixes."""
-    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md"
+    )
     intake = skill.split("### 02: Normalize input", maxsplit=1)[1].split("### 03:", maxsplit=1)[0]
 
     assert "`+review` joins review with remediation and authorizes the needed review step" in intake
@@ -112,12 +125,18 @@ def test_requested_review_does_not_replace_primary_remediation() -> None:
     assert "complete its ordered artifact closure before intake" not in intake
 
 
-def test_stale_saved_and_online_evidence_share_one_decision_with_bound_authorization() -> None:
-    """Do not treat a fresh online fetch as current review or repeat joined-review consent."""
-    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+def test_evidence_age_preserves_current_source_triage_and_bound_authorization() -> None:
+    """Older online comments require source validation, while an additional review needs its own authority."""
+    skill = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md"
+    )
     freshness = skill.split("### Review evidence freshness", maxsplit=1)[1].split("\n### ", maxsplit=1)[0]
     assert "saved reports and online review comments" in freshness
     assert "fetch time does not establish review freshness" in freshness
+    assert "For bare PR online-only remediation" in freshness
+    assert "not a new permission question" in freshness
+    assert "Inspect each claim against the verified current source" in freshness
+    assert "Do not start or offer an additional review solely because comments predate the head" in freshness
     assert "Use existing findings" in freshness
     assert "Update existing review" in freshness
     assert "Create a new review" in freshness
@@ -136,7 +155,9 @@ def test_stale_saved_and_online_evidence_share_one_decision_with_bound_authoriza
 
 def test_preliminary_findings_keep_source_and_completion_boundaries() -> None:
     """Permit source-confirmed hypotheses without certifying an unfinished review."""
-    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md"
+    )
 
     assert "### Preliminary finding intake" in skill
     assert "matching exact PR identity, head, scope, and source evidence" in skill
@@ -149,7 +170,9 @@ def test_preliminary_findings_keep_source_and_completion_boundaries() -> None:
 
 def test_missing_requested_report_blocks_continuation_until_explicit_decision() -> None:
     """Prevent fail-fast guidance from silently bypassing a requested review."""
-    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md"
+    )
     fail_fast = skill.split("## Fail-fast Rules", maxsplit=1)[1].split("## Quality Gates", maxsplit=1)[0]
 
     assert "ask only for the missing finding evidence or selection" in skill
@@ -158,33 +181,32 @@ def test_missing_requested_report_blocks_continuation_until_explicit_decision() 
     assert "available findings require explicit user confirmation before continuation" in fail_fast
 
 
-def test_missing_requested_pr_review_has_repair_fresh_partial_and_pending_routes() -> None:
-    """Offer feasible bounded recovery and preserve explicit partial and pending decisions."""
-    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+def test_missing_requested_pr_review_has_three_choices_and_preserves_pending_decisions() -> None:
+    """Keep the user's recovery choices explicit without accepting preliminary evidence."""
+    skill = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md"
+    )
     decision = read_reference_body(MISSING_REVIEW_DECISION, "Missing requested PR review decision")
 
-    assert "references/missing-review-decision.md" in skill
+    assert "missing-review-decision.md" in skill
     assert "`mode=pr` and `REQUESTED_REPORT=true`" in decision
     assert "explicit PR report paths" in decision
-    assert "Run a fresh code review for [PR #<number>](<canonical PR URL>) before remediation?" in decision
-    assert "Run fresh code review (Recommended)" in decision
-    assert "Continue with available findings" in decision
-    assert "single question/menu" in decision
-    assert "do not duplicate them in context prose" in decision
+    assert "one native question naming the linked PR and exactly `New review`, `Resume last one`, `Stop`" in decision
     assert "normal full `code-review` workflow" in decision
     assert "both artifact validators, promotion and `--complete-run`" in decision
     assert "resume this same remediation run" in decision
     assert "only after an eligible completed result is admitted" in decision
     assert "`requested_report=true`" in decision
-    assert "Declined or dismissed additional review" in decision
-    assert "Do not carry the request into final actions or ask again" in decision
-    assert "silence never authorizes new work" in decision
+    assert "A dismissed or unanswered prompt authorizes none of its options" in decision
     assert "Bare PR online-only intake does not ask this question" in decision
+    assert "stop the joined workflow, retain artifacts and changes, and do not continue remediation" in decision
 
 
 def test_requested_review_sibling_routes_cannot_bypass_decision() -> None:
     """Make incomplete, unavailable and candidate evidence pass the same checkpoint."""
-    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md"
+    )
     incomplete = skill.split("- `matching-review-incomplete:", maxsplit=1)[1].split("\n- ", maxsplit=1)[0]
     missing = skill.split("- When `REQUESTED_REPORT=true`", maxsplit=1)[1].split("\n- ", maxsplit=1)[0]
     candidate = skill.split("For `matching-review-candidate-unpromoted:", maxsplit=1)[1].split(
@@ -199,15 +221,17 @@ def test_requested_review_sibling_routes_cannot_bypass_decision() -> None:
 @pytest.mark.installed_plugin
 def test_available_findings_cannot_bypass_missing_requested_review_approval() -> None:
     """Require a bound answer even when usable findings already exist."""
-    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md"
+    )
     decision = read_reference_body(MISSING_REVIEW_DECISION, "Missing requested PR review decision")
     assert "only after compatibility assessment and feasible automatic recovery" in decision
     assert "A version mismatch or repairable derived artifact alone does not trigger this question" in decision
-    assert "Repair existing review and add missing coverage (Recommended)" in decision
-    assert "Do not offer an infeasible repair" in decision
+    assert "`New review`, `Resume last one`, `Stop`" in decision
+    assert "feasibility of each route" in decision
     assert "even when usable current-online/user findings or preliminary hypotheses exist" in decision
     assert "Continuing without a completed report requires explicit user confirmation" in decision
-    assert "Reuse an unambiguous existing answer bound to this unchanged target and decision" in decision
+    assert "Honor existing bound authorization instead of asking again" in decision
     assert "A previously selected fresh-review-first route remains binding" in decision
     assert "Normal source verification and scope selection still precede edits" in decision
     for bypass in (
@@ -225,11 +249,11 @@ def test_available_findings_cannot_bypass_missing_requested_review_approval() ->
 def test_unavailable_pr_question_links_target_without_claiming_source_review() -> None:
     """Keep failed collection identifiable without presenting artifact closure as a review."""
     decision = read_reference_body(MISSING_REVIEW_DECISION, "Missing requested PR review decision")
-    branch = decision.split("  - d. ", 1)[1].split("\n- **No /", 1)[0]
+    branch = decision.split("  - d. ", 1)[1].split("\n- **Explicit free-text", 1)[0]
 
-    assert "[PR #<number>](<canonical PR URL>) could not be retrieved" in branch
-    assert "no source review ran" in branch
-    assert "Do not describe unavailable artifact closure as a completed review" in branch
+    assert "one native question naming the linked PR" in decision
+    assert "Explain the actual collection failure or newer-run identity" in branch
+    assert "never call unavailable closure a completed source review" in branch
     assert "supersession" in branch
-    assert "Continue with available findings" in branch
-    assert "Stop remediation" in branch
+    assert "same three-option Incomplete review decision" in branch
+    assert "neither a new run nor a resume choice waives them" in branch

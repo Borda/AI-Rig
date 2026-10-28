@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from _skill_text import read_with_references
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 CODE_REVIEW_SKILL = PLUGIN_ROOT / "skills" / "code-review" / "SKILL.md"
@@ -423,7 +424,7 @@ def test_write_result_closed_review_omits_remediation_fields(tmp_path: Path) -> 
 
 def test_close_gate_precedes_detailed_review_and_documents_blocking_defaults() -> None:
     """Keep the early terminal path and normal blocking policy visible in the skill contract."""
-    skill = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(CODE_REVIEW_SKILL, "source-and-scope.md")
 
     close_gate = skill.index("Terminal close gate")
     assert close_gate < skill.index("Structural context (required for Python diffs)")

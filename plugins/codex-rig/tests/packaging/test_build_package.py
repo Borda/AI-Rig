@@ -146,7 +146,7 @@ def test_manifest_binds_the_pure_role_generator() -> None:
     generator = PLUGIN_ROOT / "scripts" / "generate_roles.py"
 
     assert manifest["generator"] == {
-        "version": 1,
+        "version": 2,
         "path": "scripts/generate_roles.py",
         "sha256": builder.sha256(generator.read_bytes()),
     }

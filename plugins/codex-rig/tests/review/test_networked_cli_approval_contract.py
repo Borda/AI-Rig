@@ -39,7 +39,19 @@ def test_networked_cli_skills_require_complete_owning_command_approval(
     network_marker: str,
 ) -> None:
     """Keep networked CLI outside the GitHub profile behind owning-command approval."""
-    skill = (PLUGIN_ROOT / "skills" / skill_name / "SKILL.md").read_text(encoding="utf-8")
+    skill = (
+        read_with_references(PLUGIN_ROOT / "skills" / skill_name / "SKILL.md", "source-and-scope.md")
+        if skill_name == "code-review"
+        else read_with_references(
+            PLUGIN_ROOT / "skills" / skill_name / "SKILL.md",
+            "intake.md",
+            "selection.md",
+            "implementation.md",
+            "completion.md",
+        )
+        if skill_name == "code-remediate"
+        else (PLUGIN_ROOT / "skills" / skill_name / "SKILL.md").read_text(encoding="utf-8")
+    )
 
     assert network_marker in skill
     assert "complete owning command" in skill or "complete collector command" in skill
@@ -65,7 +77,19 @@ def test_networked_cli_skills_require_complete_owning_command_approval(
 )
 def test_github_reads_use_profile_or_owning_command_approval(skill_name: str, helper: str) -> None:
     """Keep audited GitHub reads under either supported runtime permission boundary."""
-    skill = (PLUGIN_ROOT / "skills" / skill_name / "SKILL.md").read_text(encoding="utf-8")
+    skill = (
+        read_with_references(PLUGIN_ROOT / "skills" / skill_name / "SKILL.md", "source-and-scope.md")
+        if skill_name == "code-review"
+        else read_with_references(
+            PLUGIN_ROOT / "skills" / skill_name / "SKILL.md",
+            "intake.md",
+            "selection.md",
+            "implementation.md",
+            "completion.md",
+        )
+        if skill_name == "code-remediate"
+        else (PLUGIN_ROOT / "skills" / skill_name / "SKILL.md").read_text(encoding="utf-8")
+    )
 
     assert helper in skill
     assert "current effective" in skill
@@ -80,7 +104,19 @@ def test_github_reads_use_profile_or_owning_command_approval(skill_name: str, he
 )
 def test_effective_github_grants_never_request_escalated_helper_call(skill_name: str) -> None:
     """Prevent an agent from turning permitted GitHub reads into approval prompts."""
-    skill = (PLUGIN_ROOT / "skills" / skill_name / "SKILL.md").read_text(encoding="utf-8")
+    skill = (
+        read_with_references(PLUGIN_ROOT / "skills" / skill_name / "SKILL.md", "source-and-scope.md")
+        if skill_name == "code-review"
+        else read_with_references(
+            PLUGIN_ROOT / "skills" / skill_name / "SKILL.md",
+            "intake.md",
+            "selection.md",
+            "implementation.md",
+            "completion.md",
+        )
+        if skill_name == "code-remediate"
+        else (PLUGIN_ROOT / "skills" / skill_name / "SKILL.md").read_text(encoding="utf-8")
+    )
     contract = SHARED_CONTRACT.read_text(encoding="utf-8")
     instructions = GLOBAL_INSTRUCTIONS.read_text(encoding="utf-8")
     required = "omit `sandbox_permissions` and `justification`"
@@ -101,7 +137,9 @@ def test_user_questions_expose_answers_without_weakening_authorization() -> None
     assert "[Codex User Questions](codex-user-questions.md)" in contract
     assert "codex-user-questions-details.md" in question_guide.read_text(encoding="utf-8")
     questions = SHARED_CONTRACT.with_name("codex-user-questions-details.md").read_text(encoding="utf-8")
-    skill = read_with_references(CODE_REMEDIATE_SKILL, "existing-conflict.md")
+    skill = read_with_references(
+        CODE_REMEDIATE_SKILL, "intake.md", "selection.md", "implementation.md", "completion.md", "existing-conflict.md"
+    )
 
     assert "`Approve local merge` / `Deny local merge`" in questions
     assert "all feasible choices" in questions
@@ -293,7 +331,7 @@ def test_pr_collector_uses_profile_and_stops_on_denial() -> None:
 
 def test_permission_recovery_precedes_terminal_review_reporting() -> None:
     """Prevent terminal artifact instructions from superseding available capability approval."""
-    skill = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(CODE_REVIEW_SKILL, "source-and-scope.md")
     contract = SHARED_CONTRACT.read_text(encoding="utf-8")
     instructions = GLOBAL_INSTRUCTIONS.read_text(encoding="utf-8")
 
@@ -329,7 +367,19 @@ def test_pr_state_preflight_resolves_reader_permission_before_failure_exit() -> 
 @pytest.mark.parametrize("skill_name", ["code-review", "code-remediate"])
 def test_pr_workflows_keep_entry_permission_recovery_explicit(skill_name: str) -> None:
     """Prevent a PR entry stop from bypassing the shared reader approval procedure."""
-    skill = (PLUGIN_ROOT / "skills" / skill_name / "SKILL.md").read_text(encoding="utf-8")
+    skill = (
+        read_with_references(PLUGIN_ROOT / "skills" / skill_name / "SKILL.md", "source-and-scope.md")
+        if skill_name == "code-review"
+        else read_with_references(
+            PLUGIN_ROOT / "skills" / skill_name / "SKILL.md",
+            "intake.md",
+            "selection.md",
+            "implementation.md",
+            "completion.md",
+        )
+        if skill_name == "code-remediate"
+        else (PLUGIN_ROOT / "skills" / skill_name / "SKILL.md").read_text(encoding="utf-8")
+    )
 
     assert "Resolve the metadata reader's profile-or-approval route before the first read" in skill
     assert "before reporting entry blocked" in skill

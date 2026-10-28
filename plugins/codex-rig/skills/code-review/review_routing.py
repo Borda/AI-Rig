@@ -45,8 +45,14 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
 from pathlib import Path
 from typing import Any
+
+SHARED_DIRECTORY = Path(__file__).resolve().parents[2] / "shared"
+if str(SHARED_DIRECTORY) not in sys.path:
+    sys.path.insert(0, str(SHARED_DIRECTORY))
+from collect_diff import diff_sections, read_git_path_lines  # noqa: E402
 
 #: Exact set of routing signal names that a routing record must provide, each a boolean.
 ROUTING_SIGNALS = {
@@ -84,13 +90,35 @@ def _path_tokens(path: str) -> set[str]:
     return {token for token in re.split(r"[/._-]+", path.lower()) if token}
 
 
+def literal_patch_paths(out_dir: Path) -> set[str] | None:
+    """Recognize a literal PR listing only when every name matches the collected Git patch."""
+    path = out_dir / "files.txt"
+    patch = out_dir / "diff.patch"
+    if path.is_file() and patch.is_file():
+        content = patch.read_bytes()
+        sections = diff_sections(content)
+        if content and not sections:
+            return None
+        literal = "".join(f"{name}\n" for name in sorted(sections)).encode("utf-8")
+        if path.read_bytes() in (literal, literal.replace(b"\n", b"\r\n")):
+            return set(sections)
+    return None
+
+
+def read_review_paths(out_dir: Path, filename: str) -> set[str]:
+    """Read a patch-confirmed literal listing or Git's quoted inventory."""
+    if filename == "files.txt":
+        literal = literal_patch_paths(out_dir)
+        if literal is not None:
+            return literal
+    return read_git_path_lines(out_dir / filename)
+
+
 def derive_mechanical_risk(out_dir: Path) -> tuple[str, list[str], set[str]]:
     """Derive the minimum tier, canonical evidence, and mandatory signals from collected diff facts."""
     paths: set[str] = set()
     for filename in ("files.txt", "untracked.txt"):
-        path = out_dir / filename
-        if path.exists():
-            paths.update(line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
+        paths.update(read_review_paths(out_dir, filename))
 
     changed_lines = 0
     unknown_size_rows = 0

@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 import test_review_batches as batches
 import test_review_prepare as preparation
+from _skill_text import read_with_references
 from test_review_completion_gate import FINDER, PLUGIN_ROOT, _assessed_pr, _finalize_parent_fallback, _module
 
 
@@ -275,7 +276,7 @@ def test_malformed_closure_proof_blocks_completion_and_consumer_with_same_diagno
     ]
     result_path.write_text(json.dumps(result), encoding="utf-8", newline="\n")
     before = {path.relative_to(run): path.read_bytes() for path in run.rglob("*") if path.is_file()}
-    diagnostic = "review-validation-failed:review-finding-closure_evidence-invalid:1"
+    diagnostic = f"review-validation-failed:{result_path}:review-finding-closure_evidence-invalid:1"
     for arguments, expected_stderr in (
         (
             ["--complete-run", str(run), "--parent-thread-id", "thread"],
@@ -350,7 +351,7 @@ def _finalize_native_review(
                 ),
                 "evidence": item["output_path"],
             }
-            for item in manifest["passes"]
+            for item in sorted(manifest["passes"], key=lambda item: item["role"] != "sw-engineer")
         ],
         "specialist_manifest": "specialist-manifest.json",
         "specialist_passes": manifest["passes"],
@@ -468,6 +469,29 @@ def _finalize_native_review(
         calls = [row for row in rows if row.get("payload", {}).get("type") == "custom_tool_call"]
         calls[1]["payload"]["input"] += "\nUnrequested execution."
         preparation._write_jsonl(child, rows)
+    empty_path = tmp_path / "empty-path"
+    empty_path.mkdir()
+    probe_env = {key: value for key, value in os.environ.items() if key != "CODEMAP_BIN"}
+    probe_env["PATH"] = str(empty_path)
+    probe = subprocess.run(
+        [
+            sys.executable,
+            str(PLUGIN_ROOT / "shared/codemap_adapter.py"),
+            "context",
+            "--category",
+            "review",
+            "--diff-file",
+            str(run / "diff.patch"),
+            "--out",
+            str(run / "codemap-context.json"),
+        ],
+        env=probe_env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert probe.returncode == 0, probe.stderr
+    assert json.loads((run / "codemap-context.json").read_bytes())["status"] == "absent"
     producer_files = [path for path in run.rglob("*") if path.is_file()]
     producer_files += [path for path in home.rglob("*") if path.is_file()]
     before = {path: path.read_bytes() for path in producer_files}
@@ -665,8 +689,14 @@ def test_conditional_native_roster_does_not_satisfy_explicit_core_independence(t
 
 def test_review_and_remediation_keep_process_limits_out_of_findings() -> None:
     """Stop review producers and consumers from regenerating declined review requests as work."""
-    review = (PLUGIN_ROOT / "skills/code-review/SKILL.md").read_text(encoding="utf-8")
-    remediate = (PLUGIN_ROOT / "skills/code-remediate/SKILL.md").read_text(encoding="utf-8")
+    review = read_with_references(PLUGIN_ROOT / "skills/code-review/SKILL.md", "findings-and-completion.md")
+    remediate = read_with_references(
+        PLUGIN_ROOT / "skills/code-remediate/SKILL.md",
+        "intake.md",
+        "selection.md",
+        "implementation.md",
+        "completion.md",
+    )
     shared = (PLUGIN_ROOT / "shared/quality-gates.md").read_text(encoding="utf-8")
     for contract in (review, remediate):
         assert "Review limitations and additional review" in contract

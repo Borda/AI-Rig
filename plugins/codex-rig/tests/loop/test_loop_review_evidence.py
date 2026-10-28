@@ -505,7 +505,7 @@ def _rewrite_native_outputs(
         }
         if coverage_paths is not None:
             report["assessment"] = {
-                "rating": 4,
+                "rating": 4 if report["findings"] else 1,
                 "rationale": json.dumps(
                     {
                         "reviewed_paths": sorted(set(coverage_paths)),
@@ -529,9 +529,9 @@ def _rewrite_native_outputs(
         for row in parent_rows:
             payload = row.get("payload", {})
             if payload.get("type") == "function_call" and payload.get("call_id") == attempt["spawn_call_id"]:
-                payload["arguments"] = json.dumps(
-                    {"message": context, "task_name": Path(new_path).name, "fork_turns": "none"}
-                )
+                arguments = json.loads(payload["arguments"])
+                arguments.update(message=context, task_name=Path(new_path).name)
+                payload["arguments"] = json.dumps(arguments)
             if row.get("type") == "event_msg" and payload.get("item", {}).get("agent_path") == old_path:
                 payload["item"]["agent_path"] = new_path
             if payload.get("type") == "agent_message" and payload.get("author") == old_path:
@@ -668,6 +668,8 @@ def _local_reviewer_loop(
     source_content: str = "VALUE = 1\n",
     context_diff_suffix: str = "",
     retained_diff: bytes | None = None,
+    current_assessment: bool = False,
+    complete_coverage: bool = True,
 ) -> tuple[ModuleType, Path, Path]:
     """Bind local reviewer wave evidence to explicit diff bytes, optionally altering only the supplied context."""
     validator = _validator()
@@ -688,8 +690,8 @@ def _local_reviewer_loop(
     plan_path = Path(execution["plan_path"])
     evidence_path = Path(execution["evidence_path"])
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
-    # This fixture adapts Code Review evidence to the unchanged challenge-only assessment contract.
-    plan.pop("source_rating_version", None)
+    if not current_assessment:
+        plan.pop("source_rating_version", None)
     evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
     manifest["passes"] = [item for item in manifest["passes"] if item["role"] == "challenger"]
     plan["nodes"] = [item for item in plan["nodes"] if item["role_id"] == "challenger"]
@@ -736,6 +738,20 @@ def _local_reviewer_loop(
             "findings": [],
             "assessment": {"rating": 1, "rationale": "The frozen widget scope is clean."},
         }
+        if current_assessment:
+            report["assessment"] = {
+                "source_rating_version": 1,
+                "rating": 1,
+                "verification_readiness": "complete",
+                "rationale": json.dumps(
+                    {
+                        "reviewed_paths": ["widget.py"] if complete_coverage else [],
+                        "unreviewed_paths": [],
+                        "limits": "none",
+                        "judgment": "clean",
+                    }
+                ),
+            }
         output_path.write_text(json.dumps(report, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
         node["output_sha256"] = hashlib.sha256(output_path.read_bytes()).hexdigest()
     _write_json(evidence_path, evidence)
@@ -766,6 +782,11 @@ def _local_reviewer_loop(
         run / "loop-evidence.json",
         {
             "schema_version": 2,
+            **(
+                {"origin": {"kind": "first-run", "caller_run": None, "prior_ledger_sha256": None}}
+                if current_assessment
+                else {}
+            ),
             "repository": repository.resolve().as_posix(),
             "scope_paths": ["widget.py"],
             "current_source_path": "current-source.json",
@@ -1199,6 +1220,22 @@ def test_validates_local_reviewer_wave_against_frozen_source_diff_and_output(
     validator.validate_loop_evidence(run, codex_home)
 
 
+@pytest.mark.parametrize("complete_coverage", [True, False])
+def test_validates_current_local_wave_assessment_in_bound_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, complete_coverage: bool
+) -> None:
+    """Current local-wave evidence requires explicit complete source coverage through the ordinary validators."""
+    validator, run, codex_home = _local_reviewer_loop(
+        tmp_path, source_content="VALUE = 2\n", current_assessment=True, complete_coverage=complete_coverage
+    )
+    monkeypatch.setenv("CODEX_THREAD_ID", "thread")
+    if complete_coverage:
+        validator.validate_loop_evidence(run, codex_home)
+    else:
+        with pytest.raises(ValueError, match="loop-evidence-report-coverage-missing"):
+            validator.validate_loop_evidence(run, codex_home)
+
+
 @pytest.mark.integration
 @pytest.mark.parametrize("tamper", ["none", "source", "missing-context", "partial-context", "output", "diff"])
 def test_large_context_dispatch_through_loop_validation(
@@ -1322,17 +1359,92 @@ def test_rejects_invalid_structured_assessment(tmp_path: Path, assessment: dict[
         _validator()._findings_from_report(report, "a" * 64, "b" * 64)
 
 
-def test_current_challenger_declares_inspected_paths_and_limits(tmp_path: Path) -> None:
-    """A clean reviewer output must name the frozen paths it claims to inspect."""
+def test_current_local_wave_assessment_is_accepted_by_challenge_evidence(tmp_path: Path) -> None:
+    """A source-rated local review must pass both ordinary reviewer and challenge evidence validators."""
+    source_digest, diff_digest = "a" * 64, "b" * 64
+    payload = {
+        "source_sha256": source_digest,
+        "diff_sha256": diff_digest,
+        "findings": [],
+        "assessment": {
+            "source_rating_version": 1,
+            "rating": 1,
+            "verification_readiness": "complete",
+            "rationale": json.dumps(
+                {"reviewed_paths": ["widget.py"], "unreviewed_paths": [], "limits": "none", "judgment": "clean"}
+            ),
+        },
+    }
+    plan = {
+        "consumer_id": "code-review",
+        "source_rating_version": 1,
+        "source_sha256": source_digest,
+        "review_input_sha256": diff_digest,
+    }
+    runner = _module(PLUGIN_ROOT / "shared" / "local_reviewer_wave.py")
+    runner._validate_review_output(json.dumps(payload), plan)
+    report = tmp_path / "review.md"
+    _write_json(report, payload)
+    assert _validator()._findings_from_report(report, source_digest, diff_digest, ["widget.py"]) == []
+
+
+@pytest.mark.parametrize(
+    "assessment",
+    [
+        pytest.param(
+            {"source_rating_version": 1, "rating": None, "verification_readiness": "blocked", "rationale": "blocked"},
+            id="blocked-null-rating",
+        ),
+        pytest.param(
+            {"source_rating_version": 1, "rating": 1, "verification_readiness": "incomplete", "rationale": "partial"},
+            id="incomplete-review",
+        ),
+        pytest.param(
+            {"source_rating_version": 2, "rating": 1, "verification_readiness": "complete", "rationale": "invalid"},
+            id="unknown-version",
+        ),
+        pytest.param(
+            {"source_rating_version": True, "rating": 1, "verification_readiness": "complete", "rationale": "invalid"},
+            id="boolean-version",
+        ),
+        pytest.param(
+            {"source_rating_version": 1, "rating": True, "verification_readiness": "complete", "rationale": "invalid"},
+            id="boolean-rating",
+        ),
+    ],
+)
+def test_current_assessment_never_certifies_an_incomplete_or_invalid_review(
+    tmp_path: Path, assessment: dict[str, object]
+) -> None:
+    """A source-rated report cannot certify incomplete or malformed challenge evidence."""
+    report = tmp_path / "review.md"
+    _write_json(report, {"source_sha256": "a" * 64, "diff_sha256": "b" * 64, "findings": [], "assessment": assessment})
+    with pytest.raises(ValueError, match="loop-evidence-report-assessment-invalid"):
+        _validator()._findings_from_report(report, "a" * 64, "b" * 64)
+
+
+@pytest.mark.parametrize(
+    "reviewed_paths",
+    [
+        pytest.param(["widget.py"], id="required-source"),
+        pytest.param(["checks/probe.json", "widget.py"], id="source-with-extra-evidence"),
+    ],
+)
+def test_current_challenger_declares_inspected_paths_and_limits(tmp_path: Path, reviewed_paths: list[str]) -> None:
+    """Complete source coverage remains admissible when an honest reviewer also names inspected evidence.
+
+    Rejecting additional evidence strands a completed live review and tempts callers to alter its authenticated text.
+    Extra claims must never substitute for any required frozen source path.
+    """
     report = tmp_path / "review.md"
     payload = {
         "source_sha256": "a" * 64,
         "diff_sha256": "b" * 64,
         "findings": [],
         "assessment": {
-            "rating": 4,
+            "rating": 1,
             "rationale": json.dumps(
-                {"reviewed_paths": ["widget.py"], "unreviewed_paths": [], "limits": "none", "judgment": "clean"}
+                {"reviewed_paths": reviewed_paths, "unreviewed_paths": [], "limits": "none", "judgment": "clean"}
             ),
         },
     }
@@ -1343,6 +1455,37 @@ def test_current_challenger_declares_inspected_paths_and_limits(tmp_path: Path) 
     _write_json(report, payload)
     with pytest.raises(ValueError, match="loop-evidence-report-coverage-missing"):
         validator._findings_from_report(report, "a" * 64, "b" * 64, ["widget.py"])
+
+
+@pytest.mark.parametrize(
+    "reviewed_paths",
+    [
+        pytest.param(["checks/probe.json"], id="required-source-omitted"),
+        pytest.param(["widget.py", "widget.py"], id="duplicate-source"),
+        pytest.param(["widget.py", "checks/probe.json"], id="unsorted-source"),
+        pytest.param(["widget.py", {}], id="non-string-path"),
+        pytest.param("widget.py", id="not-a-list"),
+    ],
+)
+def test_additional_inspection_cannot_replace_valid_required_coverage(tmp_path: Path, reviewed_paths: object) -> None:
+    """Additional inspected evidence cannot hide omitted source or corrupt the coverage declaration."""
+    report = tmp_path / "review.md"
+    _write_json(
+        report,
+        {
+            "source_sha256": "a" * 64,
+            "diff_sha256": "b" * 64,
+            "findings": [],
+            "assessment": {
+                "rating": 1,
+                "rationale": json.dumps(
+                    {"reviewed_paths": reviewed_paths, "unreviewed_paths": [], "limits": "none", "judgment": "clean"}
+                ),
+            },
+        },
+    )
+    with pytest.raises(ValueError, match="loop-evidence-report-coverage-missing"):
+        _validator()._findings_from_report(report, "a" * 64, "b" * 64, ["widget.py"])
 
 
 @pytest.mark.parametrize(
@@ -1905,18 +2048,29 @@ def test_final_rejects_prefixed_primary_labels(tmp_path: Path, label: str) -> No
         "empty-diff",
         "ordinary-empty-diff",
         "completed-null",
+        "oversized-unqualified",
+        "oversized-namespaced",
+        "unknown-spawn",
     ],
 )
 def test_native_preparation_reaches_strict_challenge_consumer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, damage: str
 ) -> None:
-    """Bind a genuine headerless producer wave to challenge evidence and reject corrupted receipts."""
+    """Bind a genuine headerless producer wave to challenge evidence and reject corrupted receipts.
+
+    Complete challenge source can exceed the ordinary context cap: both supported native spawn names must carry its
+    exact bytes through real page reads, assembly and strict loop intake. Otherwise preparation strands valid large
+    challenges or assembly rejects the host's namespaced tool spelling. Unknown spellings remain inadmissible.
+    """
     producer_tests = _module(REVIEW_TESTS / "test_review_prepare.py")
     validator = _validator()
     monkeypatch.setenv("CODEX_THREAD_ID", "parent")
     run = tmp_path / "loop"
     run.mkdir()
-    review = producer_tests._review_inputs(run, unchanged=damage in {"empty-diff", "ordinary-empty-diff"})
+    oversized = damage in {"oversized-unqualified", "oversized-namespaced"}
+    review = producer_tests._review_inputs(
+        run, unchanged=damage in {"empty-diff", "ordinary-empty-diff"}, large_source=oversized
+    )
     repository = run / "repository"
     unchanged = damage in {"empty-diff", "ordinary-empty-diff"}
     source_root = (
@@ -1957,6 +2111,9 @@ def test_native_preparation_reaches_strict_challenge_consumer(
         return
     source = validator.capture_source_snapshot(repository, ["widget.py"])
     source_bytes = validator._canonical_source_bytes(source)
+    if oversized:
+        assert (repository / "widget.py").stat().st_size > 262144
+        assert len(source_bytes) > 262144
     diff_bytes = (review / "diff.patch").read_bytes()
     source_digest = hashlib.sha256(source_bytes).hexdigest()
     diff_digest = hashlib.sha256(diff_bytes).hexdigest()
@@ -1997,6 +2154,14 @@ def test_native_preparation_reaches_strict_challenge_consumer(
     message = dispatch["calls"][0]["arguments"]["message"]
     assert "Return exactly one raw JSON object or one fenced adversarial-loop block" in message
     assert "Return your findings and Reviewer Assessment" not in message
+    if oversized:
+        plan = json.loads((review / "inspection-plan.json").read_text(encoding="utf-8"))
+        context = (review / plan["contexts"][0]["context_path"]).read_bytes()
+        assert source_bytes in context
+        assert context.endswith(brief.encode("utf-8"))
+        page_count = re.search(r"Read all (\d+) frozen review context pages", message)
+        assert page_count is not None
+        assert int(page_count[1]) > 1
     response = json.dumps(
         {
             "source_sha256": source_digest,
@@ -2024,6 +2189,17 @@ def test_native_preparation_reaches_strict_challenge_consumer(
     _, home, _ = producer_tests._assembly_evidence(
         run, prepared_run=review, findings={"challenger": terminal}, final_header="missing"
     )
+    if damage in {"oversized-namespaced", "unknown-spawn"}:
+        parent_session = home / "sessions" / "rollout-parent.jsonl"
+        rows = [json.loads(line) for line in parent_session.read_text(encoding="utf-8").splitlines()]
+        launches = [
+            row["payload"]
+            for row in rows
+            if row.get("payload", {}).get("type") == "function_call" and row["payload"].get("name") == "spawn_agent"
+        ]
+        assert len(launches) == 1
+        launches[0]["name"] = "collaboration.spawn_agent" if damage == "oversized-namespaced" else "unknown.spawn_agent"
+        producer_tests._write_jsonl(parent_session, rows)
     # The runtime fixture's legacy formatting prefix is deliberately retained as raw whitespace.
     assembled = subprocess.run(
         [
@@ -2040,9 +2216,14 @@ def test_native_preparation_reaches_strict_challenge_consumer(
         text=True,
         check=False,
     )
-    if damage == "completed-null":
+    if damage in {"completed-null", "unknown-spawn"}:
         assert assembled.returncode != 0
-        assert "review-assessment-content-invalid" in assembled.stderr
+        expected = (
+            "review-assessment-content-invalid"
+            if damage == "completed-null"
+            else "review-spawn-call-not-unique:challenger"
+        )
+        assert expected in assembled.stderr
         return
     assert assembled.returncode == 0, assembled.stderr
     manifest = json.loads((review / "specialist-manifest.json").read_text(encoding="utf-8"))
@@ -2125,7 +2306,7 @@ def test_native_preparation_reaches_strict_challenge_consumer(
         assert result.returncode != 0
         assert "review-challenge-mode-mismatch" in result.stderr
         return
-    if damage in {"none", "raw", "empty-diff"}:
+    if damage in {"none", "raw", "empty-diff", "oversized-unqualified", "oversized-namespaced"}:
         validator.validate_loop_evidence(run, home)
     elif damage in {"brief-drift", "preface"}:
         expected = (

@@ -631,7 +631,7 @@ def _bind_real_chunk_run(
     assert isinstance(home, Path)
     for file in [*review.rglob("*.json"), *home.rglob("*.jsonl")]:
         content = file.read_text(encoding="utf-8")
-        for old in ("child-1", "child-2"):
+        for old in ("child-1", "child-2", "spawn-1", "spawn-2"):
             content = content.replace(old, f"{identity}-{old}")
         file.write_text(content, encoding="utf-8", newline="\n")
     for file in (home / "sessions").glob("rollout-*.jsonl"):

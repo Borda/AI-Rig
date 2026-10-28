@@ -17,6 +17,173 @@ FINDER_PATH = PLUGIN_ROOT / "shared" / "find-review-report.py"
 CREATE_RUN_PATH = PLUGIN_ROOT / "shared" / "create_run.py"
 
 
+@pytest.mark.parametrize(
+    "broken_result",
+    [
+        pytest.param(
+            json.dumps(
+                {"metadata": {"scope": "pr", "review_decision": {"recommendation": None}, "review_validation": None}}
+            ).encode(),
+            id="null-review-validation",
+        ),
+        pytest.param(
+            json.dumps(
+                {"metadata": {"scope": "pr", "review_decision": {"recommendation": None}, "review_validation": []}}
+            ).encode(),
+            id="list-review-validation",
+        ),
+        pytest.param(
+            json.dumps({"metadata": {"scope": "pr", "review_decision": {"recommendation": []}}}).encode(),
+            id="unhashable-recommendation",
+        ),
+        pytest.param(b"\xff", id="non-utf8-result"),
+        pytest.param(b"[" * 1500 + b"]" * 1500, id="excessively-nested-result"),
+    ],
+)
+def test_cli_classifies_broken_review_and_ignores_unrelated_pr(tmp_path: Path, broken_result: bytes) -> None:
+    """Broken review artifacts retain their recovery anchor without blocking other PRs."""
+    older = _write_nested_report(tmp_path, "run-001")
+    newer = _write_nested_report(tmp_path, "run-002")
+    newer.write_bytes(broken_result)
+
+    matching = subprocess.run(
+        [sys.executable, str(FINDER_PATH), "--reports-dir", str(tmp_path), "--target", "123"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    unrelated = subprocess.run(
+        [sys.executable, str(FINDER_PATH), "--reports-dir", str(tmp_path), "--target", "456"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    explicit = subprocess.run(
+        [sys.executable, str(FINDER_PATH), "--result", str(newer)], capture_output=True, text=True, check=False
+    )
+
+    assert older.is_file()
+    assert matching.returncode == 1
+    assert matching.stderr.strip() == f"invalid-review-report-rerun-code-review:{newer}"
+    assert unrelated.returncode == 1
+    assert unrelated.stderr.strip() == "missing-matching-review-report"
+    assert explicit.returncode == 1
+    assert explicit.stderr.strip() == f"invalid-review-report-rerun-code-review:{newer}"
+
+
+def test_cli_damaged_pr_identity_and_target_do_not_block_other_pr(tmp_path: Path) -> None:
+    """A non-UTF-8 identity is invalid for its directory but does not poison unrelated lookups."""
+    newer = _write_nested_report(tmp_path, "run-002")
+    (newer.parent / "pr.json").write_bytes(b"\xff")
+    (newer.parent / "pr-target.txt").write_bytes(b"\xff")
+    matching = subprocess.run(
+        [sys.executable, str(FINDER_PATH), "--reports-dir", str(tmp_path), "--target", "123"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    unrelated = subprocess.run(
+        [sys.executable, str(FINDER_PATH), "--reports-dir", str(tmp_path), "--target", "456"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert matching.returncode == 1
+    assert matching.stderr.strip() == f"invalid-review-report-rerun-code-review:{newer}"
+    assert unrelated.returncode == 1
+    assert unrelated.stderr.strip() == "missing-matching-review-report"
+
+
+def test_broken_review_does_not_hide_another_pr_review(tmp_path: Path) -> None:
+    """A malformed result for one PR cannot prevent discovery of another PR's result."""
+    finder = _load_finder()
+    broken = _write_nested_report(tmp_path, "run-002")
+    broken.write_text(
+        json.dumps(
+            {"metadata": {"scope": "pr", "review_decision": {"recommendation": None}, "review_validation": None}}
+        ),
+        encoding="utf-8",
+    )
+    other = _write_nested_report(tmp_path, "run-001", pull_number=456)
+
+    assert finder.find_latest_review_report("456", [tmp_path]) == other
+
+
+@pytest.mark.parametrize("target", ["123", "https://github.com/acme/widgets/pull/123"])
+@pytest.mark.parametrize("url", ["not-a-pr-url", "https://github.com/acme/widgets/pull/456"])
+def test_malformed_newer_pr_url_cannot_revive_older_review(tmp_path: Path, target: str, url: str) -> None:
+    """A newer run with a damaged URL remains the recovery anchor for its PR."""
+    finder = _load_finder()
+    _write_nested_report(tmp_path, "run-001")
+    newer = _write_nested_report(tmp_path, "run-002")
+    (newer.parent / "pr.json").write_text(json.dumps({"number": 123, "url": url}), encoding="utf-8")
+
+    with pytest.raises(LookupError, match="invalid-review-report-rerun-code-review"):
+        finder.find_latest_review_report(target, [tmp_path])
+    result = subprocess.run(
+        [sys.executable, str(FINDER_PATH), "--reports-dir", str(tmp_path), "--target", target],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 1
+    assert result.stderr.strip() == f"invalid-review-report-rerun-code-review:{newer}"
+
+
+def test_different_repository_url_does_not_block_matching_pr(tmp_path: Path) -> None:
+    """A valid different repository identity is not a damaged identity for the requested PR."""
+    finder = _load_finder()
+    expected = _write_nested_report(tmp_path, "run-001")
+    other = _write_nested_report(tmp_path, "run-002")
+    (other.parent / "pr.json").write_text(
+        json.dumps({"number": 123, "url": "https://github.com/other/widgets/pull/123"}), encoding="utf-8"
+    )
+
+    assert finder.find_latest_review_report("https://github.com/acme/widgets/pull/123", [tmp_path]) == expected
+
+
+@pytest.mark.parametrize("target", ["123", "https://github.com/acme/widgets/pull/123"])
+@pytest.mark.parametrize("url", ["not-a-pr-url", "https://github.com/acme/widgets/pull/456"])
+def test_flat_damaged_identity_blocks_older_review(tmp_path: Path, target: str, url: str) -> None:
+    """A flat report's retained number identifies a damaged newer review as the recovery anchor."""
+    finder = _load_finder()
+    for date, stored_url in [("2026-01-01", "https://github.com/acme/widgets/pull/123"), ("2026-02-01", url)]:
+        run = tmp_path / date
+        run.mkdir()
+        (run / "pr.json").write_text(json.dumps({"number": 123, "url": stored_url}), encoding="utf-8")
+        (run / "result.json").write_text(
+            json.dumps({"metadata": {"scope": "pr", "review_decision": {"recommendation": "needs-more-work"}}}),
+            encoding="utf-8",
+        )
+
+    with pytest.raises(LookupError, match="invalid-review-report-rerun-code-review"):
+        finder.find_latest_review_report(target, [tmp_path])
+
+
+@pytest.mark.parametrize("target", ["123", "https://github.com/acme/widgets/pull/123"])
+def test_flat_conflicting_identity_uses_recorded_target_for_fresh_review(tmp_path: Path, target: str) -> None:
+    """A damaged newer identity cannot hide its recorded PR target and revive older findings."""
+    finder = _load_finder()
+    for date, number, url in [
+        ("2026-01-01", 123, "https://github.com/acme/widgets/pull/123"),
+        ("2026-02-01", 456, "invalid-url"),
+    ]:
+        run = tmp_path / date
+        run.mkdir()
+        (run / "pr.json").write_text(json.dumps({"number": number, "url": url}), encoding="utf-8")
+        (run / "result.json").write_text(
+            json.dumps({"metadata": {"scope": "pr", "review_decision": {"recommendation": "needs-more-work"}}}),
+            encoding="utf-8",
+        )
+    newer = tmp_path / "2026-02-01"
+    (newer / "pr-target.txt").write_text("https://github.com/acme/widgets/pull/123\n", encoding="utf-8")
+
+    with pytest.raises(LookupError, match="invalid-review-report-rerun-code-review") as error:
+        finder.find_latest_review_report(target, [tmp_path])
+    assert str(error.value) == f"invalid-review-report-rerun-code-review:{newer / 'result.json'}"
+
+
 @pytest.fixture(name="assessed_local")
 def _assessed_local(tmp_path: Path) -> Path:
     """Build a complete local artifact using the existing real producer fixture."""
@@ -452,6 +619,70 @@ class TestPrScopedReviewRuns:
         with pytest.raises(LookupError, match="invalid-review-report-rerun-code-review"):
             finder.find_latest_review_report("123", [tmp_path])
 
+    @pytest.mark.parametrize("earlier_kind", ["notes", "candidate", "closed"])
+    @pytest.mark.parametrize("damage", ["missing-identity", "malformed-identity", "malformed-result"])
+    def test_newest_damaged_result_owns_recovery_over_older_unfinished_or_closed_run(
+        self, tmp_path: Path, earlier_kind: str, damage: str
+    ) -> None:
+        """Prevent recovery of an older run from hiding the newest damaged review and its evidence."""
+        finder = _load_finder()
+        if earlier_kind == "notes":
+            earlier = _write_nested_report(tmp_path, "run-001", result_name="review-notes.md")
+        elif earlier_kind == "candidate":
+            earlier = _write_nested_report(tmp_path, "run-001", result_name="result.candidate.json")
+        else:
+            earlier = _write_nested_report(tmp_path, "run-001", review_status="closed")
+        newest = _write_nested_report(tmp_path, "run-002")
+        if damage == "missing-identity":
+            (newest.parent / "pr.json").unlink()
+        elif damage == "malformed-identity":
+            (newest.parent / "pr.json").write_text("{", encoding="utf-8")
+        else:
+            newest.write_text("{", encoding="utf-8")
+        before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+
+        with pytest.raises(LookupError, match="invalid-review-report-rerun-code-review") as error:
+            finder.find_latest_review_report("https://github.com/acme/widgets/pull/123", [tmp_path])
+
+        assert str(newest) in str(error.value)
+        assert str(earlier) not in str(error.value)
+        assert {path: path.read_bytes() for path in before} == before
+
+    def test_newer_closed_result_supersedes_older_damaged_result(self, tmp_path: Path) -> None:
+        """Keep a newer terminal close authoritative while identifying the actual retained close report."""
+        finder = _load_finder()
+        earlier = _write_nested_report(tmp_path, "run-001")
+        (earlier.parent / "pr.json").unlink()
+        newest = _write_nested_report(tmp_path, "run-002", review_status="closed")
+
+        with pytest.raises(LookupError, match="matching-review-closed-not-remediable") as error:
+            finder.find_latest_review_report("123", [tmp_path])
+
+        assert str(newest) in str(error.value)
+        assert str(earlier) not in str(error.value)
+
+    @pytest.mark.parametrize("disposition", ["invalid", "unavailable", "closed"])
+    def test_rejected_lookup_names_the_selected_report(self, tmp_path: Path, disposition: str) -> None:
+        """Give recovery the rejected artifact path instead of requiring it to guess another run."""
+        finder = _load_finder()
+        older = _write_nested_report(tmp_path, "run-001", review_status="unavailable")
+        newest = _write_nested_report(
+            tmp_path, "run-002", review_status=None if disposition == "invalid" else disposition
+        )
+        if disposition == "invalid":
+            newest.write_text("{}", encoding="utf-8")
+        diagnostic = {
+            "invalid": "invalid-review-report-rerun-code-review",
+            "unavailable": "matching-review-unavailable-rerun-code-review",
+            "closed": "matching-review-closed-not-remediable",
+        }[disposition]
+
+        with pytest.raises(LookupError, match=diagnostic) as error:
+            finder.find_latest_review_report("123", [tmp_path])
+
+        assert str(newest) in str(error.value)
+        assert str(older) not in str(error.value)
+
     def test_notes_only_report_is_incomplete_not_missing(self, tmp_path: Path) -> None:
         """Diagnose an identified failed handoff independently of session continuity."""
         finder = _load_finder()
@@ -770,6 +1001,17 @@ def test_pr_metadata_only_report_is_rejected(tmp_path: Path, intake: str) -> Non
     assert "review-validation-failed:" in completed.stderr
 
 
+def test_explicit_invalid_report_diagnostic_retains_requested_path(tmp_path: Path) -> None:
+    """Keep the supplied recovery target available when explicit admission rejects its report bytes."""
+    path = _write_nested_report(tmp_path, "run-001")
+    path.write_text("{}", encoding="utf-8")
+
+    with pytest.raises(LookupError, match="invalid-review-report-rerun-code-review") as error:
+        _load_finder().require_assessed_review_result(path)
+
+    assert str(path) in str(error.value)
+
+
 @pytest.mark.integration
 def test_pr_intake_revalidates_recorded_producer_across_sessions(tmp_path: Path) -> None:
     """Validate current PR intake against its producer rather than the consumer thread."""
@@ -1004,8 +1246,9 @@ def test_pr_lookup_rejects_local_report_with_leftover_pr_identity(tmp_path: Path
         encoding="utf-8",
     )
 
-    with pytest.raises(LookupError, match=r"^invalid-review-report-rerun-code-review$"):
+    with pytest.raises(LookupError) as error:
         _load_finder().find_latest_review_report("123", [tmp_path])
+    assert str(error.value) == f"invalid-review-report-rerun-code-review:{result}"
 
 
 @pytest.mark.parametrize(
@@ -1041,12 +1284,13 @@ def test_pr_lookup_rejects_local_report_with_leftover_pr_identity(tmp_path: Path
 def test_explicit_local_intake_retains_rejection_boundaries(
     tmp_path: Path, metadata: dict[str, object], diagnostic: str
 ) -> None:
-    """Reject unassessed or malformed local reports with their existing diagnostic."""
+    """Preserve rejection categories and identify the exact recoverable report without admitting it."""
     result = tmp_path / "result.json"
     result.write_text(json.dumps({"metadata": metadata}), encoding="utf-8")
 
-    with pytest.raises(LookupError, match=f"^{diagnostic}$"):
+    with pytest.raises(LookupError) as error:
         _load_finder().require_assessed_review_result(result)
+    assert str(error.value) == f"{diagnostic}:{result}"
 
 
 @pytest.mark.parametrize("scope", ["working-tree", "path", "commit"])
@@ -1145,3 +1389,136 @@ def test_candidate_for_other_pull_request_does_not_block_assessed_review(tmp_pat
     selected = finder.find_latest_review_report("123", [tmp_path])
 
     assert selected == assessed
+
+
+@pytest.fixture
+def finding_with_direct_sources(tmp_path: Path) -> tuple[Path, list[dict]]:
+    """Retain two distinct online origins and ordinary reviewer evidence for one confirmed finding."""
+    origins = [
+        {
+            "id": f"review-comment-{index}",
+            "parent_id": f"review-thread-{index}",
+            "path": "widget.py",
+            "line": index + 6,
+            "body": body,
+            "artifact": "review-threads.json",
+            "candidate_id": "F1",
+            "disposition": "confirmed",
+        }
+        for index, body in enumerate(("Guard the empty input.", "Guard the repeated empty input."), 1)
+    ]
+    specialist = tmp_path / "specialists" / "engineer.md"
+    specialist.parent.mkdir()
+    specialist.write_text("Both input paths require the same guard.\n", encoding="utf-8", newline="\n")
+    (tmp_path / "review-notes.md").write_text("Confirmed input guard.\n", encoding="utf-8", newline="\n")
+    report = {
+        "metadata": {
+            "review_findings": [
+                {
+                    "id": "F1",
+                    "title": "Missing input guard",
+                    "authors": ["Software engineer"],
+                    "evidence": ["specialists/engineer.md", "widget.py:7"],
+                }
+            ],
+            "reviewer_assessments": [{"role": "Software engineer", "evidence": "specialists/engineer.md"}],
+            "source_findings": origins,
+            "source_finding_mapping": [{"source_id": origin["id"], "candidate_id": "F1"} for origin in origins],
+        }
+    }
+    path = tmp_path / "result.json"
+    path.write_text(json.dumps(report), encoding="utf-8", newline="\n")
+    return path, origins
+
+
+def test_finding_evidence_preserves_every_direct_origin(finding_with_direct_sources: tuple[Path, list[dict]]) -> None:
+    """Keep distinct online IDs and complete original records when one action reconciles multiple reports."""
+    path, origins = finding_with_direct_sources
+    original = path.read_bytes()
+
+    evidence = _load_finder().finding_evidence(path, "F1")
+
+    assert evidence["source_origins"] == origins
+    assert evidence["author_evidence"] == [
+        {"author": "Software engineer", "path": str(path.parent / "specialists/engineer.md")}
+    ]
+    # Retain the report's portable evidence label beside its resolved native filesystem path.
+    assert evidence["artifact_evidence"] == [  # path-sep: native
+        {"evidence": "specialists/engineer.md", "path": str(path.parent / "specialists/engineer.md")}
+    ]
+    assert evidence["source_evidence"] == ["widget.py:7"]
+    assert evidence["review_notes"] == str(path.parent / "review-notes.md")
+    assert path.read_bytes() == original
+
+
+@pytest.mark.parametrize("supplemental", ["absent", "empty"])
+def test_finding_evidence_allows_no_supplemental_origins(
+    finding_with_direct_sources: tuple[Path, list[dict]], supplemental: str
+) -> None:
+    """Do not require an optional online-origin ledger to read a finding's ordinary source evidence."""
+    path, _origins = finding_with_direct_sources
+    report = json.loads(path.read_bytes())
+    for field in ("source_findings", "source_finding_mapping"):
+        if supplemental == "absent":
+            del report["metadata"][field]
+        else:
+            report["metadata"][field] = []
+    path.write_text(json.dumps(report), encoding="utf-8", newline="\n")
+
+    evidence = _load_finder().finding_evidence(path, "F1")
+
+    assert evidence["source_origins"] == []
+    assert evidence["source_evidence"] == ["widget.py:7"]
+
+
+@pytest.mark.parametrize("damage", ["missing-relation", "conflicting-relation", "missing-origin"])
+def test_finding_evidence_rejects_incomplete_direct_origin_relations(
+    finding_with_direct_sources: tuple[Path, list[dict]], damage: str
+) -> None:
+    """Reject broken relevant associations instead of silently losing one of a finding's source obligations."""
+    path, _origins = finding_with_direct_sources
+    report = json.loads(path.read_bytes())
+    metadata = report["metadata"]
+    if damage == "missing-relation":
+        metadata["source_finding_mapping"].pop()
+    elif damage == "conflicting-relation":
+        metadata["source_finding_mapping"].append({"source_id": "review-comment-1", "candidate_id": "F2"})
+    else:
+        metadata["source_findings"].pop()
+    path.write_text(json.dumps(report), encoding="utf-8", newline="\n")
+
+    with pytest.raises(LookupError):
+        _load_finder().finding_evidence(path, "F1")
+
+
+def test_finding_evidence_keeps_batched_origin_relations(
+    finding_with_direct_sources: tuple[Path, list[dict]],
+) -> None:
+    """Preserve existing batched original records and reconciliation while fixing direct-review intake."""
+    path, direct_origins = finding_with_direct_sources
+    report = json.loads(path.read_bytes())
+    origins = [
+        {
+            "finding_id": f"source.software-engineer.origin-{index}",
+            "original": {"id": f"origin-{index}", "summary": origin["body"]},
+            "original_text": json.dumps(origin),
+            "manifest_path": "source/specialist-manifest.json",
+            "manifest_sha256": "a" * 64,
+            "output_sha256": "b" * 64,
+            "pass": {"role": "sw-engineer", "output_path": "specialists/engineer.md"},
+            "disposition": "unresolved",
+        }
+        for index, origin in enumerate(direct_origins, 1)
+    ]
+    reconciliation = {"invariant": "Reject empty input.", "rationale": "One guard covers both input paths."}
+    report["metadata"].update(
+        source_findings=origins,
+        source_finding_mapping={origin["finding_id"]: ["F1"] for origin in origins},
+        source_finding_reconciliation={"F1": reconciliation},
+    )
+    path.write_text(json.dumps(report), encoding="utf-8", newline="\n")
+
+    evidence = _load_finder().finding_evidence(path, "F1")
+
+    assert evidence["source_origins"] == origins
+    assert evidence["source_reconciliation"] == reconciliation

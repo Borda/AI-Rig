@@ -30,6 +30,15 @@ def test_ignores_generated_report_modules(tmp_path: Path) -> None:
     assert checker.run(plugins) == ["cc_example/bin/entry.py: missing module docstring"]
 
 
+def test_exclusions_are_relative_to_scan_root(tmp_path: Path) -> None:
+    """An excluded ancestor must not hide first-party files inside the selected root."""
+    plugins = tmp_path / "node_modules" / "checkout" / "plugins"
+    _write_module(plugins / "cc_example" / "bin" / "entry.py", "print('missing')\n")
+    _write_module(plugins / "cc_example" / "node_modules" / "vendor.py", "print('vendor')\n")
+
+    assert checker.run(plugins) == ["cc_example/bin/entry.py: missing module docstring"]
+
+
 def test_enforces_codex_rig_rich_docs_inside_the_general_scan(tmp_path: Path) -> None:
     """Codex Rig's documented six-section policy is retained without a plugin-only hook."""
     plugins = tmp_path / "plugins"

@@ -9,7 +9,7 @@ Use when user asks to commit or for commit summary, and for task-scoped local co
 Always use:
 
 ```text
-<type>(<scope>): <title>
+<type>: <title>
 
 Changes:
 - <what changed, including the affected surface and resulting behavior>
@@ -35,7 +35,9 @@ Rules:
 - Creating a new commit does not authorize rewriting an existing commit. Never run `git commit --amend`, `git rebase`, `git reset`, squash, fixup, or an equivalent history rewrite unless the user explicitly requests that exact history operation. Never infer rewrite permission from a commit, cleanup, or commit-diet request.
 - First line: Conventional Commit.
 - `<type>` lowercase: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `ci`, or `perf`.
+- When a useful scope exists, write the subject as `<type>(<scope>): <title>`.
 - Prefer specific lowercase `<scope>`: `api`, `cli`, `config`, `tests`, `docs`, `ci`, `deps`, `packaging`, `models`, `data`, or `utils`.
+- Omit `<scope>` when it repeats the type or means the same thing (for example, use `ci: ...` instead of `ci(ci): ...` and `test: ...` instead of `test(tests): ...`); keep a distinct affected-area scope when it adds information.
 - `<title>` imperative, concise, under 72 characters when practical.
 - Never hard-wrap commit messages. Keep each prose paragraph and each list item on one physical line regardless of length; preserve intentional breaks between the subject, section headings, separate list items, blank lines, and trailers. The title-length guideline does not impose a body line-width limit. Apply this rule to both the displayed draft and the exact message passed to Git.
 - Name behaviour in plain words in the title and body; never a skill's internal phase, step, or branch label the reader has not seen. Grep the draft for such labels before committing.

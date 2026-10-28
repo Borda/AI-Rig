@@ -28,6 +28,185 @@ def _load_validator() -> ModuleType:
     return module
 
 
+def _nested_parent_history(rows: list[dict[str, object]]) -> list[dict[str, object]]:
+    """Model nested native history whose metadata order differs from its identity chain."""
+    owner = {
+        **rows[0]["payload"],
+        "multi_agent_version": "v2",
+        "thread_source": "subagent",
+        "history_mode": "paginated",
+        "subagent_history_start_ordinal": 4,
+        "parent_thread_id": "middle",
+        "forked_from_id": "middle",
+        "source": {"subagent": {"thread_spawn": {"parent_thread_id": "middle"}}},
+    }
+    middle = {
+        "id": "middle",
+        "parent_thread_id": "ancestor",
+        "forked_from_id": "ancestor",
+        "source": {"subagent": {"thread_spawn": {"parent_thread_id": "ancestor"}}},
+    }
+    inherited = {"type": "event_msg", "payload": {"type": "task_complete", "turn_id": "inherited"}}
+    result = [
+        {**rows[0], "payload": owner},
+        {"type": "session_meta", "payload": {"id": "ancestor"}},
+        {"type": "session_meta", "payload": middle},
+        inherited,
+        *rows[1:],
+    ]
+    return [{**row, "ordinal": index} for index, row in enumerate(result)]
+
+
+def test_parent_history_preserves_unbounded_historical_rows() -> None:
+    """Historical validation must retain ambiguous metadata rather than silently normalize it."""
+    rows = [
+        {"type": "session_meta", "payload": {"id": "owner"}},
+        {"type": "session_meta", "payload": {"id": "ancestor"}},
+    ]
+    assert _load_validator()._runtime_parent_rows(rows) is rows
+
+
+@pytest.mark.parametrize(
+    ("model", "effort"),
+    [
+        pytest.param(None, None, id="both-inherited"),
+        pytest.param("model-a", None, id="effort-inherited"),
+        pytest.param(None, "medium", id="model-inherited"),
+    ],
+)
+def test_inherited_spawn_controls_must_belong_to_spawn_turn(model: str | None, effort: str | None) -> None:
+    """Reject stale parent controls when the spawn explicitly identifies a different turn.
+
+    Otherwise a portable reviewer can appear to inherit a model and effort from a prior turn, weakening the frozen
+    dispatch provenance even when its child agrees with those stale values.
+    """
+    validator = _load_validator()
+    arguments = {"agent_type": "qa-specialist", "task_name": "reviewer"}
+    if model is not None:
+        arguments["model"] = model
+    if effort is not None:
+        arguments["reasoning_effort"] = effort
+    rows = [
+        {"type": "turn_context", "payload": {"turn_id": "turn-1", "model": "model-a", "effort": "medium"}},
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "function_call",
+                "name": "spawn_agent",
+                "call_id": "spawn-1",
+                "arguments": json.dumps(arguments),
+                "internal_chat_message_metadata_passthrough": {"turn_id": "turn-1"},
+            },
+        },
+    ]
+    kwargs = {
+        "call_id": "spawn-1",
+        "role_id": "qa-specialist",
+        "agent_path": "/root/reviewer",
+        "node_id": "node-1",
+        "choice": {"role_id": "qa-specialist", "model": model, "reasoning_effort": effort},
+    }
+    assert validator._runtime_spawn_call(rows, **kwargs)["model"] == "model-a"
+    rows[1]["payload"]["internal_chat_message_metadata_passthrough"]["turn_id"] = "turn-2"
+    with pytest.raises(ValueError, match="runtime-parent-controls-turn-mismatch:node-1"):
+        validator._runtime_spawn_call(rows, **kwargs)
+
+
+@pytest.mark.parametrize("forkless_subagent", [False, True])
+def test_parent_history_excludes_inherited_evidence(forkless_subagent: bool) -> None:
+    """Nested metadata is admissible while inherited terminal evidence remains unavailable."""
+    rows = _nested_parent_history(
+        [
+            {"type": "session_meta", "payload": {"id": "owner"}},
+            {"type": "event_msg", "payload": {"type": "task_started", "turn_id": "own"}},
+        ]
+    )
+    if forkless_subagent:
+        rows[1]["payload"].update(
+            parent_thread_id="execution-parent-not-inherited",
+            source={"subagent": {"thread_spawn": {"parent_thread_id": "execution-parent-not-inherited"}}},
+        )
+    projected = _load_validator()._runtime_parent_rows(rows)
+    assert projected == [rows[0], rows[4]]
+    assert projected[0]["payload"]["id"] == "owner"
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "bool-boundary",
+        "zero-boundary",
+        "large-boundary",
+        "string-boundary",
+        "unsupported-version",
+        "unsupported-source",
+        "unsupported-history",
+        "bool-ordinal",
+        "gap-ordinal",
+        "late-metadata",
+        "duplicate-owner",
+        "empty-id",
+        "contradictory-parent",
+        "forkless-parent-conflict",
+        "forkless-declared-history",
+        "disconnected",
+        "cycle",
+    ],
+)
+def test_parent_history_rejects_unproven_boundaries(damage: str) -> None:
+    """A malformed native declaration must never turn inherited events into owner provenance."""
+    rows = _nested_parent_history(
+        [
+            {"type": "session_meta", "payload": {"id": "owner"}},
+            {"type": "event_msg", "payload": {"type": "task_started"}},
+        ]
+    )
+    owner = rows[0]["payload"]
+    if damage.endswith("boundary"):
+        owner["subagent_history_start_ordinal"] = {
+            "bool-boundary": True,
+            "zero-boundary": 0,
+            "large-boundary": len(rows) + 1,
+            "string-boundary": "4",
+        }[damage]
+    elif damage.startswith("unsupported-"):
+        field = {
+            "unsupported-version": "multi_agent_version",
+            "unsupported-source": "thread_source",
+            "unsupported-history": "history_mode",
+        }[damage]
+        owner[field] = "unsupported"
+    elif damage == "bool-ordinal":
+        rows[0]["ordinal"] = False
+    elif damage == "gap-ordinal":
+        rows[2]["ordinal"] = 10
+    elif damage == "late-metadata":
+        rows[4] = {"type": "session_meta", "ordinal": 4, "payload": {"id": "late"}}
+    elif damage == "duplicate-owner":
+        rows[1]["payload"]["id"] = "owner"
+    elif damage == "empty-id":
+        rows[1]["payload"]["id"] = ""
+    elif damage == "contradictory-parent":
+        owner["forked_from_id"] = "ancestor"
+    elif damage == "forkless-parent-conflict":
+        rows[1]["payload"].update(
+            parent_thread_id="execution-parent",
+            source={"subagent": {"thread_spawn": {"parent_thread_id": "different-parent"}}},
+        )
+    elif damage == "forkless-declared-history":
+        rows[1]["payload"]["subagent_history_start_ordinal"] = 1
+    elif damage == "disconnected":
+        rows[2]["payload"] = {"id": "middle"}
+    else:
+        rows[2]["payload"].update(
+            parent_thread_id="owner",
+            forked_from_id="owner",
+            source={"subagent": {"thread_spawn": {"parent_thread_id": "owner"}}},
+        )
+    with pytest.raises(ValueError, match="runtime-parent-history-invalid"):
+        _load_validator()._runtime_parent_rows(rows)
+
+
 def _sha256(path: Path) -> str:
     """Return the exact SHA-256 digest for one fixture file.
 
@@ -1120,8 +1299,8 @@ def test_read_only_runtime_rejects_rollout_schema_drift(tmp_path: Path) -> None:
         )
 
 
-def test_runtime_declared_model_and_effort_match_the_packaged_role_card(tmp_path: Path) -> None:
-    """Prevent a correctly linked child from silently using another runtime policy."""
+def test_runtime_declared_model_and_effort_match_spawn_selection(tmp_path: Path) -> None:
+    """Prevent a correctly linked child from silently using another spawn selection."""
     manifest, manifest_path, plan_path, parent_rollout, sessions_dir, roles_dir = _schema_v2_runtime_fixture(tmp_path)
     child_one = sessions_dir / "rollout-child-1.jsonl"
     rows = [json.loads(line) for line in child_one.read_text(encoding="utf-8").splitlines()]
@@ -1133,7 +1312,7 @@ def test_runtime_declared_model_and_effort_match_the_packaged_role_card(tmp_path
             payload["model"] = "unexpected-model"
     _write_jsonl(child_one, rows)
 
-    with pytest.raises(ValueError, match=r"^runtime-role-model-effort-mismatch:N1$"):
+    with pytest.raises(ValueError, match=r"^runtime-spawn-model-effort-mismatch:N1$"):
         _validate_runtime(
             manifest,
             manifest_path,
@@ -1170,8 +1349,8 @@ def test_runtime_preserves_truthful_serial_fallback_label(tmp_path: Path) -> Non
     assert summary["actual_mode"] == "serial-fallback"
 
 
-def test_schema_v1_remains_readable_but_cannot_earn_new_runtime_promotion(tmp_path: Path) -> None:
-    """Keep historical manifests readable while requiring v2 for new runtime claims."""
+def test_schema_v1_remains_readable_but_is_unsupported_for_runtime_validation(tmp_path: Path) -> None:
+    """Keep historical manifests readable while rejecting unsupported runtime claims."""
     legacy_run_dir = tmp_path / "legacy-run"
     legacy_roles_dir = tmp_path / "legacy-roles"
     legacy_run_dir.mkdir()
@@ -1181,7 +1360,7 @@ def test_schema_v1_remains_readable_but_cannot_earn_new_runtime_promotion(tmp_pa
     runtime_root = tmp_path / "runtime"
     runtime_root.mkdir()
     manifest, manifest_path, plan_path, parent_rollout, sessions_dir, roles_dir = _runtime_fixture(runtime_root)
-    with pytest.raises(ValueError, match=r"^runtime-schema-v2-required$"):
+    with pytest.raises(ValueError, match=r"^runtime-schema-unsupported$"):
         _validate_runtime(manifest, manifest_path, plan_path, parent_rollout, sessions_dir, roles_dir)
 
 
@@ -2106,3 +2285,295 @@ def test_parallel_rollback_contract_preserves_identity_evidence_and_gates(docume
         "Retain failed or conflicted worktrees and stop when cleanup or repository state is ambiguous.",
     ):
         assert contract in text
+
+
+@pytest.mark.integration
+def test_runtime_accepts_nested_parent_without_inherited_spawn_receipts(tmp_path: Path) -> None:
+    """A real runtime consumer must bind only the nested owner's spawn and join evidence."""
+    fixture = _schema_v2_runtime_fixture(tmp_path)
+    manifest, manifest_path, plan_path, parent_rollout, sessions_dir, roles_dir = fixture
+    rows = [json.loads(line) for line in parent_rollout.read_text(encoding="utf-8").splitlines()]
+    nested = _nested_parent_history(rows)
+    inherited = [dict(row) for row in rows[1:]]
+    nested = nested[:4] + inherited + nested[4:]
+    nested[0]["payload"]["subagent_history_start_ordinal"] = 4 + len(inherited)
+    _write_jsonl(parent_rollout, [{**row, "ordinal": index} for index, row in enumerate(nested)])
+    result = _validate_runtime(manifest, manifest_path, plan_path, parent_rollout, sessions_dir, roles_dir)
+    assert result["actual_mode"] == "parallel"
+
+
+def _fixture_admission(text: str, start: int, end: int) -> dict[str, object]:
+    """Bind approval to one occurrence in the complete synthetic input."""
+    return {
+        "input_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        "match_start": start,
+        "match_end": end,
+        "match_sha256": hashlib.sha256(text[start:end].encode("utf-8")).hexdigest(),
+        "approval_evidence": "User approved the synthetic fixture.",
+        "rationale": "The value is inert test data.",
+    }
+
+
+def test_review_input_admission_binds_complete_input_and_occurrence() -> None:
+    """An approved match cannot transfer to changed context or another occurrence."""
+    validator = _load_validator()
+    match = "Authorization: Bearer fixture-value"
+    text = "fixture: " + match
+    admission = _fixture_admission(text, 9, len(text))
+    assert validator.review_input_has_sensitive_material("ordinary context", []) is False
+    assert validator.review_input_has_sensitive_material(text, []) is True
+    assert validator.review_input_has_sensitive_material(text, [admission]) is False
+    assert validator.review_input_has_sensitive_material(text + "-changed", [admission]) is True
+    assert validator.review_input_has_sensitive_material(text + " " + match, [admission]) is True
+    repeated = match + " " + match
+    first = _fixture_admission(repeated, 0, len(match))
+    second = _fixture_admission(repeated, len(match) + 1, len(repeated))
+    assert validator.review_input_has_sensitive_material(repeated, [first]) is True
+    assert validator.review_input_has_sensitive_material(repeated, [first, second]) is False
+
+
+def test_fixture_discovery_hides_unknown_hashes_and_requires_complete_verified_input() -> None:
+    """Only export binding proposals after every overlapping match in a selected input is verified."""
+    validator = _load_validator()
+    token = "sk-" + "e" * 24
+    bearer = "Authorization: Bearer " + token
+    text = "é\r\n" + bearer
+    unknown = "Authorization: Bearer unverified-value"
+    discovery = validator.review_fixture_discovery({"paged:challenger": text, "paged:qa-specialist": unknown})
+    assert discovery == {
+        "schema_version": 1,
+        "mode": "fixture-discovery",
+        "inputs": [
+            {
+                "input_id": "paged:challenger",
+                "matches": [
+                    {"pattern_index": 1, "match_start": 3, "match_end": len(text)},
+                    {"pattern_index": 3, "match_start": len(text) - len(token), "match_end": len(text)},
+                ],
+            },
+            {
+                "input_id": "paged:qa-specialist",
+                "matches": [{"pattern_index": 1, "match_start": 0, "match_end": len(unknown)}],
+            },
+        ],
+    }
+    selections = {
+        "schema_version": 1,
+        "inputs": [
+            {
+                "input_id": "paged:challenger",
+                "complete_input_verified": True,
+                "verification_evidence": "Parent verified both complete current fixture inputs against their source.",
+                "matches": [
+                    {**match, "match_sha256": hashlib.sha256(value.encode()).hexdigest()}
+                    for match, value in zip(discovery["inputs"][0]["matches"], (bearer, token), strict=True)
+                ],
+            }
+        ],
+    }
+    proposals = validator.review_fixture_discovery(
+        {"paged:challenger": text, "paged:qa-specialist": unknown}, selections
+    )
+    assert proposals == {
+        "schema_version": 1,
+        "mode": "fixture-bindings",
+        "inputs": [
+            {
+                "input_id": "paged:challenger",
+                "bindings": [
+                    {
+                        "input_sha256": hashlib.sha256(text.encode()).hexdigest(),
+                        "match_start": match["match_start"],
+                        "match_end": match["match_end"],
+                        "match_sha256": match["match_sha256"],
+                    }
+                    for match in selections["inputs"][0]["matches"]
+                ],
+            }
+        ],
+    }
+    assert hashlib.sha256(unknown.encode()).hexdigest() not in json.dumps(proposals)
+    assert "approval_evidence" not in json.dumps(proposals)
+    assert "rationale" not in json.dumps(proposals)
+    partial = json.loads(json.dumps(selections))
+    partial["inputs"][0]["matches"].pop()
+    with pytest.raises(ValueError, match=r"^review-fixture-selection-unverified$"):
+        validator.review_fixture_discovery({"paged:challenger": text}, partial)
+    with pytest.raises(ValueError, match=r"^review-fixture-selection-unverified$"):
+        validator.review_fixture_discovery({"paged:challenger": text.replace("e" * 24, "f" * 24)}, selections)
+    with pytest.raises(ValueError, match=r"^review-fixture-selection-unverified$"):
+        validator.review_fixture_discovery({"paged:challenger": text + "\n" + unknown}, selections)
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "not-object",
+        "schema",
+        "empty",
+        "unknown-input",
+        "duplicate-input",
+        "duplicate-match",
+        "boolean-span",
+        "hash",
+        "extra-field",
+        "unverified-input",
+        "blank-evidence",
+        "sensitive-evidence",
+    ],
+)
+def test_fixture_discovery_rejects_invalid_verified_selections(damage: str) -> None:
+    """Malformed selectors never produce source or credential fingerprints."""
+    text = "Authorization: Bearer inert-value"
+    selected: object = {
+        "schema_version": 1,
+        "inputs": [
+            {
+                "input_id": "direct-plan",
+                "complete_input_verified": True,
+                "verification_evidence": "Parent verified the complete current input, not only its matched values.",
+                "matches": [
+                    {
+                        "pattern_index": 1,
+                        "match_start": 0,
+                        "match_end": len(text),
+                        "match_sha256": hashlib.sha256(text.encode()).hexdigest(),
+                    }
+                ],
+            }
+        ],
+    }
+    if damage == "not-object":
+        selected = []
+    elif damage == "schema":
+        selected["schema_version"] = True
+    elif damage == "empty":
+        selected["inputs"] = []
+    elif damage == "unknown-input":
+        selected["inputs"][0]["input_id"] = "missing-input"
+    elif damage == "duplicate-input":
+        selected["inputs"] *= 2
+    elif damage == "duplicate-match":
+        selected["inputs"][0]["matches"] *= 2
+    elif damage == "boolean-span":
+        selected["inputs"][0]["matches"][0]["match_start"] = False
+    elif damage == "hash":
+        selected["inputs"][0]["matches"][0]["match_sha256"] = "A" * 64
+    elif damage == "extra-field":
+        selected["inputs"][0]["matches"][0]["approval_evidence"] = "Cannot grant approval through discovery."
+    elif damage == "unverified-input":
+        selected["inputs"][0]["complete_input_verified"] = False
+    elif damage == "blank-evidence":
+        selected["inputs"][0]["verification_evidence"] = " "
+    else:
+        selected["inputs"][0]["verification_evidence"] = text
+    with pytest.raises(ValueError, match=r"^review-fixture-selection-invalid$"):
+        _load_validator().review_fixture_discovery({"direct-plan": text}, selected)
+
+
+def test_fixture_export_requires_complete_input_attestation_for_private_key_header() -> None:
+    """Knowing a public header's digest does not attest to the unscanned key body."""
+    validator = _load_validator()
+    header = "-----BEGIN " + "PRIVATE KEY-----"
+    text = header + "\nsynthetic body requiring parent inspection\n"
+    match = validator.review_fixture_discovery({"direct-plan": text})["inputs"][0]["matches"][0]
+    assert match["match_end"] == len(header)
+    selections = {
+        "schema_version": 1,
+        "inputs": [
+            {
+                "input_id": "direct-plan",
+                "matches": [{**match, "match_sha256": hashlib.sha256(header.encode()).hexdigest()}],
+            }
+        ],
+    }
+    with pytest.raises(ValueError, match=r"^review-fixture-selection-invalid$"):
+        validator.review_fixture_discovery({"direct-plan": text}, selections)
+
+
+@pytest.mark.parametrize(
+    "admissions",
+    [
+        pytest.param(None, id="null"),
+        pytest.param({}, id="not-list"),
+        pytest.param([{}], id="missing-fields"),
+        pytest.param([{**_fixture_admission("abc", 0, 1), "extra": "x"}], id="extra-field"),
+        pytest.param([{**_fixture_admission("abc", 0, 1), "input_sha256": "A" * 64}], id="uppercase-input-hash"),
+        pytest.param([{**_fixture_admission("abc", 0, 1), "match_sha256": "a" * 63}], id="short-match-hash"),
+        pytest.param([{**_fixture_admission("abc", 0, 1), "match_start": True}], id="boolean-offset"),
+        pytest.param([{**_fixture_admission("abc", 0, 1), "match_start": -1}], id="negative-offset"),
+        pytest.param([{**_fixture_admission("abc", 0, 1), "match_end": 0}], id="empty-span"),
+        pytest.param([{**_fixture_admission("abc", 0, 1), "approval_evidence": "  "}], id="blank-approval"),
+        pytest.param([{**_fixture_admission("abc", 0, 1), "rationale": None}], id="invalid-rationale"),
+        pytest.param([_fixture_admission("abc", 0, 1)] * 2, id="duplicate-binding"),
+    ],
+)
+def test_review_input_rejects_malformed_admissions(admissions: object) -> None:
+    """Reject malformed approval records even when the inspected context has no secret pattern."""
+    with pytest.raises(ValueError, match=r"^review-inert-fixture-admissions-invalid$"):
+        _load_validator().review_input_has_sensitive_material("ordinary context", admissions)
+
+
+@pytest.mark.parametrize("field", ["approval_evidence", "rationale"])
+def test_review_input_rejects_sensitive_approval_explanations(field: str) -> None:
+    """Never exempt sensitive text inside the evidence explaining an admission."""
+    text = "Authorization: Bearer fixture-value"
+    admission = _fixture_admission(text, 0, len(text))
+    admission[field] = text
+    with pytest.raises(ValueError, match=r"^review-inert-fixture-evidence-sensitive$"):
+        _load_validator().review_input_has_sensitive_material(text, [admission])
+
+
+def test_review_input_requires_separate_overlapping_pattern_admissions() -> None:
+    """An approved bearer cannot hide an overlapping token occurrence."""
+    validator = _load_validator()
+    token = "sk-" + "a" * 24
+    text = "Authorization: Bearer " + token
+    bearer = _fixture_admission(text, 0, len(text))
+    token_admission = _fixture_admission(text, len(text) - len(token), len(text))
+    assert validator.review_input_has_sensitive_material(text, [bearer]) is True
+    assert validator.review_input_has_sensitive_material(text, [token_admission]) is True
+    assert validator.review_input_has_sensitive_material(text, [bearer, token_admission]) is False
+
+
+def test_review_input_private_key_fixture_cannot_authorize_changed_body() -> None:
+    """Allow the approved marker in one inert fixture without authorizing another key body."""
+    validator = _load_validator()
+    marker = "-----BEGIN " + "PRIVATE KEY-----"
+    text = marker + "\nsynthetic fixture body\n"
+    admission = _fixture_admission(text, 0, len(marker))
+    assert validator.review_input_has_sensitive_material(text, [admission]) is False
+    assert validator.review_input_has_sensitive_material(marker + "\ndifferent body\n", [admission]) is True
+
+
+def test_review_input_binds_rendered_json_and_unicode_crlf() -> None:
+    """Hash exact UTF-8 input while spans count characters, including preserved CRLF and JSON punctuation."""
+    validator = _load_validator()
+    match = 'Authorization: Bearer fixture-value"}'
+    text = 'é\r\n{"header":"' + match
+    start = len('é\r\n{"header":"')
+    admission = _fixture_admission(text, start, len(text))
+    assert validator.review_input_has_sensitive_material(text, [admission]) is False
+    assert validator.review_input_has_sensitive_material(text.replace("\r\n", "\n"), [admission]) is True
+    assert validator.review_input_has_sensitive_material(text + " ", [admission]) is True
+    wrong_span = _fixture_admission(text, start, len(text) - 2)
+    assert validator.review_input_has_sensitive_material(text, [wrong_span]) is True
+    unrelated = _fixture_admission("unrelated", 0, 1)
+    assert validator.review_input_has_sensitive_material(text, [unrelated, admission]) is False
+
+
+def test_inspection_context_admission_preserves_frozen_hash(tmp_path: Path) -> None:
+    """Native review preserves CRLF bytes and rejects tampering after the context was frozen."""
+    validator = _load_validator()
+    marker = "-----BEGIN " + "PRIVATE KEY-----"
+    text = "é\r\n" + marker + "\r\nsynthetic body\r\n"
+    context = tmp_path / "context.txt"
+    context.write_bytes(text.encode("utf-8"))
+    plan = {
+        "contexts": [{"role_id": "reviewer", "context_path": "context.txt", "context_sha256": _sha256(context)}],
+        "inert_fixture_admissions": [_fixture_admission(text, 3, 3 + len(marker))],
+    }
+    assert validator.validate_inspection_contexts(plan, tmp_path / "plan.json") == {"reviewer": context}
+    context.write_bytes((text + "changed").encode("utf-8"))
+    with pytest.raises(ValueError, match=r"^review-inspection-context-hash-mismatch:reviewer$"):
+        validator.validate_inspection_contexts(plan, tmp_path / "plan.json")

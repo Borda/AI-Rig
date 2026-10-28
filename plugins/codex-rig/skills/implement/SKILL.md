@@ -13,7 +13,7 @@ Run linear implementation with strict gates.
 
 Keep setup and review artifacts subordinate to the user's acceptance condition under the primary-goal rules in Reasoning-Progress Escalation. Once the fix is established, write the minimal implementation and regression before another reviewer-setup cycle. One failed bounded setup repair stops that auxiliary route; continue safe authorized implementation and retain the coverage limit without claiming clean completion.
 
-When independent review findings are fixed in a cycle, read `../../shared/adversarial-loop.md` and apply its bounded convergence and stop rules. Use the `challenge-resolve` skill for an explicitly requested standalone loop; this workflow still owns its normal completion gates.
+An ordinary bounded plan or implementation challenge is one independent pass. Use `challenge-resolve` and `../../shared/adversarial-loop.md` for an explicitly requested iterative loop; this workflow still owns its normal completion gates.
 
 ## Input Schema
 
@@ -33,13 +33,14 @@ When independent review findings are fixed in a cycle, read `../../shared/advers
 
 > Read and apply [Proportional Execution](../../shared/native-skill-contract.md#proportional-execution) before choosing the direct or detailed path.
 
-Use a parent-only path for a small, understood, reversible local change with bounded impact and existing task authorization. A code fix plus its regression test remains one change. Routing examples are optional; tests and documentation for one change do not create separate domains.
+Use a parent-owned implementation path for a small, understood, reversible local change with bounded impact and existing task authorization. A code fix plus its regression test remains one change. Routing examples are optional; tests and documentation for one change do not create separate domains.
 
-1. Inspect the affected flow and applicable instructions; define the requested outcome. Investigate an unknown cause before editing.
-2. Make the smallest authorized change. Run the relevant acceptance check and configured lint/format checks; inspect the diff. Before reporting a missing declared dependency as blocked verification, apply [Project Dependency Preparation](../../shared/native-skill-contract.md#project-dependency-preparation) and rerun the affected check; this recovery does not require switching to the detailed workflow.
-3. Report the outcome, verification, and material limits concisely. Do not create execution plans, specialist packs, confidence worksheets, five-entry gate bundles, or final-handoff/result artifacts solely for this path. Reuse still-valid checks for unchanged source and environment.
+1. Inspect the affected flow and applicable instructions; define a concise plan with core acceptance and deferred scope. Investigate an unknown cause before editing. Perform a brief parent self-challenge (not independent); accept the challenged plan under existing authority. Assign execution to the parent for indivisible work or useful bounded disjoint owners.
+2. Make the authorized change with the smallest coherent core. Consolidate the actual result and handoffs; reconcile conflicts and integrate before result review. Obtain one bounded independent challenge of the changed behavior and its relevant source; retain its findings and actual independence limits.
+3. Resolve feasible in-scope findings, run the relevant acceptance check and configured lint/format checks, and inspect the diff. Before reporting a missing declared dependency as blocked verification, apply [Project Dependency Preparation](../../shared/native-skill-contract.md#project-dependency-preparation) and rerun the affected check; this recovery does not require switching to the detailed workflow.
+4. Report the outcome, verification, and material limits concisely. Do not create unnecessary standalone execution-plan artifacts, specialist packs, confidence worksheets, five-entry gate bundles, or final-handoff/result artifacts solely for this path. Reuse still-valid checks for unchanged source and environment; never claim independent review of a later change the reviewer did not assess.
 
-This path takes precedence over the detailed workflow and role examples below. Select the detailed workflow for medium/large or unexpectedly nontrivial work under Proportional Execution, an explicitly requested structured report/review, or work requiring independent specialist coverage. Actual runtime permissions, protected-state decisions, and project-required checks still apply. Missing portable parallel controls select parent-serial work for that route; they do not prohibit an authorized native bounded delegation route or require another permission request for already-authorized local edits.
+This path takes precedence over the detailed workflow and role examples below. Select the detailed workflow for medium/large or unexpectedly nontrivial work under Proportional Execution, an explicitly requested structured report/review, or specialist coverage beyond the bounded challenge. Actual runtime permissions, protected-state decisions, and project-required checks still apply. Missing portable parallel controls select parent-serial work for that route; they do not prohibit an authorized native bounded delegation route or require another permission request for already-authorized local edits. Missing independence stays an explicit limit, never a fabricated review.
 
 ## Execution Route Selection
 
@@ -72,6 +73,8 @@ The promoted route permits read-only evidence, acceptance, and documentation-imp
 Before any dispatch, freeze goal, mode, `done_when`, baseline, ownership DAG, context packs, role-card hashes, checks, resource locks, and plan digest. Dispatch at most one fixed dependency-ready wave, then join every terminal handoff before implementation, integration, gates, or acceptance; changed scope requires new plan.
 
 The frozen `<run-directory>/execution-plan.json` must include exact `consumer_policy` values `consumer_id=implement`, `capability=portable-read-only`, `promotion_status=promoted`, `parent_mutations=serial`, and `canonical_gates=serial`.
+
+The plan must also freeze schema-3 `dispatch_choices` for each node as specified in [portable-parallel-read.md](../../shared/portable-parallel-read.md#required-barrier); omitted spawn settings are represented by `null` and inherit observed parent controls.
 
 Bootstrap exception: run-directory creation (Step 01), baseline diff/branch persistence (Step 02), and the `write-approval.json` write itself are exempt from requiring a prior approved plan digest — these precursor writes must exist before a plan digest can be computed or approved.
 
@@ -113,7 +116,7 @@ Modes:
 - `config`: inventory references and calibration/routing impact before editing.
 - `spike`: read-only or disposable probe; do not present as completed implementation.
 
-Define narrowest reversible change, owners, acceptance. Assign native bounded owners here, after accepted plan details and before Step 05. Apply Proportional Execution: finish both independent plan challenges before Step 05 for medium/large or promoted work; reuse accepted parent-scoped plans for bounded child tasks.
+Define one scoped plan with the narrowest reversible change, owners, dependencies, acceptance and stop conditions. Apply Proportional Execution: independently challenge that plan before Step 05 for medium/large or promoted work, and seek bounded higher-capability advice when a material decision remains uncertain. Reuse accepted parent-scoped plans for bounded child tasks. Assign native bounded owners after the plan challenge and before Step 05.
 
 **Structural context (required for Python targets)**: select one task-neutral route at decision point, then invoke adapter once: `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/codemap_adapter.py context --category implementation --query-kind <kind> [--target <qname>] --out <run-directory>/codemap-context.json`. Invoking it is mandatory whenever target or planned files include a `.py` path; a `skip` route still runs the adapter and persists its `skipped` artifact, never no artifact. Use `skip` for exact localized edit with no unresolved structural fact, matching single route (`central`, `callers`, `blast`, `dependencies`, `test-impact`, or `coupling`) for one unresolved fact, and `standard` for broad or unknown scope. Map direct, all, or production caller questions to `callers`; use `blast` only for explicitly transitive caller questions. An explicit user or tool request for structural evidence overrides `skip`. Per `../../shared/codemap-contract.md`, provider absence/incompatibility stays non-fatal — the artifact records status and reason, then continue with routing above. Persist result once here, before step 05 implementation; step 06 specialist fan-out consumes `<run-directory>/codemap-context.json`, plus at most 3 targeted follow-ups per specialist under the contract's `Specialist follow-up queries` rule, each cited in that specialist's own evidence.
 
@@ -158,10 +161,10 @@ Before spawning or substituting specialists, write `<run-directory>/specialist-p
 
 Optional routing examples for work that actually benefits from separate expertise:
 
-- public API or architecture: `sw-engineer` returns a proposal for review, `qa-specialist` for acceptance matrix, and `doc-scribe` for public docs/docstrings when applicable. Use `solution-architect` only when the user expressly requests that advisory pass or selects the role; it returns a bounded read-only design artifact to the Sol parent/session, which continues and accepts.
+- public API or architecture: `sw-engineer` returns a proposal for review, `qa-specialist` for acceptance matrix, and `doc-scribe` for public docs/docstrings when applicable. Use `solution-architect` only when the user expressly requests that advisory pass or selects the role; it returns a bounded read-only design artifact to the parent/session, which continues and accepts.
 - bug fix or regression: `investigate` or equivalent root-cause evidence first, then `sw-engineer` for fix and `qa-specialist` for failure-before/pass-after proof.
 - CI/tooling: `cicd-steward` for workflow behavior and `linting-expert` for ruff/mypy/pre-commit or suppression policy.
-- security-sensitive code: the Sol parent/session scopes risk before implementation and pairs `sw-engineer` with `qa-specialist` as needed. Use read-only `security-auditor` only when the user expressly requests that advisory pass or selects the role; it returns bounded evidence to the Sol parent/session, which continues and accepts.
+- security-sensitive code: the parent/session scopes risk before implementation and pairs `sw-engineer` with `qa-specialist` as needed. Use read-only `security-auditor` only when the user expressly requests that advisory pass or selects the role; it returns bounded evidence to the parent/session, which continues and accepts.
 - ML/data/research behavior: `data-steward` for data contracts, `scientist` for method/metric validity, `squeezer` for performance claims, plus `qa-specialist` for tensor boundary tests.
 - docs-impacting behavior: `doc-scribe` gets only verified public behavior, API signatures, examples, and migration notes; do not send unrelated implementation details.
 - high-risk or broad changes: `challenger` runs after draft plan or diff to stress-test assumptions and residual risk.
@@ -182,7 +185,9 @@ Required sections:
 
 Inspect `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/run_gates.py --help`, then run all project-relevant gates with explicit commands or skip reasons.
 
-### 09: Review the changed files and the gate output before deciding pass/fail
+### 09: Independently challenge the changed result and review gate output
+
+Obtain one bounded independent challenge against the accepted outcome, relevant source, and actual gate evidence before deciding pass/fail. Resolve feasible in-scope findings and verify corrections; preserve any unassessed change or unavailable independence as a limit rather than claiming a clean independent review. A single pass does not start a multi-round convergence loop.
 
 ### 10: Classify findings using `../../shared/severity-map.md`
 

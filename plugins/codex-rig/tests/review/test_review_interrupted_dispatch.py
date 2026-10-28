@@ -289,16 +289,16 @@ def test_interrupted_prefix_prepares_real_replacement(
             root,
             aggregate,
             aggregate["passes"],
-            {"challenger", "qa-specialist"},
+            {"challenger", "qa-specialist", "sw-engineer"},
             home,
             "parent",
             tmp_path,
             retained_role_cards=retained,
             require_role_card_receipts=True,
         )
-        assert set(by_role) == {"challenger", "qa-specialist"}
+        assert set(by_role) == {"challenger", "qa-specialist", "sw-engineer"}
     runtime = validator._validate_review_runtime(root, aggregate, aggregate["passes"], home, "parent")
-    assert runtime["actual_mode"] == "independent-spawned"
+    assert runtime["actual_mode"] == "parallel"
     assert runtime["independence_satisfied"] is True
     if not opaque and not aggregate_only:
         for field in ("output_path", "raw_output_path", "output_sha256", "raw_output_sha256"):
@@ -310,7 +310,7 @@ def test_interrupted_prefix_prepares_real_replacement(
                     run,
                     forged,
                     forged["passes"],
-                    {"challenger", "qa-specialist"},
+                    {"challenger", "qa-specialist", "sw-engineer"},
                     home,
                     "parent",
                     tmp_path,

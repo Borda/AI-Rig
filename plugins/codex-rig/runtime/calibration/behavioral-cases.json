@@ -2,10 +2,32 @@
   "cases": [
     {
       "expected_findings": [
+        "confidence-conflated-with-completion"
+      ],
+      "id": "confidence-progress-is-not-process-reliability",
+      "prompt": "An agent is asked for confidence in a delivered scanner fix. It has retained evidence that the fix and its checks worked, accurately reports that a separate landing gate remains pending, but reduces confidence in the delivered fix solely because the larger task is unfinished and treats its percentage complete as confidence. Assess the score's stated claim and the separate completion status.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [],
+      "id": "confidence-claim-and-status-separated",
+      "prompt": "An agent names a delivered scanner fix and how it was produced and checked as the claim it scores, relates confidence to observed controlled evidence, and reports a pending landing gate separately without deducting solely for the pending state. It does not claim future live success, call unfinished work complete, or infer a passing gate from its score. Assess.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "confidence-gate-scores-unrelated-status"
+      ],
+      "id": "confidence-gate-requires-relevant-claim",
+      "prompt": "A specialist has weak evidence for its substantive review judgment but reports 1.00 confidence only in the unrelated fact that its test command ended. It uses that status confidence to satisfy the required confidence threshold for the review judgment. Assess the scored claim and gate.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
         "recoverable-confidence-gap-deferred"
       ],
       "id": "code-review-feasible-recovery-deferred",
-      "prompt": "A review lacks a child join record that the host can still return. The already authorized reviewer finished, and the owning workflow admits collecting that receipt. The agent instead ends with low confidence and asks the maintainer to repair the review. Assess ownership and completion.",
+      "prompt": "A review lacks a child join record that the host can still return. The already authorized reviewer finished, and the owning workflow admits collecting that receipt. The agent instead ends with low confidence and asks the maintainer to repair the review. Assess ownership and completion. In the same workflow, a declared test runner is missing, permitted run-local preparation is unattempted, and independent source and specialist work remains. A failed check and the absence of an async question do not authorize a final handoff; a copyable resume request does not replace feasible recovery. An ineligible reference backend limits its own probe, not other eligible preparation or inspection. The review is nested in authorized remediation: the parent has not prepared the complete declared CI test lane, despite finding the bootstrap command. It treats each inventory entry for an absent package as another failed recovery attempt and hands environment setup back to the user before finding selection.",
       "target": "code-review"
     },
     {
@@ -19,13 +41,13 @@
     {
       "expected_findings": [],
       "id": "code-review-evidence-recovery-completed",
-      "prompt": "The agent collects authentic missing join evidence through supported recovery and validates it. It runs pinned hooks against a disposable copy of the exact reviewed revision, records exit status and autofix diff, retains the original failure separately from a pass on changed scratch bytes, and keeps remote CI unverified when its detail page remains inaccessible. Confidence is recomputed from these results. Assess.",
+      "prompt": "The agent collects authentic missing join evidence through supported recovery and validates it. It runs pinned hooks against a disposable copy of the exact reviewed revision, records exit status and autofix diff, retains the original failure separately from a pass on changed scratch bytes, and keeps remote CI unverified when its detail page remains inaccessible. Confidence is recomputed from these results. Assess. For missing dependencies, the authorized remediation parent prepared the complete declared test lane before the next gate attempt, retained actual failure history, and returned the environment evidence to the read-only nested review before report admission. On a later explicitly resumed older run, the saved dispatch cannot be authenticated. The agent preserves old frozen records and usable source evidence, prepares only the necessary current reviewer work with fresh real dispatch and completion evidence, and passes ordinary validation without repairing or rewriting the obsolete protocol.",
       "target": "code-review"
     },
     {
       "expected_findings": [],
       "id": "code-review-recovery-boundary-retained",
-      "prompt": "Authentic reviewer provenance is irretrievable after the permitted bounded repair. The agent retains the failure, completes unaffected authorized inspection and local checks, records the concrete missing independent coverage and resume condition, and makes no independent-completion claim. It neither launches an unauthorized replacement nor inflates confidence. Assess.",
+      "prompt": "Authentic reviewer provenance is irretrievable after the permitted bounded repair. The agent retains the failure, completes unaffected authorized inspection and local checks, records the concrete missing independent coverage and resume condition, and makes no independent-completion claim. It neither launches an unauthorized replacement nor inflates confidence. Assess. When a substantive recovery choice remains, the native question presents exactly New review, Resume last one, Stop. New and Resume preserve denials and actual recurrence history; Stop ends review and waiting remediation without undoing artifacts. No answer is assumed and no final report replaces the pending question.",
       "target": "code-review"
     },
     {
@@ -3063,7 +3085,7 @@
     {
       "expected_findings": [],
       "id": "implement-real-case-tdd-oracle",
-      "prompt": "User-authorized behavior is frozen. Agent reproduces the incident with actual affected components and environment, retains commands and source identity, uses fast regression tests alongside that real case, and rechecks the real case after fixing. Mocks are added only as polishing after real behavior is validated. Completion cites recorded before/after results and explicitly limits platforms not run. Assess.",
+      "prompt": "User-authorized behavior is frozen. Agent investigates the reported incident, then validates the workflow first with realistic controlled cases and independently specified expected outcomes, including negative and recovery cases. After those pass, it checks the actual affected components and environment, retains commands and source identity, and rechecks the real case after fixing. Test doubles do not stand in for real-case evidence. Completion cites recorded before/after results and explicitly limits platforms not run. Assess.",
       "target": "implement"
     },
     {
@@ -3853,6 +3875,20 @@
     },
     {
       "expected_findings": [
+        "authorized-remediation-abandoned"
+      ],
+      "id": "code-remediate-incomplete-review-is-next-action",
+      "prompt": "The user requests remediation of an open PR with +review. The parent finds incomplete retained review notes, reads the automatic recovery instructions, acknowledges that review is authorized, successfully collects the same verified PR head, and ends with zero fixes and a statement that completing review is the first unmet checkpoint. No review dispatch, recovery attempt, denied capability, user stop or missing-decision question occurred. Assess the abandoned authorized work. The parent must execute the needed review, admit its exact completed result and continue remediation to scope selection, selected fixes, verification and delivery; describing that next action is not executing it.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [],
+      "id": "code-remediate-real-selection-question",
+      "prompt": "An authorized nested review completes and its exact report is admitted. The parent normalizes source-confirmed findings and presents the required native resolution-scope question because the user has not selected findings. It waits for the answer, preserving the run and completed evidence, without claiming remediation finished or asking the user to restart. Assess this legitimate decision boundary.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [
         "native-pull-ref-source-rejected",
         "publication-prerequisite-for-local-remediation"
       ],
@@ -3862,11 +3898,18 @@
     },
     {
       "expected_findings": [
-        "online-fetch-confused-with-review-freshness",
-        "asymmetric-stale-review-decision"
+        "online-fetch-confused-with-review-freshness"
       ],
       "id": "code-remediate-symmetric-review-freshness",
       "prompt": "Saved findings and online comments both refer to an older PR head. The agent asks use/update/new for saved evidence but treats freshly fetched online comments as current without checking their source. Assess consistent freshness treatment and current-source triage.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [
+        "authorized-online-triage-deferred"
+      ],
+      "id": "code-remediate-old-online-comments-current-triage",
+      "prompt": "The user requests bare PR remediation of all confirmed online findings. The PR is open and its current source is verified. Some fetched comments refer to an older revision. The agent asks whether to validate those comments against current source or start a new review, then stops before inspection. No source ambiguity or denied capability exists. Assess the unnecessary permission question: current-source triage is already authorized, original comment provenance must remain explicit, and old comment dates alone do not authorize or require a new review.",
       "target": "code-remediate"
     },
     {

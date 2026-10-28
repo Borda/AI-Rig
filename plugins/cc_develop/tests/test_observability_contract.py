@@ -27,6 +27,18 @@ _ROWS = [
 
 # Authorized review contract changes retain these exact current observable equivalents.
 # Keep the historical marker inventory intact and fail if any replacement signal disappears.
+# Authorized proportional routing preserves the evidence and question for actual stops, without requiring a stop for
+# every feasible finding. The historical inventory remains untouched.
+_IMPLEMENT_BLOCKER_EQUIVALENTS = {
+    "- **Blockers found** → STOP. Write the blocker findings (one line each: claim · file:line · evidence)": (
+        "Resolve feasible authorized blockers without asking",
+        "Stop for a protected decision or authority, an explicit user wait, or a blocker that remains unresolved.",
+        "Write the blocker findings (one line each: claim · file:line · evidence) to `$DEV_DIR/blockers.md` first",
+        "print them once as the last reply text before invoking `AskUserQuestion`",
+        "The question text carries the blocker count, headline and `→ $DEV_DIR/blockers.md`",
+    )
+}
+
 _REVIEW_VISIBLE_EQUIVALENTS = {
     "> - Add `Reviewers:` after `Agents:` in the report header, using readable `Role (rating)` or `Role:": (
         "> - Add `Reviewers:` after `Agents:` in the report header, using readable role names only and square-bracketed scores: `Role [rating]`, for example `Software engineer [2]`.",
@@ -91,6 +103,13 @@ _PLAN_VISIBLE_EQUIVALENTS = {
     "SLUG=$(printf '%s\\n' \"$ARGUMENTS\" | tr '[:upper:]' '[:lower:]' | grep -oE '[a-z0-9]+' | grep -vE": (
         "SLUG=$(printf '%s\\n' \"$CLEAN_ARGS\" | tr '[:upper:]' '[:lower:]' | grep -oE '[a-z0-9]+' | grep -vE",
     ),
+    # Authorized routing resolves feasible blockers before asking; genuine stops still show evidence.
+    "- **Blockers found** → STOP. Update `<PLAN_FILE>` with blocker annotations first, then present": (
+        "Resolve feasible authorized blockers without asking, update `<PLAN_FILE>` with the evidence and verify the revision.",
+        "Stop for a protected decision or authority, an explicit user wait, or a blocker that remains unresolved.",
+        "Only then present findings through `AskUserQuestion`",
+        "findings summary as question text, `→ <PLAN_FILE>`",
+    ),
     # /develop:debug is disable-model-invocation: the plan recommends it for the user to run, it never invokes it.
     'echo "→ invoking /develop:debug (depth remaining: $NEXT_DEPTH)"': (
         'echo "→ recommending /develop:debug (depth remaining: $NEXT_DEPTH)"',
@@ -150,6 +169,33 @@ _FIX_GATE_EQUIVALENTS = {
 }
 
 _VISIBLE_EQUIVALENTS = {
+    # The plan lifecycle now makes separate feasibility opt-in and routes unknown causes to debug before planning.
+    # Preserve the plan artifact and terminal summary for implementation work, plus the explicit diagnostic handoff.
+    "README.md": {
+        "`plan` reads codebase, classifies task, identifies affected files, estimates complexity, runs": (
+            "`plan` reads the codebase, classifies the task, identifies affected files and estimates complexity.",
+            "For feature, fix and refactor work it writes a structured plan to `.plans/active/`",
+            "challenges its feasibility unless `--no-challenge` is passed.",
+            "A separate feasibility review runs only on explicit request.",
+            "Unknown root cause routes to `/develop:debug` first without an implementation plan.",
+            "Plan -> .plans/active/plan_extract-data-loading-dataloader.md",
+            "Classification : refactor",
+            "Complexity     : medium",
+            "Affected files : 4 files across 2 modules",
+            "Key risks      : Public API changes in dataset.py — 3 callers",
+            "Agent review   : plan challenge completed; separate feasibility review not requested",
+            '-> /develop:refactor "extract data loading into a dedicated DataLoader class" when ready',
+        ),
+        "2. Writes structured plan to `.plans/active/<slug>.md`": (
+            "Otherwise write a structured plan to `.plans/active/<slug>.md`.",
+            "Unknown root cause: after the depth checkpoint and any applicable breaking-change gate, recommend `/develop:debug <goal>`",
+            "stop without writing or challenging an implementation plan.",
+            "At the depth cap, explicitly choosing **Write the plan anyway** continues with the unconfirmed cause recorded as a risk",
+            "Write a brief summary and the appropriate downstream handoff.",
+            "Plan -> .plans/active/plan_<slug>.md",
+            '-> /develop:feature|fix|refactor "<goal>" when ready',
+        ),
+    },
     "skills/review/SKILL.md": {
         **_REVIEW_VISIBLE_EQUIVALENTS,
         **_SHARED_INIT_EQUIVALENTS,
@@ -161,6 +207,7 @@ _VISIBLE_EQUIVALENTS = {
         **_keep_sentinel_equivalents("debug"),
     },
     "skills/feature/SKILL.md": {
+        **_IMPLEMENT_BLOCKER_EQUIVALENTS,
         # Python helpers preserve the output/state artifacts of the retired shell commands.
         'echo "$TARGET_MODULE" > ${TMPDIR:-/tmp}/dev-feature-target-module-${CSID}   # persist — reloaded by': (
             'bin/derive_codemap_target.py" --keep-state dev-feature',
@@ -189,6 +236,7 @@ _VISIBLE_EQUIVALENTS = {
         ),
     },
     "skills/fix/SKILL.md": {
+        **_IMPLEMENT_BLOCKER_EQUIVALENTS,
         # Python helpers preserve the output/state artifacts of the retired shell commands.
         'echo "! Cannot run reproduction: PYTEST_CMD or TEST_PATH unresolved — resolve TEST_PATH from': (
             'echo "! Cannot run reproduction: TEST_PATH unresolved — resolve TEST_PATH from',
@@ -202,6 +250,7 @@ _VISIBLE_EQUIVALENTS = {
         **_keep_sentinel_equivalents("fix"),
     },
     "skills/refactor/SKILL.md": {
+        **_IMPLEMENT_BLOCKER_EQUIVALENTS,
         **_run_dir_persist_equivalents("refactor"),
         **_batch_gate_equivalents("refactor"),
         **_SHARED_INIT_EQUIVALENTS,

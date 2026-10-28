@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import codecs
 import contextlib
 import hashlib
 import json
@@ -107,10 +108,47 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def canonical_diff_arguments(arguments: tuple[str, ...]) -> tuple[str, ...]:
+    """Disable configured diff transforms and stabilize patch presentation."""
+    if not arguments or arguments[0] != "diff":
+        return arguments
+    boundary = arguments.index("--") if "--" in arguments else len(arguments)
+    return (
+        "-c",
+        "core.quotePath=true",
+        "diff",
+        *arguments[1:boundary],
+        "--no-color",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--src-prefix=a/",
+        "--dst-prefix=b/",
+        "--unified=3",
+        "--inter-hunk-context=0",
+        "--diff-algorithm=myers",
+        "--no-renames",
+        "--no-relative",
+        "--ignore-submodules=none",
+        *arguments[boundary:],
+    )
+
+
+def canonical_diff_environment() -> dict[str, str]:
+    """Prevent Git environment from overriding the local patch context."""
+    environment = os.environ.copy()
+    environment.pop("GIT_DIFF_OPTS", None)
+    return environment
+
+
 def run_git(arguments: tuple[str, ...], output: Path) -> int:
     """Run one Git argv vector and write its stdout bytes unchanged."""
     with output.open("wb") as stream:
-        completed = subprocess.run(["git", *arguments], stdout=stream, check=False)  # noqa: S603, S607 - argv list, no shell; tool resolved via PATH on purpose
+        completed = subprocess.run(  # noqa: S603 - argv list, no shell
+            ["git", *arguments],  # noqa: S607 - tool resolved via PATH on purpose
+            stdout=stream,
+            check=False,
+            env=canonical_diff_environment() if arguments[:3] == ("-c", "core.quotePath=true", "diff") else None,
+        )
     return completed.returncode
 
 
@@ -139,7 +177,11 @@ def collect_diff(scope: str, target: str, output: Path) -> int:
         path_suffix = ()
 
     for filename, prefix in ARTIFACT_COMMANDS:
-        result = run_git((*prefix, *revision, *path_suffix), output / filename)
+        arguments = (*prefix, *revision, *path_suffix)
+        if filename == "diff.patch":
+            arguments = ("diff", "--binary", *revision, *path_suffix)
+        arguments = canonical_diff_arguments(arguments)
+        result = run_git(arguments, output / filename)
         if result != 0:
             return result
 
@@ -147,6 +189,10 @@ def collect_diff(scope: str, target: str, output: Path) -> int:
     if scope == "commit":
         untracked.write_bytes(b"")
         return 0
+    if scope == "working-tree":
+        # Whole-tree patches include siblings of the invoking directory; inventory must use the same root.
+        root = _repository_root(Path.cwd())
+        return run_git(("-C", os.fspath(root), "ls-files", "--others", "--exclude-standard"), untracked)
     suffix = ("--", target) if scope == "path" else ()
     return run_git(("ls-files", "--others", "--exclude-standard", *suffix), untracked)
 
@@ -157,6 +203,7 @@ def _git_output(repository: Path, arguments: tuple[str, ...]) -> bytes:
         ["git", "-C", os.fspath(repository), "--literal-pathspecs", *arguments],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
         capture_output=True,
         check=False,
+        env=canonical_diff_environment() if arguments[:3] == ("-c", "core.quotePath=true", "diff") else None,
     )
     if completed.returncode != 0:
         raise RuntimeError(f"Git source snapshot command failed: {' '.join(arguments)}")
@@ -308,6 +355,79 @@ def _inventory_paths(inventory: bytes) -> list[str]:
     return sorted({os.fsdecode(path) for path in inventory.split(b"\0") if path})
 
 
+def diff_sections(diff: bytes) -> dict[str, bytes]:
+    """Index verified Git patch sections by their destination or deleted source path."""
+
+    def decode_path(raw: bytes) -> str | None:
+        """Decode one Git path token, including C-quoted UTF-8 byte escapes."""
+        if raw.startswith(b'"') and raw.endswith(b'"'):
+            raw = codecs.escape_decode(raw[1:-1])[0]
+        try:
+            return raw.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+
+    sections: dict[str, bytes] = {}
+    for chunk in re.findall(rb"(?ms)^diff --git .*?(?=^diff --git |\Z)", diff):
+        header = chunk.split(b"\n", 1)[0]
+        path: str | None = None
+        # Rename/copy metadata names the tip path; deletion has only an old-side file.
+        for prefix in (b"rename to ", b"copy to ", b"+++ ", b"--- "):
+            match = re.search(rb"(?m)^" + re.escape(prefix) + rb"(.+)$", chunk)
+            if match is None or match.group(1) == b"/dev/null":
+                continue
+            raw_path = match.group(1)
+            # Git terminates unquoted spaced paths with a tab; literal filename tabs are C-quoted.
+            if prefix in (b"+++ ", b"--- "):
+                raw_path = raw_path.removesuffix(b"\t")
+            path = decode_path(raw_path)
+            if path is not None and prefix == b"+++ ":
+                path = path[2:] if path.startswith("b/") else None
+            elif path is not None and prefix == b"--- ":
+                path = path[2:] if path.startswith("a/") else None
+            if path is not None:
+                break
+        if path is None:
+            # Binary and mode-only patches may contain no ---/+++ markers.
+            plain = re.fullmatch(rb"diff --git a/(.+) b/\1", header)
+            quoted = re.fullmatch(rb'diff --git ("(?:\\.|[^"\\])*") ("(?:\\.|[^"\\])*")', header)
+            if plain is not None:
+                path = decode_path(plain.group(1))
+            elif quoted is not None:
+                old = decode_path(quoted.group(1))
+                new = decode_path(quoted.group(2))
+                if old is not None and new is not None and old.startswith("a/") and new == "b/" + old[2:]:
+                    path = old[2:]
+        if path is None:
+            raise ValueError("review-diff-path-inventory-incomplete")
+        sections[path] = sections.get(path, b"") + chunk
+    return sections
+
+
+def read_git_path_lines(path: Path) -> set[str]:
+    """Decode Git's line-delimited, C-quoted path inventory without splitting escaped control characters."""
+    if not path.exists():
+        return set()
+    paths = set()
+    for line in path.read_bytes().splitlines():
+        if line.startswith(b'"') and line.endswith(b'"'):
+            line = codecs.escape_decode(line[1:-1])[0]
+        if line:
+            paths.add(os.fsdecode(line))
+    return paths
+
+
+def reject_gitlink_changes(repository: Path, comparison: tuple[str, ...]) -> None:
+    """Reject changed gitlinks whose nested source cannot be captured by the file snapshot contract."""
+    raw = _git_output(
+        repository,
+        canonical_diff_arguments(("diff", "--raw", "-z", "--no-renames", *comparison)),
+    )
+    for entry in raw.split(b"\0"):
+        if entry.startswith(b":") and b"160000" in entry[1:].split()[:2]:
+            raise RuntimeError("Source review does not support changed gitlink entries")
+
+
 def _repository_root_and_head(repository: Path) -> tuple[Path, bytes | None]:
     """Resolve the Git top-level directory and verified HEAD revision with a single Git call.
 
@@ -353,6 +473,8 @@ def capture_source_snapshot(repository: Path, scope_paths: list[str]) -> dict[st
     root, head = _repository_root_and_head(repository)
     scopes = _normalize_scope_paths(root, scope_paths)
     revision_before, index_before, inventory_before = _source_state(root, scopes, head)
+    if any(entry.startswith(b"160000 ") for entry in index_before.split(b"\0")):
+        raise RuntimeError("Source snapshot does not support gitlink entries")
     records = [_source_record(root, path) for path in _inventory_paths(inventory_before)]
     revision_after, index_after, inventory_after = _source_state(root, scopes, None)
     records_after = [_source_record(root, path) for path in _inventory_paths(inventory_after)]
@@ -488,15 +610,16 @@ def collect_review_worktree(repository: Path, output: Path) -> dict[str, object]
         raise ValueError(f"Review worktree path is occupied: {review}")
 
     status_before = _git_output(root, ("status", "--porcelain", "-z", "--untracked-files=all"))
-    tracked = _git_output(root, ("diff", "--name-only", "-z", "HEAD", "--"))
-    staged = _git_output(root, ("diff", "--cached", "--name-only", "-z", "HEAD", "--"))
+    reject_gitlink_changes(root, ("HEAD", "--"))
+    tracked = _git_output(root, canonical_diff_arguments(("diff", "--name-only", "-z", "HEAD", "--")))
+    staged = _git_output(root, canonical_diff_arguments(("diff", "--cached", "--name-only", "-z", "HEAD", "--")))
     untracked = _git_output(root, ("ls-files", "--others", "--exclude-standard", "-z"))
     paths = _inventory_paths(tracked + staged + untracked)
     if not paths:
         raise ValueError("Local review worktree requires changed source paths")
     snapshot = capture_source_snapshot(root, paths)
-    patch = _git_output(root, ("diff", "--binary", "HEAD", "--"))
-    staged_patch = _git_output(root, ("diff", "--cached", "--binary", "HEAD", "--"))
+    patch = _git_output(root, canonical_diff_arguments(("diff", "--binary", "HEAD", "--")))
+    staged_patch = _git_output(root, canonical_diff_arguments(("diff", "--cached", "--binary", "HEAD", "--")))
     if status_before != _git_output(root, ("status", "--porcelain", "-z", "--untracked-files=all")):
         raise RuntimeError("Repository changed while preparing local review worktree")
     if snapshot != capture_source_snapshot(root, paths):
@@ -510,8 +633,9 @@ def collect_review_worktree(repository: Path, output: Path) -> dict[str, object]
     if completed.returncode != 0:
         raise RuntimeError("Git could not create detached local review worktree")
     if patch:
+        # New patch paths must be visible to the mirror's later Git diff without staging their contents.
         completed = subprocess.run(  # noqa: S603 - argv list, no shell
-            ["git", "-C", os.fspath(review), "apply", "--binary", "--"],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
+            ["git", "-C", os.fspath(review), "apply", "--binary", "--intent-to-add", "--"],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
             input=patch,
             capture_output=True,
             check=False,
@@ -523,7 +647,7 @@ def collect_review_worktree(repository: Path, output: Path) -> dict[str, object]
     mirror = capture_source_snapshot(review, paths)
     if mirror["revision"] != snapshot["revision"] or mirror["files"] != snapshot["files"]:
         raise RuntimeError("Detached review worktree source differs from captured local source")
-    if patch != _git_output(review, ("diff", "--binary", "HEAD", "--")):
+    if patch != _git_output(review, canonical_diff_arguments(("diff", "--binary", "HEAD", "--"))):
         raise RuntimeError("Detached review worktree patch differs from captured local patch")
     if status_before != _git_output(root, ("status", "--porcelain", "-z", "--untracked-files=all")):
         raise RuntimeError("Repository changed while creating local review worktree")
@@ -536,7 +660,8 @@ def collect_review_worktree(repository: Path, output: Path) -> dict[str, object]
     (report / "diff.patch").write_bytes(patch)
     (report / "staged.patch").write_bytes(staged_patch)
     receipt: dict[str, object] = {
-        "schema_version": 1,
+        "schema_version": 2,
+        "diff_format": "canonical-v1",
         "source_worktree": root.as_posix(),
         "review_worktree": review.as_posix(),
         "revision": snapshot["revision"],
@@ -558,8 +683,10 @@ def verify_review_worktree(output: Path) -> None:
     """Reject source drift from the recorded detached local review worktree."""
     report = output.resolve(strict=True)
     receipt = json.loads((report / "review-worktree.json").read_text(encoding="utf-8"))
-    if receipt.get("schema_version") != 1:
-        raise ValueError("Unsupported review worktree receipt schema")
+    if receipt.get("schema_version") not in (1, 2) or (
+        receipt.get("schema_version") == 2 and receipt.get("diff_format") != "canonical-v1"
+    ):
+        raise ValueError("Unsupported review worktree receipt schema or diff format")
     snapshot = json.loads((report / "source-snapshot.json").read_text(encoding="utf-8"))
     review = Path(receipt["review_worktree"])
     source = Path(receipt["source_worktree"])
@@ -586,10 +713,19 @@ def verify_review_worktree(output: Path) -> None:
     if current["revision"] != receipt["revision"] or current["files"] != snapshot["files"]:
         raise RuntimeError("Review worktree source changed after collection")
     status, patch = _git_outputs(
-        review, [("status", "--porcelain", "-z", "--untracked-files=all"), ("diff", "--binary", "HEAD", "--")]
+        review,
+        [
+            ("status", "--porcelain", "-z", "--untracked-files=all"),
+            canonical_diff_arguments(("diff", "--binary", "HEAD", "--")),
+        ],
     )
     if hashlib.sha256(status).hexdigest() != receipt["review_status_sha256"]:
         raise RuntimeError("Review worktree status changed after collection")
+    tracked_changes = _git_output(review, canonical_diff_arguments(("diff", "--name-only", "-z", "HEAD", "--")))
+    untracked_changes = _git_output(review, ("ls-files", "--others", "--exclude-standard", "-z"))
+    observed_paths = set(_inventory_paths(tracked_changes + untracked_changes))
+    if not observed_paths.issubset(set(receipt["scope_paths"])):
+        raise RuntimeError("Review worktree inventory incomplete")
     if hashlib.sha256(patch).hexdigest() != receipt["diff_sha256"]:
         raise RuntimeError("Review worktree patch changed after collection")
 

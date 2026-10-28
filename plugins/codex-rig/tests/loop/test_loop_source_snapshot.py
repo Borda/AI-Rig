@@ -6,6 +6,8 @@ import hashlib
 import importlib.util
 import json
 import re
+import runpy
+import stat
 import subprocess
 import sys
 import tempfile
@@ -199,6 +201,139 @@ def test_capture_source_snapshot_rejects_content_change_during_capture(
     monkeypatch.setattr(module, "_source_record", edit_after_read)
     with pytest.raises(RuntimeError, match="changed while capturing"):
         module.capture_source_snapshot(repository, ["source.py"])
+
+
+@pytest.mark.parametrize("edit_after_staging", [False, True])
+def test_local_review_worktree_includes_staged_new_file(tmp_path: Path, edit_after_staging: bool) -> None:
+    """Mirror a staged addition and its later edits without changing the source index."""
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    _git(repository, "init", "-q")
+    _git(repository, "config", "user.name", "Snapshot fixture")
+    _git(repository, "config", "user.email", "snapshot@example.invalid")
+    (repository / ".gitignore").write_bytes(b".reports/\n")
+    _git(repository, "add", ".gitignore")
+    _git(repository, "commit", "-qm", "fixture")
+    added = repository / "added.py"
+    added.write_bytes(b"staged content\n")
+    added.chmod(added.stat().st_mode | stat.S_IXUSR)
+    _git(repository, "add", "added.py")
+    if edit_after_staging:
+        added.write_bytes(b"current content\n")
+    original_status = subprocess.check_output(
+        ["git", "status", "--porcelain", "-z", "--untracked-files=all"], cwd=repository
+    )
+    expected_patch = subprocess.check_output(["git", "diff", "--binary", "HEAD", "--"], cwd=repository)
+    expected_staged = subprocess.check_output(["git", "diff", "--cached", "--binary", "HEAD", "--"], cwd=repository)
+    report = repository / ".reports" / "codex" / "review"
+
+    collection = subprocess.run(
+        [sys.executable, str(COLLECT_DIFF), "--review-worktree", "--repository", str(repository), "--out", str(report)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert collection.returncode == 0, collection.stderr
+    receipt = json.loads((report / "review-worktree.json").read_bytes())
+    review = Path(receipt["review_worktree"])
+    assert (review / "added.py").read_bytes() == added.read_bytes()
+    assert bool((review / "added.py").stat().st_mode & stat.S_IXUSR) == bool(added.stat().st_mode & stat.S_IXUSR)
+    assert (report / "diff.patch").read_bytes() == expected_patch
+    assert (report / "staged.patch").read_bytes() == expected_staged
+    assert subprocess.check_output(["git", "diff", "--binary", "HEAD", "--"], cwd=review) == expected_patch
+    assert (
+        subprocess.check_output(["git", "status", "--porcelain", "-z", "--untracked-files=all"], cwd=repository)
+        == original_status
+    )
+    _load_collector().verify_review_worktree(report)
+
+
+@pytest.mark.integration
+def test_staged_addition_reaches_review_preparation(tmp_path: Path) -> None:
+    """Deliver a staged addition and later edit through the ordinary review context producer."""
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    _git(repository, "init", "-q")
+    _git(repository, "config", "user.name", "Snapshot fixture")
+    _git(repository, "config", "user.email", "snapshot@example.invalid")
+    (repository / ".gitignore").write_bytes(b".reports/\n")
+    _git(repository, "add", ".gitignore")
+    _git(repository, "commit", "-qm", "fixture")
+    added = repository / "added.py"
+    added.write_bytes(b"value = 'staged'\n")
+    _git(repository, "add", "added.py")
+    added.write_bytes(b"value = 'current'\n")
+    original_status = subprocess.check_output(["git", "status", "--porcelain", "-z"], cwd=repository)
+    run = repository / ".reports" / "review"
+    context = subprocess.run(
+        [sys.executable, str(COLLECT_DIFF), "--scope", "working-tree", "--out", str(run)],
+        cwd=repository,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert context.returncode == 0, context.stderr
+    collected = subprocess.run(
+        [
+            sys.executable,
+            str(COLLECT_DIFF),
+            "--review-worktree",
+            "--repository",
+            str(repository),
+            "--out",
+            str(run / "local-source"),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert collected.returncode == 0, collected.stderr
+    receipt = json.loads((run / "local-source" / "review-worktree.json").read_bytes())
+    review_root = Path(receipt["review_worktree"])
+    skill = PLUGIN_ROOT / "skills" / "code-review"
+    signal_names = runpy.run_path(str(skill / "review_routing.py"))["ROUTING_SIGNALS"]
+    roles = ["qa-specialist", "sw-engineer"]
+    routing = {
+        "schema_version": 1,
+        "risk_tier": "LOCAL",
+        "signals": {name: name == "behavior_change" for name in signal_names},
+        "signal_evidence": {name: ["Review the staged addition."] for name in signal_names},
+        "triggered_roles": roles,
+        "trigger_reasons": {role: ["Inspect changed Python source."] for role in roles},
+    }
+    (run / "review-routing.json").write_text(json.dumps(routing), encoding="utf-8", newline="\n")
+    (run / "brief.md").write_text("Review the added source.\n", encoding="utf-8", newline="\n")
+    briefs = {role: {"axis": role, "evidence_path": "brief.md", "source_paths": ["added.py"]} for role in roles}
+    (run / "review-briefs.json").write_text(json.dumps(briefs), encoding="utf-8", newline="\n")
+    prepared = subprocess.run(
+        [
+            sys.executable,
+            str(skill / "review_prepare.py"),
+            "prepare",
+            "--out",
+            str(run),
+            "--run-id",
+            "test",
+            "--parent-thread-id",
+            "parent",
+            "--source-root",
+            str(review_root),
+            "--paged",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert prepared.returncode == 0, prepared.stderr
+    plan = json.loads((run / "inspection-plan.json").read_bytes())
+    assert {context["role_id"] for context in plan["contexts"]} == set(roles)
+    for context in plan["contexts"]:
+        content = (run / context["context_path"]).read_text(encoding="utf-8")
+        assert "### added.py (file," in content
+        assert "value = 'current'" in content
+        assert "Matching diff excerpt:" in content
+        assert "+value = 'current'" in content
+    assert subprocess.check_output(["git", "status", "--porcelain", "-z"], cwd=repository) == original_status
 
 
 @pytest.mark.parametrize("autocrlf", ["false", "true", "input"])

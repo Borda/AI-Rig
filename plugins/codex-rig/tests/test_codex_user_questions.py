@@ -15,7 +15,13 @@ SKILLS = sorted((PLUGIN_ROOT / "skills").glob("*/SKILL.md"))
 @pytest.mark.installed_plugin
 def test_scope_question_selects_delivery_before_printing_context() -> None:
     """Prevent a plain scope question in commentary followed by another in the final answer."""
-    skill = (PLUGIN_ROOT / "skills/code-remediate/SKILL.md").read_text(encoding="utf-8")
+    skill = read_with_references(
+        PLUGIN_ROOT / "skills/code-remediate/SKILL.md",
+        "intake.md",
+        "selection.md",
+        "implementation.md",
+        "completion.md",
+    )
     details = (PLUGIN_ROOT / "shared/codex-user-questions-details.md").read_text(encoding="utf-8")
     assert "Choose the delivery route before emitting the scope context" in skill
     assert "one final response containing the context, report link, and question" in skill
@@ -222,7 +228,13 @@ def test_async_question_example_uses_the_exposed_questions_wrapper() -> None:
 def test_single_unchanged_merge_accepts_explicit_conversational_approval() -> None:
     """Prevent a sole clear merge approval from becoming a repeated syntax question."""
     guide = (PLUGIN_ROOT / "shared/codex-user-questions-details.md").read_text(encoding="utf-8")
-    merge = (PLUGIN_ROOT / "skills/code-remediate/SKILL.md").read_text(encoding="utf-8")
+    merge = read_with_references(
+        PLUGIN_ROOT / "skills/code-remediate/SKILL.md",
+        "intake.md",
+        "selection.md",
+        "implementation.md",
+        "completion.md",
+    )
     compact = (PLUGIN_ROOT / QUESTION_REFERENCE).read_text(encoding="utf-8")
     assert "Accept an explicit conversational `Approve` / `Deny`" in guide
     assert "exactly one pending decision" in guide
@@ -241,12 +253,13 @@ def test_single_unchanged_merge_accepts_explicit_conversational_approval() -> No
 @pytest.mark.installed_plugin
 def test_review_recovery_yields_before_blocked_handoff() -> None:
     """Keep a pending review answer available after the native question opens."""
-    review = (PLUGIN_ROOT / "skills/code-review/SKILL.md").read_text(encoding="utf-8")
+    review = read_with_references(PLUGIN_ROOT / "skills/code-review/SKILL.md", "findings-and-completion.md")
     checkpoint = review.split("Completion checkpoint:", 1)[1].split("### Reviewer validation recovery", 1)[0]
 
     assert "If a required async question is accepted, yield immediately" in checkpoint
     assert "Do not sleep, poll, or send a final or status handoff" in checkpoint
-    assert checkpoint.index("yield immediately") < checkpoint.index("Otherwise state `Review handoff blocked`")
+    assert checkpoint.index("yield immediately") < checkpoint.index("state `Review handoff blocked`")
+    assert "Only when an unresolved controlling stop still prevents closure" in checkpoint
 
 
 @pytest.mark.installed_plugin
@@ -256,7 +269,11 @@ def test_review_recovery_yields_before_blocked_handoff() -> None:
 )
 def test_question_consumers_preserve_packaged_native_form_priority(relative: str) -> None:
     """Prevent ordinary merge, commit, and oversized menus from bypassing native forms."""
-    text = (PLUGIN_ROOT / relative).read_text(encoding="utf-8")
+    text = (
+        read_with_references(PLUGIN_ROOT / relative, "intake.md", "selection.md", "implementation.md", "completion.md")
+        if relative == "skills/code-remediate/SKILL.md"
+        else (PLUGIN_ROOT / relative).read_text(encoding="utf-8")
+    )
     assert "use async or plain chat" not in text
     assert "use the permitted async control when sync is unavailable" not in text
     assert "using async when sync is unavailable" not in text
@@ -267,7 +284,14 @@ def test_question_consumers_preserve_packaged_native_form_priority(relative: str
 @pytest.mark.installed_plugin
 def test_pr_questions_include_the_bound_clickable_target_in_the_question() -> None:
     """Prevent users from having to search prior commentary for a PR decision's target."""
-    guide = read_with_references(PLUGIN_ROOT / "skills/code-remediate/SKILL.md", "missing-review-decision.md")
+    guide = read_with_references(
+        PLUGIN_ROOT / "skills/code-remediate/SKILL.md",
+        "intake.md",
+        "selection.md",
+        "implementation.md",
+        "completion.md",
+        "missing-review-decision.md",
+    )
 
     assert "For PR-scoped decisions, include the PR number and canonical URL inside the question itself" in guide
     assert "[PR #<number>](<canonical PR URL>)" in guide

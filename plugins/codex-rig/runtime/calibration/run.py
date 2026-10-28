@@ -110,9 +110,9 @@ ROLE_TASK_CUES = {
     "scientist": "ablations",
     "delegation-lead": "separable workstreams",
 }
-#: Model identifier expected as the project-level default and used for fixture attempts.
+#: Model identifier used in historical evidence and fixture attempts.
 DEFAULT_MODEL = "gpt-6.1-sol"
-#: Model identifier that the configured review_model setting must equal.
+#: Model identifier recorded in historical review evidence.
 REVIEW_MODEL = "gpt-6.1-sol"
 #: Model identifier assigned to roles on the critical (Sol) model tier.
 CRITICAL_MODEL = "gpt-6.1-sol"
@@ -120,7 +120,7 @@ CRITICAL_MODEL = "gpt-6.1-sol"
 SUPPORT_MODEL = "gpt-6-luna"
 #: Model identifier assigned to documentation and external-evidence roles.
 TERRA_MODEL = "gpt-6.1-terra"
-#: Models a role file may declare; any other model value fails the role-model check.
+#: Model groups recorded in the historical route evidence.
 SUPPORTED_ACTIVE_MODELS = {DEFAULT_MODEL, CRITICAL_MODEL, SUPPORT_MODEL, TERRA_MODEL}
 #: Roles expected to run on the support (Luna) model instead of the critical model.
 LUNA_MODEL_AGENTS = {
@@ -405,9 +405,15 @@ def normalize_regex(pattern: str) -> str:
     return pattern.replace("[[:space:]]", r"\s")
 
 
-def check_contains(run: CalibrationRun, file: Path, pattern: str, check_id: str) -> None:
-    """Check that a file contains a case-insensitive regex pattern."""
+def check_contains(
+    run: CalibrationRun, file: Path, pattern: str, check_id: str, *, include_references: bool = False
+) -> None:
+    """Check a case-insensitive pattern, including phase references when requested."""
     text = read_text(file)
+    if include_references:
+        # Skill obligations may live in phase-loaded references; inspect every route.
+        for reference in sorted((file.parent / "references").glob("*.md")):
+            text += "\n" + read_text(reference)
     try:
         matched = re.search(normalize_regex(pattern), text, flags=re.IGNORECASE | re.MULTILINE) is not None
     except re.error:
@@ -463,24 +469,6 @@ def role_setting(run: CalibrationRun, file: Path, key: str) -> str | None:
     return top_level_setting(file, key)
 
 
-def check_model(run: CalibrationRun, file: Path, label: str, check_id: str, expected: str) -> None:
-    """Check the configured top-level model value."""
-    if top_level_setting(file, "model") == expected:
-        run.append_check(f"{label}:model=ok")
-        return
-    run.append_check(f"{label}:model=fail")
-    run.fail_and_leak(check_id, f"model-not-{expected}:{file}")
-
-
-def check_review_model(run: CalibrationRun, file: Path, label: str) -> None:
-    """Check the project review model policy."""
-    if top_level_setting(file, "review_model") == REVIEW_MODEL:
-        run.append_check(f"{label}:review_model=ok")
-        return
-    run.append_check(f"{label}:review_model=fail")
-    run.fail_and_leak("review-model-policy", f"review-model-not-{REVIEW_MODEL}:{file}")
-
-
 def check_reasoning_effort(run: CalibrationRun, file: Path, expected: str, label: str, check_id: str) -> None:
     """Check the configured model reasoning effort."""
     pattern = rf'^\s*model_reasoning_effort\s*=\s*"{re.escape(expected)}"'
@@ -489,17 +477,6 @@ def check_reasoning_effort(run: CalibrationRun, file: Path, expected: str, label
         return
     run.append_check(f"{label}:effort=fail")
     run.fail_and_leak(check_id, f"reasoning-effort-mismatch:{label}:expected={expected}:{file}")
-
-
-def check_supported_active_models(run: CalibrationRun) -> None:
-    """Reject active model names outside the configured model policy."""
-    role_files = [role_file(run, agent) for agent in AGENTS]
-    files = [*([run.paths.project_cfg] if run.paths.project_cfg is not None else []), *role_files]
-    for file in files:
-        for setting in ("model", "review_model"):
-            value = role_setting(run, file, setting) if file in role_files else top_level_setting(file, setting)
-            if value is not None and value not in SUPPORTED_ACTIVE_MODELS:
-                run.fail_and_leak("supported-model-policy", f"unsupported-active-model:{value}:{file}")
 
 
 def _sha256_file(path: Path) -> str:
@@ -843,14 +820,13 @@ def expected_agent_effort(agent: str) -> str | None:
 
 def check_agent_model(run: CalibrationRun, agent: str, file: Path) -> None:
     """Check an agent model against policy."""
-    expected = expected_agent_model(agent)
-    if expected is None:
-        run.fail_and_leak("agent-model-policy", f"agent-model-policy-missing:{agent}")
+    if run.paths.layout == "plugin":
+        if role_setting(run, file, "model") is None:
+            run.append_check(f"agent-model:{agent}=inherited")
+        else:
+            run.fail_and_leak("agent-model-policy", f"agent-model-pinned:{agent}:{file}")
         return
-    if role_setting(run, file, "model") == expected:
-        run.append_check(f"agent-model:{agent}={expected}")
-        return
-    run.fail_and_leak("agent-model-policy", f"agent-model-mismatch:{agent}:expected={expected}:{file}")
+    run.append_check(f"agent-model:{agent}=host-configured")
 
 
 def check_agent_effort(run: CalibrationRun, agent: str, file: Path) -> None:
@@ -901,13 +877,30 @@ def workflow_policy_findings(policy: str, implementation: str) -> list[str]:
     ):
         findings.append("blanket-review-stop")
     section = re.search(r"^## Lightweight Local Work\n(.*?)(?=^## |\Z)", implementation, re.M | re.S)
-    required = ("parent-only", "optional", "tests and documentation for one change do not create separate domains")
+    required = (
+        "parent-owned",
+        "one bounded independent challenge",
+        "optional",
+        "tests and documentation for one change do not create separate domains",
+    )
+    stages = (
+        "concise plan",
+        "parent self-challenge",
+        "accept the challenged plan",
+        "assign execution",
+        "make the authorized change",
+        "consolidate",
+        "one bounded independent challenge",
+    )
+    lightweight = section[1].lower() if section else ""
+    positions = [lightweight.find(stage) for stage in stages]
+    ordered = all(position >= 0 for position in positions) and positions == sorted(positions)
     mandatory_roles = re.search(
         r"(?:always require|required roles|must (?:spawn|delegate|use))[^\n]*(?:sw-engineer|qa-specialist|doc-scribe)",
         implementation,
         re.I,
     )
-    if section is None or any(text not in section[1].lower() for text in required) or mandatory_roles:
+    if not ordered or any(text not in lightweight for text in required) or mandatory_roles:
         findings.append("lightweight-local-work")
     return findings
 
@@ -1172,12 +1165,9 @@ def check_core_configs(run: CalibrationRun) -> None:
     """Run project, skill, shared contract, and agent configuration checks."""
     run.paths.checks.write_text(f"calibration-start:{run.paths.timestamp}\n", encoding="utf-8")
     if run.paths.project_cfg is not None:
-        check_model(run, run.paths.project_cfg, "project-config", "project-model-default", DEFAULT_MODEL)
-        check_review_model(run, run.paths.project_cfg, "project-config")
         check_reasoning_effort(run, run.paths.project_cfg, "medium", "project-config", "reasoning-effort-policy")
     else:
         run.append_check("project-config=not-applicable:plugin-layout")
-    check_supported_active_models(run)
     check_accepted_route_evidence(run)
 
     for skill in SKILLS:
@@ -1199,9 +1189,10 @@ def check_core_configs(run: CalibrationRun) -> None:
             skill_file,
             rf"(?:\.reports/codex/{skill}/|create_run\.py --skill {skill})",
             "skill-schema-all",
+            include_references=True,
         )
-        check_contains(run, skill_file, "result-template.json", "skill-schema-all")
-        check_contains(run, skill_file, "helper-cli-contract", "skill-schema-all")
+        check_contains(run, skill_file, "result-template.json", "skill-schema-all", include_references=True)
+        check_contains(run, skill_file, "helper-cli-contract", "skill-schema-all", include_references=True)
         template_file = skill_file.with_name("result-template.json")
         if not template_file.exists():
             run.fail_and_leak("skill-schema-all", f"missing-result-template:{skill}")
@@ -1445,7 +1436,6 @@ def check_agents(run: CalibrationRun) -> None:
             (
                 r"^role_id:",
                 r"^name:",
-                r"^model:",
                 r"^model_reasoning_effort:",
                 r"^approval_policy:",
                 r"^sandbox_mode:",
@@ -1480,7 +1470,6 @@ def check_agents(run: CalibrationRun) -> None:
                 in {
                     r"^role_id:",
                     r"^name:",
-                    r"^model:",
                     r"^model_reasoning_effort:",
                     r"^approval_policy:",
                     r"^sandbox_mode:",
@@ -1984,19 +1973,19 @@ def selftest_live_ab_contract_runner_safety(run: CalibrationRun) -> None:
 
 
 def synthetic_live_guard_policy(run: CalibrationRun, live_dir: Path) -> Path:
-    """Write scratch-only current model names for executable guard tests, without altering archived scoring inputs."""
+    """Write scratch-only model identifiers for guard tests without altering archived scoring inputs."""
     policy = json.loads(run.paths.live_route_policy.read_bytes())
     for route in policy["routes"].values():
-        route["baseline_model"] = "gpt-6.1-sol"
-        route["candidate_model"] = "gpt-6-luna"
+        route["baseline_model"] = "baseline-test-model"
+        route["candidate_model"] = "candidate-test-model"
     live_dir.mkdir(parents=True, exist_ok=True)
-    path = live_dir / "synthetic-gpt6-guard-policy.json"
+    path = live_dir / "synthetic-guard-policy.json"
     path.write_text(json.dumps(policy, indent=2) + "\n", encoding="utf-8", newline="\n")
     return path
 
 
 def selftest_live_ab_contract_archived_policy_guard(run: CalibrationRun, live_dir: Path) -> bool:
-    """Require archived model assignments to fail before auth guards and leave no run output."""
+    """Verify archived assignments still reach the CI guard without running or writing paid work."""
     out = live_dir / "archive-blocked-run"
     result = run_command(
         [
@@ -2019,10 +2008,10 @@ def selftest_live_ab_contract_archived_policy_guard(run: CalibrationRun, live_di
         ],
         env={**os.environ, "CI": "1", "GITHUB_ACTIONS": "1", "OPENAI_API_KEY": "selftest-must-not-be-used"},
     )
-    if result.returncode == 0 or "unsupported live model:" not in result.stderr or out.exists():
+    if result.returncode == 0 or "live-paid-run-disabled-in-ci" not in result.stderr or out.exists():
         run.fail_and_leak("shared-script-selftests", "selftest-failed:live-ab-archived-policy-guard")
         return False
-    run.append_check("selftest:live-ab-archived-policy=blocked-before-auth:no-output")
+    run.append_check("selftest:live-ab-archived-policy=ci-blocked:no-output")
     return True
 
 
@@ -2422,7 +2411,7 @@ def _build_review_validator_rollout(run: CalibrationRun, out: Path) -> ReviewVal
     (out / "untracked.txt").write_text("", encoding="utf-8")
     (out / "numstat.txt").write_text("5\t5\tsrc/runtime.txt\n", encoding="utf-8")
     diff = out / "diff.patch"
-    diff.write_text("diff --git a/src/runtime.txt b/src/runtime.txt\n", encoding="utf-8")
+    diff.write_text("diff --git a/src/runtime.txt b/src/runtime.txt\n", encoding="utf-8", newline="\n")
     review_input_sha = hashlib.sha256(diff.read_bytes()).hexdigest()
     role_card = run.paths.code_review_validate_artifacts.resolve().parents[2] / "roles" / "qa-specialist" / "ROLE.md"
     role_card_sha = hashlib.sha256(role_card.read_bytes()).hexdigest()
@@ -2458,6 +2447,8 @@ def _build_review_validator_rollout(run: CalibrationRun, out: Path) -> ReviewVal
                         "agent_type": "qa-specialist",
                         "fork_turns": "3",
                         "message": "Synthetic role-bound QA context.",
+                        "model": DEFAULT_MODEL,
+                        "reasoning_effort": "medium",
                         "task_name": agent_name,
                     }
                 ),
@@ -2734,6 +2725,13 @@ def selftest_review_validator(run: CalibrationRun, selftest_dir: Path) -> None:
         json.dumps(
             {
                 "review_run_id": "selftest-review",
+                "dispatch_choices": {
+                    "qa-specialist": {
+                        "role_id": "qa-specialist",
+                        "model": DEFAULT_MODEL,
+                        "reasoning_effort": "medium",
+                    }
+                },
                 "capability_policy": {"task_sensitivity": "non-sensitive"},
                 "consumer_policy": {
                     "consumer_id": "code-review",
@@ -2762,7 +2760,7 @@ def selftest_review_validator(run: CalibrationRun, selftest_dir: Path) -> None:
         "credentials": "unverified",
     }
     execution = {
-        "schema_version": 2,
+        "schema_version": 3,
         "run_id": "selftest-review",
         "plan_sha256": hashlib.sha256(execution_plan.read_bytes()).hexdigest(),
         "claimed_mode": "serial",
@@ -3627,9 +3625,6 @@ def write_result(run: CalibrationRun) -> None:
         "status": status,
         "timestamp": run.paths.timestamp,
         "checks_run": [
-            "project-model-default",
-            "review-model-policy",
-            "supported-model-policy",
             "accepted-route-evidence",
             "skill-schema-all",
             "skill-registration-project",

@@ -23,12 +23,59 @@ ROUTING_HELPER = PLUGIN_ROOT / "skills" / "code-review" / "review_routing.py"
 PARALLEL_EXECUTION_TESTS = PLUGIN_ROOT / "tests" / "loop" / "test_parallel_execution.py"
 
 
+def test_current_commit_route_preserves_revision_comparison_semantics() -> None:
+    """Keep direct commit reviews bound to the requested Git comparison."""
+    scope = (CODE_REVIEW_SKILL.parent / "references" / "source-and-scope.md").read_text(encoding="utf-8")
+
+    assert "For a three-dot range, freeze its merge base" in scope
+    assert "for a single commit, freeze its parent (or empty-tree object for the initial commit)" in scope
+
+
+def test_review_entry_preserves_proportional_execution() -> None:
+    """Keep lightweight analysis available without weakening detailed review gates."""
+    skill = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
+
+    assert "shared [Proportional Execution]" in skill
+    assert "source, coverage, artifact, and completion gates still govern" in skill
+
+
+def test_review_input_retains_requested_completion_condition() -> None:
+    """Keep the caller's completion condition in the review input contract."""
+    skill = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
+
+    assert '"done_when": "blocking issues are identified with gate decision"' in skill
+
+
+def test_review_entry_loads_skill_specific_quality_gates() -> None:
+    """Keep conditional calibration visible when reviewing native configuration."""
+    skill = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
+
+    assert "references/findings-and-completion.md#quality-gates" in skill
+
+
+def test_shared_orchestration_distinguishes_direct_and_paged_reviews() -> None:
+    """Keep the current direct route distinct from the page-only review protocol."""
+    orchestration = (PLUGIN_ROOT / "shared" / "specialist-orchestration.md").read_text(encoding="utf-8")
+
+    assert "schema-ten direct" in orchestration
+    assert "schema-eight paged" in orchestration
+    assert "Code Review's new schema-eight native route" not in orchestration
+
+
+def test_blocked_handoff_includes_copyable_recovery_requests() -> None:
+    """Keep actionable recovery requests available when no further decision is needed."""
+    completion = (CODE_REVIEW_SKILL.parent / "references" / "findings-and-completion.md").read_text(encoding="utf-8")
+
+    assert "Resume the code review of <target> from <exact run path> and finish the missing checks." in completion
+    assert "Run a fresh code review of <target>." in completion
+
+
 class TestPrArtifactPathContract:
     """Keep PR identity promotion ordered, safe, and topology-neutral downstream."""
 
     def test_promotes_after_authoritative_collection(self) -> None:
         """Prevent path promotion before current-branch PR identity is known."""
-        skill = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
+        skill = read_with_references(CODE_REVIEW_SKILL, "source-and-scope.md")
         collection = "For PR scope, inspect `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/collect_pr.py --help`"
         promotion = "create_run.py --skill code-review --promote-pr-run <run-directory>"
 
@@ -252,6 +299,122 @@ def test_test_only_python_review_does_not_trigger_software_engineer(tmp_path: Pa
     assert validator._validate_routing(tmp_path, "LOCAL") == {"qa-specialist"}
 
 
+def test_git_quoted_untracked_python_requires_software_engineer(tmp_path: Path) -> None:
+    """A non-ASCII production filename cannot bypass the required source reviewer."""
+    validator = _load_validator()
+    signals = dict.fromkeys(validator.ROUTING_SIGNALS, False)
+    (tmp_path / "files.txt").write_bytes(b"")
+    (tmp_path / "untracked.txt").write_bytes(b'"src/calf\\303\\251.py"\n')
+    (tmp_path / "numstat.txt").write_bytes(b"")
+    routing = {
+        "schema_version": 1,
+        "risk_tier": "LOCAL",
+        "mechanical_risk_tier": "TRIVIAL",
+        "mechanical_risk_evidence": ["files=1", "changed_lines=0", "unknown_size_rows=0"],
+        "signals": signals,
+        "signal_evidence": {name: ["Observed path evidence."] for name in signals},
+        "triggered_roles": [],
+        "trigger_reasons": {},
+    }
+    (tmp_path / "review-routing.json").write_text(json.dumps(routing), encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="sw-engineer"):
+        validator._validate_routing(tmp_path, "LOCAL")
+
+
+@pytest.mark.parametrize(
+    ("risk_tier", "ci_signal", "declared_challenger", "diagnostic"),
+    [
+        pytest.param(
+            "BROAD", False, False, "review-routing-tier-underclassified:HIGH_RISK:BROAD", id="dependent-errors"
+        ),
+        pytest.param(
+            "HIGH_RISK", False, True, "review-routing-mechanical-signals-false:axis_cicd_steward", id="false-ci-signal"
+        ),
+        pytest.param("HIGH_RISK", True, False, "review-routing-triggered-role-mismatch", id="missing-challenger"),
+    ],
+)
+def test_routing_first_rejection_reports_complete_effective_requirements_without_rewriting(
+    tmp_path: Path, risk_tier: str, ci_signal: bool, declared_challenger: bool, diagnostic: str
+) -> None:
+    """Expose all dependent routing repairs before one bounded setup repair is spent on only the tier."""
+    validator = _load_validator()
+    (tmp_path / "files.txt").write_text(".github/check.py\ndocs/migration.md\n", encoding="utf-8", newline="\n")
+    (tmp_path / "untracked.txt").write_bytes(b"")
+    (tmp_path / "numstat.txt").write_text(
+        "1\t1\t.github/check.py\n1\t1\tdocs/migration.md\n", encoding="utf-8", newline="\n"
+    )
+    signals = dict.fromkeys(validator.ROUTING_SIGNALS, False)
+    signals.update(axis_cicd_steward=ci_signal, axis_doc_scribe=True, axis_web_explorer=True)
+    roles = {"doc-scribe", "qa-specialist", "sw-engineer", "web-explorer"}
+    if ci_signal:
+        roles.add("cicd-steward")
+    if declared_challenger:
+        roles.add("challenger")
+    routing = {
+        "schema_version": 1,
+        "risk_tier": risk_tier,
+        "mechanical_risk_tier": "HIGH_RISK",
+        "mechanical_risk_evidence": [
+            "files=2",
+            "changed_lines=4",
+            "unknown_size_rows=0",
+            "high_risk_paths=docs/migration.md",
+        ],
+        "signals": signals,
+        "signal_evidence": {
+            name: ["Inspected source inventory and the requested external-documentation axis."] for name in signals
+        },
+        "triggered_roles": sorted(roles),
+        "trigger_reasons": {
+            role: ["Source inventory or the declared semantic axis requires this role."] for role in roles
+        },
+    }
+    routing_path = tmp_path / "review-routing.json"
+    original = json.dumps(routing).encode("utf-8")
+    routing_path.write_bytes(original)
+
+    with pytest.raises(SystemExit) as rejected:
+        validator._validate_routing(tmp_path, risk_tier)
+
+    message = str(rejected.value)
+    assert message.startswith(diagnostic)
+    assert "minimum risk_tier=HIGH_RISK" in message
+    assert "mandatory signals=axis_cicd_steward,axis_doc_scribe" in message
+    assert "required roles=challenger,cicd-steward,doc-scribe,qa-specialist,sw-engineer,web-explorer." in message
+    assert routing_path.read_bytes() == original
+
+
+def test_routing_retains_stronger_authored_risk_and_semantic_axis(tmp_path: Path) -> None:
+    """Keep nonmechanical review requirements when the collected paths need only a trivial mechanical tier."""
+    validator = _load_validator()
+    (tmp_path / "files.txt").write_text("notes.txt\n", encoding="utf-8", newline="\n")
+    (tmp_path / "untracked.txt").write_bytes(b"")
+    (tmp_path / "numstat.txt").write_text("1\t1\tnotes.txt\n", encoding="utf-8", newline="\n")
+    signals = {name: name == "axis_web_explorer" for name in validator.ROUTING_SIGNALS}
+    roles = ["challenger", "qa-specialist", "web-explorer"]
+    routing = {
+        "schema_version": 1,
+        "risk_tier": "HIGH_RISK",
+        "mechanical_risk_tier": "TRIVIAL",
+        "mechanical_risk_evidence": ["files=1", "changed_lines=2", "unknown_size_rows=0"],
+        "signals": signals,
+        "signal_evidence": {
+            name: ["Scope requires high-risk review and external-documentation inspection."] for name in signals
+        },
+        "triggered_roles": roles,
+        "trigger_reasons": {
+            role: ["The authored risk assessment or semantic axis requires this role."] for role in roles
+        },
+    }
+    routing_path = tmp_path / "review-routing.json"
+    original = json.dumps(routing).encode("utf-8")
+    routing_path.write_bytes(original)
+
+    assert validator._validate_routing(tmp_path, "HIGH_RISK") == set(roles)
+    assert routing_path.read_bytes() == original
+
+
 def test_review_role_roster_covers_every_applicable_specialist() -> None:
     """Keep the executable review roster aligned with the packaged role cards."""
     validator = _load_validator()
@@ -368,7 +531,6 @@ def test_packaged_role_card_supplies_runtime_contract_without_source_agent_confi
 
     assert contract == {
         "approval_policy": "on-request",
-        "model": "gpt-6.1-sol",
         "model_reasoning_effort": "medium",
         "role_card_sha256": hashlib.sha256(role_card.read_bytes()).hexdigest(),
         "role_id": "qa-specialist",
@@ -377,10 +539,17 @@ def test_packaged_role_card_supplies_runtime_contract_without_source_agent_confi
     assert 'project_root / ".codex" / "agents"' not in REVIEW_VALIDATOR.read_text(encoding="utf-8")
 
 
-def test_sol_axis_cannot_route_without_explicit_selection_evidence(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("role", "signal"),
+    [
+        pytest.param("solution-architect", "axis_solution_architect", id="architecture-needs-selection"),
+        pytest.param("security-auditor", "axis_security_auditor", id="security-needs-selection"),
+    ],
+)
+def test_sol_axis_cannot_route_without_explicit_selection_evidence(tmp_path: Path, role: str, signal: str) -> None:
     """Prevent an architecture/security label from automatically selecting a Sol role."""
     validator = _load_validator()
-    signals = {name: name == "axis_solution_architect" for name in validator.ROUTING_SIGNALS}
+    signals = {name: name == signal for name in validator.ROUTING_SIGNALS}
     (tmp_path / "files.txt").write_text("src/widget.py\n", encoding="utf-8")
     (tmp_path / "untracked.txt").write_text("", encoding="utf-8")
     (tmp_path / "numstat.txt").write_text("1\t1\tsrc/widget.py\n", encoding="utf-8")
@@ -393,15 +562,17 @@ def test_sol_axis_cannot_route_without_explicit_selection_evidence(tmp_path: Pat
                 "mechanical_risk_evidence": ["files=1", "changed_lines=2", "unknown_size_rows=0"],
                 "signals": signals,
                 "signal_evidence": {name: ["fixture evidence"] for name in signals},
-                "triggered_roles": ["solution-architect"],
-                "trigger_reasons": {"solution-architect": ["architecture axis"]},
+                "triggered_roles": [role],
+                "trigger_reasons": {role: ["Explicitly restricted review axis."]},
             }
         ),
         encoding="utf-8",
     )
 
-    with pytest.raises(SystemExit, match="review-routing-sol-selection-missing:solution-architect"):
+    original = (tmp_path / "review-routing.json").read_bytes()
+    with pytest.raises(SystemExit, match=f"review-routing-sol-selection-missing:{role}"):
         validator._validate_routing(tmp_path, "LOCAL")
+    assert (tmp_path / "review-routing.json").read_bytes() == original
 
 
 def _substituted_manifest(
@@ -945,6 +1116,43 @@ def test_plain_review_diff_check_misses_committed_pr_whitespace(tmp_path: Path) 
     assert b"trailing whitespace" in pr_diff.stdout + pr_diff.stderr
 
 
+@pytest.mark.parametrize(
+    ("coordinate", "command_path"),
+    [
+        pytest.param("C:/work/review", r"C:\work\review", id="windows-drive"),
+        pytest.param("//server/share/review", r"\\server\share\review", id="windows-share"),
+        pytest.param("/work/review", "/work/review", id="posix"),
+    ],
+)
+@pytest.mark.parametrize("serialized", [False, True])
+@pytest.mark.parametrize("diff_format", ["historical", "drivers-disabled", "canonical"])
+def test_pr_diff_receipt_preserves_serialized_and_native_coordinates(
+    coordinate: str, command_path: str, serialized: bool, diff_format: str
+) -> None:
+    """Accept issued path spellings while rejecting a command for another worktree."""
+    validator = _load_validator()
+    base, head = "a" * 40, "b" * 40
+    path = coordinate if serialized else command_path
+    arguments = ("diff", "--binary", f"{base}...{head}", "--")
+    if diff_format == "drivers-disabled":
+        arguments = ("diff", "--binary", "--no-ext-diff", "--no-textconv", f"{base}...{head}", "--")
+    elif diff_format == "canonical":
+        arguments = validator.canonical_diff_arguments(arguments)
+    command = " ".join(arguments)
+    checkout = {
+        "worktree": coordinate,
+        "diff_source": "verified-local-checkout",
+        "diff_base_oid": base,
+        "diff_head_oid": head,
+        "diff_command": f"git -C {path} {command}",
+    }
+    routing = {"checkout_method": "git-detached-review-worktree", "base_oid": base, "head_oid": head}
+    validator._validate_pr_diff_provenance(checkout, routing)
+    checkout["diff_command"] = f"git -C {path}-other {command}"
+    with pytest.raises(SystemExit, match="pr-local-diff-provenance-invalid"):
+        validator._validate_pr_diff_provenance(checkout, routing)
+
+
 @pytest.mark.parametrize("location", ["report-adjacent", "temporary-fallback"])
 def test_promoted_assessed_review_accepts_bound_detached_worktree(tmp_path: Path, location: str) -> None:
     """Validate a completed PR review against its pre-promotion detached checkout."""
@@ -1101,7 +1309,7 @@ def test_schema_three_binds_pass_to_the_exact_packaged_role_card(tmp_path: Path)
 
 def test_skill_requires_deterministic_routing_synchronization_before_specialists() -> None:
     """Keep the producer workflow bound to the same mechanical evidence used by validation."""
-    skill = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(CODE_REVIEW_SKILL, "routing.md", "historical-routes.md")
     invocation = "PLUGIN_ROOT/bin/python PLUGIN_ROOT/skills/code-review/review_routing.py --out <run-directory>"
 
     assert invocation in skill
@@ -1111,7 +1319,7 @@ def test_skill_requires_deterministic_routing_synchronization_before_specialists
 
 def test_skill_requires_list_valued_routing_evidence_and_reasons() -> None:
     """Prevent a valid-looking string value from stranding a review as an unpromoted candidate."""
-    skill = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(CODE_REVIEW_SKILL, "routing.md")
 
     assert "non-empty JSON `list[str]` value for each true/false decision" in skill
     assert "non-empty JSON `list[str]` value" in skill
@@ -1120,7 +1328,7 @@ def test_skill_requires_list_valued_routing_evidence_and_reasons() -> None:
 
 def test_skill_routing_example_passes_the_installed_validator(tmp_path: Path) -> None:
     """Prevent the producer's nested schema example from drifting from ordinary routing validation."""
-    skill = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(CODE_REVIEW_SKILL, "routing.md")
     section = skill.split("The following neutral example shows the complete nested shape", 1)[1]
     example = json.loads(section.split("```json\n", 1)[1].split("```", 1)[0])
     (tmp_path / "review-routing.json").write_text(json.dumps(example), encoding="utf-8", newline="\n")
@@ -1137,7 +1345,7 @@ def test_skill_routing_example_passes_the_installed_validator(tmp_path: Path) ->
 
 def test_skill_and_result_template_require_schema_three_role_and_sol_provenance() -> None:
     """Keep the producer contract aligned with installed-card and explicit-selection validation."""
-    skill = read_with_references(CODE_REVIEW_SKILL, "historical-routes.md", "batched-review.md")
+    skill = read_with_references(CODE_REVIEW_SKILL, "routing.md", "historical-routes.md", "batched-review.md")
     template = json.loads((PLUGIN_ROOT / "skills" / "code-review" / "result-template.json").read_text())
 
     assert "`specialist-manifest.json` uses schema version 3" in skill
@@ -1187,6 +1395,10 @@ def test_manifest_preflight_rejects_spawned_pass_without_attempts(
     monkeypatch.setattr(validator, "_validate_routing", lambda _out, _tier: {"qa-specialist"})
     monkeypatch.setattr(validator, "_find_rollout", lambda _home, _thread: tmp_path / "rollout.jsonl")
     monkeypatch.setattr(validator, "_read_jsonl", lambda _path: [])
+    load_role_card = validator._load_role_card
+    monkeypatch.setattr(
+        validator, "_load_role_card", lambda roles, role: {**load_role_card(roles, role), "model": "historical-model"}
+    )
 
     with pytest.raises(SystemExit, match="manifest-invalid-attempt-count:qa-specialist"):
         validator._validate_manifest_preflight(tmp_path, tmp_path, "parent-thread", tmp_path)
@@ -1294,8 +1506,8 @@ def test_review_runtime_consumer_binds_spawned_roles_to_the_shared_validator(
     assert captured["expected_consumer_id"] == "code-review"
 
 
-@pytest.fixture(name="real_schema_v2_review_runtime")
-def _real_schema_v2_review_runtime(tmp_path: Path) -> dict[str, Any]:
+@pytest.fixture(name="real_schema_v3_review_runtime")
+def _real_schema_v3_review_runtime(tmp_path: Path) -> dict[str, Any]:
     """Build consumer-bound rollout evidence for review runtime checks."""
     validator = _load_validator()
     fixture_module = _load_parallel_execution_tests()
@@ -1308,6 +1520,30 @@ def _real_schema_v2_review_runtime(tmp_path: Path) -> dict[str, Any]:
         plan_path,
         consumer_id="code-review",
     )
+    manifest["schema_version"] = 3
+    plan = json.loads(plan_path.read_bytes())
+    parent_rows = [json.loads(line) for line in parent_rollout.read_text(encoding="utf-8").splitlines()]
+    plan["dispatch_choices"] = {}
+    for node in manifest["stages"][0]["nodes"]:
+        attempt = node["attempts"][0]
+        child = [
+            json.loads(line)
+            for line in (sessions_dir / f"rollout-{attempt['agent_thread_id']}.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        controls = next(row["payload"] for row in child if row["type"] == "turn_context")
+        choice = {"role_id": node["role_id"], "model": controls["model"], "reasoning_effort": controls["effort"]}
+        plan["dispatch_choices"][node["node_id"]] = choice
+        spawn = next(
+            row["payload"] for row in parent_rows if row.get("payload", {}).get("call_id") == attempt["spawn_call_id"]
+        )
+        arguments = json.loads(spawn["arguments"])
+        arguments.update(model=choice["model"], reasoning_effort=choice["reasoning_effort"])
+        spawn["arguments"] = json.dumps(arguments)
+    plan_path.write_text(json.dumps(plan) + "\n", encoding="utf-8")
+    manifest["plan_sha256"] = hashlib.sha256(plan_path.read_bytes()).hexdigest()
+    fixture_module._write_jsonl(parent_rollout, parent_rows)
     out_dir = execution_path.parent
     codex_home = tmp_path / "codex-home"
     copied_sessions = codex_home / "sessions"
@@ -1360,9 +1596,9 @@ def _real_schema_v2_review_runtime(tmp_path: Path) -> dict[str, Any]:
 class TestReviewRuntimeConsumer:
     """Protect review's consumer-bound portable runtime contract."""
 
-    def test_accepts_real_schema_v2_evidence(self, real_schema_v2_review_runtime: dict[str, Any]) -> None:
+    def test_accepts_real_schema_v3_evidence(self, real_schema_v3_review_runtime: dict[str, Any]) -> None:
         """Promote complete restricted-network evidence from the shared validator."""
-        runtime = real_schema_v2_review_runtime
+        runtime = real_schema_v3_review_runtime
         summary = runtime["validator"]._validate_review_runtime(
             runtime["out_dir"],
             runtime["review_manifest"],
@@ -1378,9 +1614,9 @@ class TestReviewRuntimeConsumer:
         assert "network_guarantee" not in summary
         assert summary["write_parallel_eligible"] is False
 
-    def test_rejects_legacy_control_tampering(self, real_schema_v2_review_runtime: dict[str, Any]) -> None:
+    def test_rejects_legacy_control_tampering(self, real_schema_v3_review_runtime: dict[str, Any]) -> None:
         """Reject a legacy Boolean projected as a portable network restriction."""
-        runtime = real_schema_v2_review_runtime
+        runtime = real_schema_v3_review_runtime
         runtime["nodes"][0]["observed_controls"]["network"] = False
         runtime["execution_path"].write_text(
             json.dumps(runtime["manifest"], indent=2) + "\n",
@@ -1428,7 +1664,7 @@ def test_skill_requires_shared_runtime_gate_and_truthful_execution_labels() -> N
 
 def test_skill_rebuilds_a_compact_pr_snapshot_before_reporting_findings() -> None:
     """Keep assessed PR handoffs grounded in current review artifacts, not stale chat context."""
-    skill = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(CODE_REVIEW_SKILL, "findings-and-completion.md")
 
     assert "`PR Snapshot` for every assessed `scope=pr` review" in skill
     assert "`pr.json`, `pr-routing.json`, and `gates.json`" in skill
@@ -1440,3 +1676,141 @@ def test_skill_rebuilds_a_compact_pr_snapshot_before_reporting_findings() -> Non
         in skill
     )
     assert "before any findings" in skill
+
+
+def test_pr_literal_quoted_paths_are_not_git_unquoted(tmp_path: Path) -> None:
+    """PR metadata writes literal names even when they resemble Git C-quoted paths."""
+    validator = _load_validator()
+    from collect_pr import _review_artifacts
+
+    paths = ['"auth"', '"bad\\x.py"']
+    payload = {"state": "OPEN", "body": "review", "files": [{"path": path} for path in paths]}
+    (tmp_path / "pr.json").write_text(json.dumps(payload), encoding="utf-8")
+    _review_artifacts(
+        payload,
+        [],
+        tmp_path,
+        base_repo="owner/repo",
+        base_host="github.com",
+        thread_error=None,
+        pr_metadata_transport="gh",
+    )
+    patch = "".join(
+        f"diff --git {json.dumps('a/' + path)} {json.dumps('b/' + path)}\n"
+        f"--- /dev/null\n+++ {json.dumps('b/' + path)}\n"
+        for path in paths
+    )
+    (tmp_path / "diff.patch").write_text(patch, encoding="utf-8", newline="\n")
+    (tmp_path / "untracked.txt").write_bytes(b"")
+    (tmp_path / "numstat.txt").write_bytes(b"")
+    signals = dict.fromkeys(validator.ROUTING_SIGNALS, False)
+    (tmp_path / "review-routing.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "risk_tier": "LOCAL",
+                "mechanical_risk_tier": "TRIVIAL",
+                "mechanical_risk_evidence": ["files=2", "changed_lines=0", "unknown_size_rows=0"],
+                "signals": signals,
+                "signal_evidence": {name: ["Observed path evidence."] for name in signals},
+                "triggered_roles": [],
+                "trigger_reasons": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    tier, evidence, required_signals = validator.derive_mechanical_risk(tmp_path)
+    assert tier == "TRIVIAL"
+    assert evidence == ["files=2", "changed_lines=0", "unknown_size_rows=0"]
+    assert not required_signals
+    assert validator._validate_routing(tmp_path, "LOCAL") == set()
+    assert validator._python_diff_paths(tmp_path) == []
+
+
+def test_local_git_quoted_literal_names_are_decoded_once(tmp_path: Path) -> None:
+    """Git's escaped quotes and backslashes resolve to the same literal paths as PR metadata."""
+    validator = _load_validator()
+    from review_routing import read_review_paths
+
+    (tmp_path / "files.txt").write_bytes(b'"\\"auth\\""\n"\\"bad\\\\x.py\\""\n')
+
+    assert read_review_paths(tmp_path, "files.txt") == {'"auth"', '"bad\\x.py"'}
+    assert validator.derive_mechanical_risk(tmp_path)[0] == "TRIVIAL"
+
+
+def test_stray_pr_json_cannot_hide_local_git_quoted_python(tmp_path: Path) -> None:
+    """An unrelated PR artifact cannot suppress the required local source reviewer or Codemap."""
+    validator = _load_validator()
+    (tmp_path / "pr.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "files.txt").write_bytes(b'"module_\\303\\251.py"\n')
+    (tmp_path / "untracked.txt").write_bytes(b"")
+    (tmp_path / "numstat.txt").write_bytes(b"")
+    signals = dict.fromkeys(validator.ROUTING_SIGNALS, False)
+    (tmp_path / "review-routing.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "risk_tier": "LOCAL",
+                "mechanical_risk_tier": "TRIVIAL",
+                "mechanical_risk_evidence": ["files=1", "changed_lines=0", "unknown_size_rows=0"],
+                "signals": signals,
+                "signal_evidence": {name: ["Observed."] for name in signals},
+                "triggered_roles": [],
+                "trigger_reasons": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(SystemExit, match="sw-engineer"):
+        validator._validate_routing(tmp_path, "LOCAL")
+    assert validator._python_diff_paths(tmp_path) == ["module_é.py"]
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+def test_pr_newline_path_routing_uses_patch_inventory(tmp_path: Path, newline: str) -> None:
+    """A PR filename containing a newline remains one Python source path."""
+    validator = _load_validator()
+    path = "app\ntest_unit.py"
+    (tmp_path / "pr.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "files.txt").write_text(path + "\n", encoding="utf-8", newline=newline)
+    (tmp_path / "diff.patch").write_text(
+        f"diff --git {json.dumps('a/' + path)} {json.dumps('b/' + path)}\n"
+        f"--- /dev/null\n+++ {json.dumps('b/' + path)}\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    assert validator._python_diff_paths(tmp_path) == [path]
+    assert validator.derive_mechanical_risk(tmp_path)[1][0] == "files=1"
+    signals = dict.fromkeys(validator.ROUTING_SIGNALS, False)
+    (tmp_path / "review-routing.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "risk_tier": "LOCAL",
+                "mechanical_risk_tier": "TRIVIAL",
+                "mechanical_risk_evidence": ["files=1", "changed_lines=0", "unknown_size_rows=0"],
+                "signals": signals,
+                "signal_evidence": {name: ["Observed."] for name in signals},
+                "triggered_roles": [],
+                "trigger_reasons": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(SystemExit, match="sw-engineer"):
+        validator._validate_routing(tmp_path, "LOCAL")
+
+
+@pytest.mark.parametrize("listing", [None, "notes.txt\n"])
+def test_final_admission_rejects_missing_or_mismatched_patch_inventory(tmp_path: Path, listing: str | None) -> None:
+    """Retained paged evidence cannot hide a patch path when checking the final reviewer roster."""
+    validator = _load_validator()
+    (tmp_path / "diff.patch").write_text(
+        "diff --git a/module.py b/module.py\n--- a/module.py\n+++ b/module.py\n", encoding="utf-8"
+    )
+    if listing is not None:
+        (tmp_path / "files.txt").write_text(listing, encoding="utf-8")
+    environment = validator._ReviewEnvironment(tmp_path, "parent", tmp_path)
+    with pytest.raises(SystemExit, match="review-source-file-inventory-invalid"):
+        validator._validate_specialist_manifest(tmp_path, {}, tmp_path / "result.json", {}, "LOCAL", environment)

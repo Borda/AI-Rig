@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import subprocess
@@ -12,6 +13,101 @@ from pathlib import Path
 import pytest
 
 TESTS_ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.integration
+@pytest.mark.packaging
+def test_package_shards_execute_the_complete_selection_once(diagnostic_child: tuple[Path, dict[str, str]]) -> None:
+    """Partition real marker-selected cases without duplication, omissions, or ordinary-run filtering."""
+    root, env = diagnostic_child
+    (root / "test_probe.py").write_text(
+        "import pytest\n"
+        "@pytest.mark.installed_plugin\n"
+        "@pytest.mark.parametrize('value', range(24))\n"
+        "def test_selected(value):\n    pass\n"
+        "def test_checkout_only():\n    assert False, 'outside installed selection'\n",
+        encoding="utf-8",
+    )
+    selections: list[set[str]] = []
+    for shard in (None, "0/4", "1/4", "2/4", "3/4", "0/4"):
+        command = [sys.executable, "-m", "pytest", "-q", "-n", "2", "-m", "installed_plugin", "--strict-markers"]
+        if shard is not None:
+            command.extend(["--installed-package-shard", shard])
+        result = subprocess.run(command, cwd=root, env=env, capture_output=True, text=True, timeout=30, check=False)
+        assert result.returncode == 0, result.stdout + result.stderr
+        # Phase diagnostics expose the node IDs executed by actual xdist workers.
+        selections.append(
+            {
+                line.split("[installed-package] call passed ", 1)[1].split(" duration=", 1)[0]
+                for line in result.stdout.splitlines()
+                if "[installed-package] call passed " in line
+            }
+        )
+    complete, *shards = selections[:-1]
+    assert len(complete) == 24
+    assert all(shards), selections
+    assert set.union(*shards) == complete
+    assert sum(map(len, shards)) == len(complete), selections
+    assert selections[-1] == shards[0]
+
+
+@pytest.mark.integration
+@pytest.mark.packaging
+@pytest.mark.parametrize("shard", ["bad", "-1/4", "4/4", "0/0", "0/", "0/4/2"])
+def test_package_shards_reject_invalid_coordinates(diagnostic_child: tuple[Path, dict[str, str]], shard: str) -> None:
+    """Reject malformed shard requests before collecting or executing tests."""
+    root, env = diagnostic_child
+    (root / "test_probe.py").write_text("def test_probe():\n    assert False\n", encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, "-m", "pytest", f"--installed-package-shard={shard}"],
+        cwd=root,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 4
+    assert "shard must be INDEX/COUNT with 0 <= INDEX < COUNT" in result.stderr
+
+
+@pytest.mark.integration
+@pytest.mark.packaging
+@pytest.mark.parametrize("selection", ["empty-marker", "empty-shard", "failure"])
+def test_package_shards_preserve_empty_and_failure_results(
+    diagnostic_child: tuple[Path, dict[str, str]], selection: str
+) -> None:
+    """Empty partitions remain no-tests errors and selected test failures remain failures."""
+    root, env = diagnostic_child
+    (root / "test_probe.py").write_text(
+        "import pytest\n@pytest.mark.installed_plugin\ndef test_probe():\n    assert False, 'selected failure'\n",
+        encoding="utf-8",
+    )
+    destination = int.from_bytes(hashlib.sha256(b"test_probe.py::test_probe").digest(), "big") % 2
+    shard = f"{1 - destination}/2" if selection == "empty-shard" else f"{destination}/2"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            "-n",
+            "2",
+            "--installed-package-shard",
+            shard,
+            "-m",
+            "live" if selection == "empty-marker" else "installed_plugin",
+        ],
+        cwd=root,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == (1 if selection == "failure" else 5), result.stdout + result.stderr
+    if selection == "failure":
+        assert "selected failure" in result.stdout
 
 
 @pytest.fixture

@@ -275,7 +275,7 @@ Document option used in Final Report, "Recovery" subsection.
 
 ## Codex Pre-pass
 
-Mandatory after quality stack. Degrades gracefully if Codex unavailable.
+Use this pre-pass only when explicitly requested, or as the one bounded independent implementation challenge selected by the caller. Degrades gracefully if Codex unavailable; an unavailable required challenge remains an open coverage gap.
 
 Load `codex-prepass.md` via `cat` (not the Read tool — `Bash(cat:*)` grant is version-proof) and run Codex pre-pass on changes.
 
@@ -299,7 +299,7 @@ Include `### Codex Pre-pass` section in final report:
 
 ## Progressive Review Loop
 
-Max 3 cycles. Applied after quality stack. **`oss:*` skills are NEVER auto-invoked from develop flows** — run only on explicit user request. Escalation below spawns review agents directly — `/develop:review` (requires `develop` plugin) is `disable-model-invocation`, offered only as a user-run follow-up.
+Run this section only when the user explicitly requests iterative review-and-fix convergence. A normal implementation uses one bounded independent implementation challenge and does not enter this loop. Max 3 cycles. Applied after quality stack. **`oss:*` skills are NEVER auto-invoked from develop flows** — run only on explicit user request. Escalation below spawns review agents directly — `/develop:review` (requires `develop` plugin) is `disable-model-invocation`, offered only as a user-run follow-up.
 
 **Cycle 1: Confidence-gated review escalation**
 

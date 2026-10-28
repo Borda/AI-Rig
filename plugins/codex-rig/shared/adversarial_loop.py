@@ -33,11 +33,13 @@ running the CLI with ``--append``: the staged round is validated against the ear
 the staged file is deleted. Earlier rounds are never re-emitted, so a dropped or reworded round cannot slip in.
 
 Record each round's cost beside it the same way: write one object to ``loop-metrics.jsonl.rec`` and add
-``--append-metrics`` to the same call. The record has ten fields: ``schema_version`` (1), ``kind`` (``round``), a
+``--append-metrics`` to the same call. The record has eleven fields: ``schema_version`` (2), ``kind`` (``round``), a
 completed ``round``, the review ``route``, ``brief`` (``full`` or ``lean``), and ``brief_bytes``, ``duration_s``,
-``tokens_in``, ``tokens_out``, ``attested_gaps``, each ``null`` when a route cannot report it. ``duration_s`` is a
-nonnegative number of seconds; the other four are nonnegative integers, and ``attested_gaps`` is ``null`` after round
-1 or when no attestation was written.
+``tokens_in``, ``tokens_out``, ``tokens_total``, ``attested_gaps``, each ``null`` when a route cannot report it.
+``tokens_total`` is the single token total a route reports without an input/output split, such as a Claude background
+agent's ``subagent_tokens``. ``duration_s`` is a nonnegative number of seconds; the other five are nonnegative
+integers, and ``attested_gaps`` is ``null`` after round 1 or when no attestation was written. Schema 1 records, which
+carry no ``tokens_total``, stay accepted.
 It is advisory data for later cost analysis and never feeds scoring, recurrence, or clean acceptance: a rejected record
 only prints ``warning: metrics-rejected:<codes>`` and keeps its staged file, so the round, the progress table and the
 exit status are unaffected. A second record for the same round supersedes the first (last record per round wins). Its
@@ -112,9 +114,11 @@ _SNAPSHOT_KEYS = {"revision", "diff_digest"}
 #: Exact set of keys permitted in each finding record.
 _FINDING_KEYS = {"signature", "tier", "structural", "disposition", "evidence"}
 #: Schema revision of the per-round cost log; the log is advisory data, never an input to scoring or clean acceptance.
-METRICS_SCHEMA_VERSION = 1
-#: Exact set of keys permitted in each per-round cost record.
-_METRICS_KEYS = {
+METRICS_SCHEMA_VERSION = 2
+#: Cost-log revisions the appender still accepts; schema 1 predates ``tokens_total``.
+_METRICS_SCHEMA_VERSIONS = (1, METRICS_SCHEMA_VERSION)
+#: Exact set of keys permitted in each schema 1 per-round cost record.
+_METRICS_KEYS_V1 = {
     "schema_version",
     "kind",
     "round",
@@ -126,10 +130,12 @@ _METRICS_KEYS = {
     "tokens_out",
     "attested_gaps",
 }
+#: Exact set of keys permitted in each current per-round cost record.
+_METRICS_KEYS = _METRICS_KEYS_V1 | {"tokens_total"}
 #: Reviewer-brief wordings the cost log distinguishes; ``lean`` states each item once, ``full`` is the rule's brief.
 _BRIEF_ARMS = ("full", "lean")
 #: Cost fields that hold a nonnegative integer, or ``None`` when the route cannot report them.
-_METRICS_COUNT_FIELDS = ("brief_bytes", "tokens_in", "tokens_out", "attested_gaps")
+_METRICS_COUNT_FIELDS = ("brief_bytes", "tokens_in", "tokens_out", "tokens_total", "attested_gaps")
 #: Name of the file a parent drops beside the run directories to pause the lean brief arm for them.
 _BRIEF_PAUSE_FILE = "brief-arm-pause"
 #: Exact set of keys permitted at the top level of a round-actions record.
@@ -378,10 +384,12 @@ def _seconds_or_unknown(value: object) -> bool:
 def _validate_metrics(record: object, completed_rounds: int) -> list[str]:
     """Check one staged metrics record: exact fields, supported version, a completed round, honest unknowns."""
     errors: list[str] = []
-    metrics = _exact_keys(record, _METRICS_KEYS, "metrics", errors)
+    stated = record.get("schema_version") if isinstance(record, dict) else None
+    legacy = type(stated) is int and stated == 1
+    metrics = _exact_keys(record, _METRICS_KEYS_V1 if legacy else _METRICS_KEYS, "metrics", errors)
     if metrics is None or errors:
         return errors
-    if type(metrics["schema_version"]) is not int or metrics["schema_version"] != METRICS_SCHEMA_VERSION:
+    if type(metrics["schema_version"]) is not int or metrics["schema_version"] not in _METRICS_SCHEMA_VERSIONS:
         errors.append("metrics-schema-version-unsupported")
     if metrics["kind"] != "round":
         errors.append("metrics-kind-invalid")
@@ -395,7 +403,7 @@ def _validate_metrics(record: object, completed_rounds: int) -> list[str]:
     errors.extend(
         f"metrics-{field}-must-be-nonnegative-integer-or-null"
         for field in _METRICS_COUNT_FIELDS
-        if not _count_or_unknown(metrics[field])
+        if field in metrics and not _count_or_unknown(metrics[field])
     )
     if not _seconds_or_unknown(metrics["duration_s"]):
         errors.append("metrics-duration_s-must-be-nonnegative-number-or-null")
@@ -889,7 +897,7 @@ def _identity_keys(signature: str, evidence: object) -> set[str]:
     """
     keys = {f"signature:{signature}"}
     for item in evidence if isinstance(evidence, list) else []:
-        if isinstance(item, str) and item.startswith(_INVARIANT_PREFIX):
+        if isinstance(item, str) and item[: len(_INVARIANT_PREFIX)].casefold() == _INVARIANT_PREFIX:
             text = " ".join(item[len(_INVARIANT_PREFIX) :].split()).casefold()
             if text:
                 keys.add(f"{_INVARIANT_PREFIX}{text}")

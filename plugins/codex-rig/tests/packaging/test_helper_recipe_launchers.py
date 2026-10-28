@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from _skill_text import read_with_references
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 _skip_posix_shell_unavailable = pytest.mark.skipif(shutil.which("sh") is None, reason="POSIX shell unavailable")
@@ -31,7 +32,7 @@ def test_codex_helper_recipes_use_the_explicit_packaged_launcher() -> None:
                 violations.append(f"{relative}:{number}")
 
     assert not violations, "helper recipe bypasses packaged launcher: " + ", ".join(violations)
-    skill = (PLUGIN_ROOT / "skills/code-review/SKILL.md").read_text(encoding="utf-8")
+    skill = read_with_references(PLUGIN_ROOT / "skills/code-review/SKILL.md", "source-and-scope.md")
     assert "PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/select-git-remote.py --canonical-pr-url" in skill
     assert "PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/find-review-report.py --help" in skill
     policy = (PLUGIN_ROOT / "assets/AGENTS.md").read_text(encoding="utf-8")
@@ -47,7 +48,7 @@ def test_inline_review_recipe_runs_from_a_copied_package_with_only_python3(tmp_p
     """Prevent inline review recipes relying on checkout context or a bare python executable."""
     installed = tmp_path / "installed package"
     shutil.copytree(PLUGIN_ROOT, installed)
-    skill = (installed / "skills/code-review/SKILL.md").read_text(encoding="utf-8")
+    skill = read_with_references(installed / "skills/code-review/SKILL.md", "source-and-scope.md")
     commands = re.findall(r"`(PLUGIN_ROOT/bin/python [^`\n]+)`", skill)
     command = next(text for text in commands if f"PLUGIN_ROOT/shared/{helper} " in text)
     recipe = command.split()[:2]

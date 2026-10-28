@@ -14,6 +14,8 @@ Apply shared [host compatibility check](specialist-orchestration.md#host-compati
 
 The frozen plan is the `<run-directory>/execution-plan.json` that the loading skill declares with its `consumer_policy` values.
 
+For schema-3 runtime promotion, the frozen plan must include `dispatch_choices` keyed by every manifest `node_id`, each with exactly `role_id`, `model`, and `reasoning_effort`. The role must match the node. Use a nonempty string for an explicit spawn argument; use `null` to omit that argument and inherit the observed parent turn value. Runtime validation binds the plan to the actual spawn arguments and observed child controls; absent or ambiguous inherited parent controls fail closed.
+
 It must also include `write_policy`: use `parent_writes=planned` with `approval_requirement=exact-plan-digest` when any parent mutation is planned, otherwise `parent_writes=none` with `approval_requirement=not-required`. When parallel-read is selected, a planned parent write requires `<run-directory>/write-approval.json` containing only exact plan SHA-256, `response=approve`, and `source=explicit-input|user-prompt`. Serial execution or an automatic serial fallback does not require a new digest receipt for already-authorized work.
 
 Omit `--approval` when no parent writes are planned or effective execution is serial and no approval was supplied. Resolve host fallback before deciding whether the parallel route needs a receipt. A nonzero result stops route.

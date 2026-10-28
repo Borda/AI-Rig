@@ -53,6 +53,8 @@ ______________________________________________________________________
 
 <a id="-what-is-develop"></a>
 
+Small implementation uses a concise plan, brief parent self-challenge (not independent), acceptance within existing authority, useful bounded execution ownership or indivisible parent execution, and consolidation with independent result challenge and relevant verification. Medium/large work retains independent plan challenge before acceptance. Approval prompts only for actual missing authority or protected decisions; reuse accepted parent plans and establish core acceptance before optional expansion. Validate a coherent bounded outcome or split it into smaller outcomes, then complete the active branch depth-first using a compact task map and context limited to the active piece, dependencies, and interfaces. Complete required leaf challenge and verification before dependent work; dependency-ready siblings with agreed stable interfaces and disjoint owners may proceed. Unknown causes or design choices first become bounded investigation or decision prerequisites; parent consolidation retains required gates. This replaces broadly open workstreams and far-ahead detail to reduce context, coordination, and rework; that benefit is expected, not measured.
+
 ## 🤔 What is develop?
 
 `develop` is a Claude Code plugin for validate-first Python development: scope work, pin a feature contract, reproduce a bug, preserve behavior during refactoring, investigate failures, and review local Python changes with explicit evidence and handoff artifacts.
@@ -80,7 +82,7 @@ These workflows address common maintenance failures with concrete gates:
 - **fix**: reproduce bug with failing regression test first — cannot reproduce = cannot verify fix
 - **refactor**: audit test coverage, lock characterization tests before moving one line
 - **debug**: gather all evidence, state one confirmed hypothesis before any fix
-- **plan**: scope complexity, identify blast radius, agent feasibility review before committing
+- **plan**: scope complexity and blast radius; challenge the plan's feasibility before committing unless waived
 - **review**: local Python review across architecture, tests, performance, docs, lint, security, and API design.
   - Groups the relevant dimensions into spawn units (performance+architecture and docs+lint each share one agent) and runs the top three units by default, or all selected units with `--full`; no GitHub PR is required.
   - FEATURE/MIXED changes also get an isolated blind-solve pass outside the cap when a matching `.plans/active/*.md` exists: one agent sketches its own blueprint from that plan without seeing the diff, and the consolidated report lists where that blueprint diverges from the change (`### Design Divergence`), marking divergences that may be explained by context the agent lacked as questions rather than findings.
@@ -135,7 +137,7 @@ Fastest value: scope next task before starting.
 /develop:plan "extract data loading into a dedicated DataLoader class"
 ```
 
-`plan` reads codebase, classifies task, identifies affected files, estimates complexity, runs parallel feasibility review with specialist agents, writes structured plan to `.plans/active/`. Then tells exactly which skill to run next:
+`plan` reads the codebase, classifies the task, identifies affected files and estimates complexity. For feature, fix and refactor work it writes a structured plan to `.plans/active/` and challenges its feasibility unless `--no-challenge` is passed. A separate feasibility review runs only on explicit request. Unknown root cause routes to `/develop:debug` first without an implementation plan.
 
 ```text
 Plan -> .plans/active/plan_extract-data-loading-dataloader.md
@@ -144,7 +146,7 @@ Classification : refactor
 Complexity     : medium
 Affected files : 4 files across 2 modules
 Key risks      : Public API changes in dataset.py — 3 callers
-Agent review   : ✓ agents ready (1 correction incorporated)
+Agent review   : plan challenge completed; separate feasibility review not requested
 
 -> /develop:refactor "extract data loading into a dedicated DataLoader class" when ready
 ```
@@ -182,11 +184,11 @@ ______________________________________________________________________
 
 **What happens**:
 
-1. Spawns `foundry:sw-engineer` to classify task (feature / fix / refactor), map affected files, estimate complexity (small / medium / large), list risks. With codemap: effort sizing structural, not file-count-based — reverse-dependency counts per affected module set blast tier (≥5 rdeps HIGH, 1–4 MODERATE, 0 LOW), co-change coupled pairs surface as risks. HIGH module or 3+ affected modules push complexity to `large`
-2. Writes structured plan to `.plans/active/<slug>.md`
-3. Spawns parallel feasibility agents matching classification — flag blockers, open questions, concerns
-4. Resolves blockers autonomously (codebase search, WebFetch for docs); escalates only what genuinely needs your input
-5. Annotates plan with resolved/unresolved status, writes Brief summary
+1. Spawns `foundry:sw-engineer` to classify task (feature / fix / refactor / debug), map affected files, estimate complexity (small / medium / large), list risks. With codemap: effort sizing structural, not file-count-based — reverse-dependency counts per affected module set blast tier (≥5 rdeps HIGH, 1–4 MODERATE, 0 LOW), co-change coupled pairs surface as risks. HIGH module or 3+ affected modules push complexity to `large`.
+2. Unknown root cause: after the depth checkpoint and any applicable breaking-change gate, recommend `/develop:debug <goal>` and stop without writing or challenging an implementation plan. At the depth cap, explicitly choosing **Write the plan anyway** continues with the unconfirmed cause recorded as a risk; resetting the cap recommends debug, and abort stops.
+3. Otherwise write a structured plan to `.plans/active/<slug>.md`. Skip separate feasibility review by default; run it only on explicit request.
+4. Challenge the plan once for design, feasibility and testability unless `--no-challenge` is passed; resolve feasible authorized findings and escalate unresolved blockers or protected decisions.
+5. Write a brief summary and the appropriate downstream handoff.
 
 **Output to terminal**:
 
@@ -197,12 +199,12 @@ Classification : feature | fix | refactor
 Complexity     : small | medium | large
 Affected files : N files across M modules
 Key risks      : <one-liner>
-Agent review   : ✓ agents ready (N corrections incorporated)
+Agent review   : challenge and optional feasibility review status, including skipped or unavailable coverage
 
 -> /develop:feature|fix|refactor "<goal>" when ready
 ```
 
-**Passing plan to downstream skills**: every code-changing skill accepts `--plan <path>`. Skill reads classification, affected files, risks, suggested approach from plan — skips cold codebase exploration, inherits validated feasibility verdicts. The plan's hash is recorded when it is read (`.plans/` is gitignored, so edits leave no diff); `feature`, `fix` and `refactor` re-check it before the Final Report and lead with `! BLOCKED — plan changed during build` when it differs. Detection only, nothing is reverted. Simple and staged plans carry a `Verification` column and `— verify:` on each suggested step.
+**Passing plan to downstream skills**: `feature`, `fix` and `refactor` accept `--plan <path>`. The skill reads classification, affected files, risks and suggested approach, and incorporates the plan challenge and any explicitly requested feasibility review. The plan's hash is recorded when it is read (`.plans/` is gitignored, so edits leave no diff); these skills re-check it before the Final Report and lead with `! BLOCKED — plan changed during build` when it differs. Detection only, nothing is reverted. Simple and staged plans carry a `Verification` column and `— verify:` on each suggested step. A direct debug recommendation has no implementation plan; `/develop:debug` hands off to `/develop:fix --diagnosis <path>`.
 
 ```text
 /develop:plan "add streaming response support"
@@ -215,7 +217,7 @@ ______________________________________________________________________
 
 ### `/develop:feature`
 
-**Purpose**: TDD-first feature development. Crystallises API as failing demo test, drives implementation to pass, closes quality gaps via review loop + docs update.
+**Purpose**: TDD-first feature development. Crystallises API as failing demo test, drives implementation to pass, closes quality gaps via one independent challenge + docs update.
 
 **When to use**: adding new behavior.
 
@@ -252,10 +254,10 @@ ______________________________________________________________________
 1. **Scope analysis** (`foundry:sw-engineer`): existing patterns, reuse opportunities, affected files, compatibility concerns. GitHub issue number given → fetches full issue + comments (upstream if `--repo`).
 2. **Source verification** (conditional): feature calls external library API → detects installed version from `pyproject.toml`, fetches official docs via WebFetch, cites relevant passage in code comments.
 3. **Demo use-case**: crystallises API contract as inline doctest (simple functions) or example script (complex features with setup). Demo must fail against current code before proceeding. Gate enforced via exit code — not output text.
-4. **TDD implementation loop** (`foundry:sw-engineer`): tests pass in non-overlapping groups by default (`--no-batch` for one run per piece of functionality), full-directory baseline on the first cycle only; every later cycle and the review loop run only the tests each change touches (`dev_test_targets.py`).
-5. **Review and close gaps**: 5-axis quality scan (correctness, readability, architecture, security, performance) → fix loop, max 3 cycles.
+4. **TDD implementation loop** (`foundry:sw-engineer`): tests pass in non-overlapping groups by default (`--no-batch` for one run per piece of functionality), full-directory baseline on the first cycle only; every later cycle and the review run only the tests each change touches (`dev_test_targets.py`).
+5. **Review and close gaps**: 5-axis quality scan (correctness, readability, architecture, security, performance) → fix feasible gaps.
 6. **Documentation** (`foundry:doc-scribe`): updates docstrings and README content when the implementation changes a public API; a separate changelog step is used only when the project has a changelog convention.
-7. **Quality stack**: available ruff/mypy checks → full test suite (parallel via pytest-xdist when available, probed against the detected runner) — rerun in full after any later fix, max 3 gate iterations → optional Codemap blast-radius check → optional Codex pre-pass → progressive review loop.
+7. **Quality stack**: available ruff/mypy checks → full test suite (parallel via pytest-xdist when available, probed against the detected runner) — rerun in full after any later fix, max 3 gate iterations → optional Codemap blast-radius check → one bounded independent implementation challenge; iterative review only when explicitly requested.
 
 **! BREAKING (report format)** — the quality stack folds `--doctest-modules` into the main suite run when a clean-collection check passes; `Doctests:` in the Final Report is now `pass` / `fail` / `not-merged` (was a plain pass/fail line). Flaky-test retry now re-runs only the specific failing node-ids (was a blind whole-directory re-run); a failure reproducing only under parallel execution is reported as a likely test-isolation bug, not marked flaky.
 
@@ -307,8 +309,8 @@ ______________________________________________________________________
 1. **Understand the problem** (`foundry:sw-engineer`): reads full traceback, searches failing code path, traces call graph, identifies root cause, state mutation, blast radius. Argument = positive integer → fetches GitHub issue (upstream if `--repo`).
 2. **Reproduce the bug** (`foundry:qa-specialist`): writes regression test failing on unfixed code. Gate: test must exit non-zero before proceeding.
 3. **Apply the fix** (`foundry:sw-engineer`): minimal change — only what makes regression test pass. Then runs only the tests the change touches (`dev_test_targets.py`: Codemap test-impact, or name/import heuristics without Codemap).
-4. **Review and close gaps**: 5-axis quality scan → fix loop, max 3 cycles, each cycle re-running targeted tests only. Adjacent bugs documented as observations, handled in separate session — never fixed same pass.
-5. **Quality stack**: available ruff/mypy checks → full test suite (parallel via pytest-xdist when available) — the final gate after the loop, rerun in full after any later fix, max 3 gate iterations; a green full suite is the last test evidence → optional Codemap blast-radius check → optional Codex pre-pass → progressive review loop.
+4. **Review and close gaps**: quality scan → fix feasible gaps and run targeted tests. Adjacent bugs documented as observations, handled in separate session — never fixed same pass.
+5. **Quality stack**: available ruff/mypy checks → full test suite (parallel via pytest-xdist when available) — the final gate after the loop, rerun in full after any later fix, max 3 gate iterations; a green full suite is the last test evidence → optional Codemap blast-radius check → one bounded independent implementation challenge; iterative review only when explicitly requested.
 
 **Realistic example**:
 
@@ -368,8 +370,8 @@ ______________________________________________________________________
 2. **Audit test coverage**: classifies each public function covered / partially covered / uncovered. No `pytest-cov` installed → falls back to "all uncovered" conservatively.
 3. **Add characterization tests** (`foundry:qa-specialist`): every uncovered/partial public API gets tests asserting *current* behavior (not desired). Gate: all characterization tests must pass on unmodified code before proceeding.
 4. **Refactor with safety net**: focused changes run in non-overlapping groups by default (`--no-batch` for one focused change per cycle), with only the tests each change touches after each (`dev_test_targets.py`: Codemap test-impact, or name/import heuristics without Codemap) — never the full suite inside the loop. Safety break: max 5 change-test cycles per inner session (edits, not cycles, unless `--no-batch` is set); max 10 total across all outer review cycles.
-5. **Review and close gaps**: behavior preservation, goal achievement, no new smells, no unintended API surface changes. Max 3 outer review cycles, each re-running targeted tests only.
-6. **Quality stack**: available ruff/mypy checks → full test suite (parallel via pytest-xdist when available) — the final gate after the loop (the repository's own test command when the quality stack is unavailable), rerun in full after any later fix, max 3 gate iterations; a green full suite is the last test evidence → optional Codemap blast-radius check → optional Codex pre-pass → progressive review loop.
+5. **Review and close gaps**: behavior preservation, goal achievement, no new smells, no unintended API surface changes; rerun targeted tests after fixes.
+6. **Quality stack**: available ruff/mypy checks → full test suite (parallel via pytest-xdist when available) — the final gate after the loop (the repository's own test command when the quality stack is unavailable), rerun in full after any later fix, max 3 gate iterations; a green full suite is the last test evidence → optional Codemap blast-radius check → one bounded independent implementation challenge; iterative review only when explicitly requested.
 
 **Refactoring categories skill handles**:
 
@@ -552,7 +554,9 @@ A filename prefix does not change how Claude loads a rule or how its `paths:` fr
 
 Rules are symlinked, not copied: Claude loads rules at session start, so a symlink serves the installed version after every upgrade, while a copy would silently serve stale content forever. Setup delivers only this plugin's own rules — each plugin installs independently, and shipping a sibling's rules would break standalone installation and couple releases. The delta variant keeps that true: it only points at foundry's copy for the shared obligations rather than delivering it. Loading all four complete `quality-gates.md` copies at once cost 51,274 B of context on every turn.
 
-The quality-gates rule requires the local `_full/adversarial-loop.md` procedure for independent review/fix cycles, including first-pass coverage, invariant and sibling-route closure checks, and separate carried/new finding weight.
+For explicitly requested iterative independent review/fix loops, the quality-gates rule requires the local `_full/adversarial-loop.md` procedure, including first-pass coverage, invariant and sibling-route closure checks, and separate carried/new finding weight. One bounded independent challenge does not automatically start that loop.
+
+Confidence describes the correctness of the delivered result and how it was produced and checked within scope. Report completion separately; a high score does not pass an unmet gate.
 
 Only links this plugin provably owns are replaced or removed: the existing target must resolve under the current plugin root or under the same install-cache lineage. A real file, a link into another marketplace, a source checkout, or a dotfiles tree is reported as a conflict and left alone unless you approve replacing it.
 
@@ -784,12 +788,13 @@ plugins/cc_develop/
 ├── .claude-plugin/
 │   ├── plugin.json              -- manifest (name, version, author)
 │   ├── permissions-allow.json   -- tool calls the skills expect to be pre-approved
+│   ├── permissions-allow-retired.json -- obsolete allow rules /develop:setup removes
 │   └── permissions-deny.json    -- operations that must stay denied (see below)
 ├── bin/
 │   └── sync_rules.py            -- installs rules/*.md into ~/.claude/rules/
 ├── rules/
 │   ├── quality-gates.md         -- delivered as ~/.claude/rules/develop-quality-gates.md
-│   └── _full/adversarial-loop.md -- required local procedure for independent review/fix cycles
+│   └── _full/adversarial-loop.md -- procedure for explicitly requested iterative review/fix loops
 └── skills/
     ├── plan/
     │   └── SKILL.md
@@ -810,6 +815,7 @@ plugins/cc_develop/
 **Permission manifests**:
 
 - `.claude-plugin/permissions-allow.json` lists the tool calls the skills expect to be pre-approved.
+- `.claude-plugin/permissions-allow-retired.json` lists allow rules earlier versions shipped; `/develop:setup` removes exactly those from `settings.json` through `--drop-allow-file`, keeping the rule text out of the command line. The setup summary counts removals from this complete retirement set.
 - `.claude-plugin/permissions-deny.json` is its counterpart — the operations that must stay denied no matter how broad the allow list becomes: destructive shell and git commands (`rm -rf`, `sudo`, `ssh`, `chmod 777`, force-push, `claude --dangerously-skip-permissions`). It holds no gh write or local branch/tag deletion entry.
 
 Develop ships no git/gh guard; foundry supplies that guard (requires `foundry` plugin). Develop's allow list omits `Bash(gh api repos/*)`, `Bash(gh api graphql:*)`, `Bash(git branch:*)`, and `Bash(git tag:*)`. Without foundry or other matching user rules, these command families reach normal permission handling on new installs, including prompts for routine reads such as `git branch --show-current`.

@@ -60,7 +60,6 @@ _SHARED_ASKS = [
         "codemap-gates.md", "`LAZY_CODEMAP` is the explicit confirm-first preference", id="codemap-gate-a-lazy-opt-in"
     ),
     pytest.param("premise-grounding.md", "has no verified source", id="premise-grounding"),
-    pytest.param("plan-inline.md", "(a) **Proceed**", id="plan-inline"),
     pytest.param("foundry--quality-stack.md", "AskUserQuestion", id="quality-stack"),
 ]
 

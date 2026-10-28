@@ -12,6 +12,7 @@ from types import ModuleType
 
 import pytest
 from _platform import FILE_SYMLINKS_AVAILABLE
+from _skill_text import read_with_references
 from test_finding_presentation import VALIDATOR, _write_remediation_candidate
 
 # Importing the fixture function registers the shared `assessed_pr` fixture in this module.
@@ -144,7 +145,7 @@ def test_handoff_does_not_fall_back_from_invalid_recovered_checkout(
 
 @pytest.mark.parametrize(
     ("selection_version", "handoff_version"),
-    [pytest.param(4, 11, id="historical-selection-new-handoff"), pytest.param(5, 11, id="current")],
+    [pytest.param(4, 12, id="historical-selection-new-handoff"), pytest.param(5, 12, id="current")],
 )
 def test_current_handoff_marks_selection_independently_of_outcome(
     valid_run: tuple[Path, dict[str, object]], selection_version: int, handoff_version: int
@@ -280,13 +281,16 @@ def test_public_validator_preserves_historical_handoff_but_rejects_new_candidate
 
 
 def test_derived_metadata_restores_every_hand_copied_field(valid_run: tuple[Path, dict[str, object]]) -> None:
-    """Rebuild scope, workplan, and item identity from machine files exactly as the passing run recorded them.
+    """Rebuild scope, workplan, and item identity from machine files with canonical required columns.
 
     A drifted hand copy of the plan, digest, counts, deferred indexes, or item names is the failure family this helper
     removes; the derived values must equal the ones a validator-accepted run carries.
     """
     run, result = valid_run
-    expected = result["metadata"]
+    expected = copy.deepcopy(result["metadata"])
+    expected["final_resolution_table"]["required_columns"] = sorted(
+        VALIDATOR.CODE_REMEDIATE_FINAL_TABLE_REQUIRED_COLUMNS
+    )
 
     derived = HELPER.derive_metadata(run, _stale_metadata(result))
 
@@ -295,11 +299,13 @@ def test_derived_metadata_restores_every_hand_copied_field(valid_run: tuple[Path
 
 
 @pytest.mark.parametrize("selection_version", [pytest.param(2, id="historical"), pytest.param(5, id="current")])
+@pytest.mark.parametrize("owner", ["user", "codex"])
 def test_finalize_turns_judgement_drafts_into_a_passing_promoted_result(
     valid_run: tuple[Path, dict[str, object]],
     tmp_path_factory: pytest.TempPathFactory,
     capsys: pytest.CaptureFixture[str],
     selection_version: int,
+    owner: str,
 ) -> None:
     """Derive, render, write, validate, and promote in one call when only judgement fields were authored.
 
@@ -327,7 +333,18 @@ def test_finalize_turns_judgement_drafts_into_a_passing_promoted_result(
         )
     drafts = tmp_path_factory.mktemp("drafts")
     (drafts / "metadata.json").write_text(json.dumps(_stale_metadata(result)), encoding="utf-8")
-    (drafts / "handoff.json").write_text(json.dumps(_draft_handoff(run)), encoding="utf-8")
+    draft = _draft_handoff(run)
+    row_id = result["metadata"]["final_resolution_table"]["items"][0]["input_item_id"]
+    draft["remaining"] = [
+        {
+            "row_id": row_id,
+            "item": "A verification step remains.",
+            "owner": owner,
+            "next_action": "Run the required check.",
+        }
+    ]
+    draft["next_steps"] = [row_id]
+    (drafts / "handoff.json").write_text(json.dumps(draft), encoding="utf-8")
     argv = [
         "finalize",
         "--run",
@@ -353,9 +370,13 @@ def test_finalize_turns_judgement_drafts_into_a_passing_promoted_result(
     ]
     assert [step["step"] for step in summary["steps"]] == ["derive", "render", "write-result", "validate"]
     VALIDATOR.validate("code-remediate", run, run / "result.json")
+    final_text = (run / "final.md").read_text(encoding="utf-8")
+    assert final_text.index("**Artifact**") < final_text.index("**Next steps**")
+    assert final_text.endswith("   Action: Run the required check.\n")
+    assert f"**Owner: {owner}**" in final_text
     if selection_version == 5:
         handoff = json.loads((run / "final-handoff.json").read_text(encoding="utf-8"))
-        assert handoff["presentation_version"] == 11
+        assert handoff["presentation_version"] == 12
         assert ": src/package/parser.py" in (run / "resolution-scope.md").read_text(encoding="utf-8")
         handoff["presentation_version"] = 6
         promoted = json.loads((run / "result.json").read_text(encoding="utf-8"))
@@ -384,6 +405,23 @@ def test_all_errors_reports_independent_failures_with_hints(valid_run: tuple[Pat
     assert all(error["hint"] for error in report["errors"])
     with pytest.raises(SystemExit):
         VALIDATOR.validate("code-remediate", run, result_path)
+
+
+def test_missing_resolution_summary_has_actionable_hint(valid_run: tuple[Path, dict[str, object]]) -> None:
+    """Explain how to repair a missing summary without inventing its judgments."""
+    run, _ = valid_run
+    action_items = run / "action-items.md"
+    content = action_items.read_text(encoding="utf-8")
+    action_items.write_text(content.replace("## Final Resolution Summary", "## Other Summary"), encoding="utf-8")
+
+    report = VALIDATOR.collect_errors("code-remediate", run, run / "result.candidate.json")
+
+    error = next(
+        error
+        for error in report["errors"]
+        if error["code"] == "missing-artifact-section:action-items.md:Final Resolution Summary"
+    )
+    assert all(term in error["hint"] for term in ("request", "counts", "closed", "retry"))
 
 
 def test_all_errors_passes_a_valid_run_and_matches_fail_fast(valid_run: tuple[Path, dict[str, object]]) -> None:
@@ -446,6 +484,38 @@ def test_workplan_render_keeps_agent_sections_and_passes_document_checks(
     VALIDATOR._validate_code_remediate_workplan(metadata, run)
 
 
+def test_empty_selection_needs_no_fabricated_workplan(valid_run: tuple[Path, dict[str, object]]) -> None:
+    """Let a no-findings run finish without inventing a plan while rejecting hidden work.
+
+    A live remediation found no selectable findings, but path validation previously blocked its handoff before checking
+    the empty selection. Nonempty selections must still provide the approved plan and its evidence.
+    """
+    run, result = valid_run
+    metadata = copy.deepcopy(result["metadata"])
+    metadata["resolution_scope"]["selected_indexes"] = []
+    workplan = metadata["resolution_workplan"]
+    workplan["work_buckets"] = []
+    for key in (
+        "groups_total",
+        "parent_owned_groups",
+        "specialist_owned_groups",
+        "verifier_groups",
+        "unassigned_selected_items",
+    ):
+        workplan[key] = 0
+    for key in ("workplan_path", "bucket_plan_path", "parallel_approval_path", "bucket_plan_sha256"):
+        workplan.pop(key, None)
+
+    VALIDATOR._validate_code_remediate_workplan(metadata, run)
+    workplan["parent_owned_groups"] = 1
+    with pytest.raises(SystemExit, match="code-remediate-empty-selection-has-work-buckets"):
+        VALIDATOR._validate_code_remediate_workplan(metadata, run)
+    workplan["parent_owned_groups"] = 0
+    metadata["resolution_scope"]["selected_indexes"] = [1]
+    with pytest.raises(SystemExit, match="code-remediate-invalid-resolution-workplan:workplan_path"):
+        VALIDATOR._validate_code_remediate_workplan(metadata, run)
+
+
 def test_workplan_render_requires_reason_for_default_parent_only_plan(
     valid_run: tuple[Path, dict[str, object]],
 ) -> None:
@@ -475,7 +545,11 @@ def test_derivation_rejects_plan_digest_that_differs_from_approval(valid_run: tu
 
 def test_skill_routes_bookkeeping_through_the_derivation_helper() -> None:
     """Keep the remediation skill on derived workplan sections, one-call finalize, and one-pass validation."""
-    skill = " ".join((PLUGIN_ROOT / "skills" / "code-remediate" / "SKILL.md").read_text(encoding="utf-8").split())
+    skill = " ".join(
+        read_with_references(
+            PLUGIN_ROOT / "skills" / "code-remediate" / "SKILL.md", "implementation.md", "completion.md"
+        ).split()
+    )
     contract = (PLUGIN_ROOT / "shared" / "helper-cli-contract.md").read_text(encoding="utf-8")
 
     assert "remediation_finalize.py workplan --help" in skill
@@ -531,7 +605,7 @@ def test_review_finalize_derives_shared_fields_and_runs_both_validators(
         "validate",
     ]
     assert finished.returncode == 0, finished.stderr.decode()
-    assert json.loads((run / "final-handoff.json").read_text())["presentation_version"] == 11
+    assert json.loads((run / "final-handoff.json").read_text())["presentation_version"] == 12
     assert (run / "review-notes.md").read_bytes().startswith(full_report)
     reviewed_head = json.loads((run / "pr-routing.json").read_text())["head_oid"]
     assert f"Reviewed commit: {reviewed_head}" in (run / "review-notes.md").read_text()
@@ -723,3 +797,67 @@ def test_review_action_derivation_rejects_ambiguous_authored_input(tmp_path: Pat
     with pytest.raises(HELPER.DeriveError, match=r"review-(action-|report-details-unowned)"):
         HELPER._derive_review_actions(tmp_path, metadata, handoff)
     assert notes.read_bytes() == before
+
+
+@pytest.mark.parametrize("owner", ["user", "codex"])
+def test_v12_promotes_genuine_blocker(tmp_path: Path, capsys: pytest.CaptureFixture[str], owner: str) -> None:
+    """Promote a failed real fixture while retaining the owning recovery step at the end."""
+    run = tmp_path / "run"
+    run.mkdir()
+    result_path = _write_remediation_candidate(run, "code", ("unresolved", "Blocked: regression remains."))
+    result = json.loads(result_path.read_text())
+    result.update(status="fail", checks_failed=["tests"])
+    result["metadata"]["unresolved_summary"].update(
+        selected_items_total=1,
+        selected_items_unresolved=1,
+        local_actionable_items_unresolved=1,
+        all_local_actionable_items_closed=False,
+        unresolved_reason_groups=[
+            {
+                "reason": "local-code-or-doc",
+                "count": 1,
+                "owner": owner,
+                "next_action": "Fix the regression.",
+                "evidence_path": "unresolved.txt",
+            }
+        ],
+    )
+    (run / "unresolved.txt").write_text(
+        "## Unresolved Work Summary\n\nOne local regression remains.\n\n"
+        "## Why Selected Items Remain Unresolved\n\nClosure class: local-code-or-doc. "
+        "Next owner: user or agent. Attempted evidence: test failure.\n\n## Next Action\n\nFix the regression.\n"
+    )
+    gates_path = run / "gates.json"
+    gates = json.loads(gates_path.read_text())
+    gates.update(status="fail", checks_failed=["tests"])
+    gates["checks"][3].update(status="fail", exit_code=1, reason="Regression remains.")
+    gates_path.write_text(json.dumps(gates))
+    handoff = _draft_handoff(run)
+    handoff["remaining"][0].update(owner=owner, next_action="Fix the regression.")
+    handoff["commit_disposition"] = {"status": "blocked", "reason": "Regression remains.", "evidence": "unresolved.txt"}
+    (tmp_path / "metadata.json").write_text(json.dumps(_stale_metadata(result)))
+    (tmp_path / "handoff.json").write_text(json.dumps(handoff))
+    argv = [
+        "finalize",
+        "--run",
+        str(run),
+        "--metadata",
+        str(tmp_path / "metadata.json"),
+        "--handoff",
+        str(tmp_path / "handoff.json"),
+        "--status",
+        "fail",
+        "--confidence",
+        str(result["confidence"]),
+        "--artifact-path",
+        result["artifact_path"],
+        "--promote",
+    ]
+    code = HELPER.main(argv)
+    summary = json.loads(capsys.readouterr().out)
+    assert (code, summary["status"], summary["promoted"]) == (0, "pass", True), summary
+    VALIDATOR.validate("code-remediate", run, run / "result.json")
+    final = (run / "final.md").read_text()
+    assert final.index("**Artifact**") < final.index("**Next steps**")
+    assert f"**Owner: {owner}**" in final
+    assert final.endswith("   Action: Fix the regression.\n")

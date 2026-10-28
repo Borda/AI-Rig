@@ -678,9 +678,9 @@ def test_append_refuses_invalid_round_and_keeps_staged_record(
 
 
 def _metrics_record(**overrides: Any) -> dict[str, Any]:
-    """Build a valid per-round cost record, with unknown token counts as the Claude route reports them."""
+    """Build a valid current cost record: a token total with no input/output split, as a Claude agent reports it."""
     record: dict[str, Any] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "kind": "round",
         "round": 1,
         "route": "agent:foundry:challenger",
@@ -689,8 +689,16 @@ def _metrics_record(**overrides: Any) -> dict[str, Any]:
         "duration_s": 310,
         "tokens_in": None,
         "tokens_out": None,
+        "tokens_total": 105891,
         "attested_gaps": 2,
     }
+    return record | overrides
+
+
+def _legacy_metrics_record(**overrides: Any) -> dict[str, Any]:
+    """Build a valid schema 1 cost record, which has no ``tokens_total`` field."""
+    record = _metrics_record() | {"schema_version": 1}
+    del record["tokens_total"]
     return record | overrides
 
 
@@ -734,12 +742,44 @@ def test_append_metrics_records_cost_beside_the_round_without_changing_the_ledge
     assert not (tmp_path / "loop-metrics.jsonl.rec").exists()
 
 
+def test_append_metrics_still_accepts_a_schema_one_record(tmp_path: Path) -> None:
+    """Keep recording a schema 1 cost record, which Codex Rig's challenge-resolve writes without a token total.
+
+    The log is read as one file, so old and new records must be able to sit in it together; a writer that has not moved
+    to schema 2 must not have its record rejected.
+    """
+    ledger_path = tmp_path / "loop-ledger.json"
+    _write_header(ledger_path)
+    assert _append(ledger_path, _round(1, [_finding("finding-a")])).returncode == 0
+
+    result = _run_metrics(ledger_path, _legacy_metrics_record())
+
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == ""
+    assert json.loads((tmp_path / "loop-metrics.jsonl").read_text(encoding="utf-8")) == _legacy_metrics_record()
+
+
 @pytest.mark.parametrize(
     ("record", "expected_error"),
     [
+        pytest.param(
+            {k: v for k, v in _metrics_record().items() if k != "tokens_total"},
+            "metrics-missing-fields:tokens_total",
+            id="current-without-total",
+        ),
         pytest.param(_metrics_record(round=2), "metrics-round-must-be-a-completed-round", id="round-not-completed"),
         pytest.param(_metrics_record(round=True), "metrics-round-must-be-a-completed-round", id="round-is-boolean"),
-        pytest.param(_metrics_record(schema_version=2), "metrics-schema-version-unsupported", id="unknown-version"),
+        pytest.param(_metrics_record(schema_version=3), "metrics-schema-version-unsupported", id="unknown-version"),
+        pytest.param(
+            _metrics_record(tokens_total=-1),
+            "metrics-tokens_total-must-be-nonnegative-integer-or-null",
+            id="negative-total",
+        ),
+        pytest.param(
+            _legacy_metrics_record() | {"tokens_total": 5},
+            "metrics-unexpected-fields:tokens_total",
+            id="legacy-with-total",
+        ),
         pytest.param(_metrics_record(schema_version=True), "metrics-schema-version-unsupported", id="boolean-version"),
         pytest.param(_metrics_record(schema_version=1.0), "metrics-schema-version-unsupported", id="float-version"),
         pytest.param(_metrics_record(kind="origin"), "metrics-kind-invalid", id="unknown-kind"),
@@ -1598,6 +1638,39 @@ def test_current_actions_require_every_invariant_in_finding(
     assert module.validate_actions(ledger, _actions([action], version=3)) == expected
 
 
+@pytest.mark.parametrize("label", ["Invariant:", "INVARIANT:"])
+def test_action_matches_reviewer_invariant_label_without_changing_evidence(label: str) -> None:
+    """Accept label casing while still requiring the action invariant to match the review evidence."""
+    module = _load_module()
+    finding = _finding("boundary", "low", evidence=[f"{label} Every route is reviewed"])
+    ledger = _ledger(_round(1, [finding]))
+    action = _invariant_action("boundary")
+    action["evidence"][0] = "invariant: every route is reviewed"
+
+    assert module.validate_actions(ledger, _actions([action], version=3)) == []
+    assert finding["evidence"] == [f"{label} Every route is reviewed"]
+    action["evidence"][0] = "invariant: different boundary"
+    assert module.validate_actions(ledger, _actions([action], version=3)) == [
+        "round-1-action-invariant-not-in-finding:boundary"
+    ]
+
+
+def test_invariant_label_case_does_not_hide_recurring_finding() -> None:
+    """Require root-cause evidence when a renamed finding repeats a mixed-case reviewer invariant."""
+    module = _load_module()
+    ledger = _route_ledger(
+        ["first"], ["second"], invariants=dict.fromkeys(("first", "second"), "every route is reviewed")
+    )
+    ledger["rounds"][0]["findings"][0]["evidence"] = ["Invariant: every route is reviewed"]
+    first = _invariant_action("first")
+    second = _invariant_action("second")
+    first["evidence"][0] = second["evidence"][0] = "invariant: every route is reviewed"
+
+    assert module.validate_actions(ledger, _actions([first], [second], version=3)) == [
+        "round-2-repeat-root-cause-required:second"
+    ]
+
+
 @pytest.mark.parametrize(
     ("version", "expected"),
     [
@@ -2194,3 +2267,29 @@ def test_specialist_retry_policy_permits_corrected_reviewer_redispatch() -> None
     assert "Strict portable `parallel_execution` nodes are excluded" in policy
     assert "Re-dispatch that reviewer once with a brief that removes the cause;" in loop_rule
     assert "When no attempt remains, the required approval is not held, or no brief can remove the cause" in loop_rule
+
+
+def test_loop_rule_maps_the_agent_usage_notification_to_the_cost_log() -> None:
+    """The loop rule tells a Claude parent which notification fields fill the cost log's token total and duration.
+
+    Without that mapping the parent has no source for the numbers and writes ``null``, which left every recorded token
+    count unknown before schema 2.
+    """
+    loop_rule = (PLUGIN_ROOT / "shared" / "adversarial-loop.md").read_text(encoding="utf-8")
+
+    assert "record `subagent_tokens` as `tokens_total` and `duration_ms` divided by 1000 as `duration_s`" in loop_rule
+    assert "Schema 1 records (`schema_version` 1, no `tokens_total`) stay accepted" in loop_rule
+
+
+def test_loop_rule_records_replayable_probe_command_lines() -> None:
+    """The loop rule asks for the failing-before/passing-after check as a literal command line.
+
+    The attestation and a ``fix`` action both carry it, so the parent can rerun the same probe after a later edit.
+    The helper stays a recorder: the rule says it never runs the line, and a reviewer never gets it as a resolver
+    account.
+    """
+    loop_rule = (PLUGIN_ROOT / "shared" / "adversarial-loop.md").read_text(encoding="utf-8")
+
+    assert "a failing-before/passing-after check as its literal command line plus its result" in loop_rule
+    assert "a `probe:` entry holding the literal failing-before/passing-after command line" in loop_rule
+    assert "the helper never runs it; a reviewer sees it only as its own original counterexample" in loop_rule

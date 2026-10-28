@@ -15,6 +15,7 @@ import json
 from pathlib import Path
 
 import pytest
+from _skill_text import read_with_references
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 SHARED_CONTRACT = PLUGIN_ROOT / "shared" / "native-skill-contract.md"
@@ -31,7 +32,7 @@ UNSANDBOXED_DISCLOSURE = (
 @pytest.mark.installed_plugin
 def test_every_package_dependent_claim_prepares_its_environment_before_disposition() -> None:
     """Require dependency preparation at candidate admission, including favorable behavior claims."""
-    skill = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
+    skill = read_with_references(CODE_REVIEW_SKILL, "findings-and-completion.md")
     admission = skill.split("### 05: Validate every candidate", 1)[1].split("### 06:", 1)[0]
     assert "For every package-dependent behavioral claim" in admission
     assert "including favorable claims and proposed refutations" in admission
@@ -419,7 +420,7 @@ def test_evidence_and_failure_reporting(marker: str) -> None:
     "marker",
     [
         pytest.param("Never install dependencies into the project or global environment", id="no-env-install"),
-        pytest.param("(../../shared/native-skill-contract.md#ephemeral-dependency-evidence)", id="links-contract"),
+        pytest.param("(../../../shared/native-skill-contract.md#ephemeral-dependency-evidence)", id="links-contract"),
         pytest.param("a separate test run over that overlay that never shares the fetch's escalation", id="split"),
         pytest.param("is a `new dependency` finding, never an overlay", id="new-dependency-finding"),
         pytest.param(
@@ -430,7 +431,7 @@ def test_evidence_and_failure_reporting(marker: str) -> None:
 )
 def test_code_review_routes_package_gaps_to_shared_contract(marker: str) -> None:
     """The review environment rule links the shared procedure instead of forbidding every install."""
-    assert marker in CODE_REVIEW_SKILL.read_text(encoding="utf-8")
+    assert marker in read_with_references(CODE_REVIEW_SKILL, "source-and-scope.md")
 
 
 @pytest.mark.installed_plugin

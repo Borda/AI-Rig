@@ -65,6 +65,7 @@ from adversarial_loop import load_ledger  # noqa: E402
 from audit_consolidation import settle_consolidation  # noqa: E402
 from collect_pr import _github_remote_identity, _head_repository, dirty_path_record_is_consistent  # noqa: E402
 from final_handoff import HandoffError, challenge_report_path, review_commit_sha  # noqa: E402
+from parallel_worktrees import PilotError, _portable_relative  # noqa: E402
 from release_evidence import release_sections, validate_release_evidence  # noqa: E402
 
 #: Fields every result.json must contain regardless of skill.
@@ -492,13 +493,13 @@ def _validate_code_remediate_final_handoff(
         raise SystemExit("code-remediate-final-handoff-table-invalid")
     expected_items = resolution_table["items"]
     presentation = metadata.get("resolution_scope", {}).get("presentation_version")
-    if candidate and presentation == 5 and handoff.get("presentation_version") not in {8, 9, 10, 11}:
+    if candidate and presentation == 5 and handoff.get("presentation_version") not in {8, 9, 10, 11, 12}:
         raise SystemExit("remediation-current-handoff-presentation-v8-required")
-    if candidate and presentation in {4, 5} and handoff.get("presentation_version") not in {6, 8, 9, 10, 11}:
+    if candidate and presentation in {4, 5} and handoff.get("presentation_version") not in {6, 8, 9, 10, 11, 12}:
         raise SystemExit("remediation-current-handoff-presentation-v6-required")
     if presentation in {2, 3, 4, 5} and tables[0].get("layout") != (
         "concise"
-        if handoff.get("presentation_version") in {8, 9, 10, 11}
+        if handoff.get("presentation_version") in {8, 9, 10, 11, 12}
         else {2: "grouped", 3: "concise", 4: "concise", 5: "concise"}[presentation]
     ):
         raise SystemExit("code-remediate-final-handoff-grouped-layout-required")
@@ -539,10 +540,10 @@ def _validate_code_remediate_final_handoff(
         )
         if item.get("selectable"):
             selectable_index += 1
-        if handoff.get("presentation_version") in {5, 6, 8, 9, 10, 11}:
+        if handoff.get("presentation_version") in {5, 6, 8, 9, 10, 11, 12}:
             selected = metadata.get("resolution_scope", {}).get("selected_indexes", [])
             expected_rows[-1]["selected"] = bool(item.get("selectable")) and selectable_index in selected
-            if handoff.get("presentation_version") in {6, 8, 9, 10, 11}:
+            if handoff.get("presentation_version") in {6, 8, 9, 10, 11, 12}:
                 expected_rows[-1]["selected"] = (
                     "Closed" if not item.get("selectable") else "Yes" if selectable_index in selected else "No"
                 )
@@ -634,9 +635,9 @@ def _validate_code_review_final_handoff(
     if handoff.get("branch") != expected_branch:
         raise SystemExit("code-review-final-handoff-branch-mismatch")
     if result.get("schema_version") == 3 and expected_branch == "assessed":
-        if fresh_candidate and handoff.get("presentation_version") not in {8, 9, 10, 11}:
+        if fresh_candidate and handoff.get("presentation_version") not in {8, 9, 10, 11, 12}:
             raise SystemExit("review-current-handoff-presentation-v8-required")
-        if handoff.get("presentation_version") not in {3, 7, 8, 9, 10, 11}:
+        if handoff.get("presentation_version") not in {3, 7, 8, 9, 10, 11, 12}:
             raise SystemExit("review-current-handoff-presentation-invalid")
     if expected_branch == "assessed":
         decision = metadata.get("review_decision")
@@ -920,6 +921,13 @@ def _validate_final_handoff(
         raise SystemExit("final-handoff-digest-mismatch")
     if validation.get("rendered_sha256") != binding.get("rendered_sha256"):
         raise SystemExit("final-handoff-rendered-digest-mismatch")
+    if (
+        handoff.get("presentation_version") == 12
+        and result["status"] in {"fail", "timeout"}
+        and handoff.get("branch") not in {"closed", "caller-contract"}
+        and not handoff.get("next_steps")
+    ):
+        raise SystemExit("failed-handoff-next-action-required")
     _validate_final_handoff_gates(handoff, gates, skill)
     _validate_final_handoff_confidence(result, handoff, skill)
     artifacts = handoff.get("artifacts")
@@ -999,7 +1007,7 @@ def _validate_final_handoff(
         _validate_code_review_final_handoff(
             result, handoff, candidate=current_contract, out_dir=out_dir, fresh_candidate=candidate
         )
-    if candidate and handoff.get("presentation_version") not in {8, 9, 10, 11}:
+    if candidate and handoff.get("presentation_version") not in {8, 9, 10, 11, 12}:
         raise SystemExit("current-handoff-presentation-v8-required")
 
 
@@ -1088,7 +1096,29 @@ def _validate_gates(out_dir: Path) -> dict[str, Any]:
         if expected_exit is not None and check["exit_code"] != expected_exit:
             raise SystemExit(f"gate-check-exit-status-mismatch:{index}")
         if check["status"] == "fail" and check["exit_code"] in {0, 124, 127}:
-            raise SystemExit(f"gate-check-invalid-fail-exit-code:{index}")
+            source = check.get("source")
+            before = source.get("before") if isinstance(source, dict) else None
+            after = source.get("after") if isinstance(source, dict) else None
+            changed_source = isinstance(before, dict) and isinstance(after, dict) and before != after
+            guard_error = source.get("guard_error") if isinstance(source, dict) else None
+            stderr_path = Path(str(check["stderr"]))
+            if not stderr_path.is_absolute():
+                stderr_path = _resolve_gate_log(out_dir, stderr_path)
+            failed_guard = (
+                isinstance(source, dict)
+                and source.get("mode") == "local-review-mirror"
+                and isinstance(before, dict)
+                and isinstance(guard_error, str)
+                and bool(guard_error.strip())
+                and not stderr_path.is_symlink()
+                and stderr_path.resolve().is_relative_to(out_dir.resolve())
+                and stderr_path.is_file()
+                and guard_error in stderr_path.read_text(encoding="utf-8", errors="replace")
+            )
+            import_proof = check.get("python_imports")
+            failed_proof = isinstance(import_proof, dict) and import_proof.get("status") in {"fail", "inconclusive"}
+            if check["exit_code"] != 0 or not (changed_source or failed_guard or failed_proof):
+                raise SystemExit(f"gate-check-invalid-fail-exit-code:{index}")
         for key in ("command_path", "stdout", "stderr"):
             path = Path(str(check[key]))
             if not path.is_absolute():
@@ -1616,7 +1646,7 @@ def _validate_code_remediate_preliminary_report_source(
 
 
 def report_obligation_sources(report: dict[str, Any], report_path: str | None = None) -> list[dict[str, str]]:
-    """Derive each report obligation occurrence with its exact producer pointer and text."""
+    """Derive report obligations, preserving direct and batched origins only for open concerns."""
     original = report.get("metadata", {})
     path = report_path or report.get("artifact_path")
     if not isinstance(original, dict):
@@ -1639,27 +1669,59 @@ def report_obligation_sources(report: dict[str, Any], report_path: str | None = 
     if validation is not None:
         if not isinstance(validation, dict) or validation.get("schema_version") != 1:
             raise SystemExit("code-remediate-review-validation-upgrade-required")
-        origins = original.get("source_findings", [])
-        mapping = original.get("source_finding_mapping", {})
-        if mapping == [] and origins == []:
-            mapping = {}
-        if not isinstance(origins, list) or not isinstance(mapping, dict):
-            raise SystemExit("code-remediate-report-input-invalid")
         for index, candidate in enumerate(validation.get("candidates", [])):
             if candidate.get("disposition") in {None, "unverified"}:
+                origins = original.get("source_findings", [])
+                mapping = original.get("source_finding_mapping", {})
+                if not isinstance(origins, list) or any(not isinstance(origin, dict) for origin in origins):
+                    raise SystemExit("code-remediate-report-input-invalid")
+                if isinstance(mapping, list):
+                    # Direct reviews retain supplemental source IDs, not batched reviewer finding IDs.
+                    if any(not isinstance(link, dict) for link in mapping):
+                        raise SystemExit("code-remediate-report-source-mapping-invalid")
+                    origin_ids = [
+                        origin.get("id") for origin in origins if origin.get("candidate_id") == candidate["id"]
+                    ]
+                    linked_ids = [
+                        link.get("source_id") for link in mapping if link.get("candidate_id") == candidate["id"]
+                    ]
+                    if (
+                        any(not isinstance(value, str) or not value for value in origin_ids + linked_ids)
+                        or len(set(origin_ids)) != len(origin_ids)
+                        or len(set(linked_ids)) != len(linked_ids)
+                        or set(origin_ids) != set(linked_ids)
+                        or any(
+                            link.get("source_id") in origin_ids and link.get("candidate_id") != candidate["id"]
+                            for link in mapping
+                        )
+                        or any(
+                            origin.get("id") in origin_ids and origin.get("candidate_id") != candidate["id"]
+                            for origin in origins
+                        )
+                    ):
+                        raise SystemExit("code-remediate-report-source-mapping-invalid")
+                    selected_origins = [
+                        (i, origin) for i, origin in enumerate(origins) if origin.get("id") in origin_ids
+                    ]
+                elif isinstance(mapping, dict):
+                    if any(origin.get("candidate_id") == candidate["id"] for origin in origins):
+                        raise SystemExit("code-remediate-report-source-mapping-invalid")
+                    selected_origins = [
+                        (i, origin)
+                        for i, origin in enumerate(origins)
+                        if origin.get("disposition") == "unresolved"
+                        and candidate["id"] in mapping.get(origin.get("finding_id"), [])
+                    ]
+                else:
+                    raise SystemExit("code-remediate-report-source-mapping-invalid")
                 body = "Open concern, not a confirmed defect or automatic edit request: " + json.dumps(
                     candidate, sort_keys=True
                 )
                 # Preserve every mapped original inside this occurrence; closed dispositions add no edit obligation.
-                for origin_index, origin in enumerate(origins):
-                    if not isinstance(origin, dict):
-                        raise SystemExit("code-remediate-report-input-invalid")
-                    if origin.get("disposition") == "unresolved" and candidate["id"] in mapping.get(
-                        origin.get("finding_id"), []
-                    ):
-                        body += f"\nImmutable source origin /metadata/source_findings/{origin_index}: " + json.dumps(
-                            origin, sort_keys=True
-                        )
+                for origin_index, origin in selected_origins:
+                    body += f"\nImmutable source origin /metadata/source_findings/{origin_index}: " + json.dumps(
+                        origin, sort_keys=True
+                    )
                 fields[f"/metadata/review_validation/candidates/{index}"] = [body]
     sources = []
     for field, values in fields.items():
@@ -1979,7 +2041,14 @@ def _validate_code_remediate_production_lifecycle(
     if not isinstance(buckets, list) or not 2 <= len(buckets) <= 4:
         raise SystemExit("code-remediate-production-lifecycle-bucket-count-invalid")
     expected_nodes = [bucket.get("bucket_id") for bucket in buckets if isinstance(bucket, dict)]
-    expected_paths = sorted({path for bucket in buckets for path in bucket["owned_paths"]})
+    # Plans retain authored ordering and spelling; receipts use the producer's validated portable representation.
+    try:
+        expected_bucket_paths = [
+            sorted(_portable_relative(path, "owned-path") for path in bucket["owned_paths"]) for bucket in buckets
+        ]
+    except PilotError as error:
+        raise SystemExit("code-remediate-production-lifecycle-owned-path-invalid") from error
+    expected_paths = sorted({path for paths in expected_bucket_paths for path in paths})
     evidence_root = lifecycle.get("evidence_root")
     evidence_parts = PurePosixPath(evidence_root).parts if isinstance(evidence_root, str) else ()
     # PR promotion adds one component; admit its bounded identity without admitting arbitrary nesting or another run.
@@ -2035,11 +2104,11 @@ def _validate_code_remediate_production_lifecycle(
         or [node.get("node_id") for node in recorded_nodes if isinstance(node, dict)] != expected_nodes
     ):
         raise SystemExit("code-remediate-production-lifecycle-node-mismatch")
-    for node, bucket in zip(recorded_nodes, buckets, strict=True):
+    for node, bucket, owned_paths in zip(recorded_nodes, buckets, expected_bucket_paths, strict=True):
         output = bucket.get("output")
         if (
             not isinstance(node, dict)
-            or node.get("owned_paths") != bucket["owned_paths"]
+            or node.get("owned_paths") != owned_paths
             or not isinstance(output, str)
             or not output
             or "/" in output
@@ -2062,10 +2131,10 @@ def _validate_code_remediate_production_lifecycle(
         or [node.get("node_id") for node in nodes if isinstance(node, dict)] != expected_nodes
     ):
         raise SystemExit("code-remediate-production-lifecycle-node-mismatch")
-    for node, recorded, bucket in zip(nodes, recorded_nodes, buckets, strict=True):
+    for node, recorded, owned_paths in zip(nodes, recorded_nodes, expected_bucket_paths, strict=True):
         if (
             not isinstance(node, dict)
-            or node.get("owned_paths") != bucket["owned_paths"]
+            or node.get("owned_paths") != owned_paths
             or not isinstance(node.get("patch_sha256"), str)
             or re.fullmatch(r"[0-9a-f]{64}", node["patch_sha256"]) is None
             or node["patch_sha256"] != recorded["patch_sha256"]
@@ -2281,7 +2350,7 @@ def _validate_workplan_paths_and_digests(workplan: dict[str, Any]) -> _WorkplanA
     )
 
 
-def _validate_workplan_shape(metadata: dict[str, Any]) -> tuple[dict[str, Any], list[int], _WorkplanApproval]:
+def _validate_workplan_shape(metadata: dict[str, Any]) -> tuple[dict[str, Any], list[int], _WorkplanApproval | None]:
     """Check resolution-scope and workplan metadata shape before any bucket is inspected."""
     resolution_scope = metadata.get("resolution_scope")
     if not isinstance(resolution_scope, dict):
@@ -2299,10 +2368,10 @@ def _validate_workplan_shape(metadata: dict[str, Any]) -> tuple[dict[str, Any], 
     if not isinstance(workplan.get("work_buckets"), list):
         raise SystemExit("code-remediate-invalid-resolution-workplan:work_buckets")
 
-    approval = _validate_workplan_paths_and_digests(workplan)
-
     if len(selected_indexes) != len(set(selected_indexes)):
         raise SystemExit("code-remediate-selected-indexes-not-unique")
+    # An empty selection has no bucket plan or approval record to bind.
+    approval = _validate_workplan_paths_and_digests(workplan) if selected_indexes else None
     return workplan, selected_indexes, approval
 
 
@@ -2649,10 +2718,21 @@ def _validate_code_remediate_workplan(
     work_buckets = workplan["work_buckets"]
 
     if not selected_indexes:
-        if work_buckets or workplan["groups_total"] != 0:
+        if work_buckets or any(
+            workplan[key] != 0
+            for key in (
+                "groups_total",
+                "parent_owned_groups",
+                "specialist_owned_groups",
+                "verifier_groups",
+                "unassigned_selected_items",
+            )
+        ):
             raise SystemExit("code-remediate-empty-selection-has-work-buckets")
         return
 
+    if approval is None:
+        raise SystemExit("code-remediate-missing-parallel-approval")
     bucket_plan = _validate_workplan_evidence_files(out_dir, workplan, approval)
     _validate_workplan_aggregate_counts(workplan, work_buckets)
     observed = _validate_work_buckets(work_buckets, out_dir)
@@ -3190,11 +3270,14 @@ def _validate_code_remediate_pr_identity(
     if checkout.get("local_head") != checkout.get("expected_head"):
         raise SystemExit("code-remediate-pr-local-checkout-oid-mismatch")
     expected_diff_command = f"git diff --binary {routing.get('base_oid')}...{routing.get('head_oid')} --"
+    current_diff_command = (
+        f"git diff --binary --no-ext-diff --no-textconv {routing.get('base_oid')}...{routing.get('head_oid')} --"
+    )
     if (
         checkout.get("diff_source") != "verified-local-checkout"
         or checkout.get("diff_base_oid") != routing.get("base_oid")
         or checkout.get("diff_head_oid") != routing.get("head_oid")
-        or checkout.get("diff_command") != expected_diff_command
+        or checkout.get("diff_command") not in (expected_diff_command, current_diff_command)
     ):
         raise SystemExit("code-remediate-pr-local-diff-provenance-invalid")
 
@@ -3414,10 +3497,10 @@ def _validate_adversarial_loop(
         raise SystemExit("adversarial-loop-table-contract-version-required")
     scope = result["metadata"].get("challenge_scope")
     if "child_runs" in _load_json(out_dir / "final-handoff.json") and not (
-        isinstance(scope, dict) and scope.get("mode") == "chunked"
+        isinstance(scope, dict) and scope.get("mode") in ("chunked", "scoped")
     ):
         raise SystemExit("adversarial-loop-child-scores-scope-invalid")
-    if isinstance(scope, dict) and scope.get("mode") == "chunked":
+    if isinstance(scope, dict) and scope.get("mode") in ("chunked", "scoped"):
         _validate_chunked_coordinator(result, out_dir, gates, candidate=candidate, current_result=current_result)
         return
     if candidate or "challenge_scope" in result["metadata"]:
@@ -3505,7 +3588,11 @@ def _validate_adversarial_loop(
     if evidence.returncode:
         raise SystemExit("adversarial-loop-evidence-invalid:" + evidence.stderr.strip())
     loop_evidence = _load_json(out_dir / "loop-evidence.json")
-    if (candidate or current_result) and (loop_evidence.get("schema_version") != 2 or "origin" not in loop_evidence):
+    if (candidate or current_result) and (
+        type(loop_evidence.get("schema_version")) is not int
+        or loop_evidence["schema_version"] not in {2, 3}
+        or "origin" not in loop_evidence
+    ):
         raise SystemExit("adversarial-loop-evidence-contract-required")
     if "origin" in loop_evidence and result["metadata"].get("challenge_origin") != loop_evidence["origin"]:
         raise SystemExit("adversarial-loop-origin-mismatch")
@@ -3523,8 +3610,9 @@ def _validate_challenge_scope(
         if chunks_dir.exists() or chunks_dir.is_symlink():
             raise SystemExit("adversarial-loop-challenge-scope-mismatch")
         return
-    if scope != {
-        "mode": "chunked",
+    mode = scope.get("mode")
+    if mode not in ("chunked", "scoped") or scope != {
+        "mode": mode,
         "manifest_path": "chunks/chunks.json",
         "results_path": "chunks/results.json",
     }:
@@ -3541,6 +3629,15 @@ def _validate_challenge_scope(
         or not results.resolve().is_relative_to(out_dir.resolve())
     ):
         raise SystemExit("adversarial-loop-chunk-coverage-invalid")
+    # Prevent an old exhaustive result label from promoting a scoped manifest, or vice versa.
+    try:
+        manifest_value = json.loads(manifest.read_bytes())
+    except (OSError, ValueError):
+        manifest_value = None
+    manifest_version = manifest_value.get("schema_version") if isinstance(manifest_value, dict) else None
+    if type(manifest_version) is int and manifest_version in (1, 2):
+        if manifest_version != {"chunked": 1, "scoped": 2}[mode]:
+            raise SystemExit("adversarial-loop-chunk-coverage-invalid:scope-schema-mismatch")
     checker = Path(__file__).resolve().parent.parent / "skills" / "challenge-resolve" / "chunk_diff.py"
     checked = subprocess.run(  # noqa: S603 - argv list, no shell
         [
@@ -3567,6 +3664,22 @@ def _validate_challenge_scope(
         raise SystemExit("adversarial-loop-chunk-summary-invalid") from error
 
 
+def _validate_scoped_coverage_limit(checked: dict[str, Any], handoff: dict[str, Any]) -> None:
+    """Require the checked semantic-coverage limit in the human-visible handoff."""
+    limit = checked.get("coverage_limit")
+    confidence = handoff.get("confidence")
+    remaining = handoff.get("remaining")
+    if not isinstance(limit, str) or not limit.strip() or not isinstance(confidence, dict):
+        raise SystemExit("adversarial-loop-scoped-coverage-limit-missing")
+    limits = confidence.get("limits")
+    if not isinstance(limits, list) or not isinstance(remaining, list):
+        raise SystemExit("adversarial-loop-scoped-coverage-limit-missing")
+    visible = [re.sub(r"^\(-0\.\d{2}\)\s*", "", item) for item in limits if isinstance(item, str)]
+    visible.extend(item.get("item") for item in remaining if isinstance(item, dict))
+    if limit not in visible:
+        raise SystemExit("adversarial-loop-scoped-coverage-limit-missing")
+
+
 def _validate_chunked_coordinator(
     result: dict[str, Any], out_dir: Path, gates: dict[str, Any], *, candidate: bool, current_result: bool = False
 ) -> None:
@@ -3579,9 +3692,16 @@ def _validate_chunked_coordinator(
     manifest_path = out_dir / "chunks" / "chunks.json"
     if manifest_path.is_file():
         manifest = _load_json(manifest_path)
-        if current_result and manifest.get("schema_version") != 1:
+        scope = result["metadata"].get("challenge_scope", {})
+        mode = scope.get("mode", "chunked") if isinstance(scope, dict) else "chunked"
+        expected_version = {"chunked": 1, "scoped": 2}.get(mode) if isinstance(mode, str) else None
+        if current_result and (
+            type(manifest.get("schema_version")) is not int or manifest["schema_version"] != expected_version
+        ):
             raise SystemExit("adversarial-loop-chunk-origin-contract-required")
-        if manifest.get("schema_version") == 1 and result["metadata"].get("challenge_origin") != manifest.get("origin"):
+        if manifest.get("schema_version") in (1, 2) and result["metadata"].get("challenge_origin") != manifest.get(
+            "origin"
+        ):
             raise SystemExit("adversarial-loop-chunk-origin-mismatch")
     metadata = result["metadata"]
     if metadata.get("chunked_review") != checked or "adversarial_loop" in metadata:
@@ -3606,9 +3726,12 @@ def _validate_chunked_coordinator(
     ):
         raise SystemExit("adversarial-loop-chunk-coordinator-clean-result-invalid")
     handoff = _load_json(out_dir / "final-handoff.json")
-    if candidate and handoff.get("presentation_version") not in {3, 8, 9, 10, 11}:
+    scope = metadata.get("challenge_scope")
+    if isinstance(scope, dict) and scope.get("mode") == "scoped":
+        _validate_scoped_coverage_limit(checked, handoff)
+    if candidate and handoff.get("presentation_version") not in {3, 8, 9, 10, 11, 12}:
         raise SystemExit("adversarial-loop-child-scores-presentation-required")
-    if handoff.get("presentation_version") in {3, 8, 9, 10, 11} and handoff.get("child_runs") != checked["runs"]:
+    if handoff.get("presentation_version") in {3, 8, 9, 10, 11, 12} and handoff.get("child_runs") != checked["runs"]:
         raise SystemExit("adversarial-loop-child-scores-mismatch")
     rows = [row["cells"] for table in handoff["tables"] for row in table["rows"]]
     if any(row.get("admission") == "advisory" for table in handoff["tables"] for row in table["rows"]):
@@ -4003,7 +4126,7 @@ def _is_chunked_coordinator(skill: str, result: dict[str, Any]) -> bool:
         skill == "challenge-resolve"
         and result["metadata"].get("challenge_table_contract_version") in {1, 2}
         and isinstance(scope, dict)
-        and scope.get("mode") == "chunked"
+        and scope.get("mode") in ("chunked", "scoped")
     )
 
 
@@ -4455,6 +4578,10 @@ class _ValidationStep(NamedTuple):
 
 #: Repair hints for frequent failure codes, matched by longest code prefix. Each hint restates the failed condition.
 VALIDATION_HINTS = {
+    "missing-artifact-section:action-items.md:Final Resolution Summary": "Author the Final Resolution Summary in "
+    "action-items.md from the recorded request and outcome counts: ingested, resolved or already closed, implemented, "
+    "unresolved, deferred or not selected, and not applicable, duplicate or rejected. State whether all selected local "
+    "actionable items are closed using the recorded closure judgment, then retry finalization.",
     "review-findings-action-table-": "Reconcile the canonical finding/blocker records and authored row identities "
     "and statuses, then derive their presentation with remediation_finalize.py finalize --skill code-review.",
     "manifest-": "Compare the manifest with retained producer outputs and runtime receipts. Correct only proven "

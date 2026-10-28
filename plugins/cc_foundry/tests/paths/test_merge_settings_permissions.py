@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import shutil
 import stat
 import subprocess
@@ -175,6 +174,183 @@ class TestMatchesReplacedJq:
 class TestMergeContract:
     """Reporting, idempotence and refusal paths."""
 
+    def test_drop_allow_file_and_flag_both_drop(
+        self,
+        shipped: dict[str, Path],
+        user_settings: Path,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Rules named in ``--drop-allow-file`` and on ``--drop-allow`` are both removed, user rules stay.
+
+        Setup passes the retired list as a file because the gh-write-guard hook blocks a ``python`` call that names ``gh
+        api`` among its arguments; the file form must drop exactly what the flag form drops.
+        """
+        retired = tmp_path / "retired.json"
+        retired.write_text(json.dumps([_OLD_RULE, "Bash(find:*)"]), encoding="utf-8")
+        user_settings.write_text(
+            json.dumps({"permissions": {"allow": [_OLD_RULE, "Bash(find:*)", "Bash(sed:*)", "Read"]}}),
+            encoding="utf-8",
+        )
+        rc = msp.main(
+            [
+                *("--allow", str(shipped["allow"])),
+                *("--drop-allow-file", str(retired)),
+                *("--drop-allow", "Bash(sed:*)"),
+            ]
+        )
+        assert rc == 0
+        allow = json.loads(user_settings.read_text(encoding="utf-8"))["permissions"]["allow"]
+        assert [rule for rule in allow if rule in {_OLD_RULE, "Bash(find:*)", "Bash(sed:*)"}] == []
+        assert "Read" in allow
+        assert capsys.readouterr().out.splitlines()[0].endswith("dropped 3")
+
+    @pytest.mark.parametrize(
+        ("retired_text", "pair"),
+        [
+            pytest.param("null", "allow", id="allow-null"),
+            pytest.param('["Bash(find:*)", 7]', "allow", id="allow-non-string-entry"),
+            pytest.param('{"rule": "Bash(find:*)"}', "allow", id="allow-object"),
+            pytest.param("null", "deny", id="deny-null"),
+            pytest.param('["Bash(gh pr merge:*)", null]', "deny", id="deny-non-string-entry"),
+        ],
+    )
+    def test_damaged_retirement_list_stops_the_merge(
+        self, retired_text: str, pair: str, shipped: dict[str, Path], user_settings: Path, tmp_path: Path
+    ) -> None:
+        """A retirement list that cannot name the rules to remove exits 1 and leaves settings byte-unchanged.
+
+        A truncated retired file read as "retire nothing" would report success while the broad grants it exists to
+        remove stay in place. An empty array is the legitimate "nothing retired" state and is not refused.
+        """
+        retired = tmp_path / "retired.json"
+        retired.write_text(retired_text, encoding="utf-8")
+        original = json.dumps({"permissions": {"allow": ["Read", "Bash(find:*)"], "deny": ["Bash(gh pr merge:*)"]}})
+        user_settings.write_text(original, encoding="utf-8")
+        flag = "--drop-allow-file" if pair == "allow" else "--retire-deny-file"
+        rc = msp.main([*(f"--{pair}", str(shipped[pair])), *(flag, str(retired))])
+        assert rc == 1
+        assert user_settings.read_text(encoding="utf-8") == original
+
+    @pytest.mark.parametrize(
+        ("pair", "flag", "counted"),
+        [
+            pytest.param("allow", "--drop-allow-file", "dropped 0", id="allow-empty-array"),
+            pytest.param("deny", "--retire-deny-file", "retired 0", id="deny-empty-array"),
+        ],
+    )
+    def test_empty_retirement_array_retires_nothing(
+        self,
+        pair: str,
+        flag: str,
+        counted: str,
+        shipped: dict[str, Path],
+        user_settings: Path,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """An empty retirement array is the valid "nothing retired" state: the merge succeeds and removes no rule.
+
+        Strictness against a damaged retirement file must not turn the legitimate empty list into a failure, or a plugin
+        that has retired nothing could never run its setup.
+        """
+        retired = tmp_path / "retired.json"
+        retired.write_text("[]", encoding="utf-8")
+        user_settings.write_text(json.dumps({"permissions": {pair: ["Bash(find:*)"]}}), encoding="utf-8")
+        rc = msp.main([*(f"--{pair}", str(shipped[pair])), *(flag, str(retired))])
+        assert rc == 0
+        assert capsys.readouterr().out.splitlines()[0].endswith(counted)
+
+    @pytest.mark.parametrize(
+        ("base", "empty_flag", "label"),
+        [
+            pytest.param("allow", "--drop-allow-file", "retired allow file", id="drop-allow-file"),
+            pytest.param("deny", "--retire-deny-file", "retired deny file", id="retire-deny-file"),
+            pytest.param("deny", "--allow", "allow file", id="allow"),
+            pytest.param("allow", "--deny", "deny file", id="deny"),
+        ],
+    )
+    def test_empty_option_path_stops_the_merge(
+        self,
+        base: str,
+        empty_flag: str,
+        label: str,
+        shipped: dict[str, Path],
+        user_settings: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """An option given an empty path stops the merge and says the path is empty, not that a directory is unreadable.
+
+        An unset shell variable expanding to ``--drop-allow-file ""`` must not skip the retirement and still report
+        success, so settings stay byte-unchanged and the call exits 1. ``Path("")`` is the current directory, so without
+        the explicit check the refusal would name ``.`` instead of the operand the caller passed.
+        """
+        original = json.dumps({"permissions": {"allow": ["Bash(find:*)"], "deny": ["Bash(gh pr merge:*)"]}})
+        user_settings.write_text(original, encoding="utf-8")
+        rc = msp.main([*(f"--{base}", str(shipped[base])), *(empty_flag, "")])
+        assert rc == 1
+        assert f"{label} path is empty" in capsys.readouterr().err
+        assert user_settings.read_text(encoding="utf-8") == original
+
+    def test_empty_settings_path_is_refused_by_name(
+        self, shipped: dict[str, Path], capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """``--settings ""`` exits 4 and says the settings path is empty instead of printing the working directory.
+
+        The write-root check resolves an empty operand to the current directory, so its refusal used to name that
+        directory rather than the empty value the caller passed.
+        """
+        rc = msp.main([*("--allow", str(shipped["allow"])), *("--settings", "")])
+        assert rc == 4
+        assert "settings path is empty" in capsys.readouterr().err
+
+    @pytest.mark.parametrize(
+        "extra",
+        [
+            pytest.param(["--drop-allow", "Bash(find:*)"], id="drop-allow-flag"),
+            pytest.param(["--drop-allow-file", "retired.json"], id="drop-allow-file"),
+            pytest.param(["--drop-allow-file", ""], id="drop-allow-file-empty"),
+        ],
+    )
+    def test_drop_option_without_allow_is_refused(
+        self, extra: list[str], shipped: dict[str, Path], user_settings: Path
+    ) -> None:
+        """A drop option given without ``--allow`` exits 2 instead of being silently ignored.
+
+        With only ``--deny`` the allow merge never runs, so a dropped rule would stay in settings while the call
+        reported success.
+        """
+        original = json.dumps({"permissions": {"allow": ["Bash(find:*)"]}})
+        user_settings.write_text(original, encoding="utf-8")
+        with pytest.raises(SystemExit) as exit_info:
+            msp.main([*("--deny", str(shipped["deny"])), *extra])
+        assert exit_info.value.code == 2
+        assert user_settings.read_text(encoding="utf-8") == original
+
+    def test_retire_deny_file_empty_without_deny_is_refused(
+        self, shipped: dict[str, Path], user_settings: Path
+    ) -> None:
+        """An empty ``--retire-deny-file`` path without ``--deny`` still exits 2 instead of reading as option absent.
+
+        A guard that tested the option by truthiness would let ``""`` through, skip the deny merge and exit 0 with the
+        retired entries left in settings.
+        """
+        original = json.dumps({"permissions": {"deny": ["Bash(gh pr merge:*)"]}})
+        user_settings.write_text(original, encoding="utf-8")
+        with pytest.raises(SystemExit) as exit_info:
+            msp.main([*("--allow", str(shipped["allow"])), *("--retire-deny-file", "")])
+        assert exit_info.value.code == 2
+        assert user_settings.read_text(encoding="utf-8") == original
+
+    def test_retire_deny_file_without_deny_is_refused(self, shipped: dict[str, Path], user_settings: Path) -> None:
+        """``--retire-deny-file`` given without ``--deny`` exits 2 instead of being silently ignored."""
+        original = json.dumps({"permissions": {"deny": ["Bash(gh pr merge:*)"]}})
+        user_settings.write_text(original, encoding="utf-8")
+        with pytest.raises(SystemExit) as exit_info:
+            msp.main([*("--allow", str(shipped["allow"])), *("--retire-deny-file", str(shipped["retired"]))])
+        assert exit_info.value.code == 2
+        assert user_settings.read_text(encoding="utf-8") == original
+
     def test_reports_counts(
         self, shipped: dict[str, Path], user_settings: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -330,14 +506,23 @@ class TestMergeContract:
 def test_foundry_setup_passes_the_retirement_flags() -> None:
     """Foundry setup Step 5 drops exactly the obsolete allow rules and passes its retired-deny list.
 
-    Pins the call site that replaced the two jq filters, so a lost ``--drop-allow`` or ``--retire-deny-file`` flag fails
-    here instead of silently keeping stale rules in users' settings. The broad find/node/claude/sed allows were narrowed
-    out of every plugin's allow list; setup must retire them from installed settings too, since the merge only adds.
+    Pins the call site that replaced the two jq filters, so a lost ``--drop-allow-file`` or ``--retire-deny-file`` flag
+    fails here instead of silently keeping stale rules in users' settings. The broad find/node/claude/sed allows were
+    narrowed out of every plugin's allow list; setup must retire them from installed settings too, since the merge only
+    adds. The rules come from a shipped file, never the command line: the gh-write-guard hook blocks a ``python`` call
+    whose arguments name ``gh api``, so ``--drop-allow 'Bash(gh api repos/*:*)'`` would stop setup.
     """
-    skill = (Path(__file__).resolve().parents[2] / "skills" / "setup" / "SKILL.md").read_text(encoding="utf-8")
+    plugin_root = Path(__file__).resolve().parents[2]
+    skill = (plugin_root / "skills" / "setup" / "SKILL.md").read_text(encoding="utf-8")
     calls = [line for line in skill.splitlines() if "bin/merge_settings_permissions.py" in line]
     assert len(calls) == 1
-    assert re.findall(r"--drop-allow '([^']*)'", calls[0]) == [
+    assert "--drop-allow " not in calls[0]
+    assert "gh api" not in calls[0]
+    assert '--drop-allow-file "$PLUGIN_ROOT/.claude-plugin/permissions-allow-retired.json"' in calls[0]
+    retired = json.loads(
+        (plugin_root / ".claude-plugin" / "permissions-allow-retired.json").read_text(encoding="utf-8")
+    )
+    assert retired == [
         _OLD_RULE,
         "Bash(claude:*)",
         "Bash(find:*)",

@@ -36,6 +36,27 @@ def _write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
     path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8", newline="\n")
 
 
+@pytest.mark.parametrize(
+    ("existing", "expected"),
+    [
+        pytest.param(None, b"diff --git a/widget.py b/widget.py\n", id="fresh-run"),
+        pytest.param(b"", b"", id="retained-empty-patch"),
+        pytest.param(b"retained patch\n", b"retained patch\n", id="retained-patch"),
+    ],
+)
+def test_inspection_fixture_preserves_existing_patch_or_initializes_new(
+    tmp_path: Path, existing: bytes | None, expected: bytes
+) -> None:
+    """A supplied new directory needs a patch; an existing patch remains byte-exact and hash-bound."""
+    run = tmp_path / "explicit-run"
+    run.mkdir()
+    if existing is not None:
+        (run / "diff.patch").write_bytes(existing)
+    fixture = _inspection_run(tmp_path, run_dir=run)
+    assert (run / "diff.patch").read_bytes() == expected
+    assert fixture["manifest"]["review_input_sha256"] == hashlib.sha256(expected).hexdigest()
+
+
 def _inspection_run(
     tmp_path: Path,
     *,
@@ -51,7 +72,9 @@ def _inspection_run(
     specialists = run / "specialists"
     specialists.mkdir(parents=True, exist_ok=True)
     sessions.mkdir(parents=True, exist_ok=True)
-    review_input = b"diff --git a/widget.py b/widget.py\n"
+    review_input = (
+        (run / "diff.patch").read_bytes() if (run / "diff.patch").exists() else b"diff --git a/widget.py b/widget.py\n"
+    )
     (run / "diff.patch").write_bytes(review_input)
     input_hash = hashlib.sha256(review_input).hexdigest()
     plan = {
@@ -68,6 +91,7 @@ def _inspection_run(
         "parent_thread_id": parent_thread_id,
         "review_input_sha256": input_hash,
         "source_sensitivity": "non-sensitive",
+        "model_selection": {"mode": "explicit", "model": "test-review-model"},
         "contexts": [],
         "independent_review_required": independent_required,
         "independence_requirement_evidence": "User explicitly required independent review."
@@ -122,7 +146,7 @@ def _inspection_run(
             "context_path": context_path.relative_to(run).as_posix(),
             "context_sha256": context_hash,
             "turn_id": turn,
-            "model": fields["model"],
+            "model": "test-review-model",
             "effort": fields["model_reasoning_effort"],
             "output_path": output_path.relative_to(run).as_posix(),
             "output_sha256": hashlib.sha256(output_path.read_bytes()).hexdigest(),
@@ -150,7 +174,12 @@ def _inspection_run(
                         "name": "spawn_agent",
                         "call_id": attempt["spawn_call_id"],
                         "arguments": json.dumps(
-                            {"message": context, "task_name": Path(agent_path).name, "fork_turns": "none"}
+                            {
+                                "message": context,
+                                "task_name": Path(agent_path).name,
+                                "fork_turns": "none",
+                                "model": "test-review-model",
+                            }
                         ),
                     },
                 },
@@ -206,7 +235,11 @@ def _inspection_run(
                 },
                 {
                     "type": "turn_context",
-                    "payload": {"turn_id": turn, "model": fields["model"], "effort": fields["model_reasoning_effort"]},
+                    "payload": {
+                        "turn_id": turn,
+                        "model": "test-review-model",
+                        "effort": fields["model_reasoning_effort"],
+                    },
                 },
                 {
                     "type": "event_msg",
@@ -642,7 +675,8 @@ def test_spawn_receipt_rejects_unbound_or_ambiguous_lineage(tmp_path: Path, muta
         _write_jsonl(child, child_rows)
     _write_jsonl(parent, rows)
 
-    with pytest.raises(SystemExit, match="provenance-parent-spawn-mismatch"):
+    expected = "review-inspection-spawn-missing" if mutation == "duplicate-call" else "provenance-parent-spawn-mismatch"
+    with pytest.raises(SystemExit, match=expected):
         _validator()._validate_manifest_preflight(fixture["run"], fixture["sessions"], "parent-thread", fixture["run"])
 
 
@@ -705,7 +739,9 @@ def test_schema_five_rejects_unbound_or_executing_child_evidence(
     elif tamper == "context":
         parent = sessions / "sessions" / "rollout-parent-thread.jsonl"
         rows = [json.loads(line) for line in parent.read_text(encoding="utf-8").splitlines()]
-        rows[1]["payload"]["arguments"] = json.dumps({"message": "wrong"})
+        arguments = json.loads(rows[1]["payload"]["arguments"])
+        arguments["message"] = "wrong"
+        rows[1]["payload"]["arguments"] = json.dumps(arguments)
         _write_jsonl(parent, rows)
         expected = "review-inspection-context-not-sent:qa-specialist"
     elif tamper == "output":
@@ -861,6 +897,43 @@ def test_inspection_distinguishes_lifecycle_from_executable_events(
         validator._validate_manifest_preflight(fixture["run"], fixture["sessions"], "parent-thread", fixture["run"])
     else:
         with pytest.raises(SystemExit, match="review-inspection-child-tool-use:qa-specialist"):
+            validator._validate_manifest_preflight(fixture["run"], fixture["sessions"], "parent-thread", fixture["run"])
+
+
+@pytest.mark.parametrize(
+    ("payload", "permitted"),
+    [
+        pytest.param(
+            {
+                "type": "additional_tools",
+                "id": "at-host",
+                "role": "developer",
+                "tools": [{"type": "namespace", "name": "functions", "tools": []}],
+            },
+            True,
+            id="host-tool-inventory",
+        ),
+        pytest.param({"type": "additional_tools", "role": "assistant", "tools": []}, False, id="wrong-role"),
+        pytest.param({"type": "function_call", "name": "exec"}, False, id="actual-tool-call"),
+    ],
+)
+def test_paged_review_distinguishes_host_tool_inventory_from_calls(
+    tmp_path: Path, payload: dict[str, object], permitted: bool
+) -> None:
+    """Accept host tool inventory while rejecting executable or malformed extra activity."""
+    fixture = _inspection_run(tmp_path)
+    _use_frozen_read_receipts(fixture)
+    child = fixture["sessions"] / "sessions" / "rollout-child-1.jsonl"
+    rows = [json.loads(line) for line in child.read_text(encoding="utf-8").splitlines()]
+    rows.insert(1, {"type": "response_item", "payload": payload})
+    _write_jsonl(child, rows)
+    validator = _validator()
+    if permitted:
+        validator._validate_manifest_preflight(fixture["run"], fixture["sessions"], "parent-thread", fixture["run"])
+    else:
+        with pytest.raises(
+            SystemExit, match=r"review-inspection-(child-tool-use|context-read-count-mismatch):qa-specialist"
+        ):
             validator._validate_manifest_preflight(fixture["run"], fixture["sessions"], "parent-thread", fixture["run"])
 
 

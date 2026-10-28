@@ -29,7 +29,7 @@ target, keeping the link and the target's existing permission bits (the shell ``
 replaces swapped the link for a regular file).
 
 Usage:
-    merge_settings_permissions.py --allow <file> [--drop-allow <rule>]...
+    merge_settings_permissions.py --allow <file> [--drop-allow <rule>]... [--drop-allow-file <file>]
     merge_settings_permissions.py --deny <file> [--retire-deny-file <file>]
     merge_settings_permissions.py --allow <file> --deny <file> [--settings <path>]
 
@@ -37,6 +37,9 @@ Options:
     --settings PATH           Settings file to edit (default ``~/.claude/settings.json``).
     --allow FILE              JSON array of allow rules to add.
     --drop-allow RULE         Existing allow rule to remove before adding (repeatable, exact match).
+    --drop-allow-file FILE    JSON array of allow rules to remove before adding (exact match); adds to --drop-allow.
+                              A rule such as ``Bash(gh api …)`` belongs here, not on the command line: the
+                              gh-write-guard hook blocks a ``python`` call whose arguments name ``gh api``.
     --deny FILE               JSON array of deny rules to add.
     --retire-deny-file FILE   JSON array of deny rules to remove before adding (exact match).
 
@@ -48,7 +51,7 @@ Exit codes:
     0 — merged and written (also when nothing changed)
     1 — settings or source file missing, unreadable, invalid JSON, or wrong shape; settings unchanged
     2 — bad arguments (argparse), or neither --allow nor --deny given
-    4 — settings path outside the ``~/.claude/`` write root
+    4 — settings path empty or outside the ``~/.claude/`` write root
 """
 
 from __future__ import annotations
@@ -174,17 +177,38 @@ def _load_json(path: Path, label: str) -> Any:
         raise MergeError(f"{label} unreadable or invalid JSON: {path}: {exc}") from exc
 
 
-def _load_rule_list(path: Path, label: str) -> list[Any]:
-    """Load a shipped rule file; jq's ``X + null`` is X, so a JSON null contributes no rules."""
+def _load_rule_list(path: Path, label: str, *, retirement: bool = False) -> list[Any]:
+    """Load a shipped rule file; jq's ``X + null`` is X, so a JSON null contributes no rules.
+
+    A ``retirement`` list names rules to remove, so a damaged file must stop the merge instead of silently retiring
+    nothing: it refuses JSON null and any entry that is not a string. An empty array stays valid, the legitimate
+    "nothing retired" state.
+    """
     value = _load_json(path, label)
+    if retirement and value is None:
+        raise MergeError(f"{label} must hold a JSON array, found null: {path}")
     if value is None:
         return []
     if not isinstance(value, list):
         raise MergeError(f"{label} must hold a JSON array: {path}")
+    if retirement and not all(isinstance(rule, str) for rule in value):
+        raise MergeError(f"{label} must hold only string rules: {path}")
     return value
 
 
-def merge_allow(permissions: dict[str, Any], shipped: list[Any], drop: list[str]) -> MergeCounts:
+def _option_path(value: str, label: str) -> Path:
+    """Turn an option operand into a path, refusing an empty one that :class:`Path` would read as the current directory.
+
+    Examples:
+        >>> _option_path("rules.json", "allow file").name
+        'rules.json'
+    """
+    if value == "":
+        raise MergeError(f"{label} path is empty")
+    return Path(value)
+
+
+def merge_allow(permissions: dict[str, Any], shipped: list[Any], drop: list[Any]) -> MergeCounts:
     """Apply the allow merge in place and return what changed.
 
     Examples:
@@ -247,8 +271,10 @@ def _validate_settings_path(raw: str) -> Path:
     """Return the lexical absolute settings path, refusing anything not directly inside ``~/.claude``.
 
     Raises:
-        ValueError: If the path is outside the write root or not a ``.json`` file.
+        ValueError: If the path is empty, outside the write root, or not a ``.json`` file.
     """
+    if raw == "":
+        raise ValueError("settings path is empty")
     claude_dir = Path(os.path.abspath(_home_dir() / ".claude"))
     target = Path(os.path.abspath(_expand_home(Path(raw))))
     if target.parent != claude_dir or target.suffix != ".json":
@@ -305,17 +331,24 @@ def run(args: argparse.Namespace) -> int:
     try:
         settings, permissions = _settings_permissions(_load_json(target, "settings"))
         report: list[str] = []
-        if args.allow:
-            shipped = _load_rule_list(Path(args.allow), "allow file")
-            counts = merge_allow(permissions, shipped, args.drop_allow)
+        if args.allow is not None:
+            shipped = _load_rule_list(_option_path(args.allow, "allow file"), "allow file")
+            dropped: list[Any] = list(args.drop_allow)
+            if args.drop_allow_file is not None:
+                dropped += _load_rule_list(
+                    _option_path(args.drop_allow_file, "retired allow file"), "retired allow file", retirement=True
+                )
+            counts = merge_allow(permissions, shipped, dropped)
             report.append(
                 f"permissions.allow: added {counts.added}, already present {counts.present}, dropped {counts.removed}"
             )
-        if args.deny:
-            shipped = _load_rule_list(Path(args.deny), "deny file")
+        if args.deny is not None:
+            shipped = _load_rule_list(_option_path(args.deny, "deny file"), "deny file")
             retired: list[Any] = []
-            if args.retire_deny_file:
-                retired = _load_rule_list(Path(args.retire_deny_file), "retired deny file")
+            if args.retire_deny_file is not None:
+                retired = _load_rule_list(
+                    _option_path(args.retire_deny_file, "retired deny file"), "retired deny file", retirement=True
+                )
             counts = merge_deny(permissions, shipped, retired)
             report.append(
                 f"permissions.deny: added {counts.added}, already present {counts.present}, retired {counts.removed}"
@@ -350,11 +383,18 @@ def main(argv: list[str] | None = None) -> int:
         default=[],
         help="Existing allow rule removed before the add (repeatable, exact match).",
     )
+    parser.add_argument(
+        "--drop-allow-file", metavar="FILE", help="JSON array of allow rules removed before the add (exact match)."
+    )
     parser.add_argument("--deny", metavar="FILE", help="JSON array of deny rules to add.")
     parser.add_argument("--retire-deny-file", metavar="FILE", help="JSON array of deny rules removed before the add.")
     args = parser.parse_args(argv)
-    if not args.allow and not args.deny:
+    if args.allow is None and args.deny is None:
         parser.error("give --allow, --deny, or both")
+    if (args.drop_allow or args.drop_allow_file is not None) and args.allow is None:
+        parser.error("--drop-allow and --drop-allow-file modify the allow merge, so they need --allow")
+    if args.retire_deny_file is not None and args.deny is None:
+        parser.error("--retire-deny-file modifies the deny merge, so it needs --deny")
     return run(args)
 
 
