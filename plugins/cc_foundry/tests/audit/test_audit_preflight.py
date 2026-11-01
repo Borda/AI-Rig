@@ -1,124 +1,182 @@
-"""Tests for audit_preflight bin script.
+"""Tests for the audit_preflight bin script.
 
-Covers argument splitting (flags, aliases, --keep, scope tokens), the tool-probe memo, sentinel writing, and the CLI's
-two failure exits.
+Covers argument splitting (flags, aliases, --keep, scope tokens), the tool-probe memo, sentinel writing, the CLI's
+failure exits and the refusal to write state through links into the instruction sources.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
+from unittest import mock
 
 import audit_preflight as ap
 import pytest
 
+_skip_no_posix_symlinks = pytest.mark.skipif(ap.os.name != "posix", reason="creating symlinks needs POSIX permissions")
+
+
+@pytest.fixture
+def cli(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> Callable[..., tuple[int, str]]:
+    """Return a runner that calls ``main()`` in a scratch tree and yields ``(exit_code, stdout)``.
+
+    The tree has a ``templates`` directory that resolves, every tool probes present, ``TMPDIR`` is the scratch root and
+    the session token is ``sess``, so the sentinels land in ``tmp_path / "audit-state-sess"``.
+    """
+    templates = tmp_path / "templates"
+    templates.mkdir()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    monkeypatch.setenv("CSID", "sess")
+    monkeypatch.setattr(ap, "resolve_subdir", mock.create_autospec(ap.resolve_subdir, return_value=templates))
+    monkeypatch.setattr(ap, "probe_tool", mock.create_autospec(ap.probe_tool, return_value=True))
+
+    def run(*args: str) -> tuple[int, str]:
+        monkeypatch.setattr("sys.argv", ["audit_preflight.py", *args])
+        return ap.main(), capsys.readouterr().out
+
+    return run
+
 
 class TestParseArguments:
-    """Covers splitting the raw argument string."""
+    """Splitting the raw argument string into state flags, the --keep text and scope tokens."""
 
-    def test_bare_scope(self) -> None:
-        """A plain scope token sets no flags."""
+    def test_bare_scope_sets_no_flags(self) -> None:
+        """A plain scope token sets no flags and no keep text.
+
+        The default invocation names only a scope; any flag that came out true here would change the audit mode without
+        the user asking for it.
+        """
         state, keep, scope = ap.parse_arguments("plugins")
-        assert scope == "plugins"
-        assert keep == ""
-        assert not any(state.values())
+        assert (scope, keep, any(state.values())) == ("plugins", "", False)
 
-    def test_flags_recognised(self) -> None:
-        """Each supported flag sets its state key and leaves the scope clean."""
-        state, _, scope = ap.parse_arguments("plugins --local --efficiency --skip-gate --fast")
-        assert state["local-mode"]
-        assert state["efficiency"]
-        assert state["skip-gate"]
-        assert state["fast"]
-        assert scope == "plugins"
+    @pytest.mark.parametrize(
+        ("arguments", "keys", "scope"),
+        [
+            pytest.param(
+                "plugins --local --efficiency --skip-gate --fast",
+                ("local-mode", "efficiency", "skip-gate", "fast"),
+                "plugins",
+                id="local-efficiency-skip-gate-fast",
+            ),
+            pytest.param("plugins --efficiency --measured", ("measured",), "plugins", id="measured"),
+            pytest.param("rules --consolidate", ("consolidate",), "rules", id="consolidate"),
+            pytest.param("--challenge", ("adversarial",), "", id="challenge-is-adversarial-alias"),
+        ],
+    )
+    def test_flag_sets_state_key_and_stays_out_of_scope(
+        self, arguments: str, keys: tuple[str, ...], scope: str
+    ) -> None:
+        """Each supported flag sets its state key and never leaks into the scope tokens.
 
-    def test_measured_is_a_flag_not_scope(self) -> None:
-        """--measured sets its own state key and never leaks into the scope tokens."""
-        state, _, scope = ap.parse_arguments("plugins --efficiency --measured")
-        assert state["measured"]
-        assert scope == "plugins"
+        ``--challenge`` is an alias that must set the same ``adversarial`` key as ``--adversarial``; a flag read as a
+        scope token would widen the audit to a path that does not exist.
+        """
+        state, _, parsed_scope = ap.parse_arguments(arguments)
+        assert (all(state[key] is True for key in keys), parsed_scope) == (True, scope)
 
-    def test_challenge_is_adversarial_alias(self) -> None:
-        """--challenge sets the same state as --adversarial."""
-        state, _, _ = ap.parse_arguments("--challenge")
-        assert state["adversarial"] is True
+    def test_keep_text_is_extracted_and_removed(self) -> None:
+        """--keep "..." is captured whole and does not leak into the scope tokens.
 
-    def test_keep_extracted_and_removed(self) -> None:
-        """--keep "..." is captured and does not leak into the scope tokens."""
+        The keep text carries spaces and commas; splitting on whitespace first would cut it into scope tokens.
+        """
         state, keep, scope = ap.parse_arguments('agents --keep "run-dir, task ids" --local')
-        assert keep == "run-dir, task ids"
-        assert scope == "agents"
-        assert state["local-mode"] is True
+        assert (keep, scope, state["local-mode"]) == ("run-dir, task ids", "agents", True)
 
-    def test_empty_keep_value(self) -> None:
-        """An empty --keep "" yields an empty string, not a missing match."""
+    def test_empty_keep_value_is_empty_string(self) -> None:
+        """An empty --keep "" yields an empty string, not a missing match, and leaves the scope intact."""
         _, keep, scope = ap.parse_arguments('plugins --keep ""')
-        assert keep == ""
-        assert scope == "plugins"
+        assert (keep, scope) == ("", "plugins")
 
-    def test_flag_substring_in_scope_not_matched(self) -> None:
-        """A scope token containing a flag name is not treated as that flag."""
+    def test_flag_name_inside_scope_token_is_not_a_flag(self) -> None:
+        """A scope token containing a flag name is not treated as that flag.
+
+        A path such as ``my--local-notes`` is legitimate scope text; matching flags by substring would silently switch
+        the run into local mode.
+        """
         state, _, scope = ap.parse_arguments("my--local-notes")
-        assert state["local-mode"] is False
-        assert scope == "my--local-notes"
+        assert (state["local-mode"], scope) == (False, "my--local-notes")
 
-    def test_multiple_scope_tokens_preserved_in_order(self) -> None:
+    def test_scope_tokens_keep_their_order(self) -> None:
         """Scope tokens keep their order with flags removed from between them."""
         _, _, scope = ap.parse_arguments("agents --local skills")
         assert scope == "agents skills"
 
 
 class TestProbeTool:
-    """Covers the four-hour tool probe memo."""
+    """The four-hour tool probe memo: PATH lookup, timestamp marker, and the cases that bypass or ignore the marker."""
 
-    def test_missing_tool_reports_false(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A tool not on PATH probes false."""
-        monkeypatch.setattr(ap.shutil, "which", lambda _name: None)
+    @mock.patch("audit_preflight.shutil.which", autospec=True, return_value=None)
+    def test_missing_tool_probes_false(self, which: mock.Mock, tmp_path: Path) -> None:
+        """A tool not on PATH probes false.
+
+        With no marker on disk the PATH lookup is the only evidence, so its absence must be reported, not assumed.
+        """
         assert ap.probe_tool("nope", state_dir=tmp_path) is False
+        which.assert_called_once_with("nope")
 
-    def test_present_tool_writes_marker(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A tool on PATH probes true and leaves a timestamp marker."""
-        monkeypatch.setattr(ap.shutil, "which", lambda _name: "/usr/bin/jq")
-        assert ap.probe_tool("jq", state_dir=tmp_path) is True
-        assert (tmp_path / "jq.ok").is_file()
+    @mock.patch("audit_preflight.shutil.which", autospec=True, return_value="/usr/bin/jq")
+    def test_present_tool_writes_marker(self, which: mock.Mock, tmp_path: Path) -> None:
+        """A tool on PATH probes true and leaves a timestamp marker.
 
-    def test_fresh_marker_short_circuits_lookup(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A recent marker returns true without consulting PATH."""
+        The marker is what lets later audit runs inside the TTL skip the lookup, so it must exist after a hit.
+        """
+        assert (ap.probe_tool("jq", state_dir=tmp_path), (tmp_path / "jq.ok").is_file()) == (True, True)
+        which.assert_called_once_with("jq")
+
+    @mock.patch("audit_preflight.shutil.which", autospec=True)
+    def test_fresh_marker_skips_path_lookup(self, which: mock.Mock, tmp_path: Path) -> None:
+        """A recent marker returns true without consulting PATH.
+
+        A marker younger than the TTL is the memo working; consulting PATH anyway would defeat its purpose.
+        """
         (tmp_path / "jq.ok").write_text(str(int(ap.time.time())), encoding="utf-8")
-
-        def _boom(_name: str) -> str:
-            raise AssertionError("PATH lookup should have been skipped")
-
-        monkeypatch.setattr(ap.shutil, "which", _boom)
         assert ap.probe_tool("jq", state_dir=tmp_path) is True
+        which.assert_not_called()
 
-    def test_expired_marker_falls_through(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A marker older than the TTL is ignored and PATH is consulted again."""
-        stale = int(ap.time.time()) - ap.PREFLIGHT_TTL - 10
-        (tmp_path / "jq.ok").write_text(str(stale), encoding="utf-8")
-        monkeypatch.setattr(ap.shutil, "which", lambda _name: None)
-        assert ap.probe_tool("jq", state_dir=tmp_path) is False
+    @pytest.mark.parametrize(
+        "marker",
+        [
+            pytest.param("0", id="expired-timestamp"),
+            pytest.param("not-a-number", id="corrupt-content"),
+        ],
+    )
+    @mock.patch("audit_preflight.shutil.which", autospec=True, return_value=None)
+    def test_unusable_marker_falls_through_to_path_lookup(self, which: mock.Mock, marker: str, tmp_path: Path) -> None:
+        """A marker older than the TTL, or one that is not a timestamp, is ignored and PATH is consulted again.
 
-    def test_corrupt_marker_falls_through(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A marker that is not a timestamp is ignored rather than raising."""
-        (tmp_path / "jq.ok").write_text("not-a-number", encoding="utf-8")
-        monkeypatch.setattr(ap.shutil, "which", lambda _name: None)
+        The epoch timestamp is far past the TTL on any host. A corrupt marker must degrade to a fresh lookup instead of
+        raising and aborting the audit before it starts.
+        """
+        (tmp_path / "jq.ok").write_text(marker, encoding="utf-8")
         assert ap.probe_tool("jq", state_dir=tmp_path) is False
+        which.assert_called_once_with("jq")
 
 
 class TestWriteState:
-    """Covers sentinel writing."""
+    """Sentinel writing: directory naming, session token safety, ownership, links and permissions."""
 
     def test_writes_session_scoped_files(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Sentinels land in a session-scoped directory under TMPDIR."""
+        """Sentinels land in a session-scoped directory under TMPDIR, one newline-terminated file per key.
+
+        The skill's later bash blocks read these files by name, so directory name and file contents are the contract.
+        """
         monkeypatch.setenv("TMPDIR", str(tmp_path))
         monkeypatch.setenv("CSID", "sess1")
         state_dir = ap.write_state({"local-mode": "true", "audit-tpl": "/x"})
         assert state_dir == tmp_path / "audit-state-sess1"
-        assert (state_dir / "local-mode").read_text(encoding="utf-8") == "true\n"
-        assert (state_dir / "audit-tpl").read_text(encoding="utf-8") == "/x\n"
+        assert [(state_dir / key).read_text(encoding="utf-8") for key in ("local-mode", "audit-tpl")] == [
+            "true\n",
+            "/x\n",
+        ]
 
-    def test_session_token_falls_back(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """With no session variables the token is `shared`, never a pid."""
+    def test_session_token_falls_back_to_shared(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """With no session variables the token is ``shared``, never a pid.
+
+        A pid differs on every call, so two bash blocks of one skill run would look for state in different directories.
+        """
         monkeypatch.setenv("TMPDIR", str(tmp_path))
         monkeypatch.delenv("CSID", raising=False)
         monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
@@ -132,11 +190,13 @@ class TestWriteState:
             pytest.param("sess 1", id="space"),
         ],
     )
-    def test_unsafe_session_token_rejected(self, token: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_unsafe_session_token_is_rejected(
+        self, token: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """A session token that could leave TMPDIR is refused, not written outside it.
 
-        Scenario: ``CSID=../escape`` would put the sentinels in a sibling of TMPDIR; the skill's bash blocks read the
-        same unsanitized ``CSID``, so falling back to another directory would silently split writer and readers.
+        ``CSID=../escape`` would put the sentinels in a sibling of TMPDIR; the skill's bash blocks read the same
+        unsanitized ``CSID``, so falling back to another directory would silently split writer and readers.
         """
         monkeypatch.setenv("TMPDIR", str(tmp_path))
         monkeypatch.setenv("CSID", token)
@@ -145,18 +205,21 @@ class TestWriteState:
 
     @pytest.mark.skipif(ap.os.name != "posix", reason="Windows has no POSIX mode bits to assert")
     def test_new_state_dir_is_private(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A freshly created state directory is readable by its owner only."""
+        """A freshly created state directory is readable by its owner only.
+
+        The sentinels name run directories and keep-items text, so group or world access would expose them on a shared
+        machine.
+        """
         monkeypatch.setenv("TMPDIR", str(tmp_path))
         monkeypatch.setenv("CSID", "sess3")
         state_dir = ap.write_state({"k": "v"})
         assert state_dir.stat().st_mode & 0o077 == 0
 
-    def test_directory_owned_by_another_user_refused(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_directory_owned_by_another_user_is_refused(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """A pre-existing state directory owned by someone else is not written into.
 
-        Scenario: with TMPDIR unset on a shared ``/tmp``, another user pre-creates ``audit-state-shared``; sentinels
-        such as ``keep-items`` would land in a directory they control. The foreign owner is simulated by shifting the
-        uid.
+        With TMPDIR unset on a shared ``/tmp``, another user pre-creates ``audit-state-shared``; sentinels such as
+        ``keep-items`` would land in a directory they control. The foreign owner is simulated by shifting the uid.
         """
         monkeypatch.setenv("TMPDIR", str(tmp_path))
         monkeypatch.setenv("CSID", "sess4")
@@ -166,7 +229,7 @@ class TestWriteState:
         with pytest.raises(PermissionError, match="owned by another user"):
             ap.write_state({"k": "v"})
 
-    def test_symlinked_state_dir_refused(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_symlinked_state_dir_is_refused(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """A state directory that is a symlink is not written through.
 
         The link is simulated on the ``lstat`` mode check so the case runs on hosts that cannot create symlinks.
@@ -177,14 +240,14 @@ class TestWriteState:
         with pytest.raises(PermissionError, match="symlink"):
             ap.write_state({"k": "v"})
 
-    @pytest.mark.skipif(ap.os.name != "posix", reason="creating symlinks needs POSIX permissions")
-    def test_sentinel_that_is_a_symlink_is_replaced_not_written_through(
+    @_skip_no_posix_symlinks
+    def test_sentinel_symlink_is_replaced_not_written_through(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A sentinel pre-planted as a symlink to another file leaves that file untouched.
 
-        Scenario: the user-owned state directory already holds ``local-mode`` pointing at the repository's AGENTS.md; a
-        plain write would replace the instruction file with the sentinel value.
+        The user-owned state directory already holds ``local-mode`` pointing at the repository's AGENTS.md; a plain
+        write would replace the instruction file with the sentinel value.
         """
         monkeypatch.setenv("TMPDIR", str(tmp_path))
         monkeypatch.setenv("CSID", "sess7")
@@ -194,15 +257,19 @@ class TestWriteState:
         state_dir.mkdir(mode=0o700)
         (state_dir / "local-mode").symlink_to(target)
         ap.write_state({"local-mode": "true"})
-        assert (
-            target.read_text(encoding="utf-8"),
-            (state_dir / "local-mode").is_symlink(),
-            (state_dir / "local-mode").read_text(encoding="utf-8"),
-        ) == ("instructions\n", False, "true\n")
+        sentinel = state_dir / "local-mode"
+        assert (target.read_text(encoding="utf-8"), sentinel.is_symlink(), sentinel.read_text(encoding="utf-8")) == (
+            "instructions\n",
+            False,
+            "true\n",
+        )
 
-    @pytest.mark.skipif(ap.os.name != "posix", reason="creating symlinks needs POSIX permissions")
-    def test_probe_marker_that_is_a_symlink_is_replaced_not_written_through(self, tmp_path: Path) -> None:
-        """A tool-probe marker pre-planted as a symlink does not redirect the timestamp into another file."""
+    @_skip_no_posix_symlinks
+    def test_probe_marker_symlink_is_replaced_not_written_through(self, tmp_path: Path) -> None:
+        """A tool-probe marker pre-planted as a symlink does not redirect the timestamp into another file.
+
+        The probe runs real ``shutil.which`` for ``python``, so the marker write is the only thing under test.
+        """
         target = tmp_path / "AGENTS.md"
         target.write_text("instructions\n", encoding="utf-8")
         marker_dir = tmp_path / "preflight"
@@ -215,95 +282,8 @@ class TestWriteState:
         )
 
 
-class TestCli:
-    """Covers the command-line contract."""
-
-    def test_mutually_exclusive_flags_exit_one(
-        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """--upgrade with --efficiency is rejected before any work happens."""
-        monkeypatch.setattr("sys.argv", ["audit_preflight.py", "--arguments", "--upgrade --efficiency"])
-        assert ap.main() == 1
-        assert "mutually exclusive" in capsys.readouterr().out
-
-    @pytest.mark.parametrize(
-        "other",
-        [
-            pytest.param("--upgrade", id="upgrade"),
-            pytest.param("--adversarial", id="adversarial"),
-            pytest.param("--efficiency", id="efficiency"),
-        ],
-    )
-    def test_consolidate_is_standalone(
-        self, other: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """--consolidate combined with any other mode is rejected before any work happens.
-
-        The mode is advisory and skips the fix gate, so stacking it onto a mode that fixes or shares a run
-        directory would blur which findings may be applied.
-        """
-        monkeypatch.setattr("sys.argv", ["audit_preflight.py", "--arguments", f"--consolidate {other}"])
-        assert ap.main() == 1
-        assert "--consolidate is standalone" in capsys.readouterr().out
-
-    def test_measured_without_efficiency_exits_one(
-        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """--measured alone is rejected: it only adds evidence to the efficiency pass.
-
-        A run that silently ignored it would leave the user believing transcripts were measured when nothing ran.
-        """
-        monkeypatch.setattr("sys.argv", ["audit_preflight.py", "--arguments", "plugins --measured"])
-        assert ap.main() == 1
-        assert "pass both" in capsys.readouterr().out
-
-    def test_measured_sentinel_is_written(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """--efficiency --measured writes the ``measured`` sentinel the Phase B block reads back as ``true``.
-
-        The measured phase runs only when that file holds ``true``, so a missing or stale sentinel would either skip the
-        requested measurement or run it unasked.
-        """
-        templates = tmp_path / "templates"
-        templates.mkdir()
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.setenv("TMPDIR", str(tmp_path))
-        monkeypatch.setenv("CSID", "sess6")
-        monkeypatch.setattr(ap, "resolve_subdir", lambda *_a, **_k: templates)
-        monkeypatch.setattr(ap, "probe_tool", lambda *_a, **_k: True)
-        monkeypatch.setattr(
-            "sys.argv",
-            ["audit_preflight.py", "--arguments", "plugins --efficiency --measured", "--claude-dir", str(tmp_path)],
-        )
-        assert ap.main() == 0
-        assert (tmp_path / "audit-state-sess6" / "measured").read_text(encoding="utf-8") == "true\n"
-
-    def test_consolidate_flag_is_recognised(self) -> None:
-        """--consolidate sets its own state key and leaves the scope tokens alone."""
-        state, _, scope = ap.parse_arguments("rules --consolidate")
-        assert state["consolidate"]
-        assert scope == "rules"
-
-    def test_consolidate_prints_dispatch_line_and_needs_no_claude_dir(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """--consolidate prints the dispatch line that tells the skill to skip every other step.
-
-        The mode reads plugins/, not .claude/, so a checkout without .claude/ must still run it; the dispatch line is
-        what makes the skip of Step 1 (pre-commit --all-files rewriting sources) deterministic rather than prose.
-        """
-        templates = tmp_path / "templates"
-        templates.mkdir()
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.setenv("TMPDIR", str(tmp_path))
-        monkeypatch.setenv("CSID", "sess3")
-        monkeypatch.setattr(ap, "resolve_subdir", lambda *_a, **_k: templates)
-        monkeypatch.setattr(ap, "probe_tool", lambda *_a, **_k: True)
-        monkeypatch.setattr(
-            "sys.argv",
-            ["audit_preflight.py", "--arguments", "rules --consolidate", "--claude-dir", str(tmp_path / "absent")],
-        )
-        assert ap.main() == 0
-        assert "dispatch=mode:consolidate" in capsys.readouterr().out
+class TestBindArguments:
+    """Keeping a raw argument string that starts with a dash bound to its ``--arguments`` option."""
 
     @pytest.mark.parametrize(
         ("argv", "expected"),
@@ -325,22 +305,65 @@ class TestCli:
         """
         assert ap._bind_arguments(argv) == expected
 
-    def test_plain_audit_prints_no_dispatch_line(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+
+class TestCli:
+    """The command-line contract: exit codes, output lines and the sentinels a successful run writes."""
+
+    def test_mutually_exclusive_flags_exit_one(self, cli: Callable[..., tuple[int, str]]) -> None:
+        """--upgrade with --efficiency is rejected before any work happens."""
+        code, out = cli("--arguments", "--upgrade --efficiency")
+        assert (code, "mutually exclusive" in out) == (1, True)
+
+    @pytest.mark.parametrize(
+        "other",
+        [
+            pytest.param("--upgrade", id="upgrade"),
+            pytest.param("--adversarial", id="adversarial"),
+            pytest.param("--efficiency", id="efficiency"),
+        ],
+    )
+    def test_consolidate_is_standalone(self, other: str, cli: Callable[..., tuple[int, str]]) -> None:
+        """--consolidate combined with any other mode is rejected before any work happens.
+
+        The mode is advisory and skips the fix gate, so stacking it onto a mode that fixes or shares a run directory
+        would blur which findings may be applied.
+        """
+        code, out = cli("--arguments", f"--consolidate {other}")
+        assert (code, "--consolidate is standalone" in out) == (1, True)
+
+    def test_measured_without_efficiency_exits_one(self, cli: Callable[..., tuple[int, str]]) -> None:
+        """--measured alone is rejected: it only adds evidence to the efficiency pass.
+
+        A run that silently ignored it would leave the user believing transcripts were measured when nothing ran.
+        """
+        code, out = cli("--arguments", "plugins --measured")
+        assert (code, "pass both" in out) == (1, True)
+
+    def test_measured_sentinel_is_written(self, tmp_path: Path, cli: Callable[..., tuple[int, str]]) -> None:
+        """--efficiency --measured writes the ``measured`` sentinel the Phase B block reads back as ``true``.
+
+        The measured phase runs only when that file holds ``true``, so a missing or stale sentinel would either skip the
+        requested measurement or run it unasked.
+        """
+        code, _ = cli("--arguments", "plugins --efficiency --measured", "--claude-dir", str(tmp_path))
+        assert (code, (tmp_path / "audit-state-sess" / "measured").read_text(encoding="utf-8")) == (0, "true\n")
+
+    def test_consolidate_prints_dispatch_line_and_needs_no_claude_dir(
+        self, tmp_path: Path, cli: Callable[..., tuple[int, str]]
     ) -> None:
+        """--consolidate prints the dispatch line that tells the skill to skip every other step.
+
+        The mode reads plugins/, not .claude/, so a checkout without .claude/ must still run it; the dispatch line is
+        what makes the skip of Step 1 (pre-commit --all-files rewriting sources) deterministic rather than prose.
+        """
+        code, out = cli("--arguments", "rules --consolidate", "--claude-dir", str(tmp_path / "absent"))
+        assert (code, "dispatch=mode:consolidate" in out) == (0, True)
+
+    def test_plain_audit_prints_no_dispatch_line(self, tmp_path: Path, cli: Callable[..., tuple[int, str]]) -> None:
         """Only --consolidate prints a dispatch line, so the regular audit flow is unchanged."""
-        claude = tmp_path / ".claude"
-        claude.mkdir()
-        templates = tmp_path / "templates"
-        templates.mkdir()
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.setenv("TMPDIR", str(tmp_path))
-        monkeypatch.setenv("CSID", "sess4")
-        monkeypatch.setattr(ap, "resolve_subdir", lambda *_a, **_k: templates)
-        monkeypatch.setattr(ap, "probe_tool", lambda *_a, **_k: True)
-        monkeypatch.setattr("sys.argv", ["audit_preflight.py", "--arguments", "plugins", "--claude-dir", str(claude)])
-        assert ap.main() == 0
-        assert "dispatch=" not in capsys.readouterr().out
+        (tmp_path / ".claude").mkdir()
+        code, out = cli("--arguments", "plugins", "--claude-dir", str(tmp_path / ".claude"))
+        assert (code, "dispatch=" in out) == (0, False)
 
     @pytest.mark.parametrize(
         "arguments",
@@ -349,98 +372,65 @@ class TestCli:
             pytest.param("--typo rules --consolidate", id="unknown-flag-before-scope"),
         ],
     )
-    def test_consolidate_rejects_an_unknown_flag(
-        self, arguments: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_consolidate_rejects_an_unknown_flag(self, arguments: str, cli: Callable[..., tuple[int, str]]) -> None:
         """An unknown ``--flag`` next to --consolidate exits 1 instead of reaching the scope.
 
         The consolidate dispatch skips the skill's own unknown-flag question; without this check the stray token became
         a scope token and, before scope tokens were validated, widened the run to the whole tree.
         """
-        monkeypatch.setattr("sys.argv", ["audit_preflight.py", "--arguments", arguments])
-        assert ap.main() == 1
-        assert "unknown flag" in capsys.readouterr().out
+        code, out = cli("--arguments", arguments)
+        assert (code, "unknown flag" in out) == (1, True)
 
-    def test_consolidate_without_jq_exits_one(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_consolidate_without_jq_exits_one(self, cli: Callable[..., tuple[int, str]]) -> None:
         """A missing jq stops --consolidate before the cluster spend, since the merge step needs it."""
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.setattr(ap, "probe_tool", lambda name, **_k: name != "jq")
-        monkeypatch.setattr("sys.argv", ["audit_preflight.py", "--arguments", "--consolidate"])
-        assert ap.main() == 1
-        assert "! MISSING: jq" in capsys.readouterr().out
+        ap.probe_tool.side_effect = lambda name, **_kwargs: name != "jq"
+        code, out = cli("--arguments", "--consolidate")
+        assert (code, "! MISSING: jq" in out) == (1, True)
 
-    def test_missing_claude_dir_exits_one(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_missing_claude_dir_exits_one(self, tmp_path: Path, cli: Callable[..., tuple[int, str]]) -> None:
         """No .claude/ directory aborts with the BREAKING line."""
-        monkeypatch.setattr(
-            "sys.argv",
-            ["audit_preflight.py", "--arguments", "plugins", "--claude-dir", str(tmp_path / "absent")],
-        )
-        assert ap.main() == 1
-        assert "! BREAKING: .claude/ directory not found" in capsys.readouterr().out
+        code, out = cli("--arguments", "plugins", "--claude-dir", str(tmp_path / "absent"))
+        assert (code, "! BREAKING: .claude/ directory not found" in out) == (1, True)
 
-    def test_success_prints_state_summary(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    def test_success_prints_state_summary_and_writes_sentinels(
+        self, tmp_path: Path, cli: Callable[..., tuple[int, str]]
     ) -> None:
-        """A successful run prints the state lines and writes the sentinels."""
-        claude = tmp_path / ".claude"
-        claude.mkdir()
-        templates = tmp_path / "templates"
-        templates.mkdir()
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.setenv("TMPDIR", str(tmp_path))
-        monkeypatch.setenv("CSID", "sess2")
-        monkeypatch.setattr(ap, "resolve_subdir", lambda *_a, **_k: templates)
-        monkeypatch.setattr(
-            "sys.argv",
-            ["audit_preflight.py", "--arguments", 'plugins --efficiency --keep "a"', "--claude-dir", str(claude)],
-        )
-        assert ap.main() == 0
-        out = capsys.readouterr().out
-        assert "efficiency=true" in out
-        assert "scope=plugins" in out
-        assert "keep-items=a" in out
-        assert (tmp_path / "audit-state-sess2" / "keep-items").read_text(encoding="utf-8") == "a\n"
-        # Scope is printed, not persisted: nothing re-derives it across bash blocks,
-        # and the shell original never wrote it either.
-        assert not (tmp_path / "audit-state-sess2" / "clean-args").exists()
+        """A successful run prints the state lines and writes the sentinels, but does not persist the scope.
+
+        Scope is printed, not persisted: nothing re-derives it across bash blocks, and the shell original never wrote it
+        either.
+        """
+        (tmp_path / ".claude").mkdir()
+        code, out = cli("--arguments", 'plugins --efficiency --keep "a"', "--claude-dir", str(tmp_path / ".claude"))
+        state_dir = tmp_path / "audit-state-sess"
+        assert code == 0
+        assert all(line in out for line in ("efficiency=true", "scope=plugins", "keep-items=a"))
+        assert (state_dir / "keep-items").read_text(encoding="utf-8") == "a\n"
+        assert not (state_dir / "clean-args").exists()
 
     def test_unresolvable_templates_exit_one(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cli: Callable[..., tuple[int, str]]
     ) -> None:
         """An unresolvable templates directory aborts with the setup hint."""
-        claude = tmp_path / ".claude"
-        claude.mkdir()
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.setattr(ap, "resolve_subdir", lambda *_a, **_k: None)
-        monkeypatch.setattr("sys.argv", ["audit_preflight.py", "--arguments", "plugins", "--claude-dir", str(claude)])
-        assert ap.main() == 1
-        assert "run /foundry:setup first" in capsys.readouterr().out
+        (tmp_path / ".claude").mkdir()
+        ap.resolve_subdir.return_value = None
+        code, out = cli("--arguments", "plugins", "--claude-dir", str(tmp_path / ".claude"))
+        assert (code, "run /foundry:setup first" in out) == (1, True)
 
     def test_unsafe_session_token_exits_one(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cli: Callable[..., tuple[int, str]]
     ) -> None:
         """A session token that cannot be used safely aborts with a BLOCKED line instead of a traceback."""
-        claude = tmp_path / ".claude"
-        claude.mkdir()
-        templates = tmp_path / "templates"
-        templates.mkdir()
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.setenv("TMPDIR", str(tmp_path))
+        (tmp_path / ".claude").mkdir()
         monkeypatch.setenv("CSID", "../escape")
-        monkeypatch.setattr(ap, "resolve_subdir", lambda *_a, **_k: templates)
-        monkeypatch.setattr("sys.argv", ["audit_preflight.py", "--arguments", "plugins", "--claude-dir", str(claude)])
-        assert ap.main() == 1
-        assert "! BLOCKED — cannot prepare audit state" in capsys.readouterr().out
+        code, out = cli("--arguments", "plugins", "--claude-dir", str(tmp_path / ".claude"))
+        assert (code, "! BLOCKED — cannot prepare audit state" in out) == (1, True)
 
 
 class TestStateDirectoryLinks:
-    """Covers a `.temp/state` that is a link into the instruction sources."""
+    """A ``.temp/state`` that is a link: refused when it points into the instruction sources, allowed elsewhere."""
 
-    @pytest.mark.skipif(ap.os.name != "posix", reason="creating symlinks needs POSIX permissions")
+    @_skip_no_posix_symlinks
     @pytest.mark.parametrize(
         ("target", "problem"),
         [
@@ -451,14 +441,18 @@ class TestStateDirectoryLinks:
     def test_state_link_target_decides(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target: str, problem: bool
     ) -> None:
-        """A link whose target lies in the tree outside .temp/ and .reports/ is a problem; one inside them is not."""
+        """A link whose target lies in the tree outside .temp/ and .reports/ is a problem; one inside them is not.
+
+        Preflight writes probe markers and run directories below ``.temp/state``; through a link into a rules directory
+        those writes would land inside instruction files.
+        """
         monkeypatch.chdir(tmp_path)
         (tmp_path / target).mkdir(parents=True)
         (tmp_path / ".temp").mkdir()
         (tmp_path / ".temp" / "state").symlink_to(tmp_path / target)
         assert bool(ap._state_dir_problem()) is problem
 
-    @pytest.mark.skipif(ap.os.name != "posix", reason="creating symlinks needs POSIX permissions")
+    @_skip_no_posix_symlinks
     def test_link_outside_the_tree_is_allowed(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """A state directory kept on another disk, outside the tree, is not touched by the check."""
         tree = tmp_path / "tree"
@@ -471,44 +465,35 @@ class TestStateDirectoryLinks:
 
 
 class TestStateChildLinks:
-    """Covers a link at a state path below `.temp` or `.reports`, not only at `.temp/state` itself."""
+    """A link at a state path below ``.temp`` or ``.reports``, not only at ``.temp/state`` itself."""
 
-    @pytest.mark.skipif(ap.os.name != "posix", reason="creating symlinks needs POSIX permissions")
+    @_skip_no_posix_symlinks
     @pytest.mark.parametrize(
-        ("link", "problem"),
+        "link",
         [
-            pytest.param(".temp/state/preflight", True, id="preflight-into-sources"),
-            pytest.param(".reports/audit", True, id="reports-audit-into-sources"),
-            pytest.param(".reports", True, id="reports-into-sources"),
+            pytest.param(".temp/state/preflight", id="preflight-into-sources"),
+            pytest.param(".reports/audit", id="reports-audit-into-sources"),
+            pytest.param(".reports", id="reports-into-sources"),
         ],
     )
     def test_link_into_instruction_sources_blocks_preflight(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
-        link: str,
-        problem: bool,
+        self, tmp_path: Path, cli: Callable[..., tuple[int, str]], link: str
     ) -> None:
-        """A regular `.temp/state` does not hide a linked child: the probe marker and run dir would land in a rule."""
-        monkeypatch.chdir(tmp_path)
+        """A regular `.temp/state` does not hide a linked child: the probe marker and run dir would land in a rule.
+
+        Each case links one state path to a plugin ``rules`` directory; preflight must stop with BLOCKED and leave that
+        directory empty.
+        """
         rules = tmp_path / "plugins" / "cc_demo" / "rules"
         rules.mkdir(parents=True)
         (tmp_path / ".claude").mkdir()
-        (tmp_path / ".temp" / "state").mkdir(parents=True)
-        (tmp_path / ".reports").mkdir(exist_ok=True)
         path = tmp_path / link
         path.parent.mkdir(parents=True, exist_ok=True)
-        if path.is_dir() and not path.is_symlink():
-            path.rmdir()
         path.symlink_to(rules)
-        monkeypatch.setattr(ap.sys, "argv", ["audit_preflight.py", "--arguments", "--consolidate"])
+        code, out = cli("--arguments", "--consolidate")
+        assert (code, "BLOCKED" in out, list(rules.iterdir())) == (1, True, [])
 
-        assert ap.main() == 1
-        assert "BLOCKED" in capsys.readouterr().out
-        assert list(rules.iterdir()) == []
-
-    @pytest.mark.skipif(ap.os.name != "posix", reason="creating symlinks needs POSIX permissions")
+    @_skip_no_posix_symlinks
     def test_child_link_into_reports_is_allowed(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """A run area kept under another `.reports` directory is not a problem."""
         monkeypatch.chdir(tmp_path)
@@ -518,9 +503,9 @@ class TestStateChildLinks:
 
 
 class TestTempDirectoryIntoSources:
-    """Covers a ``TMPDIR`` that places the session state directory inside the tree's instruction sources."""
+    """A ``TMPDIR`` that places the session state directory inside the tree's instruction sources."""
 
-    @pytest.mark.skipif(ap.os.name != "posix", reason="creating symlinks needs POSIX permissions")
+    @_skip_no_posix_symlinks
     @pytest.mark.parametrize(
         "route",
         [
@@ -529,23 +514,21 @@ class TestTempDirectoryIntoSources:
         ],
     )
     def test_tmpdir_into_sources_blocks_preflight(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], route: str
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cli: Callable[..., tuple[int, str]], route: str
     ) -> None:
-        """The state directory is made below ``TMPDIR``; one that resolves into a rule directory is refused first."""
-        monkeypatch.chdir(tmp_path)
+        """The state directory is made below ``TMPDIR``; one that resolves into a rule directory is refused first.
+
+        The link route reaches the rules directory through a symlinked ancestor, which a check on the literal path would
+        miss.
+        """
         rules = tmp_path / "plugins" / "cc_demo" / "rules"
         rules.mkdir(parents=True)
         (tmp_path / ".claude").mkdir()
-        tmpdir = rules
-        if route == "linked-ancestor":
-            tmpdir = tmp_path / "scratch-link"
-            tmpdir.symlink_to(rules)
-        monkeypatch.setenv("TMPDIR", str(tmpdir))
-        monkeypatch.setattr(ap.sys, "argv", ["audit_preflight.py", "--arguments", "--consolidate"])
-
-        assert ap.main() == 1
-        assert "TMPDIR state directory" in capsys.readouterr().out
-        assert list(rules.iterdir()) == []
+        scratch_link = tmp_path / "scratch-link"
+        scratch_link.symlink_to(rules)
+        monkeypatch.setenv("TMPDIR", str({"direct": rules, "linked-ancestor": scratch_link}[route]))
+        code, out = cli("--arguments", "--consolidate")
+        assert (code, "TMPDIR state directory" in out, list(rules.iterdir())) == (1, True, [])
 
     def test_tmpdir_outside_the_tree_is_allowed(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """A temp directory elsewhere on the machine is the normal case and is not touched by the check."""

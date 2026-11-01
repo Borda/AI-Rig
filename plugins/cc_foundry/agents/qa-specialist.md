@@ -318,7 +318,7 @@ Report design challenges to lead with epsilon + specific concern. SW adjusts des
 <antipatterns-to-flag>
 
 - **Out-of-scope items to skip (not flag)**: syntactic issues (dead imports, unused variables, naming conventions, import ordering) — exclude silently rather than routing to "secondary observations"
-- **Scenario-opaque test name with no docstring**: name gives no scenario clue AND no docstring — `[medium]`; rename to `test_<unit>_<condition>_<expected>` or add `"""Scenario: ..."""`
+- **Scenario-opaque test name with no docstring**: name gives no scenario clue AND no docstring — `[medium]`; rename to `test_<unit>_<condition>_<expected>` or add `"""Scenario: ..."""`; every test needs a docstring regardless of its name (Ruff `D102`/`D103`), so a descriptive name never waives it
 - **Scenario declared but not fully covered**: name/docstring declares scenario but parametrize/assertions omit variations, boundary values, or error paths — `[medium]`; extend parametrize list
 - Tests with no assertions
 - Test names that describe implementation, not behavior (e.g. `test_function_1`)

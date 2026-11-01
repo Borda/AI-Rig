@@ -28,7 +28,7 @@ Failure: Exit 1 reports invalid arguments or an unresolvable repository; exit 2 
 as complete after a non-zero exit.
 
 Used by: ``skills/release/SKILL.md`` (Gather: commit-to-PR associations), ``skills/analyse/modes/codemap-signals.md``
-(Signal B: changed files of open PRs). Tests in ``tests/test_gh_batch_query.py``.
+(Signal B: changed files of open PRs). Tests in ``tests/common/test_gh_batch_query.py``.
 
 Arguments:
     --range:      Git revision range for ``git rev-list`` (``commit-prs``); must not start with ``-``.

@@ -34,6 +34,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PLUGINS_DIR = REPO_ROOT / "plugins"
 _POSIX_SHELL = shutil.which("sh")
+_requires_posix_shell = pytest.mark.skipif(_POSIX_SHELL is None, reason="needs a POSIX shell")
 
 _NODE_PROBE = 'for n in node /opt/homebrew/bin/node /usr/local/bin/node; do command -v "$n" >/dev/null 2>&1 && '
 _NODE_HOOK = re.compile(
@@ -72,7 +73,10 @@ HOOK_FILES = _claude_hook_files()
 
 
 def test_claude_hook_files_are_discovered() -> None:
-    """The scan must cover the node-hook plugins and the python-hook plugin, or every check below is vacuous."""
+    """The scan covers the node-hook plugins and the python-hook plugin.
+
+    A manifest layout change that hid a plugin's hook file would make every parametrized check below pass vacuously.
+    """
     names = {path.relative_to(PLUGINS_DIR).parts[0] for path in HOOK_FILES}
     assert {"cc_foundry", "cc_oss", "cc_develop", "cc_research", "codemap-py"} <= names
 
@@ -81,7 +85,10 @@ def test_claude_hook_files_are_discovered() -> None:
     "hook_file", [pytest.param(path, id=path.relative_to(PLUGINS_DIR).parts[0]) for path in HOOK_FILES]
 )
 def test_every_script_hook_uses_an_interpreter_fallback(hook_file: Path) -> None:
-    """A command that runs a shipped hook script must use the node or python fallback form, never a bare interpreter."""
+    """A command that runs a shipped hook script uses the node or python fallback form, never a bare interpreter.
+
+    A bare ``node "…/x.js"`` fails with ``command not found`` on a host without Node on PATH, once per hook event.
+    """
     offenders = [
         command
         for _, command in _commands(hook_file)
@@ -103,23 +110,29 @@ def test_every_script_hook_uses_an_interpreter_fallback(hook_file: Path) -> None
     ],
 )
 def test_node_hook_plugins_report_missing_node_once_per_session(hook_file: Path) -> None:
-    """A plugin whose node hooks skip silently must still say, once per session, that they are inactive."""
+    """A plugin whose node hooks skip silently still says, once per session, that they are inactive.
+
+    The silent exit 0 on a missing Node is only acceptable when exactly one ``SessionStart`` check reports it.
+    """
     commands = _commands(hook_file)
     checks = [(event, command) for event, command in commands if _NODE_CHECK.fullmatch(command)]
     assert [event for event, _ in checks] == ["SessionStart"]
 
 
-@pytest.mark.skipif(shutil.which("sh") is None or shutil.which("node") is None, reason="needs a POSIX sh and node")
+@pytest.mark.skipif(_POSIX_SHELL is None or shutil.which("node") is None, reason="needs a POSIX sh and node")
 def test_node_hook_form_passes_stdin_and_exit_code_through(tmp_path: Path) -> None:
-    """The wrapper must hand the event payload to the script and keep a guard's blocking exit 2."""
+    """The wrapper hands the event payload to the script and keeps a guard's blocking exit 2.
+
+    A real ``sh`` runs the registered command form against a stub guard that echoes stdin and exits 2, the only exit
+    code Claude Code treats as blocking.
+    """
     (tmp_path / "hooks").mkdir()
     script = 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{process.stdout.write(d);process.exit(2)})\n'
     (tmp_path / "hooks" / "guard.js").write_text(script, encoding="utf-8", newline="\n")
     command = _NODE_PROBE + 'exec "$n" "${CLAUDE_PLUGIN_ROOT}/hooks/guard.js"; done; exit 0'
-    assert _NODE_HOOK.fullmatch(command)
 
     result = subprocess.run(
-        [shutil.which("sh"), "-c", command],
+        [_POSIX_SHELL, "-c", command],
         input='{"event": 1}',
         capture_output=True,
         text=True,
@@ -127,6 +140,7 @@ def test_node_hook_form_passes_stdin_and_exit_code_through(tmp_path: Path) -> No
         check=False,
     )
 
+    assert _NODE_HOOK.fullmatch(command)
     assert (result.returncode, result.stdout) == (2, '{"event": 1}')
 
 
@@ -137,176 +151,228 @@ _FORBIDDEN_SELECTION = (
     "resolve `python` first",
     "resolve `python` on PATH first",
 )
+_SHIPPED_SUFFIXES = frozenset({".md", ".py", ".json", ".toml", ""})
+_GIT = shutil.which("git")
+_IN_GIT_CHECKOUT = (
+    _GIT is not None
+    and subprocess.run(
+        [_GIT, "-C", str(REPO_ROOT), "rev-parse", "--git-dir"], capture_output=True, check=False
+    ).returncode
+    == 0
+)
+
+
+def _shipped_files() -> list[Path]:
+    """Return every shipped (non-test) plugin file of a text-like type."""
+    return [
+        path
+        for path in sorted(PLUGINS_DIR.rglob("*"))
+        if path.is_file() and "tests" not in path.relative_to(PLUGINS_DIR).parts and path.suffix in _SHIPPED_SUFFIXES
+    ]
+
+
+def _selection_offenders(path: Path) -> list[str]:
+    """Return one ``plugin-relative path: needle`` entry per forbidden interpreter-selection phrase in ``path``."""
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    return [f"{path.relative_to(PLUGINS_DIR)}: {needle}" for needle in _FORBIDDEN_SELECTION if needle in text]
+
+
+def _write_runtime(directory: Path, name: str, body: str) -> Path:
+    """Write an executable POSIX ``name`` script with ``body`` into ``directory``."""
+    runtime = directory / name
+    runtime.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8", newline="\n")
+    runtime.chmod(0o755)
+    return runtime
+
+
+def _write_versioned_python(directory: Path, name: str = "python3.12") -> Path:
+    """Write a shim named ``name`` that execs the interpreter running the tests."""
+    return _write_runtime(directory, name, f'exec "{Path(sys.executable).as_posix()}" "$@"')
+
+
+def _run_launcher(launcher: Path, path_dir: Path, *args: str, **kwargs: object) -> subprocess.CompletedProcess[str]:
+    """Run a POSIX ``bin/python`` launcher under ``sh`` with ``path_dir`` as the whole PATH."""
+    return subprocess.run(
+        [_POSIX_SHELL, launcher.as_posix(), *args],
+        env={**os.environ, "PATH": path_dir.as_posix()},
+        capture_output=True,
+        text=True,
+        check=False,
+        **kwargs,
+    )
+
+
+def _export_with_autocrlf(repository: Path, launchers: list[Path], content: bytes) -> None:
+    """Commit ``content`` at every launcher path and export it with ``core.autocrlf=true`` like a Windows checkout."""
+    repository.mkdir()
+    shutil.copy2(REPO_ROOT / ".gitattributes", repository / ".gitattributes")
+    for source in launchers:
+        target = repository / source.relative_to(REPO_ROOT)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+    for arguments in (["init", "-q"], ["add", "."], ["checkout-index", "--all", "--prefix=export/"]):
+        subprocess.run(["git", "-c", "core.autocrlf=true", *arguments], cwd=repository, capture_output=True, check=True)
 
 
 def test_shipped_text_never_selects_the_interpreter_per_call() -> None:
-    """A missing ``python`` is fixed at the launch layer, so no shipped file may select an interpreter per call.
+    """A missing ``python`` is fixed at the launch layer, so no shipped file selects an interpreter per call.
 
     Rewritten call sites miss ``Bash(python:*)`` allow rules and blueprint digests, and per-file selection prose repeats
     on every skill load (``CLAUDE.md`` §Interpreter Commands).
     """
-    offenders = [
-        f"{path.relative_to(PLUGINS_DIR)}: {needle}"
-        for path in sorted(PLUGINS_DIR.rglob("*"))
-        if path.is_file()
-        and "tests" not in path.relative_to(PLUGINS_DIR).parts
-        and path.suffix in {".md", ".py", ".json", ".toml", ""}
-        for needle in _FORBIDDEN_SELECTION
-        if needle in path.read_text(encoding="utf-8", errors="ignore")
-    ]
+    offenders = [offender for path in _shipped_files() for offender in _selection_offenders(path)]
+
     assert offenders == []
 
 
-def test_every_claude_plugin_ships_the_python_fallback() -> None:
-    """Each Claude plugin stands alone, so each ships its own executable ``bin/python``."""
-    for hook_file in HOOK_FILES:
+class TestPythonLauncher:
+    """The standalone ``bin/python`` and ``bin/python.cmd`` launchers shipped by each plugin."""
+
+    @pytest.mark.parametrize(
+        "hook_file", [pytest.param(path, id=path.relative_to(PLUGINS_DIR).parts[0]) for path in HOOK_FILES]
+    )
+    def test_every_claude_plugin_ships_an_executable_fallback(self, hook_file: Path) -> None:
+        """Each Claude plugin stands alone, so each ships its own executable ``bin/python``.
+
+        A plugin installed without its siblings has no other launcher to borrow; on POSIX the file must be executable.
+        """
         shim = hook_file.parents[1] / "bin" / "python"
+
         assert shim.is_file(), shim
         assert os.name == "nt" or shim.stat().st_mode & 0o111, shim
 
+    @pytest.mark.skipif(not _IN_GIT_CHECKOUT, reason="checkout attributes need a git checkout")
+    def test_fallback_is_checked_out_with_lf_on_every_host(self) -> None:
+        """Windows checkouts convert extensionless text to CRLF unless attributes pin LF; CRLF breaks the shebang.
 
-@pytest.mark.skipif(shutil.which("git") is None, reason="git is required to read checkout attributes")
-def test_python_fallback_is_checked_out_with_lf_on_every_host() -> None:
-    """Windows checkouts convert extensionless text to CRLF unless attributes pin LF; CRLF breaks the shebang."""
-    # repo-relative POSIX paths: git C-quotes paths containing backslashes, so absolute Windows paths never match
-    shims = [(hook_file.parents[1] / "bin" / "python").relative_to(REPO_ROOT).as_posix() for hook_file in HOOK_FILES]
-    result = subprocess.run(
-        ["git", "-C", str(REPO_ROOT), "check-attr", "eol", "--", *shims], capture_output=True, text=True, check=False
+        ``git check-attr`` reports the end-of-line attribute of every plugin's shim; each must be ``lf``.
+        """
+        # repo-relative POSIX paths: git C-quotes paths containing backslashes, so absolute Windows paths never match
+        shims = [(hook.parents[1] / "bin" / "python").relative_to(REPO_ROOT).as_posix() for hook in HOOK_FILES]
+
+        result = subprocess.run(
+            [_GIT, "-C", str(REPO_ROOT), "check-attr", "eol", "--", *shims], capture_output=True, text=True, check=False
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.splitlines() == [f"{shim}: eol: lf" for shim in shims]
+
+    @_requires_posix_shell
+    @pytest.mark.parametrize(
+        "plugin", ["cc_foundry", "cc_oss", "cc_develop", "cc_research", "codemap-py", "bridge_cc-codex", "codex-rig"]
     )
-    if result.returncode != 0:
-        pytest.skip("not a git checkout")
-    assert result.stdout.splitlines() == [f"{shim}: eol: lf" for shim in shims]
+    def test_finds_versioned_only_runtime(self, plugin: str, tmp_path: Path) -> None:
+        """An installed shim starts without bare python3, rejects a lying candidate name and preserves the workload.
 
+        PATH holds only ``python3.12`` (a working shim) and ``python3.20`` (exits 1). Arguments with spaces, stdin,
+        stderr and the exit status of the workload must pass through the launcher unchanged.
+        """
+        _write_versioned_python(tmp_path)
+        _write_runtime(tmp_path, "python3.20", "exit 1")
+        workload = (
+            "import sys; print(sys.argv[1]); print(sys.stdin.read()); print('error', file=sys.stderr); sys.exit(23)"
+        )
 
-@pytest.mark.skipif(_POSIX_SHELL is None, reason="needs a POSIX shell")
-@pytest.mark.parametrize(
-    "plugin", ["cc_foundry", "cc_oss", "cc_develop", "cc_research", "codemap-py", "bridge_cc-codex", "codex-rig"]
-)
-def test_python_fallback_finds_versioned_only_runtime(plugin: str, tmp_path: Path) -> None:
-    """An installed shim starts without bare python3 and rejects a lying candidate name."""
-    runtime = tmp_path / "python3.12"
-    runtime.write_text(f'#!/bin/sh\nexec "{Path(sys.executable).as_posix()}" "$@"\n', encoding="utf-8", newline="\n")
-    runtime.chmod(0o755)
-    old = tmp_path / "python3.20"
-    old.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8", newline="\n")
-    old.chmod(0o755)
-    result = subprocess.run(
-        [
-            _POSIX_SHELL,
-            (PLUGINS_DIR / plugin / "bin" / "python").as_posix(),
-            "-c",
-            "import sys; print(sys.argv[1]); print(sys.stdin.read()); print('error', file=sys.stderr); sys.exit(23)",
-            "space argument",
-        ],
-        input="payload",
-        capture_output=True,
-        text=True,
-        check=False,
-        env={**os.environ, "PATH": tmp_path.as_posix()},
-    )
-    assert result.returncode == 23, result.stderr
-    assert result.stdout == "space argument\npayload\n"
-    assert result.stderr == "error\n"
+        result = _run_launcher(
+            PLUGINS_DIR / plugin / "bin" / "python", tmp_path, "-c", workload, "space argument", input="payload"
+        )
 
+        assert result.returncode == 23, result.stderr
+        assert result.stdout == "space argument\npayload\n"
+        assert result.stderr == "error\n"
 
-@pytest.mark.skipif(_POSIX_SHELL is None, reason="needs a POSIX shell")
-def test_python_fallback_skips_self_and_does_not_leak_probe_guard(tmp_path: Path) -> None:
-    """Self discovery terminates, and private probe state never reaches the workload."""
-    shutil.copy2(PLUGINS_DIR / "cc_foundry" / "bin" / "python", tmp_path / "python")
-    runtime = tmp_path / "python3.12"
-    runtime.write_text(f'#!/bin/sh\nexec "{Path(sys.executable).as_posix()}" "$@"\n', encoding="utf-8", newline="\n")
-    runtime.chmod(0o755)
-    result = subprocess.run(
-        [
-            _POSIX_SHELL,
-            (tmp_path / "python").as_posix(),
+    @_requires_posix_shell
+    def test_skips_itself_and_hides_probe_guard_from_workload(self, tmp_path: Path) -> None:
+        """Self discovery terminates, and private probe state never reaches the workload.
+
+        The launcher is copied onto PATH under its own name beside a real runtime; it must skip itself while probing and
+        unset its recursion guard before executing the workload.
+        """
+        shutil.copy2(PLUGINS_DIR / "cc_foundry" / "bin" / "python", tmp_path / "python")
+        _write_versioned_python(tmp_path)
+
+        result = _run_launcher(
+            tmp_path / "python",
+            tmp_path,
             "-c",
             "import os; print(os.environ.get('AI_RIG_PYTHON_PROBE', 'absent'))",
-        ],
-        env={**os.environ, "PATH": tmp_path.as_posix()},
-        capture_output=True,
-        text=True,
-        timeout=10,
-        check=False,
-    )
-    assert (result.returncode, result.stdout, result.stderr) == (0, "absent\n", "")
-
-
-@pytest.mark.skipif(_POSIX_SHELL is None, reason="needs a POSIX shell")
-def test_python_fallback_no_runtime_has_bounded_diagnostic(tmp_path: Path) -> None:
-    """An empty PATH fails without a bootstrap traceback or repeated workload."""
-    result = subprocess.run(
-        [
-            _POSIX_SHELL,
-            (PLUGINS_DIR / "cc_foundry" / "bin" / "python").as_posix(),
-            "-c",
-            "raise AssertionError('must not run')",
-        ],
-        env={**os.environ, "PATH": tmp_path.as_posix()},
-        capture_output=True,
-        text=True,
-        timeout=10,
-        check=False,
-    )
-    assert result.returncode == 127
-    assert result.stdout == ""
-    assert result.stderr == "python: no Python 3.10+ found on PATH (python3, python3.10-python3.20); install one\n"
-
-
-def test_windows_python_launcher_disables_implicit_current_directory_lookup() -> None:
-    """Set the cmd search guard inside setlocal before probing any interpreter."""
-    source = (PLUGINS_DIR / "cc_foundry/bin/python.cmd").read_text(encoding="utf-8")
-    guard = source.index('set "NoDefaultCurrentDirectoryInExePath=1"')
-    assert source.index("setlocal") < guard < source.index("python.exe -c")
-
-
-@pytest.mark.skipif(shutil.which("cmd") is None, reason="needs native Windows cmd")
-def test_native_windows_python_launcher_preserves_workload(tmp_path: Path) -> None:
-    """A real cmd process runs the installed launcher without any POSIX shell."""
-    script = tmp_path / "work load.py"
-    script.write_text(
-        "import sys\nprint(sys.argv[1]); print(sys.stdin.read()); print('error', file=sys.stderr); sys.exit(23)\n",
-        encoding="utf-8",
-        newline="\n",
-    )
-    launcher = tmp_path / "python.cmd"
-    shutil.copy2(PLUGINS_DIR / "codex-rig" / "bin" / "python.cmd", launcher)
-    cmd = shutil.which("cmd")
-    # cmd parses its own quotes; argv-list serialization adds incompatible CRT escapes.
-    command = f'"{cmd}" /d /s /c ""{launcher}" "{script}" "space argument""'
-    result = subprocess.run(
-        command,
-        executable=cmd,
-        input="payload",
-        env={**os.environ, "PATH": str(Path(sys.executable).parent)},
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert (result.returncode, result.stdout, result.stderr) == (23, "space argument\npayload\n", "error\n")
-
-
-@pytest.mark.integration
-def test_windows_checkout_preserves_shared_launcher_bytes(tmp_path: Path) -> None:
-    """Windows-style Git checkout must preserve shared bytes and package hash identities."""
-    repository = tmp_path / "checkout"
-    repository.mkdir()
-    shutil.copy2(REPO_ROOT / ".gitattributes", repository / ".gitattributes")
-    launchers = sorted(PLUGINS_DIR.glob("*/bin/python.cmd"))
-    assert len(launchers) >= 2
-    expected = (PLUGINS_DIR / "cc_foundry/bin/python.cmd").read_bytes()
-    assert b"\r\n" not in expected
-    for source in launchers:
-        target = repository / source.relative_to(REPO_ROOT)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(expected)
-    for arguments in (["init", "-q"], ["add", "."], ["checkout-index", "--all", "--prefix=export/"]):
-        subprocess.run(
-            ["git", "-c", "core.autocrlf=true", *arguments],
-            cwd=repository,
-            capture_output=True,
-            check=True,
+            timeout=10,
         )
-    for source in launchers:
-        exported = repository / "export" / source.relative_to(REPO_ROOT)
-        assert exported.read_bytes() == expected, source.relative_to(REPO_ROOT).as_posix()
+
+        assert (result.returncode, result.stdout, result.stderr) == (0, "absent\n", "")
+
+    @_requires_posix_shell
+    def test_without_runtime_fails_with_bounded_diagnostic(self, tmp_path: Path) -> None:
+        """An empty PATH fails without a bootstrap traceback or repeated workload.
+
+        With no Python 3.10+ on PATH the launcher exits 127 with one diagnostic line and never runs the workload.
+        """
+        launcher = PLUGINS_DIR / "cc_foundry" / "bin" / "python"
+
+        result = _run_launcher(launcher, tmp_path, "-c", "raise AssertionError('must not run')", timeout=10)
+
+        assert result.returncode == 127
+        assert result.stdout == ""
+        assert result.stderr == "python: no Python 3.10+ found on PATH (python3, python3.10-python3.20); install one\n"
+
+    def test_windows_launcher_disables_implicit_current_directory_lookup(self) -> None:
+        """The cmd search guard is set inside ``setlocal`` before any interpreter is probed.
+
+        Without ``NoDefaultCurrentDirectoryInExePath`` cmd would resolve ``python.exe`` from the current directory.
+        """
+        source = (PLUGINS_DIR / "cc_foundry/bin/python.cmd").read_text(encoding="utf-8")
+
+        guard = source.index('set "NoDefaultCurrentDirectoryInExePath=1"')
+
+        assert source.index("setlocal") < guard < source.index("python.exe -c")
+
+    @pytest.mark.skipif(shutil.which("cmd") is None, reason="needs native Windows cmd")
+    def test_native_windows_launcher_preserves_workload(self, tmp_path: Path) -> None:
+        """A real cmd process runs the installed launcher without any POSIX shell.
+
+        The workload script path and an argument both contain spaces; stdin, stderr and the exit status must survive.
+        """
+        script = tmp_path / "work load.py"
+        script.write_text(
+            "import sys\nprint(sys.argv[1]); print(sys.stdin.read()); print('error', file=sys.stderr); sys.exit(23)\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        launcher = tmp_path / "python.cmd"
+        shutil.copy2(PLUGINS_DIR / "codex-rig" / "bin" / "python.cmd", launcher)
+        cmd = shutil.which("cmd")
+        # cmd parses its own quotes; argv-list serialization adds incompatible CRT escapes.
+        command = f'"{cmd}" /d /s /c ""{launcher}" "{script}" "space argument""'
+
+        result = subprocess.run(
+            command,
+            executable=cmd,
+            input="payload",
+            env={**os.environ, "PATH": str(Path(sys.executable).parent)},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert (result.returncode, result.stdout, result.stderr) == (23, "space argument\npayload\n", "error\n")
+
+    @pytest.mark.integration
+    def test_windows_checkout_preserves_shared_launcher_bytes(self, tmp_path: Path) -> None:
+        """Windows-style Git checkout must preserve shared bytes and package hash identities.
+
+        Every plugin's ``python.cmd`` is a byte-identical copy; exporting them through real Git with ``core.autocrlf``
+        and the repository's ``.gitattributes`` must not turn any copy into CRLF.
+        """
+        launchers = sorted(PLUGINS_DIR.glob("*/bin/python.cmd"))
+        expected = (PLUGINS_DIR / "cc_foundry/bin/python.cmd").read_bytes()
+        repository = tmp_path / "checkout"
+
+        _export_with_autocrlf(repository, launchers, expected)
+
+        exported = {
+            src.relative_to(REPO_ROOT).as_posix(): (repository / "export" / src.relative_to(REPO_ROOT)).read_bytes()
+            for src in launchers
+        }
+        assert len(launchers) >= 2
+        assert b"\r\n" not in expected
+        assert [name for name, content in exported.items() if content != expected] == []

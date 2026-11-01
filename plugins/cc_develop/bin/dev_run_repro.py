@@ -125,7 +125,8 @@ def run_tail(argv: list[str], tail_lines: int = _TAIL_LINES) -> tuple[int, list[
     the direct child is killed and this call raises, even when a grandchild that inherited stdout keeps the pipe open.
     Only the direct child is killed; such a grandchild (a test worker, say) runs on until it exits by itself. Killing
     the whole process group would need a new session for the child, which would stop the caller's own interrupt or
-    timeout from reaching the tests.
+    timeout from reaching the tests. The helper thread closes the output pipe once it reaches the end of the output,
+    so a pipe a grandchild still holds open is closed when that grandchild exits.
 
     Args:
         argv: Command and arguments, executed without a shell.
@@ -155,19 +156,24 @@ def run_tail(argv: list[str], tail_lines: int = _TAIL_LINES) -> tuple[int, list[
             raise subprocess.TimeoutExpired(argv, _RUN_TIMEOUT_S)
         code = proc.wait(timeout=max(0.0, deadline - time.monotonic()))
     except subprocess.TimeoutExpired:
-        # Leave stdout open: closing it while the reader thread still holds its lock would block here instead.
+        # Never close stdout here: the reader thread may still be blocked in a read holding the stream's lock, so the
+        # close would block here instead. The reader closes it at the end of the output (see ``_drain``).
         proc.kill()
         proc.wait()
         raise
-    if proc.stdout is not None:
-        proc.stdout.close()
     return code, list(tail)
 
 
 def _drain(stream: IO[str] | None, tail: deque[str]) -> None:
-    """Read ``stream`` to its end, keeping the last lines in ``tail`` with line endings stripped."""
+    """Read ``stream`` to its end, keeping the last lines in ``tail`` with line endings stripped, then close it.
+
+    Closing here rather than in the caller keeps the stream from leaking when the caller gives up at the deadline: the
+    caller cannot close it while this thread still reads, and this thread reaches the end as soon as the killed child,
+    or a grandchild that inherited its stdout, lets go of the pipe.
+    """
     if stream is not None:
-        tail.extend(line.rstrip("\r\n") for line in stream)
+        with stream:
+            tail.extend(line.rstrip("\r\n") for line in stream)
 
 
 def main(argv: list[str] | None = None) -> int:

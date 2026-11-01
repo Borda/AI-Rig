@@ -4,8 +4,8 @@ Claude Code runs Bash tool commands in the user's login shell, which is zsh on a
 command whose filename pattern matches nothing (``no matches found``) instead of passing the pattern through as bash
 does. When one command lists a glob under an optional directory (``.claude/skills/*/SKILL.md`` in a plugin-only
 checkout) beside operands that do exist, that abort drops the existing operands too: the check scans nothing and reports
-clean. The static scan below rejects that shape in every shipped bash fence; the run test executes the audit's Check 23c
-block under each available shell in a plugin-only tree and requires the finding it exists to report.
+clean. The static scan below rejects that shape in every shipped bash fence; the run tests execute the audit's Check 23c
+and 23e blocks under each available shell in a plugin-only tree and require the findings they exist to report.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -26,6 +27,19 @@ _FENCE_OPEN = re.compile(r"^\s*(`{3,})(?:bash|sh|shell|zsh)\s*$")
 # Directories a normal checkout may lack: a project's own `.claude/` tree, and the optional Codex manifest of a plugin.
 _OPTIONAL_GLOB = re.compile(r"^(?:\.claude/\S*[*?[]|\S*/\.codex-plugin/\S*|\S*[*?[]\S*/\.codex-plugin/)")
 _PATH_OPERAND = re.compile(r"^(?:\.claude/|plugins/|\.claude$)")
+
+_both_shells = pytest.mark.parametrize(
+    "shell",
+    [
+        pytest.param(
+            "bash",
+            marks=pytest.mark.skipif(not _bash_runs_posix_script(), reason="requires Bash executing POSIX scripts"),
+        ),
+        pytest.param(
+            "zsh", marks=pytest.mark.skipif(shutil.which("zsh") is None, reason="requires zsh to run the block")
+        ),
+    ],
+)
 
 
 def _code_outside_quotes(line: str) -> str:
@@ -92,7 +106,44 @@ def _mixed_operand_globs() -> list[str]:
     return hits
 
 
-def test_no_command_mixes_an_optional_glob_with_other_operands() -> None:
+def _check_block(sub_check: str) -> str:
+    """Return the bash block of the audit's ``Sub-check <sub_check>`` section."""
+    lines = _CHECKS_SKILLS_BASH.read_text(encoding="utf-8").splitlines()
+    start = lines.index(next(line for line in lines if line.startswith(f"### Sub-check {sub_check}")))
+    body = lines[start + 1 :]
+    first = body.index("```bash") + 1
+    return "\n".join(body[first : first + body[first:].index("```")])
+
+
+@pytest.fixture
+def probe_tree(tmp_path: Path) -> Callable[[str, str], Path]:
+    """Return a factory placing one file under ``plugins/demo/skills/probe/`` in a plugin-only checkout.
+
+    The checkout has an empty ``.claude/`` directory and no ``.claude/skills/``, the normal plugin-only layout.
+    """
+
+    def _place(relative: str, text: str) -> Path:
+        """Write ``text`` to the demo skill's ``relative`` path and return the checkout root."""
+        target = tmp_path / "plugins" / "demo" / "skills" / "probe" / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+        (tmp_path / ".claude").mkdir(exist_ok=True)
+        return tmp_path
+
+    return _place
+
+
+def _run_block(shell: str, block: str, cwd: Path, timeout: int = 30) -> subprocess.CompletedProcess[str]:
+    """Run an audit check ``block`` in ``shell`` from ``cwd`` and capture its text output."""
+    return subprocess.run([shell, "-c", block], cwd=cwd, capture_output=True, encoding="utf-8", timeout=timeout)
+
+
+def _flagged_lines(proc: subprocess.CompletedProcess[str]) -> list[int]:
+    """Return the sorted line numbers of every ``plugins/...:<line>:`` finding the block printed."""
+    return sorted(int(line.split(":")[1]) for line in proc.stdout.splitlines() if line.startswith("plugins/"))
+
+
+def test_no_optional_glob_beside_other_operands() -> None:
     """No shipped bash command lists a glob under an optional directory beside other path operands.
 
     Under zsh the unmatched glob aborts the whole command, so the operands that do exist are never read and the check
@@ -101,197 +152,133 @@ def test_no_command_mixes_an_optional_glob_with_other_operands() -> None:
     assert _mixed_operand_globs() == []
 
 
-def _check_23c_block() -> str:
-    """Return the bash block of the audit's Sub-check 23c."""
-    text = _CHECKS_SKILLS_BASH.read_text(encoding="utf-8")
-    section = text.split("### Sub-check 23c", 1)[1]
-    return section.split("```bash\n", 1)[1].split("\n```", 1)[0]
+class TestCheck23c:
+    """Audit Sub-check 23c reports ``eval "$(...)"`` lines found in fenced code of plugin skills."""
 
-
-@pytest.fixture(name="plugin_only_tree")
-def _plugin_only_tree(tmp_path: Path) -> Path:
-    """Create a checkout holding one plugin skill that evals a script's output and no ``.claude/skills/`` directory."""
-    skill = tmp_path / "plugins" / "demo" / "skills" / "probe" / "SKILL.md"
-    skill.parent.mkdir(parents=True)
-    # Check 23c scans only fenced code, where a skill's executable lines live
-    skill.write_text('```bash\nVALUES="$(true)"\neval "$(python "$ROOT/bin/emit_values.py")"\n```\n', encoding="utf-8")
-    (tmp_path / ".claude").mkdir()
-    return tmp_path
-
-
-_both_shells = pytest.mark.parametrize(
-    "shell",
-    [
-        pytest.param(
-            "bash",
-            marks=pytest.mark.skipif(not _bash_runs_posix_script(), reason="requires Bash executing POSIX scripts"),
-        ),
-        pytest.param(
-            "zsh", marks=pytest.mark.skipif(shutil.which("zsh") is None, reason="requires zsh to run the block")
-        ),
-    ],
-)
-
-
-@_both_shells
-def test_check_23c_scans_tilde_and_blockquoted_fences_but_not_prose(shell: str, tmp_path: Path) -> None:
-    """Check 23c reads ``~~~`` and ``> ```` fences as code and leaves prose that quotes ``eval`` alone.
-
-    Scanning only fenced code keeps prose such as ``Skill runs `eval "$(…)"` `` out of the findings; a fence parser that
-    knows only backtick fences at the line start would miss the other valid code blocks entirely.
-    """
-    skill = tmp_path / "plugins" / "demo" / "skills" / "probe" / "SKILL.md"
-    skill.parent.mkdir(parents=True)
-    skill.write_text(
-        'Prose: `eval "$(python /bin/prose.py)"`\n'
-        '~~~bash\neval "$(python /bin/tilde.py)"\n~~~\n'
-        '> ```bash\n> eval "$(python /bin/quoted.py)"\n> ```\n',
-        encoding="utf-8",
+    @_both_shells
+    @pytest.mark.parametrize(
+        ("skill_text", "expected"),
+        [
+            pytest.param(
+                'Prose: `eval "$(python /bin/prose.py)"`\n'
+                '~~~bash\neval "$(python /bin/tilde.py)"\n~~~\n'
+                '> ```bash\n> eval "$(python /bin/quoted.py)"\n> ```\n',
+                ["tilde.py", "quoted.py"],
+                # Prose quoting eval stays out of the findings; a parser knowing only line-start backtick fences would
+                # miss the other two valid code blocks entirely.
+                id="tilde-and-blockquoted-fences-not-prose",
+            ),
+            pytest.param(
+                '````bash\nNOTE="\n```\n"\neval "$(python /bin/long.py)"\n````\n'
+                '> ```bash\n> # eval "$(python /bin/comment.py)"\n> ```\n',
+                ["long.py"],
+                # A four-backtick block may hold a bare three-backtick line inside a quoted string; ending the fence
+                # there would hide every later line. A comment inside a blockquoted fence is still a comment.
+                id="long-fence-stays-open-and-quoted-comment-skipped",
+            ),
+        ],
     )
-    (tmp_path / ".claude").mkdir()
-    proc = subprocess.run(
-        [shell, "-c", _check_23c_block()], cwd=tmp_path, capture_output=True, encoding="utf-8", timeout=30
+    def test_reads_code_fences_not_prose(
+        self, shell: str, probe_tree: Callable[[str, str], Path], skill_text: str, expected: list[str]
+    ) -> None:
+        """Check 23c scans fenced code of every valid fence style and ignores prose and comments.
+
+        Scanning only fenced code keeps prose such as ``Skill runs `eval "$(…)"` `` out of the findings, while a fence
+        parser that is too narrow would miss valid code blocks and report clean.
+        """
+        tree = probe_tree("SKILL.md", skill_text)
+        proc = _run_block(shell, _check_block("23c"), tree)
+        scanned = ["tilde.py", "quoted.py", "prose.py", "long.py", "comment.py"]
+        assert [name for name in scanned if name in proc.stdout] == expected, proc.stderr
+
+    @_both_shells
+    def test_reports_plugin_finding_without_project_skills(
+        self, shell: str, probe_tree: Callable[[str, str], Path]
+    ) -> None:
+        """Check 23c reports a plugin skill's eval finding in a checkout that has no ``.claude/skills/`` directory.
+
+        This is the normal plugin-only case. Before the fix the block's ``.claude/skills/*/SKILL.md`` glob matched
+        nothing, zsh aborted the grep, and the check reported clean while the plugin skill held the finding.
+        """
+        # Check 23c scans only fenced code, where a skill's executable lines live
+        tree = probe_tree("SKILL.md", '```bash\nVALUES="$(true)"\neval "$(python "$ROOT/bin/emit_values.py")"\n```\n')
+        proc = _run_block(shell, _check_block("23c"), tree)
+        assert "plugins/demo/skills/probe/SKILL.md:3:" in proc.stdout, proc.stderr
+
+
+class TestCheck23e:
+    """Audit Sub-check 23e reports command-name rebinds in shell fences."""
+
+    @_both_shells
+    @pytest.mark.parametrize(
+        ("mode_text", "flagged"),
+        [
+            pytest.param(
+                "```bash\nset -Acommands ruff /bin/echo\nx=1; hash -p /bin/rm ruff\n: ${(P)n::=/bin/rm}\n"
+                "typeset -A aliases\necho hi  # hash later\ncommand -v uv\nls docs/commands.md\n```\n"
+                "```text\nfunctions to change\n```\n"
+                "> ```zsh\n> alias ruff=rm\n> ```\n",
+                [2, 3, 4, 5, 14],
+                # Every rebind spelling the blueprint danger filter denies by name must surface here too, so an author
+                # learns why the block prompts; `command -v`, a `commands.md` path, a trailing comment and a `text`
+                # fence must stay quiet.
+                id="rebinds-in-shell-fences-only",
+            ),
+            pytest.param(
+                "```bash\nset -A names x y\nread -a names\nprintf -v target %s value\ndeclare -n ref=target\n"
+                'typeset "$n=value"\ncommand hash -p /bin/echo probe\n\\hash -p /bin/echo probe\n'
+                'FOO=1 hash -p /bin/echo probe\necho " # literal"; hash -p /bin/echo probe\n'
+                "timeout 5 set -A x y\n2>/dev/null set -A x y\nprint -u 2 -v x y\n"
+                'printf "  Python: %s\\n" "$(python --version 2>&1)"\n'
+                'IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/r-${CSID}" 2>/dev/null || RUN_DIR=""\n'
+                'local x="$1"\nset -euo pipefail\ninteger -n ref\necho "a \\" # literal"; hash -p /bin/echo probe\n'
+                "print -f '%s %s' -v target /bin/echo\nh$'\\x61'sh -p /bin/echo probe\nha\\\nsh -p /bin/echo probe\n"
+                "printf '%s\\n' -v\nX=a$b; echo hi\n"
+                '2>"a echo" set -A "$n" ruff /bin/echo\nread `echo n`\n```\n',
+                [*range(2, 14), 18, 19, 20, 21, 23, 26, 27],
+                # The danger filter refuses lines 2-13, 18-21, 23, 26 and 27 (an array or variable named by an option,
+                # a command word behind `command`, a backslash, an assignment, a wrapper, a redirection, a `hash`
+                # after a quoted string holding an escaped quote and a `#`, `print -v` after a quoted format, a command
+                # word built with `$'...'`, one continued across lines and reported where it ends, `set -A` behind a
+                # quoted redirection target, or a `read` operand built by a command substitution); lines 14-17, 24 and
+                # 25 are ordinary shapes it admits, `-v` passed to `printf` as data among them.
+                id="option-forms-and-prefixed-commands",
+            ),
+            pytest.param(
+                '```bash\nread 2>/dev/null "$n"\nhash>/dev/null -p /bin/echo probe\n'
+                '{fd}>/dev/null set -A "$n" ruff /bin/echo\nread -r x < "$file"\n'
+                'IFS= read -r y < "$(dirname "$R")/sha.txt" || y=\n'
+                'IFS= read -r z < "$F" 2>/dev/null; z="${z:-a}"\n'
+                "command -- hash -p /bin/echo probe\nsudo -u root hash -p /bin/echo probe\n"
+                "command -v hash >/dev/null\n```\n",
+                [2, 3, 4, 8, 9],
+                # Lines 2-4 and 8-9 are refused by the danger filter (a `read` operand after `2>/dev/null`, a
+                # redirection glued to `hash`, `set -A` behind an allocated descriptor `{fd}>`, `hash` behind
+                # `command --` or `sudo -u root`); lines 5-7 are ordinary reads whose redirection targets hold a `$`, a
+                # command substitution with a quoted space, or a `;` right after the target, and line 10 is a
+                # `command -v` lookup.
+                id="operands-read-past-redirections",
+            ),
+        ],
     )
-    assert ("tilde.py" in proc.stdout, "quoted.py" in proc.stdout, "prose.py" in proc.stdout) == (True, True, False)
+    def test_flags_rebind_lines(
+        self, shell: str, probe_tree: Callable[[str, str], Path], mode_text: str, flagged: list[int]
+    ) -> None:
+        """Check 23e flags exactly the lines that rebind a command name and nothing else.
 
+        The block drops whole redirections, prefixes and wrapper options before matching, so a rebind hidden behind one
+        is still reported while lookups, data operands and prose fences stay quiet.
+        """
+        tree = probe_tree("modes/rebind.md", mode_text)
+        proc = _run_block(shell, _check_block("23e"), tree)
+        assert _flagged_lines(proc) == flagged, proc.stdout + proc.stderr
 
-@_both_shells
-def test_check_23c_keeps_long_fences_open_and_drops_blockquoted_comments(shell: str, tmp_path: Path) -> None:
-    """Check 23c closes a fence only on a marker at least as long as its opener, and skips ``> #`` comment lines.
+    @_both_shells
+    def test_finds_no_rebind_in_shipped_skills(self, shell: str) -> None:
+        """No shipped skill block rebinds a command name, and Check 23e does not match its own pattern text.
 
-    A four-backtick block may hold a bare three-backtick line inside a quoted string; ending the fence there would hide
-    every later line of the block. A comment inside a blockquoted fence is still a comment once its ``>`` is removed.
-    """
-    skill = tmp_path / "plugins" / "demo" / "skills" / "probe" / "SKILL.md"
-    skill.parent.mkdir(parents=True)
-    skill.write_text(
-        '````bash\nNOTE="\n```\n"\neval "$(python /bin/long.py)"\n````\n'
-        '> ```bash\n> # eval "$(python /bin/comment.py)"\n> ```\n',
-        encoding="utf-8",
-    )
-    (tmp_path / ".claude").mkdir()
-    proc = subprocess.run(
-        [shell, "-c", _check_23c_block()], cwd=tmp_path, capture_output=True, encoding="utf-8", timeout=30
-    )
-    assert ("long.py" in proc.stdout, "comment.py" in proc.stdout) == (True, False), proc.stderr
-
-
-def _check_23e_block() -> str:
-    """Return the bash block of the audit's Sub-check 23e."""
-    text = _CHECKS_SKILLS_BASH.read_text(encoding="utf-8")
-    section = text.split("### Sub-check 23e", 1)[1]
-    return section.split("```bash\n", 1)[1].split("\n```", 1)[0]
-
-
-@_both_shells
-def test_check_23e_flags_rebinds_in_shell_fences_only(shell: str, tmp_path: Path) -> None:
-    """Check 23e reports name rebinds in shell fences and leaves lookups, paths, comments and prose fences alone.
-
-    Every rebind spelling the blueprint danger filter denies by name must surface here too, so an author learns why the
-    block prompts; ``command -v``, a ``commands.md`` path, a trailing comment and a ``text`` fence must stay quiet.
-    """
-    mode = tmp_path / "plugins" / "demo" / "skills" / "probe" / "modes" / "rebind.md"
-    mode.parent.mkdir(parents=True)
-    mode.write_text(
-        "```bash\nset -Acommands ruff /bin/echo\nx=1; hash -p /bin/rm ruff\n: ${(P)n::=/bin/rm}\ntypeset -A aliases\n"
-        "echo hi  # hash later\ncommand -v uv\nls docs/commands.md\n```\n"
-        "```text\nfunctions to change\n```\n"
-        "> ```zsh\n> alias ruff=rm\n> ```\n",
-        encoding="utf-8",
-    )
-    (tmp_path / ".claude").mkdir()
-    proc = subprocess.run(
-        [shell, "-c", _check_23e_block()], cwd=tmp_path, capture_output=True, encoding="utf-8", timeout=30
-    )
-    flagged = sorted(int(line.split(":")[1]) for line in proc.stdout.splitlines() if line.startswith("plugins/"))
-    assert flagged == [2, 3, 4, 5, 14], proc.stderr
-
-
-@_both_shells
-def test_check_23e_flags_option_forms_and_prefixed_commands(shell: str, tmp_path: Path) -> None:
-    """Check 23e reports option-driven rebinds and rebinds behind prefixes, escapes and quoted ``#`` characters.
-
-    The blueprint danger filter refuses each of lines 2-13, 18-21, 23, 26 and 27 (an array or variable named by an
-    option, a command word behind ``command``, a backslash, an assignment, a wrapper, a redirection, a ``hash`` after a
-    quoted string holding an escaped quote and a ``#``, ``print -v`` after a quoted format, a command word built with
-    ``$'…'``, one continued across lines, reported where it ends, ``set -A`` behind a quoted redirection target, or a
-    ``read`` operand built by a command substitution); lines 14-17, 24 and 25 are ordinary shapes the filter admits,
-    ``-v`` passed to ``printf`` as data among them.
-    """
-    mode = tmp_path / "plugins" / "demo" / "skills" / "probe" / "modes" / "options.md"
-    mode.parent.mkdir(parents=True)
-    mode.write_text(
-        "```bash\nset -A names x y\nread -a names\nprintf -v target %s value\ndeclare -n ref=target\n"
-        'typeset "$n=value"\ncommand hash -p /bin/echo probe\n\\hash -p /bin/echo probe\n'
-        'FOO=1 hash -p /bin/echo probe\necho " # literal"; hash -p /bin/echo probe\ntimeout 5 set -A x y\n'
-        "2>/dev/null set -A x y\nprint -u 2 -v x y\n"
-        'printf "  Python: %s\\n" "$(python --version 2>&1)"\n'
-        'IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/r-${CSID}" 2>/dev/null || RUN_DIR=""\n'
-        'local x="$1"\nset -euo pipefail\ninteger -n ref\necho "a \\" # literal"; hash -p /bin/echo probe\n'
-        "print -f '%s %s' -v target /bin/echo\nh$'\\x61'sh -p /bin/echo probe\nha\\\nsh -p /bin/echo probe\n"
-        "printf '%s\\n' -v\nX=a$b; echo hi\n"
-        '2>"a echo" set -A "$n" ruff /bin/echo\nread `echo n`\n```\n',
-        encoding="utf-8",
-    )
-    (tmp_path / ".claude").mkdir()
-    proc = subprocess.run(
-        [shell, "-c", _check_23e_block()], cwd=tmp_path, capture_output=True, encoding="utf-8", timeout=30
-    )
-    flagged = sorted(int(line.split(":")[1]) for line in proc.stdout.splitlines() if line.startswith("plugins/"))
-    assert flagged == [*range(2, 14), 18, 19, 20, 21, 23, 26, 27], proc.stdout + proc.stderr
-
-
-@_both_shells
-def test_check_23e_reads_operands_past_redirections(shell: str, tmp_path: Path) -> None:
-    """Check 23e drops whole redirections and wrapper options before matching, so a rebind behind one is reported.
-
-    Lines 2-4 and 8-9 are refused by the blueprint danger filter (a ``read`` operand after ``2>/dev/null``, a
-    redirection glued to ``hash``, ``set -A`` behind an allocated descriptor ``{fd}>``, ``hash`` behind ``command --``
-    or ``sudo -u root``); lines 5-7 are ordinary reads whose redirection targets hold a ``$``, a command substitution
-    with a quoted space, or a ``;`` right after the target, and line 10 is a ``command -v`` lookup.
-    """
-    mode = tmp_path / "plugins" / "demo" / "skills" / "probe" / "modes" / "redirections.md"
-    mode.parent.mkdir(parents=True)
-    mode.write_text(
-        '```bash\nread 2>/dev/null "$n"\nhash>/dev/null -p /bin/echo probe\n{fd}>/dev/null set -A "$n" ruff /bin/echo\n'
-        'read -r x < "$file"\nIFS= read -r y < "$(dirname "$R")/sha.txt" || y=\n'
-        'IFS= read -r z < "$F" 2>/dev/null; z="${z:-a}"\n'
-        "command -- hash -p /bin/echo probe\nsudo -u root hash -p /bin/echo probe\ncommand -v hash >/dev/null\n```\n",
-        encoding="utf-8",
-    )
-    (tmp_path / ".claude").mkdir()
-    proc = subprocess.run(
-        [shell, "-c", _check_23e_block()], cwd=tmp_path, capture_output=True, encoding="utf-8", timeout=30
-    )
-    flagged = sorted(int(line.split(":")[1]) for line in proc.stdout.splitlines() if line.startswith("plugins/"))
-    assert flagged == [2, 3, 4, 8, 9], proc.stdout + proc.stderr
-
-
-@_both_shells
-def test_check_23e_finds_no_rebind_in_shipped_skills(shell: str) -> None:
-    """No shipped skill block rebinds a command name, and Check 23e does not match its own pattern text.
-
-    The blueprint danger filter denies these spellings by name on the evidence that no shipped block needs them; this
-    keeps that premise true as skills change.
-    """
-    proc = subprocess.run(
-        [shell, "-c", _check_23e_block()], cwd=_PLUGINS.parent, capture_output=True, encoding="utf-8", timeout=60
-    )
-    assert [line for line in proc.stdout.splitlines() if not line.startswith("===")] == [], proc.stderr
-
-
-@_both_shells
-def test_check_23c_reports_plugin_finding_without_project_skills(shell: str, plugin_only_tree: Path) -> None:
-    """Check 23c reports a plugin skill's eval finding in a checkout that has no ``.claude/skills/`` directory.
-
-    This is the normal plugin-only case. Before the fix the block's ``.claude/skills/*/SKILL.md`` glob matched nothing,
-    zsh aborted the grep, and the check reported clean while the plugin skill held the finding.
-    """
-    proc = subprocess.run(
-        [shell, "-c", _check_23c_block()],
-        cwd=plugin_only_tree,
-        capture_output=True,
-        encoding="utf-8",
-        timeout=30,
-    )
-    assert "plugins/demo/skills/probe/SKILL.md:3:" in proc.stdout, proc.stderr
+        The blueprint danger filter denies these spellings by name on the evidence that no shipped block needs them;
+        this keeps that premise true as skills change.
+        """
+        proc = _run_block(shell, _check_block("23e"), _PLUGINS.parent, timeout=60)
+        assert [line for line in proc.stdout.splitlines() if not line.startswith("===")] == [], proc.stderr

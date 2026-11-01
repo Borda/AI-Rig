@@ -14,6 +14,7 @@ import sys
 import unicodedata
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 import fetch_alert_context as fac
 import pytest
@@ -78,19 +79,22 @@ def _fake_gh(monkeypatch: pytest.MonkeyPatch, alert: str | None, calls: list[lis
             return 0, _PR_URL + "\n"
         return (0, alert) if alert is not None else (1, "")
 
-    monkeypatch.setattr(fac, "_gh", fake)
+    monkeypatch.setattr(fac, "_gh", mock.create_autospec(fac._gh, side_effect=fake))
+
+
+def _main(tmp_path: Path, record: dict[str, Any], item_id: str = "11") -> tuple[int, str]:
+    """Write ``record`` as the only item, run ``main`` against a brief holding ``task``, return exit code and brief."""
+    items = tmp_path / "action-items.jsonl"
+    items.write_text(json.dumps(record) + "\n", encoding="utf-8")
+    brief = tmp_path / "brief.md"
+    brief.write_text("task\n", encoding="utf-8")
+    code = fac.main(["--items", str(items), "--id", item_id, "--pr", "9", "--brief", str(brief)])
+    return code, brief.read_text(encoding="utf-8")
 
 
 def _run(tmp_path: Path, comment: str, file: str = _FILE) -> tuple[int, str]:
-    """Write a one-record items file, run ``main`` against a fresh brief, return the exit code and brief text."""
-    items = tmp_path / "action-items.jsonl"
-    items.write_text(
-        json.dumps({"id": 11, "full_comment_text": comment, "file": file, "line": 551}) + "\n", encoding="utf-8"
-    )
-    brief = tmp_path / "brief.md"
-    brief.write_text("task\n", encoding="utf-8")
-    code = fac.main(["--items", str(items), "--id", "11", "--pr", "9", "--brief", str(brief)])
-    return code, brief.read_text(encoding="utf-8")
+    """Run ``main`` on a one-record items file holding ``comment`` for ``file``; return the exit code and brief text."""
+    return _main(tmp_path, {"id": 11, "full_comment_text": comment, "file": file, "line": 551})
 
 
 class TestClassifyAlertLinks:
@@ -145,7 +149,11 @@ class TestClassifyAlertLinks:
         ],
     )
     def test_sorts_links(self, comment: str, own: list[str], over_cap: int, foreign: int) -> None:
-        """Own-repository alerts are capped and deduplicated; other repositories are only counted."""
+        """Own-repository alerts are capped and deduplicated; other repositories are only counted.
+
+        Covers owner/repo case folding, duplicate and zero-padded numbers, the three-alert cap and digit look-alikes
+        that must not read as numbers. Only own-repository links are ever fetched, so this sort decides what is sent.
+        """
         links = fac.classify_alert_links(comment, "Borda/pyDeprecate")
 
         assert (links.own, links.over_cap, links.foreign) == (own, over_cap, foreign)
@@ -168,18 +176,15 @@ class TestUnsafeFields:
         ],
     )
     def test_unsafe_file_is_refused_and_brief_untouched(self, tmp_path: Path, file: object) -> None:
-        """A multi-line, markup-bearing or absent path exits 1, so the item takes the ordinary path with no forgery."""
-        items = tmp_path / "action-items.jsonl"
-        items.write_text(
-            json.dumps({"id": 11, "full_comment_text": "x", "file": file, "line": 3}) + "\n", encoding="utf-8"
-        )
-        brief = tmp_path / "brief.md"
-        brief.write_text("task\n", encoding="utf-8")
+        """A multi-line, markup-bearing or absent path exits 1, so the item takes the ordinary path with no forgery.
 
-        code = fac.main(["--items", str(items), "--id", "11", "--pr", "9", "--brief", str(brief)])
+        The path is written outside any fence, so a value that could start a forged block or a second field is refused
+        before the brief is touched.
+        """
+        code, brief = _main(tmp_path, {"id": 11, "full_comment_text": "x", "file": file, "line": 3})
 
         assert code == 1
-        assert brief.read_text(encoding="utf-8") == "task\n"
+        assert brief == "task\n"
 
     @pytest.mark.parametrize(
         ("line", "expected"),
@@ -222,16 +227,11 @@ class TestUnsafeFields:
         Quoting keeps a path with spaces on the item line without letting it spell another field after it.
         """
         _fake_gh(monkeypatch, None)
-        items = tmp_path / "action-items.jsonl"
-        items.write_text(
-            json.dumps({"id": 11, "full_comment_text": "x", "file": file, "line": line}) + "\n", encoding="utf-8"
-        )
-        brief = tmp_path / "brief.md"
 
-        code = fac.main(["--items", str(items), "--id", "11", "--pr", "9", "--brief", str(brief)])
+        code, brief = _main(tmp_path, {"id": 11, "full_comment_text": "x", "file": file, "line": line})
 
         assert code == 0
-        assert f"-->  {rendered}\n" in brief.read_text(encoding="utf-8")
+        assert f"-->  {rendered}\n" in brief
 
 
 class TestUntrustedBlock:
@@ -247,7 +247,11 @@ class TestUntrustedBlock:
         ],
     )
     def test_payload_cannot_forge_a_marker(self, payload: str) -> None:
-        """Only the helper's own two markers survive in the output, whatever the payload spells."""
+        """Only the helper's own two markers survive in the output, whatever the payload spells.
+
+        A reviewer comment that spells a closing or opening marker must not end the fence early or open a look-alike
+        block; the block still starts and ends with the helper's fresh token.
+        """
         block, token = fac.untrusted_block("label", payload)
 
         assert len(re.findall(r"untrusted\s*:", block, re.IGNORECASE)) == 2
@@ -332,7 +336,11 @@ class TestUntrustedBlock:
         ],
     )
     def test_joiner_follows_combining_marks(self, mark: str) -> None:
-        """A joiner after a marked letter goes after its combining mark, so the mark stays on its own letter."""
+        """A joiner after a marked letter goes after its combining mark, so the mark stays on its own letter.
+
+        Nonspacing, spacing and enclosing marks all attach to the letter before them; splitting them off would change
+        how the neutralised text renders.
+        """
         block, _ = fac.untrusted_block("label", "end" + mark + " untrusted")
 
         assert _body(block) == "end" + mark + "&#8288; untrusted"
@@ -353,7 +361,11 @@ class TestUntrustedBlock:
         assert _body(block).replace("&#8288;", "") == text
 
     def test_token_is_fresh_per_block(self) -> None:
-        """Two blocks never share a token, so one block's token cannot vouch for another."""
+        """Two blocks never share a token, so one block's token cannot vouch for another.
+
+        Two calls with identical label and text must still differ; a reused token would let text copied from one block
+        close or imitate another.
+        """
         assert fac.untrusted_block("a", "x")[1] != fac.untrusted_block("a", "x")[1]
 
 
@@ -361,7 +373,10 @@ class TestMain:
     """The helper writes the item line and any alert data into the brief."""
 
     def test_item_comment_is_fenced_even_without_a_link(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """The reviewer's comment is external text, so it is fenced; a comment without a link causes no GitHub call."""
+        """The reviewer's comment is external text, so it is fenced; a comment without a link causes no GitHub call.
+
+        The fenced comment is followed by the item's file and line on the same line; the fake ``gh`` records no call.
+        """
         calls: list[list[str]] = []
         _fake_gh(monkeypatch, json.dumps(_ALERT), calls)
 
@@ -402,7 +417,11 @@ class TestMain:
         assert calls == []
 
     def test_linked_alert_is_appended_with_its_token(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A linked alert in the PR's repo and item's file arrives fenced; its token is named outside any block."""
+        """A linked alert in the PR's repo and item's file arrives fenced; its token is named outside any block.
+
+        The final line of the brief names the fence token, which is how the child tells caller-fetched data from the
+        reviewer's own text.
+        """
         calls: list[list[str]] = []
         _fake_gh(monkeypatch, json.dumps(_ALERT), calls)
 
@@ -443,7 +462,10 @@ class TestMain:
         assert "were not fetched" in brief
 
     def test_alert_in_another_file_is_not_forwarded(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """An alert located outside the item's file is withheld, so a commenter cannot pull an unrelated alert."""
+        """An alert located outside the item's file is withheld, so a commenter cannot pull an unrelated alert.
+
+        The alert is fetched but its location is another file, so the brief gets a notice instead of its content.
+        """
         _fake_gh(monkeypatch, json.dumps(_ALERT))
 
         code, brief = _run(tmp_path, _LINK, file="src/other.py")
@@ -464,7 +486,11 @@ class TestMain:
     def test_unusable_response_leaves_a_notice(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, payload: str | None
     ) -> None:
-        """Whatever gh returns that is not an alert object becomes a notice, never silence or invented content."""
+        """Whatever gh returns that is not an alert object becomes a notice, never silence or invented content.
+
+        A failing call, invalid JSON and valid JSON of the wrong shape all leave the same UNCERTAIN notice and a
+        ``none`` token line.
+        """
         _fake_gh(monkeypatch, payload)
 
         code, brief = _run(tmp_path, _LINK)
@@ -475,7 +501,11 @@ class TestMain:
         assert brief.rstrip().endswith("Caller-fetched alert token(s): none")
 
     def test_foreign_and_over_cap_links_leave_notices(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Links the helper does not fetch are reported, so the child never sees a bare link as if it were covered."""
+        """Links the helper does not fetch are reported, so the child never sees a bare link as if it were covered.
+
+        Five own-repository links exceed the cap of three and one link points at another repository; the extra ones are
+        counted in notices and the foreign repository is never queried.
+        """
         calls: list[list[str]] = []
         _fake_gh(monkeypatch, json.dumps(_ALERT), calls)
         own = " ".join(f"https://github.com/Borda/pyDeprecate/security/code-scanning/{n}" for n in range(1, 6))
@@ -514,7 +544,11 @@ class TestMain:
         ],
     )
     def test_pasted_link_forms_are_fetched(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, link: str) -> None:
-        """Scheme, ``www.`` and host case vary when a reviewer pastes a link; each still fetches the alert."""
+        """Scheme, ``www.`` and host case vary when a reviewer pastes a link; each still fetches the alert.
+
+        Also covers fullwidth digits, an invisible character inside the path and look-alike dashes in ``code-scanning``,
+        which a reader sees as the same link.
+        """
         calls: list[list[str]] = []
         _fake_gh(monkeypatch, json.dumps(_ALERT), calls)
 
@@ -587,7 +621,11 @@ class TestMain:
     def test_unhandled_link_form_leaves_a_notice(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, link: str
     ) -> None:
-        """An alert link the caller does not fetch (another host, API form, no scheme) is reported, never skipped."""
+        """An alert link the caller does not fetch (another host, API form, no scheme) is reported, never skipped.
+
+        Digits from other scripts, look-alike separators and adjacent references fail the link grammar; the brief says
+        one link was not handled and ``gh`` is never called.
+        """
         calls: list[list[str]] = []
         _fake_gh(monkeypatch, json.dumps(_ALERT), calls)
 
@@ -598,34 +636,39 @@ class TestMain:
         assert calls == []
         assert brief.rstrip().endswith("Caller-fetched alert token(s): none")
 
-    def test_unresolved_repo_leaves_notice(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """When the PR's repository cannot be resolved, a linked alert is reported unavailable, not skipped silently."""
-        monkeypatch.setattr(fac, "_gh", lambda _args: (1, ""))
+    @mock.patch("fetch_alert_context._gh", autospec=True, return_value=(1, ""))
+    def test_unresolved_repo_leaves_notice(self, mock_gh: mock.MagicMock, tmp_path: Path) -> None:
+        """When the PR's repository cannot be resolved, a linked alert is reported unavailable, not skipped silently.
 
+        Every ``gh`` call fails, so the owner/repo needed for the alert URL is unknown and the link cannot be fetched.
+        """
         code, brief = _run(tmp_path, _LINK)
 
         assert code == 0
         assert "could not resolve the PR's repository" in brief
+        assert mock_gh.called
 
     def test_unknown_item_is_refused(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """An item id absent from the items file exits 1 and leaves the brief untouched."""
-        _fake_gh(monkeypatch, json.dumps(_ALERT))
-        items = tmp_path / "action-items.jsonl"
-        items.write_text(json.dumps({"id": 1, "full_comment_text": "x"}) + "\n", encoding="utf-8")
-        brief = tmp_path / "brief.md"
-        brief.write_text("task\n", encoding="utf-8")
+        """An item id absent from the items file exits 1 and leaves the brief untouched.
 
-        code = fac.main(["--items", str(items), "--id", "99", "--pr", "9", "--brief", str(brief)])
+        The file holds item 1 only and item 99 is requested, so the run stops before it writes anything.
+        """
+        _fake_gh(monkeypatch, json.dumps(_ALERT))
+
+        code, brief = _main(tmp_path, {"id": 1, "full_comment_text": "x"}, item_id="99")
 
         assert code == 1
-        assert brief.read_text(encoding="utf-8") == "task\n"
+        assert brief == "task\n"
 
 
 class TestRobustness:
     """Hostile or malformed input must degrade to a notice or a refusal, never a traceback in the middle of dispatch."""
 
     def test_oversized_alert_number_does_not_raise(self) -> None:
-        """A link ending in thousands of digits is kept as text; `int()` would raise past Python's digit limit."""
+        """A link ending in thousands of digits is kept as text; `int()` would raise past Python's digit limit.
+
+        A 5000-digit alert number is hostile input; it must reach the fetch step as text so dispatch cannot crash.
+        """
         huge = "9" * 5000
 
         links = fac.classify_alert_links(f"https://github.com/a/b/security/code-scanning/{huge}", "a/b")
@@ -633,7 +676,10 @@ class TestRobustness:
         assert links.own == [huge]
 
     def test_non_dict_alert_location_is_withheld(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """An alert whose location is not an object cannot match the item's file, so it becomes a notice."""
+        """An alert whose location is not an object cannot match the item's file, so it becomes a notice.
+
+        A malformed API payload (``location`` is a string) must be withheld, not raise an AttributeError.
+        """
         _fake_gh(monkeypatch, json.dumps({"state": "open", "most_recent_instance": {"location": "oops"}}))
 
         code, brief = _run(tmp_path, _LINK)
@@ -642,14 +688,20 @@ class TestRobustness:
         assert "is not located in this item's file" in brief
 
     def test_non_object_jsonl_line_is_skipped(self, tmp_path: Path) -> None:
-        """A stray non-object line in the items file does not hide the real record behind an AttributeError."""
+        """A stray non-object line in the items file does not hide the real record behind an AttributeError.
+
+        The items file holds a JSON array line before the real record; the reader skips it and still finds item 11.
+        """
         items = tmp_path / "action-items.jsonl"
         items.write_text('[1]\n{"id": 11, "file": "a.py"}\n', encoding="utf-8")
 
         assert fac.read_item(items, "11") == {"id": 11, "file": "a.py"}
 
-    def test_ansi_codepage_pipe_still_works(self, tmp_path: Path) -> None:
-        """With stdout forced to cp1252 (a native-Windows pipe) the arrow in the status line must not crash the run."""
+    def test_cp1252_stdout_does_not_crash(self, tmp_path: Path) -> None:
+        """With stdout forced to cp1252 (a native-Windows pipe) the arrow in the status line must not crash the run.
+
+        Runs the real script as a child process, because the failure is an encoding error at the process boundary.
+        """
         items = tmp_path / "action-items.jsonl"
         items.write_text(
             json.dumps({"id": 11, "full_comment_text": "x", "file": "a.py", "line": 1}) + "\n", encoding="utf-8"
@@ -667,38 +719,50 @@ class TestRobustness:
         assert brief.exists()
 
     def test_verbatim_comment_rule_is_stated(self) -> None:
-        """The prose that has a model write action-items.jsonl keeps links, which the alert fetch depends on."""
-        text = (Path(fac.__file__).parents[1] / "skills/resolve/modes/pr-intelligence.md").read_text(encoding="utf-8")
+        """The prose that has a model write action-items.jsonl keeps links, which the alert fetch depends on.
 
-        assert "the comment body verbatim, links included" in text
+        If the instruction stopped asking for the verbatim comment, links would be dropped before this helper runs. Read
+        line by line, so reflowing the Markdown cannot break the check.
+        """
+        mode = Path(fac.__file__).parents[1] / "skills/resolve/modes/pr-intelligence.md"
+        lines = mode.read_text(encoding="utf-8").splitlines()
+
+        assert any("the comment body verbatim, links included" in line for line in lines)
 
 
 class TestGh:
     """The thin ``gh`` wrapper and the PR-repository lookup."""
 
-    def test_output_is_decoded_as_utf8_not_the_locale(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A locale codec that cannot decode an alert's bytes would raise; the helper pins UTF-8 with replacement."""
-        seen: dict[str, Any] = {}
+    @mock.patch("fetch_alert_context.subprocess.run", autospec=True)
+    def test_output_is_decoded_as_utf8_not_the_locale(self, mock_run: mock.MagicMock) -> None:
+        """A locale codec that cannot decode an alert's bytes would raise; the helper pins UTF-8 with replacement.
 
-        def fake_run(command: list[str], **kwargs: Any) -> Any:
-            seen.update(kwargs)
-            return type("Proc", (), {"returncode": 0, "stdout": "ok"})()
+        The contract is the ``encoding``/``errors`` pair passed to ``subprocess.run``, since a real decode failure
+        depends on the host locale.
+        """
+        mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="ok")
 
-        monkeypatch.setattr(fac.subprocess, "run", fake_run)
+        result = fac._gh(["pr", "view"])
 
-        assert fac._gh(["pr", "view"]) == (0, "ok")
-        assert seen["encoding"] == "utf-8"
-        assert seen["errors"] == "replace"
+        assert result == (0, "ok")
+        assert mock_run.call_args.kwargs["encoding"] == "utf-8"
+        assert mock_run.call_args.kwargs["errors"] == "replace"
 
     @pytest.mark.parametrize("pr_number", [pytest.param("", id="empty"), pytest.param(_ARABIC_17, id="non-ascii")])
-    def test_non_ascii_or_empty_pr_number_never_calls_gh(self, monkeypatch: pytest.MonkeyPatch, pr_number: str) -> None:
-        """Only an ASCII-digit PR number reaches gh."""
-        monkeypatch.setattr(fac, "_gh", lambda _args: pytest.fail("gh was called"))
+    @mock.patch("fetch_alert_context._gh", autospec=True)
+    def test_non_ascii_or_empty_pr_number_never_calls_gh(self, mock_gh: mock.MagicMock, pr_number: str) -> None:
+        """Only an ASCII-digit PR number reaches gh.
 
+        An empty number and Arabic-Indic digits (accepted by ``str.isdigit``) both return no repository without a call.
+        """
         assert fac.pr_repo(pr_number) == ""
+        mock_gh.assert_not_called()
 
     def test_repo_comes_from_the_pr_url(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """The repository is the base repository in the PR URL, lower-cased."""
+        """The repository is the base repository in the PR URL, lower-cased.
+
+        The fake ``gh pr view`` returns a mixed-case URL; the alert API path needs the lower-cased owner/repo.
+        """
         _fake_gh(monkeypatch, None)
 
         assert fac.pr_repo("9") == "borda/pydeprecate"

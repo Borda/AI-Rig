@@ -25,212 +25,14 @@ _EXIT_USAGE = 2  # join_avoidance.main's own bare literal (bin/join_avoidance.py
 
 _BASE = datetime(2026, 7, 10, 1, 0, 0, tzinfo=timezone.utc)
 
-
-@pytest.mark.parametrize("field", ["v", "project"])
-def test_join_keeps_evidence_cohorts_separate(field: str) -> None:
-    """A shared session and module cannot bridge versions or project roots."""
-    answer = _cli("pkg.mod", 0) | {field: "/work/first" if field == "project" else "0.39.3"}
-    tool = _tool("pkg.mod", 1) | {field: "/work/second" if field == "project" else "0.39.4"}
-    assert len(ja.parse_cli_records([answer])) == 1
-    assert len(ja.parse_tool_records([tool])) == 1
-    assert ja.find_avoidance_events(ja.parse_cli_records([answer]), ja.parse_tool_records([tool])) == []
-
-
-@pytest.mark.parametrize(
-    "change",
-    [
-        pytest.param({"session": ""}, id="empty-session"),
-        pytest.param({"exit_code": 2}, id="failed-command"),
-        pytest.param({"source": "bench"}, id="diagnostic-source"),
-        pytest.param({"result": {"module": "pkg.mod", "index": {"query_complete": True, "stale": True}}}, id="stale"),
-        pytest.param(
-            {"result": {"module": "pkg.mod", "index": {"query_complete": False, "exhaustive": True}}},
-            id="conflicting-legacy",
-        ),
-    ],
-)
-def test_invalid_answer_cannot_support_overlap(change: dict) -> None:
-    """Rejected, stale, diagnostic, and unjoinable answers stay outside the numerator."""
-    assert ja.parse_cli_records([_cli("pkg.mod", 0) | change]) == []
-
-
-def test_module_identity_never_comes_from_option_value() -> None:
-    """An index path is not evidence for a queried module."""
-    assert ja._module_from_cli_result({"argv": ["central", "--index", "pkg/mod.json"]}) == ""
-    assert ja._module_from_cli_result({"argv": ["rdeps", "pkg", "--index", "other.json"]}) == "pkg"
-    assert ja._module_from_cli_result({"result": {"qname": "pkg.mod::Thing"}}) == "pkg.mod"
-
-
-def test_batch_counts_successful_logical_answers_only() -> None:
-    """One batch invocation can expose several answers without counting failed children."""
-    record = _cli("pkg.mod", 0)
-    result = record["result"]
-    record.update(
-        cmd="batch",
-        argv=["batch"],
-        result={
-            "batch": [
-                {"cmd": "rdeps", "ok": True, "result": result},
-                {"cmd": "rdeps", "ok": False, "result": result},
-            ]
-        },
-    )
-    answers = ja.parse_cli_records([record])
-    assert [answer.module for answer in answers] == ["pkg.mod"]
-    summary = ja.summarize(answers, ja.parse_tool_records([_tool("pkg/mod.py", 1, tool="Read")]))
-    payload = json.loads(ja.render_json(summary))
-    assert payload["avoidance_count"] == 1
-    assert payload["metric"] == "module_overlap_proxy_v3"
-    assert payload["confirmed_misuse"] is None
-    assert "not confirmed misuse" in ja.render_text(summary)
-
-
-@pytest.mark.parametrize(
-    ("tool", "target", "search_path", "kind"),
-    [
-        pytest.param("Read", "src/pkg/mod.py", "", "source_read", id="read-own-file"),
-        pytest.param("Read", "src\\pkg\\mod.py", "", "source_read", id="read-own-file-windows"),
-        pytest.param("Read", "src/pkg/mod.py.bak", "", "source_read", id="read-backup-copy"),
-        pytest.param(
-            "Bash", "grep -n 'os.replace\\|tempfile' src/pkg/mod.py | head", "", "source_read", id="grep-own-file"
-        ),
-        pytest.param("Bash", "grep -n 'x' src/pkg/mod.py", "", "source_read", id="grep-single-file"),
-        pytest.param("Bash", "rg -n 'x' src/pkg/mod/__init__.py", "", "source_read", id="rg-own-package-init"),
-        pytest.param("Bash", "rg -n 'pkg.mod' src/pkg/other.py", "", "unknown", id="rg-other-single-file"),
-        pytest.param("Bash", "grep -rn 'pkg.mod' src/pkg/other.py", "", "unknown", id="grep-r-other-single-file"),
-        pytest.param("Bash", "grep -rn 'pkg.mod' src tests", "", "unknown", id="grep-r-tree"),
-        pytest.param("Bash", "egrep -rn 'pkg.mod' src", "", "unknown", id="egrep-r-tree"),
-        pytest.param("Bash", "fgrep -r 'pkg.mod' src", "", "unknown", id="fgrep-r-tree"),
-        pytest.param("Bash", "grep -n --include=*.py -r 'import pkg.mod' .", "", "unknown", id="grep-include-tree"),
-        pytest.param("Bash", "rg -n 'from pkg.mod import' src", "", "unknown", id="rg-tree"),
-        pytest.param("Bash", "rg -n 'from pkg.mod import' src", "src", "structural_search", id="bash-directory-scope"),
-        pytest.param(
-            "Bash", "grep -rn 'pkg.mod' src/pkg/other.py", "src/pkg/other.py", "source_read", id="bash-file-scope"
-        ),
-        pytest.param("Bash", "grep -rn 'pkg.mod' src tests", "unscoped", "unknown", id="bash-unknown-scope"),
-        pytest.param("Grep", "pkg.mod", "", "unknown", id="grep-tool-unscoped"),
-        pytest.param("Grep", "pkg.mod", "src", "structural_search", id="grep-tool-tree-scope"),
-        pytest.param("Grep", "pkg.mod", "src/pkg/mod.py", "source_read", id="grep-tool-own-file-scope"),
-        pytest.param("Grep", "pkg.mod", "src/pkg/other.py", "source_read", id="grep-tool-other-file-scope"),
-        pytest.param("Glob", "**/pkg/mod*", "", "unknown", id="glob-tool"),
-        pytest.param("Glob", "*.py", "src/pkg/mod/__init__.py", "source_read", id="glob-tool-own-file-scope"),
-    ],
-)
-def test_overlap_kind_separates_source_reads_from_structural_searches(
-    tool: str, target: str, search_path: str, kind: str
-) -> None:
-    """Directory scope is structural; recursive-looking shell spelling alone leaves scope unknown."""
-    scope = {
-        "unscoped": "unknown",
-        "src": "directory",
-        "src/pkg/mod.py": "file",
-        "src/pkg/other.py": "file",
-        "src/pkg/mod/__init__.py": "file",
-    }
-    assert ja.classify_overlap("pkg.mod", tool, target, search_path, scope.get(search_path, "")) == kind
-
-
-@pytest.mark.parametrize(
-    ("tool", "target"),
-    [
-        pytest.param("Grep", "pkg.mod", id="legacy-grep"),
-        pytest.param("Bash", "rg -n 'pkg.mod' src/pkg/other.py", id="unverified-shell-scope"),
-    ],
-)
-def test_unknown_count_separates_unclassifiable_from_zero_structural(tool: str, target: str) -> None:
-    """Unverified search scope is counted as unknown, overall and per runtime, never as zero structural.
-
-    A cohort of pre-scope records and a cohort of classified records both report ``structural_search_count: 0``; only
-    ``unknown_count`` tells "no tree searches" from "nothing classifiable".
-    """
-    answers = ja.parse_cli_records([_cli("pkg.mod", 0)])
-    events = ja.parse_tool_records([_tool("src/pkg/mod.py", 1, tool="Read"), _tool(target, 2, tool=tool)])
-    summary = ja.summarize(answers, events)
-    payload = json.loads(ja.render_json(summary))
-    assert payload["avoidance_count"] == 2
-    assert payload["structural_search_count"] == 0
-    assert payload["unknown_count"] == 1
-    assert payload["per_runtime"]["unattributed"]["unknown_count"] == 1
-    assert "unknown scope among them:       1" in ja.render_text(summary)
-    assert "unknown 1" in ja.render_text(summary)
-
-
-def test_structural_search_count_is_subset_of_avoidance_count() -> None:
-    """A source read and a tree grep both overlap, but only the grep counts as structural.
-
-    The legacy ``avoidance_count`` stays a plain overlap proxy; the new counter narrows it without changing it, per
-    runtime and overall. A Grep-tool record scoped to the own file joins through ``search_path`` as a source read.
-    """
-    answers = ja.parse_cli_records([_cli("pkg.mod", 0)])
-    events = ja.parse_tool_records(
-        [
-            _tool("src/pkg/mod.py", 1, tool="Read"),
-            _tool("grep -rn 'pkg.mod' src tests", 2, tool="Bash"),
-            _tool("pkg.mod", 3) | {"search_path": "src/pkg/mod.py", "search_scope": "file"},
-            _tool("pkg.mod", 4) | {"search_path": "src", "search_scope": "directory"},
-        ]
-    )
-    summary = ja.summarize(answers, events)
-    payload = json.loads(ja.render_json(summary))
-    assert payload["avoidance_count"] == 4
-    assert payload["structural_search_count"] == 1
-    assert payload["unknown_count"] == 1
-    assert [event["kind"] for event in payload["events"]] == [
-        "source_read",
-        "unknown",
-        "source_read",
-        "structural_search",
-    ]
-    assert payload["per_runtime"]["unattributed"]["structural_search_count"] == 1
-    assert "structural searches among them: 1" in ja.render_text(summary)
-
-
-@pytest.mark.parametrize(
-    ("command", "expected"),
-    [
-        pytest.param("grep -rn 'x' src", ja.OverlapKind.UNKNOWN, id="grep-recursive-flag"),
-        pytest.param("egrep --recursive x src", ja.OverlapKind.UNKNOWN, id="egrep-long-flag"),
-        pytest.param("echo $(grep -inR x src)", ja.OverlapKind.UNKNOWN, id="grep-in-substitution"),
-        pytest.param("cd d && rg -n x", ja.OverlapKind.UNKNOWN, id="rg-after-and"),
-        pytest.param("grep -n x file.py | head", ja.OverlapKind.SOURCE_READ, id="grep-without-recursive-flag"),
-        pytest.param("grep -n x f; ls -r", ja.OverlapKind.SOURCE_READ, id="flag-after-separator-is-another-command"),
-        pytest.param("cat f | sort -r", ja.OverlapKind.SOURCE_READ, id="no-grep-word"),
-    ],
-)
-def test_bash_recursive_search_classification(command: str, expected: ja.OverlapKind) -> None:
-    """A recursive-looking grep or rg is unknown scope; a flag only counts inside its own simple command.
-
-    The tokenizer that replaced the single regular expression must agree with it on ordinary command lines: ``-r``
-    belongs to a ``grep`` only when no ``;``, ``&``, ``|`` or newline separates them.
-    """
-    assert ja.classify_overlap("pkg.mod", "Bash", command) == expected
-
-
-def test_bash_recursive_search_classification_is_linear() -> None:
-    """Repeated ``grep`` words classify in milliseconds, not the quadratic seconds of the former regex.
-
-    The former pattern took about 2 s on 40 KB of ``grep `` repetitions and grows with the square of the length; 100 KB
-    would have taken over ten seconds, so a one-second bound separates the two without a timing-sensitive threshold.
-    """
-    started = time.perf_counter()
-    kind = ja.classify_overlap("pkg.mod", "Bash", "grep " * 20000)
-    assert kind == ja.OverlapKind.SOURCE_READ
-    assert time.perf_counter() - started < 1.0
-
-
-def test_render_text_strips_terminal_control_characters() -> None:
-    """Session ids carrying escape sequences are printed with the control characters replaced.
-
-    Log text is partly influenced by tool commands, so a session id such as ``ESC ] 0 ; title BEL`` printed raw would
-    retitle or script the reader's terminal. The JSON rendering escapes it already; the text report must not leak it.
-    """
-    session = "s\x1b]0;pwn\x07-1"
-    answers = ja.parse_cli_records([_cli("pkg.mod", 0) | {"session": session}])
-    events = ja.parse_tool_records([_tool("src/pkg/mod.py", 1, tool="Read") | {"session": session}])
-    text = ja.render_text(ja.summarize(answers, events))
-    assert "\x1b" not in text
-    assert "\x07" not in text
-    assert "s?]0;pwn?-1" in text
+# search_path -> the ``search_scope`` the hook would have recorded for it
+_SEARCH_SCOPE = {
+    "unscoped": "unknown",
+    "src": "directory",
+    "src/pkg/mod.py": "file",
+    "src/pkg/other.py": "file",
+    "src/pkg/mod/__init__.py": "file",
+}
 
 
 def _ts(offset_min: float) -> str:
@@ -279,6 +81,299 @@ def _tool(target: str, offset_min: float, *, tool: str = "Grep", session: str = 
     }
 
 
+def _batch_record() -> dict:
+    """Build a ``batch`` cli record with one successful and one failed ``rdeps`` child on ``pkg.mod``."""
+    record = _cli("pkg.mod", 0)
+    result = record["result"]
+    record.update(
+        cmd="batch",
+        argv=["batch"],
+        result={
+            "batch": [
+                {"cmd": "rdeps", "ok": True, "result": result},
+                {"cmd": "rdeps", "ok": False, "result": result},
+            ]
+        },
+    )
+    return record
+
+
+def _write_shards(log_dir: Path, cli_records: list[dict], tool_records: list[dict]) -> None:
+    """Write cli/tools shards under *log_dir* for the ``--logs`` resolution path."""
+    log_dir.mkdir(parents=True, exist_ok=True)
+    (log_dir / "cli_s1.jsonl").write_text("".join(json.dumps(r) + "\n" for r in cli_records))
+    (log_dir / "tools_s1.jsonl").write_text("".join(json.dumps(r) + "\n" for r in tool_records))
+
+
+def _write_runtime_pairs(log_dir: Path, runtime_sessions: dict[str, str]) -> None:
+    """Write one matching cli+tools shard pair per ``runtime -> session``; an empty runtime means the flat log dir."""
+    for runtime, session in runtime_sessions.items():
+        shard_dir = log_dir / runtime if runtime else log_dir
+        shard_dir.mkdir(parents=True, exist_ok=True)
+        (shard_dir / f"cli_{session}.jsonl").write_text(json.dumps(_cli("pkg.auth", 0.0, session=session)) + "\n")
+        (shard_dir / f"tools_{session}.jsonl").write_text(
+            json.dumps(_tool("import pkg.auth", 2.0, session=session)) + "\n"
+        )
+
+
+class TestEvidenceCohorts:
+    """Version and project root partition the evidence the join may bridge."""
+
+    @pytest.mark.parametrize(
+        ("field", "answer_value", "tool_value"),
+        [
+            pytest.param("v", "0.39.3", "0.39.4", id="version"),
+            pytest.param("project", "/work/first", "/work/second", id="project-root"),
+        ],
+    )
+    def test_shared_session_and_module_do_not_bridge_cohorts(
+        self, field: str, answer_value: str, tool_value: str
+    ) -> None:
+        """A shared session and module cannot join an answer and a tool call from different versions or projects.
+
+        Both records parse on their own, so the only thing keeping them apart is the cohort key; bridging would count an
+        answer from one release as covering a search made under another.
+        """
+        answer = _cli("pkg.mod", 0) | {field: answer_value}
+        tool = _tool("pkg.mod", 1) | {field: tool_value}
+        answers = ja.parse_cli_records([answer])
+        events = ja.parse_tool_records([tool])
+
+        assert len(answers) == 1
+        assert len(events) == 1
+        assert ja.find_avoidance_events(answers, events) == []
+
+
+class TestParseCliRecords:
+    """Which cli records count as a complete, joinable answer."""
+
+    @pytest.mark.parametrize(
+        "change",
+        [
+            pytest.param({"session": ""}, id="empty-session"),
+            pytest.param({"exit_code": 2}, id="failed-command"),
+            pytest.param({"source": "bench"}, id="diagnostic-source"),
+            pytest.param(
+                {"result": {"module": "pkg.mod", "index": {"query_complete": True, "stale": True}}}, id="stale"
+            ),
+            pytest.param(
+                {"result": {"module": "pkg.mod", "index": {"query_complete": False, "exhaustive": True}}},
+                id="conflicting-legacy",
+            ),
+        ],
+    )
+    def test_invalid_answer_cannot_support_overlap(self, change: dict) -> None:
+        """Rejected, stale, diagnostic, and unjoinable answers stay outside the numerator.
+
+        Each change turns an otherwise complete answer into one that cannot honestly be called "already answered", so it
+        must yield no answer record at all.
+        """
+        assert ja.parse_cli_records([_cli("pkg.mod", 0) | change]) == []
+
+    @pytest.mark.parametrize(
+        ("record", "module"),
+        [
+            pytest.param({"argv": ["central", "--index", "pkg/mod.json"]}, "", id="index-option-value"),
+            pytest.param({"argv": ["rdeps", "pkg", "--index", "other.json"]}, "pkg", id="positional-before-option"),
+            pytest.param({"result": {"qname": "pkg.mod::Thing"}}, "pkg.mod", id="qualified-name-result"),
+        ],
+    )
+    def test_module_identity_never_comes_from_option_value(self, record: dict, module: str) -> None:
+        """An index path is not evidence for a queried module.
+
+        The queried module comes from the positional argument or the result's qualified name, never from the value of an
+        option such as ``--index``, which would invent a module the user never asked about.
+        """
+        assert ja._module_from_cli_result(record) == module
+
+    def test_batch_counts_successful_children_only(self) -> None:
+        """One batch invocation exposes its successful logical answers without counting failed children.
+
+        The batch holds two ``rdeps`` children on ``pkg.mod``, one ok and one failed, so exactly one answer results.
+        """
+        answers = ja.parse_cli_records([_batch_record()])
+
+        assert [answer.module for answer in answers] == ["pkg.mod"]
+
+
+class TestSummaryReport:
+    """The JSON and text summaries built from joined answers and tool events."""
+
+    def test_overlap_is_labelled_a_proxy_not_misuse(self) -> None:
+        """A source read after a batch answer is one overlap, reported as a proxy and never as confirmed misuse.
+
+        The metric name and the text report must say that the join is a name/time proxy, so nobody reads the count as
+        proof that the guard leaked.
+        """
+        answers = ja.parse_cli_records([_batch_record()])
+        summary = ja.summarize(answers, ja.parse_tool_records([_tool("pkg/mod.py", 1, tool="Read")]))
+
+        payload = json.loads(ja.render_json(summary))
+
+        assert payload["avoidance_count"] == 1
+        assert payload["metric"] == "module_overlap_proxy_v3"
+        assert payload["confirmed_misuse"] is None
+        assert "not confirmed misuse" in ja.render_text(summary)
+
+    @pytest.mark.parametrize(
+        ("tool", "target"),
+        [
+            pytest.param("Grep", "pkg.mod", id="legacy-grep"),
+            pytest.param("Bash", "rg -n 'pkg.mod' src/pkg/other.py", id="unverified-shell-scope"),
+        ],
+    )
+    def test_unknown_count_separates_unclassifiable_from_zero_structural(self, tool: str, target: str) -> None:
+        """Unverified search scope is counted as unknown, overall and per runtime, never as zero structural.
+
+        A cohort of pre-scope records and a cohort of classified records both report ``structural_search_count: 0``;
+        only ``unknown_count`` tells "no tree searches" from "nothing classifiable".
+        """
+        answers = ja.parse_cli_records([_cli("pkg.mod", 0)])
+        events = ja.parse_tool_records([_tool("src/pkg/mod.py", 1, tool="Read"), _tool(target, 2, tool=tool)])
+        summary = ja.summarize(answers, events)
+
+        payload = json.loads(ja.render_json(summary))
+        text = ja.render_text(summary)
+
+        assert payload["avoidance_count"] == 2
+        assert payload["structural_search_count"] == 0
+        assert payload["unknown_count"] == 1
+        assert payload["per_runtime"]["unattributed"]["unknown_count"] == 1
+        assert "unknown scope among them:       1" in text
+        assert "unknown 1" in text
+
+    def test_structural_search_count_is_subset_of_avoidance_count(self) -> None:
+        """A source read and a tree grep both overlap, but only the grep counts as structural.
+
+        The legacy ``avoidance_count`` stays a plain overlap proxy; the new counter narrows it without changing it, per
+        runtime and overall. A Grep-tool record scoped to the own file joins through ``search_path`` as a source read.
+        """
+        answers = ja.parse_cli_records([_cli("pkg.mod", 0)])
+        events = ja.parse_tool_records(
+            [
+                _tool("src/pkg/mod.py", 1, tool="Read"),
+                _tool("grep -rn 'pkg.mod' src tests", 2, tool="Bash"),
+                _tool("pkg.mod", 3) | {"search_path": "src/pkg/mod.py", "search_scope": "file"},
+                _tool("pkg.mod", 4) | {"search_path": "src", "search_scope": "directory"},
+            ]
+        )
+        summary = ja.summarize(answers, events)
+
+        payload = json.loads(ja.render_json(summary))
+
+        assert payload["avoidance_count"] == 4
+        assert payload["structural_search_count"] == 1
+        assert payload["unknown_count"] == 1
+        assert [event["kind"] for event in payload["events"]] == [
+            "source_read",
+            "unknown",
+            "source_read",
+            "structural_search",
+        ]
+        assert payload["per_runtime"]["unattributed"]["structural_search_count"] == 1
+        assert "structural searches among them: 1" in ja.render_text(summary)
+
+    def test_text_report_strips_terminal_control_characters(self) -> None:
+        """Session ids carrying escape sequences are printed with the control characters replaced.
+
+        Log text is partly influenced by tool commands, so a session id such as ``ESC ] 0 ; title BEL`` printed raw
+        would retitle or script the reader's terminal. The JSON rendering escapes it already; the text report must not
+        leak it.
+        """
+        session = "s\x1b]0;pwn\x07-1"
+        answers = ja.parse_cli_records([_cli("pkg.mod", 0) | {"session": session}])
+        events = ja.parse_tool_records([_tool("src/pkg/mod.py", 1, tool="Read") | {"session": session}])
+
+        text = ja.render_text(ja.summarize(answers, events))
+
+        assert "\x1b" not in text
+        assert "\x07" not in text
+        assert "s?]0;pwn?-1" in text
+
+
+class TestClassifyOverlap:
+    """Overlap kind: source read, structural search or unknown scope."""
+
+    @pytest.mark.parametrize(
+        ("tool", "target", "search_path", "kind"),
+        [
+            pytest.param("Read", "src/pkg/mod.py", "", "source_read", id="read-own-file"),
+            pytest.param("Read", "src\\pkg\\mod.py", "", "source_read", id="read-own-file-windows"),
+            pytest.param("Read", "src/pkg/mod.py.bak", "", "source_read", id="read-backup-copy"),
+            pytest.param(
+                "Bash", "grep -n 'os.replace\\|tempfile' src/pkg/mod.py | head", "", "source_read", id="grep-own-file"
+            ),
+            pytest.param("Bash", "grep -n 'x' src/pkg/mod.py", "", "source_read", id="grep-single-file"),
+            pytest.param("Bash", "rg -n 'x' src/pkg/mod/__init__.py", "", "source_read", id="rg-own-package-init"),
+            pytest.param("Bash", "rg -n 'pkg.mod' src/pkg/other.py", "", "unknown", id="rg-other-single-file"),
+            pytest.param("Bash", "grep -rn 'pkg.mod' src/pkg/other.py", "", "unknown", id="grep-r-other-single-file"),
+            pytest.param("Bash", "grep -rn 'pkg.mod' src tests", "", "unknown", id="grep-r-tree"),
+            pytest.param("Bash", "egrep -rn 'pkg.mod' src", "", "unknown", id="egrep-r-tree"),
+            pytest.param("Bash", "fgrep -r 'pkg.mod' src", "", "unknown", id="fgrep-r-tree"),
+            pytest.param("Bash", "grep -n --include=*.py -r 'import pkg.mod' .", "", "unknown", id="grep-include-tree"),
+            pytest.param("Bash", "rg -n 'from pkg.mod import' src", "", "unknown", id="rg-tree"),
+            pytest.param(
+                "Bash", "rg -n 'from pkg.mod import' src", "src", "structural_search", id="bash-directory-scope"
+            ),
+            pytest.param(
+                "Bash", "grep -rn 'pkg.mod' src/pkg/other.py", "src/pkg/other.py", "source_read", id="bash-file-scope"
+            ),
+            pytest.param("Bash", "grep -rn 'pkg.mod' src tests", "unscoped", "unknown", id="bash-unknown-scope"),
+            pytest.param("Grep", "pkg.mod", "", "unknown", id="grep-tool-unscoped"),
+            pytest.param("Grep", "pkg.mod", "src", "structural_search", id="grep-tool-tree-scope"),
+            pytest.param("Grep", "pkg.mod", "src/pkg/mod.py", "source_read", id="grep-tool-own-file-scope"),
+            pytest.param("Grep", "pkg.mod", "src/pkg/other.py", "source_read", id="grep-tool-other-file-scope"),
+            pytest.param("Glob", "**/pkg/mod*", "", "unknown", id="glob-tool"),
+            pytest.param("Glob", "*.py", "src/pkg/mod/__init__.py", "source_read", id="glob-tool-own-file-scope"),
+        ],
+    )
+    def test_separates_source_reads_from_structural_searches(
+        self, tool: str, target: str, search_path: str, kind: str
+    ) -> None:
+        """Directory scope is structural; recursive-looking shell spelling alone leaves scope unknown.
+
+        Each row is one tool call against ``pkg.mod``: a read or file-scoped search is a source read, a directory-scoped
+        search is structural, and anything whose scope cannot be verified is unknown.
+        """
+        assert ja.classify_overlap("pkg.mod", tool, target, search_path, _SEARCH_SCOPE.get(search_path, "")) == kind
+
+    @pytest.mark.parametrize(
+        ("command", "expected"),
+        [
+            pytest.param("grep -rn 'x' src", ja.OverlapKind.UNKNOWN, id="grep-recursive-flag"),
+            pytest.param("egrep --recursive x src", ja.OverlapKind.UNKNOWN, id="egrep-long-flag"),
+            pytest.param("echo $(grep -inR x src)", ja.OverlapKind.UNKNOWN, id="grep-in-substitution"),
+            pytest.param("cd d && rg -n x", ja.OverlapKind.UNKNOWN, id="rg-after-and"),
+            pytest.param("grep -n x file.py | head", ja.OverlapKind.SOURCE_READ, id="grep-without-recursive-flag"),
+            pytest.param(
+                "grep -n x f; ls -r", ja.OverlapKind.SOURCE_READ, id="flag-after-separator-is-another-command"
+            ),
+            pytest.param("cat f | sort -r", ja.OverlapKind.SOURCE_READ, id="no-grep-word"),
+        ],
+    )
+    def test_bash_recursive_search(self, command: str, expected: ja.OverlapKind) -> None:
+        """A recursive-looking grep or rg is unknown scope; a flag only counts inside its own simple command.
+
+        The tokenizer that replaced the single regular expression must agree with it on ordinary command lines: ``-r``
+        belongs to a ``grep`` only when no ``;``, ``&``, ``|`` or newline separates them.
+        """
+        assert ja.classify_overlap("pkg.mod", "Bash", command) == expected
+
+    def test_bash_recursive_search_is_linear(self) -> None:
+        """Repeated ``grep`` words classify in milliseconds, not the quadratic seconds of the former regex.
+
+        The former pattern took about 2 s on 40 KB of ``grep `` repetitions and grows with the square of the length; 100
+        KB would have taken over ten seconds, so a one-second bound separates the two without a timing-sensitive
+        threshold.
+        """
+        started = time.perf_counter()
+        kind = ja.classify_overlap("pkg.mod", "Bash", "grep " * 20000)
+        elapsed = time.perf_counter() - started
+
+        assert kind == ja.OverlapKind.SOURCE_READ
+        assert elapsed < 1.0
+
+
 class TestModuleMatches:
     """The ported word-boundary matcher must accept real references, reject near-misses."""
 
@@ -292,7 +387,10 @@ class TestModuleMatches:
         ],
     )
     def test_matches_real_reference(self, module: str, text: str) -> None:
-        """A word-boundary reference in either dotted or slashed form matches."""
+        """A word-boundary reference in either dotted or slashed form matches.
+
+        These are the spellings a real search for the module takes, so each must count toward an overlap.
+        """
         assert ja.module_matches(module, text) is True
 
     @pytest.mark.parametrize(
@@ -307,7 +405,10 @@ class TestModuleMatches:
         ],
     )
     def test_rejects_near_miss(self, module: str, text: str) -> None:
-        """A substring-only or unrelated hit must not match (would be a false avoidance)."""
+        """A substring-only or unrelated hit must not match (would be a false avoidance).
+
+        Longer identifiers that merely contain the module name, other modules and empty inputs are all non-references.
+        """
         assert ja.module_matches(module, text) is False
 
 
@@ -325,8 +426,11 @@ class TestQueryComplete:
             pytest.param({}, False, id="no-result"),
         ],
     )
-    def test_query_complete(self, record: dict, expected: bool) -> None:
-        """query_complete reads index.query_complete, index.exhaustive, then top level."""
+    def test_reads_forward_then_legacy_then_top_level(self, record: dict, expected: bool) -> None:
+        """Completeness is read from ``index.query_complete``, then ``index.exhaustive``, then the top level.
+
+        Older logs only carry the legacy field and answers without an index block must count as incomplete.
+        """
         assert ja._query_complete(record) is expected
 
 
@@ -334,7 +438,10 @@ class TestFindAvoidanceEvents:
     """The core accept criteria: a complete answer + a later matching grep = one event."""
 
     def test_grep_after_complete_answer_flags_one_event(self) -> None:
-        """A complete answer on X then a grep on X two minutes later flags exactly one event."""
+        """A complete answer on X then a grep on X two minutes later flags exactly one event.
+
+        This is the positive case of the whole join: same session, same module, inside the 10-minute window.
+        """
         answers = ja.parse_cli_records([_cli("pkg.auth", 0.0)])
         events = ja.parse_tool_records([_tool("import pkg.auth", 2.0)])
 
@@ -369,7 +476,10 @@ class TestFindAvoidanceEvents:
         assert ja.find_avoidance_events(answers, events, window_min=10) == []
 
     def test_grep_after_incomplete_answer_flags_nothing(self) -> None:
-        """An incomplete answer cannot be avoided — re-grepping it is expected, not a leak."""
+        """An incomplete answer cannot be avoided — re-grepping it is expected, not a leak.
+
+        The incomplete answer is dropped at parse time, so the grep has nothing to overlap with.
+        """
         answers = ja.parse_cli_records([_cli("pkg.auth", 0.0, complete=False)])
         events = ja.parse_tool_records([_tool("import pkg.auth", 2.0)])
 
@@ -381,7 +491,10 @@ class TestSummarize:
     """Totals and per-session/per-skill aggregation for the debrief report."""
 
     def test_totals_and_rate(self) -> None:
-        """Rate is flagged events over all tool events; totals count the raw inputs."""
+        """Rate is flagged events over all tool events; totals count the raw inputs.
+
+        One of two tool events overlaps the answer, so the rate is 0.5 and the single session owns that one event.
+        """
         answers = ja.parse_cli_records([_cli("pkg.auth", 0.0)])
         tool_records = [_tool("import pkg.auth", 2.0), _tool("import pkg.billing", 3.0)]
         events = ja.parse_tool_records(tool_records)
@@ -395,7 +508,10 @@ class TestSummarize:
         assert summary.per_session == {"s1": 1}
 
     def test_per_skill_attribution(self) -> None:
-        """A session mapped to a skill attributes its avoidance events to that skill."""
+        """A session mapped to a skill attributes its avoidance events to that skill.
+
+        The debrief maps session ids to the skill that ran in them, so the overlap can be reported per skill.
+        """
         answers = ja.parse_cli_records([_cli("pkg.auth", 0.0, session="s1")])
         events = ja.parse_tool_records([_tool("import pkg.auth", 2.0, session="s1")])
 
@@ -404,7 +520,10 @@ class TestSummarize:
         assert summary.per_skill == {"codemap:query-code": 1}
 
     def test_no_tool_events_yields_zero_rate(self) -> None:
-        """An empty tool set scores zero rate without dividing by zero."""
+        """An empty tool set scores zero rate without dividing by zero.
+
+        A session with an answer but no tool calls at all is a valid, quiet input and must not raise.
+        """
         summary = ja.summarize(ja.parse_cli_records([_cli("pkg.auth", 0.0)]), [], window_min=10)
 
         assert summary.rate == 0.0
@@ -414,48 +533,41 @@ class TestSummarize:
 class TestMainCli:
     """End-to-end CLI: shard resolution, window flag, JSON output, and the exit contract."""
 
-    @staticmethod
-    def _write_shards(log_dir: Path, cli_records: list[dict], tool_records: list[dict]) -> None:
-        """Write cli/tools shards under *log_dir* for the ``--logs`` resolution path."""
-        log_dir.mkdir(parents=True, exist_ok=True)
-        (log_dir / "cli_s1.jsonl").write_text("".join(json.dumps(r) + "\n" for r in cli_records))
-        (log_dir / "tools_s1.jsonl").write_text("".join(json.dumps(r) + "\n" for r in tool_records))
+    @pytest.mark.parametrize(
+        ("answer_at", "expected_events"),
+        [
+            pytest.param(0.0, 1, id="grep-after-answer"),
+            pytest.param(5.0, 0, id="grep-before-answer"),
+        ],
+    )
+    def test_logs_dir_joins_session_shards(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture, answer_at: float, expected_events: int
+    ) -> None:
+        """``--logs`` joins a session's cli and tools shards: a grep after the answer flags, a grep before does not.
 
-    def test_logs_dir_flags_synthetic_session(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
-        """The synthetic session fixture (answer on X, grep on X 2 min later) flags one event."""
+        The synthetic session answers ``pkg.auth`` at *answer_at* and greps it at minute 2; only the grep that follows
+        the answer is an avoidance, through the CLI exactly as through the library.
+        """
         log_dir = tmp_path / "logs"
-        self._write_shards(log_dir, [_cli("pkg.auth", 0.0)], [_tool("import pkg.auth", 2.0)])
+        _write_shards(log_dir, [_cli("pkg.auth", answer_at)], [_tool("import pkg.auth", 2.0)])
 
         code = ja.main(["--logs", str(log_dir), "--json"])
         payload = json.loads(capsys.readouterr().out)
 
         assert code == 0
-        assert payload["avoidance_count"] == 1
-        assert payload["events"][0]["module"] == "pkg.auth"
-
-    def test_grep_before_query_flags_zero(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
-        """The negative fixture (grep before the query) reports zero via the CLI too."""
-        log_dir = tmp_path / "logs"
-        self._write_shards(log_dir, [_cli("pkg.auth", 5.0)], [_tool("import pkg.auth", 2.0)])
-
-        code = ja.main(["--logs", str(log_dir), "--json"])
-        payload = json.loads(capsys.readouterr().out)
-
-        assert code == 0
-        assert payload["avoidance_count"] == 0
+        assert payload["avoidance_count"] == expected_events
+        assert [event["module"] for event in payload["events"]] == ["pkg.auth"] * expected_events
 
     def test_logs_dir_recursively_reconciles_flat_and_all_runtime_subtrees(
         self, tmp_path: Path, capsys: pytest.CaptureFixture
     ) -> None:
-        """Recursive discovery joins one matching pair from legacy and each runtime once."""
+        """Recursive discovery joins one matching pair from legacy and each runtime once.
+
+        The flat legacy directory and the ``claude``, ``codex`` and ``direct`` subtrees each hold one answer and one
+        grep under their own session; all four pairs join, and the flat one is reported as unattributed.
+        """
         log_dir = tmp_path / "logs"
-        for runtime, session in (("", "legacy"), ("claude", "claude"), ("codex", "codex"), ("direct", "direct")):
-            shard_dir = log_dir / runtime if runtime else log_dir
-            shard_dir.mkdir(parents=True, exist_ok=True)
-            (shard_dir / f"cli_{session}.jsonl").write_text(json.dumps(_cli("pkg.auth", 0.0, session=session)) + "\n")
-            (shard_dir / f"tools_{session}.jsonl").write_text(
-                json.dumps(_tool("import pkg.auth", 2.0, session=session)) + "\n"
-            )
+        _write_runtime_pairs(log_dir, {"": "legacy", "claude": "claude", "codex": "codex", "direct": "direct"})
 
         code = ja.main(["--logs", str(log_dir), "--json"])
         payload = json.loads(capsys.readouterr().out)
@@ -470,7 +582,11 @@ class TestMainCli:
     def test_same_session_in_different_runtime_subtrees_does_not_cross_join(
         self, tmp_path: Path, capsys: pytest.CaptureFixture
     ) -> None:
-        """Runtime scope is part of the join key even when opaque session strings match."""
+        """Runtime scope is part of the join key even when opaque session strings match.
+
+        The answer sits in the ``claude`` subtree and the grep in ``codex``, both under session ``same``; they must not
+        be joined.
+        """
         log_dir = tmp_path / "logs"
         claude = log_dir / "claude"
         codex = log_dir / "codex"
@@ -479,16 +595,19 @@ class TestMainCli:
         (claude / "cli_same.jsonl").write_text(json.dumps(_cli("pkg.auth", 0.0, session="same")) + "\n")
         (codex / "tools_same.jsonl").write_text(json.dumps(_tool("import pkg.auth", 2.0, session="same")) + "\n")
 
-        assert ja.main(["--logs", str(log_dir), "--json"]) == 0
+        code = ja.main(["--logs", str(log_dir), "--json"])
         payload = json.loads(capsys.readouterr().out)
+
+        assert code == 0
         assert payload["avoidance_count"] == 0
         assert payload["per_runtime"]["claude"]["total_complete_answers"] == 1
         assert payload["per_runtime"]["codex"]["total_tool_events"] == 1
 
     def test_explicit_files_and_window_flag(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
-        """Verify command-line option behavior.
+        """``--cli``/``--tools`` bypass shard resolution and ``--window-min`` tightens the join.
 
-        ``--cli``/``--tools`` bypass shard resolution and ``--window-min`` tightens the join.
+        The grep comes 8 minutes after the answer, inside the default 10-minute window but outside ``--window-min 5``,
+        so no event is flagged.
         """
         cli_path = tmp_path / "cli.jsonl"
         tools_path = tmp_path / "tools.jsonl"
@@ -499,17 +618,23 @@ class TestMainCli:
         payload = json.loads(capsys.readouterr().out)
 
         assert code == 0
-        assert payload["avoidance_count"] == 0  # 8-min gap exceeds the 5-min window
+        assert payload["avoidance_count"] == 0
 
     def test_missing_inputs_exit_2(self, capsys: pytest.CaptureFixture) -> None:
-        """Neither ``--logs`` nor ``--cli``/``--tools`` given is a usage error (exit 2)."""
+        """Neither ``--logs`` nor ``--cli``/``--tools`` given is a usage error (exit 2).
+
+        Without any input the tool cannot run, so it must say what to pass instead of reporting an empty result.
+        """
         assert ja.main([]) == _EXIT_USAGE
         assert "give --logs" in capsys.readouterr().err
 
     def test_text_output_reports_rate(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
-        """Default text output names the window, totals, and rate for a human reader."""
+        """Default text output names the window, totals, and rate for a human reader.
+
+        Without ``--json`` the report is the human-readable one, which must state the event count and the window.
+        """
         log_dir = tmp_path / "logs"
-        self._write_shards(log_dir, [_cli("pkg.auth", 0.0)], [_tool("import pkg.auth", 2.0)])
+        _write_shards(log_dir, [_cli("pkg.auth", 0.0)], [_tool("import pkg.auth", 2.0)])
 
         code = ja.main(["--logs", str(log_dir)])
         out = capsys.readouterr().out

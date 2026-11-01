@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from _scan_helpers import IGNORE_RUNNER_THREAD_FORK_WARNING
 
 _PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 _SRC = _PLUGIN_ROOT / "src"
@@ -59,142 +60,180 @@ def _symbol_names(module: dict) -> set[str]:
     return {s.get("name") for s in module.get("symbols", [])}
 
 
-# --- shadowing: sibling .py wins ------------------------------------------------
+class TestStubShadowing:
+    """A sibling ``.py`` is authoritative and its ``.pyi`` is reported as shadowed, never indexed twice."""
+
+    @IGNORE_RUNNER_THREAD_FORK_WARNING
+    def test_shadowed_stub_is_not_a_second_module(self, index: dict) -> None:
+        """Prefer an implementation module over its shadowed type stub.
+
+        ``pkg/shadowed.py`` and ``pkg/shadowed.pyi`` share one dotted name; only the ``.py`` may appear as a module.
+        """
+        assert _by_path(index, "pkg/shadowed.pyi") is None
+        assert _module(index, "pkg.shadowed")["path"] == "pkg/shadowed.py"
+
+    @IGNORE_RUNNER_THREAD_FORK_WARNING
+    def test_inventory_lists_every_shadowed_stub(self, index: dict) -> None:
+        """All three shadowed stubs are reported (never silently dropped), sorted."""
+        assert index.get("shadowed_stubs") == _SHADOWED
+
+    @pytest.mark.parametrize("name", ["pkg.shadowed", "nested.core", "pkg"])
+    @IGNORE_RUNNER_THREAD_FORK_WARNING
+    def test_implementation_flagged_has_stub(self, index: dict, name: str) -> None:
+        """Each ``.py`` that shadows a ``.pyi`` carries ``has_stub=True``.
+
+        The flag tells consumers a stub exists beside the authoritative module, including for a package ``__init__``.
+        """
+        assert _module(index, name).get("has_stub") is True
+
+    @IGNORE_RUNNER_THREAD_FORK_WARNING
+    def test_init_py_wins_over_init_pyi(self, index: dict) -> None:
+        """Prefer a package implementation initializer over its type stub."""
+        assert _module(index, "pkg")["path"] == "pkg/__init__.py"
+        assert "pkg/__init__.pyi" in index.get("shadowed_stubs", [])
+
+    @IGNORE_RUNNER_THREAD_FORK_WARNING
+    def test_private_symbol_survives_shadowing(self, index: dict) -> None:
+        """A private symbol present only in the ``.py`` (not the stub) stays indexed.
+
+        Shadowing hides the stub, not the implementation's undeclared names: ``_double`` exists only in the source.
+        """
+        assert "_double" in _symbol_names(_module(index, "pkg.shadowed"))
 
 
-def test_shadowed_module_not_indexed_as_second_module(index: dict) -> None:
-    """Prefer an implementation module over its shadowed type stub."""
-    assert _by_path(index, "pkg/shadowed.pyi") is None
-    assert _module(index, "pkg.shadowed")["path"] == "pkg/shadowed.py"
+class TestStubOnly:
+    """A lone ``.pyi`` is indexed once as ``stub_only`` with declarations and imports but no call edges."""
+
+    @IGNORE_RUNNER_THREAD_FORK_WARNING
+    def test_each_lone_stub_indexed_once(self, index: dict) -> None:
+        """Every lone ``.pyi`` is indexed exactly once with ``stub_only=True``."""
+        stub_only = {m["name"] for m in index["modules"] if m.get("stub_only") is True}
+        names = [m["name"] for m in index["modules"]]
+
+        assert stub_only == _STUB_ONLY_MODULES
+        assert len(names) == len(set(names)), "no module name indexed twice"
+
+    @IGNORE_RUNNER_THREAD_FORK_WARNING
+    def test_no_call_edges(self, index: dict) -> None:
+        """Stub-only modules contribute no outgoing call edges (bodies are ``...``)."""
+        with_calls = [
+            m["name"]
+            for m in index["modules"]
+            if m.get("stub_only") and any(s.get("calls") for s in m.get("symbols", []))
+        ]
+
+        assert with_calls == []
+
+    @IGNORE_RUNNER_THREAD_FORK_WARNING
+    def test_declarations_and_imports_recorded(self, index: dict) -> None:
+        """A declarations-only stub records its symbols and its import edges."""
+        stub = _module(index, "pkg.stub_only")
+        interfaces = _module(index, "typed.interfaces")
+
+        assert "typing" in stub["direct_imports"]
+        assert {"Marker", "describe"} <= _symbol_names(stub)
+        assert {"os", "collections.abc", "typing"} <= set(interfaces["direct_imports"])
+
+    @IGNORE_RUNNER_THREAD_FORK_WARNING
+    def test_package_init_indexed_once(self, index: dict) -> None:
+        """A package whose only init is ``__init__.pyi`` is indexed once as stub-only."""
+        pkg = _module(index, "stubpkg")
+
+        assert pkg is not None
+        assert pkg.get("stub_only") is True
+        assert pkg["path"] == "stubpkg/__init__.pyi"
+
+    @IGNORE_RUNNER_THREAD_FORK_WARNING
+    def test_module_inside_stub_package_resolves(self, index: dict) -> None:
+        """A stub module inside a stub-only package resolves to a dotted name."""
+        leaf = _module(index, "stubpkg.leaf")
+
+        assert leaf is not None
+        assert leaf.get("stub_only") is True
+
+    @IGNORE_RUNNER_THREAD_FORK_WARNING
+    def test_malformed_stub_degrades_without_failing_scan(self, tmp_path: Path) -> None:
+        """A syntactically broken lone ``.pyi`` degrades; the scan still completes.
+
+        One bad stub beside a healthy module must not abort the scan: the stub is recorded as degraded and its sibling
+        module stays ``ok``.
+        """
+        root = tmp_path / "proj"
+        (root / "pkg").mkdir(parents=True)
+        (root / "pkg" / "__init__.py").write_text("")
+        (root / "pkg" / "good.py").write_text("def f() -> int:\n    return 1\n")
+        (root / "pkg" / "broken.pyi").write_text("def f( ->:\n")  # invalid syntax
+
+        result = scan(root)
+
+        broken = _by_path(result, "pkg/broken.pyi")
+        assert broken is not None
+        assert broken["status"] == "degraded"
+        assert _module(result, "pkg.good")["status"] == "ok"
 
 
-def test_shadowed_stubs_inventory_lists_every_shadowed_pyi(index: dict) -> None:
-    """All three shadowed stubs are reported (never silently dropped), sorted."""
-    assert index.get("shadowed_stubs") == _SHADOWED
+class TestNestedMixAndInvariants:
+    """Mixed ``.py``/``.pyi`` packages keep their edges and the module set stays exactly as expected."""
+
+    @IGNORE_RUNNER_THREAD_FORK_WARNING
+    def test_authoritative_edges_preserved(self, index: dict) -> None:
+        """In a nested package: authoritative ``.py`` keeps its call edge, stub shadowed."""
+        core = _module(index, "nested.core")
+        calls = sum(len(s.get("calls", [])) for s in core.get("symbols", []))
+
+        assert calls >= 1, "cross-package run()->impl edge must survive"
+        assert "nested/core.pyi" in index.get("shadowed_stubs", [])
+        assert _module(index, "nested.proto").get("stub_only") is True
+
+    @IGNORE_RUNNER_THREAD_FORK_WARNING
+    def test_module_count_and_membership(self, index: dict) -> None:
+        """Authoritative-module set is exactly the five .py modules; total = 5 + 5 stubs."""
+        non_stub = {m["name"] for m in index["modules"] if not m.get("stub_only")}
+
+        assert non_stub == _PY_MODULES
+        assert len(index["modules"]) == len(_PY_MODULES) + len(_STUB_ONLY_MODULES)
+
+    def test_pyi_joins_the_freshness_hash_set(self, tmp_path: Path, corpus_pyi_dir: Path) -> None:
+        """A ``.pyi`` edit must invalidate the index: stubs are in ``file_shas`` (MD5 path).
+
+        The fixture project is copied so hashing never touches the committed corpus.
+        """
+        dest = tmp_path / "proj"
+        shutil.copytree(corpus_pyi_dir, dest)
+
+        shas = get_file_hashes(dest, _load_exclusions(dest))
+
+        assert any(k.endswith(".pyi") for k in shas), "stubs must be hashed for freshness"
+        assert "pkg/stub_only.pyi" in shas
 
 
-def test_authoritative_modules_flagged_has_stub(index: dict) -> None:
-    """Each ``.py`` that shadows a ``.pyi`` carries ``has_stub=True``."""
-    assert _module(index, "pkg.shadowed").get("has_stub") is True
-    assert _module(index, "nested.core").get("has_stub") is True
-    assert _module(index, "pkg").get("has_stub") is True
+class TestCaseFoldCollisions:
+    """Case-fold collisions fail closed, independent of the host filesystem."""
 
+    def test_both_paths_dropped_deterministically(self) -> None:
+        """Two paths equal under casefold are dropped and reported, order-independent."""
+        a = {"name": "pkg.Mod", "path": "pkg/Mod.py"}
+        b = {"name": "pkg.mod", "path": "pkg/mod.py"}
 
-def test_init_py_precedence_over_init_pyi(index: dict) -> None:
-    """Prefer a package implementation initializer over its type stub."""
-    assert _module(index, "pkg")["path"] == "pkg/__init__.py"
-    assert "pkg/__init__.pyi" in index.get("shadowed_stubs", [])
+        kept_ab, shadow_ab, cf_ab = _resolve_stub_shadowing([a, b])
+        kept_ba, shadow_ba, cf_ba = _resolve_stub_shadowing([b, a])
 
+        assert kept_ab == kept_ba == []
+        assert shadow_ab == shadow_ba == []
+        assert cf_ab == cf_ba == [{"paths": ["pkg/Mod.py", "pkg/mod.py"], "reason": "case_fold_collision"}]
 
-def test_authoritative_private_symbol_survives_shadowing(index: dict) -> None:
-    """A private symbol present only in the ``.py`` (not the stub) stays indexed."""
-    assert "_double" in _symbol_names(_module(index, "pkg.shadowed"))
+    def test_py_pyi_sibling_is_not_a_collision(self) -> None:
+        """A real shadow pair (differing suffix) is resolved, never flagged case-fold.
 
+        ``mod.py`` and ``mod.pyi`` fold to different strings only by suffix; they must produce a shadowed stub and a
+        ``has_stub`` module, not a collision that drops both.
+        """
+        py = {"name": "pkg.mod", "path": "pkg/mod.py"}
+        pyi = {"name": "pkg.mod", "path": "pkg/mod.pyi"}
 
-# --- stub-only: lone .pyi -------------------------------------------------------
+        kept, shadowed, casefold = _resolve_stub_shadowing([py, pyi])
 
-
-def test_stub_only_modules_indexed_once_each(index: dict) -> None:
-    """Every lone ``.pyi`` is indexed exactly once with ``stub_only=True``."""
-    stub_only = {m["name"] for m in index["modules"] if m.get("stub_only") is True}
-    assert stub_only == _STUB_ONLY_MODULES
-    names = [m["name"] for m in index["modules"]]
-    assert len(names) == len(set(names)), "no module name indexed twice"
-
-
-def test_stub_only_modules_have_no_call_edges(index: dict) -> None:
-    """Stub-only modules contribute no outgoing call edges (bodies are ``...``)."""
-    for m in index["modules"]:
-        if m.get("stub_only"):
-            assert all(not s.get("calls") for s in m.get("symbols", [])), m["name"]
-
-
-def test_stub_only_contributes_declarations_and_imports(index: dict) -> None:
-    """A declarations-only stub records its symbols and its import edges."""
-    stub = _module(index, "pkg.stub_only")
-    assert "typing" in stub["direct_imports"]
-    assert {"Marker", "describe"} <= _symbol_names(stub)
-    interfaces = _module(index, "typed.interfaces")
-    assert {"os", "collections.abc", "typing"} <= set(interfaces["direct_imports"])
-
-
-def test_stub_only_package_init_indexed_once(index: dict) -> None:
-    """A package whose only init is ``__init__.pyi`` is indexed once as stub-only."""
-    pkg = _module(index, "stubpkg")
-    assert pkg is not None
-    assert pkg.get("stub_only") is True
-    assert pkg["path"] == "stubpkg/__init__.pyi"
-
-
-def test_stub_only_module_inside_stub_package_resolves(index: dict) -> None:
-    """A stub module inside a stub-only package resolves to a dotted name."""
-    leaf = _module(index, "stubpkg.leaf")
-    assert leaf is not None
-    assert leaf.get("stub_only") is True
-
-
-# --- nested mix / invariants ----------------------------------------------------
-
-
-def test_nested_mix_authoritative_edges_preserved(index: dict) -> None:
-    """In a nested package: authoritative ``.py`` keeps its call edge, stub shadowed."""
-    core = _module(index, "nested.core")
-    calls = sum(len(s.get("calls", [])) for s in core.get("symbols", []))
-    assert calls >= 1, "cross-package run()->impl edge must survive"
-    assert "nested/core.pyi" in index.get("shadowed_stubs", [])
-    assert _module(index, "nested.proto").get("stub_only") is True
-
-
-def test_module_count_invariant_and_membership(index: dict) -> None:
-    """Authoritative-module set is exactly the five .py modules; total = 5 + 5 stubs."""
-    non_stub = {m["name"] for m in index["modules"] if not m.get("stub_only")}
-    assert non_stub == _PY_MODULES
-    assert len(index["modules"]) == len(_PY_MODULES) + len(_STUB_ONLY_MODULES)
-
-
-def test_pyi_joins_the_freshness_hash_set(tmp_path: Path, corpus_pyi_dir: Path) -> None:
-    """A ``.pyi`` edit must invalidate the index: stubs are in ``file_shas`` (MD5 path)."""
-    dest = tmp_path / "proj"
-    shutil.copytree(corpus_pyi_dir, dest)
-    shas = get_file_hashes(dest, _load_exclusions(dest))
-    assert any(k.endswith(".pyi") for k in shas), "stubs must be hashed for freshness"
-    assert "pkg/stub_only.pyi" in shas
-
-
-# --- case-fold collisions (fail closed, OS-independent) -------------------------
-
-
-def test_case_fold_collision_drops_both_deterministically() -> None:
-    """Two paths equal under casefold are dropped and reported, order-independent."""
-    a = {"name": "pkg.Mod", "path": "pkg/Mod.py"}
-    b = {"name": "pkg.mod", "path": "pkg/mod.py"}
-    kept_ab, shadow_ab, cf_ab = _resolve_stub_shadowing([a, b])
-    kept_ba, shadow_ba, cf_ba = _resolve_stub_shadowing([b, a])
-    assert kept_ab == kept_ba == []
-    assert shadow_ab == shadow_ba == []
-    assert cf_ab == cf_ba == [{"paths": ["pkg/Mod.py", "pkg/mod.py"], "reason": "case_fold_collision"}]
-
-
-def test_py_pyi_sibling_is_not_a_casefold_collision() -> None:
-    """A real shadow pair (differing suffix) is resolved, never flagged case-fold."""
-    py = {"name": "pkg.mod", "path": "pkg/mod.py"}
-    pyi = {"name": "pkg.mod", "path": "pkg/mod.pyi"}
-    kept, shadowed, casefold = _resolve_stub_shadowing([py, pyi])
-    assert casefold == []
-    assert shadowed == ["pkg/mod.pyi"]
-    assert [m["path"] for m in kept] == ["pkg/mod.py"]
-    assert kept[0].get("has_stub") is True
-
-
-def test_malformed_stub_degrades_without_failing_scan(tmp_path: Path) -> None:
-    """A syntactically broken lone ``.pyi`` degrades; the scan still completes."""
-    root = tmp_path / "proj"
-    (root / "pkg").mkdir(parents=True)
-    (root / "pkg" / "__init__.py").write_text("")
-    (root / "pkg" / "good.py").write_text("def f() -> int:\n    return 1\n")
-    (root / "pkg" / "broken.pyi").write_text("def f( ->:\n")  # invalid syntax
-    result = scan(root)
-    broken = _by_path(result, "pkg/broken.pyi")
-    assert broken is not None
-    assert broken["status"] == "degraded"
-    assert _module(result, "pkg.good")["status"] == "ok"
+        assert casefold == []
+        assert shadowed == ["pkg/mod.pyi"]
+        assert [m["path"] for m in kept] == ["pkg/mod.py"]
+        assert kept[0].get("has_stub") is True

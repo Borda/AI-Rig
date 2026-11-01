@@ -1,14 +1,13 @@
 """Tests for ``bin/heal_git_artifacts.py`` — stale lock and worktree reclamation.
 
 Covers:
-* PID liveness on **both** platform branches, exercised on every host (the
-  project's recurrent cross-OS defect guard: the Windows branch is simulated
-  with a monkeypatched ``ctypes.windll`` rather than skipped)
+* PID liveness on **both** platform branches, exercised on every host (the project's recurrent cross-OS defect guard:
+  the Windows branch is simulated with a monkeypatched ``ctypes.windll`` rather than skipped)
 * Lock classification: dead holder, live holder, age override, malformed
 * Worktree tiering: protected / live / dirty / removable / orphan / symlink
-* Filesystem sweeps and CLI exit-code contract, including the ``--include-orphans``
-  opt-in and the rejected ``*`` managed prefix
-* Windows-portability invariants of the source itself
+* Filesystem sweeps and CLI exit-code contract, including the ``--include-orphans`` opt-in and the rejected ``*``
+  managed prefix
+* Deletion guards of the destructive paths
 """
 
 from __future__ import annotations
@@ -20,8 +19,10 @@ import sys
 import time
 from pathlib import Path
 from typing import ClassVar
+from unittest import mock
 
 import pytest
+from _hook_env import _symlinks_supported
 
 _MODULE_NAME = "foundry_heal_git_artifacts"
 _SCRIPT = Path(__file__).resolve().parent.parent / "bin" / "heal_git_artifacts.py"
@@ -34,6 +35,8 @@ _spec.loader.exec_module(_mod)  # type: ignore[union-attr]
 
 LockVerdict = _mod.LockVerdict
 WorktreeTier = _mod.WorktreeTier
+
+_LOCK_GLOB = "oss-resolve-*.lock"
 
 
 def _fake_repo_git(repo: Path, worktree_list: str):
@@ -50,12 +53,35 @@ def _fake_repo_git(repo: Path, worktree_list: str):
     return _git
 
 
-def _aged_dir(path: Path, days: float = 60.0) -> Path:
-    """Create *path* and backdate its modification time by *days*."""
-    path.mkdir(parents=True)
+def _git_answers(answers: dict[str, str]):
+    """Build a ``_git`` stand-in answering by subcommand (``args[0]``) from *answers*, empty for any other."""
+    return lambda args, cwd=None: answers.get(args[0], "")
+
+
+def _backdate(path: Path, days: float = 60.0) -> Path:
+    """Set the modification time of *path* to *days* ago and return it."""
     past = time.time() - days * 86400
     os.utime(path, (past, past))
     return path
+
+
+def _aged_dir(path: Path, days: float = 60.0) -> Path:
+    """Create *path* and backdate its modification time by *days*."""
+    path.mkdir(parents=True)
+    return _backdate(path, days)
+
+
+def _write_lock(directory: Path, name: str, body: str, age_minutes: float = 0.0) -> Path:
+    """Write one lock fixture, optionally backdating its modification time."""
+    path = directory / name
+    path.write_text(body, encoding="utf-8")
+    if age_minutes:
+        past = time.time() - age_minutes * 60
+        os.utime(path, (past, past))
+    return path
+
+
+_skip_no_symlinks = pytest.mark.skipif(not _symlinks_supported(), reason="host cannot create symlinks")
 
 
 class _FakeKernel32:
@@ -89,54 +115,63 @@ class _FakeWindll:
         self.kernel32 = kernel32
 
 
+@pytest.fixture
+def only_self_alive(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Report only this test process as a live PID, so every other holder PID reads as dead.
+
+    The own-PID answer still comes from the real probe, so live-holder lock tests keep exercising it; only the made-up
+    holder PIDs are forced dead, which keeps them from colliding with a real process on the host.
+    """
+    real_probe = _mod.pid_alive
+    monkeypatch.setattr(_mod, "pid_alive", lambda pid: pid == os.getpid() and real_probe(pid))
+
+
+@pytest.fixture
+def aged_registered_worktree(tmp_path: Path) -> tuple[Path, Path]:
+    """Create an old managed worktree directory ``agent-wt`` and return ``(worktree root, worktree path)``."""
+    root = tmp_path / ".claude" / "worktrees"
+    return root, _aged_dir(root / "agent-wt")
+
+
 class TestPidLivenessPosix:
-    def test_probes_with_signal_zero(self, monkeypatch):
+    """POSIX liveness probe: signal 0 through ``os.kill``, classified by the error it raises."""
+
+    @mock.patch("foundry_heal_git_artifacts.os.kill", autospec=True)
+    def test_probes_with_signal_zero(self, kill: mock.Mock) -> None:
         """A live process answers True, and the probe is signal 0 — never a real signal.
 
-        ``os.kill`` is patched rather than invoked for real because signal 0 is not
-        inert everywhere: on Windows it is ``CTRL_C_EVENT``, so a genuine call would
-        deliver Ctrl+C to the console process group and abort the whole pytest run.
-        Patching keeps this assertion running on every host instead of skipping it
-        on the one platform where the mistake actually bites.
+        ``os.kill`` is patched rather than invoked for real because signal 0 is not inert everywhere: on Windows it is
+        ``CTRL_C_EVENT``, so a genuine call would deliver Ctrl+C to the console process group and abort the whole pytest
+        run. Patching keeps this assertion running on every host instead of skipping it on the one platform where the
+        mistake actually bites.
         """
-        calls = []
-
-        monkeypatch.setattr(_mod.os, "kill", lambda pid, sig: calls.append((pid, sig)))
         assert _mod._pid_alive_posix(4242) is True
-        assert calls == [(4242, 0)]
-
-    def test_permission_error_counts_as_alive(self, monkeypatch):
-        """Another user's process exists — EPERM answers the question yes."""
-
-        def _raise_perm(pid, sig):
-            """Raise the permission error representing another user's live process."""
-            raise PermissionError
-
-        monkeypatch.setattr(_mod.os, "kill", _raise_perm)
-        assert _mod._pid_alive_posix(12345) is True
+        kill.assert_called_once_with(4242, 0)
 
     @pytest.mark.parametrize(
         ("error", "expected"),
         [
+            pytest.param(PermissionError, True, id="permission-error-is-alive"),
             pytest.param(ProcessLookupError, False, id="missing-process-is-dead"),
             pytest.param(OSError, False, id="generic-oserror-is-dead"),
         ],
     )
-    def test_kill_error_means_dead(self, monkeypatch, error, expected):
-        """A missing process or any other OS error from the signal-0 probe is treated as a dead process."""
+    @mock.patch("foundry_heal_git_artifacts.os.kill", autospec=True)
+    def test_kill_error_classifies_liveness(self, kill: mock.Mock, error: type[OSError], expected: bool) -> None:
+        """EPERM means another user's process exists; a missing process or any other OS error means dead.
 
-        def _raise(pid, sig):
-            """Raise the configured error for this liveness case."""
-            raise error
-
-        monkeypatch.setattr(_mod.os, "kill", _raise)
+        The signal-0 probe can only answer through the exception it raises, so each error class must map to the right
+        verdict — in particular ``PermissionError`` (a subclass of ``OSError``) must not fall into the dead branch.
+        """
+        kill.side_effect = error
         assert _mod._pid_alive_posix(12345) is expected
 
 
 class TestSimulatedWindowsPidLiveness:
     """Runs on every host — the Win32 surface is supplied, never skipped."""
 
-    def test_open_process_success_is_alive(self, monkeypatch):
+    def test_open_process_success_is_alive(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A successful OpenProcess means alive, and the handle is closed so it does not leak."""
         kernel = _FakeKernel32(handle=777)
         monkeypatch.setattr(ctypes, "windll", _FakeWindll(kernel), raising=False)
         assert _mod._pid_alive_windows(4242) is True
@@ -155,7 +190,7 @@ class TestSimulatedWindowsPidLiveness:
         monkeypatch.setattr(ctypes, "windll", _FakeWindll(kernel), raising=False)
         assert _mod._pid_alive_windows(4242) is expected
 
-    def test_absent_windll_degrades_to_false(self, monkeypatch):
+    def test_absent_windll_degrades_to_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Regression: prove absence is handled, not merely untested.
 
         ``ctypes.windll`` does not exist on POSIX hosts; deleting it makes the assertion meaningful on Windows too,
@@ -164,27 +199,46 @@ class TestSimulatedWindowsPidLiveness:
         monkeypatch.delattr(ctypes, "windll", raising=False)
         assert _mod._pid_alive_windows(4242) is False
 
-    def test_simulated_windows_branch_never_uses_os_kill(self, monkeypatch):
-        """Avoid probing a live Windows process through a disruptive signal."""
+    @mock.patch("foundry_heal_git_artifacts.os.kill", autospec=True)
+    def test_simulated_windows_branch_never_uses_os_kill(
+        self, kill: mock.Mock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Avoid probing a live Windows process through a disruptive signal.
 
-        def _forbidden(*_args, **_kwargs):
-            """Fail if the simulated Windows branch probes through ``os.kill``."""
-            raise AssertionError("os.kill must not be called on the Windows branch")
-
+        With ``os.name`` set to ``nt`` the public probe must go through the Win32 API only, since signal 0 would be
+        ``CTRL_C_EVENT`` on a real Windows host.
+        """
         kernel = _FakeKernel32(handle=5)
         monkeypatch.setattr(ctypes, "windll", _FakeWindll(kernel), raising=False)
-        monkeypatch.setattr(_mod.os, "kill", _forbidden)
         monkeypatch.setattr(_mod.os, "name", "nt")
         assert _mod.pid_alive(4242) is True
+        kill.assert_not_called()
 
 
-class TestPidAliveGuards:
+class TestPidAlive:
+    """The public PID probe and its guard against unverifiable PIDs."""
+
     @pytest.mark.parametrize("pid", [pytest.param(None, id="none"), 0, -1])
-    def test_unverifiable_pid_is_not_alive(self, pid):
+    def test_unverifiable_pid_is_not_alive(self, pid: int | None) -> None:
+        """A missing, zero or negative PID is never alive.
+
+        Signal 0 to PID 0 or a negative PID addresses a process group, so these values must be refused before any probe
+        is sent.
+        """
         assert _mod.pid_alive(pid) is False
+
+    def test_own_process_is_alive(self) -> None:
+        """The real probe sees this test process as alive.
+
+        Every other liveness test substitutes the OS call, so this one keeps the actual syscall (or Win32 call) in the
+        suite against a process that is certain to exist.
+        """
+        assert _mod.pid_alive(os.getpid()) is True
 
 
 class TestParseLockPid:
+    """Reading the holder PID from a lock file's first token."""
+
     @pytest.mark.parametrize(
         ("text", "expected"),
         [
@@ -198,11 +252,14 @@ class TestParseLockPid:
             pytest.param("0 x", None, id="zero"),
         ],
     )
-    def test_parse(self, text, expected):
+    def test_parse(self, text: str, expected: int | None) -> None:
+        """The first token is the holder PID when it is a positive integer; anything else yields None."""
         assert _mod.parse_lock_pid(text) == expected
 
 
 class TestClassifyLock:
+    """Lock verdicts from holder liveness and age."""
+
     @pytest.mark.parametrize(
         ("pid", "alive", "age_minutes", "verdict"),
         [
@@ -224,16 +281,26 @@ class TestClassifyLock:
         """
         assert _mod.classify_lock(pid, alive=alive, age_minutes=age_minutes, max_age_minutes=30) is verdict
 
-    @pytest.mark.parametrize("verdict", [LockVerdict.STALE_DEAD, LockVerdict.STALE_AGED])
-    def test_reclaimable_set(self, verdict):
-        assert verdict in _mod.RECLAIMABLE_LOCKS
+    @pytest.mark.parametrize(
+        ("verdict", "reclaimable"),
+        [
+            pytest.param(LockVerdict.STALE_DEAD, True, id="stale-dead"),
+            pytest.param(LockVerdict.STALE_AGED, True, id="stale-aged"),
+            pytest.param(LockVerdict.HELD, False, id="held"),
+            pytest.param(LockVerdict.MALFORMED, False, id="malformed"),
+        ],
+    )
+    def test_reclaimable_set(self, verdict: object, reclaimable: bool) -> None:
+        """Only stale verdicts are reclaimable; a held or malformed lock is never removed.
 
-    @pytest.mark.parametrize("verdict", [LockVerdict.HELD, LockVerdict.MALFORMED])
-    def test_non_reclaimable_set(self, verdict):
-        assert verdict not in _mod.RECLAIMABLE_LOCKS
+        A malformed lock may belong to a live writer that has not finished writing it, so it is reported, not stolen.
+        """
+        assert (verdict in _mod.RECLAIMABLE_LOCKS) is reclaimable
 
 
 class TestClassifyWorktree:
+    """Worktree tiers from name, registration, dirtiness and age."""
+
     BASE: ClassVar = dict(
         is_main=False,
         registered=True,
@@ -282,128 +349,127 @@ class TestClassifyWorktree:
         assert self._tier(name, **overrides) is tier
 
     @pytest.mark.parametrize("tier", [WorktreeTier.DIRTY, WorktreeTier.PROTECTED, WorktreeTier.LIVE, WorktreeTier.MAIN])
-    def test_protected_tiers_not_reclaimable(self, tier):
+    def test_protected_tiers_not_reclaimable(self, tier: object) -> None:
+        """A dirty, protected, live or main worktree tier is never in the reclaimable set.
+
+        The reclaimable set is what ``--apply`` removes, so any of these tiers appearing in it would delete work.
+        """
         assert tier not in _mod.RECLAIMABLE_WORKTREES
 
 
 class TestSweepLocks:
-    def _write(self, tmp_path: Path, name: str, body: str, age_minutes: float = 0.0) -> Path:
-        """Write one lock fixture, optionally backdating its modification time."""
-        path = tmp_path / name
-        path.write_text(body, encoding="utf-8")
-        if age_minutes:
-            past = time.time() - age_minutes * 60
-            os.utime(path, (past, past))
-        return path
+    """Filesystem sweep of lock files matching a glob."""
 
-    def test_live_holder_is_held(self, tmp_path):
-        self._write(tmp_path, "oss-resolve-main.lock", f"{os.getpid()} 2026-08-17T18:10:04Z\n")
-        states = _mod.sweep_locks(tmp_path, "oss-resolve-*.lock", 30, time.time())
-        assert [s.verdict for s in states] == [LockVerdict.HELD]
+    @pytest.mark.parametrize(
+        ("holder", "age_minutes", "verdict"),
+        [
+            pytest.param(os.getpid(), 0.0, LockVerdict.HELD, id="live-holder-is-held"),
+            pytest.param(424242, 0.0, LockVerdict.STALE_DEAD, id="dead-holder-is-stale"),
+            pytest.param(os.getpid(), 60.0, LockVerdict.STALE_AGED, id="aged-live-holder-reclaimed"),
+        ],
+    )
+    @pytest.mark.usefixtures("only_self_alive")
+    def test_verdict_per_holder_and_age(self, tmp_path: Path, holder: int, age_minutes: float, verdict: object) -> None:
+        """A swept lock gets the verdict for its holder's liveness and age, with the holder PID reported.
 
-    def test_dead_holder_is_stale(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(_mod, "pid_alive", lambda pid: False)
-        self._write(tmp_path, "oss-resolve-main.lock", "424242 2026-08-17T18:10:04Z\n")
-        states = _mod.sweep_locks(tmp_path, "oss-resolve-*.lock", 30, time.time())
-        assert states[0].verdict is LockVerdict.STALE_DEAD
-        assert states[0].pid == 424242
+        Scenario: a lock held by this live process stays held while fresh and turns stale once aged past the limit,
+        and a lock whose holder is gone is stale at once.
+        """
+        _write_lock(tmp_path, "oss-resolve-main.lock", f"{holder} 2026-08-17T18:10:04Z\n", age_minutes)
+        states = _mod.sweep_locks(tmp_path, _LOCK_GLOB, 30, time.time())
+        assert [(s.verdict, s.pid) for s in states] == [(verdict, holder)]
 
-    def test_glob_is_not_branch_scoped(self, tmp_path, monkeypatch):
-        """The 27-day leak survived because only the current branch was checked."""
-        monkeypatch.setattr(_mod, "pid_alive", lambda pid: False)
-        self._write(tmp_path, "oss-resolve-main.lock", "1 x")
-        self._write(tmp_path, "oss-resolve-feat-abandoned.lock", "2 x")
-        self._write(tmp_path, "unrelated.lock", "3 x")
-        states = _mod.sweep_locks(tmp_path, "oss-resolve-*.lock", 30, time.time())
+    @pytest.mark.usefixtures("only_self_alive")
+    def test_glob_is_not_branch_scoped(self, tmp_path: Path) -> None:
+        """Every lock matching the glob is swept, whatever branch it names.
+
+        The 27-day leak survived because only the current branch was checked.
+        """
+        _write_lock(tmp_path, "oss-resolve-main.lock", "1 x")
+        _write_lock(tmp_path, "oss-resolve-feat-abandoned.lock", "2 x")
+        _write_lock(tmp_path, "unrelated.lock", "3 x")
+        states = _mod.sweep_locks(tmp_path, _LOCK_GLOB, 30, time.time())
         assert {s.path.name for s in states} == {"oss-resolve-main.lock", "oss-resolve-feat-abandoned.lock"}
 
-    def test_aged_live_holder_reclaimed(self, tmp_path):
-        self._write(tmp_path, "oss-resolve-main.lock", f"{os.getpid()} x", age_minutes=60)
-        states = _mod.sweep_locks(tmp_path, "oss-resolve-*.lock", 30, time.time())
-        assert states[0].verdict is LockVerdict.STALE_AGED
+    def test_no_matches_is_empty(self, tmp_path: Path) -> None:
+        """A directory with no matching lock yields no states."""
+        assert _mod.sweep_locks(tmp_path, _LOCK_GLOB, 30, time.time()) == []
 
-    def test_no_matches_is_empty(self, tmp_path):
-        assert _mod.sweep_locks(tmp_path, "oss-resolve-*.lock", 30, time.time()) == []
-
-    def test_directory_matching_glob_ignored(self, tmp_path):
+    def test_directory_matching_glob_ignored(self, tmp_path: Path) -> None:
+        """A directory whose name matches the lock glob is not a lock and is skipped."""
         (tmp_path / "oss-resolve-dir.lock").mkdir()
-        assert _mod.sweep_locks(tmp_path, "oss-resolve-*.lock", 30, time.time()) == []
+        assert _mod.sweep_locks(tmp_path, _LOCK_GLOB, 30, time.time()) == []
 
 
 class TestSweepWorktrees:
-    def test_orphan_directory_detected(self, tmp_path, monkeypatch):
-        """Git worktree prune cannot see this case — it removes the inverse."""
+    """Filesystem sweep of a worktree root, with git answers supplied."""
+
+    def test_orphan_directory_detected(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """An aged directory git does not list is tiered ORPHAN.
+
+        Git worktree prune cannot see this case — it removes the inverse.
+        """
         root = tmp_path / ".claude" / "worktrees"
-        (root / "agent-orphan").mkdir(parents=True)
-        past = time.time() - 60 * 86400
-        os.utime(root / "agent-orphan", (past, past))
-        monkeypatch.setattr(
-            _mod, "_git", lambda args, cwd=None: f"worktree {tmp_path}" if args[0] == "worktree" else ""
-        )
+        _aged_dir(root / "agent-orphan")
+        monkeypatch.setattr(_mod, "_git", _git_answers({"worktree": f"worktree {tmp_path}"}))
         states = _mod.sweep_worktrees(tmp_path, root, 14, ("agent-",), time.time())
         assert [(s.path.name, s.tier) for s in states] == [("agent-orphan", WorktreeTier.ORPHAN)]
 
-    def test_missing_root_is_empty(self, tmp_path):
+    def test_missing_root_is_empty(self, tmp_path: Path) -> None:
+        """A worktree root that does not exist yields no states."""
         assert _mod.sweep_worktrees(tmp_path, tmp_path / "nope", 14, ("agent-",), time.time()) == []
 
-    def test_dirty_registered_worktree_reported_not_removable(self, tmp_path, monkeypatch):
-        root = tmp_path / ".claude" / "worktrees"
-        wt = root / "agent-dirty"
-        wt.mkdir(parents=True)
-        past = time.time() - 60 * 86400
-        os.utime(wt, (past, past))
-
-        def _fake_git(args, cwd=None):
-            """Return registered worktree and dirty-status fixture output."""
-            if args[0] == "worktree":
-                return f"worktree {tmp_path}\nworktree {wt.resolve()}"
-            if args[0] == "status":
-                return " M a.py\n M b.py"
-            return ""
-
-        monkeypatch.setattr(_mod, "_git", _fake_git)
+    def test_dirty_registered_worktree_reported_not_removable(
+        self, tmp_path: Path, aged_registered_worktree: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A registered worktree with uncommitted files is tiered DIRTY and its changed files are counted."""
+        root, wt = aged_registered_worktree
+        answers = {"worktree": f"worktree {tmp_path}\nworktree {wt.resolve()}", "status": " M a.py\n M b.py"}
+        monkeypatch.setattr(_mod, "_git", _git_answers(answers))
         states = _mod.sweep_worktrees(tmp_path, root, 14, ("agent-",), time.time())
-        assert states[0].tier is WorktreeTier.DIRTY
-        assert states[0].dirty_files == 2
+        assert (states[0].tier, states[0].dirty_files) == (WorktreeTier.DIRTY, 2)
 
 
 class TestCli:
-    def _run(self, argv, monkeypatch, tmp_path, capsys):
+    """Exit codes and output of ``main`` with repository discovery stubbed to ``tmp_path``."""
+
+    @staticmethod
+    def _run(argv, monkeypatch, tmp_path, capsys):
         """Run the CLI with repository discovery stubbed to ``tmp_path``."""
-        monkeypatch.setattr(_mod, "_git", lambda args, cwd=None: str(tmp_path) if args[0] == "rev-parse" else "")
+        monkeypatch.setattr(_mod, "_git", _fake_repo_git(tmp_path, ""))
         rc = _mod.main(argv)
         return rc, capsys.readouterr().out
 
-    def test_reclaimable_without_apply_exits_1(self, tmp_path, monkeypatch, capsys):
-        """Report-only must be distinguishable from clean by exit code alone."""
-        (tmp_path / "oss-resolve-x.lock").write_text("424242 x", encoding="utf-8")
-        monkeypatch.setattr(_mod, "pid_alive", lambda pid: False)
-        rc, out = self._run(["locks", "--pattern", "oss-resolve-*.lock"], monkeypatch, tmp_path, capsys)
-        assert rc == 1
-        assert "reclaimable" in out
-        assert (tmp_path / "oss-resolve-x.lock").exists(), "report-only must not delete"
+    @pytest.mark.parametrize(
+        ("holder", "extra_args", "rc", "report", "survives"),
+        [
+            # Report-only must be distinguishable from clean by exit code alone.
+            pytest.param(424242, [], 1, "reclaimable", True, id="reclaimable-without-apply-exits-1"),
+            pytest.param(424242, ["--apply"], 0, "reclaimed", False, id="apply-removes-and-exits-0"),
+            pytest.param(os.getpid(), ["--apply"], 0, "held", True, id="held-lock-exits-0-and-survives"),
+        ],
+    )
+    @pytest.mark.usefixtures("only_self_alive")
+    def test_lock_sweep_exit_code_and_removal(
+        self, tmp_path, monkeypatch, capsys, holder, extra_args, rc, report, survives
+    ):
+        """The lock sweep exits 1 for reclaimable locks left in place, 0 once clean, and removes only with --apply.
 
-    def test_apply_removes_and_exits_0(self, tmp_path, monkeypatch, capsys):
-        (tmp_path / "oss-resolve-x.lock").write_text("424242 x", encoding="utf-8")
-        monkeypatch.setattr(_mod, "pid_alive", lambda pid: False)
-        rc, out = self._run(["locks", "--pattern", "oss-resolve-*.lock", "--apply"], monkeypatch, tmp_path, capsys)
-        assert rc == 0
-        assert "reclaimed" in out
-        assert not (tmp_path / "oss-resolve-x.lock").exists()
+        A held lock is never removed even under --apply, and report-only leaves the stale file on disk.
+        """
+        lock = _write_lock(tmp_path, "oss-resolve-x.lock", f"{holder} x")
+        code, out = self._run(["locks", "--pattern", _LOCK_GLOB, *extra_args], monkeypatch, tmp_path, capsys)
+        assert (code, report in out, lock.exists()) == (rc, True, survives)
 
-    def test_held_lock_exits_0_and_survives(self, tmp_path, monkeypatch, capsys):
-        (tmp_path / "oss-resolve-x.lock").write_text(f"{os.getpid()} x", encoding="utf-8")
-        rc, out = self._run(["locks", "--pattern", "oss-resolve-*.lock", "--apply"], monkeypatch, tmp_path, capsys)
-        assert rc == 0
-        assert "held" in out
-        assert (tmp_path / "oss-resolve-x.lock").exists()
-
+    @pytest.mark.usefixtures("only_self_alive")
     def test_quiet_suppresses_output_not_exit_code(self, tmp_path, monkeypatch, capsys):
-        (tmp_path / "oss-resolve-x.lock").write_text("424242 x", encoding="utf-8")
-        monkeypatch.setattr(_mod, "pid_alive", lambda pid: False)
-        rc, out = self._run(["locks", "--pattern", "oss-resolve-*.lock", "--quiet"], monkeypatch, tmp_path, capsys)
-        assert rc == 1
-        assert out == ""
+        """``--quiet`` prints nothing yet still exits 1 when a reclaimable lock remains.
+
+        Scripts that only branch on the exit code rely on it staying meaningful with the report silenced.
+        """
+        _write_lock(tmp_path, "oss-resolve-x.lock", "424242 x")
+        rc, out = self._run(["locks", "--pattern", _LOCK_GLOB, "--quiet"], monkeypatch, tmp_path, capsys)
+        assert (rc, out) == (1, "")
 
     @pytest.mark.parametrize(
         ("extra_args", "rc", "output"),
@@ -459,36 +525,27 @@ class TestCli:
         assert orphan.is_dir() is kept
         assert output in capsys.readouterr().out
 
-    def test_outside_git_repo_exits_2(self, monkeypatch, capsys):
-        monkeypatch.setattr(_mod, "_git", lambda args, cwd=None: "")
+    def test_outside_git_repo_exits_2(self, monkeypatch):
+        """Running where git cannot name a repository exits 2 instead of sweeping the current directory.
+
+        With no repository root there is nothing to bound the sweep, so the safe answer is to refuse.
+        """
+        monkeypatch.setattr(_mod, "_git", _git_answers({}))
         assert _mod.main(["locks", "--pattern", "*.lock"]) == 2
 
     def test_root_outside_repo_exits_2(self, tmp_path, tmp_path_factory, monkeypatch, capsys):
         """--root outside the repo is rejected before any sweep runs, and nothing is deleted.
 
-        Reproduces ASEC10: --root pointed at an arbitrary directory, combined with
-        a matching --managed-prefix, --include-orphans and --apply, would otherwise
-        recursively rmtree every sufficiently-aged matching child it finds there.
+        Reproduces ASEC10: --root pointed at an arbitrary directory, combined with a matching --managed-prefix,
+        --include-orphans and --apply, would otherwise recursively rmtree every sufficiently-aged matching child it
+        finds there.
         """
         outside = tmp_path_factory.mktemp("outside")
-        (outside / "lr-1e-4").mkdir()
-        past = time.time() - 5 * 86400
-        os.utime(outside / "lr-1e-4", (past, past))
-        monkeypatch.setattr(_mod, "_git", lambda args, cwd=None: str(tmp_path) if args[0] == "rev-parse" else "")
+        _aged_dir(outside / "lr-1e-4", days=5)
+        monkeypatch.setattr(_mod, "_git", _fake_repo_git(tmp_path, ""))
 
-        rc = _mod.main(
-            [
-                "worktrees",
-                "--root",
-                str(outside),
-                "--managed-prefix",
-                "lr-",
-                "--include-orphans",
-                "--min-age-days",
-                "1",
-                "--apply",
-            ]
-        )
+        argv = ["worktrees", "--root", str(outside), "--managed-prefix", "lr-", "--include-orphans"]
+        rc = _mod.main([*argv, "--min-age-days", "1", "--apply"])
 
         assert rc == 2
         assert "! SECURITY" in capsys.readouterr().err
@@ -505,21 +562,6 @@ class TestCli:
         """Omitting the mode, or the --pattern a locks sweep needs, exits through argparse."""
         with pytest.raises(SystemExit):
             _mod.main(argv)
-
-
-def _symlinks_supported() -> bool:
-    """Probe whether this host lets the test process create symlinks."""
-    import tempfile
-
-    with tempfile.TemporaryDirectory() as tmp:
-        try:
-            os.symlink(tmp, os.path.join(tmp, "probe"))
-        except (OSError, NotImplementedError):
-            return False
-    return True
-
-
-_skip_no_symlinks = pytest.mark.skipif(not _symlinks_supported(), reason="host cannot create symlinks")
 
 
 class TestDeletionGuards:
@@ -566,7 +608,7 @@ class TestDeletionGuards:
         target = tmp_path / "elsewhere"
         target.write_text("424242 x", encoding="utf-8")
         (tmp_path / "oss-resolve-link.lock").symlink_to(target)
-        assert _mod.sweep_locks(tmp_path, "oss-resolve-*.lock", 30, time.time()) == []
+        assert _mod.sweep_locks(tmp_path, _LOCK_GLOB, 30, time.time()) == []
 
     @_skip_no_symlinks
     def test_symlinked_worktree_child_is_skipped(self, tmp_path, monkeypatch):
@@ -576,7 +618,7 @@ class TestDeletionGuards:
         real = tmp_path / "real"
         real.mkdir()
         (root / "agent-link").symlink_to(real, target_is_directory=True)
-        monkeypatch.setattr(_mod, "_git", lambda args, cwd=None: "")
+        monkeypatch.setattr(_mod, "_git", _git_answers({}))
         states = _mod.sweep_worktrees(tmp_path, root, 14, ("agent-",), time.time())
         assert [(s.path.name, s.tier) for s in states] == [("agent-link", WorktreeTier.SYMLINK)]
         assert WorktreeTier.SYMLINK not in _mod.RECLAIMABLE_WORKTREES
@@ -598,70 +640,56 @@ class TestDeletionGuards:
         assert link.is_symlink()
         assert (target / "keep.txt").is_file()
 
-    def test_unverifiable_registered_worktree_is_dirty(self, tmp_path, monkeypatch):
+    def test_unverifiable_registered_worktree_is_dirty(
+        self, tmp_path: Path, aged_registered_worktree: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """A registered worktree whose git status cannot be read is DIRTY, not removable.
 
         git failing and a clean tree both print nothing; treating that silence as clean would let a broken checkout
         holding uncommitted work be removed.
         """
-        root = tmp_path / ".claude" / "worktrees"
-        wt = root / "agent-broken"
-        wt.mkdir(parents=True)
-        past = time.time() - 60 * 86400
-        os.utime(wt, (past, past))
-        monkeypatch.setattr(
-            _mod,
-            "_git",
-            lambda args, cwd=None: f"worktree {tmp_path}\nworktree {wt.resolve()}" if args[0] == "worktree" else "",
-        )
+        root, wt = aged_registered_worktree
+        monkeypatch.setattr(_mod, "_git", _git_answers({"worktree": f"worktree {tmp_path}\nworktree {wt.resolve()}"}))
         states = _mod.sweep_worktrees(tmp_path, root, 14, ("agent-",), time.time())
         assert states[0].tier is WorktreeTier.DIRTY
 
-    def test_declined_git_removal_never_falls_back_to_rmtree(self, tmp_path, monkeypatch):
-        """When git declines to remove a registered worktree, the directory stays on disk.
+    @pytest.mark.parametrize(
+        "answers",
+        [
+            # git refuses dirty, locked and submodule worktrees on purpose; deleting the directory by other means would
+            # defeat that refusal.
+            pytest.param({"rev-parse": ".git"}, id="git-declines-removal"),
+            # A worktree that gained uncommitted files between sweep and removal is kept.
+            pytest.param({"status": " M late.py"}, id="dirtied-after-sweep"),
+        ],
+    )
+    def test_registered_worktree_git_will_not_remove_is_kept(self, tmp_path, monkeypatch, answers):
+        """When git declines to remove a registered worktree, or it turned dirty, the directory and its files stay.
 
-        git refuses dirty, locked and submodule worktrees on purpose; deleting the directory by other means would defeat
-        that refusal.
+        The removal never falls back to deleting the directory itself, so unsaved work in it cannot be lost.
         """
         wt = tmp_path / "agent-locked"
         wt.mkdir()
         (wt / "keep.txt").write_text("work", encoding="utf-8")
         state = _mod.WorktreeState(path=wt, registered=True, dirty_files=0, age_days=99.0, tier=WorktreeTier.REMOVABLE)
-        monkeypatch.setattr(
-            _mod,
-            "_git",
-            lambda args, cwd=None: "" if args[0] == "worktree" else (".git" if args[0] == "rev-parse" else ""),
-        )
+        monkeypatch.setattr(_mod, "_git", _git_answers(answers))
         assert _mod._remove_worktree(state, tmp_path) is False
         assert (wt / "keep.txt").exists()
 
-    def test_worktree_dirtied_after_sweep_is_not_removed(self, tmp_path, monkeypatch):
-        """A worktree that gained uncommitted files between sweep and removal is kept."""
-        wt = tmp_path / "agent-late"
-        wt.mkdir()
-        state = _mod.WorktreeState(path=wt, registered=True, dirty_files=0, age_days=99.0, tier=WorktreeTier.REMOVABLE)
-        monkeypatch.setattr(_mod, "_git", lambda args, cwd=None: " M late.py" if args[0] == "status" else "")
-        assert _mod._remove_worktree(state, tmp_path) is False
-        assert wt.exists()
-
     @pytest.mark.parametrize(
-        ("touched", "removed"),
+        ("age_days_after", "removed"),
         [
-            pytest.param(False, True, id="untouched-orphan-removed"),
-            pytest.param(True, False, id="orphan-touched-since-sweep-kept"),
+            pytest.param(60.0, True, id="untouched-orphan-removed"),
+            pytest.param(0.0, False, id="orphan-touched-since-sweep-kept"),
         ],
     )
-    def test_orphan_rechecks_age_before_rmtree(self, tmp_path, monkeypatch, touched, removed):
+    def test_orphan_rechecks_age_before_rmtree(self, tmp_path, monkeypatch, age_days_after, removed):
         """An unregistered directory modified after the sweep is no longer provably abandoned."""
-        orphan = tmp_path / "agent-orphan"
-        orphan.mkdir()
-        past = time.time() - 60 * 86400
-        os.utime(orphan, (past, past))
+        orphan = _aged_dir(tmp_path / "agent-orphan")
         state = _mod.WorktreeState(
             path=orphan, registered=False, dirty_files=0, age_days=60.0, tier=WorktreeTier.ORPHAN
         )
-        if touched:
-            os.utime(orphan, None)
+        _backdate(orphan, age_days_after)
         monkeypatch.setattr(_mod, "_git", _fake_repo_git(tmp_path, f"worktree {tmp_path.resolve()}"))
         assert _mod._remove_worktree(state, tmp_path) is removed
         assert orphan.exists() is not removed
@@ -693,7 +721,7 @@ class TestDeletionGuards:
         """
         orphan = _aged_dir(tmp_path / "agent-clone")
         (orphan / ".git").mkdir()
-        os.utime(orphan, (time.time() - 60 * 86400,) * 2)
+        _backdate(orphan)
         state = _mod.WorktreeState(path=orphan, registered=False, dirty_files=0, age_days=1.0, tier=WorktreeTier.ORPHAN)
         fake = _fake_repo_git(tmp_path, f"worktree {tmp_path.resolve()}")
         monkeypatch.setattr(

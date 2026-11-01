@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.46.1
+
+- `run_pytest_short.py` closes the child's output pipe after reading, including when output is truncated, preventing leaked pipes and unclosed-file ResourceWarnings.
+- `dev_run_repro.py` closes the child's output pipe from its reader thread when the output ends, so a run that hits the timeout no longer leaks the pipe or emits a ResourceWarning, and a pipe a grandchild still holds is closed when that grandchild exits.
+
 ## 0.46.0
 
 - Require proportional planning and challenge before accepted execution, then consolidate actual results with independent review and verification; routine authorized work gains no user approval prompt. Validate bounded outcomes, decompose larger work, and complete branches depth-first with focused context and useful disjoint sibling delegation; parent consolidation retains valid-evidence and mandatory acceptance gates.

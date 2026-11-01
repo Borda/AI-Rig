@@ -103,10 +103,7 @@ def before_row(
     ``blueprint`` and ``shape`` each take ``allow``, ``passthrough``, ``none`` or ``module-error``; the effective
     verdict follows rank order: blueprint, shape, then the optional ``gh_read`` lane.
     """
-    verdicts = [
-        _verdict("blueprint", blueprint),
-        _verdict("shape", shape),
-    ]
+    verdicts = [_verdict("blueprint", blueprint), _verdict("shape", shape)]
     if gh_read is not None:
         verdicts.append(_verdict("gh-read", gh_read))
     # The digest exists only when the blueprint lane actually normalized the command, i.e. it reached a decision.
@@ -149,12 +146,7 @@ def _verdict(lane: str, decision: str) -> dict:
 
 
 def after_row(
-    tag: str,
-    plugin: str,
-    tool_use_id: str | None,
-    *,
-    status: str = "ok",
-    session_id: str | None = SESSION,
+    tag: str, plugin: str, tool_use_id: str | None, *, status: str = "ok", session_id: str | None = SESSION
 ) -> dict:
     """Return one ``post_execution`` row observing that the tool call completed."""
     row = _base(tag, plugin, "audit-close", "post_execution", "tool.bash")
@@ -411,7 +403,7 @@ def build(fixture_dir: Path) -> dict:
     # Every row below is re-sealed after mutation. A schema-invalid row must carry a VALID hash, otherwise the case
     # would also be a corrupt-record and would force exit 1 — testing the wrong bucket and the wrong exit code.
     good = before_row("si-good", "cc_foundry", tid, blueprint="allow")
-    missing_verdicts = {k: v for k, v in good.items()}
+    missing_verdicts = dict(good)
     missing_verdicts["action_detail"] = {k: v for k, v in good["action_detail"].items() if k != "verdicts"}
     missing_verdicts = sealed(missing_verdicts)
     verdicts_on_after = after_row("si-after-verdicts", "cc_oss", tid)
@@ -421,10 +413,8 @@ def build(fixture_dir: Path) -> dict:
     }
     verdicts_on_after = sealed(verdicts_on_after)
     duplicate_lanes = before_row("si-dup-lane", "cc_develop", tid)
-    duplicate_lanes["action_detail"] = {
-        **duplicate_lanes["action_detail"],
-        "verdicts": [_verdict("blueprint", "passthrough"), _verdict("blueprint", "passthrough")],
-    }
+    twin_lanes = [_verdict("blueprint", "passthrough"), _verdict("blueprint", "passthrough")]
+    duplicate_lanes["action_detail"] = {**duplicate_lanes["action_detail"], "verdicts": twin_lanes}
     duplicate_lanes = sealed(duplicate_lanes)
     unknown_outcome = sealed({**after_row("si-outcome", "cc_research", tid), "outcome": "escalated"})
     case(
@@ -510,10 +500,7 @@ def _write_canonical_vectors(fixture_dir: Path) -> None:
         ("integer-bounds", {"lo": -9007199254740991, "hi": 9007199254740991}),
         ("empty-object-and-array", {"action_detail": {}, "verdicts": []}),
         ("record-hash-excluded", {"a": 1, "record_hash": "ffff"}),
-        (
-            "full-before-row",
-            before_row("vector-before", "cc_foundry", "toolu_01vector", blueprint="allow"),
-        ),
+        ("full-before-row", before_row("vector-before", "cc_foundry", "toolu_01vector", blueprint="allow")),
         ("full-after-row", after_row("vector-after", "cc_oss", "toolu_01vector")),
         ("full-lifecycle-row", lifecycle_row("vector-lifecycle", "cc_develop", "session.end", reason="clear")),
     ]

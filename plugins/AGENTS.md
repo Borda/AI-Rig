@@ -18,6 +18,16 @@ Root `AGENTS.md` and the shipped Codex Rig global template (`plugins/codex-rig/a
 - There is no shared automatic release command. Update the owning manifests and CHANGELOG, validate the package, and leave remote publication to the human workflow.
 - Completion requires relevant tests, lint/format where applicable, package validation where available, README synchronization, the SemVer gate, and `git diff --check`.
 
+## Plugin Tests
+
+- Ruff (the pinned `ruff-check` pre-commit hook) enforces docstrings on every test module, class, method and function (`D100`–`D103`, tests only), the 120-character docstring line (`W505`), and the `pytest.skip()` ban (`TID251`). The remaining test-style rules live in foundry `rules/python-testing.md` §Mechanical Enforcement and Codex Rig `shared/global-baseline-details.md` §"Testing details" and are checked by review; fix the test, never add a custom checker script.
+- Classify a check before writing it: if the test did not exist, could anything actually break undetected? If not, it is linting and belongs in a pre-commit hook or Ruff rule, not pytest.
+- Shared test helpers and fixtures stay inside the same plugin's `tests/` directory, in `conftest.py` or an `_`-prefixed module. Never import across plugins: `installed_plugin` tests run from the installed plugin without the repository.
+- Past 15 test files, a plugin's `tests/` groups into topic subfolders of 4 or more files; helpers and the tree-wide `conftest.py` stay at the plugin's `tests/` root. Full rule: foundry `rules/python-testing.md` §File Layout and Codex Rig `shared/global-baseline-details.md` §"Testing details".
+- Shipped executables (`bin/`, hooks) stay independent, self-contained scripts and never import a test helper. Byte-identical propagated copies stay identical; a test's convenience never justifies diverging one.
+- Real-tool tests — `integration`, `packaging`, `installed_plugin`, `live`, and end-to-end hook runs — stay real. Mock only boundaries the test does not cover, never for speed.
+- Contract tests over shipped Markdown (skills, rules, agents) parse it line by line, per foundry `rules/python-testing.md` §Tests Reading Markdown or Prose. Never reflow or edit instruction Markdown to make a test pass.
+
 ## Change Consistency
 
 - Before any plugin addition, edit, or deletion, ask which other uses share the same behavior or contract, then scan the owning plugin and other plugins for similar implementations, invocation patterns, consumers, documentation, tests, and calibration cases. Do not limit the scan to exact names or already-touched files.
@@ -90,7 +100,7 @@ Root `AGENTS.md` and the shipped Codex Rig global template (`plugins/codex-rig/a
 - Parallel writers stage separate `<ledger>.<writer>.rec` files, appended by one `append_ledger.py` call after all writers return. Values already in the shell are appended directly with `printf` or `jq -c` redirected with `>>`; files already on disk with `append_ledger.py "$LEDGER" --from <files>`.
 - Corrections are appended as new event records and readers take the last record per key; values derived later go to a sidecar file, not back into the ledger.
 - Exempt, where editing or rewriting is correct: single-value state, mtime-clock `agent-watch-*.tsv` batch files, compaction contracts, digest- or validator-bound rendered artifacts, dedup and merge reconciliation, the artifact being refined, and frozen plans.
-- `tests/test_append_only_ledgers.py` enforces the instruction wording; `plugins/CLAUDE.md` §Growing Ledgers holds the full rationale.
+- `tests/instructions/test_append_only_ledgers.py` enforces the instruction wording; `plugins/CLAUDE.md` §Growing Ledgers holds the full rationale.
 - Codex Rig keeps the same `.rec` staging but has no `append_ledger.py`: the helper that owns a ledger's schema appends and validates the staged record (`codex-rig/shared/native-skill-contract.md` §Append-Only Ledgers). Intentional difference — Codex has no permission matcher or blueprint manifest to satisfy, and per-schema validation rejects a bad record before it lands.
 
 ## Version Pre-Bump Gate

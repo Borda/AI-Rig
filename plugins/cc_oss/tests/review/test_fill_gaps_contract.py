@@ -6,6 +6,7 @@ shaped like the rejected PR 8 publication, so a recipe edit that breaks the cont
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import os
@@ -13,12 +14,15 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
+from unittest import mock
 
 import fill_gaps_scope as fgs
 import find_review_report as frr
 import mint_finding_ids as mfi
 import pytest
+from _review_fixtures import assessment, concern, without
 
+_concern = functools.partial(concern, closure="assert")
 _BASH = shutil.which("bash")
 _PLUGIN = Path(__file__).resolve().parents[2]
 _SKILL = _PLUGIN / "skills/review/SKILL.md"
@@ -84,21 +88,6 @@ def _candidate(identifier: str, disposition: str | None) -> dict:
     }
 
 
-def _assessment(role: str, readiness: str) -> dict:
-    """Describe one returned reviewer with a NEEDS_WORK judgment and the given readiness."""
-    return {
-        "role": role,
-        "presence": "completed",
-        "source_outcome": "NEEDS_WORK",
-        "source_rating": 3,
-        "readiness": readiness,
-        "coverage": "src/",
-        "rationale": "inspected",
-        "evidence": ["src/a.py:1"],
-        "limits": [],
-    }
-
-
 def _row(candidate_id: str) -> dict:
     """Publish one confirmed candidate as an actionable, merge-ready findings row."""
     return {
@@ -112,11 +101,6 @@ def _row(candidate_id: str) -> dict:
         "change": "code",
         "author": "Software engineer",
     }
-
-
-def _concern(candidate_id: str) -> dict:
-    """Carry one open candidate as a durable concern."""
-    return {"candidate_id": candidate_id, "owner": "maintainer", "next_check": "native run", "closure": "assert"}
 
 
 def _write_run(run: Path, data: dict, rows: list[dict]) -> None:
@@ -150,10 +134,10 @@ def _prior(tmp_path: Path) -> Path:
         "readiness": "complete",
         "readiness_reason": "checked",
         "assessments": [
-            _assessment("Software engineer", "blocked"),
-            _assessment("QA specialist", "blocked"),
-            _assessment("Performance engineer", "blocked"),
-            _assessment("Challenger", "blocked"),
+            assessment("Software engineer", "blocked"),
+            assessment("QA specialist", "blocked"),
+            assessment("Performance engineer", "blocked"),
+            assessment("Challenger", "blocked"),
         ],
         "candidates": [
             *(_candidate(cid, "UNVERIFIED") for cid in ("V13", "V20", "V21")),
@@ -183,6 +167,21 @@ def _gate_sentinels(tmp_path: Path, roles: str, candidates: str, pr: str = "8") 
 def _gate() -> str:
     """Return the shipped fill-gaps gate recipe."""
     return _block(_MODE, 'fill_gaps_scope.py" plan')
+
+
+def _allocation() -> str:
+    """Return the shipped Step 2 run-directory allocation recipe."""
+    return _block(_SKILL, "next_run_dir.py")
+
+
+def _read_envelope(run: Path) -> dict:
+    """Load a run's ``review-validation.json`` envelope."""
+    return json.loads((run / "review-validation.json").read_text(encoding="utf-8"))
+
+
+def _read_rows(run: Path) -> list[dict]:
+    """Load a run's ``findings.jsonl`` rows."""
+    return [json.loads(line) for line in (run / "findings.jsonl").read_text(encoding="utf-8").splitlines()]
 
 
 @_skip_no_bash
@@ -235,7 +234,7 @@ def test_valid_selection_plans_then_allocates_a_new_run(prior: Path, tmp_path: P
         "open_concerns": ["V20", "V21"],
         "findings": ["f-V2"],
     }
-    allocation = _run(_block(_SKILL, "next_run_dir.py"), tmp_path, _PRELUDE_SENTINELS)
+    allocation = _run(_allocation(), tmp_path, _PRELUDE_SENTINELS)
     assert allocation.returncode == 0, allocation.stdout + allocation.stderr
     new_run = Path(_sentinel(tmp_path, "oss-review-report-dir"))
     assert new_run == tmp_path / ".reports/review/pr-8/run-002"
@@ -260,7 +259,7 @@ def test_plain_review_allocation_ignores_a_reset_plan(tmp_path: Path) -> None:
         "oss-review-fill-head": "",
         **_PRELUDE_SENTINELS,
     }
-    result = _run(_block(_SKILL, "next_run_dir.py"), tmp_path, sentinels)
+    result = _run(_allocation(), tmp_path, sentinels)
     assert result.returncode == 0, result.stdout + result.stderr
     new_run = Path(_sentinel(tmp_path, "oss-review-report-dir"))
     assert (new_run / "head-sha.txt").read_text(encoding="utf-8").strip() == _FULL_HEAD
@@ -282,7 +281,7 @@ def test_fill_gaps_allocation_without_a_plan_refuses(prior: Path, tmp_path: Path
         "oss-review-fill-report": _PRIOR_REPORT,
         "oss-review-fill-head": "",
     }
-    result = _run(_block(_SKILL, "next_run_dir.py"), tmp_path, sentinels)
+    result = _run(_allocation(), tmp_path, sentinels)
     assert result.returncode == 1, result.stdout + result.stderr
     assert "! BLOCKED — --fill-gaps has no plan (fill-gaps gate not passed); refusing to allocate a report dir" in (
         result.stdout
@@ -319,13 +318,14 @@ def test_step0_parses_fill_gaps_values(tmp_path: Path, arguments: str, expected:
     # The block's last line is `[ DIRECT_PATH_MODE = true ] && echo …`, so its status is 1 on every PR run;
     # completion is proven by the DIRECT_PATH_MODE line it appends last.
     assert "! BLOCKED" not in result.stdout, result.stdout + result.stderr
-    flags = (tmp_path / f"oss-review-flags-{_SESSION}").read_text(encoding="utf-8")
-    assert "DIRECT_PATH_MODE=false" in flags
+    flag_lines = (tmp_path / f"oss-review-flags-{_SESSION}").read_text(encoding="utf-8").splitlines()
+    flags = dict(line.split("=", 1) for line in flag_lines if "=" in line)
+    assert flags["DIRECT_PATH_MODE"] == "false"
     observed = {
         "pr": _sentinel(tmp_path, "oss-review-pr-tag"),
         "roles": _sentinel(tmp_path, "oss-review-fill-roles"),
         "candidates": _sentinel(tmp_path, "oss-review-fill-candidates"),
-        "mode": re.search(r"^FILL_GAPS_MODE=(\w+)$", flags, re.MULTILINE).group(1),
+        "mode": flags["FILL_GAPS_MODE"],
     }
     assert observed == expected
     assert _sentinel(tmp_path, "oss-review-fill-plan") == ""
@@ -386,10 +386,10 @@ def _publish_fill_run(prior: Path, tmp_path: Path) -> Path:
         newline="\n",
     )
     (run / "head-sha.txt").write_text(_PRIOR_HEAD + "\n", encoding="utf-8", newline="\n")
-    data = json.loads((prior.parent / "review-validation.json").read_text(encoding="utf-8"))
+    data = _read_envelope(prior.parent)
     data["readiness"] = "blocked"
     data["readiness_reason"] = "three reviewers blocked; V13, V20 and V21 stay open"
-    data["assessments"][1] = _assessment("QA specialist", "complete")
+    data["assessments"][1] = assessment("QA specialist", "complete")
     data["candidates"][0]["reason"] = "re-validated: still needs native backend"
     _write_run(run, data, [_row("V2"), _row("V1b")])
     return run / "review-report.md"
@@ -410,16 +410,16 @@ def test_honest_fill_gaps_merge_passes_carry_check_and_publication_gate(prior: P
 
 def _alter_carried_candidate(run: Path) -> None:
     """Reword a carried candidate's claim."""
-    data = json.loads((run / "review-validation.json").read_text(encoding="utf-8"))
+    data = _read_envelope(run)
     data["candidates"][1]["claim"] = "reworded"
-    _write_run(run, data, [json.loads(line) for line in (run / "findings.jsonl").read_text().splitlines()])
+    _write_run(run, data, _read_rows(run))
 
 
 def _drop_rerun_role(run: Path) -> None:
     """Lose the re-run QA assessment entirely."""
-    data = json.loads((run / "review-validation.json").read_text(encoding="utf-8"))
+    data = _read_envelope(run)
     data["assessments"] = [a for a in data["assessments"] if a["role"] != "QA specialist"]
-    _write_run(run, data, [json.loads(line) for line in (run / "findings.jsonl").read_text().splitlines()])
+    _write_run(run, data, _read_rows(run))
 
 
 def _drop_carried_row(run: Path) -> None:
@@ -434,9 +434,9 @@ def _drop_published_row(run: Path) -> None:
 
 def _drop_revalidated_candidate(run: Path) -> None:
     """Lose re-validated V13 instead of recording its new disposition."""
-    data = json.loads((run / "review-validation.json").read_text(encoding="utf-8"))
+    data = _read_envelope(run)
     data["candidates"] = [c for c in data["candidates"] if c["id"] != "V13"]
-    _write_run(run, data, [json.loads(line) for line in (run / "findings.jsonl").read_text().splitlines()])
+    _write_run(run, data, _read_rows(run))
 
 
 @_skip_no_bash
@@ -492,7 +492,7 @@ def _plan_points_prior_validation_elsewhere(run: Path) -> None:
 
 def _new_assessments_not_a_list(run: Path) -> None:
     """Publish the new assessments as a mapping and add a non-object findings row."""
-    data = json.loads((run / "review-validation.json").read_text(encoding="utf-8"))
+    data = _read_envelope(run)
     data["assessments"] = {"QA specialist": data["assessments"][1]}
     _write_run(run, data, [*(json.loads(line) for line in (run / "findings.jsonl").read_text().splitlines()), 7])
 
@@ -585,7 +585,7 @@ def test_stale_confirmed_candidate_is_revalidated_not_published(prior: Path) -> 
     Publishing a row on stale evidence would turn an outdated confirmation into an action item; only a confirmation on
     the reviewed head may skip re-validation.
     """
-    data = json.loads((prior.parent / "review-validation.json").read_text(encoding="utf-8"))
+    data = _read_envelope(prior.parent)
     data["candidates"][3]["revision"] = "0123456789ab"
     (prior.parent / "review-validation.json").write_text(json.dumps(data), encoding="utf-8")
     plan = fgs.build_plan(fgs.PlanRequest("8", prior, [], ["V1b"], _FULL_HEAD))
@@ -598,7 +598,7 @@ def test_stale_carried_candidate_blocks_unless_selected(prior: Path) -> None:
     The publication gate compares every candidate revision to the new run's head exactly, so carrying stale evidence
     would publish a run the gate rejects — the plan refuses it up front instead.
     """
-    data = json.loads((prior.parent / "review-validation.json").read_text(encoding="utf-8"))
+    data = _read_envelope(prior.parent)
     data["candidates"][1]["revision"] = "0123456789ab"
     (prior.parent / "review-validation.json").write_text(json.dumps(data), encoding="utf-8")
     with pytest.raises(fgs.FillGapsBlocked, match="V20"):
@@ -659,9 +659,9 @@ def _null_aggregate_missing_engineer(data: dict) -> None:
     """
     data.update(source_outcome=None, source_rating=None, readiness="blocked")
     data["assessments"] = [
-        {**_assessment("Performance engineer", "blocked"), "source_outcome": None, "source_rating": None},
+        {**assessment("Performance engineer", "blocked"), "source_outcome": None, "source_rating": None},
         {
-            **_assessment("Software engineer", "incomplete"),
+            **assessment("Software engineer", "incomplete"),
             "presence": "missing",
             "source_outcome": None,
             "source_rating": None,
@@ -682,8 +682,8 @@ def _null_aggregate_all_reviewers_missing(data: dict) -> None:
     data.update(source_outcome=None, source_rating=None, readiness="incomplete")
     missing = {"presence": "missing", "source_outcome": None, "source_rating": None, "rationale": "", "evidence": []}
     data["assessments"] = [
-        {**_assessment("Performance engineer", "incomplete"), **missing},
-        {**_assessment("Software engineer", "incomplete"), **missing},
+        {**assessment("Performance engineer", "incomplete"), **missing},
+        {**assessment("Software engineer", "incomplete"), **missing},
     ]
     data["candidates"] = [record for record in data["candidates"] if record["id"] in {"V1b", "V2"}]
     data["open_concerns"] = []
@@ -851,22 +851,17 @@ def _write_rows(prior: Path, rows: list) -> None:
     (prior.parent / "findings.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
 
 
-def _without(row: dict, *keys: str) -> dict:
-    """Copy a findings row without the given fields."""
-    return {key: value for key, value in row.items() if key not in keys}
-
-
 @pytest.mark.parametrize(
     ("rows", "candidates", "expected"),
     [
         pytest.param(
-            [_without(_row("V2"), "change", "author")],
+            [without(_row("V2"), "change", "author")],
             ["V13", "V1b"],
             "carried record(s) V2 fail findings.jsonl finding 1 missing change, author (candidate 'V2'; resolve's merge",
             id="pre-producer-row",
         ),
         pytest.param(
-            [_without(_row("V2"), "id")],
+            [without(_row("V2"), "id")],
             ["V13", "V1b"],
             "carried record(s) V2 fail findings.jsonl finding 1 missing id (candidate 'V2'; resolve's merge",
             id="id-less-row-mint-would-re-mint",
@@ -941,7 +936,7 @@ def _triage_duplicate_row(report: Path) -> None:
 
 def _triage_unmergeable_row(report: Path) -> None:
     """Rewrite V2's row without the change and author fields resolve's merge needs, a row no gap grades."""
-    _write_rows(report, [_without(_row("V2"), "change", "author")])
+    _write_rows(report, [without(_row("V2"), "change", "author")])
 
 
 def _triage_pending_row_only_gap(report: Path) -> None:
@@ -1025,7 +1020,7 @@ def _triage_header_only_gap(report: Path) -> None:
         report,
         lambda data: data.update(
             readiness="blocked",
-            assessments=[_assessment("Software engineer", "complete")],
+            assessments=[assessment("Software engineer", "complete")],
             candidates=[record for record in data["candidates"] if record["id"] == "V2"],
             open_concerns=[],
         ),
@@ -1127,16 +1122,17 @@ def test_triage_requires_a_candidate_whose_concern_cannot_carry(prior: Path) -> 
         pytest.param("Codex security", "absent", id="bridge-role-not-runnable"),
     ],
 )
+@mock.patch("fill_gaps_scope.bridge_status", autospec=True)
 def test_triage_refuses_when_a_gap_names_a_qa_role_no_request_can_include(
-    prior: Path, monkeypatch: pytest.MonkeyPatch, role: str, bridge: str
+    bridge_status: mock.Mock, prior: Path, role: str, bridge: str
 ) -> None:
     """A blocked QA or security reviewer that ``--roles`` cannot name or ``plan`` cannot re-run makes the rerun refuse.
 
     Its per-PR security scan is mandatory, so a gap naming it is never optional. Triage used to drop such a role from
     the selectable subjects silently and admit a rerun that would publish without the security scan.
     """
-    monkeypatch.setattr(fgs, "bridge_status", lambda _home, _root: bridge)
-    _mutate_prior(prior, lambda data: data["assessments"].append(_assessment(role, "blocked")))
+    bridge_status.return_value = bridge
+    _mutate_prior(prior, lambda data: data["assessments"].append(assessment(role, "blocked")))
     verdict = fgs.triage(prior, "8", lambda _pr: False)
     assert (verdict.admissible, verdict.required_roles, verdict.roles, verdict.candidates) == (False, [], [], [])
     assert f"QA/security role(s) {role!r} named by a gap cannot be named in --roles or re-run" in verdict.reason
@@ -1162,18 +1158,17 @@ def test_triage_required_subjects_always_plan(prior: Path) -> None:
         fgs.build_plan(fgs.PlanRequest("8", prior, [], ["V1b"], _FULL_HEAD))
 
 
+@mock.patch("find_review_report.current_head_sha", autospec=True, return_value="f" * 40)
 def test_triage_cli_drops_the_rerun_when_the_head_moved(
-    prior: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+    current_head: mock.Mock, prior: Path, capsys: pytest.CaptureFixture
 ) -> None:
     """A moved PR head makes the targeted rerun inadmissible, checked with gh through the validator's own helper.
 
     ``plan`` refuses a moved head; triage used to keep offering the rerun for a critical report anyway.
     """
-    asked: list[str] = []
-    monkeypatch.setattr(frr, "current_head_sha", lambda pr, _timeout: asked.append(pr) or "f" * 40)
     assert fgs.main(["triage", "--report", str(prior), "--pr", "8"]) == 0
     verdict = json.loads(capsys.readouterr().out)
-    assert (verdict["admissible"], asked) == (False, ["8"])
+    assert (verdict["admissible"], [call.args[0] for call in current_head.call_args_list]) == (False, ["8"])
     assert verdict["reason"].startswith(f"PR head moved since the run reviewed {_PRIOR_HEAD}")
 
 
@@ -1186,10 +1181,11 @@ def test_triage_cli_drops_the_rerun_when_the_head_moved(
         pytest.param(False, "#8", True, id="non-digit-pr"),
     ],
 )
+@mock.patch("find_review_report.current_head_sha", autospec=True, return_value="f" * 40)
 def test_triage_cli_reuses_the_assessment_line(
+    current_head: mock.Mock,
     prior: Path,
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture,
     head_moved: bool | None,
     pr: str,
@@ -1201,13 +1197,12 @@ def test_triage_cli_reuses_the_assessment_line(
     report. An empty, ``n/a`` or non-digit ``--pr`` falls back to the header's ``PR: #8``, which the verdict carries as
     ``pr`` so resolve's rerun options need no second header read; only ``head_moved: true`` blocks.
     """
-    asked: list[str] = []
-    monkeypatch.setattr(frr, "current_head_sha", lambda pr_number, _timeout: asked.append(pr_number) or "f" * 40)
     gaps = tmp_path / "gaps.json"
     gaps.write_text(json.dumps({"report": prior.as_posix(), "head_moved": head_moved}) + "\n", encoding="utf-8")
     assert fgs.main(["triage", f"--assessment={gaps}", f"--pr={pr}"]) == 0
     verdict = json.loads(capsys.readouterr().out)
-    assert (verdict["admissible"], verdict["pr"], asked) == (admissible, "8", [])
+    assert (verdict["admissible"], verdict["pr"]) == (admissible, "8")
+    current_head.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -1244,7 +1239,11 @@ def test_triage_cli_answers_an_unusable_assessment_with_a_verdict(
 
 
 def test_triage_cli_without_a_source_is_a_usage_error(capsys: pytest.CaptureFixture) -> None:
-    """Neither ``--report`` nor ``--assessment`` stops with a blocked line and exit 1, not argparse's exit 2."""
+    """Neither ``--report`` nor ``--assessment`` stops with a blocked line and exit 1, not argparse's exit 2.
+
+    Resolve and review read the exit code and the leading ``! BLOCKED`` marker; argparse's default usage error would
+    surface as a bare exit 2 with no marker, so triage converts it.
+    """
     with pytest.raises(SystemExit) as stop:
         fgs.main(["triage", "--pr", "8"])
     output = capsys.readouterr().out
@@ -1282,7 +1281,11 @@ def test_prior_head_must_be_a_commit_id(prior: Path, head: str) -> None:
     ],
 )
 def test_role_maps_to_its_spawn_unit(role: str, unit: str, file: str) -> None:
-    """Free-text role names reach the dimension agent and output file that re-assesses them."""
+    """Free-text role names reach the dimension agent and output file that re-assesses them.
+
+    Reports name reviewers in prose (``Security auditor``, ``Test engineer``); the map must send each to the same spawn
+    unit and file the full review uses, with security and test roles riding the QA unit.
+    """
     dimension = fgs.map_role(role)
     assert (dimension.unit, dimension.file) == (unit, file)
 

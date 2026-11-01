@@ -6,6 +6,7 @@ this test and the root historical changelog may retain them to document and dete
 
 from __future__ import annotations
 
+import functools
 from pathlib import Path
 
 import pytest
@@ -58,28 +59,47 @@ def _production_files(plugin: str) -> list[Path]:
     ]
 
 
-@pytest.mark.parametrize("plugin", CONSUMER_PLUGINS)
-def test_consumers_select_the_installed_bridge(plugin: str) -> None:
-    """Require every consumer to declare the installed bridge selector."""
-    contents = "\n".join(path.read_text(encoding="utf-8") for path in _production_files(plugin))
-    assert TARGET_SELECTOR in contents
-    for retired in RETIRED_LITERALS:
-        assert retired not in contents
+@functools.cache
+def _plugin_texts(plugin: str) -> dict[Path, str]:
+    """Read every shipped routing surface of one consumer once per session (the tree is immutable during a run)."""
+    return {path: path.read_text(encoding="utf-8") for path in _production_files(plugin)}
 
 
-def test_consumers_use_canonical_bridge_operations() -> None:
-    """Keep implementation, advice, and read-only review calls available."""
-    contents = "\n".join(
-        path.read_text(encoding="utf-8") for plugin in CONSUMER_PLUGINS for path in _production_files(plugin)
-    )
-    for skill in TARGET_SKILLS:
-        assert skill in contents
+def _all_texts() -> dict[Path, str]:
+    """Merge the cached texts of every consumer plugin."""
+    return {path: text for plugin in CONSUMER_PLUGINS for path, text in _plugin_texts(plugin).items()}
 
 
-def test_bridge_calls_do_not_ship_placeholder_only_briefs() -> None:
-    """Require executable bridge examples to spell out a complete brief contract."""
-    contents = "\n".join(
-        path.read_text(encoding="utf-8") for plugin in CONSUMER_PLUGINS for path in _production_files(plugin)
-    )
-    for placeholder in PLACEHOLDER_ONLY_BRIEFS:
-        assert placeholder not in contents
+def _files_containing(literal: str) -> list[str]:
+    """Return repository-relative names of consumer files that contain ``literal``."""
+    return [path.relative_to(REPOSITORY_ROOT).as_posix() for path, text in _all_texts().items() if literal in text]
+
+
+class TestConsumersUseBridge:
+    """Every consumer plugin routes through the installed ``bridge`` plugin and nothing retired."""
+
+    @pytest.mark.parametrize("plugin", CONSUMER_PLUGINS)
+    def test_declares_the_installed_selector(self, plugin: str) -> None:
+        """Each consumer plugin names the installed bridge selector somewhere in its shipped files.
+
+        A consumer without the selector cannot resolve the bridge, so its delegated work silently has no target.
+        """
+        assert any(TARGET_SELECTOR in text for text in _plugin_texts(plugin).values())
+
+    @pytest.mark.parametrize("retired", RETIRED_LITERALS)
+    def test_omits_retired_literal(self, retired: str) -> None:
+        """No consumer ships a retired selector or detection probe of the replaced integration.
+
+        A leftover literal keeps a live gate on the old integration, which is how two gates once survived migration.
+        """
+        assert _files_containing(retired) == []
+
+    @pytest.mark.parametrize("skill", TARGET_SKILLS)
+    def test_uses_canonical_bridge_operation(self, skill: str) -> None:
+        """Implementation, advice, and read-only review calls each stay reachable from some consumer."""
+        assert _files_containing(skill) != []
+
+    @pytest.mark.parametrize("placeholder", PLACEHOLDER_ONLY_BRIEFS)
+    def test_ships_no_placeholder_only_brief(self, placeholder: str) -> None:
+        """Executable bridge examples spell out a complete brief instead of a bare placeholder."""
+        assert _files_containing(placeholder) == []

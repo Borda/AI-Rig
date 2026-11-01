@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.43.3
+
+- The doctest examples of `rwgate.read_index`, `rwgate.publish_stream`, `rwgate.atomic_publish` and `parse_scan_args.main` close the files they open, so collecting the package with `--doctest-modules` no longer raises ResourceWarnings.
+- Prompt-hook background refresh now reaps its detached scan instead of dropping the process handle, so long-lived callers no longer get a `subprocess still running` ResourceWarning or an unreaped child.
+
 ## 0.43.2
 
 - The `debrief-coding`, `query-code`, `test-impact`, `rename-refs` and `integration` skills no longer pin a model, so they run on the session model. The pins swapped the main-thread model for one turn and back, which rewrote the whole cached prompt prefix twice on every call whenever the session model differed from the pin (always for the three Haiku pins, and for the two Sonnet pins in an Opus session).

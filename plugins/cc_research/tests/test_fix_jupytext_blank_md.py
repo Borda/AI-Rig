@@ -2,11 +2,10 @@
 
 Output contract:
 
-* Bare ``#``/``##``/... lines inside ``# %% [markdown]`` cells are cleared to
-  truly empty lines; the same lines inside ``# %%`` (code) cells are left
-  untouched.
-* ``fix_text`` is pure (string in, string + count out); ``main`` wraps it
-  with file I/O and a ``--check`` (report-only, exit 1 on violations) mode.
+* Bare ``#``/``##``/... lines inside ``# %% [markdown]`` cells are cleared to truly empty lines; the same lines inside
+  ``# %%`` (code) cells are left untouched.
+* ``fix_text`` is pure (string in, string + count out); ``main`` wraps it with file I/O and a ``--check`` (report-only,
+  exit 1 on violations) mode.
 """
 
 from __future__ import annotations
@@ -16,17 +15,22 @@ from pathlib import Path
 import fix_jupytext_blank_md as gate
 import pytest
 
+_SPACER_NOTEBOOK = "# %% [markdown]\n# Para one.\n#\n# Para two.\n"
+_CLEARED_NOTEBOOK = "# %% [markdown]\n# Para one.\n\n# Para two.\n"
+
 
 class TestFixText:
+    """The pure text transformation: which lines are cleared and which are left alone."""
+
     def test_clears_bare_hash_in_markdown_cell(self) -> None:
         """A lone ``#`` between markdown paragraphs becomes an empty line.
 
         This is the exact shape jupytext emits for a blank line inside a markdown cell — the gate must turn it back into
         a real blank line so it renders as whitespace instead of an empty heading.
         """
-        text = "# %% [markdown]\n# Para one.\n#\n# Para two.\n"
-        fixed, count = gate.fix_text(text)
-        assert fixed == "# %% [markdown]\n# Para one.\n\n# Para two.\n"
+        fixed, count = gate.fix_text(_SPACER_NOTEBOOK)
+
+        assert fixed == _CLEARED_NOTEBOOK
         assert count == 1
 
     @pytest.mark.parametrize("spacer", ["#", "##", "# ", "###  "])
@@ -36,8 +40,8 @@ class TestFixText:
         notebook-style.md's Markdown blank lines anchor covers not just a bare ``#`` but any hash-only line, since
         ``##`` alone renders as an empty H2 just as ``#`` renders as an empty H1.
         """
-        text = f"# %% [markdown]\n# Para one.\n{spacer}\n# Para two.\n"
-        _fixed, count = gate.fix_text(text)
+        _fixed, count = gate.fix_text(f"# %% [markdown]\n# Para one.\n{spacer}\n# Para two.\n")
+
         assert count == 1
 
     @pytest.mark.parametrize(
@@ -56,6 +60,7 @@ class TestFixText:
         prefixed prose.
         """
         fixed, count = gate.fix_text(text)
+
         assert fixed == text
         assert count == 0
 
@@ -65,9 +70,10 @@ class TestFixText:
         The Kaggle skill's Step 4 verify pass may run this gate more than once across a session; a non-idempotent fixer
         would corrupt an already-clean file on a repeat run.
         """
-        text = "# %% [markdown]\n# Para one.\n#\n# Para two.\n"
-        once, _ = gate.fix_text(text)
+        once, _ = gate.fix_text(_SPACER_NOTEBOOK)
+
         twice, count = gate.fix_text(once)
+
         assert twice == once
         assert count == 0
 
@@ -77,68 +83,73 @@ class TestFixText:
         A file with a markdown cell followed by a code cell must not keep treating the code cell's bare ``#`` lines as
         markdown spacers.
         """
-        text = "# %% [markdown]\n# Para.\n#\n\n# %%\n#\nz = 1\n"
-        fixed, count = gate.fix_text(text)
+        fixed, count = gate.fix_text("# %% [markdown]\n# Para.\n#\n\n# %%\n#\nz = 1\n")
+
         assert count == 1
         assert "\n#\nz = 1\n" in fixed
 
 
 class TestMain:
+    """The CLI wrapper: file rewriting, report-only mode and the working-directory guard."""
+
     @pytest.fixture(autouse=True)
     def _work_in_tmp(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Run from ``tmp_path``, as kaggle runs from the project root that holds its notebook."""
         monkeypatch.chdir(tmp_path)
 
     def test_writes_fixed_file_and_reports_count(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """Write the cleared file and report the replacement count in default mode."""
+        """Default mode rewrites the notebook with spacers cleared and reports how many were replaced.
+
+        A notebook with one bare ``#`` spacer ends up with a real blank line and a ``cleared 1`` line on stdout.
+        """
         target = tmp_path / "notebook.py"
-        target.write_text("# %% [markdown]\n# Para one.\n#\n# Para two.\n", encoding="utf-8")
-        rc = gate.main([str(target)])
-        captured = capsys.readouterr()
-        assert rc == 0
-        assert "cleared 1" in captured.out
-        assert target.read_text(encoding="utf-8") == "# %% [markdown]\n# Para one.\n\n# Para two.\n"
+        target.write_text(_SPACER_NOTEBOOK, encoding="utf-8")
+
+        assert gate.main([str(target)]) == 0
+
+        assert "cleared 1" in capsys.readouterr().out
+        assert target.read_text(encoding="utf-8") == _CLEARED_NOTEBOOK
 
     def test_clean_file_produces_no_output(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """A file with nothing to fix prints nothing and exits 0."""
         target = tmp_path / "notebook.py"
-        target.write_text("# %% [markdown]\n# Para one.\n\n# Para two.\n", encoding="utf-8")
-        rc = gate.main([str(target)])
-        captured = capsys.readouterr()
-        assert rc == 0
-        assert captured.out == ""
+        target.write_text(_CLEARED_NOTEBOOK, encoding="utf-8")
+
+        assert gate.main([str(target)]) == 0
+        assert capsys.readouterr().out == ""
 
     def test_check_mode_reports_without_writing(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """Report violations, exits 1, and leaves the file untouched."""
-        original = "# %% [markdown]\n# Para one.\n#\n# Para two.\n"
+        """``--check`` reports violations and exits 1 while leaving the file untouched.
+
+        Report-only mode lets a pre-commit style caller fail on a dirty notebook without rewriting it.
+        """
         target = tmp_path / "notebook.py"
-        target.write_text(original, encoding="utf-8")
-        rc = gate.main(["--check", str(target)])
-        captured = capsys.readouterr()
-        assert rc == 1
-        assert "1 bare" in captured.out
-        assert target.read_text(encoding="utf-8") == original
+        target.write_text(_SPACER_NOTEBOOK, encoding="utf-8")
+
+        assert gate.main(["--check", str(target)]) == 1
+
+        assert "1 bare" in capsys.readouterr().out
+        assert target.read_text(encoding="utf-8") == _SPACER_NOTEBOOK
 
     @pytest.mark.parametrize(
-        "relative",
-        [pytest.param("../outside/notebook.py", id="dot-dot-segment"), pytest.param(None, id="absolute-path")],
+        "argument",
+        [pytest.param("../outside/notebook.py", id="dot-dot-segment"), pytest.param("{target}", id="absolute-path")],
     )
     def test_file_outside_working_directory_is_skipped(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], relative: str | None
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], argument: str
     ) -> None:
         """A path resolving outside the working directory is left untouched with a skip notice on stderr.
 
         The fixer rewrites files in place; its only caller passes the kaggle notebook it just wrote under the project,
         so any argument escaping the working tree is refused rather than rewritten.
         """
-        original = "# %% [markdown]\n# Para one.\n#\n# Para two.\n"
         target = tmp_path / "outside" / "notebook.py"
         target.parent.mkdir()
-        target.write_text(original, encoding="utf-8")
+        target.write_text(_SPACER_NOTEBOOK, encoding="utf-8")
         (tmp_path / "work").mkdir()
         monkeypatch.chdir(tmp_path / "work")
-        rc = gate.main([relative or str(target)])
-        captured = capsys.readouterr()
-        assert rc == 0
-        assert "outside the working directory" in captured.err
-        assert target.read_text(encoding="utf-8") == original
+
+        assert gate.main([argument.format(target=target)]) == 0
+
+        assert "outside the working directory" in capsys.readouterr().err
+        assert target.read_text(encoding="utf-8") == _SPACER_NOTEBOOK

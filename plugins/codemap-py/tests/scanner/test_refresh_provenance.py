@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from _scan_helpers import IGNORE_RUNNER_THREAD_FORK_WARNING
 from codemap_py import graph
+from codemap_py.scanner.discovery import get_file_hashes
+from codemap_py.scanner.docs_xrefs import _iter_doc_files
 
 
 def _git(root: Path, *args: str) -> str:
@@ -29,6 +34,20 @@ def _scanned_repo(tmp_path: Path) -> tuple[Path, dict]:
     return root, graph.scan(root)
 
 
+@pytest.fixture(name="set_env")
+def _set_env(monkeypatch: pytest.MonkeyPatch) -> Callable[[dict[str, str | None]], None]:
+    """Return a setter applying ``name -> value`` to the environment, removing a name whose value is ``None``."""
+
+    def _set(env: dict[str, str | None]) -> None:
+        for name, value in env.items():
+            if value is None:
+                monkeypatch.delenv(name, raising=False)
+            else:
+                monkeypatch.setenv(name, value)
+
+    return _set
+
+
 def _symbols(index: dict) -> list[str]:
     """Return every indexed qualified name, sorted."""
     return sorted(sym["qualified_name"] for module in index["modules"] for sym in module["symbols"])
@@ -37,8 +56,13 @@ def _symbols(index: dict) -> list[str]:
 class TestIncrementalScanInputs:
     """Incremental refresh observes source bytes regardless of Git staging state."""
 
+    @IGNORE_RUNNER_THREAD_FORK_WARNING
     def test_unstaged_and_untracked_edits_are_reparsed(self, scanned_repo) -> None:
-        """The requested automatic freshness includes modified and newly discovered source files."""
+        """The requested automatic freshness includes modified and newly discovered source files.
+
+        One tracked module gains a function without being staged, and a brand-new untracked module appears; the refresh
+        must see both, change the stored hashes, and keep the recorded HEAD because nothing was committed.
+        """
         root, index = scanned_repo
         (root / "a.py").write_text("def f():\n    return 1\n\n\ndef g():\n    return 2\n")
         (root / "new.py").write_text("def h():\n    return 3\n")
@@ -49,8 +73,12 @@ class TestIncrementalScanInputs:
         assert refreshed["file_shas"] != index["file_shas"]
         assert refreshed["git_sha"] == index["git_sha"]
 
+    @IGNORE_RUNNER_THREAD_FORK_WARNING
     def test_staged_edit_is_reparsed(self, scanned_repo) -> None:
-        """Staging the same edit makes the scanner pick it up."""
+        """Staging the same edit makes the scanner pick it up.
+
+        Staging must not be required for freshness, but it must not hide the edit either.
+        """
         root, index = scanned_repo
         (root / "a.py").write_text("def f():\n    return 1\n\n\ndef g():\n    return 2\n")
         _git(root, "add", "a.py")
@@ -59,6 +87,7 @@ class TestIncrementalScanInputs:
 
         assert _symbols(refreshed) == ["f", "g"]
 
+    @IGNORE_RUNNER_THREAD_FORK_WARNING
     def test_commit_of_already_indexed_stage_restamps_head(self, scanned_repo, monkeypatch) -> None:
         """Committing an already-indexed staged edit re-parses nothing yet records the new HEAD.
 
@@ -79,37 +108,65 @@ class TestIncrementalScanInputs:
         assert refreshed["scanned_at"] == staged_index["scanned_at"]
 
 
-@pytest.mark.parametrize(
-    ("trigger", "changed", "stale", "expected"),
-    [
-        pytest.param("query_self_heal", "4", "true", ("query_self_heal", 4, True), id="query_self_heal"),
-        pytest.param(
-            "codex_prompt_background", "", "true", ("codex_prompt_background", None, True), id="codex-background"
-        ),
-        pytest.param("unknown", "-1", "maybe", ("direct_cli", None, None), id="unknown"),
-        pytest.param(None, "", "", ("direct_cli", None, None), id="none"),
-    ],
-)
-def test_refresh_result_normalizes_closed_provenance(
-    monkeypatch: pytest.MonkeyPatch,
-    trigger: str | None,
-    changed: str,
-    stale: str,
-    expected: tuple[str, int | None, bool | None],
-) -> None:
-    """Only documented triggers and observed scalar facts reach successful index telemetry."""
-    if trigger is None:
-        monkeypatch.delenv("CODEMAP_REFRESH_TRIGGER", raising=False)
-    else:
-        monkeypatch.setenv("CODEMAP_REFRESH_TRIGGER", trigger)
-    monkeypatch.setenv("CODEMAP_REFRESH_CHANGED_COUNT", changed)
-    monkeypatch.setenv("CODEMAP_REFRESH_STALE_BEFORE", stale)
+class TestRefreshResult:
+    """The successful-refresh record only carries documented triggers and observed scalar facts."""
 
-    result = graph._refresh_result(argparse.Namespace(incremental=True))
+    @pytest.mark.parametrize(
+        ("env", "expected"),
+        [
+            pytest.param(
+                {
+                    "CODEMAP_REFRESH_TRIGGER": "query_self_heal",
+                    "CODEMAP_REFRESH_CHANGED_COUNT": "4",
+                    "CODEMAP_REFRESH_STALE_BEFORE": "true",
+                },
+                ("query_self_heal", 4, True),
+                id="query_self_heal",
+            ),
+            pytest.param(
+                {
+                    "CODEMAP_REFRESH_TRIGGER": "codex_prompt_background",
+                    "CODEMAP_REFRESH_CHANGED_COUNT": "",
+                    "CODEMAP_REFRESH_STALE_BEFORE": "true",
+                },
+                ("codex_prompt_background", None, True),
+                id="codex-background",
+            ),
+            pytest.param(
+                {
+                    "CODEMAP_REFRESH_TRIGGER": "unknown",
+                    "CODEMAP_REFRESH_CHANGED_COUNT": "-1",
+                    "CODEMAP_REFRESH_STALE_BEFORE": "maybe",
+                },
+                ("direct_cli", None, None),
+                id="unknown",
+            ),
+            pytest.param(
+                {
+                    "CODEMAP_REFRESH_TRIGGER": None,
+                    "CODEMAP_REFRESH_CHANGED_COUNT": "",
+                    "CODEMAP_REFRESH_STALE_BEFORE": "",
+                },
+                ("direct_cli", None, None),
+                id="none",
+            ),
+        ],
+    )
+    def test_normalizes_closed_provenance(
+        self, set_env: Callable[[dict[str, str | None]], None], env: dict, expected: tuple
+    ) -> None:
+        """Only documented triggers and observed scalar facts reach successful index telemetry.
 
-    assert (result["trigger"], result["changed_count"], result["stale_before"]) == expected
-    assert result["incremental"] is True
-    assert result["result_currency"] == "current"
+        An unknown trigger, a negative count or a non-boolean stale flag must fall back to ``direct_cli`` with the facts
+        dropped, so arbitrary environment text can never leak into the record.
+        """
+        set_env(env)
+
+        result = graph._refresh_result(argparse.Namespace(incremental=True))
+
+        assert (result["trigger"], result["changed_count"], result["stale_before"]) == expected
+        assert result["incremental"] is True
+        assert result["result_currency"] == "current"
 
 
 class TestMarkRefreshPublished:
@@ -137,7 +194,11 @@ class TestMarkRefreshPublished:
     def test_foreign_or_incomplete_handoff_writes_nothing(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str, fingerprint: str
     ) -> None:
-        """An environment path the hook could not have produced is never written, nor is a record without its key."""
+        """An environment path the hook could not have produced is never written, nor is a record without its key.
+
+        A stray ``CODEMAP_REFRESH_RECORD`` pointing at an arbitrary file name, or a record with no fingerprint to match,
+        must leave the filesystem untouched.
+        """
         target = tmp_path / name
         monkeypatch.setenv("CODEMAP_REFRESH_RECORD", str(target))
         monkeypatch.setenv("CODEMAP_REFRESH_FINGERPRINT", fingerprint)
@@ -147,20 +208,26 @@ class TestMarkRefreshPublished:
         assert not target.exists()
 
 
-@pytest.mark.parametrize("kind", ["source", "documentation"])
+@pytest.mark.parametrize(
+    ("folder", "filename", "discover"),
+    [
+        pytest.param("pkg", "mod.py", get_file_hashes, id="source"),
+        pytest.param("docs", "api.rst", _iter_doc_files, id="documentation"),
+    ],
+)
+@IGNORE_RUNNER_THREAD_FORK_WARNING
 def test_unreadable_discovery_never_becomes_an_empty_fresh_map(
-    scanned_repo, monkeypatch: pytest.MonkeyPatch, kind: str
+    scanned_repo, monkeypatch: pytest.MonkeyPatch, folder: str, filename: str, discover: Callable
 ) -> None:
-    """A denied directory traversal preserves the prior index and surfaces an unknown-freshness failure."""
-    import os
+    """A denied directory traversal preserves the prior index and surfaces an unknown-freshness failure.
 
-    from codemap_py.scanner.discovery import get_file_hashes
-    from codemap_py.scanner.docs_xrefs import _iter_doc_files
-
+    A directory the scanner may not read must raise rather than yield an empty file map: an empty map would look like
+    "nothing changed" and publish a fresh-looking index over unreadable input.
+    """
     root, _ = scanned_repo
-    unreadable = root / ("pkg" if kind == "source" else "docs")
+    unreadable = root / folder
     unreadable.mkdir()
-    (unreadable / ("mod.py" if kind == "source" else "api.rst")).write_bytes(b"content\n")
+    (unreadable / filename).write_bytes(b"content\n")
     scan_dir = os.scandir
 
     def denied_scan(path):
@@ -170,6 +237,6 @@ def test_unreadable_discovery_never_becomes_an_empty_fresh_map(
         return scan_dir(path)
 
     monkeypatch.setattr(os, "scandir", denied_scan)
-    discover = get_file_hashes if kind == "source" else _iter_doc_files
+
     with pytest.raises(PermissionError, match="directory cannot be read"):
         discover(root)

@@ -1366,6 +1366,9 @@ def _observed_pass(
     role = context["role_id"]
     task_name = f"review_{role.replace('-', '_')}_{context['context_sha256'][:12]}_a{attempt_number}"
     paths = children.get(task_name, [])
+    if not paths and (out / "direct-plan.json").exists():
+        # A renamed dispatch has no bound child; keep legacy diagnostics and duplicate rejection unchanged.
+        raise ValueError(f"review-child-session-missing:{role}:{task_name}")
     if len(paths) != 1:
         raise ValueError(f"review-child-session-not-unique:{role}")
     rows = validator._read_jsonl(paths[0])

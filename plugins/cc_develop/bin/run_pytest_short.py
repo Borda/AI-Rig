@@ -257,23 +257,25 @@ def main(argv: list[str] | None = None) -> int:
     # PIPE guarantees a stream.
     if proc.stdout is None:
         raise RuntimeError("proc.stdout must not be None")
-    for chunk in iter(lambda: proc.stdout.read(64 * 1024), ""):
-        remaining = _MAX_OUTPUT_BYTES - total
-        if remaining <= 0:
-            truncated = True
-            # Drain remaining output without buffering so the child can exit cleanly.
-            for _ in iter(lambda: proc.stdout.read(64 * 1024), ""):
-                pass
-            break
-        if len(chunk) > remaining:
-            chunks.append(chunk[:remaining])
-            total += remaining
-            truncated = True
-            for _ in iter(lambda: proc.stdout.read(64 * 1024), ""):
-                pass
-            break
-        chunks.append(chunk)
-        total += len(chunk)
+    # The reader owns the pipe, including when output is truncated or reading raises.
+    with proc.stdout:
+        for chunk in iter(lambda: proc.stdout.read(64 * 1024), ""):
+            remaining = _MAX_OUTPUT_BYTES - total
+            if remaining <= 0:
+                truncated = True
+                # Drain remaining output without buffering so the child can exit cleanly.
+                for _ in iter(lambda: proc.stdout.read(64 * 1024), ""):
+                    pass
+                break
+            if len(chunk) > remaining:
+                chunks.append(chunk[:remaining])
+                total += remaining
+                truncated = True
+                for _ in iter(lambda: proc.stdout.read(64 * 1024), ""):
+                    pass
+                break
+            chunks.append(chunk)
+            total += len(chunk)
     returncode = proc.wait(timeout=600)  # 10-min hard cap; pytest_cmd callers set # timeout: 600000 in bash
     output = "".join(chunks)
     if truncated:

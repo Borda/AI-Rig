@@ -24,17 +24,15 @@ import pytest
 _PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 _REPO_ROOT = _PLUGIN_ROOT.parents[1]
 _SCRIPTS = _PLUGIN_ROOT / "scripts"
+if str(_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS))
+
+import _probe_runtime  # noqa: E402  (needs the scripts/ path insert above)
+
 _CLAUDE_CLI_AVAILABLE = shutil.which("claude") is not None
 _CODEX_CLI_AVAILABLE = shutil.which("codex") is not None
 
-_EXPECTED_CLAUDE_SKILLS = {
-    "scan-codebase",
-    "query-code",
-    "test-impact",
-    "rename-refs",
-    "integration",
-    "debrief-coding",
-}
+_EXPECTED_SKILLS = {"scan-codebase", "query-code", "test-impact", "rename-refs", "integration", "debrief-coding"}
 
 
 def _launcher_execute_permission_is_enforced() -> bool:
@@ -55,6 +53,8 @@ _skip_launcher_execute_permission_unenforced = pytest.mark.skipif(
     not _launcher_execute_permission_is_enforced(),
     reason="launcher execute permissions are not enforced on this host",
 )
+_skip_claude_cli_absent = pytest.mark.skipif(not _CLAUDE_CLI_AVAILABLE, reason="claude CLI not present on this runner")
+_skip_codex_cli_absent = pytest.mark.skipif(not _CODEX_CLI_AVAILABLE, reason="codex CLI not present on this runner")
 
 
 def _run_probe(script_name: str, source: Path) -> dict:
@@ -122,38 +122,6 @@ def _assert_source_hidden(installed_path: str) -> None:
     assert repo not in installed.parents, f"installed under repo checkout: {installed}"
 
 
-@pytest.mark.skipif(not _CLAUDE_CLI_AVAILABLE, reason="claude CLI not present on this runner")
-@pytest.mark.integration
-@pytest.mark.packaging
-def test_claude_probe_installs_and_verifies_exact_roster(candidate_source: Path) -> None:
-    """The Claude probe installs the built package and verifies the exact 6-skill roster."""
-    result = _run_probe("probe_claude_install.py", candidate_source)
-    assert result["status"] == "ok", result
-    assert result["_returncode"] == 0
-    verification = result["verification"]
-    assert verification["ok"] is True, verification["issues"]
-    assert verification["roster"] == verification["skill_dirs"]
-    assert set(verification["skill_dirs"]) == _EXPECTED_CLAUDE_SKILLS
-    _assert_source_hidden(result["installed_path"])
-    _assert_runtime_proof(result)
-
-
-@pytest.mark.skipif(not _CODEX_CLI_AVAILABLE, reason="codex CLI not present on this runner")
-@pytest.mark.integration
-@pytest.mark.packaging
-def test_codex_probe_installs_and_verifies_exact_roster(candidate_source: Path) -> None:
-    """The Codex probe installs the built package and verifies the exact six-skill roster (Phase 4)."""
-    result = _run_probe("probe_codex_install.py", candidate_source)
-    assert result["status"] == "ok", result
-    assert result["_returncode"] == 0
-    verification = result["verification"]
-    assert verification["ok"] is True, verification["issues"]
-    assert set(verification["skill_dirs"]) == _EXPECTED_CLAUDE_SKILLS
-    assert verification["checks"]["hooks_config_present"] is True
-    _assert_source_hidden(result["installed_path"])
-    _assert_runtime_proof(result)
-
-
 def _assert_runtime_proof(result: dict) -> None:
     """Assert the probe deleted the install source and executed via the shipped launcher."""
     assert result["verification"]["runtime_ok"] is True, result.get("runtime")
@@ -175,24 +143,68 @@ def _assert_runtime_proof(result: dict) -> None:
     assert checks["query_ok"] is True
 
 
-@_skip_launcher_execute_permission_unenforced
-@pytest.mark.packaging
-def test_runtime_proof_fails_when_launcher_mode_stripped(tmp_path: Path) -> None:
-    """Falsification: a non-executable installed launcher makes the runtime proof fail (no fallback)."""
-    if str(_SCRIPTS) not in sys.path:
-        sys.path.insert(0, str(_SCRIPTS))
-    import _probe_runtime
+def _assert_install_verified(result: dict) -> None:
+    """Assert the probe exited 0 with an ok verification, the exact roster, a hidden source and a runtime proof."""
+    assert result["status"] == "ok", result
+    assert result["_returncode"] == 0
+    verification = result["verification"]
+    assert verification["ok"] is True, verification["issues"]
+    assert set(verification["skill_dirs"]) == _EXPECTED_SKILLS
+    _assert_source_hidden(result["installed_path"])
+    _assert_runtime_proof(result)
 
-    installed = tmp_path / "installed"
-    (installed / "bin").mkdir(parents=True)
-    launcher = installed / "bin" / "codemap-py"
-    launcher.write_text("#!/bin/sh\necho should-not-run\n")
-    launcher.chmod(0o644)  # stripped executable bit — the bug this proof must catch
-    source = tmp_path / "src"
-    source.mkdir()
 
-    result = _probe_runtime.runtime_proof(installed, tmp_path / "work", [source], [_REPO_ROOT, source])
+class TestInstallProbes:
+    """Each runtime's install probe installs the built package into a real runtime CLI and verifies the result."""
 
-    assert result.checks["launcher_executable"] is False
-    assert result.checks["doctor_ok"] is False
-    assert result.ok is False
+    @_skip_claude_cli_absent
+    @pytest.mark.integration
+    @pytest.mark.packaging
+    def test_claude_probe_installs_exact_roster(self, candidate_source: Path) -> None:
+        """The Claude probe installs the built package, verifies the exact six-skill roster and proves launcher use.
+
+        Runs the real ``claude`` CLI against a disposable candidate copy, so a roster, source-hiding or runtime-proof
+        regression in the shipped Claude install surfaces here and not only on a user machine.
+        """
+        result = _run_probe("probe_claude_install.py", candidate_source)
+
+        _assert_install_verified(result)
+        assert result["verification"]["roster"] == result["verification"]["skill_dirs"]
+
+    @_skip_codex_cli_absent
+    @pytest.mark.integration
+    @pytest.mark.packaging
+    def test_codex_probe_installs_exact_roster(self, candidate_source: Path) -> None:
+        """The Codex probe installs the built package, verifies the six-skill roster and the Codex hook config.
+
+        Same real-install proof as the Claude probe, plus the Codex-only hook configuration that the Codex runtime reads
+        from the installed plugin.
+        """
+        result = _run_probe("probe_codex_install.py", candidate_source)
+
+        _assert_install_verified(result)
+        assert result["verification"]["checks"]["hooks_config_present"] is True
+
+
+class TestRuntimeProofFalsification:
+    """The runtime proof must fail, not fall back, when the installed launcher is unusable."""
+
+    @_skip_launcher_execute_permission_unenforced
+    @pytest.mark.packaging
+    def test_proof_fails_when_launcher_mode_stripped(self, tmp_path: Path) -> None:
+        """A non-executable installed launcher makes the runtime proof fail instead of falling back to Python.
+
+        The installed launcher has its execute bit removed, the exact packaging bug the proof exists to catch; a silent
+        Python-entry fallback would let a broken install pass.
+        """
+        installed = tmp_path / "installed"
+        (installed / "bin").mkdir(parents=True)
+        launcher = installed / "bin" / "codemap-py"
+        launcher.write_text("#!/bin/sh\necho should-not-run\n")
+        launcher.chmod(0o644)
+        source = tmp_path / "src"
+        source.mkdir()
+
+        result = _probe_runtime.runtime_proof(installed, tmp_path / "work", [source], [_REPO_ROOT, source])
+
+        assert (result.checks["launcher_executable"], result.checks["doctor_ok"], result.ok) == (False, False, False)

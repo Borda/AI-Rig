@@ -1,5 +1,5 @@
 ---
-description: pytest test design standards — structure, fixtures, parametrization, markers and selection, behaviour-vs-bookkeeping classification, mutation checks, cross-OS tests, mocking
+description: pytest test design standards — structure, fixtures, parametrization, markers and selection, behaviour-vs-bookkeeping classification, mutation checks, cross-OS tests, mocking, test names, uncollected tests, prose-reading tests, test-style hook codes
 paths:
   - tests/**/*.py
   - '**/test_*.py'
@@ -30,6 +30,7 @@ paths:
 - Each test validates exactly one scenario
 - No `if`/`for` logic in test bodies
   - Exception: list-comprehension/generator inside `@pytest.mark.parametrize(...)` to build args — allowed if it spans \<30% of the decorator's own lines (lines inside the outer parentheses only, not the test body)
+  - `while` loops count too. A branch or loop in the body means the test covers more than one scenario — parametrize the cases or split the test.
 - Parametrize aggressively — 3+ test functions same structure → `@pytest.mark.parametrize`
 - Test case IDs: use `pytest.param(..., id="slug")` per case — never `ids=[...]` on decorator; keeps ID and args co-located, survives reordering
   - Never pass a separate `ids=` in any form — list, tuple, or callable. Generated cases and mapping rows follow the same rule; attach each required ID to its own case.
@@ -44,6 +45,18 @@ class TestParseArgs:  # subject stated once
     def test_rejects_unknown_flag(self): ...  # not test_parse_args_rejects_unknown_flag
     def test_defaults_to_install(self): ...  # not test_parse_args_defaults_to_install
 ```
+
+## Test Names
+
+- Name the observable outcome, never a verdict on it. Filler tokens carry no information about what broke: never use `correctly`, `properly`, `successfully`, `works`, `should`, or `as_expected` as a name token (`test_rejects_unknown_flag`, not `test_parse_works_correctly`).
+
+## Uncollected Tests
+
+A test pytest never collects or never fully runs passes silently forever. Three shapes hide one:
+
+- **Nested `def test_*`** inside another function or test — pytest collects only module-level functions and class methods, so the inner test never runs.
+- **Same-name redefinition** in one module or class (ruff `F811`) — the later definition replaces the earlier one, which then never runs.
+- **Code after `return`** in a test — unreachable assertions never execute.
 
 ## Test Selection — Markers
 
@@ -66,7 +79,7 @@ Markers exist so a suite can be sliced by what a test *requires*, not by what it
 
 ## Behaviour vs Bookkeeping Checks
 
-Classify a check before writing it. A failure that means broken behaviour (guard verdict, parser reading, CLI exit code, anything a user or hook depends on) is a pytest test. A failure that only means drifted bookkeeping (README counts, export lists, byte-identical copies, manifest hashes regenerated from source) belongs in a pre-commit hook: kept in pytest it blocks fix rounds with no behaviour at risk and dilutes what coverage measures.
+Classify a check before writing it. Decisive question: if this test did not exist, could anything actually break undetected? If not, it is linting and belongs in a pre-commit hook (or a Ruff rule), not pytest. A failure that means broken behaviour (guard verdict, parser reading, CLI exit code, anything a user or hook depends on) is a pytest test. A failure that only means drifted bookkeeping (README counts, export lists, byte-identical copies, manifest hashes regenerated from source) belongs in a pre-commit hook: kept in pytest it blocks fix rounds with no behaviour at risk and dilutes what coverage measures.
 
 ## Mutation Checks
 
@@ -83,6 +96,9 @@ Companion to `python-code.md` §Multi-OS Executables, same scope: projects suppo
 ## File Layout
 
 Mirror `src/` layout in `tests/unit/`: `src/foo/bar.py` → `tests/unit/foo/test_bar.py`
+
+- A `tests/` directory past 15 test files groups them into topic subfolders named for what they test. A subfolder needs 4 or more test files; fewer stay in the parent directory, never a folder of 3 or fewer.
+- `_`-prefixed helper modules and the tree-wide `conftest.py` stay at the test tree's root and resolve from any depth through that conftest's `sys.path` insert (needed under `--import-mode=importlib`). A narrower `conftest.py` may still sit in a subfolder (§Fixtures). Path anchors (`Path(__file__).resolve().parents[N]`) shift one per folder level: derive roots from one shared helper or conftest constant, not `parents[N]` repeated across files. Fixtures and data with a single consumer live beside it.
 
 ## Seeding / Randomness
 
@@ -123,14 +139,17 @@ def test_rejects_unknown_flag(self):
 Decorator or context manager — never hand-assigned attributes (`mod.fn = fake`), which leak into every later test in the session when an assertion fails before restore.
 
 ```python
-@mock.patch("pkg.mod.fetch", return_value={"ok": True})  # patch WHERE USED, not where defined
+@mock.patch("pkg.mod.fetch", autospec=True, return_value={"ok": True})  # patch WHERE USED, not where defined
 def test_x(mock_fetch): ...
 ```
 
 - **Patch the reference, not the origin** — `pkg.consumer.fetch`, not `pkg.source.fetch`; `from x import fetch` binds a new name the origin patch never reaches.
 - `autospec=True` (or `spec=`) on anything non-trivial — a bare `Mock` happily accepts calls the real object would reject, so the test passes after the real signature changes.
+  - Prefer the `@mock.patch(..., autospec=True)` decorator over a `with patch(...)` block: the patch then spans the whole test and adds no indented body.
+  - Every `patch(...)`, `mock.patch(...)`, and `patch.object(...)` names its replacement shape: one of `autospec`, `spec`, `spec_set`, `new`, `new_callable`, or `wraps`, or a replacement object as the second positional argument. A patch with none of these is an unspecced `MagicMock`.
 - Prefer `monkeypatch` (pytest fixture) for env vars, `cwd`, and attributes — auto-restores at teardown, no decorator stacking.
 - Mock only what crosses a process boundary you don't own: network, clock, filesystem, subprocess, randomness. Mocking your own logic asserts the mock, not the code.
+  - Speed never justifies mocking the thing under test. Tests whose contract is the real interaction — integration, packaging, installed-package, live-service, and end-to-end hook runs — stay real; mock only the boundaries that test does not cover.
 - **Never add a mock to silence a newly failing test** — see §Test-Softening Anti-patterns; that hides the regression the test just caught.
 - Assert the interaction when it is the contract (`assert_called_once_with`), not merely that the function returned.
 
@@ -161,6 +180,17 @@ def test_loads_name(config):  # Arrange is one parameter
 
 - Helper with no shared logic across cases → split into separate dedicated functions, not single branching helper
 - Shared logic only → shared function; helper must not branch on case type (no if/for selecting different behavior per caller)
+- Share helpers and fixtures only within one test tree: `conftest.py` or an `_`-prefixed module (placement: §File Layout). Never import test helpers from another independently installable package's tests — a test shipped with its package runs without the surrounding repository.
+- Production code never imports a test helper. Shipped executables (scripts, hooks, entry points) stay self-contained, and files kept byte-identical across packages stay identical — test convenience never justifies diverging a copy.
+
+## Tests Reading Markdown or Prose
+
+Tests that assert on Markdown, rule files, or other prose parse it line by line, so rewording or reflowing a paragraph cannot break an unrelated assertion:
+
+- Split into lines, locate the heading's section, then apply per-line predicates.
+- Read table cells by splitting a row on `|`, never by matching across the row.
+- No multi-line or wrap-sensitive regex — a line break in prose is formatting, not content.
+- Never edit the Markdown to fit a test. A test that breaks on a reflow is the defect; fix the test.
 
 ## TDD for New Features
 
@@ -194,6 +224,18 @@ Never soften a failing test to make it pass. Every softening pattern signals wro
 - **Widening tolerance to pass**: loosening `atol`/`rtol`, switching `==` to `in range`, or relaxing type checks without documented precision reason = hiding numerical or type bugs
 
 When tempted to soften a test: stop — read the failure, find the implementation bug, fix that instead.
+
+## Mechanical Enforcement — Ruff
+
+Where a project's Ruff config selects these rules, they are enforced by code through the pinned `ruff-check` pre-commit hook, and its report is authoritative. One line per rule; the rule itself lives in the named section:
+
+- `D100`–`D103` — module, public class, method or function without a docstring, scoped to test files with a negated `lint.per-file-ignores."!**/tests/**"` entry (§Docstrings)
+- `W505` — docstring line over `lint.pycodestyle.max-doc-length` (120) (§Docstrings)
+- `TID251` — `pytest.skip` banned through `lint.flake8-tidy-imports.banned-api`; skip/skipif marks are fine (§Cross-OS Tests, §Test-Softening Anti-patterns)
+- `PT` (flake8-pytest-style) — parametrize and fixture shape (§Test Structure)
+- `F811` — a redefined `def test_*` silently drops the first one (§Uncollected Tests)
+
+Ruff cannot express the rest, so reviewers and `foundry:qa-specialist` check them by reading: `ids=` instead of `pytest.param(..., id=...)`, `pytestmark` assignment, `def test_*` nested in another function, `if`/`for`/`while` in a test body, filler tokens in a test name, and a `patch` without a replacement shape. Never add a custom checker script for a rule Ruff can enforce, and never keep a pytest test for a check that only guards bookkeeping (§Behaviour vs Bookkeeping Checks).
 
 ## Baseline Gate
 

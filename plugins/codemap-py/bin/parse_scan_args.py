@@ -216,7 +216,8 @@ def main(argv: list[str] | None = None) -> int:
         ...     path = f.name
         >>> main(["--root /opt/x --incremental", "--nul-output", path])
         0
-        >>> open(path, "rb").read() == b"--root\\x00/opt/x\\x00--incremental\\x00"
+        >>> with open(path, "rb") as fh:
+        ...     fh.read() == b"--root\\x00/opt/x\\x00--incremental\\x00"
         True
         >>> os.unlink(path)
         >>> main(["--root /opt/x", "--print-root"])

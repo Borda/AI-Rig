@@ -1,0 +1,356 @@
+"""Pin everything the user or tooling could see at HEAD in files the turn-budget pass touched — no observability
+regression.
+
+data/observability_head_markers.json holds, per touched file, every HEAD line that produces visible output: ⏱ markers,
+printed progress and report lines, report headers, checkpoint and plan-file writes, task updates, run-dir artifacts.
+Each marker is the line's first ~100 characters, cut at a word boundary, still present verbatim. Lines the pass rewrote
+are pinned separately by their visible equivalent. Removing an output deletes its marker and fails here.
+"""
+
+from __future__ import annotations
+
+import json
+from functools import cache
+from pathlib import Path
+
+import pytest
+from _develop_text import flat
+
+_PLUGIN = Path(__file__).resolve().parents[2]
+
+
+@cache
+def _read(relative: str) -> str:
+    """Return one plugin file with whitespace collapsed."""
+    return flat((_PLUGIN / relative).read_text(encoding="utf-8"))
+
+
+_MARKERS = json.loads((Path(__file__).parent / "data" / "observability_head_markers.json").read_text(encoding="utf-8"))
+_ROWS = [
+    pytest.param(
+        relative, marker, id=f"{relative.split('/')[-2] if relative.endswith('SKILL.md') else relative}-{index}"
+    )
+    for relative, markers in sorted(_MARKERS.items())
+    for index, marker in enumerate(markers, start=1)
+]
+
+
+# Authorized review contract changes retain these exact current observable equivalents.
+# Keep the historical marker inventory intact and fail if any replacement signal disappears.
+# Authorized proportional routing preserves the evidence and question for actual stops, without requiring a stop for
+# every feasible finding. The historical inventory remains untouched.
+_IMPLEMENT_BLOCKER_EQUIVALENTS = {
+    "- **Blockers found** → STOP. Write the blocker findings (one line each: claim · file:line · evidence)": (
+        "Resolve feasible authorized blockers without asking",
+        "Stop for a protected decision or authority, an explicit user wait, or a blocker that remains unresolved.",
+        "Write the blocker findings (one line each: claim · file:line · evidence) to `$DEV_DIR/blockers.md` first",
+        "print them once as the last reply text before invoking `AskUserQuestion`",
+        "The question text carries the blocker count, headline and `→ $DEV_DIR/blockers.md`",
+    )
+}
+
+_REVIEW_VISIBLE_EQUIVALENTS = {
+    "> - Add `Reviewers:` after `Agents:` in the report header, using readable `Role (rating)` or `Role:": (
+        "> - Add `Reviewers:` after `Agents:` in the report header, using readable role names only and square-bracketed scores: `Role [rating]`, for example `Software engineer [2]`.",
+    ),
+    "`Legend: 1 = Approve · 2 = Minor changes · 3 = Changes required · 4 = Insufficient evidence": (
+        "Legend: 1 = Approve · 2 = Minor changes · 3 = Major revision · 4 = Insufficient, but a good initiative · 5 = Block.",
+    ),
+    'echo "⚠ foundry--cross-validation-protocol.md not found at $_DEV_SHARED — Step 4 skipped; critical': (
+        'echo "⚠ foundry--cross-validation-protocol.md not found at $_DEV_SHARED — Step 4 skipped; required validation is incomplete.',
+        'echo "**Reason**: _DEV_SHARED unavailable — cross-validation protocol not executed."',
+    ),
+    "File present → follow cross-validation protocol printed above. File absent → skip Step 4 (warning": (
+        "File present → parent validates all candidates using the printed protocol before consolidation.",
+        "File absent → record incomplete process coverage, owner and reinstall recovery; no unconditional approval or unvalidated actionable findings.",
+    ),
+    "Use as full consolidator instructions. Prepend the [run-dir preamble": (
+        "Read <CONSOLIDATOR_INSTRUCTIONS_LITERAL> with the Read tool and follow it in full.",
+        "Pass only the reference, literal bindings, run-dir preamble and required return envelope.",
+    ),
+    "**Consolidator-unavailable fallback**: `Agent` tool deferred or consolidator times out → read each": (
+        "**Consolidator-unavailable fallback**: `Agent` tool deferred or consolidator times out → read the same instruction file and each agent finding file from `$RUN_DIR/` directly,",
+        "apply the full validation, precision gate, density and output rules, synthesize the report, and write `$REPORT_DIR/review-report.md` with the Write tool.",
+        "Missing instruction/report-template files block with restore/reinstall recovery; never synthesize from absent rules.",
+    ),
+    'echo "$_REVIEW_TEMPLATE"': (
+        'printf \'Consolidator instructions: %s\\nReport template: %s\\n\' "$_CONSOLIDATOR_INSTRUCTIONS" "$_REVIEW_TEMPLATE"',
+    ),
+    # The severity checklist ships with develop (templates/review-checklist.md) instead of being read from the oss
+    # plugin, so the missing-checklist warning now names a broken develop install, not an absent oss plugin.
+    'echo "⚠ oss plugin checklist unavailable — review will proceed without severity anchors; install': (
+        'echo "⚠ review checklist unavailable — review will proceed without severity anchors; restore/reinstall this develop version for full coverage"',
+    ),
+}
+
+
+# The team-mode liveness probe and its 15-minute cutoff were removed as forbidden polling; the ⏱ marking survives.
+_DEBUG_VISIBLE_EQUIVALENTS = {
+    "Hard cutoff 15 min no-file-activity per agent; mark timed-out agents ⏱ in synthesis.": (
+        "Mark timed-out agents ⏱ in synthesis.",
+    ),
+    # The two inline pytest repro blocks became dev_run_repro.py, which prints these lines itself
+    # (tests/runners/test_dev_run_repro.py); the skill text states each one so the model knows what the script emits.
+    'echo "$GATE_EXIT" > "${TMPDIR:-/tmp}/dev-gate-exit-${CSID}"': ("writes `dev-gate-exit`",),
+    'echo "! PYTEST_CMD unresolved — re-run §Project Detection (runner-detection.md); an empty command': (
+        "`! PYTEST_CMD unresolved — re-run §Project Detection (runner-detection.md)`",
+    ),
+    'echo "Bug reproduced — tests fail. Proceed to fix."': ("Bug reproduced — tests fail. Proceed to fix.",),
+    'echo "Tests pass — bug may not be reproducible via pytest; check symptom directly."': (
+        "Tests pass — bug may not be reproducible via pytest; check symptom directly.",
+    ),
+    # fix/SKILL.md ships in the same plugin as debug, so the partial-install warning could never print; the dead
+    # check is gone and the handoff line the user copies is the live signal it guarded.
+    'echo "⚠ /develop:fix not found — partial install detected; diagnosis file will be written but': (
+        "Hand off: `-> /develop:fix --diagnosis $DIAG_FILE`",
+    ),
+}
+
+
+# The plan slug is built from the flag-stripped goal (CLEAN_ARGS) instead of raw $ARGUMENTS, so flags and shell
+# metacharacters cannot reach the filename or the pipeline.
+_PLAN_VISIBLE_EQUIVALENTS = {
+    "SLUG=$(printf '%s\\n' \"$ARGUMENTS\" | tr '[:upper:]' '[:lower:]' | grep -oE '[a-z0-9]+' | grep -vE": (
+        "SLUG=$(printf '%s\\n' \"$CLEAN_ARGS\" | tr '[:upper:]' '[:lower:]' | grep -oE '[a-z0-9]+' | grep -vE",
+    ),
+    # Authorized routing resolves feasible blockers before asking; genuine stops still show evidence.
+    "- **Blockers found** → STOP. Update `<PLAN_FILE>` with blocker annotations first, then present": (
+        "Resolve feasible authorized blockers without asking, update `<PLAN_FILE>` with the evidence and verify the revision.",
+        "Stop for a protected decision or authority, an explicit user wait, or a blocker that remains unresolved.",
+        "Only then present findings through `AskUserQuestion`",
+        "findings summary as question text, `→ <PLAN_FILE>`",
+    ),
+    # /develop:debug is disable-model-invocation: the plan recommends it for the user to run, it never invokes it.
+    'echo "→ invoking /develop:debug (depth remaining: $NEXT_DEPTH)"': (
+        'echo "→ recommending /develop:debug (depth remaining: $NEXT_DEPTH)"',
+    ),
+}
+
+
+def _run_dir_persist_equivalents(skill: str) -> dict[str, tuple[str, ...]]:
+    """Map the retired per-skill sentinel echo to the ``--persist`` call that now writes the same sentinel."""
+    return {
+        f'echo "$DEV_DIR" > "${{TMPDIR:-/tmp}}/dev-{skill}-dev-dir-${{CSID}}"': (
+            f'bin/dev_run_dir.py" --persist {skill})',
+        ),
+    }
+
+
+# Every skill's cold-resolve block became one ``dev_shared_resolve.py --init`` call
+# (tests/state/test_dev_shared_resolve.py covers what it writes); the call's own comment names the sentinel
+# the retired ``echo`` line wrote.
+_SHARED_INIT_EQUIVALENTS = {
+    'echo "$_DEV_SHARED" > "${TMPDIR:-/tmp}/dev-shared-${CSID}"  # cold resolve — every later block': (
+        'bin/dev_shared_resolve.py" --init',
+        "writes dev-shared",
+    ),
+}
+
+
+def _batch_gate_equivalents(skill: str) -> dict[str, tuple[str, ...]]:
+    """Map the retired per-skill ``dev-batch-skill`` echo to the ``dev_batch_gate.py`` call that now writes it."""
+    return {
+        f'echo "{skill}" > "${{TMPDIR:-/tmp}}/dev-batch-skill-${{CSID}}"  # batch-mode.md\'s own fences read this': (
+            f'bin/dev_batch_gate.py" {skill}; then python "${{CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}}/bin/dev_load_shared.py" batch-mode.md; fi',
+            "writes dev-batch-skill",
+        ),
+    }
+
+
+def _keep_sentinel_equivalents(skill: str) -> dict[str, tuple[str, ...]]:
+    """Map the plain contract-write call to the ``--keep-sentinel`` form that now carries the user's ``--keep`` text."""
+    return {
+        f'python "${{CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}}/bin/write_skill_contract.py" "develop:{skill}"': (
+            f'bin/write_skill_contract.py" --keep-sentinel dev-{skill}-keep-items "develop:{skill}"',
+        ),
+    }
+
+
+#: fix's reproduction gates printed ``GATE OK`` for any non-zero pytest exit; now only exit 1 prints it and every other
+#: exit prints ``GATE ERROR``, so a usage error or a missing runner is never reported as a reproduced bug.
+_FIX_GATE_EQUIVALENTS = {
+    f'[ $GATE_{gate} -eq 0 ] && echo "GATE FAIL (Path {path}): test passed — bug not captured" || echo "GATE OK': (
+        f'case $GATE_{gate} in 0) echo "GATE FAIL (Path {path}): test passed — bug not captured";; 1) echo "GATE OK (Path {path}): failed as expected (exit 1)"',
+    )
+    for gate, path in (("P1", 1), ("P2", 2))
+} | {
+    '[ $GATE_EXIT -eq 0 ] && echo "GATE FAIL: fixed test still passes — weak test not corrected;': (
+        'case $GATE_EXIT in 0) echo "GATE FAIL: fixed test still passes — weak test not corrected; revisit";; 1) echo "GATE OK: fixed test fails as expected (exit 1)"',
+    )
+}
+
+_VISIBLE_EQUIVALENTS = {
+    # The plan lifecycle now makes separate feasibility opt-in and routes unknown causes to debug before planning.
+    # Preserve the plan artifact and terminal summary for implementation work, plus the explicit diagnostic handoff.
+    "README.md": {
+        "`plan` reads codebase, classifies task, identifies affected files, estimates complexity, runs": (
+            "`plan` reads the codebase, classifies the task, identifies affected files and estimates complexity.",
+            "For feature, fix and refactor work it writes a structured plan to `.plans/active/`",
+            "challenges its feasibility unless `--no-challenge` is passed.",
+            "A separate feasibility review runs only on explicit request.",
+            "Unknown root cause routes to `/develop:debug` first without an implementation plan.",
+            "Plan -> .plans/active/plan_extract-data-loading-dataloader.md",
+            "Classification : refactor",
+            "Complexity     : medium",
+            "Affected files : 4 files across 2 modules",
+            "Key risks      : Public API changes in dataset.py — 3 callers",
+            "Agent review   : plan challenge completed; separate feasibility review not requested",
+            '-> /develop:refactor "extract data loading into a dedicated DataLoader class" when ready',
+        ),
+        "2. Writes structured plan to `.plans/active/<slug>.md`": (
+            "Otherwise write a structured plan to `.plans/active/<slug>.md`.",
+            "Unknown root cause: after the depth checkpoint and any applicable breaking-change gate, recommend `/develop:debug <goal>`",
+            "stop without writing or challenging an implementation plan.",
+            "At the depth cap, explicitly choosing **Write the plan anyway** continues with the unconfirmed cause recorded as a risk",
+            "Write a brief summary and the appropriate downstream handoff.",
+            "Plan -> .plans/active/plan_<slug>.md",
+            '-> /develop:feature|fix|refactor "<goal>" when ready',
+        ),
+    },
+    "skills/review/SKILL.md": {
+        **_REVIEW_VISIBLE_EQUIVALENTS,
+        **_SHARED_INIT_EQUIVALENTS,
+        **_keep_sentinel_equivalents("review"),
+    },
+    "skills/debug/SKILL.md": {
+        **_DEBUG_VISIBLE_EQUIVALENTS,
+        **_SHARED_INIT_EQUIVALENTS,
+        **_keep_sentinel_equivalents("debug"),
+    },
+    "skills/feature/SKILL.md": {
+        **_IMPLEMENT_BLOCKER_EQUIVALENTS,
+        # Python helpers preserve the output/state artifacts of the retired shell commands.
+        'echo "$TARGET_MODULE" > ${TMPDIR:-/tmp}/dev-feature-target-module-${CSID}   # persist — reloaded by': (
+            'bin/derive_codemap_target.py" --keep-state dev-feature',
+            'IFS= read -r TARGET_MODULE < "${TMPDIR:-/tmp}/dev-feature-target-module-${CSID}"',
+        ),
+        'echo "$TARGET_FN"     > ${TMPDIR:-/tmp}/dev-feature-target-fn-${CSID}': (
+            'bin/derive_codemap_target.py" --keep-state dev-feature',
+            'IFS= read -r TARGET_FN < "${TMPDIR:-/tmp}/dev-feature-target-fn-${CSID}"',
+        ),
+        **_run_dir_persist_equivalents("feature"),
+        **_batch_gate_equivalents("feature"),
+        **_SHARED_INIT_EQUIVALENTS,
+        **_keep_sentinel_equivalents("feature"),
+    },
+    "skills/plan/SKILL.md": {**_PLAN_VISIBLE_EQUIVALENTS, **_SHARED_INIT_EQUIVALENTS},
+    # Spawn prompts now open with the teammate's delta line (agent-spawn.md), so the role sentence is no longer line 1.
+    "skills/fix/modes/team-mode.md": {
+        '"You are a foundry:sw-engineer teammate investigating a bug fix. Read': (
+            "You are a foundry:sw-engineer teammate investigating a bug fix. Read",
+        ),
+    },
+    # The liveness sentinel touched before each spawn is retired: the armed `team` deadline is the only liveness check.
+    "skills/refactor/modes/team-mode.md": {
+        "Apply to each teammate independently — create sentinel `touch": (
+            "Apply to each teammate independently — arm batch `team` in each spawn response",
+        ),
+    },
+    "skills/fix/SKILL.md": {
+        **_IMPLEMENT_BLOCKER_EQUIVALENTS,
+        # Python helpers preserve the output/state artifacts of the retired shell commands.
+        'echo "! Cannot run reproduction: PYTEST_CMD or TEST_PATH unresolved — resolve TEST_PATH from': (
+            'echo "! Cannot run reproduction: TEST_PATH unresolved — resolve TEST_PATH from',
+        ),
+        'eval "$PYTEST_CMD --tb=long \\"\\$TEST_PATH\\" -v" >"${TMPDIR:-/tmp}/pytest-out.txt-${CSID}" 2>&1;': (
+            'python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_tests.py" pytest -- --tb=long "$TEST_PATH" -v >"${TMPDIR:-/tmp}/pytest-out.txt-${CSID}" 2>&1;',
+        ),
+        **_run_dir_persist_equivalents("fix"),
+        **_FIX_GATE_EQUIVALENTS,
+        **_SHARED_INIT_EQUIVALENTS,
+        **_keep_sentinel_equivalents("fix"),
+    },
+    "skills/refactor/SKILL.md": {
+        **_IMPLEMENT_BLOCKER_EQUIVALENTS,
+        **_run_dir_persist_equivalents("refactor"),
+        **_batch_gate_equivalents("refactor"),
+        **_SHARED_INIT_EQUIVALENTS,
+        **_keep_sentinel_equivalents("refactor"),
+        # The quality-stack Codex pre-pass and delegation call Skill(bridge:review/implement),
+        # so refactor now grants Skill like feature and fix.
+        "allowed-tools: Read, Write, Edit, Bash, Grep, Glob, Agent, TaskList, TaskCreate, TaskUpdate,": (
+            "allowed-tools: Read, Write, Edit, Bash, Grep, Glob, Agent, Skill, TaskList, TaskCreate, TaskUpdate,",
+        ),
+        # Scoped like feature's dev-feature-gate-exit: debug's dev_run_repro.py writes the unscoped dev-gate-exit.
+        'echo "$GATE_EXIT" > ${TMPDIR:-/tmp}/dev-gate-exit-${CSID}': (
+            'echo "$GATE_EXIT" > ${TMPDIR:-/tmp}/dev-refactor-gate-exit-${CSID}',
+        ),
+    },
+}
+
+
+@pytest.mark.parametrize(("relative", "marker"), _ROWS)
+def test_head_visible_output_still_present(relative: str, marker: str) -> None:
+    """Preserve each historical output verbatim or its explicitly authorized current equivalent.
+
+    Every marker is one line of visible output the files produced at HEAD (progress, report headers, timeout marks);
+    losing one silently removes a signal the user relied on, unless an equivalent line was recorded for it.
+    """
+    equivalents = _VISIBLE_EQUIVALENTS.get(relative, {}).get(marker, (marker,))
+    text = _read(relative)
+    assert all(flat(equivalent) in text for equivalent in equivalents)
+
+
+@pytest.mark.parametrize(
+    ("relative", "marker"),
+    [
+        pytest.param("skills/feature/SKILL.md", "baseline proven at cycle 0", id="feature-baseline-skip-line"),
+        pytest.param(
+            "skills/feature/SKILL.md", "⚠ not_covered — some changed code has no mapped test", id="feature-not-covered"
+        ),
+        pytest.param(
+            "skills/fix/SKILL.md", "⚠ not_covered — some changed code has no mapped test", id="fix-not-covered"
+        ),
+        pytest.param(
+            "skills/refactor/SKILL.md",
+            "⚠ not_covered — some changed code has no mapped test",
+            id="refactor-not-covered",
+        ),
+        pytest.param("skills/fix/SKILL.md", "regression test is sole verification", id="fix-no-suite-note"),
+        pytest.param(
+            "skills/refactor/SKILL.md", "note the message above in Final Report", id="refactor-stack-skipped-note"
+        ),
+        pytest.param(
+            "skills/review/SKILL.md",
+            "Mark agents that returned empty or error with ⏱ in final report",
+            id="review-timeout-marker",
+        ),
+        pytest.param("skills/fix/modes/team-mode.md", "surface with ⏱; never omit", id="fix-team-timeout-marker"),
+    ],
+)
+def test_replaced_output_has_a_visible_equivalent(relative: str, marker: str) -> None:
+    """Every HEAD output this pass rewrote still has a visible equivalent — same signal, new wording.
+
+    These signals changed wording on purpose (skipped-step notes, ⏱ marks); the new text is pinned so it cannot vanish.
+    """
+    assert flat(marker) in _read(relative)
+
+
+@pytest.mark.parametrize("skill", ["refactor", "fix", "feature"])
+def test_targeted_runs_are_recorded_with_reasons_and_full_log(skill: str) -> None:
+    """Targeted loop runs record which tests were picked and why, and keep the full runner log, in the run dir.
+
+    ``--skill`` makes the selector read the skill's ``dev-<skill>-dev-dir`` sentinel and record there;
+    ``tests/runners/test_dev_test_targets.py::TestSkillSentinels`` covers the record itself.
+    """
+    text = _read(f"skills/{skill}/SKILL.md")
+    assert f'bin/dev_test_targets.py" --skill {skill} --run' in text
+    assert "$DEV_DIR/test-targets.jsonl" in text
+
+
+@pytest.mark.parametrize("phrase", ["top-level `pending` list", "`elapsed_s` since spawn"])
+def test_agent_wait_check_prints_in_flight_progress(phrase: str) -> None:
+    """Each wake-up prints a status line per in-flight agent from the helper's pending list and elapsed time.
+
+    The shared wait rule has to name both inputs, or the printed line has nothing to report for a stalled agent.
+    """
+    assert phrase in _read("skills/_shared/agent-resolution.md")
+
+
+@pytest.mark.parametrize("skill", ["refactor", "fix", "debug"])
+def test_step_level_task_progress_is_kept(skill: str) -> None:
+    """Step-level task progress the user saw at HEAD stays visible: one task per step, never collapsed.
+
+    Collapsing to fewer tasks would hide progress the user saw at HEAD; only the bookkeeping-only turns were removed.
+    """
+    assert "One task per step, never a bookkeeping-only turn." in _read(f"skills/{skill}/SKILL.md")

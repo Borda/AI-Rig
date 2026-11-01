@@ -1,10 +1,36 @@
-"""Keep foundry decisions readable before choosing and preserve report follow-up delivery after the answer."""
+"""Keep foundry decisions readable before choosing and preserve report follow-up delivery after the answer.
+
+Each test reads skill Markdown as text and checks single-line phrases, so reflowing a paragraph never breaks an
+assertion.
+"""
 
 from pathlib import Path
 
 import pytest
+from _markdown_text import found, missing
 
 _SKILLS = Path(__file__).resolve().parents[2] / "skills"
+
+#: Rendering limits every plain-question gate states: size caps and the ban on tables, fences and previews.
+_QUESTION_LIMITS = (
+    "6 plain lines",
+    "600 characters",
+    "1,500",
+    "no table",
+    "no pipe layout",
+    "no code fence",
+    "no `preview`",
+)
+#: Delivery wording of a saved-and-printed gate: printed once as normal Markdown, last reply text before the question.
+_PRINT_ONCE = ("printed once", "normal Markdown", "last reply text before")
+#: Wording that told the model to route rich content through option previews before the plain-question rewrite.
+_OBSOLETE_PREVIEW_ROUTING = (
+    "`preview` of every",
+    "`preview` of both",
+    "every option's `preview`",
+    "option previews",
+    "Preview cap",
+)
 
 
 @pytest.mark.parametrize(
@@ -123,93 +149,103 @@ _SKILLS = Path(__file__).resolve().parents[2] / "skills"
 def test_rich_decision_content_is_saved_printed_once_and_summarized(
     relative: str, start: str, end: str, artifact: str
 ) -> None:
-    """Each gate saves its rich content, prints it once before asking, and keeps a bounded plain question summary."""
+    """Each gate saves its rich content, prints it once before asking, and keeps a bounded plain question summary.
+
+    The section between the two markers must name the saved artifact, the print-once delivery, the plain question text
+    limits and the recommended-option placement.
+    """
     text = (_SKILLS / relative).read_text(encoding="utf-8")
     section = text.split(start, 1)[1].split(end, 1)[0]
-    assert artifact in section
-    assert "printed once" in section
-    assert "normal Markdown" in section
-    assert "last reply text before" in section
-    assert "question text" in section
-    assert "6 plain lines" in section
-    assert "600 characters" in section
-    assert "1,500" in section
-    assert "no table" in section
-    assert "no pipe layout" in section
-    assert "no code fence" in section
-    assert "no `preview`" in section
+    assert missing(section, [artifact, *_PRINT_ONCE, "question text", *_QUESTION_LIMITS]) == []
     assert "recommended option second" in section or "display recommended (a) second" in section
 
 
-@pytest.mark.parametrize("relative", ["audit/SKILL.md", "audit/modes/steps-4-5-7.md", "profile/SKILL.md"])
-def test_report_follow_ups_use_plain_question_summary_and_final_reply(relative: str) -> None:
-    """Audit and profile defer the full findings/header to the final reply while question text names its source."""
+_FOLLOW_UP_FRAGMENTS = (
+    "first question's text",
+    "6 plain lines",
+    "600 characters",
+    "1,500",
+    "no table",
+    "no pipe layout",
+    "no code fence",
+    "final reply after the answer",
+    "last tool call",
+    "no `preview`",
+    "never before the question",
+)
+
+
+@pytest.mark.parametrize("relative", ["audit/SKILL.md", "audit/modes/steps-4-5-7.md"])
+def test_audit_follow_ups_use_plain_question_summary_and_final_reply(relative: str) -> None:
+    """Audit defers the full findings to the final reply while the question text names where they come from.
+
+    The audit gates point at ``summary.jsonl`` for the question summary and keep the Audit Report headline and total.
+    """
     text = (_SKILLS / relative).read_text(encoding="utf-8")
-    assert "first question's text" in text
-    assert "6 plain lines" in text
-    assert "600 characters" in text
-    assert "1,500" in text
-    assert "no table" in text
-    assert "no pipe layout" in text
-    assert "no code fence" in text
-    assert "final reply after the answer" in text
-    assert "last tool call" in text
-    assert "no `preview`" in text
-    assert "never before the question" in text
-    if relative.startswith("audit/"):
-        assert "$RUN_DIR/summary.jsonl" in text
-        assert "Audit Report" in text
-        assert "Total: N" in text
-    else:
-        assert "$REPORT_DIR/report.md" in text
-        assert "Title" in text
-        assert "Outcome" in text
+    assert missing(text, [*_FOLLOW_UP_FRAGMENTS, "$RUN_DIR/summary.jsonl", "Audit Report", "Total: N"]) == []
+
+
+def test_profile_follow_up_uses_plain_question_summary_and_final_reply() -> None:
+    """Profile defers the full header to the final reply while the question text names the report it comes from.
+
+    The profile gate points at ``report.md`` for the question summary and keeps the Title and Outcome header fields.
+    """
+    text = (_SKILLS / "profile/SKILL.md").read_text(encoding="utf-8")
+    assert missing(text, [*_FOLLOW_UP_FRAGMENTS, "$REPORT_DIR/report.md", "Title", "Outcome"]) == []
 
 
 def test_rename_question_carries_small_diff_and_saves_long_context() -> None:
-    """Ambiguous rename decisions include a small diff inline or a saved, printed long diff before asking."""
+    """Ambiguous rename decisions include a small diff inline or a saved, printed long diff before asking.
+
+    The rename-validation mode keeps a short diff in the question text, saves a long one with 5-line context, and
+    batches at most four questions per call.
+    """
     text = (_SKILLS / "manage/modes/rename-validation.md").read_text(encoding="utf-8")
     section = text.split("Collect ambiguous hits", 1)[1]
-    assert "small renaming diff in the question text" in section
-    assert ".temp/manage/rename-hit-<id>.md" in section
-    assert "5-line context" in section
-    assert "printed once" in section
-    assert "normal Markdown" in section
-    assert "last reply text before" in section
-    assert "6 plain lines" in section
-    assert "600 characters" in section
-    assert "1,500" in section
-    assert "no table" in section
-    assert "no pipe layout" in section
-    assert "no code fence" in section
-    assert "no `preview`" in section
-    assert "Batch max 4 per call" in section
+    required = [
+        "small renaming diff in the question text",
+        ".temp/manage/rename-hit-<id>.md",
+        "5-line context",
+        *_PRINT_ONCE,
+        *_QUESTION_LIMITS,
+        "Batch max 4 per call",
+    ]
+    assert missing(section, required) == []
 
 
 def test_shared_terminal_template_defers_header_to_final_reply() -> None:
     """The shared template preserves raw file formats and delivers rendered headers after report follow-up answers."""
     text = (_SKILLS / "_shared/terminal-summaries.md").read_text(encoding="utf-8")
-    assert "first question's text" in text
-    assert "Title" in text
-    assert "Outcome" in text
-    assert "Verdict" in text
-    assert "final reply after the answer" in text
-    assert "never before the question" in text
-    assert "no `preview`" in text
-    assert "Field | Value" in text
+    required = [
+        "first question's text",
+        "Title",
+        "Outcome",
+        "Verdict",
+        "final reply after the answer",
+        "never before the question",
+        "no `preview`",
+        "Field | Value",
+    ]
+    assert missing(text, required) == []
 
 
 def test_audit_final_step_delivers_full_findings_after_all_tools() -> None:
-    """The actual audit terminal step keeps every finding after the follow-up answer and final cleanup calls."""
+    """The actual audit terminal step keeps every finding after the follow-up answer and final cleanup calls.
+
+    The step prints the whole Step 7 report once, as the last thing, after the completion marker and cleanup calls.
+    """
     text = (_SKILLS / "audit/SKILL.md").read_text(encoding="utf-8")
     section = text.split("**Step 11b — terminal output**", 1)[1].split("**Completion marker**", 1)[0]
-    assert "final reply after the answer" in section
-    assert "after the last tool call including the completion marker and cleanup" in section
-    assert "full Step 7 Audit Report from `$RUN_DIR/audit-report.md`" in section
-    assert "exact `Total: N`" in section
-    assert "every finding's `one_line`" in section
-    assert "normal Markdown" in section
-    assert "printed once here, never before the question or in an option" in section
+    required = [
+        "final reply after the answer",
+        "after the last tool call including the completion marker and cleanup",
+        "full Step 7 Audit Report from `$RUN_DIR/audit-report.md`",
+        "exact `Total: N`",
+        "every finding's `one_line`",
+        "normal Markdown",
+        "printed once here, never before the question or in an option",
+    ]
+    assert missing(section, required) == []
 
 
 @pytest.mark.parametrize(
@@ -233,13 +269,9 @@ def test_audit_final_step_delivers_full_findings_after_all_tools() -> None:
     ],
 )
 def test_no_rewritten_gate_still_routes_rich_content_to_option_previews(relative: str) -> None:
-    """Sibling instructions in a rewritten file cannot retain the old identical-preview delivery requirement."""
+    """Sibling instructions in a rewritten file cannot retain the old identical-preview delivery requirement.
+
+    None of the files rewritten for plain-question delivery may still contain any retired preview-routing phrase.
+    """
     text = (_SKILLS / relative).read_text(encoding="utf-8")
-    for obsolete in (
-        "`preview` of every",
-        "`preview` of both",
-        "every option's `preview`",
-        "option previews",
-        "Preview cap",
-    ):
-        assert obsolete not in text
+    assert found(text, _OBSOLETE_PREVIEW_ROUTING) == []

@@ -33,12 +33,16 @@ def _load_module(module_name: str, filename: str):
         filename: Filename of the script relative to BENCHMARKS_DIR.
 
     Returns:
-        The loaded module with all public symbols accessible.
+        The loaded module with all public symbols accessible. A module already registered under ``module_name`` from
+        the same file is returned unchanged: loading again would swap ``sys.modules`` for a second copy, and tests
+        that patch by string target (``mock.patch("name.attr")``) would patch that copy, not the fixture's.
 
     Example:
         >>> module = _load_module("example_python_source", "_bench_common/python_source.py")
         >>> module.__name__, sys.modules["example_python_source"] is module
         ('example_python_source', True)
+        >>> _load_module("example_python_source", "_bench_common/python_source.py") is module
+        True
         >>> _ = sys.modules.pop("example_python_source")
     """
     # Runners import private benchmark packages from their own directory; add it
@@ -46,6 +50,10 @@ def _load_module(module_name: str, filename: str):
     if str(BENCHMARKS_DIR) not in sys.path:
         sys.path.insert(0, str(BENCHMARKS_DIR))
     path = BENCHMARKS_DIR / filename
+    # The fixture doctests call getfixture(), which re-runs a session fixture in the same worker.
+    registered = sys.modules.get(module_name)
+    if registered is not None and getattr(registered, "__file__", None) == str(path):
+        return registered
     spec = importlib.util.spec_from_file_location(module_name, path)
     mod = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = mod

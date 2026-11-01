@@ -176,8 +176,8 @@ _ASKS = [
 
 
 @pytest.mark.parametrize(("relative", "section_start", "section_end", "marker"), _ASKS)
-def test_baseline_ask_still_happens(relative: str, section_start: str, section_end: str, marker: str) -> None:
-    """Every decision asked in the committed baseline is still asked, in its section, through the AskUserQuestion tool.
+def test_baseline_ask_is_still_asked(relative: str, section_start: str, section_end: str, marker: str) -> None:
+    """Every decision asked in the committed baseline is still asked, in its section, through AskUserQuestion.
 
     The section must name the tool itself, so a prose mention of the question cannot stand in for a real ask.
     """
@@ -189,11 +189,13 @@ def test_baseline_ask_still_happens(relative: str, section_start: str, section_e
 
 
 @pytest.mark.parametrize(
-    "relative",
-    ["investigate/SKILL.md", "manage/SKILL.md", "calibrate/SKILL.md", "audit/SKILL.md"],
+    "relative", ["investigate/SKILL.md", "manage/SKILL.md", "calibrate/SKILL.md", "audit/SKILL.md"]
 )
 def test_timeouts_never_answer_a_question(relative: str) -> None:
-    """Every skill that arms agent deadlines says a timed-out agent never answers, skips or defaults a user decision."""
+    """Every skill that arms agent deadlines says a timed-out agent never answers, skips or defaults a user decision.
+
+    The deadline helper is named in the skill, and the skill states that a timeout never answers a question.
+    """
     text = (_SKILLS / relative).read_text(encoding="utf-8")
     assert "agent_watch.py" in text
     assert "never answers" in text or "never wait further" in text
@@ -215,7 +217,10 @@ def test_shared_rules_ban_waiting_tools(relative: str) -> None:
     assert "Optional between-turn liveness" not in text
 
 
-def test_apply_flags_keep_skipping_only_the_gates_they_skipped_at_baseline() -> None:
-    """``--apply`` still skips only the calibrate proposal gate, never the large fan-out spawn gate."""
+def test_apply_flag_skips_only_the_proposal_gate() -> None:
+    """``--apply`` still skips only the calibrate proposal gate, never the large fan-out spawn gate.
+
+    The fan-out gate protects against an expensive spawn, so the flag that auto-applies proposals must not bypass it.
+    """
     text = (_SKILLS / "calibrate/SKILL.md").read_text(encoding="utf-8")
     assert "`--apply` only skips Step 3 proposal-review gate, not this one" in text

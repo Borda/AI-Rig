@@ -35,40 +35,65 @@ def _command(script: str) -> dict:
     }
 
 
-def test_codex_manifest_points_to_runtime_scoped_hook_config() -> None:
-    """Codex discovers its hooks through the plugin manifest, not Claude's config."""
-    manifest = _load(".codex-plugin/plugin.json")
+class TestCodexRegistration:
+    """Codex loads its own runtime-scoped hook config, separate from Claude's."""
 
-    assert manifest["hooks"] == "./hooks/codex-hooks.json"
+    def test_manifest_points_to_runtime_scoped_hook_config(self) -> None:
+        """Codex discovers its hooks through the plugin manifest, not Claude's config.
+
+        The ``.codex-plugin`` manifest must name ``hooks/codex-hooks.json`` so Codex never loads the Claude file.
+        """
+        manifest = _load(".codex-plugin/plugin.json")
+
+        assert manifest["hooks"] == "./hooks/codex-hooks.json"
+
+    def test_registers_session_prompt_and_tool_lifecycle(self) -> None:
+        """Codex hooks avoid Claude-only seeding, inject prompts, and classify required tools.
+
+        Reads the shipped ``codex-hooks.json`` and checks, per event and matcher, exactly which runtime-scoped commands
+        run: no SessionStart seeding, prompt preamble, Bash guard, and the exhausted/telemetry recorders.
+        """
+        config = _load("hooks/codex-hooks.json")
+
+        assert "SessionStart" not in config["hooks"]
+        assert _commands(config, "UserPromptSubmit", None) == [_command("inject-preamble.py")]
+        assert _commands(config, "PreToolUse", "Bash") == [_command("guard-redundant-scan.py")]
+        assert _commands(config, "PostToolUse", "Bash") == [
+            _command("record-exhausted.py"),
+            _command("log-tool-use.py"),
+        ]
+        assert _commands(config, "PostToolUse", "Grep|Read|Glob") == [_command("log-tool-use.py")]
+        assert _commands(config, "PostToolUse", "Edit|Write|apply_patch") == [_command("record-exhausted.py")]
 
 
-def test_codex_hook_config_registers_runtime_scoped_session_prompt_and_tool_lifecycle() -> None:
-    """Codex hooks avoid Claude-only seeding, inject prompts, and classify required tools."""
-    config = _load("hooks/codex-hooks.json")
+class TestClaudeRegistration:
+    """The Claude hook surface stays as established while Codex gains its own."""
 
-    assert "SessionStart" not in config["hooks"]
-    assert _commands(config, "UserPromptSubmit", None) == [_command("inject-preamble.py")]
-    assert _commands(config, "PreToolUse", "Bash") == [_command("guard-redundant-scan.py")]
-    assert _commands(config, "PostToolUse", "Bash") == [_command("record-exhausted.py"), _command("log-tool-use.py")]
-    assert _commands(config, "PostToolUse", "Grep|Read|Glob") == [_command("log-tool-use.py")]
-    assert _commands(config, "PostToolUse", "Edit|Write|apply_patch") == [_command("record-exhausted.py")]
+    def test_manifest_and_hook_runtime_unchanged(self) -> None:
+        """The Codex registration must not relabel the established Claude hook surface.
 
+        The Claude manifest keeps pointing at ``claude-hooks.json``, which must stay free of the Codex runtime label and
+        still register ``record-exhausted.py``.
+        """
+        manifest = _load(".claude-plugin/plugin.json")
+        claude_config = (_PLUGIN_ROOT / "hooks" / "claude-hooks.json").read_text()
 
-def test_claude_manifest_and_hook_runtime_remain_unchanged() -> None:
-    """The Codex registration must not relabel the established Claude hook surface."""
-    manifest = _load(".claude-plugin/plugin.json")
-    claude_config = (_PLUGIN_ROOT / "hooks" / "claude-hooks.json").read_text()
+        assert manifest["hooks"] == "./hooks/claude-hooks.json"
+        assert "CODEMAP_RUNTIME=codex" not in claude_config
+        assert "record-exhausted.py" in claude_config
 
-    assert manifest["hooks"] == "./hooks/claude-hooks.json"
-    assert "CODEMAP_RUNTIME=codex" not in claude_config
-    assert "record-exhausted.py" in claude_config
+    def test_hooks_share_validated_launcher(self) -> None:
+        """Every hook validates the scanner's runtime before importing any handler.
 
+        Each registered command must go through the ``codemap-py`` launcher and name a ``.py`` handler; a hook that
+        invokes a script directly would skip the Python-runtime validation.
+        """
+        config = _load("hooks/claude-hooks.json")
+        commands = [
+            hook["command"] for entries in config["hooks"].values() for entry in entries for hook in entry["hooks"]
+        ]
+        launcher = 'exec "${CLAUDE_PLUGIN_ROOT}/bin/codemap-py" --run-hook '
+        offenders = [c for c in commands if not (c.startswith(launcher) and c.endswith(".py"))]
 
-def test_claude_hooks_share_validated_codemap_launcher() -> None:
-    """Every hook validates the scanner's runtime before importing any handler."""
-    config = _load("hooks/claude-hooks.json")
-    commands = [hook["command"] for entries in config["hooks"].values() for entry in entries for hook in entry["hooks"]]
-    assert commands
-    for command in commands:
-        assert command.startswith('exec "${CLAUDE_PLUGIN_ROOT}/bin/codemap-py" --run-hook ')
-        assert command.endswith(".py")
+        assert commands
+        assert offenders == []

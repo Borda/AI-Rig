@@ -12,26 +12,23 @@ import os
 import shutil
 import subprocess
 import sys
+from functools import cache
 from pathlib import Path
 
 import pytest
+from _text_io import bash_path
 
 _REVIEW = Path(__file__).resolve().parents[2] / "skills/review"
 _SHARED = _REVIEW.parent / "_shared"
 _PLUGIN = _REVIEW.parents[1]
 _BASH = shutil.which("bash")
+_skip_no_bash = pytest.mark.skipif(_BASH is None, reason="the wake-up check is Bash")
 
 
+@cache
 def _skill() -> str:
-    """Read the review skill."""
+    """Read the review skill; the shipped text is immutable during a run."""
     return (_REVIEW / "SKILL.md").read_text(encoding="utf-8")
-
-
-def _bash_path(path: Path) -> str:
-    """Return the fixture path in Git Bash syntax on native Windows."""
-    if sys.platform != "win32":
-        return str(path)
-    return subprocess.check_output(["cygpath", "-u", str(path)], text=True).strip()
 
 
 #: (section start, section end, marker that only exists while the baseline question is still asked there)
@@ -54,7 +51,11 @@ _ASKS = [
 
 @pytest.mark.parametrize(("section_start", "section_end", "marker"), _ASKS)
 def test_baseline_ask_still_happens(section_start: str, section_end: str, marker: str) -> None:
-    """Every question the baseline review asked is still asked in its section, with the tool named beside it."""
+    """Every question the baseline review asked is still asked in its section, with the tool named beside it.
+
+    Efficiency work removed polling and task calls; this pins that none of the three user-facing asks (existing-report
+    guard, direct report fast-path, follow-up gate) was dropped with them.
+    """
     text = _skill()
     start = text.index(section_start)
     section = text[start : text.index(section_end, start)]
@@ -63,7 +64,11 @@ def test_baseline_ask_still_happens(section_start: str, section_end: str, marker
 
 
 def test_codemap_gate_asks_only_for_the_lazy_preference() -> None:
-    """Gate A prepares by default and retains a confirm-first question only when requested."""
+    """Gate A prepares by default and retains a confirm-first question only when requested.
+
+    The skill loads the shared gates document; that document must keep the automatic default, the explicit lazy
+    preference, the autobuild opt-out and the force-off detection command.
+    """
     assert 'cat "$_OSS_SHARED/codemap-gates.md"' in _skill()
     gates = (_SHARED / "codemap-gates.md").read_text(encoding="utf-8")
     assert "Gate A prepares automatically by default" in gates
@@ -73,7 +78,11 @@ def test_codemap_gate_asks_only_for_the_lazy_preference() -> None:
 
 
 def test_review_preflight_reloads_gate_state_and_freezes_stale_queries() -> None:
-    """The review query block sees persisted gate decisions before running any batch."""
+    """The review query block sees persisted gate decisions before running any batch.
+
+    Every codemap query line must carry the no-heal guard, and the block must reload the enabled and currency sentinels
+    instead of assuming an earlier shell still holds them.
+    """
     context = (_REVIEW / "modes" / "codemap-context.md").read_text(encoding="utf-8")
     assert 'IFS= read -r CODEMAP_ENABLED  2>/dev/null < "${TMPDIR:-/tmp}/review-codemap-enabled-${CSID}"' in context
     assert 'IFS= read -r CODEMAP_CURRENCY  2>/dev/null < "${TMPDIR:-/tmp}/review-codemap-currency-${CSID}"' in context
@@ -87,6 +96,8 @@ def test_review_preflight_reloads_gate_state_and_freezes_stale_queries() -> None
 
 
 class TestNoPolling:
+    """Waiting for agents is event-driven: per-agent deadlines replace the silence probe and polling loops."""
+
     @pytest.mark.parametrize(
         "retired",
         [
@@ -108,9 +119,13 @@ class TestNoPolling:
         assert f"`{batch}`" in skill[: skill.index("</constants>")]
         assert "never `ScheduleWakeup`, `ListAgents` or a `Monitor` loop" in skill
 
-    @pytest.mark.skipif(_BASH is None, reason="the wake-up check is Bash")
+    @_skip_no_bash
     def test_wake_up_check_reports_agents(self, tmp_path: Path) -> None:
-        """The documented wake-up block reads the run dir from its sentinel and prints one deadline report."""
+        """The documented wake-up block reads the run dir from its sentinel and prints one deadline report.
+
+        Runs the shipped block in a real Bash against a run dir holding one pending agent deadline, so it proves the
+        sentinel read, the helper call and the JSON report shape end to end.
+        """
         skill = _skill()
         anchor = skill.index("On each wake-up — a completion or idle notification")
         start = skill.index("```bash", anchor) + len("```bash\n")
@@ -119,12 +134,12 @@ class TestNoPolling:
         run_dir = tmp_path / "run"
         run_dir.mkdir()
         (run_dir / "agent-watch-review.tsv").write_text(
-            f"foundry:qa-specialist\t{_bash_path(run_dir)}/foundry--qa-specialist.md\t1800\n",
+            f"foundry:qa-specialist\t{bash_path(run_dir)}/foundry--qa-specialist.md\t1800\n",
             encoding="utf-8",
             newline="\n",
         )
         (tmp_path / f"oss-review-run-dir-{session}").write_text(
-            f"{_bash_path(run_dir)}\n", encoding="utf-8", newline="\n"
+            f"{bash_path(run_dir)}\n", encoding="utf-8", newline="\n"
         )
         result = subprocess.run(
             [_BASH, "-c", block],
@@ -145,8 +160,13 @@ class TestNoPolling:
 
 
 class TestBookkeeping:
+    """Task bookkeeping rides with real work; no turn is spent on bookkeeping alone."""
+
     def test_zero_bookkeeping_only_turns(self) -> None:
-        """Task calls ride with real work; only the completion before a long output stands alone."""
+        """Task calls ride with real work; only the completion before a long output stands alone.
+
+        The measured cost of a bookkeeping-only turn is a full context re-read, so the skill must keep the rule stated.
+        """
         assert "**Zero bookkeeping-only turns**" in _skill()
 
     def test_cross_validation_task_stays_visible(self) -> None:
@@ -162,7 +182,10 @@ class TestBookkeeping:
 
 
 def test_step_2_prelude_is_one_call() -> None:
-    """Handoff protocol, Codex availability and prompt templates load in one Bash call instead of three."""
+    """Handoff protocol, Codex availability and prompt templates load in one Bash call instead of three.
+
+    Each separate call re-reads the whole context; the prelude block must name all three loads together.
+    """
     skill = _skill()
     prelude = skill[skill.index("**Step 2 prelude — one call**") :]
     block = prelude[prelude.index("```bash") : prelude.index("```", prelude.index("```bash") + 7)]

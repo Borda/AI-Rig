@@ -69,6 +69,8 @@ CHILD_TIMEOUT_MULTIPLIER = 1.2
 CLEANUP_GRACE_SECONDS = 2.0
 #: Seconds between liveness checks of the signalled child tree while the cleanup grace runs.
 CLEANUP_POLL_SECONDS = 0.01
+#: Seconds allowed for all child output-reader threads to finish during one join attempt.
+OUTPUT_READER_JOIN_SECONDS = 2.0
 # This leaves substantial headroom below the smallest audited process argument
 # limit after the Bridge prompt, schema, environment, and executable arguments.
 #: Largest task text, in UTF-8 bytes, a request may carry before it is rejected as over the transport budget.
@@ -1390,6 +1392,8 @@ def _run_child(command: list[str], workspace: Path, timeout: float, job_path: Pa
         finally:
             _finish_output_readers(readers)
         raise
+    finally:
+        _close_finished_child_pipes(process, readers)
 
 
 def _start_output_readers(
@@ -1415,13 +1419,29 @@ def _read_child_stream(stream_name: str, stream: Any, output: _ChildOutputBuffer
 
 def _finish_output_readers(readers: list[threading.Thread]) -> bool:
     """Join output readers after child exit without letting inherited pipes extend the supervisor lifetime."""
-    deadline = time.monotonic() + 2.0
+    deadline = time.monotonic() + OUTPUT_READER_JOIN_SECONDS
     for reader in readers:
         reader.join(timeout=max(0.0, deadline - time.monotonic()))
     # Closing a BufferedReader while another thread is blocked in read() can
     # wait on its internal lock forever. Callers terminate the owning group
     # instead, then make one further bounded join attempt.
     return not any(reader.is_alive() for reader in readers)
+
+
+def _close_finished_child_pipes(process: subprocess.Popen[bytes], readers: list[threading.Thread]) -> None:
+    """Close the child's capture pipes once no reader thread can still be blocked on them.
+
+    Without this, every supervised call leaves both pipe file objects open until garbage collection, which a long-lived
+    host such as the MCP server pays per request. A reader that is still alive (a surviving grandchild holds the write
+    end) keeps its pipe open, because closing a BufferedReader under a blocked ``read()`` can wait on its internal lock
+    forever (see ``_finish_output_readers``). The ``close`` lookup tolerates stream objects without one, as
+    ``_spawn_child`` tolerates adapters that supply no pipes.
+    """
+    if not any(reader.is_alive() for reader in readers):
+        for stream in (process.stdout, process.stderr):
+            close = getattr(stream, "close", None)
+            if close is not None:
+                close()
 
 
 def _resolve_executable(executable: str) -> str | None:
@@ -2126,6 +2146,19 @@ def _open_windows_nofollow_descriptor(path: Path) -> int:
     return descriptor
 
 
+def _reap_in_background(process: subprocess.Popen[bytes]) -> None:
+    """Collect a detached child's exit status on a daemon thread so the launcher never leaves it unreaped.
+
+    The launcher never owns the supervisor's result, but a discarded running ``Popen`` warns ``subprocess N is still
+    running`` and, in a long-lived host, leaves a zombie that keeps answering liveness probes until a later spawn sweeps
+    it. A daemon thread never delays interpreter exit, so a short-lived launcher still returns at once. The ``wait``
+    lookup tolerates process objects without one, as ``_spawn_child`` tolerates adapters that supply no pipes.
+    """
+    wait = getattr(process, "wait", None)
+    if wait is not None:
+        threading.Thread(target=wait, name=f"bridge-reap-{process.pid}", daemon=True).start()
+
+
 def start_background(request: Request) -> dict[str, Any]:
     """Start a detached supervisor and return its persistent job record."""
     validate_request_transport_budget(request)
@@ -2173,7 +2206,8 @@ def start_background(request: Request) -> dict[str, Any]:
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     else:
         kwargs["start_new_session"] = True
-    subprocess.Popen(command, **kwargs)  # noqa: S603 - invokes this installed script with explicit arguments.
+    supervisor = subprocess.Popen(command, **kwargs)  # noqa: S603 - invokes this installed script with explicit arguments.
+    _reap_in_background(supervisor)
     # The spawned supervisor records its own PID and running state; a launcher
     # write here could race a fast-failing supervisor and clobber its final
     # record with a stale queued-derived copy. The returned status matches the

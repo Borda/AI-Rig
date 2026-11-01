@@ -8,17 +8,18 @@ silently build notes and CHANGELOG entries from ``LAST_TAG..HEAD`` instead of th
 from __future__ import annotations
 
 import os
-import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+from _text_io import bash_blocks
 
 _PLUGIN_ROOT = Path(__file__).resolve().parents[2]
-_SKILL = (_PLUGIN_ROOT / "skills" / "release" / "SKILL.md").read_text(encoding="utf-8")
-_BLOCKS = re.findall(r"```bash\n(.*?)```", _SKILL, re.DOTALL)
+
+
+_BLOCKS = bash_blocks((_PLUGIN_ROOT / "skills" / "release" / "SKILL.md").read_text(encoding="utf-8"))
 _MODE_BLOCK = next(block for block in _BLOCKS if "release-do-migration-" in block and "parse-skill-flags.py" in block)
 _GATHER_RELOAD = next(block for block in _BLOCKS if "# quote RANGE" in block).split('if [ -z "$RANGE" ]', 1)[0]
 
@@ -39,8 +40,7 @@ def test_mode_detection_range_reaches_gather_shell(tmp_path: Path, arguments: st
     A stale sentinel from an earlier invocation in the same session is planted first: Mode Detection must overwrite
     it, so a run without an explicit range falls through to the marker/``LAST_TAG`` default instead of reusing it.
     """
-    sentinel = tmp_path / "release-range-test"
-    sentinel.write_text("stale..range\n", encoding="utf-8", newline="\n")
+    (tmp_path / "release-range-test").write_text("stale..range\n", encoding="utf-8", newline="\n")
     environment = os.environ.copy()
     environment.update(
         {

@@ -219,6 +219,11 @@ def run_wilcoxon(
             reason="scipy not installed — run: pip install scipy",
         )
 
+    if all(candidate == baseline for candidate, baseline in zip(candidate_scores, baseline_scores)):
+        # Every paired difference is zero: scipy's normal approximation then divides by a zero standard error and
+        # emits a RuntimeWarning before returning statistic 0.0 and p-value 1.0. Return that same conclusive result
+        # directly, without ``reason``, so the payload keeps its success shape.
+        return WilcoxonResult(significant=False, p_value=1.0, statistic=0.0, n=n)
     alternative = "greater" if direction == Direction.HIGHER else "less"
     result = wilcoxon(candidate_scores, baseline_scores, alternative=alternative)
     statistic = float(result.statistic)

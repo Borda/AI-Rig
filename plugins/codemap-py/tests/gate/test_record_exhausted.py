@@ -25,7 +25,6 @@ import json
 import os
 import subprocess
 import sys
-import time
 from pathlib import Path
 from typing import ClassVar
 
@@ -50,6 +49,17 @@ _NONEXHAUSTIVE_RESPONSE = _response("mypackage.auth", {"query_complete": False, 
 _QUERY_COMPLETE_ONLY_RESPONSE = _response("mypackage.auth", {"query_complete": True, "stale": False})
 
 
+_SESSION = "sess"  # every test owns its TMPDIR, so one session id never collides across tests
+_RDEPS_COMMAND = 'scan-query rdeps "mypackage.auth"'
+_FN_RDEPS_RESPONSE = _response("mypackage.auth::validate_token", _COMPLETE_BLOCK, key="qname")
+_ARMED_TOKENS = {"mypackage.auth", "mypackage/auth"}
+
+
+def _sentinel(tmp_path: Path, session: str = _SESSION) -> Path:
+    """Return the path of the exhausted-sentinel file the hook writes for *session* under the isolated TMPDIR."""
+    return tmp_path / f"codemap-exhausted-{session}"
+
+
 def _run(command: str, response: object, session: str, tmp_path: Path, **extra: object) -> None:
     """Feed one PostToolUse(Bash) event through the hook with TMPDIR isolated to tmp_path."""
     payload = {"tool_input": {"command": command}, "tool_response": response, "session_id": session, **extra}
@@ -71,104 +81,93 @@ def _drive(payload: dict, tmp_path: Path, cwd: Path | None = None, **env_extra: 
 
 
 @pytest.mark.parametrize(
-    ("command", "session"),
+    ("command", "response"),
     [
-        pytest.param('scan-query rdeps "mypackage.auth"', "sess-rdeps-quoted", id="rdeps-quoted"),
-        pytest.param("scan-query rdeps mypackage.auth", "sess-rdeps-bare", id="rdeps-bare"),
-        pytest.param('$SQ rdeps "mypackage.auth"', "sess-sq-fallback", id="sq-fallback"),
-        pytest.param("codemap-py query rdeps mypackage.auth", "sess-codemap-query", id="codemap-query-rdeps"),
-    ],
-)
-def test_sentinel_written_for_real_commands(command: str, session: str, tmp_path: Path) -> None:
-    """Every real emitted rdeps form must write the module to the sentinel."""
-    _run(command, _EXHAUSTIVE_RESPONSE, session, tmp_path)
-
-    sentinel = tmp_path / f"codemap-exhausted-{session}"
-    assert sentinel.exists(), f"sentinel not written for command: {command}"
-    assert {"mypackage.auth", "mypackage/auth"} <= set(sentinel.read_text().split())
-
-
-@pytest.mark.parametrize(
-    ("command", "session"),
-    [
-        pytest.param('scan-query fn-rdeps "mypackage.auth::validate_token"', "sess-fnrdeps", id="fn-rdeps"),
+        pytest.param(_RDEPS_COMMAND, _EXHAUSTIVE_RESPONSE, id="rdeps-quoted"),
+        pytest.param("scan-query rdeps mypackage.auth", _EXHAUSTIVE_RESPONSE, id="rdeps-bare"),
+        pytest.param('$SQ rdeps "mypackage.auth"', _EXHAUSTIVE_RESPONSE, id="sq-fallback"),
+        pytest.param("codemap-py query rdeps mypackage.auth", _EXHAUSTIVE_RESPONSE, id="codemap-query-rdeps"),
+        pytest.param(
+            'scan-query fn-rdeps "mypackage.auth::validate_token"', _FN_RDEPS_RESPONSE, id="fn-rdeps-module-portion"
+        ),
         pytest.param(
             'scan-query --timeout 5 fn-rdeps "mypackage.auth::validate_token" --exclude-tests',
-            "sess-interposed",
+            _FN_RDEPS_RESPONSE,
             id="fn-rdeps-interposed-flags",
+        ),
+        # A future index that has dropped the legacy `exhaustive` alias must still arm via `query_complete` alone.
+        pytest.param(_RDEPS_COMMAND, _QUERY_COMPLETE_ONLY_RESPONSE, id="query-complete-alone"),
+        # The Bash tool's `{"stdout": ...}` envelope is parsed, not stringified.
+        pytest.param(
+            _RDEPS_COMMAND,
+            {"stdout": _EXHAUSTIVE_RESPONSE, "stderr": "", "interrupted": False, "isImage": False},
+            id="bash-stdout-envelope",
         ),
     ],
 )
-def test_fn_rdeps_records_module_portion(command: str, session: str, tmp_path: Path) -> None:
-    """fn-rdeps records the module portion (before ``::``), matching on the echoed qname."""
-    response = _response("mypackage.auth::validate_token", _COMPLETE_BLOCK, key="qname")
-    _run(command, response, session, tmp_path)
+def test_sentinel_written_for_real_emitted_commands(command: str, response: object, tmp_path: Path) -> None:
+    """Every real emitted rdeps/fn-rdeps form with a complete result writes the module to the sentinel.
 
-    sentinel = tmp_path / f"codemap-exhausted-{session}"
+    Each command string is copied from a live skill block (see module docstring) and paired with the response shape it
+    produces; fn-rdeps matches on the echoed qname and records the module portion before ``::``.
+    """
+    _run(command, response, _SESSION, tmp_path)
+
+    sentinel = _sentinel(tmp_path)
     assert sentinel.exists(), f"sentinel not written for command: {command}"
-    assert {"mypackage.auth", "mypackage/auth"} <= set(sentinel.read_text().split())
+    assert _ARMED_TOKENS <= set(sentinel.read_text().split())
 
 
 _TRUNCATED_PREVIEW_RESPONSE = _response(
-    "mypackage.auth",
-    {"query_complete": True, "exhaustive": True, "truncated": True, "total_available": 1000},
+    "mypackage.auth", {"query_complete": True, "exhaustive": True, "truncated": True, "total_available": 1000}
 )
 
 
 @pytest.mark.parametrize(
-    ("command", "response", "session"),
+    ("command", "response"),
     [
-        pytest.param(
-            'scan-query rdeps "mypackage.auth"', _NONEXHAUSTIVE_RESPONSE, "sess-nonexh", id="non-exhaustive-result"
-        ),
+        pytest.param(_RDEPS_COMMAND, _NONEXHAUSTIVE_RESPONSE, id="non-exhaustive-result"),
         # A graph-complete display slice cannot suppress a later exhaustive caller query.
         pytest.param(
-            'scan-query rdeps "mypackage.auth" --limit 20',
-            _TRUNCATED_PREVIEW_RESPONSE,
-            "sess-preview",
-            id="truncated-rdeps-preview",
+            'scan-query rdeps "mypackage.auth" --limit 20', _TRUNCATED_PREVIEW_RESPONSE, id="truncated-rdeps-preview"
         ),
-        pytest.param('grep -r "import mypackage.auth" .', _EXHAUSTIVE_RESPONSE, "sess-grep", id="unrelated-command"),
+        pytest.param('grep -r "import mypackage.auth" .', _EXHAUSTIVE_RESPONSE, id="unrelated-command"),
         # A complete result whose own identity is another module must not arm this one.
         pytest.param(
-            'scan-query rdeps "mypackage.auth"',
-            _response("mypackage.other", _COMPLETE_BLOCK),
-            "sess-foreign",
-            id="response-for-a-different-module",
+            _RDEPS_COMMAND, _response("mypackage.other", _COMPLETE_BLOCK), id="response-for-a-different-module"
         ),
         # Output the hook cannot parse fails open — it never guesses completeness.
+        pytest.param(_RDEPS_COMMAND, "mypackage.auth is query_complete: true, trust me", id="unparsable-response"),
+        # A complete flag on an unrelated sub-result must not arm the queried module.
         pytest.param(
-            'scan-query rdeps "mypackage.auth"',
-            "mypackage.auth is query_complete: true, trust me",
-            "sess-prose",
-            id="unparsable-response",
+            _RDEPS_COMMAND,
+            json.dumps(
+                {
+                    "module": "mypackage.auth",
+                    "index": {"query_complete": False, "stale": False},
+                    "other_query": {"module": "mypackage.other", "index": {"query_complete": True}},
+                }
+            ),
+            id="mixed-response-foreign-flag",
         ),
     ],
 )
-def test_sentinel_not_written_when_the_result_does_not_arm(
-    command: str, response: object, session: str, tmp_path: Path
-) -> None:
-    """A non-exhaustive, truncated, unrelated, foreign-module or unparsable result must NOT arm the guard.
+def test_result_that_does_not_arm_leaves_no_sentinel(command: str, response: object, tmp_path: Path) -> None:
+    """A non-exhaustive, truncated, unrelated, foreign-module, unparsable or mixed result must NOT arm the guard.
 
-    Completeness is taken only from the queried target's own, parseable, graph-complete result of a scan-query rdeps/fn-
-    rdeps command; anything else leaves no sentinel behind.
+    Completeness is taken only from the queried target's OWN, parseable, graph-complete result of a scan-query rdeps/fn-
+    rdeps command, never from a text scan of the whole response; anything else leaves no sentinel behind.
     """
-    _run(command, response, session, tmp_path)
+    _run(command, response, _SESSION, tmp_path)
 
-    assert not (tmp_path / f"codemap-exhausted-{session}").exists()
-
-
-def test_query_complete_alone_arms_sentinel(tmp_path: Path) -> None:
-    """A forward-only result (query_complete, no legacy exhaustive) still arms the guard."""
-    _run('scan-query rdeps "mypackage.auth"', _QUERY_COMPLETE_ONLY_RESPONSE, "sess-qc-only", tmp_path)
-
-    sentinel = tmp_path / "codemap-exhausted-sess-qc-only"
-    assert sentinel.exists(), "query_complete:true alone must write the sentinel"
-    assert "mypackage.auth" in sentinel.read_text().split()
+    assert not _sentinel(tmp_path).exists()
 
 
 def test_codemap_hooks_read_stdin_by_fd_for_simulated_windows() -> None:
-    """Codemap hooks must not use POSIX-only /dev/stdin."""
+    """Codemap hooks must not use POSIX-only /dev/stdin.
+
+    Hook sources are scanned for the literal path; Windows has no such file, so any hit would break the hook there.
+    """
     hooks_dir = _HOOK.parent
     offenders = [
         path.name for path in sorted(hooks_dir.glob("*.py")) if "/dev/stdin" in path.read_text(encoding="utf-8")
@@ -176,50 +175,14 @@ def test_codemap_hooks_read_stdin_by_fd_for_simulated_windows() -> None:
     assert offenders == []
 
 
-class TestCompletenessScoping:
-    """Completeness must come from the queried target's OWN result, never a text scan.
-
-    The hook used to regex a flattened dump of the entire ``tool_response`` for ``"query_complete": true``. A combined
-    response — one Bash call whose output carries more than the rdeps result — therefore armed the deny for the queried
-    module using a completeness flag that belonged to some other sub-result.
-    """
-
-    _COMMAND = 'scan-query rdeps "mypackage.auth"'
-
-    def test_mixed_response_does_not_arm_from_foreign_flag(self, tmp_path: Path) -> None:
-        """A complete flag on an unrelated sub-result must not arm the queried module."""
-        mixed = json.dumps(
-            {
-                "module": "mypackage.auth",
-                "index": {"query_complete": False, "stale": False},
-                "other_query": {"module": "mypackage.other", "index": {"query_complete": True}},
-            }
-        )
-        _drive(
-            {"tool_input": {"command": self._COMMAND}, "tool_response": mixed, "session_id": "sess-mixed"},
-            tmp_path,
-        )
-
-        assert not (tmp_path / "codemap-exhausted-sess-mixed").exists()
-
-    def test_bash_stdout_envelope_arms(self, tmp_path: Path) -> None:
-        """The Bash tool's ``{"stdout": ...}`` response envelope is parsed, not stringified."""
-        envelope = {"stdout": _EXHAUSTIVE_RESPONSE, "stderr": "", "interrupted": False, "isImage": False}
-        _run(self._COMMAND, envelope, "sess-envelope", tmp_path)
-
-        sentinel = tmp_path / "codemap-exhausted-sess-envelope"
-        assert sentinel.exists(), "a Bash stdout envelope carrying a complete result must arm the guard"
-        assert "mypackage.auth" in sentinel.read_text().split()
-
-
 class TestEditInvalidation:
     """A source edit drops the sentinel: an exhaustive caller set cannot outlive its tree."""
 
     @staticmethod
-    def _arm(tmp_path: Path, session: str = "sess-edit") -> Path:
+    def _arm(tmp_path: Path, session: str = _SESSION) -> Path:
         """Arm the sentinel through the real recording path and return it."""
-        _run('scan-query rdeps "mypackage.auth"', _EXHAUSTIVE_RESPONSE, session, tmp_path)
-        sentinel = tmp_path / f"codemap-exhausted-{session}"
+        _run(_RDEPS_COMMAND, _EXHAUSTIVE_RESPONSE, session, tmp_path)
+        sentinel = _sentinel(tmp_path, session)
         assert sentinel.exists(), "precondition: sentinel armed"
         return sentinel
 
@@ -236,33 +199,39 @@ class TestEditInvalidation:
         ],
     )
     def test_source_edit_drops_sentinel(self, tool_name: str, tool_input: dict, tmp_path: Path) -> None:
-        """Editing a Python source file, or an edit with an unreadable path, invalidates the recorded caller set."""
+        """Editing a Python source file, or an edit with an unreadable path, invalidates the recorded caller set.
+
+        The sentinel records an exhaustive caller set for a module; any edit that could change the import graph makes
+        that set untrustworthy, so the guard must stop honouring it.
+        """
         sentinel = self._arm(tmp_path)
 
-        _drive({"tool_name": tool_name, "tool_input": tool_input, "session_id": "sess-edit"}, tmp_path)
+        _drive({"tool_name": tool_name, "tool_input": tool_input, "session_id": _SESSION}, tmp_path)
 
         assert not sentinel.exists(), (
             f"{tool_name} on {tool_input or 'an unreadable target'} must invalidate the sentinel"
         )
 
     def test_non_source_edit_keeps_sentinel(self, tmp_path: Path) -> None:
-        """Editing a file that cannot change the import graph leaves the sentinel armed."""
-        sentinel = self._arm(tmp_path, "sess-doc-edit")
+        """Editing a file that cannot change the import graph leaves the sentinel armed.
 
-        _drive(
-            {"tool_name": "Edit", "tool_input": {"file_path": "/repo/README.md"}, "session_id": "sess-doc-edit"},
-            tmp_path,
-        )
+        A docs edit cannot change who imports a module, so discarding the caller set would only force a needless re-
+        query.
+        """
+        sentinel = self._arm(tmp_path)
+
+        _drive({"tool_name": "Edit", "tool_input": {"file_path": "/repo/README.md"}, "session_id": _SESSION}, tmp_path)
 
         assert sentinel.exists(), "a docs edit must not discard a still-valid caller set"
 
     def test_invalidation_without_sentinel_is_a_noop(self, tmp_path: Path) -> None:
-        """Invalidating when nothing is armed must not fail the hook."""
-        _drive(
-            {"tool_name": "Edit", "tool_input": {"file_path": "/repo/a.py"}, "session_id": "sess-absent"},
-            tmp_path,
-        )
-        assert not (tmp_path / "codemap-exhausted-sess-absent").exists()
+        """Invalidating when nothing is armed must not fail the hook.
+
+        The hook fires on every edit, most of them in sessions that never armed a sentinel; ``_drive`` asserts exit 0.
+        """
+        _drive({"tool_name": "Edit", "tool_input": {"file_path": "/repo/a.py"}, "session_id": _SESSION}, tmp_path)
+
+        assert not _sentinel(tmp_path).exists()
 
 
 class TestMissingSessionKey:
@@ -272,59 +241,72 @@ class TestMissingSessionKey:
     session id wrote to — and denied each other through — the same file.
     """
 
-    _EVENT: ClassVar = {
-        "tool_input": {"command": 'scan-query rdeps "mypackage.auth"'},
-        "tool_response": _EXHAUSTIVE_RESPONSE,
-    }
+    _EVENT: ClassVar = {"tool_input": {"command": _RDEPS_COMMAND}, "tool_response": _EXHAUSTIVE_RESPONSE}
+
+    @staticmethod
+    def _drive_session_less(tmp_path: Path, runs: list[tuple[str, str]]) -> list[str]:
+        """Feed the session-less event once per ``(project, CSID)`` pair and return the sentinel names written."""
+        for name, csid in runs:
+            project = tmp_path / name
+            project.mkdir(exist_ok=True)
+            _drive(TestMissingSessionKey._EVENT, tmp_path, cwd=project, CSID=csid)
+        return sorted(p.name for p in tmp_path.glob("codemap-exhausted-*"))
 
     def test_fallback_key_is_not_the_literal_nosession(self, tmp_path: Path) -> None:
-        """The fallback still records, but never under a project-agnostic name."""
-        project = tmp_path / "proj-alpha"
-        project.mkdir()
+        """The fallback still records, but never under a project-agnostic name.
 
-        _drive(self._EVENT, tmp_path, cwd=project, CSID="session-one")
+        The sentinel name must be derived from the working project and the session token instead of a constant.
+        """
+        written = self._drive_session_less(tmp_path, [("proj-alpha", "session-one")])
 
         assert not (tmp_path / "codemap-exhausted-nosession").exists()
-        written = [p.name for p in tmp_path.glob("codemap-exhausted-*")]
         assert written == ["codemap-exhausted-proj-alpha-session-one"]
 
-    def test_two_projects_do_not_share_one_sentinel(self, tmp_path: Path) -> None:
-        """Concurrent session-less runs in different projects stay in separate sentinels."""
-        for name in ("proj-alpha", "proj-beta"):
-            project = tmp_path / name
-            project.mkdir()
-            _drive(self._EVENT, tmp_path, cwd=project, CSID="session-one")
+    @pytest.mark.parametrize(
+        ("runs", "expected"),
+        [
+            pytest.param(
+                [("proj-alpha", "session-one"), ("proj-beta", "session-one")],
+                ["codemap-exhausted-proj-alpha-session-one", "codemap-exhausted-proj-beta-session-one"],
+                id="two-projects-one-session",
+            ),
+            pytest.param(
+                [("proj-alpha", "session-one"), ("proj-alpha", "session-two")],
+                ["codemap-exhausted-proj-alpha-session-one", "codemap-exhausted-proj-alpha-session-two"],
+                id="two-sessions-one-project",
+            ),
+        ],
+    )
+    def test_concurrent_runs_do_not_share_one_sentinel(
+        self, tmp_path: Path, runs: list[tuple[str, str]], expected: list[str]
+    ) -> None:
+        """Session-less runs differing by project or by session token stay in separate sentinels.
 
-        assert sorted(p.name for p in tmp_path.glob("codemap-exhausted-*")) == [
-            "codemap-exhausted-proj-alpha-session-one",
-            "codemap-exhausted-proj-beta-session-one",
-        ]
-
-    def test_two_sessions_in_one_project_do_not_share_one_sentinel(self, tmp_path: Path) -> None:
-        """The session token stays the terminal suffix, so concurrent sessions stay apart."""
-        project = tmp_path / "proj-alpha"
-        project.mkdir()
-
-        for csid in ("session-one", "session-two"):
-            _drive(self._EVENT, tmp_path, cwd=project, CSID=csid)
-
-        assert sorted(p.name for p in tmp_path.glob("codemap-exhausted-*")) == [
-            "codemap-exhausted-proj-alpha-session-one",
-            "codemap-exhausted-proj-alpha-session-two",
-        ]
+        The session token stays the terminal suffix, so concurrent sessions in one project stay apart as well.
+        """
+        assert self._drive_session_less(tmp_path, runs) == expected
 
     def test_traversal_in_session_id_cannot_escape_the_temp_dir(self, tmp_path: Path) -> None:
-        """A host-supplied session id is sanitized before it reaches a filename."""
-        _run('scan-query rdeps "mypackage.auth"', _EXHAUSTIVE_RESPONSE, "../escaped", tmp_path)
+        """A host-supplied session id is sanitized before it reaches a filename.
+
+        A ``../`` session id would otherwise write the sentinel outside the temp directory.
+        """
+        _run(_RDEPS_COMMAND, _EXHAUSTIVE_RESPONSE, "../escaped", tmp_path)
 
         assert not (tmp_path.parent / "codemap-exhausted-escaped").exists()
         assert list(tmp_path.glob("codemap-exhausted-*"))
 
 
 def test_sentinel_mtime_tracks_last_record(tmp_path: Path) -> None:
-    """Recording refreshes the sentinel mtime, which is what the guard's TTL reads."""
-    before = time.time()
-    _run('scan-query rdeps "mypackage.auth"', _EXHAUSTIVE_RESPONSE, "sess-mtime", tmp_path)
+    """Recording refreshes the sentinel mtime, which is what the guard's TTL reads.
 
-    sentinel = tmp_path / "codemap-exhausted-sess-mtime"
-    assert sentinel.stat().st_mtime >= before - 1
+    An armed sentinel is aged to the epoch, then recorded again; a fresh mtime shows the guard's TTL restarts from the
+    latest record rather than the first.
+    """
+    _run(_RDEPS_COMMAND, _EXHAUSTIVE_RESPONSE, _SESSION, tmp_path)
+    sentinel = _sentinel(tmp_path)
+    os.utime(sentinel, (1, 1))
+
+    _run(_RDEPS_COMMAND, _EXHAUSTIVE_RESPONSE, _SESSION, tmp_path)
+
+    assert sentinel.stat().st_mtime > 1

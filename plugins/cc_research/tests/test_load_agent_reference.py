@@ -6,31 +6,36 @@ block, argument and path-component validation, and the stderr notice when the cw
 
 from __future__ import annotations
 
-import importlib.util
 from pathlib import Path
 
 import pytest
+from _research_text import load_module
 
-_SCRIPT = Path(__file__).resolve().parent.parent / "bin" / "load-agent-reference.py"
-_spec = importlib.util.spec_from_file_location("research_load_agent_reference", _SCRIPT)
-_mod = importlib.util.module_from_spec(_spec)  # type: ignore[arg-type]
-_spec.loader.exec_module(_mod)  # type: ignore[union-attr]
+_mod = load_module(
+    Path(__file__).resolve().parent.parent / "bin" / "load-agent-reference.py", "research_load_agent_reference"
+)
 
 main = _mod.main
 _DEGRADED = "degraded: fragment unavailable"
 
 
 @pytest.fixture
-def plugin_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Point ``HOME``/``USERPROFILE`` at an empty directory so the real plugin cache is never consulted."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    return home
+
+
+@pytest.fixture
+def plugin_root(tmp_path: Path, home: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Build a plugin root with one sidecar, isolated from the real home directory's plugin cache."""
     root = tmp_path / "plugin"
     sidecar = root / "references" / "scientist"
     sidecar.mkdir(parents=True)
     (sidecar / "frag.md").write_bytes(b"line one\r\nline two\n")
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("USERPROFILE", str(home))
     monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(root))
     return root
 
@@ -51,14 +56,20 @@ class TestEmit:
     def test_missing_fragment_prints_degraded_message(
         self, plugin_root: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """An absent fragment prints the caller's degraded message and exits 0, so the skill continues."""
+        """An absent fragment prints the caller's degraded message and exits 0, so the skill continues.
+
+        The sidecar directory exists but the named fragment does not: the skill must degrade, not stop.
+        """
         code = main(["load-agent-reference.py", "scientist", "absent.md", _DEGRADED])
 
         assert code == 0
         assert capsys.readouterr().out.strip() == _DEGRADED
 
     def test_missing_sidecar_blocks(self, plugin_root: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """An agent with no sidecar directory exits 1 with a BLOCKED line on stderr."""
+        """An agent with no sidecar directory exits 1 with a BLOCKED line on stderr.
+
+        Unlike a missing fragment, a missing sidecar means the install is wrong, so the loader must not continue.
+        """
         code = main(["load-agent-reference.py", "unknown-agent", "frag.md", _DEGRADED])
 
         assert code == 1
@@ -79,8 +90,12 @@ class TestValidation:
             pytest.param(["scientist", "", _DEGRADED], id="empty-fragment"),
         ],
     )
-    def test_invalid_arguments(self, argv: list[str], plugin_root: Path) -> None:
-        """Wrong argument count, an agent outside ``[A-Za-z0-9_-]+``, or an unsafe fragment name exits 2."""
+    def test_rejects_invalid_arguments(self, argv: list[str], plugin_root: Path) -> None:
+        """Wrong argument count, an agent outside ``[A-Za-z0-9_-]+``, or an unsafe fragment name exits 2.
+
+        The agent and fragment names are joined into a filesystem path, so traversal and newline tricks must be refused
+        before any lookup happens.
+        """
         assert main(["load-agent-reference.py", *argv]) == 2
 
 
@@ -88,14 +103,14 @@ class TestCacheTier:
     """Installed-cache lookup when the plugin root carries no sidecar for the agent."""
 
     def test_newest_non_orphaned_version_wins(
-        self, plugin_root: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        self, plugin_root: Path, home: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """The highest non-orphaned research version's sidecar is read; a newer orphaned install is skipped.
 
         Several cached versions coexist after upgrades. The old full-cache walk returned whichever directory it met
         first; a superseded (``.orphaned_at``) install must never shadow the live one.
         """
-        research = tmp_path / "home" / ".claude" / "plugins" / "cache" / "market" / "research"
+        research = home / ".claude" / "plugins" / "cache" / "market" / "research"
         for version, text in (("0.9.0", "old\n"), ("0.29.0", "live\n"), ("0.30.0", "orphaned\n")):
             sidecar = research / version / "references" / "data-steward"
             sidecar.mkdir(parents=True)
@@ -109,15 +124,11 @@ class TestCacheTier:
 
 
 @pytest.fixture
-def cwd_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def cwd_tree(tmp_path: Path, home: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Enter a cwd holding a ``scientist`` sidecar under ``plugins/cc_research``, no plugin root, an empty home."""
     sidecar = tmp_path / "plugins" / "cc_research" / "references" / "scientist"
     sidecar.mkdir(parents=True)
     (sidecar / "frag.md").write_text("from cwd\n", encoding="utf-8", newline="\n")
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("USERPROFILE", str(home))
     monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
     monkeypatch.chdir(tmp_path)
     return tmp_path
@@ -159,10 +170,13 @@ class TestCwdFallback:
         assert "! BLOCKED" in captured.err
 
     def test_untrusted_cwd_tree_falls_through_to_cache(
-        self, cwd_tree: Path, capsys: pytest.CaptureFixture[str]
+        self, cwd_tree: Path, home: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """A cwd tree without research's own manifest is skipped in favour of the installed cache copy."""
-        cached = cwd_tree / "home" / ".claude" / "plugins" / "cache" / "market" / "research" / "0.1.0"
+        """A cwd tree without research's own manifest is skipped in favour of the installed cache copy.
+
+        With the cache populated the untrusted tree is ignored silently rather than blocking, so the agent still loads.
+        """
+        cached = home / ".claude" / "plugins" / "cache" / "market" / "research" / "0.1.0"
         (cached / "references" / "scientist").mkdir(parents=True)
         (cached / "references" / "scientist" / "frag.md").write_text("from cache\n", encoding="utf-8", newline="\n")
 

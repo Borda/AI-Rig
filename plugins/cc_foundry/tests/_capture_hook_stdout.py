@@ -22,6 +22,7 @@ import argparse
 import base64
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -117,8 +118,6 @@ def _run_hook(root: Path, hook: str, stdin_text: str) -> dict:
 
 def _path_env() -> str:
     """Return a minimal ``PATH`` — the hooks must not inherit anything else from the capturing shell."""
-    import os
-
     return os.environ.get("PATH", "/usr/bin:/bin")
 
 

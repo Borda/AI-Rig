@@ -15,7 +15,7 @@ from pathlib import Path
 _TESTS_DIR = Path(__file__).resolve().parent
 
 #: Suites whose parametrized ``command`` values, and whose shared-vector ``input`` values, form the corpus.
-SUITES = ("hooks/test_blueprint_allow_js.py", "hooks/test_sentinel_read_allow_js.py")
+SUITES = ("hooks/allow/test_blueprint_allow_js.py", "hooks/allow/test_sentinel_read_allow_js.py")
 
 
 class _Collector:
@@ -47,20 +47,9 @@ def collect_commands() -> list[str]:
     import pytest
 
     collector = _Collector()
-    code = pytest.main(
-        [
-            *(str(_TESTS_DIR / suite) for suite in SUITES),
-            "--collect-only",
-            "-q",
-            "--no-header",
-            "-p",
-            "no:cacheprovider",
-            # The project's ``addopts`` turn on coverage for every run; collection neither needs it nor may pay for it.
-            "-o",
-            "addopts=",
-        ],
-        plugins=[collector],
-    )
+    # The project's ``addopts`` turn on coverage for every run; collection neither needs it nor may pay for it.
+    options = ["--collect-only", "-q", "--no-header", "-p", "no:cacheprovider", "-o", "addopts="]
+    code = pytest.main([*(str(_TESTS_DIR / suite) for suite in SUITES), *options], plugins=[collector])
     if int(code) != 0:
         raise RuntimeError(f"pytest collection failed with exit {code}")
     if not collector.commands:

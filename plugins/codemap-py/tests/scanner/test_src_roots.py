@@ -21,6 +21,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from _scan_helpers import write_tree
 
 # The scan-index implementation now lives in the package:
 # discovery/parsing (incl. former bin/_exclusions.py content) -> codemap_py.scanner,
@@ -43,21 +44,14 @@ _dedup_modules = _graph_mod._dedup_modules
 _resolve_src_roots = _graph_mod._resolve_src_roots
 _parse_file = _scanner_mod._parse_file
 
-
-_PYPROJECT_TWO_ROOTS = '[tool.codemap]\nsrc_roots = ["libs/core/src", "services/api/src"]\n'
-
-
-def _materialize_monorepo(root: Path) -> None:
-    """Write a two-source-root monorepo tree with a pyproject declaring both roots."""
-    (root / "pyproject.toml").write_text(_PYPROJECT_TWO_ROOTS)
-    pkg_a = root / "libs" / "core" / "src" / "pkg_a"
-    pkg_a.mkdir(parents=True)
-    (pkg_a / "__init__.py").write_text("")
-    (pkg_a / "mod_a.py").write_text("def a():\n    return 1\n")
-    pkg_b = root / "services" / "api" / "src" / "pkg_b"
-    pkg_b.mkdir(parents=True)
-    (pkg_b / "__init__.py").write_text("")
-    (pkg_b / "mod_b.py").write_text("def b():\n    return 2\n")
+_MONOREPO_FILES = {
+    "pyproject.toml": '[tool.codemap]\nsrc_roots = ["libs/core/src", "services/api/src"]\n',
+    "libs/core/src/pkg_a/__init__.py": "",
+    "libs/core/src/pkg_a/mod_a.py": "def a():\n    return 1\n",
+    "services/api/src/pkg_b/__init__.py": "",
+    "services/api/src/pkg_b/mod_b.py": "def b():\n    return 2\n",
+}
+_MONOREPO_ROOTS = ("libs/core/src", "services/api/src")
 
 
 def _scan_and_load(scan_index: Path, root: Path, *extra: str) -> dict:
@@ -72,6 +66,14 @@ def _scan_and_load(scan_index: Path, root: Path, *extra: str) -> dict:
     index_path = root / ".cache" / "codemap" / f"{root.name}.json"
     assert index_path.exists(), "scan-index did not produce an index file"
     return json.loads(index_path.read_text())
+
+
+@pytest.fixture(name="monorepo_index", scope="module")
+def _monorepo_index(tmp_path_factory: pytest.TempPathFactory, scan_index: Path) -> dict:
+    """Index of the two-source-root monorepo, scanned once; tests only read it."""
+    root = tmp_path_factory.mktemp("monorepo")
+    write_tree(root, _MONOREPO_FILES)
+    return _scan_and_load(scan_index, root)
 
 
 # ── config parsing / loading ─────────────────────────────────────────────────────
@@ -96,7 +98,11 @@ class TestParseSrcRootsToml:
         ],
     )
     def test_src_roots_array_is_extracted(self, text: str, expected: list[str]):
-        """The ordered ``src_roots`` array of the ``[tool.codemap]`` table is extracted, nothing from other tables."""
+        """The ordered ``src_roots`` array of the ``[tool.codemap]`` table is extracted, nothing from other tables.
+
+        Declaration order is the collision priority, so it must survive parsing; a same-named key in another tool's
+        table must not be mistaken for codemap configuration.
+        """
         assert _parse_codemap_src_roots_toml(text) == expected
 
 
@@ -104,11 +110,15 @@ class TestLoadSrcRoots:
     """load_src_roots resolves existing directories in priority order."""
 
     def test_returns_existing_dirs_in_declaration_order(self, tmp_path: Path):
-        """Only directories that exist are returned, ordered as declared."""
-        _materialize_monorepo(tmp_path)
+        """Only directories that exist are returned, ordered as declared.
+
+        Both roots of the monorepo exist on disk; they come back as absolute paths in the order of the config.
+        """
+        write_tree(tmp_path, _MONOREPO_FILES)
+
         roots = load_src_roots(tmp_path)
-        rels = [p.relative_to(tmp_path).as_posix() for p in roots]
-        assert rels == ["libs/core/src", "services/api/src"]
+
+        assert [p.relative_to(tmp_path).as_posix() for p in roots] == list(_MONOREPO_ROOTS)
 
     @pytest.mark.parametrize(
         ("declared", "existing_dir"),
@@ -120,14 +130,23 @@ class TestLoadSrcRoots:
         ],
     )
     def test_unusable_entries_dropped(self, tmp_path: Path, declared: str, existing_dir: str):
-        """Only declared roots that exist and stay inside the project root survive."""
-        (tmp_path / "pyproject.toml").write_text(f"[tool.codemap]\nsrc_roots = {declared}\n")
+        """Only declared roots that exist and stay inside the project root survive.
+
+        A stale entry must not break the scan, and a ``..`` entry must not let the config point the scanner at files
+        outside the project.
+        """
+        write_tree(tmp_path, {"pyproject.toml": f"[tool.codemap]\nsrc_roots = {declared}\n"})
         (tmp_path / existing_dir).mkdir(parents=True)
+
         roots = load_src_roots(tmp_path)
+
         assert [p.relative_to(tmp_path).as_posix() for p in roots] == [existing_dir]
 
     def test_no_pyproject_returns_empty(self, tmp_path: Path):
-        """A project without pyproject.toml has no configured roots."""
+        """A project without pyproject.toml has no configured roots.
+
+        The single-root detection then applies, exactly as before ``src_roots`` existed.
+        """
         assert load_src_roots(tmp_path) == []
 
 
@@ -147,20 +166,31 @@ class TestEffectiveSrcRoot:
         ],
     )
     def test_file_maps_to_its_matching_root(self, tmp_path: Path, relative_file: str, root_index: int):
-        """A file under a configured root is named relative to that root, by priority."""
+        """A file under a configured root is named relative to that root, by priority.
+
+        Module names are derived from the root a file lives under, so the first matching root in config order must win.
+        """
         roots = (tmp_path / "libs" / "core" / "src", tmp_path / "services" / "api" / "src")
+
         assert _effective_src_root(tmp_path / relative_file, roots, tmp_path) == roots[root_index]
 
-    def test_falls_back_to_default_when_no_root_matches(self, tmp_path: Path):
-        """A file under no configured root falls back to the default root."""
-        r0 = tmp_path / "libs" / "core" / "src"
-        fp = tmp_path / "other" / "stray.py"
-        assert _effective_src_root(fp, (r0,), tmp_path) == tmp_path
+    @pytest.mark.parametrize(
+        ("configured", "relative_file"),
+        [
+            # A file under no configured root falls back to the default root.
+            pytest.param(("libs/core/src",), "other/stray.py", id="no-root-matches"),
+            # With no configured roots every file uses the default (single-root) path.
+            pytest.param((), "pkg/mod.py", id="no-configured-roots"),
+        ],
+    )
+    def test_falls_back_to_default_root(self, tmp_path: Path, configured: tuple[str, ...], relative_file: str):
+        """A file under no configured root (or with none configured) uses the default root.
 
-    def test_no_configured_roots_uses_default(self, tmp_path: Path):
-        """With no configured roots every file uses the default (single-root) path."""
-        fp = tmp_path / "pkg" / "mod.py"
-        assert _effective_src_root(fp, (), tmp_path) == tmp_path
+        Stray files and projects without ``src_roots`` keep the pre-monorepo single-root naming.
+        """
+        roots = tuple(tmp_path / rel for rel in configured)
+
+        assert _effective_src_root(tmp_path / relative_file, roots, tmp_path) == tmp_path
 
 
 class TestSrcRootRels:
@@ -182,7 +212,10 @@ class TestSrcRootRels:
         ],
     )
     def test_value_is_normalised_to_a_tuple(self, value, expected):
-        """A single string or a tuple becomes a tuple of non-empty entries in priority order."""
+        """A single string or a tuple becomes a tuple of non-empty entries in priority order.
+
+        Callers still pass the legacy single-string form; both shapes must feed the same ranking code.
+        """
         assert _src_root_rels(value) == expected
 
 
@@ -193,22 +226,22 @@ class TestUnderRootRank:
         ("path", "roots", "expected_rank"),
         [
             # A path under the highest-priority root ranks 0.
-            pytest.param(
-                "libs/core/src/pkg/m.py", ("libs/core/src", "services/api/src"), 0, id="first-root-ranks-zero"
-            ),
+            pytest.param("libs/core/src/pkg/m.py", _MONOREPO_ROOTS, 0, id="first-root-ranks-zero"),
             # A path under the second root ranks 1 (after the first).
-            pytest.param(
-                "services/api/src/pkg/m.py", ("libs/core/src", "services/api/src"), 1, id="second-root-ranks-one"
-            ),
+            pytest.param("services/api/src/pkg/m.py", _MONOREPO_ROOTS, 1, id="second-root-ranks-one"),
             # A path under no configured root ranks after every configured root.
-            pytest.param("stray/m.py", ("libs/core/src", "services/api/src"), 2, id="no-root-ranks-after-all"),
+            pytest.param("stray/m.py", _MONOREPO_ROOTS, 2, id="no-root-ranks-after-all"),
             # One root reproduces the original under(0)/outside(1) ranking.
             pytest.param("src/m.py", ("src",), 0, id="single-root-under-ranks-zero"),
             pytest.param("copy/m.py", ("src",), 1, id="single-root-outside-ranks-one"),
         ],
     )
     def test_rank_is_the_index_of_the_first_root_the_path_lies_under(self, path, roots, expected_rank):
-        """A path ranks by the first source root it lies under, or after all roots when under none."""
+        """A path ranks by the first source root it lies under, or after all roots when under none.
+
+        The rank is the primary key of the collision winner choice, so each position, the no-root position and the
+        single-root special case must be pinned.
+        """
         assert _under_root_rank(path, roots) == expected_rank
 
 
@@ -222,58 +255,65 @@ class TestDedupKeyMultiRoot:
             pytest.param(
                 "libs/core/src/deep/nested/m.py",
                 "services/api/src/m.py",
-                ("libs/core/src", "services/api/src"),
+                _MONOREPO_ROOTS,
                 id="earlier-root-beats-later-root",
             ),
             # A path under any configured root beats a stray copy under none.
-            pytest.param(
-                "services/api/src/pkg/m.py",
-                "vendor/pkg/m.py",
-                ("libs/core/src", "services/api/src"),
-                id="any-root-beats-non-root",
-            ),
+            pytest.param("services/api/src/pkg/m.py", "vendor/pkg/m.py", _MONOREPO_ROOTS, id="any-root-beats-non-root"),
             # The pre-existing single-rel-string call form keeps working.
             pytest.param("src/m.py", "copy/m.py", "src", id="legacy-single-string-still-supported"),
         ],
     )
     def test_winner_sorts_before_loser(self, winner: str, loser: str, roots):
-        """A path under a higher-priority configured root sorts before a lower-priority or stray one."""
+        """A path under a higher-priority configured root sorts before a lower-priority or stray one.
+
+        Config order, not path length, decides between roots; the legacy single-string argument must behave the same.
+        """
         assert _dedup_key(winner, roots) < _dedup_key(loser, roots)
 
 
 class TestDedupModulesRootAware:
     """_dedup_modules resolves collisions using multi-root priority."""
 
-    @pytest.mark.parametrize("reverse", [False, True])
-    def test_root_path_beats_stray_copy_deterministically(self, reverse: bool):
-        """A configured-root path always wins over a stray copy across input orders."""
-        entries = [
-            {"name": "pkg_b.mod_b", "path": "vendor/pkg_b/mod_b.py"},
-            {"name": "pkg_b.mod_b", "path": "services/api/src/pkg_b/mod_b.py"},
-        ]
-        roots = ("libs/core/src", "services/api/src")
-        order = list(reversed(entries)) if reverse else entries
-        kept, collisions = _dedup_modules(list(order), roots)
-        assert len(kept) == 1
-        assert kept[0]["path"] == "services/api/src/pkg_b/mod_b.py"
-        assert collisions == [
-            {
-                "name": "pkg_b.mod_b",
-                "kept": "services/api/src/pkg_b/mod_b.py",
-                "dropped": ["vendor/pkg_b/mod_b.py"],
-            }
-        ]
+    @pytest.mark.parametrize(
+        ("name", "paths", "kept", "dropped"),
+        [
+            # A configured-root path beats a stray copy wherever the stray appears in the input.
+            pytest.param(
+                "pkg_b.mod_b",
+                ["vendor/pkg_b/mod_b.py", "services/api/src/pkg_b/mod_b.py"],
+                "services/api/src/pkg_b/mod_b.py",
+                ["vendor/pkg_b/mod_b.py"],
+                id="stray-copy-loses",
+            ),
+            pytest.param(
+                "pkg_b.mod_b",
+                ["services/api/src/pkg_b/mod_b.py", "vendor/pkg_b/mod_b.py"],
+                "services/api/src/pkg_b/mod_b.py",
+                ["vendor/pkg_b/mod_b.py"],
+                id="stray-copy-loses-reversed-input",
+            ),
+            # The same name under two configured roots goes to the first-listed root.
+            pytest.param(
+                "shared.mod",
+                ["services/api/src/shared/mod.py", "libs/core/src/shared/mod.py"],
+                "libs/core/src/shared/mod.py",
+                ["services/api/src/shared/mod.py"],
+                id="earlier-root-wins-over-later-root",
+            ),
+        ],
+    )
+    def test_root_priority_decides_winner(self, name: str, paths: list[str], kept: str, dropped: list[str]):
+        """The path under the highest-priority configured root wins and the loser is recorded as dropped.
 
-    def test_earlier_root_wins_over_later_root(self):
-        """When the same name appears under two roots, the first-listed root wins."""
-        entries = [
-            {"name": "shared.mod", "path": "services/api/src/shared/mod.py"},
-            {"name": "shared.mod", "path": "libs/core/src/shared/mod.py"},
-        ]
-        roots = ("libs/core/src", "services/api/src")
-        kept, collisions = _dedup_modules(entries, roots)
-        assert kept[0]["path"] == "libs/core/src/shared/mod.py"
-        assert collisions[0]["kept"] == "libs/core/src/shared/mod.py"
+        Input order mimics filesystem walk order, which is arbitrary; the survivor must follow root priority only.
+        """
+        entries = [{"name": name, "path": path} for path in paths]
+
+        kept_entries, collisions = _dedup_modules(entries, _MONOREPO_ROOTS)
+
+        assert [m["path"] for m in kept_entries] == [kept]
+        assert collisions == [{"name": name, "kept": kept, "dropped": dropped}]
 
 
 # ── end-to-end scan behaviour ─────────────────────────────────────────────────────
@@ -282,19 +322,23 @@ class TestDedupModulesRootAware:
 class TestMonorepoScan:
     """A real scan of a two-root monorepo names both packages and records the roots."""
 
-    def test_dotted_names_derive_from_each_root(self, tmp_path: Path, scan_index):
-        """Modules under each configured root get names relative to that root."""
-        _materialize_monorepo(tmp_path)
-        index = _scan_and_load(scan_index, tmp_path)
-        names = {m["name"] for m in index["modules"]}
+    def test_dotted_names_derive_from_each_root(self, monorepo_index: dict):
+        """Modules under each configured root get names relative to that root.
+
+        ``pkg_a`` lives under ``libs/core/src`` and ``pkg_b`` under ``services/api/src``; neither name may carry the
+        directory prefix of its root.
+        """
+        names = {m["name"] for m in monorepo_index["modules"]}
+
         assert {"pkg_a", "pkg_a.mod_a", "pkg_b", "pkg_b.mod_b"}.issubset(names)
 
-    def test_meta_records_effective_roots(self, tmp_path: Path, scan_index):
-        """The index meta lists both configured source roots and flags a src layout."""
-        _materialize_monorepo(tmp_path)
-        index = _scan_and_load(scan_index, tmp_path)
-        assert index["src_roots"] == ["libs/core/src", "services/api/src"]
-        assert index["src_layout"] is True
+    def test_meta_records_effective_roots(self, monorepo_index: dict):
+        """The index meta lists both configured source roots and flags a src layout.
+
+        Downstream queries read ``src_roots`` to reproduce the naming without rescanning.
+        """
+        assert monorepo_index["src_roots"] == list(_MONOREPO_ROOTS)
+        assert monorepo_index["src_layout"] is True
 
     def test_root_path_wins_collision_over_stray_copy(self, tmp_path: Path, scan_index):
         """A stray copy of a package colliding with a root path loses deterministically.
@@ -303,13 +347,12 @@ class TestMonorepoScan:
         the real package under ``services/api/src``. The configured-root path must win, since it ranks under a source
         root and the stray is under none.
         """
-        _materialize_monorepo(tmp_path)
-        stray = tmp_path / "pkg_b"
-        stray.mkdir()
-        (stray / "__init__.py").write_text("")
-        (stray / "mod_b.py").write_text("def b():\n    return 99\n")
+        write_tree(
+            tmp_path, {**_MONOREPO_FILES, "pkg_b/__init__.py": "", "pkg_b/mod_b.py": "def b():\n    return 99\n"}
+        )
 
         index = _scan_and_load(scan_index, tmp_path)
+
         collision = next((c for c in index["collisions"] if c["name"] == "pkg_b.mod_b"), None)
         assert collision is not None
         assert collision["kept"] == "services/api/src/pkg_b/mod_b.py"
@@ -347,24 +390,31 @@ class TestNoConfigRegression:
         expected_roots: list[str],
         expected_layout: bool,
     ):
-        """Without ``src_roots`` the scan names packages by the detected default root and records its layout."""
-        pkg = tmp_path / package_dir
-        pkg.mkdir(parents=True)
-        (pkg / "__init__.py").write_text("")
-        (pkg / module_file).write_text("def f():\n    return 0\n")
+        """Without ``src_roots`` the scan names packages by the detected default root and records its layout.
+
+        A conventional ``src/`` layout and a flat repository are scanned with no codemap configuration; naming and the
+        recorded layout must match what single-root detection always produced.
+        """
+        write_tree(
+            tmp_path, {f"{package_dir}/__init__.py": "", f"{package_dir}/{module_file}": "def f():\n    return 0\n"}
+        )
 
         index = _scan_and_load(scan_index, tmp_path)
-        names = {m["name"] for m in index["modules"]}
-        assert expected_names.issubset(names)
+
+        assert expected_names.issubset({m["name"] for m in index["modules"]})
         assert index["src_roots"] == expected_roots
         assert index["src_layout"] is expected_layout
 
     def test_resolve_src_roots_collapses_to_single_root(self, tmp_path: Path):
-        """Without config, the resolved context uses only the detected default root."""
-        pkg = tmp_path / "pkg"
-        pkg.mkdir()
-        (pkg / "__init__.py").write_text("")
+        """Without config, the resolved context uses only the detected default root.
+
+        No configured roots means no multi-root dedup ranking: ``dedup_rels`` must be empty so collisions use the
+        legacy ordering.
+        """
+        write_tree(tmp_path, {"pkg/__init__.py": ""})
+
         ctx = _resolve_src_roots(tmp_path)
+
         assert ctx.configured == ()
         assert ctx.dedup_rels(tmp_path) == ()
 
@@ -373,45 +423,57 @@ class TestPackageIdentityOutsideDetectedRoot:
     """Package descendants outside a preferred root retain importable names."""
 
     @pytest.mark.parametrize(
-        ("prefix", "prefix_is_package", "package_init", "configured_root", "expected"),
+        ("files", "worker", "expected"),
         [
-            pytest.param("tests", False, "__init__.py", None, "tests_fabric.worker", id="tests-prefix"),
-            pytest.param("tests", False, "__init__.pyi", None, "tests_fabric.worker", id="stub-package-init"),
-            pytest.param("namespace", False, "__init__.py", None, "tests_fabric.worker", id="namespace-prefix"),
-            pytest.param("tests", True, "__init__.py", None, "tests.tests_fabric.worker", id="real-tests-package"),
             pytest.param(
-                "ignored", False, "__init__.py", "configured/src", "tests_fabric.worker", id="configured-root"
+                {"src/production/__init__.py": "", "tests/tests_fabric/__init__.py": ""},
+                "tests/tests_fabric/worker.py",
+                "tests_fabric.worker",
+                id="tests-prefix",
+            ),
+            pytest.param(
+                {"src/production/__init__.py": "", "tests/tests_fabric/__init__.pyi": ""},
+                "tests/tests_fabric/worker.py",
+                "tests_fabric.worker",
+                id="stub-package-init",
+            ),
+            pytest.param(
+                {"src/production/__init__.py": "", "namespace/tests_fabric/__init__.py": ""},
+                "namespace/tests_fabric/worker.py",
+                "tests_fabric.worker",
+                id="namespace-prefix",
+            ),
+            pytest.param(
+                {"src/production/__init__.py": "", "tests/__init__.py": "", "tests/tests_fabric/__init__.py": ""},
+                "tests/tests_fabric/worker.py",
+                "tests.tests_fabric.worker",
+                id="real-tests-package",
+            ),
+            pytest.param(
+                {
+                    "pyproject.toml": '[tool.codemap]\nsrc_roots = ["configured/src"]\n',
+                    "configured/src/production/__init__.py": "",
+                    "ignored/tests_fabric/__init__.py": "",
+                },
+                "ignored/tests_fabric/worker.py",
+                "tests_fabric.worker",
+                id="configured-root",
             ),
         ],
     )
     def test_nested_package_drops_only_non_package_prefix(
-        self,
-        tmp_path: Path,
-        prefix: str,
-        prefix_is_package: bool,
-        package_init: str,
-        configured_root: str | None,
-        expected: str,
+        self, tmp_path: Path, files: dict[str, str], worker: str, expected: str
     ) -> None:
-        """A source-root mismatch uses the outermost real package as the import root."""
-        source_root = tmp_path / (configured_root or "src")
-        production = source_root / "production"
-        production.mkdir(parents=True)
-        (production / "__init__.py").write_text("")
-        if configured_root:
-            (tmp_path / "pyproject.toml").write_text(f'[tool.codemap]\nsrc_roots = ["{configured_root}"]\n')
+        """A source-root mismatch uses the outermost real package as the import root.
 
-        package_parent = tmp_path / prefix
-        package = package_parent / "tests_fabric"
-        package.mkdir(parents=True)
-        if prefix_is_package:
-            (package_parent / "__init__.py").write_text("")
-        (package / package_init).write_text("")
-        worker = package / "worker.py"
-        worker.write_text("def run():\n    return 1\n")
+        ``tests_fabric`` sits outside the preferred source root under a plain directory (or a real package); only the
+        non-package prefix may be dropped from its importable name, with ``.py`` and ``.pyi`` package inits alike.
+        """
+        write_tree(tmp_path, {**files, worker: "def run():\n    return 1\n"})
 
         context = _resolve_src_roots(tmp_path)
-        entry = _parse_file(worker, tmp_path, context.name_root_for(worker))
+        entry = _parse_file(tmp_path / worker, tmp_path, context.name_root_for(tmp_path / worker))
+
         assert entry["name"] == expected
 
 
@@ -419,14 +481,16 @@ class TestMonorepoIncrementalScan:
     """Incremental re-scan preserves multi-root naming for changed files."""
 
     def test_incremental_names_new_file_under_its_root(self, tmp_path: Path, scan_index):
-        """A file added under the second root after the initial scan is named from that root."""
-        _materialize_monorepo(tmp_path)
-        _scan_and_load(scan_index, tmp_path)
+        """A file added under the second root after the initial scan is named from that root.
 
-        new_mod = tmp_path / "services" / "api" / "src" / "pkg_b" / "extra.py"
-        new_mod.write_text("def c():\n    return 3\n")
+        A full scan indexes the monorepo, ``extra.py`` is added under ``services/api/src`` and only ``--incremental``
+        runs; the new module must get its root-relative name and the recorded roots must stay intact.
+        """
+        write_tree(tmp_path, _MONOREPO_FILES)
+        _scan_and_load(scan_index, tmp_path)
+        write_tree(tmp_path, {"services/api/src/pkg_b/extra.py": "def c():\n    return 3\n"})
+
         index = _scan_and_load(scan_index, tmp_path, "--incremental")
 
-        names = {m["name"] for m in index["modules"]}
-        assert "pkg_b.extra" in names
-        assert index["src_roots"] == ["libs/core/src", "services/api/src"]
+        assert "pkg_b.extra" in {m["name"] for m in index["modules"]}
+        assert index["src_roots"] == list(_MONOREPO_ROOTS)

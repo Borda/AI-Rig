@@ -20,7 +20,9 @@ import pytest
 _DEVELOP = Path(__file__).resolve().parent.parent.parent
 _DOC = _DEVELOP / "skills" / "_shared" / "codemap-context.md"
 _IMPL = _DEVELOP.parent / "cc_oss" / "bin" / "codemap_cache.py"
-_HAS_OSS_IMPLEMENTATION = _IMPL.is_file()
+_requires_oss_implementation = pytest.mark.skipif(
+    not _IMPL.is_file(), reason="requires cc_oss cache implementation for parity check"
+)
 
 # Reasons reach the verdict from three return shapes: a bare string from a per-check helper,
 # that string leading a tuple, and the final ``True, "fresh"``. The variable-carrying
@@ -50,35 +52,54 @@ def _impl_text() -> str:
     return _IMPL.read_text(encoding="utf-8")
 
 
+@pytest.fixture(name="freshness_rule", scope="module")
+def _freshness_rule(doc_text: str) -> str:
+    """Return the freshness-rule paragraph of the document (from its bold label to the next blank line)."""
+    return doc_text.split("**Freshness rule**", 1)[1].split("\n\n", 1)[0]
+
+
 def test_artifact_shape_documents_index_stamp(doc_text: str) -> None:
-    """The prefix block must show the stamp; an artifact written without one is rejected."""
+    """The documented artifact prefix shows the stamp field and its format.
+
+    An artifact written without the stamp is rejected by the reader, so a doc that omits it teaches a broken writer.
+    """
     shape = doc_text.split('{"module": "pkg.mod"', 1)[1].split("```", 1)[0]
     assert "index_stamp" in shape
     assert "<canonical-path>:<size>:<mtime_ns>" in shape
 
 
-def test_freshness_rule_is_fail_closed(doc_text: str) -> None:
-    """The doc must state all three conditions, not just git_sha + scanned_at."""
-    rule = doc_text.split("**Freshness rule**", 1)[1].split("\n\n", 1)[0]
-    for field in ("git_sha", "scanned_at", "index_stamp"):
-        assert field in rule, f"freshness rule omits {field}"
-    assert "fail" in rule.lower()
+@pytest.mark.parametrize("field", ["git_sha", "scanned_at", "index_stamp"])
+def test_freshness_rule_names_every_condition(freshness_rule: str, field: str) -> None:
+    """The freshness rule states all three conditions, not just ``git_sha`` + ``scanned_at``.
+
+    The implementation became three-field first; a two-field doc let writers produce artifacts the reader rejects.
+    """
+    assert field in freshness_rule
 
 
-@pytest.mark.skipif(not _HAS_OSS_IMPLEMENTATION, reason="requires cc_oss cache implementation for parity check")
-def test_documented_verdict_reasons_all_exist(doc_text: str, impl_text: str) -> None:
-    """Every reason string the doc advertises must be one the implementation can return."""
-    rule = doc_text.split("**Freshness rule**", 1)[1].split("\n\n", 1)[0]
-    documented = set(re.findall(r"`(fresh|[a-z_]+_mismatch|index_rebuilt)`", rule))
+def test_freshness_rule_is_fail_closed(freshness_rule: str) -> None:
+    """The freshness rule says an unverifiable artifact fails instead of being trusted."""
+    assert "fail" in freshness_rule.lower()
+
+
+@_requires_oss_implementation
+def test_documented_verdict_reasons_all_exist(freshness_rule: str, impl_text: str) -> None:
+    """Every reason string the doc advertises is one the implementation can return.
+
+    A documented verdict the code never returns would send consumers waiting on a branch that cannot fire.
+    """
+    documented = set(re.findall(r"`(fresh|[a-z_]+_mismatch|index_rebuilt)`", freshness_rule))
     implemented = set(_REASON_RE.findall(impl_text))
     assert documented, "no verdict reasons documented"
     assert documented <= implemented, f"documented but unreachable: {sorted(documented - implemented)}"
 
 
-@pytest.mark.skipif(not _HAS_OSS_IMPLEMENTATION, reason="requires cc_oss cache implementation for parity check")
-def test_no_reason_left_undocumented(doc_text: str, impl_text: str) -> None:
-    """A consumer branching on verdicts needs the full set, not a subset."""
-    rule = doc_text.split("**Freshness rule**", 1)[1].split("\n\n", 1)[0]
+@_requires_oss_implementation
+def test_no_reason_left_undocumented(freshness_rule: str, impl_text: str) -> None:
+    """Every reason the implementation can return is documented in the freshness rule.
+
+    A consumer branching on verdicts needs the full set, not a subset.
+    """
     implemented = set(_REASON_RE.findall(impl_text))
-    missing = {r for r in implemented if f"`{r}`" not in rule}
+    missing = {r for r in implemented if f"`{r}`" not in freshness_rule}
     assert not missing, f"implementation returns undocumented verdicts: {sorted(missing)}"

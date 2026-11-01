@@ -6,74 +6,113 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
+from typing import NamedTuple
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 BASH = shutil.which("bash")
+_requires_bash = pytest.mark.skipif(BASH is None, reason="offline harness requires Bash")
+_BLOCKED_EXIT = 125
 
 
-@pytest.fixture
-def harness_git(tmp_path: Path) -> tuple[Path, dict[str, str]]:
-    """Create the harness's actual Git wrapper around an isolated real repository."""
+class HarnessGit(NamedTuple):
+    """An isolated real repository, the environment that routes ``git`` through the harness wrapper, and the wrapper."""
+
+    repository: Path
+    environment: dict[str, str]
+    wrapper: Path
+
+
+def _git(real_git: str, repository: Path, environment: dict[str, str], *arguments: str) -> None:
+    """Run one real Git command in ``repository`` and fail the fixture when it fails."""
+    subprocess.run([real_git, *arguments], cwd=repository, env=environment, check=True, capture_output=True)
+
+
+@pytest.fixture(scope="module")
+def harness_git(tmp_path_factory: pytest.TempPathFactory) -> HarnessGit:
+    """Create the harness's actual Git wrapper around an isolated real repository.
+
+    Every test only reads the repository or is refused by the wrapper before Git runs, so one copy serves the module.
+    """
+    tmp_path = tmp_path_factory.mktemp("harness-git")
     real_git = shutil.which("git")
     assert real_git is not None
     repository = tmp_path / "repository"
     repository.mkdir()
     environment = os.environ.copy()
     environment.update({"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull})
-    for arguments in (
-        ["init", "-q"],
-        ["config", "user.name", "Fixture"],
-        ["config", "user.email", "fixture@example.invalid"],
-    ):
-        subprocess.run([real_git, *arguments], cwd=repository, env=environment, check=True, capture_output=True)
+    _git(real_git, repository, environment, "init", "-q")
+    _git(real_git, repository, environment, "config", "user.name", "Fixture")
+    _git(real_git, repository, environment, "config", "user.email", "fixture@example.invalid")
     (repository / "tracked.txt").write_text("before\n", encoding="utf-8")
-    subprocess.run([real_git, "add", "tracked.txt"], cwd=repository, env=environment, check=True)
-    subprocess.run([real_git, "commit", "-qm", "fixture"], cwd=repository, env=environment, check=True)
+    _git(real_git, repository, environment, "add", "tracked.txt")
+    _git(real_git, repository, environment, "commit", "-qm", "fixture")
     (repository / "tracked.txt").write_text("after\n", encoding="utf-8")
     (repository / "untracked.txt").write_text("new\n", encoding="utf-8")
 
     source = (ROOT / ".github" / "codex-harness.sh").read_text(encoding="utf-8")
-    wrapper = source.split('cat >"$TMP_BIN/git" <<EOF\n', 1)[1].split("\nEOF\n", 1)[0]
-    wrapper = wrapper.replace("$REAL_GIT", Path(real_git).as_posix()).replace("\\$", "$")
+    wrapper_text = source.split('cat >"$TMP_BIN/git" <<EOF\n', 1)[1].split("\nEOF\n", 1)[0]
+    wrapper_text = wrapper_text.replace("$REAL_GIT", Path(real_git).as_posix()).replace("\\$", "$")
     bin_directory = tmp_path / "bin"
     bin_directory.mkdir()
-    git_wrapper = bin_directory / "git"
-    git_wrapper.write_text(wrapper + "\n", encoding="utf-8", newline="\n")
-    git_wrapper.chmod(0o755)
+    wrapper = bin_directory / "git"
+    wrapper.write_text(wrapper_text + "\n", encoding="utf-8", newline="\n")
+    wrapper.chmod(0o755)
     environment["PATH"] = str(bin_directory) + os.pathsep + environment["PATH"]
-    return repository, environment
+    return HarnessGit(repository, environment, wrapper)
 
 
-@pytest.mark.skipif(BASH is None, reason="offline harness requires Bash")
+def _run_wrapper(harness: HarnessGit, *arguments: str) -> subprocess.CompletedProcess[str]:
+    """Run the harness ``git`` wrapper with Bash inside the fixture repository."""
+    return subprocess.run(
+        [str(BASH), harness.wrapper.as_posix(), *arguments],
+        cwd=harness.repository,
+        env=harness.environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+@_requires_bash
 @pytest.mark.integration
-def test_offline_harness_reads_real_working_tree(harness_git: tuple[Path, dict[str, str]]) -> None:
-    """Allow canonical diff and repository-root reads needed by calibration."""
-    repository, environment = harness_git
-    wrapper = Path(environment["PATH"].split(os.pathsep)[0]) / "git"
-    outputs = []
-    for arguments in (
-        ["-c", "core.quotePath=true", "diff", "--binary", "HEAD"],
-        ["-C", ".", "--literal-pathspecs", "rev-parse", "--show-toplevel"],
-        ["-C", ".", "ls-files", "--others", "--exclude-standard"],
-    ):
-        completed = subprocess.run(
-            [str(BASH), wrapper.as_posix(), *arguments],
-            cwd=repository,
-            env=environment,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+class TestAllowedReads:
+    """Canonical read-only Git calls that calibration needs pass through the wrapper to real Git."""
+
+    def test_diff_binary_against_head(self, harness_git: HarnessGit) -> None:
+        """The canonical ``diff --binary HEAD`` call returns the working-tree change.
+
+        The repository has one tracked file edited after its commit. Calibration reads this diff offline, so the wrapper
+        must forward it (with formatting-only ``-c core.quotePath``) to real Git.
+        """
+        completed = _run_wrapper(harness_git, "-c", "core.quotePath=true", "diff", "--binary", "HEAD")
+
         assert completed.returncode == 0, completed.stderr
-        outputs.append(completed.stdout)
-    assert "-before\n+after" in outputs[0]
-    assert Path(outputs[1].strip()).resolve() == repository.resolve()
-    assert outputs[2].splitlines() == ["untracked.txt"]
+        assert "-before\n+after" in completed.stdout
+
+    def test_show_toplevel_with_literal_pathspecs(self, harness_git: HarnessGit) -> None:
+        """The repository-root lookup returns the real repository directory.
+
+        Calibration resolves the repository root with ``-C . --literal-pathspecs rev-parse --show-toplevel``.
+        """
+        completed = _run_wrapper(harness_git, "-C", ".", "--literal-pathspecs", "rev-parse", "--show-toplevel")
+
+        assert completed.returncode == 0, completed.stderr
+        assert Path(completed.stdout.strip()).resolve() == harness_git.repository.resolve()
+
+    def test_lists_untracked_files(self, harness_git: HarnessGit) -> None:
+        """The untracked-file listing returns exactly the one new file.
+
+        Untracked files are part of the working tree calibration snapshots, so ``ls-files --others`` must pass through.
+        """
+        completed = _run_wrapper(harness_git, "-C", ".", "ls-files", "--others", "--exclude-standard")
+
+        assert completed.returncode == 0, completed.stderr
+        assert completed.stdout.splitlines() == ["untracked.txt"]
 
 
-@pytest.mark.skipif(BASH is None, reason="offline harness requires Bash")
+@_requires_bash
 @pytest.mark.parametrize(
     "arguments",
     [
@@ -85,19 +124,13 @@ def test_offline_harness_reads_real_working_tree(harness_git: tuple[Path, dict[s
         pytest.param(["-C", ".", "--literal-pathspecs", "fetch"], id="literal-path-fetch"),
     ],
 )
-def test_offline_harness_still_blocks_network_git(
-    harness_git: tuple[Path, dict[str, str]], arguments: list[str]
-) -> None:
-    """Keep network operations and arbitrary configuration outside the harness allowlist."""
-    repository, environment = harness_git
-    wrapper = Path(environment["PATH"].split(os.pathsep)[0]) / "git"
-    completed = subprocess.run(
-        [str(BASH), wrapper.as_posix(), *arguments],
-        cwd=repository,
-        env=environment,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert completed.returncode == 125
+def test_wrapper_blocks_network_git(harness_git: HarnessGit, arguments: list[str]) -> None:
+    """Keep network operations and arbitrary configuration outside the harness allowlist.
+
+    Allowed option prefixes (``-C``, ``--literal-pathspecs``, formatting ``-c``) must not smuggle a network subcommand
+    or an aliased push past the offline boundary; each is refused with the harness exit code and message.
+    """
+    completed = _run_wrapper(harness_git, *arguments)
+
+    assert completed.returncode == _BLOCKED_EXIT
     assert "blocked by offline Codex harness" in completed.stderr

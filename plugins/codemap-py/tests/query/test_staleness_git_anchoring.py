@@ -30,32 +30,34 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from unittest import mock
 
 import pytest
+from _scan_helpers import index_path_for, init_repo, run_git, run_scan
 from codemap_py import query
 
 
-def test_incremental_self_heal_propagates_refresh_provenance(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The child scan receives self-heal facts while preserving unrelated runtime state."""
+@mock.patch("codemap_py.query.subprocess.run", autospec=True, return_value=subprocess.CompletedProcess([], 0, "", ""))
+def test_incremental_self_heal_propagates_refresh_provenance(
+    mock_run: mock.Mock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The child scan receives self-heal facts while preserving unrelated runtime state.
+
+    The incremental scan is spawned with a copy of the caller's environment; the codex runtime marker already present
+    must survive next to the trigger, changed-count and stale-before facts the self-heal adds for the child's telemetry.
+    """
     scan_bin = tmp_path / "scan-index"
     scan_bin.write_text("placeholder")
-    captured: dict[str, object] = {}
-
-    def _fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        """Capture the incremental-scan command and return success."""
-        captured["command"] = command
-        captured["kwargs"] = kwargs
-        return subprocess.CompletedProcess(command, 0, "", "")
-
     monkeypatch.setenv("CODEMAP_RUNTIME", "codex")
-    monkeypatch.setattr(query.subprocess, "run", _fake_run)
 
-    assert query._run_incremental_scan(scan_bin, tmp_path, 3) is True
-    env = captured["kwargs"]["env"]  # type: ignore[index]
-    assert env["CODEMAP_RUNTIME"] == "codex"  # type: ignore[index]
-    assert env["CODEMAP_REFRESH_TRIGGER"] == "query_self_heal"  # type: ignore[index]
-    assert env["CODEMAP_REFRESH_CHANGED_COUNT"] == "3"  # type: ignore[index]
-    assert env["CODEMAP_REFRESH_STALE_BEFORE"] == "true"  # type: ignore[index]
+    ran = query._run_incremental_scan(scan_bin, tmp_path, 3)
+
+    env = mock_run.call_args.kwargs["env"]
+    assert ran is True
+    assert env["CODEMAP_RUNTIME"] == "codex"
+    assert env["CODEMAP_REFRESH_TRIGGER"] == "query_self_heal"
+    assert env["CODEMAP_REFRESH_CHANGED_COUNT"] == "3"
+    assert env["CODEMAP_REFRESH_STALE_BEFORE"] == "true"
 
 
 def _literal_cap(source: str, name: str) -> int:
@@ -72,23 +74,6 @@ def _literal_cap(source: str, name: str) -> int:
         if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == name for t in node.targets):
             return int(eval(compile(ast.Expression(node.value), "<cap>", "eval")))  # noqa: S307
     raise AssertionError(f"{name} not assigned at module level")
-
-
-def _git(root: Path, *args: str) -> None:
-    """Run a git command inside *root*, asserting success."""
-    result = subprocess.run(["git", *args], cwd=str(root), capture_output=True, text=True)
-    assert result.returncode == 0, result.stderr
-
-
-def _scan(scan_index: Path, root: Path, *extra: str) -> None:
-    """Run scan-index over *root*, asserting success."""
-    result = subprocess.run(
-        [sys.executable, str(scan_index), "--root", str(root), *extra],
-        capture_output=True,
-        text=True,
-        cwd=str(root),
-    )
-    assert result.returncode == 0, result.stderr
 
 
 def _query_from(scan_query: Path, cwd: Path, index_path: Path, *args: str, frozen: bool = False) -> dict:
@@ -132,13 +117,11 @@ def _build_committed_repo(root: Path, scan_index: Path) -> tuple[Path, Path]:
     )
     (root / "pkg" / "deep" / "__init__.py").write_text("")
     (root / "pkg" / "deep" / "leaf.py").write_text('"""Deep leaf."""\n\n\ndef deep_fn():\n    return 1\n')
-    _git(root, "init", "-q")
-    _git(root, "config", "user.email", "t@t.t")
-    _git(root, "config", "user.name", "t")
-    _git(root, "add", "-A")
-    _git(root, "commit", "-q", "-m", "init")
-    _scan(scan_index, root)
-    index_path = root / ".cache" / "codemap" / f"{root.name}.json"
+    init_repo(root)
+    run_git(root, "add", "-A")
+    run_git(root, "commit", "-q", "-m", "init")
+    run_scan(scan_index, root)
+    index_path = index_path_for(root)
     assert index_path.exists()
     return root, index_path
 
@@ -198,13 +181,11 @@ def _dated_repo(tmp_path: Path) -> Path:
     root = tmp_path / "dated"
     root.mkdir()
     (root / "mod.py").write_text("def f():\n    return 1\n")
-    _git(root, "init", "-q")
-    _git(root, "config", "user.email", "t@t.t")
-    _git(root, "config", "user.name", "t")
-    _git(root, "add", "-A")
+    init_repo(root)
+    run_git(root, "add", "-A")
     _commit_at(root, _SOURCE_COMMIT_DATE, "sources")
     (root / "mod.pyi").write_text("def f() -> int: ...\n")
-    _git(root, "add", "-A")
+    run_git(root, "add", "-A")
     _commit_at(root, _STUB_COMMIT_DATE, "stub only")
     return root
 
@@ -233,24 +214,27 @@ class TestGitRootAnchoring:
         ],
     )
     def test_unchanged_repo_is_not_stale(self, pristine_committed_repo, scan_query, query_dir_parts) -> None:
-        """A freshly scanned, fully committed repo is not stale from its root or from a nested subdirectory."""
+        """A freshly scanned, fully committed repo is not stale from its root or from a nested subdirectory.
+
+        The index stores root-relative paths; a query launched from ``pkg/deep`` must compare against them at the git
+        root, otherwise every stored path reads as deleted and the index is stale forever.
+        """
         root, index_path = pristine_committed_repo
         data = _query_from(scan_query, root.joinpath(*query_dir_parts), index_path, "deps", "pkg.alpha")
         assert data["index"]["stale"] is False
 
-    def test_subdirectory_query_stays_complete(self, pristine_committed_repo, scan_query) -> None:
-        """A subdirectory query still claims completeness rather than a phantom blind spot."""
+    def test_subdirectory_query_has_no_blind_spots(self, pristine_committed_repo, scan_query) -> None:
+        """A subdirectory query claims completeness and lists no untracked-file blind spot.
+
+        Fully committed tree queried from ``pkg/deep``: anchoring must not invent a phantom blind spot (untracked files
+        that are really tracked) or withdraw ``query_complete``.
+        """
         root, index_path = pristine_committed_repo
         data = _query_from(scan_query, root / "pkg" / "deep", index_path, "rdeps", "pkg.gamma")
         assert data["index"]["query_complete"] is True
-
-    def test_subdirectory_query_reports_no_untracked_blind_spot(self, pristine_committed_repo, scan_query) -> None:
-        """Fully committed tree: the untracked-file blind spot list is empty from a subdirectory."""
-        root, index_path = pristine_committed_repo
-        data = _query_from(scan_query, root / "pkg" / "deep", index_path, "rdeps", "pkg.gamma")
         assert data["index"]["untracked_py"] == []
 
-    def test_real_edit_is_still_detected_from_subdirectory(self, committed_repo, scan_query) -> None:
+    def test_real_edit_is_detected_from_subdirectory(self, committed_repo, scan_query) -> None:
         """Anchoring must not blind the check: an actual committed edit still reads as stale.
 
         Run frozen, because the inline self-heal would otherwise repair the index and report ``stale: false`` truthfully
@@ -258,8 +242,8 @@ class TestGitRootAnchoring:
         """
         root, index_path = committed_repo
         (root / "pkg" / "gamma.py").write_text('"""Leaf."""\n\n\ndef func_gamma(x):\n    return x + 99\n')
-        _git(root, "add", "-A")
-        _git(root, "commit", "-q", "-m", "edit gamma")
+        run_git(root, "add", "-A")
+        run_git(root, "commit", "-q", "-m", "edit gamma")
         data = _query_from(scan_query, root / "pkg" / "deep", index_path, "deps", "pkg.alpha", frozen=True)
         assert data["index"]["stale"] is True
 
@@ -273,19 +257,21 @@ class TestNonAsciiPathParity:
     """
 
     def test_clean_tree_with_non_ascii_module_is_not_stale(self, tmp_path: Path, scan_index: Path, scan_query: Path):
-        """A fresh index over a committed ``pkg/modé.py`` reports ``stale: false`` with self-heal disabled."""
+        """A fresh index over a committed ``pkg/modé.py`` reports ``stale: false`` with self-heal disabled.
+
+        ``core.quotePath`` is forced on so git would C-quote the non-ASCII name in its default listing; the reader must
+        still agree with the writer's NUL-separated paths.
+        """
         root = tmp_path / "quoted"
         (root / "pkg").mkdir(parents=True)
         (root / "pkg" / "__init__.py").write_text("")
         (root / "pkg" / "modé.py").write_text("def helper():\n    return 1\n", encoding="utf-8")
-        _git(root, "init", "-q")
-        _git(root, "config", "core.quotePath", "true")
-        _git(root, "config", "user.email", "t@t.t")
-        _git(root, "config", "user.name", "t")
-        _git(root, "add", "-A")
-        _git(root, "commit", "-q", "-m", "init")
-        _scan(scan_index, root)
-        index_path = root / ".cache" / "codemap" / f"{root.name}.json"
+        init_repo(root)
+        run_git(root, "config", "core.quotePath", "true")
+        run_git(root, "add", "-A")
+        run_git(root, "commit", "-q", "-m", "init")
+        run_scan(scan_index, root)
+        index_path = index_path_for(root)
 
         data = _query_from(scan_query, root, index_path, "deps", "pkg", frozen=True)
 
@@ -295,53 +281,59 @@ class TestNonAsciiPathParity:
 class TestFileShaMemoization:
     """The tracked-blob read costs one git subprocess per invocation, not one per consumer."""
 
-    def test_repeated_reads_spawn_one_subprocess(self, reset_query_caches, monkeypatch, tmp_path) -> None:
-        """Both staleness consumers share a single resolved result."""
-        calls: list[list[str]] = []
+    @mock.patch("codemap_py.query.subprocess.check_output", autospec=True, return_value="sha1")
+    def test_repeated_reads_spawn_one_subprocess(
+        self, mock_check_output: mock.Mock, reset_query_caches, monkeypatch, tmp_path
+    ) -> None:
+        """Both staleness consumers share a single resolved result.
 
-        def _fake_check_output(cmd, **kwargs):
-            """Return empty tracked-blob output while recording the git command."""
-            calls.append(list(cmd))
-            return "sha1"
-
+        The self-heal decision and the coverage block ask the same question in one invocation; three reads through the
+        two entry points must reach git exactly once.
+        """
         monkeypatch.setattr(query.index_io, "_get_git_root_cached", lambda: tmp_path)
-        monkeypatch.setattr(query.subprocess, "check_output", _fake_check_output)
+
         query._get_current_file_shas()
         query._get_current_file_shas()
         query._current_file_shas()
-        assert len(calls) == 1
 
-    def test_memoized_call_is_the_anchored_object_format(self, reset_query_caches, monkeypatch, tmp_path) -> None:
-        """The scanner reads the root's Git object format once before hashing actual source bytes."""
-        seen: dict[str, object] = {}
+        assert mock_check_output.call_count == 1
 
-        def _fake_check_output(cmd, **kwargs):
-            """Return empty tracked-blob output and retain subprocess arguments."""
-            seen["cmd"] = list(cmd)
-            seen["cwd"] = kwargs.get("cwd")
-            return "sha1"
+    @mock.patch("codemap_py.query.subprocess.check_output", autospec=True, return_value="sha1")
+    def test_object_format_read_is_anchored_at_git_root(
+        self, mock_check_output: mock.Mock, reset_query_caches, monkeypatch, tmp_path
+    ) -> None:
+        """The scanner reads the root's Git object format once, from the git root, before hashing source bytes.
 
+        Anchoring the one memoized git call at the repository root is what keeps subdirectory queries from receiving
+        subdirectory-relative answers.
+        """
         monkeypatch.setattr(query.index_io, "_get_git_root_cached", lambda: tmp_path)
-        monkeypatch.setattr(query.subprocess, "check_output", _fake_check_output)
+
         query._get_current_file_shas()
-        assert seen["cmd"] == ["git", "rev-parse", "--show-object-format"]
-        assert seen["cwd"] == str(tmp_path)
+
+        assert list(mock_check_output.call_args.args[0]) == ["git", "rev-parse", "--show-object-format"]
+        assert mock_check_output.call_args.kwargs["cwd"] == str(tmp_path)
 
 
 class TestGitFailureIsUndetermined:
     """A git failure inside a repository is reported, never read as a fresh index."""
 
-    @staticmethod
-    def _fail_git(monkeypatch, exc: Exception, root: Path) -> None:
-        """Make the tracked-blob git read fail while a repository root still resolves."""
+    @pytest.fixture(name="fail_git")
+    def _fail_git(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+        """Return a callable making the tracked-blob git read raise while a repository root still resolves."""
 
-        def _raise(cmd, **kwargs):
-            """Raise the injected failure from the tracked-blob lookup."""
-            raise exc
+        def _fail(exc: Exception) -> None:
+            (tmp_path / ".git").mkdir()
+            monkeypatch.setattr(query.index_io, "_get_git_root_cached", lambda: tmp_path)
+            failing = mock.create_autospec(subprocess.check_output, side_effect=exc)
+            monkeypatch.setattr(query.subprocess, "check_output", failing)
 
-        (root / ".git").mkdir()
-        monkeypatch.setattr(query.index_io, "_get_git_root_cached", lambda: root)
-        monkeypatch.setattr(query.subprocess, "check_output", _raise)
+        return _fail
+
+    @pytest.fixture(name="no_untracked_files")
+    def _no_untracked_files(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Report no untracked sources so the coverage block depends on the staleness verdict alone."""
+        monkeypatch.setattr(query.index_io, "_untracked_py_files", lambda: [])
 
     @pytest.mark.parametrize(
         "exc",
@@ -351,44 +343,76 @@ class TestGitFailureIsUndetermined:
             pytest.param(subprocess.TimeoutExpired("git", 10), id="git-timeout"),
         ],
     )
-    def test_failure_classifies_as_git_error(self, reset_query_caches, monkeypatch, exc, tmp_path) -> None:
-        """Every git failure mode inside a repo resolves to the git_error status."""
-        self._fail_git(monkeypatch, exc, tmp_path)
+    def test_failure_classifies_as_git_error(self, reset_query_caches, fail_git, exc) -> None:
+        """Every git failure mode inside a repo resolves to the git_error status.
+
+        Missing binary, non-zero exit and timeout all used to fall into a blanket ``except`` that read as "nothing
+        changed"; each must now be classified as an error instead.
+        """
+        fail_git(exc)
+
         assert query._current_file_shas().status == query._SHAS_GIT_ERROR
 
-    def test_failure_emits_a_diagnostic(self, reset_query_caches, monkeypatch, capsys, tmp_path) -> None:
-        """The failure is surfaced on stderr rather than swallowed silently."""
-        self._fail_git(monkeypatch, FileNotFoundError("git"), tmp_path)
+    def test_failure_emits_a_diagnostic(self, reset_query_caches, fail_git, capsys) -> None:
+        """The failure is surfaced on stderr rather than swallowed silently.
+
+        A user who sees ``UNDETERMINED`` knows the freshness verdict is unavailable, not that the index is fresh.
+        """
+        fail_git(FileNotFoundError("git"))
+
         query._current_file_shas()
+
         assert "UNDETERMINED" in capsys.readouterr().err
 
-    def test_absent_repository_is_not_an_error(self, reset_query_caches, monkeypatch, capsys, tmp_path) -> None:
-        """Outside a repository there is no git failure to report — the path stays quiet."""
+    def test_absent_repository_is_not_an_error(self, reset_query_caches, monkeypatch, capsys) -> None:
+        """Outside a repository there is no git failure to report — the path stays quiet.
+
+        A plain directory has no repository to be undetermined about, so it resolves to the no-repo status without any
+        stderr noise.
+        """
         monkeypatch.setattr(query.index_io, "_get_git_root_cached", lambda: None)
+
         resolved = query._current_file_shas()
+
         assert resolved.status == query._SHAS_NO_REPO
         assert capsys.readouterr().err == ""
 
-    def test_coverage_marks_staleness_undetermined(self, reset_query_caches, monkeypatch, tmp_path) -> None:
-        """The coverage block carries the undetermined flag instead of a bare stale=False."""
-        self._fail_git(monkeypatch, FileNotFoundError("git"), tmp_path)
-        monkeypatch.setattr(query.index_io, "_untracked_py_files", lambda: [])
+    def test_coverage_marks_staleness_undetermined(self, reset_query_caches, fail_git, no_untracked_files) -> None:
+        """The coverage block carries the undetermined flag instead of a bare stale=False.
+
+        The coverage block is what the query response publishes, so the git failure has to reach it as an explicit flag.
+        """
+        fail_git(FileNotFoundError("git"))
+
         base = query._coverage({"modules": [], "file_shas": {"a.py": "deadbeef"}})
+
         assert base["stale_undetermined"] is True
 
-    def test_undetermined_staleness_vetoes_completeness(self, reset_query_caches, monkeypatch, tmp_path) -> None:
-        """An unmeasurable index cannot yield a complete answer."""
-        self._fail_git(monkeypatch, FileNotFoundError("git"), tmp_path)
-        monkeypatch.setattr(query.index_io, "_untracked_py_files", lambda: [])
+    def test_undetermined_staleness_vetoes_completeness(self, reset_query_caches, fail_git, no_untracked_files) -> None:
+        """An unmeasurable index cannot yield a complete answer.
+
+        With freshness undetermined the query must withdraw ``query_complete`` and name ``stale_undetermined`` as the
+        reason, so callers do not treat the answer as exhaustive.
+        """
+        fail_git(FileNotFoundError("git"))
         base = query._coverage({"modules": [], "file_shas": {"a.py": "deadbeef"}})
+
         verdict = query._query_complete(base, command="central", module_status=None, module_name=None)
+
         assert verdict == (False, "stale_undetermined")
 
-    def test_absent_repository_keeps_the_legacy_block(self, reset_query_caches, monkeypatch, tmp_path) -> None:
-        """Without a repository the coverage block gains no new key (non-git trees unchanged)."""
+    def test_absent_repository_keeps_the_legacy_block(
+        self, reset_query_caches, monkeypatch, no_untracked_files
+    ) -> None:
+        """Without a repository the coverage block gains no new key (non-git trees unchanged).
+
+        The undetermined flag only exists for a git failure inside a repository; trees that were never repositories must
+        keep returning the block they always did.
+        """
         monkeypatch.setattr(query.index_io, "_get_git_root_cached", lambda: None)
-        monkeypatch.setattr(query.index_io, "_untracked_py_files", lambda: [])
+
         base = query._coverage({"modules": [], "file_shas": {"a.py": "deadbeef"}})
+
         assert "stale_undetermined" not in base
 
 
@@ -397,15 +421,23 @@ class TestWriterReaderFileSetParity:
 
     @pytest.mark.parametrize("pattern", ["*.py", "*.pyi", "*.rst", "docs/**/*.md"])
     def test_pathspec_covers_every_indexed_kind(self, pattern: str) -> None:
-        """Every file kind scan-index records a SHA for is watched for staleness."""
+        """Every file kind scan-index records a SHA for is watched for staleness.
+
+        If the reader's pathspec lacked a kind the writer records, a change to that kind (a stub, an ``.rst`` or a doc
+        page) could never mark the index stale.
+        """
         assert pattern in query._INDEXED_PATHSPEC
 
     def test_blob_reader_uses_scanner_discovery(self, reset_query_caches, monkeypatch, tmp_path) -> None:
-        """Query freshness sees discovered untracked source and docs, and respects scanner exclusions."""
+        """Query freshness sees discovered untracked source and docs, and respects scanner exclusions.
+
+        A bare repository holds an untracked module, stub, ``.rst`` and ``docs`` page plus a non-indexed README and a
+        hidden directory; the reader must return exactly what the scanner's own discovery would record.
+        """
         from codemap_py.scanner.discovery import get_file_hashes
         from codemap_py.scanner.exclusions import _load_exclusions
 
-        _git(tmp_path, "init", "-q")
+        run_git(tmp_path, "init", "-q")
         (tmp_path / "mod.py").write_bytes(b"value = 1\n")
         (tmp_path / "mod.pyi").write_bytes(b"value: int\n")
         (tmp_path / "guide.rst").write_bytes(b":func:`mod.value`\n")
@@ -419,19 +451,23 @@ class TestWriterReaderFileSetParity:
         assert set(actual) == {"mod.py", "mod.pyi", "guide.rst", "docs/api.md"}
         assert actual == get_file_hashes(tmp_path, _load_exclusions(tmp_path))
 
-    def test_timestamp_fallback_passes_the_shared_pathspec(self, reset_query_caches, monkeypatch) -> None:
-        """The v2 fallback asks git for the same file set, not a narrower hand-written one."""
-        seen: list[str] = []
+    @mock.patch(
+        "codemap_py.query.subprocess.run", autospec=True, return_value=subprocess.CompletedProcess([], 0, "", "")
+    )
+    def test_timestamp_fallback_passes_the_shared_pathspec(
+        self, mock_run: mock.Mock, reset_query_caches, monkeypatch
+    ) -> None:
+        """The v2 fallback asks git for the same file set, not a narrower hand-written one.
 
-        def _fake_run(cmd, **kwargs):
-            """Return a successful empty subprocess result while recording arguments."""
-            seen.extend(cmd)
-            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
-
+        Only the argument vector handed to git matters here, so the subprocess is replaced; the real-git behaviour of
+        the same fallback is covered by the stub-only-commit case below.
+        """
         monkeypatch.setattr(query.index_io, "_get_git_root_cached", lambda: Path("/repo"))
-        monkeypatch.setattr(query.subprocess, "run", _fake_run)
+
         query.check_staleness("2020-01-01T00:00:00+00:00")
-        assert seen[seen.index("--") + 1 :] == list(query._INDEXED_PATHSPEC)
+
+        command = list(mock_run.call_args.args[0])
+        assert command[command.index("--") + 1 :] == list(query._INDEXED_PATHSPEC)
 
     @pytest.mark.parametrize(
         ("window_start", "expected_stale"),
@@ -467,23 +503,30 @@ class TestIndexSizeCapAgreement:
 
     #: Helper modules whose ceiling must match the engine's, with the constant's name.
     _HELPER_CAPS = (
-        ("bin/check-index-currency", "MAX_INDEX_SIZE"),
-        ("bin/scan-stats.py", "MAX_INDEX_SIZE"),
-        ("bin/smoke_test_index.py", "MAX_INDEX_SIZE"),
+        pytest.param("bin/check-index-currency", "MAX_INDEX_SIZE", id="check-index-currency"),
+        pytest.param("bin/scan-stats.py", "MAX_INDEX_SIZE", id="scan-stats"),
+        pytest.param("bin/smoke_test_index.py", "MAX_INDEX_SIZE", id="smoke-test-index"),
     )
 
     def test_engine_cap_is_the_documented_value(self) -> None:
-        """The ceiling stays pinned at the documented 512 MiB rather than drifting."""
+        """The ceiling stays pinned at the documented 512 MiB rather than drifting.
+
+        The helpers are compared against this constant, so the constant itself must not move unnoticed.
+        """
         assert query._MAX_INDEX_SIZE_BYTES == 512 * 1024 * 1024
 
-    def test_no_helper_caps_below_the_engine(self) -> None:
-        """No helper refuses an index the engine would serve."""
+    @pytest.mark.parametrize(("rel", "const"), _HELPER_CAPS)
+    def test_helper_cap_is_not_below_the_engine(self, rel: str, const: str) -> None:
+        """No helper refuses an index the engine would serve.
+
+        Each helper's ceiling is read from its source by AST; a value under the engine's recreates the ``no_index``
+        blind spot on large repositories.
+        """
         # parents[3]: query is a package, so __file__ is query/__init__.py.
         plugin_root = Path(query.__file__).resolve().parents[3]
-        below = [
-            f"{rel}={value}"
-            for rel, const in self._HELPER_CAPS
-            for value in [_literal_cap((plugin_root / rel).read_text(encoding="utf-8"), const)]
-            if value < query._MAX_INDEX_SIZE_BYTES
-        ]
-        assert below == [], f"helper ceilings below the engine's {query._MAX_INDEX_SIZE_BYTES}: {below}"
+
+        cap = _literal_cap((plugin_root / rel).read_text(encoding="utf-8"), const)
+
+        assert cap >= query._MAX_INDEX_SIZE_BYTES, (
+            f"{rel} caps at {cap}, below the engine's {query._MAX_INDEX_SIZE_BYTES}"
+        )

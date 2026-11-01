@@ -9,15 +9,17 @@ import runpy
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import pytest
-from test_audit_consolidation import make_report
+from test_audit_consolidation import empty_report, make_report
 from test_gate_source import _python_command
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 GATES = ("lint", "format", "types", "tests", "review")
+AuditRun = tuple[Any, Path, dict[str, Any]]
 
 
 def _evidence(directory: Path, name: str, payload: object) -> dict[str, str]:
@@ -46,7 +48,7 @@ def _gate_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 @pytest.fixture
-def audit_run(tmp_path: Path, validator: dict[str, Any], gate_template: Path) -> tuple[Any, Path, dict[str, Any]]:
+def audit_run(tmp_path: Path, validator: dict[str, Any], gate_template: Path) -> AuditRun:
     """Prepare a complete historical audit with executed review and retained cost evidence."""
     shutil.copytree(gate_template, tmp_path, dirs_exist_ok=True)
     for name, sections in validator["SKILL_REQUIREMENTS"]["audit"]["files"].items():
@@ -172,7 +174,7 @@ def audit_run(tmp_path: Path, validator: dict[str, Any], gate_template: Path) ->
     return validator["validate"], tmp_path, result
 
 
-def _validate(run: tuple[Any, Path, dict[str, Any]]) -> None:
+def _validate(run: AuditRun) -> None:
     """Exercise the public validator with one retained audit result."""
     validate, directory, result = run
     path = directory / "result.json"
@@ -180,132 +182,179 @@ def _validate(run: tuple[Any, Path, dict[str, Any]]) -> None:
     validate("audit", directory, path)
 
 
-def test_accepts_retained_matched_audit_evidence(audit_run: tuple[Any, Path, dict[str, Any]]) -> None:
-    """Permit a fully matched finite comparison with every hard guard passed."""
-    _validate(audit_run)
+def _edit_proof(directory: Path, holder: dict[str, Any], key: str, edit: Callable[[Any], object]) -> None:
+    """Rewrite the retained proof referenced by `holder[key]` through `edit` and rebind its digest."""
+    name = holder[key]["path"]
+    proof = json.loads((directory / name).read_text(encoding="utf-8"))
+    edit(proof)
+    holder[key] = _evidence(directory, name, proof)
 
 
-def test_consolidation_requires_bound_advisory_evidence(audit_run: tuple[Any, Path, dict[str, Any]]) -> None:
-    """Do not promote a consolidation audit through the ordinary unmeasured-cost early return."""
-    _, _, result = audit_run
-    result["metadata"]["axis"] = "consolidate"
-    result["metadata"]["value_per_token"] = {"status": "not-run"}
-    with pytest.raises(SystemExit, match="consolidation"):
-        _validate(audit_run)
+def _point_candidate_at_baseline(directory: Path, value: dict[str, Any]) -> None:
+    """Make every retained candidate snapshot equal the baseline, rebinding each proof digest."""
+    baseline = value["baseline_sha256"]
+    value["candidate_sha256"] = baseline
+    value["static_measurements"][0]["candidate_sha256"] = baseline
+    for record in value["static_gates"]:
+        _edit_proof(directory, record, "evidence", lambda proof: proof.update(candidate_sha256=baseline))
+    for field in ("behavioral_comparison", "live_comparison"):
+        _edit_proof(directory, value, field, lambda proof: proof.update(candidate_sha256=baseline))
 
 
-def test_advisory_consolidation_uses_derived_outcomes(audit_run: tuple[Any, Path, dict[str, Any]]) -> None:
-    """The real audit consumer accepts empty discovery, but never a forged reviewed outcome."""
-    _, directory, result = audit_run
-    report = {"schema_version": 1, "sources": [], "items": [], "coverage": [], "candidates": [], "excluded": []}
+def _set_consolidation(run: AuditRun, report: dict[str, Any], outcomes: list[dict[str, Any]]) -> None:
+    """Turn the run into an advisory consolidation audit carrying `report` and the claimed `outcomes`."""
+    _, directory, result = run
     result["metadata"].update(
         axis="consolidate",
         value_per_token={"status": "not-run"},
-        consolidation={"report": _evidence(directory, "consolidation.json", report), "outcomes": []},
+        consolidation={"report": _evidence(directory, "consolidation.json", report), "outcomes": outcomes},
     )
-    _validate(audit_run)
-    result["metadata"]["consolidation"]["outcomes"] = [{"status": "reviewed"}]
-    with pytest.raises(SystemExit, match="settlement-mismatch"):
-        _validate(audit_run)
-    result["metadata"]["consolidation"]["outcomes"] = []
-    result["metadata"]["value_per_token"]["status"] = "accepted"
-    with pytest.raises(SystemExit, match="advisory-only"):
-        _validate(audit_run)
 
 
-@pytest.mark.parametrize("damage", ["proposal", "citation", "outcome"])
-def test_reviewed_proposal_reaches_audit_consumer_with_drift_controls(
-    audit_run: tuple[Any, Path, dict[str, Any]], damage: str
-) -> None:
-    """Exercise a nonempty reviewed report through the public audit artifact validator."""
-    _, directory, result = audit_run
-    report = make_report(directory)
-    settle = runpy.run_path(str(PLUGIN_ROOT / "shared" / "audit_consolidation.py"))["settle_consolidation"]
+@pytest.fixture(scope="module", name="settle")
+def _settle() -> Callable[[dict[str, Any]], dict[str, Any]]:
+    """Load the consolidation settler used by the audit consumer once for the module."""
+    return runpy.run_path(str(PLUGIN_ROOT / "shared" / "audit_consolidation.py"))["settle_consolidation"]
+
+
+@pytest.fixture(name="reviewed_run")
+def _reviewed_run(
+    audit_run: AuditRun, settle: Callable[[dict[str, Any]], dict[str, Any]]
+) -> tuple[AuditRun, dict[str, Any]]:
+    """Prepare a consolidation audit whose nonempty proposal carries a holding review and a derived outcome."""
+    report = make_report(audit_run[1])
     report["candidates"][0]["review"] = {
         "digest": settle(report)["review_inputs"][0]["digest"],
         "verdict": "holds",
         "evidence": "Fixture review preserves source obligations, loading and citations.",
     }
-    result["metadata"].update(
-        axis="consolidate",
-        value_per_token={"status": "not-run"},
-        consolidation={
-            "report": _evidence(directory, "consolidation.json", report),
-            "outcomes": settle(report)["outcomes"],
-        },
-    )
-    assert result["metadata"]["consolidation"]["outcomes"][0]["status"] == "reviewed"
+    _set_consolidation(audit_run, report, settle(report)["outcomes"])
+    assert audit_run[2]["metadata"]["consolidation"]["outcomes"][0]["status"] == "reviewed"
+    return audit_run, report
+
+
+def test_accepts_retained_matched_audit_evidence(audit_run: AuditRun) -> None:
+    """A fully matched finite comparison with every hard guard passed is accepted."""
     _validate(audit_run)
-    if damage == "proposal":
-        report["candidates"][0]["edits"][0]["replacement"] += " Additional explanation."
-    elif damage == "citation":
-        source = report["sources"][-1]
-        Path(source["path"]).write_text("Read first.md §Approval and preserve its actor.\n", encoding="utf-8")
-        source["sha256"] = hashlib.sha256(Path(source["path"]).read_bytes()).hexdigest()
-    else:
-        result["metadata"]["consolidation"]["outcomes"][0]["status"] = "accepted"
-    result["metadata"]["consolidation"]["report"] = _evidence(directory, "consolidation.json", report)
+
+
+def test_consolidation_requires_bound_advisory_evidence(audit_run: AuditRun) -> None:
+    """A consolidation audit is not promoted through the ordinary unmeasured-cost early return.
+
+    The axis says consolidate but no report or outcomes are bound, so the validator must name the consolidation gap.
+    """
+    result = audit_run[2]
+    result["metadata"]["axis"] = "consolidate"
+    result["metadata"]["value_per_token"] = {"status": "not-run"}
+
+    with pytest.raises(SystemExit, match="consolidation"):
+        _validate(audit_run)
+
+
+def test_accepts_empty_consolidation_discovery(audit_run: AuditRun) -> None:
+    """The real audit consumer accepts a consolidation audit whose discovery found nothing to merge."""
+    _set_consolidation(audit_run, empty_report(), [])
+
+    _validate(audit_run)
+
+
+def test_rejects_forged_reviewed_outcome(audit_run: AuditRun) -> None:
+    """A claimed `reviewed` outcome that the report does not derive is a settlement mismatch.
+
+    Outcomes must be derived from the bound report; an audit author cannot assert a reviewed result for empty discovery.
+    """
+    _set_consolidation(audit_run, empty_report(), [{"status": "reviewed"}])
+
     with pytest.raises(SystemExit, match="settlement-mismatch"):
         _validate(audit_run)
+
+
+def test_rejects_accepted_cost_status_on_advisory_audit(audit_run: AuditRun) -> None:
+    """A consolidation audit stays advisory-only and cannot also claim an accepted cost comparison."""
+    _set_consolidation(audit_run, empty_report(), [])
+    audit_run[2]["metadata"]["value_per_token"]["status"] = "accepted"
+
+    with pytest.raises(SystemExit, match="advisory-only"):
+        _validate(audit_run)
+
+
+def test_accepts_reviewed_proposal(reviewed_run: tuple[AuditRun, dict[str, Any]]) -> None:
+    """A nonempty reviewed proposal with a derived outcome reaches the public audit artifact validator."""
+    _validate(reviewed_run[0])
+
+
+def _damage_proposal(report: dict[str, Any], result: dict[str, Any]) -> None:
+    """Append text to the reviewed replacement so the review digest no longer matches."""
+    report["candidates"][0]["edits"][0]["replacement"] += " Additional explanation."
+
+
+def _damage_citation(report: dict[str, Any], result: dict[str, Any]) -> None:
+    """Rewrite the citing source and refresh its recorded hash."""
+    source = report["sources"][-1]
+    Path(source["path"]).write_text("Read first.md §Approval and preserve its actor.\n", encoding="utf-8")
+    source["sha256"] = hashlib.sha256(Path(source["path"]).read_bytes()).hexdigest()
+
+
+def _damage_outcome(report: dict[str, Any], result: dict[str, Any]) -> None:
+    """Claim a different outcome status than the report derives."""
+    result["metadata"]["consolidation"]["outcomes"][0]["status"] = "accepted"
 
 
 @pytest.mark.parametrize(
     "damage",
     [
-        "missing-tasks",
-        "empty-tasks",
-        "missing-baseline",
-        "missing-candidate",
-        "missing-quality",
-        "missing-tools",
-        "missing-checks",
-        "missing-transcript",
-        "tool-regression",
-        "check-regression",
-        "quality-regression",
-        "bool-quality",
-        "nan-quality",
-        "unbounded-quality",
-        "duplicate-task",
+        pytest.param(_damage_proposal, id="proposal"),
+        pytest.param(_damage_citation, id="citation"),
+        pytest.param(_damage_outcome, id="outcome"),
     ],
 )
-def test_rejects_omitted_or_regressed_paired_task_guards(
-    audit_run: tuple[Any, Path, dict[str, Any]], damage: str
+def test_reviewed_proposal_drift_is_a_settlement_mismatch(
+    reviewed_run: tuple[AuditRun, dict[str, Any]], damage: Callable[[dict[str, Any], dict[str, Any]], None]
 ) -> None:
-    """Prevent aggregate totals from concealing absent or degraded per-task evidence."""
+    """Editing the proposal, its citing source or the claimed outcome after review is rejected.
+
+    The consumer re-derives outcomes from the retained report, so any drift between review and claim must surface.
+    """
+    run, report = reviewed_run
+    damage(report, run[2])
+    run[2]["metadata"]["consolidation"]["report"] = _evidence(run[1], "consolidation.json", report)
+
+    with pytest.raises(SystemExit, match="settlement-mismatch"):
+        _validate(run)
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        pytest.param(lambda proof: proof.pop("tasks"), id="missing-tasks"),
+        pytest.param(lambda proof: proof.update(tasks=[]), id="empty-tasks"),
+        pytest.param(lambda proof: proof["tasks"][0].pop("baseline"), id="missing-baseline"),
+        pytest.param(lambda proof: proof["tasks"][0].pop("candidate"), id="missing-candidate"),
+        pytest.param(lambda proof: proof["tasks"][0]["candidate"].pop("completion_quality"), id="missing-quality"),
+        pytest.param(lambda proof: proof["tasks"][0]["candidate"].pop("tool_failures"), id="missing-tools"),
+        pytest.param(lambda proof: proof["tasks"][0]["candidate"].pop("check_failures"), id="missing-checks"),
+        pytest.param(lambda proof: proof["tasks"][0]["candidate"].pop("evidence"), id="missing-transcript"),
+        pytest.param(lambda proof: proof["tasks"][0]["candidate"].update(tool_failures=1), id="tool-regression"),
+        pytest.param(lambda proof: proof["tasks"][0]["candidate"].update(check_failures=1), id="check-regression"),
+        pytest.param(
+            lambda proof: proof["tasks"][0]["candidate"].update(completion_quality=0.9), id="quality-regression"
+        ),
+        pytest.param(lambda proof: proof["tasks"][0]["candidate"].update(completion_quality=True), id="bool-quality"),
+        pytest.param(
+            lambda proof: proof["tasks"][0]["candidate"].update(completion_quality=float("nan")), id="nan-quality"
+        ),
+        pytest.param(lambda proof: proof["tasks"][0]["candidate"].update(completion_quality=2), id="unbounded-quality"),
+        pytest.param(lambda proof: proof["tasks"].append(copy.deepcopy(proof["tasks"][0])), id="duplicate-task"),
+    ],
+)
+def test_rejects_omitted_or_regressed_paired_task_guards(audit_run: AuditRun, damage: Callable[[Any], object]) -> None:
+    """Aggregate totals cannot conceal absent or degraded per-task evidence.
+
+    The matched task is damaged in the retained behavior proof (missing parts, regressions, non-numeric or out-of-range
+    quality, duplicates) and the digest is rebound, so only the per-task guards can catch it.
+    """
     _, directory, result = audit_run
-    proof = json.loads((directory / "behavior.json").read_text(encoding="utf-8"))
-    task = proof["tasks"][0]
-    if damage == "missing-tasks":
-        del proof["tasks"]
-    elif damage == "empty-tasks":
-        proof["tasks"] = []
-    elif damage.startswith("missing-"):
-        field = damage.removeprefix("missing-")
-        if field in {"baseline", "candidate"}:
-            del task[field]
-        else:
-            del task["candidate"][
-                {
-                    "quality": "completion_quality",
-                    "tools": "tool_failures",
-                    "checks": "check_failures",
-                    "transcript": "evidence",
-                }[field]
-            ]
-    elif damage == "duplicate-task":
-        proof["tasks"].append(copy.deepcopy(task))
-    else:
-        field, value = {
-            "tool-regression": ("tool_failures", 1),
-            "check-regression": ("check_failures", 1),
-            "quality-regression": ("completion_quality", 0.9),
-            "bool-quality": ("completion_quality", True),
-            "nan-quality": ("completion_quality", float("nan")),
-            "unbounded-quality": ("completion_quality", 2),
-        }[damage]
-        task["candidate"][field] = value
-    result["metadata"]["value_per_token"]["behavioral_comparison"] = _evidence(directory, "behavior.json", proof)
+    _edit_proof(directory, result["metadata"]["value_per_token"], "behavioral_comparison", damage)
 
     with pytest.raises(SystemExit, match="audit-cost-"):
         _validate(audit_run)
@@ -328,9 +377,10 @@ def test_rejects_omitted_or_regressed_paired_task_guards(
         "residual_limits",
     ],
 )
-def test_rejects_missing_acceptance_evidence(audit_run: tuple[Any, Path, dict[str, Any]], field: str) -> None:
-    """Reject an accepted claim when any required evidence component is absent."""
+def test_rejects_missing_acceptance_evidence(audit_run: AuditRun, field: str) -> None:
+    """An accepted claim is rejected when any single required evidence component is absent."""
     del audit_run[2]["metadata"]["value_per_token"][field]
+
     with pytest.raises(SystemExit, match="audit-cost-"):
         _validate(audit_run)
 
@@ -338,89 +388,104 @@ def test_rejects_missing_acceptance_evidence(audit_run: tuple[Any, Path, dict[st
 @pytest.mark.parametrize(
     "damage",
     [
-        "schema",
-        "failed-guard",
-        "tampered-proof",
-        "obligation-loss",
-        "proxy",
-        "mismatched-prompt",
-        "regression",
-        "nan-cost",
-        "negative-cost",
-        "bool-cost",
-        "insufficient-saving",
+        pytest.param(lambda directory, value: value.update(schema_version=1), id="schema"),
+        pytest.param(lambda directory, value: value["static_gates"][0].update(status="fail"), id="failed-guard"),
+        pytest.param(
+            lambda directory, value: (directory / "live.json").write_text("{}", encoding="utf-8"), id="tampered-proof"
+        ),
+        pytest.param(
+            lambda directory, value: _evidence(directory, "obligations.json", [{"preserved": False}]),
+            id="obligation-loss",
+        ),
+        pytest.param(lambda directory, value: value["static_measurements"][0].update(source="utf8-bytes"), id="proxy"),
+        pytest.param(
+            lambda directory, value: _edit_proof(
+                directory,
+                value,
+                "live_comparison",
+                lambda proof: proof["candidate_identity"].update(prompt_sha256="e" * 64),
+            ),
+            id="mismatched-prompt",
+        ),
+        pytest.param(
+            lambda directory, value: _edit_proof(
+                directory, value, "behavioral_comparison", lambda proof: proof.update(candidate_failures=1)
+            ),
+            id="regression",
+        ),
+        pytest.param(
+            lambda directory, value: _edit_proof(
+                directory, value, "live_comparison", lambda proof: proof.update(candidate_cost=float("nan"))
+            ),
+            id="nan-cost",
+        ),
+        pytest.param(
+            lambda directory, value: _edit_proof(
+                directory, value, "live_comparison", lambda proof: proof.update(candidate_cost=-1)
+            ),
+            id="negative-cost",
+        ),
+        pytest.param(
+            lambda directory, value: _edit_proof(
+                directory, value, "live_comparison", lambda proof: proof.update(candidate_cost=True)
+            ),
+            id="bool-cost",
+        ),
+        pytest.param(
+            lambda directory, value: _edit_proof(
+                directory, value, "live_comparison", lambda proof: proof.update(candidate_cost=9.9)
+            ),
+            id="insufficient-saving",
+        ),
     ],
 )
-def test_rejects_invalid_acceptance_evidence(audit_run: tuple[Any, Path, dict[str, Any]], damage: str) -> None:
-    """Reject dishonest guards, unmatched comparisons, invalid costs, and inadequate savings."""
+def test_rejects_invalid_acceptance_evidence(
+    audit_run: AuditRun, damage: Callable[[Path, dict[str, Any]], object]
+) -> None:
+    """Dishonest guards, unmatched comparisons, invalid costs and inadequate savings are rejected.
+
+    Each case damages exactly one retained proof or claim field of an otherwise complete accepted audit.
+    """
     _, directory, result = audit_run
-    value = result["metadata"]["value_per_token"]
-    if damage == "schema":
-        value["schema_version"] = 1
-    elif damage == "failed-guard":
-        value["static_gates"][0]["status"] = "fail"
-    elif damage == "tampered-proof":
-        (directory / "live.json").write_text("{}", encoding="utf-8")
-    elif damage == "obligation-loss":
-        _evidence(directory, "obligations.json", [{"preserved": False}])
-    elif damage == "proxy":
-        value["static_measurements"][0]["source"] = "utf8-bytes"
-    else:
-        name = "behavior.json" if damage == "regression" else "live.json"
-        proof = json.loads((directory / name).read_text(encoding="utf-8"))
-        if damage == "mismatched-prompt":
-            proof["candidate_identity"] = copy.deepcopy(proof["candidate_identity"])
-            proof["candidate_identity"]["prompt_sha256"] = "e" * 64
-        elif damage == "regression":
-            proof["candidate_failures"] = 1
-        else:
-            proof["candidate_cost"] = {
-                "nan-cost": float("nan"),
-                "negative-cost": -1,
-                "bool-cost": True,
-                "insufficient-saving": 9.9,
-            }[damage]
-        value["behavioral_comparison" if damage == "regression" else "live_comparison"] = _evidence(
-            directory, name, proof
-        )
+    damage(directory, result["metadata"]["value_per_token"])
+
     with pytest.raises(SystemExit, match="audit-cost-"):
         _validate(audit_run)
 
 
-def test_successful_audit_requires_executed_review(audit_run: tuple[Any, Path, dict[str, Any]]) -> None:
-    """Keep generic skipped-gate accounting from certifying an unassessed audit."""
+def test_successful_audit_requires_executed_review(audit_run: AuditRun) -> None:
+    """Generic skipped-gate accounting cannot certify an audit whose review gate never ran.
+
+    Every gate is marked not-applicable with exit code 0, which a generic validator would treat as clean.
+    """
     _, directory, result = audit_run
     result["metadata"]["value_per_token"]["status"] = "not-run"
     gates = json.loads((directory / "gates.json").read_text(encoding="utf-8"))
-    for gate in gates["checks"]:
-        gate.update(status="not-applicable", reason="Unavailable diagnostic.", exit_code=0)
+    gates["checks"] = [
+        {**gate, "status": "not-applicable", "reason": "Unavailable diagnostic.", "exit_code": 0}
+        for gate in gates["checks"]
+    ]
     (directory / "gates.json").write_text(json.dumps(gates), encoding="utf-8")
+
     with pytest.raises(SystemExit, match="audit-review-gate-required"):
         _validate(audit_run)
 
 
 @pytest.mark.parametrize("status", ["not-run", "insufficient-evidence", "rejected"])
-def test_honest_unaccepted_comparison_remains_valid(audit_run: tuple[Any, Path, dict[str, Any]], status: str) -> None:
-    """Allow assessed audits to disclose unavailable or rejected optimization evidence."""
+def test_honest_unaccepted_comparison_remains_valid(audit_run: AuditRun, status: str) -> None:
+    """Assessed audits may disclose unavailable, insufficient or rejected optimization evidence."""
     audit_run[2]["metadata"]["value_per_token"] = {"schema_version": 2, "status": status}
+
     _validate(audit_run)
 
 
-def test_unchanged_snapshot_cannot_certify_optimization(audit_run: tuple[Any, Path, dict[str, Any]]) -> None:
-    """Reject a positive cost claim when every baseline and candidate snapshot is identical."""
+def test_unchanged_snapshot_cannot_certify_optimization(audit_run: AuditRun) -> None:
+    """A positive cost claim is rejected when every baseline and candidate snapshot is identical.
+
+    All retained proofs are rewritten consistently so only the unchanged-snapshot guard can reject the claim.
+    """
     _, directory, result = audit_run
-    value = result["metadata"]["value_per_token"]
-    value["candidate_sha256"] = value["baseline_sha256"]
-    value["static_measurements"][0]["candidate_sha256"] = value["baseline_sha256"]
-    for record in value["static_gates"]:
-        name = record["evidence"]["path"]
-        proof = json.loads((directory / name).read_text(encoding="utf-8"))
-        proof["candidate_sha256"] = value["baseline_sha256"]
-        record["evidence"] = _evidence(directory, name, proof)
-    for field in ("behavioral_comparison", "live_comparison"):
-        name = value[field]["path"]
-        proof = json.loads((directory / name).read_text(encoding="utf-8"))
-        proof["candidate_sha256"] = value["baseline_sha256"]
-        value[field] = _evidence(directory, name, proof)
+    _point_candidate_at_baseline(directory, result["metadata"]["value_per_token"])
+
     with pytest.raises(SystemExit, match="audit-cost-unchanged-snapshot"):
         _validate(audit_run)

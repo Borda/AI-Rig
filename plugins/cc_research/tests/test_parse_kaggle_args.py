@@ -9,15 +9,14 @@ Covers:
 
 from __future__ import annotations
 
-import importlib.util
 from pathlib import Path
 
 import pytest
+from _research_text import load_module
 
-_SCRIPT = Path(__file__).resolve().parent.parent / "bin" / "parse_kaggle_args.py"
-_spec = importlib.util.spec_from_file_location("research_parse_kaggle_args", _SCRIPT)
-_mod = importlib.util.module_from_spec(_spec)  # type: ignore[arg-type]
-_spec.loader.exec_module(_mod)  # type: ignore[union-attr]
+_mod = load_module(
+    Path(__file__).resolve().parent.parent / "bin" / "parse_kaggle_args.py", "research_parse_kaggle_args"
+)
 
 parse_modes = _mod.parse_modes
 main = _mod.main
@@ -37,93 +36,124 @@ def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def _sentinel(project_dir: Path, name: str) -> str:
+    """Return the content of the session-scoped ``kaggle-<name>`` sentinel written under the isolated TMPDIR."""
     return (project_dir / "sentinels" / f"kaggle-{name}-testsess").read_text(encoding="utf-8")
 
 
-@pytest.mark.parametrize(
-    ("arguments", "expected"),
-    [
-        ("comp", (False, False, False)),
-        ("comp --eda-only", (True, False, False)),
-        ("comp --eda-only --offline-setup", (True, False, False)),
-        ("comp --inference-only", (False, True, True)),
-        ("comp --offline-setup", (False, False, True)),
-        ("comp --eda-only --inference-only", (True, True, False)),
-    ],
-    ids=["plain", "eda", "eda-overrides-offline", "inference-forces-offline", "offline", "conflicting"],
-)
-def test_parse_modes(arguments: str, expected: tuple[bool, bool, bool]) -> None:
-    assert parse_modes(arguments) == expected
+class TestParseModes:
+    """Mode-flag precedence resolved from the raw ``$ARGUMENTS`` string."""
+
+    @pytest.mark.parametrize(
+        ("arguments", "expected"),
+        [
+            pytest.param("comp", (False, False, False), id="plain"),
+            pytest.param("comp --eda-only", (True, False, False), id="eda"),
+            pytest.param("comp --eda-only --offline-setup", (True, False, False), id="eda-overrides-offline"),
+            pytest.param("comp --inference-only", (False, True, True), id="inference-forces-offline"),
+            pytest.param("comp --offline-setup", (False, False, True), id="offline"),
+            pytest.param("comp --eda-only --inference-only", (True, True, False), id="conflicting"),
+        ],
+    )
+    def test_resolves_flag_precedence(self, arguments: str, expected: tuple[bool, bool, bool]) -> None:
+        """``(eda_only, inference_only, offline_setup)`` follows the precedence rules.
+
+        Inference forces offline setup, EDA overrides offline, and a conflicting EDA plus inference pair keeps both
+        flags without forcing offline.
+        """
+        assert parse_modes(arguments) == expected
 
 
-def test_sentinels_and_dirs(project: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["--", 'titanic --type tabular --resume old.py --keep "plan, decisions"']) == 0
-    assert _sentinel(project, "competition-name") == "titanic\n"
-    assert _sentinel(project, "eda-only") == "false\n"
-    assert _sentinel(project, "inference-only") == "false\n"
-    assert _sentinel(project, "offline-setup") == "false\n"
-    assert _sentinel(project, "resume") == "old.py\n"
-    assert _sentinel(project, "keep-items") == "plan, decisions\n"
-    assert (project / "work" / ".experiments" / "kaggle").is_dir()
-    out = capsys.readouterr().out
-    assert "Competition: titanic" in out
-    assert "Type: tabular" in out
-    assert "Resume: old.py" in out
+class TestMain:
+    """Sentinels, printed summary and side effects of ``main()``."""
 
+    def test_writes_sentinels_and_creates_dirs(self, project: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """A full argument string yields one sentinel per field, the ``.experiments/kaggle`` dir and a summary.
 
-def test_absent_flags_report_placeholders(project: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["--", "titanic"]) == 0
-    out = capsys.readouterr().out
-    assert "Type: auto-detect" in out
-    assert "Resume: none" in out
-    assert _sentinel(project, "resume") == "\n"
-    assert _sentinel(project, "keep-items") == "\n"
+        ``--type``, ``--resume`` and ``--keep`` are the flags the zsh ``BASH_REMATCH`` twin dropped; each must land in
+        its own sentinel with a trailing newline.
+        """
+        code = main(["--", 'titanic --type tabular --resume old.py --keep "plan, decisions"'])
 
+        out = capsys.readouterr().out
+        assert code == 0
+        assert _sentinel(project, "competition-name") == "titanic\n"
+        assert _sentinel(project, "eda-only") == "false\n"
+        assert _sentinel(project, "inference-only") == "false\n"
+        assert _sentinel(project, "offline-setup") == "false\n"
+        assert _sentinel(project, "resume") == "old.py\n"
+        assert _sentinel(project, "keep-items") == "plan, decisions\n"
+        assert (project / "work" / ".experiments" / "kaggle").is_dir()
+        assert "Competition: titanic" in out
+        assert "Type: tabular" in out
+        assert "Resume: old.py" in out
 
-def test_stale_contract_is_cleared(project: Path) -> None:
-    contract = project / "work" / ".temp" / "state" / "skill-contract.md"
-    contract.parent.mkdir(parents=True)
-    contract.write_text("stale", encoding="utf-8")
-    assert main(["--", "titanic"]) == 0
-    assert not contract.exists()
+    def test_absent_flags_report_placeholders(self, project: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """With only a competition name, the summary shows placeholders and the optional sentinels stay empty."""
+        code = main(["--", "titanic"])
 
+        out = capsys.readouterr().out
+        assert code == 0
+        assert "Type: auto-detect" in out
+        assert "Resume: none" in out
+        assert _sentinel(project, "resume") == "\n"
+        assert _sentinel(project, "keep-items") == "\n"
 
-def test_missing_contract_is_not_an_error(project: Path) -> None:
-    assert main(["--", "titanic"]) == 0
+    def test_clears_stale_contract(self, project: Path) -> None:
+        """A leftover ``.temp/state/skill-contract.md`` from a crashed run is deleted at start.
 
+        A stale contract would otherwise leak its preserve items into the next unrelated compaction.
+        """
+        contract = project / "work" / ".temp" / "state" / "skill-contract.md"
+        contract.parent.mkdir(parents=True)
+        contract.write_text("stale", encoding="utf-8")
 
-@pytest.mark.parametrize(
-    ("arguments", "expected_out", "sentinel", "expected_sentinel"),
-    [
-        pytest.param("--eda-only", "Competition: --eda-only", "eda-only", "true\n", id="leading-dash-arguments"),
-        pytest.param("", "Competition: \n", "competition-name", "\n", id="empty-arguments"),
-    ],
-)
-def test_edge_case_arguments_do_not_break_parsing(
-    project: Path,
-    capsys: pytest.CaptureFixture[str],
-    arguments: str,
-    expected_out: str,
-    sentinel: str,
-    expected_sentinel: str,
-) -> None:
-    """Unusual ``$ARGUMENTS`` strings parse without error.
+        code = main(["--", "titanic"])
 
-    ``$ARGUMENTS`` may start with a flag; the ``--`` separator must absorb it. An empty string yields an empty
-    competition name.
-    """
-    assert main(["--", arguments]) == 0
-    assert expected_out in capsys.readouterr().out
-    assert _sentinel(project, sentinel) == expected_sentinel
+        assert code == 0
+        assert not contract.exists()
 
+    def test_missing_contract_is_not_an_error(self, project: Path) -> None:
+        """A first run with no contract file to clear still exits 0."""
+        assert main(["--", "titanic"]) == 0
 
-def test_keep_flag_tolerates_multiple_spaces(project: Path) -> None:
-    assert main(["--", 'comp --keep  "a, b"']) == 0
-    assert _sentinel(project, "keep-items") == "a, b\n"
+    @pytest.mark.parametrize(
+        ("arguments", "expected_out", "sentinel", "expected_sentinel"),
+        [
+            pytest.param("--eda-only", "Competition: --eda-only", "eda-only", "true\n", id="leading-dash-arguments"),
+            pytest.param("", "Competition: \n", "competition-name", "\n", id="empty-arguments"),
+        ],
+    )
+    def test_edge_case_arguments_parse(
+        self,
+        project: Path,
+        capsys: pytest.CaptureFixture[str],
+        arguments: str,
+        expected_out: str,
+        sentinel: str,
+        expected_sentinel: str,
+    ) -> None:
+        """Unusual ``$ARGUMENTS`` strings parse without error.
 
+        ``$ARGUMENTS`` may start with a flag; the ``--`` separator must absorb it. An empty string yields an empty
+        competition name.
+        """
+        code = main(["--", arguments])
 
-def test_unwritable_sentinel_dir_exits_one(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("TMPDIR", str(tmp_path / "does" / "not" / "exist"))
-    monkeypatch.setenv("CSID", "testsess")
-    assert main(["--", "comp"]) == 1
+        assert code == 0
+        assert expected_out in capsys.readouterr().out
+        assert _sentinel(project, sentinel) == expected_sentinel
+
+    def test_keep_flag_tolerates_multiple_spaces(self, project: Path) -> None:
+        """``--keep`` followed by several spaces before its quoted value still extracts the value."""
+        code = main(["--", 'comp --keep  "a, b"'])
+
+        assert code == 0
+        assert _sentinel(project, "keep-items") == "a, b\n"
+
+    def test_unwritable_sentinel_dir_exits_one(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A TMPDIR that does not exist makes the sentinel write fail, so the script exits 1 instead of crashing."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("TMPDIR", str(tmp_path / "does" / "not" / "exist"))
+        monkeypatch.setenv("CSID", "testsess")
+
+        assert main(["--", "comp"]) == 1

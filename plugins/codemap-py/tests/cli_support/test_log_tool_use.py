@@ -13,6 +13,9 @@ index-hygiene fixes aim to reduce. It must:
 - honour `CODEMAP_LOGGING=false` (mirrors `_telemetry.py`'s env gate) and fail open;
 - keep the repeated-read nudge bounded: it runs on every matched Read, so it inspects a
   fixed tail of the shard instead of the whole 10 MB rotation budget.
+
+End-to-end cases feed the real hook through a subprocess; pure scope-parsing cases call the hook's
+``bash_search_scope`` in-process, because the subprocess adds no coverage to command parsing.
 """
 
 from __future__ import annotations
@@ -37,21 +40,18 @@ _MODULE = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_MODULE)
 
 
-def _run(payload: dict, cwd: Path, *, logging: str | None = None) -> subprocess.CompletedProcess:
+def _run(
+    payload: dict, cwd: Path, *, logging: str = "true", extra_env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess:
     """Feed one PostToolUse event through the hook with cwd + env isolated to a tmp dir."""
-    env = {**os.environ}
+    env = {**os.environ, **(extra_env or {})}
     # Force the log dir under cwd; unset any inherited override so tests are hermetic.
     env.pop("CODEMAP_LOG_DIR", None)
     # conftest's autouse _telemetry_off exports CODEMAP_LOGGING=false suite-wide;
     # this helper's default must re-enable it or every write-asserting case goes dark.
-    env["CODEMAP_LOGGING"] = logging if logging is not None else "true"
+    env["CODEMAP_LOGGING"] = logging
     return subprocess.run(
-        [sys.executable, str(_HOOK)],
-        input=json.dumps(payload),
-        text=True,
-        capture_output=True,
-        cwd=str(cwd),
-        env=env,
+        [sys.executable, str(_HOOK)], input=json.dumps(payload), text=True, capture_output=True, cwd=str(cwd), env=env
     )
 
 
@@ -62,6 +62,25 @@ def _read_records(cwd: Path) -> list[dict]:
     for shard in sorted(log_dir.glob("tools*.jsonl")):
         records += [json.loads(line) for line in shard.read_text().splitlines() if line.strip()]
     return records
+
+
+def _write_pkg_module(root: Path) -> Path:
+    """Create ``pkg/mod.py`` under *root* and return its path."""
+    source = root / "pkg" / "mod.py"
+    source.parent.mkdir()
+    source.write_text("import pkg.mod\n")
+    return source
+
+
+def _join_summary(record: dict) -> dict:
+    """Pair *record* with a complete ``rdeps`` CLI answer and return the avoidance-join summary as a dict."""
+    answer = record | {
+        "layer": "cli",
+        "cmd": "rdeps",
+        "exit_code": 0,
+        "result": {"module": "pkg.mod", "index": {"query_complete": True}},
+    }
+    return json.loads(ja.render_json(ja.summarize(ja.parse_cli_records([answer]), ja.parse_tool_records([record]))))
 
 
 @pytest.mark.parametrize(
@@ -94,21 +113,19 @@ def test_appends_record_per_tool(
     assert records[0]["layer"] == "tool"
 
 
-def test_session_shard_uses_seeded_session_id(tmp_path: Path) -> None:
-    """A seeded session tmpfile routes records to tools_<session>.jsonl, matching the cli shard key."""
-    # seed-session.js writes codemap-<project>-session into TMPDIR; project = cwd basename here.
+def test_seeded_session_selects_shard(tmp_path: Path) -> None:
+    """A seeded session tmpfile routes records to tools_<session>.jsonl, matching the cli shard key.
+
+    seed-session.js writes ``codemap-<project>-session`` into TMPDIR, where project is the cwd basename; the hook must
+    read it and name its shard after that session.
+    """
     session = "abc-123"
     (tmp_path / f"codemap-{tmp_path.name}-session").write_text(session)
-    env = {**os.environ, "TMPDIR": str(tmp_path), "TEMP": str(tmp_path), "TMP": str(tmp_path)}
-    env.pop("CODEMAP_LOG_DIR", None)
-    env["CODEMAP_LOGGING"] = "true"  # conftest autouse gate exports false suite-wide
-    result = subprocess.run(
-        [sys.executable, str(_HOOK)],
-        input=json.dumps({"tool_name": "Grep", "tool_input": {"pattern": "x"}}),
-        text=True,
-        capture_output=True,
-        cwd=str(tmp_path),
-        env=env,
+
+    result = _run(
+        {"tool_name": "Grep", "tool_input": {"pattern": "x"}},
+        tmp_path,
+        extra_env={"TMPDIR": str(tmp_path), "TEMP": str(tmp_path), "TMP": str(tmp_path)},
     )
 
     assert result.returncode == 0, result.stderr
@@ -118,39 +135,38 @@ def test_session_shard_uses_seeded_session_id(tmp_path: Path) -> None:
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("scope", ["file", "directory", "legacy"])
-def test_search_scope_survives_hook_to_join(tmp_path: Path, scope: str) -> None:
-    """A real hook record distinguishes file inspection, directory search and unknowable old scope."""
-    source = tmp_path / "pkg" / "mod.py"
-    source.parent.mkdir()
-    source.write_text("import pkg.mod\n")
-    path = source if scope != "directory" else source.parent
+@pytest.mark.parametrize(
+    ("path_kind", "drop_scope", "expected_scope", "expected_kind", "expected_structural"),
+    [
+        pytest.param("file", False, "file", "source_read", 0, id="file"),
+        pytest.param("directory", False, "directory", "structural_search", 1, id="directory"),
+        pytest.param("file", True, "file", "unknown", 0, id="legacy-record-without-scope"),
+    ],
+)
+def test_search_scope_survives_hook_to_join(
+    tmp_path: Path, path_kind: str, drop_scope: bool, expected_scope: str, expected_kind: str, expected_structural: int
+) -> None:
+    """A real hook record distinguishes file inspection, directory search and unknowable old scope.
+
+    A Grep over one file, a Grep over a directory and a pre-scope record (``search_path``/``search_scope`` removed) are
+    run through the real hook, then joined with a complete ``rdeps`` answer: only the first two may be classed.
+    """
+    source = _write_pkg_module(tmp_path)
+    path = source if path_kind == "file" else source.parent
     result = _run(
         {"tool_name": "Grep", "session_id": "scope-session", "tool_input": {"pattern": "pkg.mod", "path": str(path)}},
         tmp_path,
     )
     assert result.returncode == 0, result.stderr
     (record,) = _read_records(tmp_path)
-    if scope == "legacy":
-        record.pop("search_path", None)
-        record.pop("search_scope", None)
-    else:
-        assert record["search_path"] == str(path)
-        assert record["search_scope"] == scope
-    answer = record | {
-        "layer": "cli",
-        "cmd": "rdeps",
-        "exit_code": 0,
-        "result": {"module": "pkg.mod", "index": {"query_complete": True}},
-    }
-    summary = ja.summarize(ja.parse_cli_records([answer]), ja.parse_tool_records([record]))
-    payload = json.loads(ja.render_json(summary))
+    assert (record["search_path"], record["search_scope"]) == (str(path), expected_scope)
+    dropped = ("search_path", "search_scope") if drop_scope else ()
+
+    payload = _join_summary({key: value for key, value in record.items() if key not in dropped})
+
     assert payload["avoidance_count"] == 1
-    assert (
-        payload["events"][0]["kind"]
-        == {"file": "source_read", "directory": "structural_search", "legacy": "unknown"}[scope]
-    )
-    assert payload["structural_search_count"] == int(scope == "directory")
+    assert payload["events"][0]["kind"] == expected_kind
+    assert payload["structural_search_count"] == expected_structural
 
 
 @pytest.mark.parametrize(
@@ -167,15 +183,23 @@ def test_search_scope_survives_hook_to_join(tmp_path: Path, scope: str) -> None:
     ],
 )
 def test_non_search_call_ignored(tmp_path: Path, payload: dict) -> None:
-    """A tool outside the matched set or a Bash command that is not manual search volume writes nothing."""
+    """A tool outside the matched set or a Bash command that is not manual search volume writes nothing.
+
+    Codemap's own ``scan-query`` calls must not be counted as the manual search volume the hook measures.
+    """
     _run(payload, tmp_path)
+
     assert _read_records(tmp_path) == []
 
 
 @pytest.mark.parametrize("command", ["rg 'def login' src/", "cat f.py | grep import"])
 def test_bash_search_logged_with_command_target(tmp_path: Path, command: str) -> None:
-    """Search-shaped Bash commands are logged as tool=Bash with the command as target."""
+    """Search-shaped Bash commands are logged as tool=Bash with the command as target.
+
+    Sessions without a Grep tool search through Bash, so a bare ``rg`` or a ``grep`` in a pipeline is a search call.
+    """
     _run({"tool_name": "Bash", "tool_input": {"command": command}}, tmp_path)
+
     records = _read_records(tmp_path)
     assert len(records) == 1
     assert records[0]["tool"] == "Bash"
@@ -192,7 +216,7 @@ def _search_tree(tmp_path: Path) -> Path:
 
 
 def _bash_record(command: str, cwd: Path, payload_cwd: Path | None = None) -> dict:
-    """Run one Bash search through the hook and return its single record."""
+    """Run one Bash search through the real hook and return its single record."""
     payload = {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(payload_cwd or cwd)}
     result = _run(payload, cwd)
     assert result.returncode == 0, result.stderr
@@ -204,7 +228,8 @@ class TestBashSearchScope:
     """Sessions without a Grep tool search through Bash, so the producer observes Bash search scope too.
 
     Only a standalone grep/rg command with established operands gets a file or directory scope; pipelines, lists,
-    expansions and unknown options stay ``unknown`` rather than guessed.
+    expansions and unknown options stay ``unknown`` rather than guessed. Pure parsing cases call ``bash_search_scope``
+    in-process; the cwd anchor and the quoted absolute path run through the real hook.
     """
 
     @pytest.mark.parametrize(
@@ -228,12 +253,14 @@ class TestBashSearchScope:
     def test_standalone_search_records_observed_scope(
         self, search_tree: Path, command: str, search_path: str, scope: str
     ) -> None:
-        """Operands are stat-ed at hook time: files are ``file``, a directory the tool descends into is
-        ``directory``."""
-        record = _bash_record(command, search_tree)
+        """Operands are stat-ed at hook time: files are ``file``, a directory the tool descends into is ``directory``.
 
-        assert record["search_path"] == (str(search_tree) if search_path == "<cwd>" else search_path)
-        assert record["search_scope"] == scope
+        Each command runs against a tree holding ``a.py`` and ``src/mod.py``; the expected path is the operand text
+        exactly as written (several operands are joined by the OS path separator).
+        """
+        expected_path = str(search_tree) if search_path == "<cwd>" else search_path
+
+        assert _MODULE.bash_search_scope(command, search_tree) == (expected_path, scope)
 
     @pytest.mark.parametrize(
         "command",
@@ -254,14 +281,18 @@ class TestBashSearchScope:
         ],
     )
     def test_ambiguous_command_stays_unknown(self, search_tree: Path, command: str) -> None:
-        """Anything that is not one simple search with literal operands records ``unknown`` and no path."""
-        record = _bash_record(command, search_tree)
+        """Anything that is not one simple search with literal operands records ``unknown`` and no path.
 
-        assert record["search_scope"] == "unknown"
-        assert "search_path" not in record
+        Guessing a scope from a pipeline, list, expansion or unknown option would let the overlap join misclassify an
+        ordinary shell command as a tree search.
+        """
+        assert _MODULE.bash_search_scope(command, search_tree) == (None, "unknown")
 
     def test_relative_operand_resolves_against_event_cwd(self, search_tree: Path) -> None:
-        """The host event's ``cwd`` (where the Bash tool ran) anchors relative operands, not the hook's own cwd."""
+        """The host event's ``cwd`` (where the Bash tool ran) anchors relative operands, not the hook's own cwd.
+
+        The hook process runs in the tree root while the event reports ``src``; ``mod.py`` only exists under ``src``.
+        """
         record = _bash_record("grep -n x mod.py", search_tree, payload_cwd=search_tree / "src")
 
         assert record["search_scope"] == "file"
@@ -307,9 +338,7 @@ def test_bash_search_scope_survives_hook_to_join(tmp_path: Path, command: str, k
 
     The pipeline case keeps the target-spelling fallback: ``rg`` recurses, so its unverified scope stays ``unknown``.
     """
-    source = tmp_path / "pkg" / "mod.py"
-    source.parent.mkdir()
-    source.write_text("import pkg.mod\n")
+    _write_pkg_module(tmp_path)
     payload = {
         "tool_name": "Bash",
         "session_id": "bash-scope",
@@ -318,33 +347,35 @@ def test_bash_search_scope_survives_hook_to_join(tmp_path: Path, command: str, k
     }
     assert _run(payload, tmp_path).returncode == 0
     (record,) = _read_records(tmp_path)
-    answer = record | {
-        "layer": "cli",
-        "cmd": "rdeps",
-        "exit_code": 0,
-        "result": {"module": "pkg.mod", "index": {"query_complete": True}},
-    }
 
-    summary = json.loads(ja.render_json(ja.summarize(ja.parse_cli_records([answer]), ja.parse_tool_records([record]))))
+    summary = _join_summary(record)
 
     assert summary["events"][0]["kind"] == kind
     assert summary["structural_search_count"] == int(kind == "structural_search")
 
 
 def test_records_carry_plugin_version(tmp_path: Path) -> None:
-    """Every record stamps the plugin version `v` for before/after release comparison."""
+    """Every record stamps the plugin version `v` for before/after release comparison.
+
+    An unstamped or ``?`` version would make releases indistinguishable in the telemetry stream.
+    """
     _run({"tool_name": "Read", "tool_input": {"file_path": "/a/b.py"}}, tmp_path)
+
     (record,) = _read_records(tmp_path)
     assert record["v"] not in ("", "?")
 
 
 def test_tool_response_never_parsed(tmp_path: Path) -> None:
-    """A non-JSON, oversized tool_response must not affect the append — the hook never reads it."""
+    """A non-JSON, oversized tool_response must not affect the append — the hook never reads it.
+
+    Parsing search or read output is the cost the hook exists to avoid, so hostile response bytes must be ignored.
+    """
     payload = {
         "tool_name": "Grep",
         "tool_input": {"pattern": "def login"},
         "tool_response": "\x00not-json{{{" + "x" * 100000,
     }
+
     result = _run(payload, tmp_path)
 
     assert result.returncode == 0, result.stderr
@@ -354,7 +385,10 @@ def test_tool_response_never_parsed(tmp_path: Path) -> None:
 
 
 def test_logging_disabled_suppresses_record(tmp_path: Path) -> None:
-    """Suppress telemetry shards when logging is disabled."""
+    """Suppress telemetry shards when logging is disabled.
+
+    ``CODEMAP_LOGGING=false`` mirrors the CLI gate: the hook exits 0 and does not even create the log directory.
+    """
     result = _run({"tool_name": "Grep", "tool_input": {"pattern": "x"}}, tmp_path, logging="false")
 
     assert result.returncode == 0, result.stderr
@@ -367,18 +401,23 @@ class TestReadRedundancyNudge:
     _PAYLOAD: ClassVar = {"tool_name": "Read", "tool_input": {"file_path": "/proj/src/core.py"}}
 
     def test_hint_fires_exactly_on_third_read(self, tmp_path: Path) -> None:
-        """Reads 1–2 stay silent, read 3 hints, read 4 stays silent again."""
+        """Reads 1-2 stay silent, read 3 hints, read 4 stays silent again.
+
+        The hint is advisory and fires only when the count equals three, so a long session is not nagged repeatedly.
+        """
         outs = [_run(self._PAYLOAD, tmp_path).stdout for _ in range(4)]
-        assert outs[0] == ""
-        assert outs[1] == ""
+
+        assert outs[:2] == ["", ""]
         assert "[codemap] core.py read 3x" in outs[2]
         assert outs[3] == ""
 
     def test_no_hint_for_test_files(self, tmp_path: Path) -> None:
         """Repeated Reads of test files never nudge — re-reading tests is normal."""
         payload = {"tool_name": "Read", "tool_input": {"file_path": "/proj/tests/test_core.py"}}
+
         outs = [_run(payload, tmp_path).stdout for _ in range(4)]
-        assert all(o == "" for o in outs)
+
+        assert outs == [""] * 4
 
     def test_hint_survives_a_large_preexisting_shard(self, tmp_path: Path) -> None:
         """The nudge still fires on the 3rd read when a big shard already exists.
@@ -393,8 +432,7 @@ class TestReadRedundancyNudge:
 
         outs = [_run(self._PAYLOAD, tmp_path).stdout for _ in range(3)]
 
-        assert outs[0] == ""
-        assert outs[1] == ""
+        assert outs[:2] == ["", ""]
         assert "[codemap] core.py read 3x" in outs[2]
 
 

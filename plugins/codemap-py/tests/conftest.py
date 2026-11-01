@@ -21,7 +21,14 @@ _SRC_DIR = Path(__file__).parent.parent / "src"
 if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 
-_DATA_DIR = Path(__file__).parent / "data"
+_TESTS_DIR = Path(__file__).parent
+# tests/ on sys.path so test files can import the shared ``_``-prefixed helper modules (``_scan_helpers`` etc.).
+if str(_TESTS_DIR) not in sys.path:
+    sys.path.append(str(_TESTS_DIR))
+
+from _scan_helpers import index_path_for, run_git, run_scan  # noqa: E402
+
+_DATA_DIR = _TESTS_DIR / "data"
 
 
 @pytest.fixture(name="corpus_dir", scope="session")
@@ -37,7 +44,7 @@ def _corpus_pyi_dir() -> Path:
 
 
 @pytest.fixture(autouse=True)
-def _telemetry_off(monkeypatch):
+def _telemetry_off(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep the suite out of the real telemetry stream.
 
     The 2026-07 usage audit found 4.5K pytest-run records in the dev repo's live cli.jsonl (fixture errors, 30–126s
@@ -48,7 +55,7 @@ def _telemetry_off(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _host_session_off(monkeypatch):
+def _host_session_off(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep the host's own session identity out of the suite.
 
     ``_hookutil.runtime_session`` and ``codemap_py.telemetry`` prefer ``CLAUDE_CODE_SESSION_ID``/``CSID`` (Claude) and
@@ -108,15 +115,9 @@ def _project(tmp_path_factory, gamma_src, beta_src, alpha_src, delta_src, scan_i
     (root / "pkg" / "__init__.py").write_text("")
     (root / "pkg" / "delta.py").write_text(delta_src)
 
-    result = subprocess.run(
-        [sys.executable, str(scan_index), "--root", str(root)],
-        capture_output=True,
-        text=True,
-        cwd=str(root),
-    )
-    assert result.returncode == 0, result.stderr
+    run_scan(scan_index, root)
 
-    index_path = root / ".cache" / "codemap" / f"{root.name}.json"
+    index_path = index_path_for(root)
     assert index_path.exists(), "scan-index did not produce index file"
     return root, index_path
 
@@ -177,28 +178,6 @@ _BROKEN_SRC = "def oops(:\n    return\n"  # SyntaxError → degraded
 _VENDORED_SRC = "def vendored_fn():\n    return 0\n"
 
 
-def _git(root: Path, *args: str) -> None:
-    """Run a git command inside *root*, asserting success."""
-    result = subprocess.run(["git", *args], cwd=str(root), capture_output=True, text=True)
-    assert result.returncode == 0, result.stderr
-
-
-def _index_path_for(root: Path) -> Path:
-    """Return the codemap index path scan-index writes for *root*."""
-    return root / ".cache" / "codemap" / f"{root.name}.json"
-
-
-def _run_scan(scan_index: Path, root: Path, *extra: str) -> None:
-    """Run scan-index over *root*, asserting success."""
-    result = subprocess.run(
-        [sys.executable, str(scan_index), "--root", str(root), *extra],
-        capture_output=True,
-        text=True,
-        cwd=str(root),
-    )
-    assert result.returncode == 0, result.stderr
-
-
 def _materialize_polluted_tree(root: Path, *, with_collision: bool) -> None:
     """Write the polluted-repo directory tree under *root* (no scan, no git).
 
@@ -254,14 +233,14 @@ def _polluted_repo(tmp_path: Path, scan_index: Path) -> Callable[..., tuple[Path
         """Build and scan one isolated polluted-repository variant."""
         root = tmp_path / "polluted"
         root.mkdir()
-        _git(root, "init", "-q")
-        _git(root, "config", "user.email", "t@t.t")
-        _git(root, "config", "user.name", "t")
+        run_git(root, "init", "-q")
+        run_git(root, "config", "user.email", "t@t.t")
+        run_git(root, "config", "user.name", "t")
         _materialize_polluted_tree(root, with_collision=with_collision)
-        _git(root, "add", "-A")
-        _git(root, "commit", "-q", "-m", "init polluted repo")
-        _run_scan(scan_index, root)
-        index_path = _index_path_for(root)
+        run_git(root, "add", "-A")
+        run_git(root, "commit", "-q", "-m", "init polluted repo")
+        run_scan(scan_index, root)
+        index_path = index_path_for(root)
         assert index_path.exists(), "scan-index did not produce an index file"
         return root, index_path
 

@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import ast
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -47,6 +48,8 @@ _VOLATILE_KEYS = ("scanned_at", "git_sha")
 # Corpus modules whose syntax first became valid in CPython 3.12.
 _POST_311_MODULES = ("pep695_type_params", "fstring_nesting_312")
 _ACCEPTED_MODULE = "accepted_311"
+# What the post-3.11 modules must be recorded as on the running interpreter: degraded below 3.12, indexed from 3.12 on.
+_POST_311_STATUS = "degraded" if sys.version_info < (3, 12) else "ok"
 
 
 def _corpus_files(corpus_dir: Path) -> list[Path]:
@@ -83,8 +86,6 @@ def _make_corpus_tree(tmp_path: Path, corpus_dir: Path) -> Path:
 
 def _scan(src: Path, index_dir: Path) -> dict:
     """Run ``scan-index`` over *src*, writing into *index_dir*, and return the index dict."""
-    import os
-
     index_dir.mkdir(parents=True, exist_ok=True)
     result = subprocess.run(
         [sys.executable, str(_SCAN_INDEX), "--root", str(src)],
@@ -123,12 +124,44 @@ def _canonical(index: dict) -> str:
     return json.dumps(index, sort_keys=True, ensure_ascii=False)
 
 
-def test_corpus_is_present_and_named(corpus_dir: Path) -> None:
-    """The three frozen corpus modules must exist under their pinned names."""
-    names = {p.stem for p in _corpus_files(corpus_dir)}
-    assert _ACCEPTED_MODULE in names
-    for mod in _POST_311_MODULES:
-        assert mod in names, f"missing frozen corpus module: {mod}"
+def _status_mismatches(status: dict, corpus_dir: Path) -> list[str]:
+    """Describe every corpus file whose recorded status disagrees with the running interpreter's own parse."""
+    mismatches = []
+    for f in _corpus_files(corpus_dir):
+        rejected = _running_grammar_rejects(f.read_text())
+        expected = "degraded" if rejected else "ok"
+        if status.get(f.stem) != expected:
+            mismatches.append(
+                f"{f.name}: running-grammar rejected={rejected} but scan-index status={status.get(f.stem)!r}"
+            )
+    return mismatches
+
+
+@pytest.fixture(name="corpus_scans", scope="module")
+def _corpus_scans(tmp_path_factory: pytest.TempPathFactory, corpus_dir: Path) -> tuple[dict, dict]:
+    """Scan one copy of the corpus twice and return both index payloads.
+
+    Every test here reads these two scans, so the extractor subprocess runs twice per module instead of once per test.
+    The scans share one source tree so ``scan_root`` stays constant; the module-scoped setup runs outside the function-
+    scoped autouse env fixtures, so telemetry and host-session variables are neutralised here.
+    """
+    base = tmp_path_factory.mktemp("grammar")
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("CODEMAP_LOGGING", "false")
+        for name in ("CLAUDE_CODE_SESSION_ID", "CSID", "CODEX_THREAD_ID"):
+            patch.delenv(name, raising=False)
+        src = _make_corpus_tree(base, corpus_dir)
+        return _scan(src, base / "idx_a"), _scan(src, base / "idx_b")
+
+
+@pytest.mark.parametrize("module", [_ACCEPTED_MODULE, *_POST_311_MODULES])
+def test_corpus_module_is_present(corpus_dir: Path, module: str) -> None:
+    """Each frozen corpus module exists under its pinned name.
+
+    The accepted baseline and the two post-3.11 modules are the whole corpus the other tests reason about; a rename or
+    deletion would silently turn their expectations into no-ops.
+    """
+    assert module in {p.stem for p in _corpus_files(corpus_dir)}
 
 
 def test_corpus_contains_grammar_gated_post311_syntax(corpus_dir: Path) -> None:
@@ -145,52 +178,51 @@ def test_corpus_contains_grammar_gated_post311_syntax(corpus_dir: Path) -> None:
     ast.parse(accepted, feature_version=(3, 11))  # must not raise
 
 
-def test_scan_index_is_deterministic(tmp_path: Path, corpus_dir: Path) -> None:
-    """Two scans of identical source produce identical index JSON minus volatile keys."""
-    src = _make_corpus_tree(tmp_path, corpus_dir)
-    first = _scan(src, tmp_path / "idx_a")
-    second = _scan(src, tmp_path / "idx_b")
+def test_scan_index_is_deterministic(corpus_scans: tuple[dict, dict]) -> None:
+    """Two scans of identical source produce identical index JSON minus volatile keys.
+
+    Run-to-run entropy (timestamps, ordering) leaking into the index body would make every refresh look like a change.
+    """
+    first, second = corpus_scans
+
     assert _canonical(_strip_volatile(first)) == _canonical(_strip_volatile(second))
 
 
-def test_degraded_records_are_stable(tmp_path: Path, corpus_dir: Path) -> None:
+def test_degraded_records_are_stable(corpus_scans: tuple[dict, dict]) -> None:
     """The set of degraded module records is identical across two scans."""
-    src = _make_corpus_tree(tmp_path, corpus_dir)
-    first = _scan(src, tmp_path / "idx_a")
-    second = _scan(src, tmp_path / "idx_b")
+    first, second = corpus_scans
+
     degraded_first = sorted((m["name"], m.get("reason")) for m in first["modules"] if m.get("status") == "degraded")
     degraded_second = sorted((m["name"], m.get("reason")) for m in second["modules"] if m.get("status") == "degraded")
+
     assert degraded_first == degraded_second
 
 
-def test_degradation_tracks_running_grammar(tmp_path: Path, corpus_dir: Path) -> None:
+def test_degradation_tracks_running_grammar(corpus_scans: tuple[dict, dict], corpus_dir: Path) -> None:
     """Scan-index degrades a module iff the running interpreter cannot parse it.
 
-    This is the exact correlation that holds on every matrix cell: the extractor
-    and this test share ``sys.executable``, so their parse verdicts must agree.
+    This is the exact correlation that holds on every matrix cell: the extractor and this test share
+    ``sys.executable``, so their parse verdicts must agree for every corpus file.
     """
-    index = _scan(_make_corpus_tree(tmp_path, corpus_dir), tmp_path / "idx")
-    status = _module_status(index)
-    for f in _corpus_files(corpus_dir):
-        rejected = _running_grammar_rejects(f.read_text())
-        expected = "degraded" if rejected else "ok"
-        assert status.get(f.stem) == expected, (
-            f"{f.name}: running-grammar rejected={rejected} but scan-index status={status.get(f.stem)!r}"
-        )
+    first, _ = corpus_scans
+
+    assert _status_mismatches(_module_status(first), corpus_dir) == []
 
 
-def test_post311_modules_degrade_below_312(tmp_path: Path, corpus_dir: Path) -> None:
+@pytest.mark.parametrize(
+    ("module", "expected"),
+    [
+        pytest.param(_ACCEPTED_MODULE, "ok", id="accepted-baseline"),
+        pytest.param("pep695_type_params", _POST_311_STATUS, id="pep695"),
+        pytest.param("fstring_nesting_312", _POST_311_STATUS, id="fstring-nesting"),
+    ],
+)
+def test_post311_modules_degrade_below_312(corpus_scans: tuple[dict, dict], module: str, expected: str) -> None:
     """Version-conditioned expectation — the multi-minor teeth of the corpus.
 
     On 3.10 and 3.11 the two post-3.11 modules must be degraded; on 3.12+ they must index cleanly. The accepted baseline
     indexes on every supported minor.
     """
-    index = _scan(_make_corpus_tree(tmp_path, corpus_dir), tmp_path / "idx")
-    status = _module_status(index)
-    assert status.get(_ACCEPTED_MODULE) == "ok"
-    below_312 = sys.version_info < (3, 12)
-    for mod in _POST_311_MODULES:
-        if below_312:
-            assert status.get(mod) == "degraded", f"{mod} should degrade on {sys.version_info[:2]}"
-        else:
-            assert status.get(mod) == "ok", f"{mod} should index on {sys.version_info[:2]}"
+    first, _ = corpus_scans
+
+    assert _module_status(first).get(module) == expected, f"{module} on {sys.version_info[:2]}"

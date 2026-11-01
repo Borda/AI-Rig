@@ -6,16 +6,15 @@ verdict, and the fail-closed paths: an unreadable program or a missing argument 
 
 from __future__ import annotations
 
-import importlib.util
 from pathlib import Path
 
 import pytest
+from _research_text import load_module
 
 # Hyphenated script name: load by path, as the sibling bin tests do.
-_SCRIPT = Path(__file__).resolve().parent.parent / "bin" / "detect-complexity.py"
-_spec = importlib.util.spec_from_file_location("research_detect_complexity", _SCRIPT)
-_mod = importlib.util.module_from_spec(_spec)  # type: ignore[arg-type]
-_spec.loader.exec_module(_mod)  # type: ignore[union-attr]
+_mod = load_module(
+    Path(__file__).resolve().parent.parent / "bin" / "detect-complexity.py", "research_detect_complexity"
+)
 
 main = _mod.main
 
@@ -68,7 +67,11 @@ class TestFailClosed:
         assert (code, out) == (2, "true")
 
     def test_missing_argument_exits_two(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """Calling without a program path exits 2 with a diagnostic and no verdict."""
+        """Calling without a program path exits 2 with a diagnostic and no verdict.
+
+        Consumers capture stdout only, so the diagnostic goes to stderr and stdout stays empty rather than ever carrying
+        a ``false`` that a forgotten argument could turn into a skipped review.
+        """
         code = main(["detect-complexity.py"])
 
         captured = capsys.readouterr()

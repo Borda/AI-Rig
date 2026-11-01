@@ -654,7 +654,7 @@
     },
     "23eefbf744adbe1d035200bf130dbb080b24625ecf0f4325d5bb5f213a2fbdd3": {
       "kind": "block",
-      "src": "rules/_full/git-commit.md:210"
+      "src": "rules/_full/git-commit.md:224"
     },
     "2426332a26e8dc2332c009f77e2bf5bddd7ab9b35164bb852b15445e1754913d": {
       "kind": "command",
@@ -1040,6 +1040,10 @@
       "kind": "command",
       "src": "agents/perf-optimizer.md:209"
     },
+    "3adb2eaf526b0123df0d01ce36875ac6c6e357c24b7cf2f460cb8175500471e0": {
+      "kind": "command",
+      "src": "rules/_full/git-commit.md:169"
+    },
     "3b2fe39feecef5df990f1b41e42f87faf6f9839d05d6fded821ff765c33bb9b1": {
       "kind": "command",
       "src": "skills/audit/templates/checks-agents.md:39"
@@ -1194,7 +1198,7 @@
     },
     "44676a7f021bec8dda0a7b5e654a871a85e0396417b02be5bfe8b952b2c1f148": {
       "kind": "block",
-      "src": "rules/python-testing.md:173"
+      "src": "rules/python-testing.md:203"
     },
     "44aa9d64636826d09bee7abd82aa36c5a31fac8a6ead7bdb29dae70de7e92638": {
       "kind": "block",
@@ -2036,6 +2040,10 @@
       "kind": "command",
       "src": "skills/setup/SKILL.md:365"
     },
+    "6f358249ed50202060e30ef9173077a168b0fb2be0e8ae4908a9f3754e5a0955": {
+      "kind": "command",
+      "src": "rules/_full/git-commit.md:169"
+    },
     "6fe3c8cc1ef805e3ec5eb747bdc381d2542f7274a14c2d599d58e7f66f315b1d": {
       "kind": "command",
       "src": "skills/audit/templates/checks-shared.md:536"
@@ -2419,6 +2427,10 @@
     "86c936951249f8f7e5e8ce034a5bff08280292b368c350907482ca200fda5cb6": {
       "kind": "block",
       "src": "agents/linting-expert.md:129"
+    },
+    "86d9fcece94ea0d3a167fbbeed02aeb91ff1b1bd0a5c911853d3533aed2b97f0": {
+      "kind": "command",
+      "src": "rules/_full/git-commit.md:169"
     },
     "86f33d659f185714f54c4bacf5dd0b83986f6ff79d8fd6e2afa7d53b20cc6709": {
       "kind": "command",
@@ -2859,6 +2871,10 @@
     "9d9d8dc5f742e88c6179ef84faceb87819014521a968d17726eca7167c571690": {
       "kind": "block",
       "src": "skills/profile/SKILL.md:84"
+    },
+    "9da76b85c08dad7b39ba9b70c849a3310574ab811364d9862da1be2b3d6a7e9b": {
+      "kind": "command",
+      "src": "rules/_full/git-commit.md:169"
     },
     "9dc6c410147b72d2c5d1d48ff36afb93cdf05b039fc50e0f7dbe172e606c3e7d": {
       "kind": "block",
@@ -4569,6 +4585,6 @@
       "src": "skills/audit/templates/checks-skills-gaps.md:49"
     }
   },
-  "plugin": "cc_foundry@0.74.0",
+  "plugin": "cc_foundry@0.74.1",
   "schema": 1
 }

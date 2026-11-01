@@ -198,7 +198,7 @@ def _ingest_usage(result: CodexParseResult, usage: Mapping[str, Any]) -> None:
     event per turn, always terminal — so ``max()``, ``sum()`` and last-wins are
     indistinguishable on real data and the cumulative property is unobservable
     there, while the subset claim held on all 401 events. The semantic stays
-    pinned only by a synthetic fixture in ``tests/test_codex_runtime.py``
+    pinned only by a synthetic fixture in ``benchmarks/tests/harness/test_codex_runtime.py``
     (``test_usage_events_are_treated_as_cumulative_not_additive``). If a future
     CLI emits several usage events per turn, that fixture is the contract to
     revisit before changing this.

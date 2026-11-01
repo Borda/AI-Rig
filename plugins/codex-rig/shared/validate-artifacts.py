@@ -63,6 +63,7 @@ if str(SHARED_DIRECTORY) not in sys.path:
 from adversarial_loop import SCHEMA_VERSION as LOOP_LEDGER_SCHEMA_VERSION  # noqa: E402
 from adversarial_loop import load_ledger  # noqa: E402
 from audit_consolidation import settle_consolidation  # noqa: E402
+from collect_diff import canonical_diff_arguments  # noqa: E402
 from collect_pr import _github_remote_identity, _head_repository, dirty_path_record_is_consistent  # noqa: E402
 from final_handoff import HandoffError, challenge_report_path, review_commit_sha  # noqa: E402
 from parallel_worktrees import PilotError, _portable_relative  # noqa: E402
@@ -3273,11 +3274,19 @@ def _validate_code_remediate_pr_identity(
     current_diff_command = (
         f"git diff --binary --no-ext-diff --no-textconv {routing.get('base_oid')}...{routing.get('head_oid')} --"
     )
+    canonical_diff_command = " ".join(
+        [
+            "git",
+            *canonical_diff_arguments(
+                ("diff", "--binary", f"{routing.get('base_oid')}...{routing.get('head_oid')}", "--")
+            ),
+        ]
+    )
     if (
         checkout.get("diff_source") != "verified-local-checkout"
         or checkout.get("diff_base_oid") != routing.get("base_oid")
         or checkout.get("diff_head_oid") != routing.get("head_oid")
-        or checkout.get("diff_command") not in (expected_diff_command, current_diff_command)
+        or checkout.get("diff_command") not in (expected_diff_command, current_diff_command, canonical_diff_command)
     ):
         raise SystemExit("code-remediate-pr-local-diff-provenance-invalid")
 

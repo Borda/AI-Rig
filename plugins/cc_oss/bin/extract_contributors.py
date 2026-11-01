@@ -22,7 +22,7 @@ an unavailable executable for an empty contributor list.
 
 Used by: ``skills/release/SKILL.md`` for inline notes mode and
 ``skills/release/modes/changelog-audit-prompt.md`` for delegated release
-preparation. Tests in ``tests/test_extract_contributors.py`` cover the pure
+preparation. Tests in ``tests/vitality/test_extract_contributors.py`` cover the pure
 classification and subprocess boundary.
 
 Arguments:

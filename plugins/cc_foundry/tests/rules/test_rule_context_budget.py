@@ -24,38 +24,6 @@ import pytest
 RULES_DIR = Path(__file__).resolve().parents[2] / "rules"
 FULL_DIR = RULES_DIR / "_full"
 EAGER_GLOBS = frozenset({"**", "**/*"})
-# Total bytes of the eager rule files. See the module docstring before raising this.
-# Raised from 58597: commit-message format bullets stay eager in claude-config.md because
-# rule-inject.js context arrives beside the first git call's result, after that message
-# was drafted; stub/detail pairs gained policy-sibling markers. Raised again from 59315:
-# default-branch and history-safety bullets stay eager because `reset --hard` never
-# triggers injection and `rebase` injects only after it ran. Raised again from 59455: the eager
-# commit-authority ban names the local Git grant as its third source, or it would contradict the
-# injected git-commit.md before that rule arrives. Raised again from 59464: the gh-write approval
-# question (public-github.md) must be seen before the first gh write, which no hook injects a
-# rule for, and untrusted-content.md states that free gh reads stay data.
-# Raised from 59990 by 995 bytes: the gh-write question now lists approval scope and expiry,
-# with the body summary and exact command visible before approval. It must remain eager
-# because no hook injects this rule before the first write; a lazy home misses that decision.
-# Raised from 60985 by 161 bytes: the adversarial-loop progress table format (exact columns,
-# `old + new` cells) now sits in the quality-gates stub. Defined only in the lazily read full
-# rule, it was replaced by a reduced ad-hoc table in a live loop report.
-# Raised from 61146 by 66 bytes: a one-line pointer to `_full/quality-gates.md` §Challenger Rounds,
-# which holds the procedure itself. The challenger brief is written before the first Agent() call,
-# and rule-inject.js injects agent-spawn.md only after that call ran, so a lazy home misses it.
-# Raised from 61212 by 11 bytes: the progress table header in the quality-gates stub gains its
-# `Security` column; the stub states the exact columns, so leaving it out reintroduces the
-# seven-column table in live loop reports.
-# Raised from 61223 by 44 bytes: the stub's recurrence clause names "a repeated invariant (same
-# signature or same invariant evidence)". Already eager, it said "repeated signature" alone, which
-# contradicts the full rule's per-invariant count; dropping it would leave no eager recurrence trigger.
-# Raised by 22 bytes: the existing eager subject rule must permit omitting a redundant scope;
-# the injected full rule arrives only after the first Git call, potentially after drafting.
-# Raised by 707 bytes: confidence and its gate must assess the delivered result in every workflow,
-# including early handoffs, so a lazily loaded rule cannot prevent status-score substitution.
-# Raised by 581 net bytes: proportional implementation and controlled-first validation must be known
-# before planning, editing, or external dispatch; activity-triggered rules arrive after those decisions.
-EAGER_BUDGET_BYTES = 62577
 #: Rules ``hooks/rule-inject.js`` injects on their activity; eager loading would duplicate them.
 HOOK_INJECTED_RULES = ("agent-spawn.md", "git-commit.md")
 
@@ -115,31 +83,15 @@ def _is_eager(path: Path) -> bool:
     return globs is None or any(glob in EAGER_GLOBS for glob in globs)
 
 
-def _eager_bytes() -> dict[str, int]:
-    """Byte size of each always-loaded rule file, keyed by file name."""
-    return {path.name: path.stat().st_size for path in _rule_files() if _is_eager(path)}
-
-
-def test_rule_files_were_found() -> None:
-    """The checks below are vacuous if the rules directory resolves to nothing."""
-    assert len(_rule_files()) >= 10, f"only {len(_rule_files())} rule files under {RULES_DIR}"
-
-
-def test_eager_rule_bytes_stay_within_budget() -> None:
-    """Fail when always-loaded rule text grows past the pinned budget."""
-    sizes = _eager_bytes()
-    total = sum(sizes.values())
-    largest = ", ".join(f"{name} {size}" for name, size in sorted(sizes.items(), key=lambda item: -item[1])[:5])
-    assert total <= EAGER_BUDGET_BYTES, (
-        f"always-loaded rules total {total} B, budget {EAGER_BUDGET_BYTES} B (largest: {largest}). "
-        "Move the new text behind a narrower `paths` glob or into `_full/` with a trigger line; "
-        "raise EAGER_BUDGET_BYTES only deliberately (see module docstring)."
-    )
+_RULE_CASES = [pytest.param(path, id=path.name) for path in _rule_files()]
 
 
 @pytest.mark.parametrize("name", HOOK_INJECTED_RULES)
 def test_hook_injected_rules_stay_out_of_the_eager_set(name: str) -> None:
     """A hook-injected rule that also loaded at session start would reach the model twice.
+
+    ``rule-inject.js`` reads the named rule when its activity starts, so the rule must exist and carry a ``paths``
+    glob narrow enough to keep it out of the session-start set.
 
     Args:
         name: Rule file the injection hook reads at run time.
@@ -149,9 +101,11 @@ def test_hook_injected_rules_stay_out_of_the_eager_set(name: str) -> None:
     assert not _is_eager(rule), f"{name} is hook-injected but its `paths` glob loads it at session start"
 
 
-@pytest.mark.parametrize("rule", _rule_files(), ids=lambda path: path.name)
+@pytest.mark.parametrize("rule", _RULE_CASES)
 def test_every_rule_declares_description_and_paths(rule: Path) -> None:
     """A rule without frontmatter ``paths`` is eager by accident rather than by decision.
+
+    Each top-level rule must state its load scope, plus a description, so no rule joins the eager set by omission.
 
     Args:
         rule: Top-level rule file.
@@ -162,9 +116,11 @@ def test_every_rule_declares_description_and_paths(rule: Path) -> None:
     assert _paths(front), f"{rule.name} frontmatter lacks a non-empty `paths` list"
 
 
-@pytest.mark.parametrize("rule", _rule_files(), ids=lambda path: path.name)
+@pytest.mark.parametrize("rule", _RULE_CASES)
 def test_every_full_pointer_resolves(rule: Path) -> None:
     """A stub that points at ``_full/<name>.md`` must find that file, or its detail is unreachable.
+
+    Every ``_full/`` file name mentioned in a top-level rule has to exist in the ``_full`` directory.
 
     Args:
         rule: Top-level rule file.

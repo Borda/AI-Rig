@@ -11,23 +11,8 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 
-
-@pytest.mark.integration
-@pytest.mark.parametrize(
-    "module",
-    [
-        "benchmarks/tests/test_run_all.py",
-        "tests/test_makefile_sync.py",
-        "plugins/cc_develop/tests/test_enforce_review_header_js.py",
-        "plugins/cc_oss/tests/vitality/test_enforce_analyse_header_js.py",
-        "plugins/cc_oss/tests/resolve/test_enforce_review_header_js.py",
-        "plugins/cc_research/tests/test_enforce_topic_header_js.py",
-    ],
-)
-def test_capability_skips_report_without_internal_error(module: str) -> None:
-    """Exercise skip reporting on every host without executing platform-specific test bodies."""
-    # Force only the skip decision, not sys.platform: pathlib and pytest must retain real host semantics.
-    code = """
+# Force only the skip decision, not sys.platform: pathlib and pytest must retain real host semantics.
+_FORCE_SKIP_PROBE = """
 import pytest
 import sys
 
@@ -42,10 +27,31 @@ raise SystemExit(pytest.main(
     [sys.argv[1], "-q", "--doctest-modules", "--no-cov", "--color=no"], plugins=[_ForceCapabilitySkip()]
 ))
 """
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "module",
+    [
+        "benchmarks/tests/entrypoints/test_run_all.py",
+        "tests/test_makefile_sync.py",
+        "plugins/cc_develop/tests/review/test_enforce_review_header_js.py",
+        "plugins/cc_oss/tests/vitality/test_enforce_analyse_header_js.py",
+        "plugins/cc_oss/tests/resolve/test_enforce_review_header_js.py",
+        "plugins/cc_research/tests/test_enforce_topic_header_js.py",
+    ],
+)
+def test_capability_skips_report_without_internal_error(module: str) -> None:
+    """Exercise skip reporting on every host without executing platform-specific test bodies.
+
+    Each module is collected by a real nested pytest with every test and doctest force-skipped at collection. The run
+    must end normally and report skips, so a module whose capability gate skips cannot abort the whole session.
+    """
     env = os.environ.copy()
     env.pop("PYTEST_ADDOPTS", None)
+
     result = subprocess.run(
-        [sys.executable, "-c", code, module],
+        [sys.executable, "-c", _FORCE_SKIP_PROBE, module],
         cwd=ROOT,
         env=env,
         capture_output=True,
@@ -53,6 +59,7 @@ raise SystemExit(pytest.main(
         timeout=60,
         check=False,
     )
+
     output = result.stdout + result.stderr
     assert result.returncode == 0, output
     assert "skipped" in output, output

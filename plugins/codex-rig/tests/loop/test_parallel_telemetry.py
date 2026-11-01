@@ -1,18 +1,21 @@
-"""Focused contract tests for privacy-minimized parallel telemetry."""
+"""Focused contract tests for privacy-minimized parallel telemetry.
+
+Covers token extraction from runtime rows, per-attempt and per-wave aggregation with HMAC identifiers, the compact
+retained-evidence record, and the 30-day diagnostic expiry enforcement with its durable audit trail.
+"""
 
 from __future__ import annotations
 
 import json
-import os
 import sys
 import tempfile
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
-from shared import parallel_telemetry
 from shared.parallel_telemetry import (
     TelemetryError,
     aggregate_wave_telemetry,
@@ -42,7 +45,7 @@ def _symlinks_supported() -> bool:
         return link.is_symlink()
 
 
-SYMLINKS_SUPPORTED = _symlinks_supported()
+_skip_without_symlinks = pytest.mark.skipif(not _symlinks_supported(), reason="symlink capability unavailable")
 
 
 def _row(
@@ -90,154 +93,25 @@ def _usage(input_tokens: int, output_tokens: int, *, cached: int = 0) -> dict[st
     }
 
 
-def test_terminal_usage_is_authoritative_and_subclasses_are_not_added() -> None:
-    first = _usage(10, 4, cached=6)
-    final_call = _usage(15, 5, cached=5)
-    cumulative = _usage(25, 9, cached=11)
-    rows = _row(first, total_usage=first) + _row(final_call, total_usage=cumulative, terminal=True)
-    usage, source, reset = extract_token_usage(rows)
-    assert usage["total_tokens"] == 34
-    assert usage["input_tokens"] == 25
-    assert source == "terminal_total"
-    assert reset is False
-
-
-def test_missing_terminal_reconstructs_deltas_and_marks_resets() -> None:
-    first = _usage(10, 2)
-    second = _usage(15, 3)
-    reset = _usage(4, 1)
-    rows = _row(first) + _row(second, total_usage=_usage(25, 5)) + _row(reset, total_usage=_usage(4, 1))
-    usage, source, reset = extract_token_usage(rows)
-    assert usage["total_tokens"] == 35
-    assert source == "delta_reconstruction"
-    assert reset is True
-
-
-def test_nonterminal_duplicate_cumulative_samples_are_not_double_counted() -> None:
-    cumulative = _usage(20, 4)
-    rows = _row(_usage(10, 2), total_usage=_usage(10, 2))
-    rows += _row(_usage(10, 2), total_usage=cumulative)
-    rows += _row(_usage(10, 2), total_usage=cumulative)
-    usage, source, reset = extract_token_usage(rows)
-    assert usage["total_tokens"] == 24
-    assert source == "delta_reconstruction"
-    assert reset is False
-
-
-def test_token_sample_after_terminal_is_schema_order_drift() -> None:
-    rows = _row(_usage(10, 2), terminal=True) + _row(_usage(12, 3))
-    with pytest.raises(TelemetryError, match="token-sample-after-terminal"):
-        extract_token_usage(rows)
-
-
-def test_attempt_output_contains_hmac_ids_and_no_raw_identifier() -> None:
-    attempt = collect_attempt_telemetry(
-        iter(_row(_usage(10, 4), terminal=True)),
-        attempt_id="child-1",
-        parent_attempt_id="parent-1",
-        role="qa-specialist",
+def _attempt(attempt_id: str = "child-1", rows=None, role: str = "qa-specialist", **extra) -> dict[str, object]:
+    """Collect one passing attempt; `rows` defaults to a small terminal-closed run."""
+    return collect_attempt_telemetry(
+        _row(_usage(2, 1), terminal=True) if rows is None else rows,
+        attempt_id=attempt_id,
+        role=role,
         outcome="pass",
         hmac_secret=SECRET,
+        **extra,
     )
-    assert attempt["attempt_id_hmac"] == hmac_identifier(SECRET, "child-1")
-    assert attempt["parent_attempt_id_hmac"] == hmac_identifier(SECRET, "parent-1")
-    assert "child-1" not in str(attempt)
-    assert attempt["task_duration_ms"] == 100
 
 
-def test_wave_parallel_uses_explicit_join_duration_and_keeps_child_proxy_diagnostic() -> None:
-    attempts = [
-        collect_attempt_telemetry(
-            _row(_usage(10, 4), terminal=True),
-            attempt_id="child-1",
-            role="qa-specialist",
-            outcome="pass",
-            hmac_secret=SECRET,
-        ),
-        collect_attempt_telemetry(
-            _row(_usage(12, 5), terminal=True),
-            attempt_id="child-2",
-            role="challenger",
-            outcome="pass",
-            hmac_secret=SECRET,
-        ),
-    ]
-    wave = aggregate_wave_telemetry(
-        attempts,
-        wave_id="wave-1",
-        mode="parallel",
-        workload_key=" Workload-A ",
-        dispatch_to_final_join_ms=180,
+def _aggregate(
+    attempts: list[dict[str, object]], *, workload_key: str = "same", join_ms: int = 10
+) -> dict[str, object]:
+    """Aggregate attempts into one parallel wave with a fixed id."""
+    return aggregate_wave_telemetry(
+        attempts, wave_id="wave-1", mode="parallel", workload_key=workload_key, dispatch_to_final_join_ms=join_ms
     )
-    assert wave["wall_time_ms"] == 180
-    assert wave["wall_time_source"] == "dispatch_to_final_join"
-    assert wave["child_duration_proxy_ms"] == 100
-    serial = {
-        "wall_time_ms": 300,
-        "wall_time_source": "dispatch_to_final_join",
-        "total_tokens": 100,
-        "workload_key_sha256": wave["workload_key_sha256"],
-    }
-    comparison = compare_parallel_to_serial(wave, serial)
-    assert comparison["wall_saved_ms"] == 120
-    assert comparison["speedup"] == 300 / 180
-    assert comparison["token_multiplier"] == wave["total_tokens"] / 100
-    assert comparison["baseline_matched"] is True
-    assert "workload_key" not in wave
-    assert "workload-a" not in str(wave)
-    mutated = {**wave, "workload_key_sha256": "0" * 64}
-    assert compare_parallel_to_serial(mutated, serial)["baseline_matched"] is False
-
-
-def test_invalid_counter_and_duplicate_attempt_fail_closed() -> None:
-    invalid = _usage(2, 1)
-    invalid["total_tokens"] = 99
-    with pytest.raises(TelemetryError, match="token-total-mismatch"):
-        extract_token_usage(_row(invalid, terminal=True))
-    attempt = collect_attempt_telemetry(
-        _row(_usage(2, 1), terminal=True),
-        attempt_id="child-1",
-        role="qa-specialist",
-        outcome="pass",
-        hmac_secret=SECRET,
-    )
-    with pytest.raises(TelemetryError, match="duplicate-attempt-id"):
-        aggregate_wave_telemetry(
-            [attempt, attempt],
-            wave_id="wave-1",
-            mode="parallel",
-            workload_key="same",
-            dispatch_to_final_join_ms=10,
-        )
-
-
-def test_parallel_claim_needs_two_attempts_and_matched_baseline() -> None:
-    attempt = collect_attempt_telemetry(
-        _row(_usage(2, 1), terminal=True),
-        attempt_id="child-1",
-        role="qa-specialist",
-        outcome="pass",
-        hmac_secret=SECRET,
-    )
-    with pytest.raises(TelemetryError, match="parallel-wave-needs-two-attempts"):
-        aggregate_wave_telemetry(
-            [attempt],
-            wave_id="wave-1",
-            mode="parallel",
-            workload_key="same",
-            dispatch_to_final_join_ms=10,
-        )
-    comparison = compare_parallel_to_serial(
-        {"wall_time_ms": 100, "total_tokens": 10}, {"wall_time_ms": 200, "total_tokens": 20}
-    )
-    assert comparison["baseline_matched"] is False
-    assert comparison["unavailable_fields"] == ["wall_saved_ms", "speedup", "token_multiplier"]
-
-
-def test_workload_key_is_required_and_post_mutation_is_detected() -> None:
-    assert normalize_workload_key("  Workload-A  ") == "workload-a"
-    with pytest.raises(TelemetryError, match="workload-key-must-be-single-token"):
-        normalize_workload_key("raw prompt text")
 
 
 def _parallel_wave() -> dict[str, object]:
@@ -248,345 +122,536 @@ def _parallel_wave() -> dict[str, object]:
         180
     """
     attempts = [
-        collect_attempt_telemetry(
-            _row(_usage(40, 20), terminal=True),
-            attempt_id=attempt_id,
-            role=role,
-            outcome="pass",
-            hmac_secret=SECRET,
-        )
+        _attempt(attempt_id, rows=_row(_usage(40, 20), terminal=True), role=role)
         for attempt_id, role in (("child-1", "qa-specialist"), ("child-2", "challenger"))
     ]
-    return aggregate_wave_telemetry(
-        attempts,
-        wave_id="wave-1",
-        mode="parallel",
-        workload_key="workload-a",
-        dispatch_to_final_join_ms=180,
-    )
+    return _aggregate(attempts, workload_key="workload-a", join_ms=180)
 
 
-@pytest.mark.installed_plugin
-def test_retained_wave_evidence_is_compact_private_and_observes_budget_overrun() -> None:
-    """Keep durable proof useful without retaining raw runtime identity or diagnostic payloads."""
-    record = build_retained_wave_evidence(
-        _parallel_wave(),
-        hmac_secret=SECRET,
-        proof_sha256="f" * 64,
-        status="passed",
-        observed_at="2026-09-02T12:00:00+00:00",
-        resolved_at=None,
-        budget_ceiling_tokens=100,
-        budget_reserved_tokens=100,
-    )
-
-    assert record["wave_id_hmac"] == hmac_identifier(SECRET, "wave-1")
-    assert "wave_id" not in record
-    assert "wave-1" not in str(record)
-    assert record["actual_over_budget_tokens"] == 20
-    assert record["proof_retention"] == "durable"
-    assert record["diagnostic_retention"] == "expire-30d-after-success-or-resolution"
-    assert record["diagnostic_expires_at"] == "2026-10-02T12:00:00+00:00"
-    assert set(record) == {
-        "schema_version",
-        "wave_id_hmac",
-        "proof_sha256",
-        "status",
-        "observed_at",
-        "resolved_at",
-        "mode",
-        "attempt_count",
-        "workload_key_sha256",
-        "wall_time_ms",
-        "wall_time_source",
-        "unavailable_fields",
-        "input_tokens",
-        "output_tokens",
-        "reasoning_output_tokens",
-        "cached_input_tokens",
-        "cache_write_input_tokens",
-        "total_tokens",
-        "budget_ceiling_tokens",
-        "budget_reserved_tokens",
-        "actual_over_budget_tokens",
-        "proof_retention",
-        "diagnostic_retention",
-        "diagnostic_expires_at",
-    }
-
-
-def test_failed_retention_waits_for_resolution_then_expires_in_thirty_days() -> None:
-    """Retain unresolved failure diagnostics while bounding resolved diagnostic lifetime."""
-    unresolved = build_retained_wave_evidence(
-        _parallel_wave(),
-        hmac_secret=SECRET,
-        proof_sha256="a" * 64,
-        status="failed",
-        observed_at="2026-09-02T12:00:00Z",
-        resolved_at=None,
-        budget_ceiling_tokens=200,
-        budget_reserved_tokens=150,
-    )
-    assert unresolved["diagnostic_retention"] == "retain-until-resolution"
-    assert unresolved["diagnostic_expires_at"] is None
-
-    resolved = build_retained_wave_evidence(
-        _parallel_wave(),
-        hmac_secret=SECRET,
-        proof_sha256="a" * 64,
-        status="failed",
-        observed_at="2026-09-02T12:00:00Z",
-        resolved_at="2026-09-05T12:00:00Z",
-        budget_ceiling_tokens=200,
-        budget_reserved_tokens=150,
-    )
-    assert resolved["diagnostic_expires_at"] == "2026-10-05T12:00:00+00:00"
-
-
-def test_retained_wave_rejects_unknown_fields_and_invalid_lifecycle() -> None:
-    """Fail closed on raw-field drift, invalid budgets, or impossible retention chronology."""
-    wave = _parallel_wave()
-    wave["prompt"] = "must-not-be-retained"
-    with pytest.raises(TelemetryError, match="retained-wave-fields-invalid"):
-        build_retained_wave_evidence(
-            wave,
-            hmac_secret=SECRET,
-            proof_sha256="a" * 64,
-            status="passed",
-            observed_at="2026-09-02T12:00:00Z",
-            resolved_at=None,
-            budget_ceiling_tokens=200,
-            budget_reserved_tokens=150,
-        )
-
-    with pytest.raises(TelemetryError, match="retention-resolution-before-observation"):
-        build_retained_wave_evidence(
-            _parallel_wave(),
-            hmac_secret=SECRET,
-            proof_sha256="a" * 64,
-            status="failed",
-            observed_at="2026-09-02T12:00:00Z",
-            resolved_at="2026-09-01T12:00:00Z",
-            budget_ceiling_tokens=200,
-            budget_reserved_tokens=150,
-        )
-
-    wave = _parallel_wave()
-    wave["unavailable_fields"] = ["raw child path or message"]
-    with pytest.raises(TelemetryError, match="retained-wave-contract-invalid"):
-        build_retained_wave_evidence(
-            wave,
-            hmac_secret=SECRET,
-            proof_sha256="a" * 64,
-            status="failed",
-            observed_at="2026-09-02T12:00:00Z",
-            resolved_at=None,
-            budget_ceiling_tokens=200,
-            budget_reserved_tokens=150,
-        )
-
-
-def _retained_record(*, status: str = "passed", resolved_at: str | None = None) -> dict[str, object]:
-    """Return a compact record with a deterministic 30-day expiry policy.
+def _retained_record(wave: dict[str, object] | None = None, **overrides) -> dict[str, object]:
+    """Return a retained record with defaults for a passed wave observed 2026-09-02.
 
     Example:
         >>> _retained_record(status="failed")["status"]
         'failed'
     """
-    return build_retained_wave_evidence(
-        _parallel_wave(),
-        hmac_secret=SECRET,
-        proof_sha256="a" * 64,
-        status=status,
-        observed_at="2026-09-02T12:00:00Z",
-        resolved_at=resolved_at,
-        budget_ceiling_tokens=200,
-        budget_reserved_tokens=150,
-    )
-
-
-def _expiry_audit_rows(diagnostics: Path) -> list[dict[str, object]]:
-    """Read durable expiry audit rows from the dedicated diagnostics directory."""
-    return [json.loads(line) for line in (diagnostics / "expiry-audit.jsonl").read_text(encoding="utf-8").splitlines()]
-
-
-def test_expiry_enforcement_deletes_only_the_fixed_sanitized_diagnostic_and_is_idempotent(tmp_path: Path) -> None:
-    """Delete the exact expired diagnostic and report a truthful repeat audit."""
-    record = _retained_record()
-    diagnostics = tmp_path / "diagnostics"
-    diagnostics.mkdir()
-    artifact = diagnostics / f"{record['wave_id_hmac']}.diagnostic.json"
-    artifact.write_text('{"sanitized":true}\n', encoding="utf-8", newline="\n")
-    sibling = diagnostics / "unrelated-retained-evidence.json"
-    sibling.write_text('{"keep":true}\n', encoding="utf-8", newline="\n")
-    other_diagnostic = diagnostics / f"{'f' * 64}.diagnostic.json"
-    other_diagnostic.write_text('{"other":true}\n', encoding="utf-8", newline="\n")
-
-    deleted = enforce_diagnostic_expiry(record, diagnostics_directory=diagnostics, now="2026-10-02T12:00:00Z")
-    assert not artifact.exists()
-    assert sibling.read_text(encoding="utf-8") == '{"keep":true}\n'
-    assert other_diagnostic.read_text(encoding="utf-8") == '{"other":true}\n'
-    assert deleted == {
-        "schema_version": 1,
-        "wave_id_hmac": record["wave_id_hmac"],
+    arguments = {
+        "hmac_secret": SECRET,
+        "proof_sha256": "a" * 64,
         "status": "passed",
-        "checked_at": "2026-10-02T12:00:00+00:00",
-        "diagnostic_expires_at": "2026-10-02T12:00:00+00:00",
-        "action": "deleted",
-        "deleted": True,
+        "observed_at": "2026-09-02T12:00:00Z",
+        "resolved_at": None,
+        "budget_ceiling_tokens": 200,
+        "budget_reserved_tokens": 150,
+        **overrides,
     }
-    audit_rows = _expiry_audit_rows(diagnostics)
-    assert [row["action"] for row in audit_rows] == ["delete-intent", "deleted"]
-    assert audit_rows[-1] == deleted
-
-    repeated = enforce_diagnostic_expiry(record, diagnostics_directory=diagnostics, now="2026-10-03T12:00:00Z")
-    assert repeated["action"] == "already-missing"
-    assert repeated["deleted"] is False
-    assert _expiry_audit_rows(diagnostics)[-1] == repeated
-    assert sibling.read_text(encoding="utf-8") == '{"keep":true}\n'
-    assert other_diagnostic.read_text(encoding="utf-8") == '{"other":true}\n'
+    return build_retained_wave_evidence(_parallel_wave() if wave is None else wave, **arguments)
 
 
-@pytest.mark.parametrize("status", ["failed", "cancelled", "conflicted"])
-def test_expiry_enforcement_never_deletes_unresolved_failure_diagnostics(tmp_path: Path, status: str) -> None:
-    """Leave failed, cancelled, and conflicted records untouched until explicitly resolved."""
-    diagnostics = tmp_path / "diagnostics"
-    diagnostics.mkdir()
-    record = _retained_record(status=status)
-    artifact = diagnostics / f"{record['wave_id_hmac']}.diagnostic.json"
-    artifact.write_text("sanitized\n", encoding="utf-8", newline="\n")
-
-    audit = enforce_diagnostic_expiry(record, diagnostics_directory=diagnostics, now="2030-01-01T00:00:00Z")
-    assert audit["action"] == "retained-unresolved"
-    assert audit["deleted"] is False
-    assert artifact.is_file()
-    assert _expiry_audit_rows(diagnostics)[-1] == audit
+@pytest.fixture
+def diagnostics(tmp_path: Path) -> Path:
+    """Empty dedicated diagnostics directory."""
+    directory = tmp_path / "diagnostics"
+    directory.mkdir()
+    return directory
 
 
-def test_expiry_enforcement_deletes_expired_resolved_failure_diagnostic(tmp_path: Path) -> None:
-    """Treat an explicit resolution as the 30-day expiry anchor for a failed record."""
-    record = _retained_record(status="failed", resolved_at="2026-09-05T12:00:00Z")
-    diagnostics = tmp_path / "diagnostics"
-    diagnostics.mkdir()
-    artifact = diagnostics / f"{record['wave_id_hmac']}.diagnostic.json"
-    artifact.write_text("sanitized\n", encoding="utf-8", newline="\n")
-
-    audit = enforce_diagnostic_expiry(record, diagnostics_directory=diagnostics, now="2026-10-05T12:00:00Z")
-    assert audit["action"] == "deleted"
-    assert audit["diagnostic_expires_at"] == "2026-10-05T12:00:00+00:00"
-    assert not artifact.exists()
-    assert _expiry_audit_rows(diagnostics)[-1] == audit
+def _write_artifact(directory: Path, record: dict[str, object], text: str = "sanitized\n") -> Path:
+    """Write the fixed-name sanitized diagnostic for a retained record and return its path."""
+    artifact = directory / f"{record['wave_id_hmac']}.diagnostic.json"
+    artifact.write_text(text, encoding="utf-8", newline="\n")
+    return artifact
 
 
-def test_expiry_enforcement_requires_durable_audit_before_deletion(tmp_path: Path) -> None:
-    """Keep the diagnostic when the fixed durable audit target cannot accept evidence."""
-    record = _retained_record()
-    diagnostics = tmp_path / "diagnostics"
-    diagnostics.mkdir()
-    artifact = diagnostics / f"{record['wave_id_hmac']}.diagnostic.json"
-    artifact.write_text("sanitized\n", encoding="utf-8", newline="\n")
-    (diagnostics / "expiry-audit.jsonl").mkdir()
+def _expiry_audit_rows(directory: Path) -> list[dict[str, object]]:
+    """Read durable expiry audit rows from the dedicated diagnostics directory."""
+    return [json.loads(line) for line in (directory / "expiry-audit.jsonl").read_text(encoding="utf-8").splitlines()]
 
-    with pytest.raises(TelemetryError, match="diagnostic-audit-target-not-regular-file"):
+
+class TestExtractTokenUsage:
+    """Token extraction from runtime rows: terminal totals, delta reconstruction, schema drift."""
+
+    @pytest.mark.parametrize(
+        ("rows", "expected_usage", "expected_source", "expected_reset"),
+        [
+            pytest.param(
+                _row(_usage(10, 4, cached=6))
+                + _row(_usage(15, 5, cached=5), total_usage=_usage(25, 9, cached=11), terminal=True),
+                {"total_tokens": 34, "input_tokens": 25},
+                "terminal_total",
+                False,
+                id="terminal-total-is-authoritative",
+            ),
+            pytest.param(
+                _row(_usage(10, 2)) + _row(_usage(15, 3), total_usage=_usage(25, 5)) + _row(_usage(4, 1)),
+                {"total_tokens": 35},
+                "delta_reconstruction",
+                True,
+                id="missing-terminal-marks-counter-reset",
+            ),
+            pytest.param(
+                _row(_usage(10, 2))
+                + _row(_usage(10, 2), total_usage=_usage(20, 4))
+                + _row(_usage(10, 2), total_usage=_usage(20, 4)),
+                {"total_tokens": 24},
+                "delta_reconstruction",
+                False,
+                id="duplicate-cumulative-samples-not-double-counted",
+            ),
+        ],
+    )
+    def test_usage_source_and_reset(self, rows, expected_usage, expected_source, expected_reset) -> None:
+        """Usage totals come from the terminal event when present, else from reconstructed deltas.
+
+        A terminal total is authoritative and its sub-counters are never added on top. Without one, deltas are rebuilt
+        from cumulative samples: repeated samples count once and a shrinking counter is flagged as a reset.
+        """
+        usage, source, reset = extract_token_usage(rows)
+
+        assert {key: usage[key] for key in expected_usage} == expected_usage
+        assert source == expected_source
+        assert reset is expected_reset
+
+    @pytest.mark.parametrize(
+        ("rows", "match"),
+        [
+            pytest.param(
+                _row(_usage(10, 2), terminal=True) + _row(_usage(12, 3)),
+                "token-sample-after-terminal",
+                id="sample-after-terminal",
+            ),
+            pytest.param(
+                _row({**_usage(2, 1), "total_tokens": 99}, terminal=True),
+                "token-total-mismatch",
+                id="inconsistent-total",
+            ),
+        ],
+    )
+    def test_rejects_invalid_rows(self, rows, match: str) -> None:
+        """Rows that break the counter schema fail closed with a named reason.
+
+        A token sample after the terminal event signals schema-order drift, and a total that is not input plus output
+        signals corrupted counters; accepting either would silently skew the reported usage.
+        """
+        with pytest.raises(TelemetryError, match=match):
+            extract_token_usage(rows)
+
+
+class TestCollectAttemptTelemetry:
+    """Per-attempt telemetry carries HMAC identifiers and never the raw ones."""
+
+    def test_hmac_ids_without_raw_identifier(self) -> None:
+        """Attempt output holds HMAC ids and omits the raw attempt identifier.
+
+        Accepts an iterator of rows so streamed runtime logs work; the terminal event supplies the task duration.
+        """
+        attempt = _attempt(
+            rows=iter(_row(_usage(10, 4), terminal=True)), parent_attempt_id="parent-1", attempt_id="child-1"
+        )
+
+        assert attempt["attempt_id_hmac"] == hmac_identifier(SECRET, "child-1")
+        assert attempt["parent_attempt_id_hmac"] == hmac_identifier(SECRET, "parent-1")
+        assert "child-1" not in str(attempt)
+        assert attempt["task_duration_ms"] == 100
+
+
+class TestAggregateWave:
+    """Wave aggregation: explicit join duration, privacy of the workload key, fail-closed inputs."""
+
+    @pytest.fixture
+    def wave(self) -> dict[str, object]:
+        """Two-attempt parallel wave with a padded, mixed-case workload key and a 180 ms join."""
+        attempts = [
+            _attempt("child-1", rows=_row(_usage(10, 4), terminal=True)),
+            _attempt("child-2", rows=_row(_usage(12, 5), terminal=True), role="challenger"),
+        ]
+        return _aggregate(attempts, workload_key=" Workload-A ", join_ms=180)
+
+    def test_wall_time_uses_explicit_join_duration(self, wave) -> None:
+        """Wall time is the dispatch-to-join duration; the longest child stays a diagnostic proxy only.
+
+        Two children of 100 ms each run in parallel and the parent joined at 180 ms, so the wave reports 180 ms and
+        keeps the child duration as a separate proxy rather than substituting it for the wall time.
+        """
+        assert wave["wall_time_ms"] == 180
+        assert wave["wall_time_source"] == "dispatch_to_final_join"
+        assert wave["child_duration_proxy_ms"] == 100
+
+    def test_workload_key_stored_only_as_hash(self, wave) -> None:
+        """The wave records a workload hash and never the raw workload key."""
+        assert "workload_key" not in wave
+        assert "workload-a" not in str(wave)
+
+    def test_compare_to_serial_with_matched_baseline(self, wave) -> None:
+        """A serial baseline with the same workload hash yields savings, speedup and a token multiplier."""
+        serial = {
+            "wall_time_ms": 300,
+            "wall_time_source": "dispatch_to_final_join",
+            "total_tokens": 100,
+            "workload_key_sha256": wave["workload_key_sha256"],
+        }
+
+        comparison = compare_parallel_to_serial(wave, serial)
+
+        assert comparison["wall_saved_ms"] == 120
+        assert comparison["speedup"] == 300 / 180
+        assert comparison["token_multiplier"] == wave["total_tokens"] / 100
+        assert comparison["baseline_matched"] is True
+
+    def test_compare_flags_mutated_workload_hash(self, wave) -> None:
+        """A wave whose workload hash was altered after aggregation no longer matches its serial baseline."""
+        serial = {
+            "wall_time_ms": 300,
+            "wall_time_source": "dispatch_to_final_join",
+            "total_tokens": 100,
+            "workload_key_sha256": wave["workload_key_sha256"],
+        }
+
+        comparison = compare_parallel_to_serial({**wave, "workload_key_sha256": "0" * 64}, serial)
+
+        assert comparison["baseline_matched"] is False
+
+    def test_rejects_duplicate_attempt_ids(self) -> None:
+        """The same attempt cannot be counted twice in one wave.
+
+        Passing one collected attempt twice would double its tokens and make a wave look larger than it was.
+        """
+        attempt = _attempt()
+
+        with pytest.raises(TelemetryError, match="duplicate-attempt-id"):
+            _aggregate([attempt, attempt])
+
+    def test_parallel_wave_needs_two_attempts(self) -> None:
+        """A parallel claim backed by a single attempt is rejected."""
+        with pytest.raises(TelemetryError, match="parallel-wave-needs-two-attempts"):
+            _aggregate([_attempt()])
+
+    def test_comparison_without_workload_hash_is_unmatched(self) -> None:
+        """Without matching workload hashes no speedup claim is derived.
+
+        The comparison marks the baseline unmatched and lists the derived fields as unavailable instead of computing
+        savings from two runs that may not describe the same work.
+        """
+        comparison = compare_parallel_to_serial(
+            {"wall_time_ms": 100, "total_tokens": 10}, {"wall_time_ms": 200, "total_tokens": 20}
+        )
+
+        assert comparison["baseline_matched"] is False
+        assert comparison["unavailable_fields"] == ["wall_saved_ms", "speedup", "token_multiplier"]
+
+
+class TestNormalizeWorkloadKey:
+    """Workload keys are single lowercase tokens so raw prompt text cannot leak in."""
+
+    def test_trims_and_lowercases(self) -> None:
+        """Surrounding whitespace and letter case are normalized away."""
+        assert normalize_workload_key("  Workload-A  ") == "workload-a"
+
+    def test_rejects_multi_token_text(self) -> None:
+        """A key with spaces looks like free text and is rejected."""
+        with pytest.raises(TelemetryError, match="workload-key-must-be-single-token"):
+            normalize_workload_key("raw prompt text")
+
+
+class TestBuildRetainedWaveEvidence:
+    """The retained record is compact, private, and carries a fixed retention policy."""
+
+    @pytest.mark.installed_plugin
+    def test_compact_private_record_with_budget_overrun(self) -> None:
+        """Durable proof stays useful without raw runtime identity or diagnostic payloads.
+
+        A wave of 120 tokens against a 100-token ceiling is recorded as a 20-token overrun, the wave id appears only as
+        an HMAC, and the record carries exactly the documented field set.
+        """
+        record = _retained_record(
+            proof_sha256="f" * 64,
+            observed_at="2026-09-02T12:00:00+00:00",
+            budget_ceiling_tokens=100,
+            budget_reserved_tokens=100,
+        )
+
+        assert record["wave_id_hmac"] == hmac_identifier(SECRET, "wave-1")
+        assert "wave_id" not in record
+        assert "wave-1" not in str(record)
+        assert record["actual_over_budget_tokens"] == 20
+        assert record["proof_retention"] == "durable"
+        assert record["diagnostic_retention"] == "expire-30d-after-success-or-resolution"
+        assert record["diagnostic_expires_at"] == "2026-10-02T12:00:00+00:00"
+        assert set(record) == {
+            "schema_version",
+            "wave_id_hmac",
+            "proof_sha256",
+            "status",
+            "observed_at",
+            "resolved_at",
+            "mode",
+            "attempt_count",
+            "workload_key_sha256",
+            "wall_time_ms",
+            "wall_time_source",
+            "unavailable_fields",
+            "input_tokens",
+            "output_tokens",
+            "reasoning_output_tokens",
+            "cached_input_tokens",
+            "cache_write_input_tokens",
+            "total_tokens",
+            "budget_ceiling_tokens",
+            "budget_reserved_tokens",
+            "actual_over_budget_tokens",
+            "proof_retention",
+            "diagnostic_retention",
+            "diagnostic_expires_at",
+        }
+
+    @pytest.mark.parametrize(
+        ("resolved_at", "expected_retention", "expected_expiry"),
+        [
+            pytest.param(None, "retain-until-resolution", None, id="unresolved-failure"),
+            pytest.param(
+                "2026-09-05T12:00:00Z",
+                "expire-30d-after-success-or-resolution",
+                "2026-10-05T12:00:00+00:00",
+                id="resolved-failure",
+            ),
+        ],
+    )
+    def test_failure_waits_for_resolution_then_expires_in_thirty_days(
+        self, resolved_at, expected_retention, expected_expiry
+    ) -> None:
+        """A failed wave keeps its diagnostic until resolved, then expires 30 days after the resolution.
+
+        Failure diagnostics must stay available while the failure is open; once resolved the lifetime is bounded.
+        """
+        record = _retained_record(status="failed", resolved_at=resolved_at)
+
+        assert record["diagnostic_retention"] == expected_retention
+        assert record["diagnostic_expires_at"] == expected_expiry
+
+    @pytest.mark.parametrize(
+        ("wave_update", "overrides", "match"),
+        [
+            pytest.param(
+                {"prompt": "must-not-be-retained"}, {}, "retained-wave-fields-invalid", id="unknown-raw-field"
+            ),
+            pytest.param(
+                {},
+                {"status": "failed", "resolved_at": "2026-09-01T12:00:00Z"},
+                "retention-resolution-before-observation",
+                id="resolution-before-observation",
+            ),
+            pytest.param(
+                {"unavailable_fields": ["raw child path or message"]},
+                {"status": "failed"},
+                "retained-wave-contract-invalid",
+                id="unavailable-fields-carry-raw-text",
+            ),
+        ],
+    )
+    def test_rejects_field_drift_and_invalid_lifecycle(self, wave_update, overrides, match: str) -> None:
+        """Raw-field drift, bad contract values or impossible chronology fail closed with a named reason."""
+        with pytest.raises(TelemetryError, match=match):
+            _retained_record({**_parallel_wave(), **wave_update}, **overrides)
+
+
+@pytest.fixture
+def bystanders(diagnostics: Path) -> dict[Path, str]:
+    """Files next to the target diagnostic that expiry must never touch, mapped to their content."""
+    contents = {
+        diagnostics / "unrelated-retained-evidence.json": '{"keep":true}\n',
+        diagnostics / f"{'f' * 64}.diagnostic.json": '{"other":true}\n',
+    }
+    for path, text in contents.items():
+        path.write_text(text, encoding="utf-8", newline="\n")
+    return contents
+
+
+def _read_all(contents: dict[Path, str]) -> dict[Path, str]:
+    """Read the current text of every path in `contents`."""
+    return {path: path.read_text(encoding="utf-8") for path in contents}
+
+
+class TestEnforceDiagnosticExpiry:
+    """Expiry deletes exactly one sanitized diagnostic after a durable audit intent, or leaves it alone."""
+
+    def test_deletes_only_the_fixed_diagnostic(self, diagnostics, bystanders) -> None:
+        """The expired record's own diagnostic is deleted and audited; neighbouring files survive.
+
+        The wave's diagnostic sits next to an unrelated evidence file and another wave's diagnostic. Only the fixed-name
+        target may go, and the audit trail shows the intent row before the deleted row.
+        """
+        record = _retained_record()
+        artifact = _write_artifact(diagnostics, record)
+
+        deleted = enforce_diagnostic_expiry(record, diagnostics_directory=diagnostics, now="2026-10-02T12:00:00Z")
+
+        assert not artifact.exists()
+        assert _read_all(bystanders) == bystanders
+        assert deleted == {
+            "schema_version": 1,
+            "wave_id_hmac": record["wave_id_hmac"],
+            "status": "passed",
+            "checked_at": "2026-10-02T12:00:00+00:00",
+            "diagnostic_expires_at": "2026-10-02T12:00:00+00:00",
+            "action": "deleted",
+            "deleted": True,
+        }
+        audit_rows = _expiry_audit_rows(diagnostics)
+        assert [row["action"] for row in audit_rows] == ["delete-intent", "deleted"]
+        assert audit_rows[-1] == deleted
+
+    def test_repeat_run_reports_already_missing(self, diagnostics, bystanders) -> None:
+        """A second enforcement after deletion is idempotent and audits that the target is already gone.
+
+        Expiry may be re-run by retries or schedulers; the repeat must not fail or delete anything else.
+        """
+        record = _retained_record()
+        _write_artifact(diagnostics, record)
         enforce_diagnostic_expiry(record, diagnostics_directory=diagnostics, now="2026-10-02T12:00:00Z")
 
-    assert artifact.read_text(encoding="utf-8") == "sanitized\n"
+        repeated = enforce_diagnostic_expiry(record, diagnostics_directory=diagnostics, now="2026-10-03T12:00:00Z")
 
+        assert repeated["action"] == "already-missing"
+        assert repeated["deleted"] is False
+        assert _expiry_audit_rows(diagnostics)[-1] == repeated
+        assert _read_all(bystanders) == bystanders
 
-def test_expiry_enforcement_preserves_diagnostic_when_intent_fsync_fails(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Prevent deletion when the intent row cannot reach the audit durability boundary."""
-    record = _retained_record()
-    diagnostics = tmp_path / "diagnostics"
-    diagnostics.mkdir()
-    artifact = diagnostics / f"{record['wave_id_hmac']}.diagnostic.json"
-    artifact.write_text("sanitized\n", encoding="utf-8", newline="\n")
+    @pytest.mark.parametrize("status", ["failed", "cancelled", "conflicted"])
+    def test_keeps_unresolved_failure_diagnostics(self, diagnostics, status: str) -> None:
+        """Failed, cancelled and conflicted records stay untouched until explicitly resolved.
 
-    def _fail_fsync(_descriptor: int) -> None:
-        """Simulate a storage failure at the audit durability boundary."""
-        raise OSError("full")
+        Even far past any 30-day window, an unresolved failure has no expiry anchor, so its diagnostic is retained.
+        """
+        record = _retained_record(status=status)
+        artifact = _write_artifact(diagnostics, record)
 
-    monkeypatch.setattr(parallel_telemetry.os, "fsync", _fail_fsync)
+        audit = enforce_diagnostic_expiry(record, diagnostics_directory=diagnostics, now="2030-01-01T00:00:00Z")
 
-    with pytest.raises(TelemetryError, match="diagnostic-audit-write-failed"):
-        enforce_diagnostic_expiry(record, diagnostics_directory=diagnostics, now="2026-10-02T12:00:00Z")
+        assert audit["action"] == "retained-unresolved"
+        assert audit["deleted"] is False
+        assert artifact.is_file()
+        assert _expiry_audit_rows(diagnostics)[-1] == audit
 
-    assert artifact.read_text(encoding="utf-8") == "sanitized\n"
+    def test_deletes_expired_resolved_failure(self, diagnostics) -> None:
+        """An explicit resolution is the 30-day expiry anchor for a failed record."""
+        record = _retained_record(status="failed", resolved_at="2026-09-05T12:00:00Z")
+        artifact = _write_artifact(diagnostics, record)
 
+        audit = enforce_diagnostic_expiry(record, diagnostics_directory=diagnostics, now="2026-10-05T12:00:00Z")
 
-def test_expiry_enforcement_retains_intent_when_outcome_fsync_fails(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Leave a recoverable intent trail when deletion succeeds but its outcome fsync fails."""
-    record = _retained_record()
-    diagnostics = tmp_path / "diagnostics"
-    diagnostics.mkdir()
-    artifact = diagnostics / f"{record['wave_id_hmac']}.diagnostic.json"
-    artifact.write_text("sanitized\n", encoding="utf-8", newline="\n")
-    real_fsync = os.fsync
-    calls = 0
+        assert audit["action"] == "deleted"
+        assert audit["diagnostic_expires_at"] == "2026-10-05T12:00:00+00:00"
+        assert not artifact.exists()
+        assert _expiry_audit_rows(diagnostics)[-1] == audit
 
-    def _fail_second_fsync(descriptor: int) -> None:
-        """Fail only the post-deletion audit durability boundary."""
-        nonlocal calls
-        calls += 1
-        if calls == 2:
-            raise OSError("full")
-        real_fsync(descriptor)
+    def test_requires_durable_audit_before_deletion(self, diagnostics) -> None:
+        """The diagnostic is kept when the fixed audit target cannot accept evidence.
 
-    monkeypatch.setattr(parallel_telemetry.os, "fsync", _fail_second_fsync)
-    with pytest.raises(TelemetryError, match="diagnostic-audit-write-failed"):
-        enforce_diagnostic_expiry(record, diagnostics_directory=diagnostics, now="2026-10-02T12:00:00Z")
+        With a directory squatting on the audit file name no intent row can be written, so deleting would leave no
+        record of the action.
+        """
+        record = _retained_record()
+        artifact = _write_artifact(diagnostics, record)
+        (diagnostics / "expiry-audit.jsonl").mkdir()
 
-    assert not artifact.exists()
-    assert _expiry_audit_rows(diagnostics)[0]["action"] == "delete-intent"
+        with pytest.raises(TelemetryError, match="diagnostic-audit-target-not-regular-file"):
+            enforce_diagnostic_expiry(record, diagnostics_directory=diagnostics, now="2026-10-02T12:00:00Z")
 
+        assert artifact.read_text(encoding="utf-8") == "sanitized\n"
 
-def test_expiry_enforcement_rejects_timestamp_policy_and_target_drift(tmp_path: Path) -> None:
-    """Fail closed before deletion for ambiguous time, record drift, and unsafe targets."""
-    record = _retained_record()
-    diagnostics = tmp_path / "diagnostics"
-    diagnostics.mkdir()
-    artifact = diagnostics / f"{record['wave_id_hmac']}.diagnostic.json"
+    @mock.patch("shared.parallel_telemetry.os.fsync", autospec=True, side_effect=OSError("full"))
+    def test_keeps_diagnostic_when_intent_fsync_fails(self, mock_fsync, diagnostics) -> None:
+        """Deletion is prevented when the intent row cannot reach the audit durability boundary.
 
-    with pytest.raises(TelemetryError, match="retention-now-invalid"):
-        enforce_diagnostic_expiry(record, diagnostics_directory=diagnostics, now="2026-10-02T12:00:00")
+        Storage fails on the first fsync, before anything is deleted, so the diagnostic must still be on disk.
+        """
+        record = _retained_record()
+        artifact = _write_artifact(diagnostics, record)
 
-    drifted = {**record, "diagnostic_expires_at": "2026-10-03T12:00:00+00:00"}
-    with pytest.raises(TelemetryError, match="retained-record-policy-drift"):
-        enforce_diagnostic_expiry(drifted, diagnostics_directory=diagnostics, now="2026-10-03T12:00:00Z")
+        with pytest.raises(TelemetryError, match="diagnostic-audit-write-failed"):
+            enforce_diagnostic_expiry(record, diagnostics_directory=diagnostics, now="2026-10-02T12:00:00Z")
 
-    artifact.mkdir()
-    with pytest.raises(TelemetryError, match="diagnostic-target-not-regular-file"):
-        enforce_diagnostic_expiry(record, diagnostics_directory=diagnostics, now="2026-10-03T12:00:00Z")
+        assert mock_fsync.call_count == 1
+        assert artifact.read_text(encoding="utf-8") == "sanitized\n"
 
+    @mock.patch("shared.parallel_telemetry.os.fsync", autospec=True, side_effect=[None, OSError("full")])
+    def test_retains_intent_when_outcome_fsync_fails(self, mock_fsync, diagnostics) -> None:
+        """A recoverable intent trail remains when deletion succeeds but its outcome fsync fails.
 
-@pytest.mark.skipif(not SYMLINKS_SUPPORTED, reason="symlink capability unavailable")
-def test_expiry_enforcement_rejects_symlinked_directory_and_target(tmp_path: Path) -> None:
-    """Reject symlink routes so expiry cannot escape the dedicated diagnostics directory."""
-    record = _retained_record()
-    diagnostics = tmp_path / "diagnostics"
-    diagnostics.mkdir()
-    directory_link = tmp_path / "diagnostics-link"
-    directory_link.symlink_to(diagnostics, target_is_directory=True)
-    with pytest.raises(TelemetryError, match="diagnostic-directory-symlink-invalid"):
-        enforce_diagnostic_expiry(record, diagnostics_directory=directory_link, now="2026-10-03T12:00:00Z")
+        The first fsync (intent) succeeds and the second (outcome) fails after the file is gone; the intent row must
+        remain so the deletion can be reconstructed.
+        """
+        record = _retained_record()
+        artifact = _write_artifact(diagnostics, record)
 
-    parent = tmp_path / "parent"
-    nested_diagnostics = parent / "diagnostics"
-    nested_diagnostics.mkdir(parents=True)
-    parent_link = tmp_path / "parent-link"
-    parent_link.symlink_to(parent, target_is_directory=True)
-    with pytest.raises(TelemetryError, match="diagnostic-directory-path-escape"):
-        enforce_diagnostic_expiry(record, diagnostics_directory=parent_link / "diagnostics", now="2026-10-03T12:00:00Z")
+        with pytest.raises(TelemetryError, match="diagnostic-audit-write-failed"):
+            enforce_diagnostic_expiry(record, diagnostics_directory=diagnostics, now="2026-10-02T12:00:00Z")
 
-    artifact = diagnostics / f"{record['wave_id_hmac']}.diagnostic.json"
-    outside = tmp_path / "outside-diagnostic.json"
-    outside.write_text("keep\n", encoding="utf-8", newline="\n")
-    artifact.symlink_to(outside)
-    with pytest.raises(TelemetryError, match="diagnostic-target-symlink-invalid"):
-        enforce_diagnostic_expiry(record, diagnostics_directory=diagnostics, now="2026-10-03T12:00:00Z")
-    assert outside.read_text(encoding="utf-8") == "keep\n"
+        assert mock_fsync.call_count == 2
+        assert not artifact.exists()
+        assert _expiry_audit_rows(diagnostics)[0]["action"] == "delete-intent"
+
+    @pytest.mark.parametrize(
+        ("record_update", "now", "match"),
+        [
+            pytest.param({}, "2026-10-02T12:00:00", "retention-now-invalid", id="naive-now"),
+            pytest.param(
+                {"diagnostic_expires_at": "2026-10-03T12:00:00+00:00"},
+                "2026-10-03T12:00:00Z",
+                "retained-record-policy-drift",
+                id="expiry-differs-from-policy",
+            ),
+        ],
+    )
+    def test_rejects_ambiguous_time_and_policy_drift(self, diagnostics, record_update, now: str, match: str) -> None:
+        """Ambiguous time or a record that drifted from the 30-day policy fails before any deletion."""
+        record = {**_retained_record(), **record_update}
+
+        with pytest.raises(TelemetryError, match=match):
+            enforce_diagnostic_expiry(record, diagnostics_directory=diagnostics, now=now)
+
+    def test_rejects_directory_as_target(self, diagnostics) -> None:
+        """A directory squatting on the diagnostic file name is rejected instead of removed."""
+        record = _retained_record()
+        (diagnostics / f"{record['wave_id_hmac']}.diagnostic.json").mkdir()
+
+        with pytest.raises(TelemetryError, match="diagnostic-target-not-regular-file"):
+            enforce_diagnostic_expiry(record, diagnostics_directory=diagnostics, now="2026-10-03T12:00:00Z")
+
+    @_skip_without_symlinks
+    def test_rejects_symlinked_directory(self, tmp_path, diagnostics) -> None:
+        """A symlink pointing at the diagnostics directory is refused so expiry cannot be redirected."""
+        link = tmp_path / "diagnostics-link"
+        link.symlink_to(diagnostics, target_is_directory=True)
+
+        with pytest.raises(TelemetryError, match="diagnostic-directory-symlink-invalid"):
+            enforce_diagnostic_expiry(_retained_record(), diagnostics_directory=link, now="2026-10-03T12:00:00Z")
+
+    @_skip_without_symlinks
+    def test_rejects_symlinked_parent_escape(self, tmp_path) -> None:
+        """A symlinked parent of the diagnostics directory is refused as a path escape."""
+        parent = tmp_path / "parent"
+        (parent / "diagnostics").mkdir(parents=True)
+        parent_link = tmp_path / "parent-link"
+        parent_link.symlink_to(parent, target_is_directory=True)
+
+        with pytest.raises(TelemetryError, match="diagnostic-directory-path-escape"):
+            enforce_diagnostic_expiry(
+                _retained_record(), diagnostics_directory=parent_link / "diagnostics", now="2026-10-03T12:00:00Z"
+            )
+
+    @_skip_without_symlinks
+    def test_rejects_symlinked_target_and_keeps_outside_file(self, tmp_path, diagnostics) -> None:
+        """A symlinked diagnostic is refused and the file it points at is left intact.
+
+        The link leads outside the diagnostics directory; following it would delete evidence the policy never owned.
+        """
+        record = _retained_record()
+        outside = tmp_path / "outside-diagnostic.json"
+        outside.write_text("keep\n", encoding="utf-8", newline="\n")
+        (diagnostics / f"{record['wave_id_hmac']}.diagnostic.json").symlink_to(outside)
+
+        with pytest.raises(TelemetryError, match="diagnostic-target-symlink-invalid"):
+            enforce_diagnostic_expiry(record, diagnostics_directory=diagnostics, now="2026-10-03T12:00:00Z")
+
+        assert outside.read_text(encoding="utf-8") == "keep\n"

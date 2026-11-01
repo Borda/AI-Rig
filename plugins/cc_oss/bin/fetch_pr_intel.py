@@ -38,7 +38,7 @@ A failed resolved-thread query is not fatal: ``resolved_threads_ok`` is ``false`
 ``resolved`` is ``false``; a failed commit query sets ``commits_ok`` to ``false``. A failed issue lookup is recorded on
 that issue's own record.
 
-Used by: ``skills/resolve/modes/pr-intelligence.md`` (Step 3b). Tests in ``tests/test_fetch_pr_intel.py``.
+Used by: ``skills/resolve/modes/pr-intelligence.md`` (Step 3b). Tests in ``tests/resolve/test_fetch_pr_intel.py``.
 
 Arguments:
     --pr:     Pull request number.

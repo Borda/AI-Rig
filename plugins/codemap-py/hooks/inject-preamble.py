@@ -38,6 +38,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from collections.abc import Callable
 from contextlib import suppress
@@ -488,9 +489,15 @@ def spawn_refresh(
     else:
         kwargs["start_new_session"] = True
     try:
-        subprocess.Popen(command, **kwargs)  # noqa: S603 - argv list, no shell; tool resolved via PATH on purpose
+        process = subprocess.Popen(command, **kwargs)  # noqa: S603 - argv list, no shell; tool resolved via PATH on purpose
     except OSError:
         return False
+    # The scan outlives this call by design, so its handle must not be dropped here: a discarded Popen whose child
+    # is still running warns "subprocess N is still running" from Popen.__del__ and leaves the finished child
+    # unreaped in a long-lived caller. A daemon thread holds the handle and reaps the child when it exits. Being a
+    # daemon, it never delays the hook's own exit; the child keeps running in its own session (POSIX) or process
+    # group (Windows) after the hook is gone, exactly as before.
+    threading.Thread(target=process.wait, name="codemap-refresh-reaper", daemon=True).start()
     return True
 
 

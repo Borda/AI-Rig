@@ -170,8 +170,10 @@ _ABANDON_WORD = (
 #: ``📦`` are not warnings).
 _WARNING_SIGN = r"[\U000026a0\U000026d4\U00002757\U0000274c\U0001f6a8\U0001f6ab\U0001f6d1]\U0000fe0f?"
 #: Opening and closing marks around a description's status: bold/italic, a bracket, a warning sign.
-_ABANDON_OPEN = rf"(?:\*{{1,2}}|_{{1,2}}|\[|\(|{_WARNING_SIGN}[ \t]*)"
-_ABANDON_CLOSE = rf"(?:\*{{1,2}}|_{{1,2}}|\]|\)|[ \t]*{_WARNING_SIGN})"
+#: Bold or italic mark, a raw string because docformatter 1.7.8 on CPython 3.12.3 corrupts ``\*{{1,2}}`` in an f-string.
+_EMPHASIS_MARK = r"\*{1,2}|_{1,2}"
+_ABANDON_OPEN = rf"(?:{_EMPHASIS_MARK}|\[|\(|{_WARNING_SIGN}[ \t]*)"
+_ABANDON_CLOSE = rf"(?:{_EMPHASIS_MARK}|\]|\)|[ \t]*{_WARNING_SIGN})"
 #: Description tail — the status ends the description or its sentence ("**DEPRECATED**", "Archived.", "No longer
 #: maintained. This ..."), or a redirect follows it ("DEPRECATED use bar", "DEPRECATED, please see bar"). A ``:`` that
 #: introduces anything else names another subject ("Deprecated: Python 3.8 support was dropped"), and a following noun
@@ -347,9 +349,11 @@ _MONTH_NUMBERS = {
 _ISO_DATE_RE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
 #: Day number with an optional two-letter ordinal suffix (``5th``, ``22``).
 _DAY_NUMBER = r"(\d{1,2})[a-z]{0,2}"
-_DAY_MONTH_YEAR_RE = re.compile(rf"\b{_DAY_NUMBER}\s+{_MONTH},?\s+(\d{{4}})\b", re.IGNORECASE)
-_MONTH_DAY_YEAR_RE = re.compile(rf"\b{_MONTH}\s+{_DAY_NUMBER},?\s+(\d{{4}})\b", re.IGNORECASE)
-_MONTH_YEAR_RE = re.compile(rf"\b{_MONTH}\s+(\d{{4}})\b", re.IGNORECASE)
+#: Captured four-digit year, a raw string for the same docformatter reason as ``_EMPHASIS_MARK``.
+_YEAR = r"(\d{4})"
+_DAY_MONTH_YEAR_RE = re.compile(rf"\b{_DAY_NUMBER}\s+{_MONTH},?\s+{_YEAR}\b", re.IGNORECASE)
+_MONTH_DAY_YEAR_RE = re.compile(rf"\b{_MONTH}\s+{_DAY_NUMBER},?\s+{_YEAR}\b", re.IGNORECASE)
+_MONTH_YEAR_RE = re.compile(rf"\b{_MONTH}\s+{_YEAR}\b", re.IGNORECASE)
 #: A version number in a changelog heading or release tag (``26.10.0``, ``v1.2.3``, ``21.12b0``, ``1.0.0-rc.1``); at
 #: least one dot, so an ISO date (``2024-01-05``) never reads as a version.
 _VERSION_RE = re.compile(r"(?<![\w.])v?(\d+(?:\.\d+)+[\w.+-]*)", re.IGNORECASE)

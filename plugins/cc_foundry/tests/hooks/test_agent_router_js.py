@@ -23,11 +23,9 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
-from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from _hook_env import _hook_tmp_base
 
 HOOK = Path(__file__).resolve().parent.parent.parent / "hooks" / "agent-router.js"
 
@@ -35,18 +33,6 @@ NODE_UNAVAILABLE = shutil.which("node") is None
 _skip_node_unavailable = pytest.mark.skipif(NODE_UNAVAILABLE, reason="requires node to execute the hook")
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
-
-
-@pytest.fixture(name="sid")
-def _sid(tmp_path: Path) -> Iterator[str]:
-    """Yield a unique session id; clean its ``claude-state-<id>`` dir on teardown.
-
-    Base resolved via ``_hook_tmp_base()`` so teardown targets the same directory the hook's ``getSentinelDir()`` writes
-    on this platform.
-    """
-    s = f"pytest-{tmp_path.name}"
-    yield s
-    shutil.rmtree(_hook_tmp_base() / f"claude-state-{s}", ignore_errors=True)
 
 
 @pytest.fixture(name="tmp_home")
@@ -62,8 +48,7 @@ def _tmp_home(tmp_path: Path) -> Path:
     plugin_agents = h / ".claude" / "plugins" / "cache" / "borda-ai-rig" / "foundry" / "0.0.1" / "agents"
     plugin_agents.mkdir(parents=True)
     (plugin_agents / "sw-engineer.md").write_text(
-        "---\nname: sw-engineer\ndescription: stub agent for tests\n---\n",
-        encoding="utf-8",
+        "---\nname: sw-engineer\ndescription: stub agent for tests\n---\n", encoding="utf-8"
     )
     return h
 
@@ -121,13 +106,13 @@ class TestAgentRouting:
         assert result.returncode == 0, result.stderr
         assert result.stdout == ""
 
-    def test_unknown_agent_rerouted_to_general_purpose(self, sid: str, tmp_home: Path, run_hook) -> None:
-        """Unknown agent triggers tier-3 fallback; stdout JSON sets subagent_type=general-purpose."""
-        result = run_hook(
-            "agent-router.js",
-            _pre_agent("nonexistent:agent-xyz", sid),
-            home=tmp_home,
-        )
+    def test_unknown_agent_reroutes_to_general_purpose(self, sid: str, tmp_home: Path, run_hook) -> None:
+        """Unknown agent triggers tier-3 fallback; stdout JSON sets subagent_type=general-purpose.
+
+        The agent name matches nothing in the stubbed cache or local directory and no API key is available for tier 2,
+        so the call must still run, rerouted to the built-in agent instead of failing.
+        """
+        result = run_hook("agent-router.js", _pre_agent("nonexistent:agent-xyz", sid), home=tmp_home)
 
         assert result.returncode == 0, result.stderr
         assert result.stdout, "tier-3 fallback must emit JSON"
@@ -136,7 +121,11 @@ class TestAgentRouting:
         assert updated["subagent_type"] == "general-purpose"
 
     def test_session_start_builds_index(self, sid: str, tmp_home: Path, run_hook, state_dir) -> None:
-        """SessionStart writes agent-router-index.json with plugin agents enumerated."""
+        """SessionStart writes agent-router-index.json with plugin agents enumerated.
+
+        The stubbed home holds one plugin agent; the index written at session start must list it so later calls can
+        resolve it without rescanning the cache.
+        """
         result = run_hook("agent-router.js", _session_start(sid), home=tmp_home)
 
         assert result.returncode == 0, result.stderr
@@ -151,25 +140,26 @@ class TestAgentRouting:
 # ── Tier-2B LLM pick helpers ──────────────────────────────────────────────────
 
 
+def _run_node(script: str) -> dict:
+    """Run one ``node -e`` script that writes JSON to stdout and return the parsed value."""
+    proc = subprocess.run(["node", "-e", script], capture_output=True, encoding="utf-8", timeout=10, check=False)
+    assert proc.returncode == 0, f"node failed: {proc.stderr}"
+    return json.loads(proc.stdout)
+
+
 def _node_call(fn: str, *args: object) -> dict:
     """Call one exported hook helper under node; return ``{"ok": value}`` or ``{"error": message}``."""
     call_args = ", ".join(json.dumps(a) for a in args)
-    script = (
+    return _run_node(
         f"const h = require({json.dumps(str(HOOK))});"
         f"let out; try {{ out = {{ ok: h.{fn}({call_args}) }}; }} catch (e) {{ out = {{ error: e.message }}; }}"
         "process.stdout.write(JSON.stringify(out));"
     )
-    proc = subprocess.run(["node", "-e", script], capture_output=True, encoding="utf-8", timeout=10, check=False)
-    assert proc.returncode == 0, f"node failed: {proc.stderr}"
-    return json.loads(proc.stdout)
 
 
 def _node_constant(name: str) -> object:
     """Read one exported hook constant under node."""
-    script = f"process.stdout.write(JSON.stringify(require({json.dumps(str(HOOK))}).{name}));"
-    proc = subprocess.run(["node", "-e", script], capture_output=True, encoding="utf-8", timeout=10, check=False)
-    assert proc.returncode == 0, f"node failed: {proc.stderr}"
-    return json.loads(proc.stdout)
+    return _run_node(f"process.stdout.write(JSON.stringify(require({json.dumps(str(HOOK))}).{name}));")
 
 
 def _node_resolve(env: dict[str, str], fetch_body: str, now_ms: str = "Date.now()") -> dict:
@@ -178,7 +168,7 @@ def _node_resolve(env: dict[str, str], fetch_body: str, now_ms: str = "Date.now(
     ``fetch_body`` is the JavaScript body of the stub ``fetchModels(apiKey)`` — it may return a ``{statusCode, raw}``
     object or throw. ``env`` replaces ``process.env`` for the resolver, so ``TMPDIR`` points the cache at ``tmp_path``.
     """
-    script = (
+    return _run_node(
         f"const h = require({json.dumps(str(HOOK))});"
         "const logs = []; let calls = 0;"
         f"const fetchModels = async (apiKey) => {{ calls += 1; {fetch_body} }};"
@@ -186,9 +176,6 @@ def _node_resolve(env: dict[str, str], fetch_body: str, now_ms: str = "Date.now(
         " log: (m) => logs.push(m) })"
         ".then((r) => process.stdout.write(JSON.stringify({ ...r, logs, calls })));"
     )
-    proc = subprocess.run(["node", "-e", script], capture_output=True, encoding="utf-8", timeout=10, check=False)
-    assert proc.returncode == 0, f"node failed: {proc.stderr}"
-    return json.loads(proc.stdout)
 
 
 def _models_response(*entries: tuple[str, str | None]) -> str:
@@ -198,6 +185,12 @@ def _models_response(*entries: tuple[str, str | None]) -> str:
 
 
 _MODELS_MUST_NOT_BE_CALLED = "throw new Error('Models API must not be called');"
+
+
+@pytest.fixture(name="fallback_model", scope="module")
+def _fallback_model() -> object:
+    """Return the hook's exported ``FALLBACK_HAIKU_MODEL`` constant, read once per module."""
+    return _node_constant("FALLBACK_HAIKU_MODEL")
 
 
 @_skip_node_unavailable
@@ -237,7 +230,10 @@ class TestHaikuModelResolution:
         assert (got["model"], got["source"], got["calls"]) == ("claude-haiku-9", "env", 0)
 
     def test_fresh_cache_hit_skips_models_api(self, tmp_path: Path) -> None:
-        """A cache file younger than 24h answers without a network call."""
+        """A cache file younger than 24h answers without a network call.
+
+        The cache already names a model; the Models API stub throws if touched, so a hit proves the lookup was skipped.
+        """
         (tmp_path / "agent-router-haiku-model-shared").write_text("claude-haiku-7-1\n", encoding="utf-8")
 
         got = _node_resolve({"TMPDIR": str(tmp_path)}, _MODELS_MUST_NOT_BE_CALLED)
@@ -288,17 +284,15 @@ class TestHaikuModelResolution:
             pytest.param("return { statusCode: 200, raw: JSON.stringify({ data: [] }) };", id="no-haiku-line"),
         ],
     )
-    def test_lookup_failure_falls_back_and_logs(self, tmp_path: Path, fetch_body: str) -> None:
+    def test_lookup_failure_falls_back_and_logs(self, tmp_path: Path, fetch_body: str, fallback_model: object) -> None:
         """Every lookup failure lands on the latest-known constant, logs why, and leaves no cache behind.
 
         Caching the fallback would pin it for a day; leaving the cache empty retries the lookup on the next call.
         """
-        fallback = _node_constant("FALLBACK_HAIKU_MODEL")
-
         got = _node_resolve({"TMPDIR": str(tmp_path)}, fetch_body)
 
-        assert (got["model"], got["source"]) == (fallback, "fallback")
-        assert any(f"using fallback {fallback}" in line for line in got["logs"])
+        assert (got["model"], got["source"]) == (fallback_model, "fallback")
+        assert any(f"using fallback {fallback_model}" in line for line in got["logs"])
         assert not (tmp_path / "agent-router-haiku-model-shared").exists()
 
     @pytest.mark.parametrize(
@@ -311,7 +305,11 @@ class TestHaikuModelResolution:
         ],
     )
     def test_cache_path_is_session_scoped(self, tmp_path: Path, env: dict[str, str], suffix: str) -> None:
-        """The cache file sits in ``TMPDIR`` with a session suffix; a token unsafe for a filename becomes ``shared``."""
+        """The cache file sits in ``TMPDIR`` with a session suffix; a token unsafe for a filename becomes ``shared``.
+
+        Two Claude Code sessions must not share one cache file, and a hostile ``CSID`` such as ``../escape`` must never
+        steer the path out of ``TMPDIR``.
+        """
         got = _node_call("haikuModelCachePath", {**env, "TMPDIR": str(tmp_path)})
 
         assert Path(got["ok"]) == tmp_path / f"agent-router-haiku-model-{suffix}"

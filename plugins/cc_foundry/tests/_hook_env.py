@@ -6,14 +6,17 @@ whichever ``conftest`` module was registered under that name first, which under 
 ``benchmarks/conftest.py``. Importing by a name that exists exactly once in the repo removes the ordering dependency
 entirely.
 
-Fixtures still belong in ``conftest.py`` — pytest injects those by name with no import at all. These two are not
-fixtures: :func:`_hook_tmp_base` is called from plain module-level helpers that tests invoke directly, and
-:func:`_bash_runs_posix_script` is evaluated inside a module-level ``skipif``, where a fixture cannot reach.
+Fixtures still belong in ``conftest.py`` — pytest injects those by name with no import at all. These are not fixtures:
+:func:`_hook_tmp_base` is called from plain module-level helpers that tests invoke directly, and
+:func:`_bash_runs_posix_script`, :func:`_symlinks_supported` and :func:`_contract_path_capability` are evaluated inside
+module-level ``skipif`` markers, where a fixture cannot reach. :func:`_clean_env` and :func:`_session_transcript` are
+plain helpers both ``conftest.py`` and the test modules call.
 """
 
 from __future__ import annotations
 
 import functools
+import os
 import subprocess
 import sys
 import tempfile
@@ -51,11 +54,7 @@ def _hook_tmp_base() -> Path:
         return Path("/tmp")
     try:
         proc = subprocess.run(
-            ["node", "-p", "require('os').tmpdir()"],
-            capture_output=True,
-            text=True,
-            timeout=15,
-            check=False,
+            ["node", "-p", "require('os').tmpdir()"], capture_output=True, text=True, timeout=15, check=False
         )
     except (OSError, subprocess.SubprocessError):
         return Path(tempfile.gettempdir())
@@ -81,13 +80,80 @@ def _bash_runs_posix_script() -> bool:
         True
     """
     try:
-        proc = subprocess.run(
-            ["bash", "-c", "printf ok"],
-            capture_output=True,
-            text=True,
-            timeout=15,
-            check=False,
-        )
+        proc = subprocess.run(["bash", "-c", "printf ok"], capture_output=True, text=True, timeout=15, check=False)
     except (OSError, subprocess.SubprocessError):
         return False
     return proc.returncode == 0 and proc.stdout.strip() == "ok"
+
+
+@functools.lru_cache(maxsize=1)
+def _symlinks_supported() -> bool:
+    """Probe whether this process may create a symlink.
+
+    A capability probe rather than a platform test: native Windows allows symlinks with the right privilege or in
+    developer mode, and a blanket ``win32`` skip would hide a real regression on the machines that do support them.
+
+    Returns:
+        True when a (dangling) file symlink could be created.
+
+    Examples:
+        >>> isinstance(_symlinks_supported(), bool)
+        True
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        try:
+            (Path(directory) / "link").symlink_to(Path(directory) / "target")
+        except (OSError, NotImplementedError):
+            return False
+    return True
+
+
+def _contract_path_capability(kind: str) -> bool:
+    """Probe special-file creation before collection, including Windows restrictions.
+
+    Args:
+        kind: ``"fifo"`` to probe :func:`os.mkfifo`; any other value probes a file symlink.
+
+    Examples:
+        >>> isinstance(_contract_path_capability("symlink"), bool)
+        True
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        candidate = Path(directory) / "candidate"
+        try:
+            if kind == "fifo":
+                if not hasattr(os, "mkfifo"):
+                    return False
+                os.mkfifo(candidate)
+            else:
+                target = Path(directory) / "target"
+                target.write_bytes(b"test")
+                candidate.symlink_to(target)
+        except OSError:
+            return False
+    return True
+
+
+def _clean_env(**overrides: str) -> dict[str, str]:
+    """Return the test environment: no ``CLAUDE_PROJECT_DIR``, no ``GIT_*`` variable, then ``overrides``.
+
+    Examples:
+        >>> "CLAUDE_PROJECT_DIR" in _clean_env()
+        False
+        >>> _clean_env(GIT_DIR="x")["GIT_DIR"]
+        'x'
+    """
+    env = {
+        key: value for key, value in os.environ.items() if key != "CLAUDE_PROJECT_DIR" and not key.startswith("GIT_")
+    }
+    return {**env, **overrides}
+
+
+def _session_transcript(repo: Path) -> Path:
+    """Return the session transcript beside ``repo`` that the token fixtures record the user's answers in.
+
+    Examples:
+        >>> _session_transcript(Path("/w/repo")).name
+        'repo-session.jsonl'
+    """
+    return repo.parent / f"{repo.name}-session.jsonl"

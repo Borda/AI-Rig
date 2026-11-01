@@ -7,23 +7,9 @@ placement, listed-degrader confidence — is pinned here on the metric shapes wh
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
 import pytest
 import vitality_extract as vx
-
-_NOW = 1_800_000_000
-_DAY = 86400
-
-
-def _iso(days_ago: float) -> str:
-    """Return an ISO-8601 UTC timestamp ``days_ago`` days before ANALYSIS_NOW."""
-    return datetime.fromtimestamp(_NOW - days_ago * _DAY, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def _view(*records: dict) -> vx.DataView:
-    """Build a DataView from ``{"type", "data", ...}`` records at the fixed ANALYSIS_NOW."""
-    return vx.DataView(records={r["type"]: r for r in records}, now=_NOW)
+from _vitality_data import data_view, iso
 
 
 def _readme(line: str, repo: str = "o/foo") -> dict:
@@ -34,6 +20,11 @@ def _readme(line: str, repo: str = "o/foo") -> dict:
 def _description(text: str) -> dict:
     """``repo_metadata`` record carrying only the repository description ``text``."""
     return {"type": "repo_metadata", "data": {"description": text}}
+
+
+def _raw_readme(text: str) -> dict:
+    """README record holding exactly ``text``, with no repository name attached."""
+    return {"type": "readme_content", "data": text}
 
 
 #: Axis 9 sub-signal metrics scoring 10, 5 or 0, per sub-signal; ``None`` leaves the sub-signal ⚪.
@@ -170,9 +161,13 @@ class TestAxis1Bands:
         ],
     )
     def test_band(self, overrides: dict, band: str, score: int) -> None:
-        """Pick the worst band whose line holds; a value on a shared boundary belongs to the better band."""
+        """Pick the worst band whose line holds; a value on a shared boundary belongs to the better band.
+
+        A red line and a yellow line can hold at once, and values sit exactly on shared boundaries. Each case pins the
+        band the rubric's precedence rule picks, including a missing PR clause counting as not held.
+        """
         # Act
-        result = vx.score_axis1(_view(), _axis1(**overrides))
+        result = vx.score_axis1(data_view(), _axis1(**overrides))
 
         # Assert
         assert (result["band"], result["score"]) == (band, score)
@@ -185,9 +180,13 @@ class TestAxis1Bands:
         ],
     )
     def test_no_judgeable_issue_is_unavailable(self, overrides: dict) -> None:
-        """Mark the axis ⚪ when no issue is old enough or answered: no band line is decidable without issue metrics."""
+        """Mark the axis ⚪ when no issue is old enough or answered: no band line is decidable without issue metrics.
+
+        Either no issue was sampled, or every sampled issue is too young to judge. The scorer then reports ⚪ with zero
+        confidence rather than guessing a band from PR metrics alone.
+        """
         # Act
-        result = vx.score_axis1(_view(), _axis1(median_issue_response_days=None, **overrides))
+        result = vx.score_axis1(data_view(), _axis1(median_issue_response_days=None, **overrides))
 
         # Assert
         assert (result["band"], result["score"], result["conf"]) == ("⚪", None, 0.0)
@@ -202,7 +201,7 @@ class TestAxis1Bands:
         Keying on ``issues_sampled`` reported 100% responded over 4 items at full confidence.
         """
         # Act
-        result = vx.score_axis1(_view(), _axis1(issues_eligible=eligible, issues_too_young=20 - eligible))
+        result = vx.score_axis1(data_view(), _axis1(issues_eligible=eligible, issues_too_young=20 - eligible))
 
         # Assert
         assert result["conf"] == conf
@@ -214,12 +213,12 @@ class TestAxis2Bands:
     @pytest.mark.parametrize(
         ("records", "band", "score"),
         [
-            pytest.param([{"type": "commits", "data": [_iso(1)] * 5}], "🟢", 10, id="active"),
-            pytest.param([{"type": "commits", "data": [_iso(100)]}], "🔴", 1, id="stalled"),
+            pytest.param([{"type": "commits", "data": [iso(1)] * 5}], "🟢", 10, id="active"),
+            pytest.param([{"type": "commits", "data": [iso(100)]}], "🔴", 1, id="stalled"),
             pytest.param(
                 [
-                    {"type": "commits", "data": [_iso(70), _iso(75), _iso(80)]},
-                    {"type": "releases", "data": [{"tag": "v1.0.1", "published": _iso(50)}]},
+                    {"type": "commits", "data": [iso(70), iso(75), iso(80)]},
+                    {"type": "releases", "data": [{"tag": "v1.0.1", "published": iso(50)}]},
                 ],
                 "🟡",
                 4,
@@ -227,8 +226,8 @@ class TestAxis2Bands:
             ),
             pytest.param(
                 [
-                    {"type": "commits", "data": [_iso(70), _iso(75), _iso(80)]},
-                    {"type": "releases", "data": [{"tag": "v1.0.1", "published": _iso(180)}]},
+                    {"type": "commits", "data": [iso(70), iso(75), iso(80)]},
+                    {"type": "releases", "data": [{"tag": "v1.0.1", "published": iso(180)}]},
                 ],
                 "🟡",
                 4,
@@ -236,8 +235,8 @@ class TestAxis2Bands:
             ),
             pytest.param(
                 [
-                    {"type": "commits", "data": [_iso(70), _iso(75), _iso(80)]},
-                    {"type": "releases", "data": [{"tag": "v1.0.1", "published": _iso(180.1)}]},
+                    {"type": "commits", "data": [iso(70), iso(75), iso(80)]},
+                    {"type": "releases", "data": [{"tag": "v1.0.1", "published": iso(180.1)}]},
                 ],
                 "🔴",
                 1,
@@ -245,25 +244,26 @@ class TestAxis2Bands:
             ),
             pytest.param([{"type": "commits", "data": []}], "🔴", 1, id="empty-commit-list-is-zero-commits"),
             pytest.param(
-                [
-                    {"type": "commits", "data": [_iso(1)] * 5},
-                    {"type": "readme_content", "data": "This project is deprecated."},
-                ],
+                [{"type": "commits", "data": [iso(1)] * 5}, _raw_readme("This project is deprecated.")],
                 "🔴",
                 0,
                 id="abandonment-override-scores-zero",
             ),
             pytest.param(
-                [{"type": "commits", "data": [_iso(14)] * 5}], "🟢", 10, id="last-commit-14d-boundary-is-green"
+                [{"type": "commits", "data": [iso(14)] * 5}], "🟢", 10, id="last-commit-14d-boundary-is-green"
             ),
-            pytest.param([{"type": "commits", "data": [_iso(14.1)] * 5}], "🟡", 5, id="last-commit-past-14d-is-yellow"),
+            pytest.param([{"type": "commits", "data": [iso(14.1)] * 5}], "🟡", 5, id="last-commit-past-14d-is-yellow"),
             pytest.param([], "⚪", None, id="missing-commit-list-is-unavailable"),
         ],
     )
     def test_band(self, records: list[dict], band: str, score: int | None) -> None:
-        """Decide Axis 2 from commit recency and volume, with the backport upgrade and the ⛔ override."""
+        """Decide Axis 2 from commit recency and volume, with the backport upgrade and the ⛔ override.
+
+        Cases cover recency and volume boundaries, a backport release that lifts red to yellow within 180 days, a
+        missing commit list, and a README discontinuation notice that zeroes an otherwise active repository.
+        """
         # Act
-        result = vx.axis_result("2", _view(*records))
+        result = vx.axis_result("2", data_view(*records))
 
         # Assert
         assert (result["band"], result["score"]) == (band, score)
@@ -272,40 +272,33 @@ class TestAxis2Bands:
         ("extra", "override"),
         [
             pytest.param(
-                {
-                    "type": "repo_metadata",
-                    "data": {"description": "Drop-in replacement for the deprecated foo library"},
-                },
+                _description("Drop-in replacement for the deprecated foo library"),
                 None,
                 id="description-naming-another-deprecated-thing",
             ),
             pytest.param(
-                {"type": "readme_content", "data": "# foo\nPython 2 support is deprecated as of v3.\n"},
+                _raw_readme("# foo\nPython 2 support is deprecated as of v3.\n"),
                 None,
                 id="readme-deprecating-a-feature",
             ),
             pytest.param(
-                {"type": "readme_content", "data": "# foo\n- deprecated: the `--fast` flag\n"},
-                None,
-                id="list-item-is-not-a-line-start-notice",
+                _raw_readme("# foo\n- deprecated: the `--fast` flag\n"), None, id="list-item-is-not-a-line-start-notice"
             ),
             pytest.param(
-                {"type": "readme_content", "data": "# foo\nAbandoned ideas live in the wiki.\n"},
+                _raw_readme("# foo\nAbandoned ideas live in the wiki.\n"),
                 None,
                 id="bare-keyword-is-not-a-self-reference",
             ),
             pytest.param(
-                {"type": "readme_content", "data": "# foo\nThis package is unmaintained.\n"},
-                None,
-                id="package-subject-may-be-a-sub-component",
+                _raw_readme("# foo\nThis package is unmaintained.\n"), None, id="package-subject-may-be-a-sub-component"
             ),
             pytest.param(
-                {"type": "readme_content", "data": "# foo\n> **Deprecated:** use bar instead.\n"},
+                _raw_readme("# foo\n> **Deprecated:** use bar instead.\n"),
                 "⛔ self-declared discontinuation",
                 id="line-start-deprecated-notice",
             ),
             pytest.param(
-                {"type": "repo_metadata", "data": {"description": "No longer maintained, see bar"}},
+                _description("No longer maintained, see bar"),
                 "⛔ self-declared discontinuation",
                 id="description-no-longer-maintained",
             ),
@@ -320,70 +313,64 @@ class TestAxis2Bands:
                 id="not-archived",
             ),
             pytest.param(
-                {"type": "readme_content", "data": "# foo\nThe 1.x branch is no longer maintained. Use 2.x.\n"},
+                _raw_readme("# foo\nThe 1.x branch is no longer maintained. Use 2.x.\n"),
                 None,
                 id="another-subject-no-longer-maintained",
             ),
             pytest.param(
-                {"type": "readme_content", "data": "# foo\nDeprecated: Python 3.8 support was dropped in 4.0\n"},
+                _raw_readme("# foo\nDeprecated: Python 3.8 support was dropped in 4.0\n"),
                 None,
                 id="plain-readme-deprecated-line-names-a-feature",
             ),
+            pytest.param(_raw_readme("# foo\n## Deprecated features\n"), None, id="feature-heading"),
+            pytest.param(_description("Deprecated APIs finder"), None, id="description-naming-deprecated-things"),
             pytest.param(
-                {"type": "readme_content", "data": "# foo\n## Deprecated features\n"}, None, id="feature-heading"
-            ),
-            pytest.param(
-                {"type": "repo_metadata", "data": {"description": "Deprecated APIs finder"}},
-                None,
-                id="description-naming-deprecated-things",
-            ),
-            pytest.param(
-                {"type": "readme_content", "data": "# foo\nThis project is no longer actively maintained.\n"},
+                _raw_readme("# foo\nThis project is no longer actively maintained.\n"),
                 "⛔ self-declared discontinuation",
                 id="this-project-no-longer-actively-maintained",
             ),
             pytest.param(
-                {"type": "readme_content", "data": "# foo\nThis repository has been archived.\n"},
+                _raw_readme("# foo\nThis repository has been archived.\n"),
                 "⛔ self-declared discontinuation",
                 id="this-repository-has-been-archived",
             ),
             pytest.param(
-                {"type": "readme_content", "data": "# foo\nThis project is now deprecated.\n"},
+                _raw_readme("# foo\nThis project is now deprecated.\n"),
                 "⛔ self-declared discontinuation",
                 id="this-project-is-now-deprecated",
             ),
             pytest.param(
-                {"type": "readme_content", "data": "# DEPRECATED\n"},
+                _raw_readme("# DEPRECATED\n"),
                 "⛔ self-declared discontinuation",
                 id="title-heading-holding-only-the-status",
             ),
             pytest.param(
-                {"type": "readme_content", "data": "# foo (DEPRECATED)\n"},
+                _raw_readme("# foo (DEPRECATED)\n"),
                 "⛔ self-declared discontinuation",
                 id="title-with-the-status-in-parentheses",
             ),
             pytest.param(
-                {"type": "readme_content", "data": "# foo — DEPRECATED\n"},
+                _raw_readme("# foo — DEPRECATED\n"),
                 "⛔ self-declared discontinuation",
                 id="title-with-the-status-after-a-dash",
             ),
             pytest.param(
-                {"type": "readme_content", "data": "# foo [ARCHIVED]\n"},
+                _raw_readme("# foo [ARCHIVED]\n"),
                 "⛔ self-declared discontinuation",
                 id="title-with-the-status-in-brackets",
             ),
             pytest.param(
-                {"type": "readme_content", "data": '<h1 align="center">DEPRECATED</h1>\n'},
+                _raw_readme('<h1 align="center">DEPRECATED</h1>\n'),
                 "⛔ self-declared discontinuation",
                 id="html-title-holding-only-the-status",
             ),
             pytest.param(
-                {"type": "readme_content", "data": '<h2 align="center">The Uncompromising Code Formatter</h2>\n'},
+                _raw_readme('<h2 align="center">The Uncompromising Code Formatter</h2>\n'),
                 None,
                 id="html-subtitle-without-a-status",
             ),
             pytest.param(
-                {"type": "readme_content", "data": "foo (deprecated)\n================\n"},
+                _raw_readme("foo (deprecated)\n================\n"),
                 "⛔ self-declared discontinuation",
                 id="setext-title-with-the-status",
             ),
@@ -424,15 +411,12 @@ class TestAxis2Bands:
                 id="status-sentence-then-another-subject",
             ),
             pytest.param(
-                {"type": "readme_content", "data": "x" * 486 + "\n**Deprecated APIs** are listed in the docs.\n"},
+                _raw_readme("x" * 486 + "\n**Deprecated APIs** are listed in the docs.\n"),
                 None,
                 id="line-the-500-byte-cut-ends",
             ),
             pytest.param(
-                {
-                    "type": "readme_content",
-                    "data": '<img src="' + "u" * 475 + '"> **Deprecated APIs** are listed below.\n',
-                },
+                _raw_readme('<img src="' + "u" * 475 + '"> **Deprecated APIs** are listed below.\n'),
                 None,
                 id="first-line-longer-than-the-500-byte-cut",
             ),
@@ -511,17 +495,15 @@ class TestAxis2Bands:
             ),
             pytest.param(_description("Deprecated project template"), None, id="description-template-subject"),
             pytest.param(
-                {"type": "readme_content", "data": "# foo\n**DEPRECATED** use bar\n"},
+                _raw_readme("# foo\n**DEPRECATED** use bar\n"),
                 "⛔ self-declared discontinuation",
                 id="bold-deprecated-banner",
             ),
             pytest.param(
-                {"type": "readme_content", "data": "# foo\n⚠️ Deprecated\n"},
-                "⛔ self-declared discontinuation",
-                id="warning-sign-deprecated",
+                _raw_readme("# foo\n⚠️ Deprecated\n"), "⛔ self-declared discontinuation", id="warning-sign-deprecated"
             ),
             pytest.param(
-                {"type": "repo_metadata", "data": {"description": "DEPRECATED - use bar"}},
+                _description("DEPRECATED - use bar"),
                 "⛔ self-declared discontinuation",
                 id="description-leading-deprecated",
             ),
@@ -547,7 +529,7 @@ class TestAxis2Bands:
         a table row, a bare section heading and the line the 500-byte cut ends never fire.
         """
         # Arrange
-        view = _view({"type": "commits", "data": [_iso(1)] * 20}, extra)
+        view = data_view({"type": "commits", "data": [iso(1)] * 20}, extra)
 
         # Act
         result = vx.axis_result("2", view)
@@ -557,9 +539,13 @@ class TestAxis2Bands:
         assert result["score"] == (10 if override is None else 0)
 
     def test_missing_commits_still_honour_the_archived_flag(self) -> None:
-        """Score an archived repository ⛔ 0 even without a commit list; only an undecided axis is ⚪."""
+        """Score an archived repository ⛔ 0 even without a commit list; only an undecided axis is ⚪.
+
+        Only repository metadata was fetched, flagged archived. The flag alone decides the override, so the axis is 🔴 0
+        even though the commit list is missing.
+        """
         # Act
-        result = vx.axis_result("2", _view({"type": "repo_metadata", "data": {"archived": True}}))
+        result = vx.axis_result("2", data_view({"type": "repo_metadata", "data": {"archived": True}}))
 
         # Assert
         assert (result["band"], result["score"], result["override"]) == ("🔴", 0, "⛔ repository archived")
@@ -584,21 +570,25 @@ class TestAxis3Bands:
     @pytest.mark.parametrize(
         ("bus", "top", "retention", "commits", "band", "score"),
         [
-            pytest.param(3, 40.0, 60.0, [_iso(1)] * 5, "🟢", 10, id="all-green"),
-            pytest.param(2, 40.0, 25.0, [_iso(1)] * 5, "🔴", 2, id="bus-2-and-low-retention-worst-wins"),
-            pytest.param(3, 40.0, None, [_iso(1)] * 5, "🟡", 6, id="undefined-retention-caps-yellow"),
-            pytest.param(1, 40.0, 60.0, [_iso(100)], "🔴", 3, id="bus-1-with-axis-2-red"),
-            pytest.param(1, 40.0, 60.0, [_iso(1)] * 5, "🟡", 6, id="bus-1-with-axis-2-green"),
-            pytest.param(3, 50.0, 60.0, [_iso(1)] * 5, "🟢", 10, id="top-contributor-50-boundary-is-green"),
-            pytest.param(3, 50.1, 60.0, [_iso(1)] * 5, "🟡", 6, id="top-contributor-past-50-is-yellow"),
+            pytest.param(3, 40.0, 60.0, [iso(1)] * 5, "🟢", 10, id="all-green"),
+            pytest.param(2, 40.0, 25.0, [iso(1)] * 5, "🔴", 2, id="bus-2-and-low-retention-worst-wins"),
+            pytest.param(3, 40.0, None, [iso(1)] * 5, "🟡", 6, id="undefined-retention-caps-yellow"),
+            pytest.param(1, 40.0, 60.0, [iso(100)], "🔴", 3, id="bus-1-with-axis-2-red"),
+            pytest.param(1, 40.0, 60.0, [iso(1)] * 5, "🟡", 6, id="bus-1-with-axis-2-green"),
+            pytest.param(3, 50.0, 60.0, [iso(1)] * 5, "🟢", 10, id="top-contributor-50-boundary-is-green"),
+            pytest.param(3, 50.1, 60.0, [iso(1)] * 5, "🟡", 6, id="top-contributor-past-50-is-yellow"),
         ],
     )
     def test_band(
         self, bus: int, top: float, retention: float | None, commits: list[str], band: str, score: int
     ) -> None:
-        """Read the Axis 2 band from the extractor so the bus-factor-1 clause is decidable inside Group C."""
+        """Read the Axis 2 band from the extractor so the bus-factor-1 clause is decidable inside Group C.
+
+        Each case sets bus factor, top-contributor share and retention beside a commit history. The bus-factor-1 clause
+        is red only when Axis 2 is red too, so the scorer must read the Axis 2 band itself.
+        """
         # Arrange
-        view = _view({"type": "commits", "data": commits})
+        view = data_view({"type": "commits", "data": commits})
 
         # Act
         result = vx.score_axis3(view, self._metrics(bus, top, retention))
@@ -607,28 +597,36 @@ class TestAxis3Bands:
         assert (result["band"], result["score"]) == (band, score)
 
     def test_fallback_uses_fixed_confidence(self) -> None:
-        """Score the commit-author fallback with only the bus-factor clause decidable, at fixed confidence 0.5."""
+        """Score the commit-author fallback with only the bus-factor clause decidable, at fixed confidence 0.5.
+
+        Contributor stats are pending (202), so the band comes from commit authors alone. Four distinct authors reach
+        the cap of 3, leaving only the bus-factor clause decidable.
+        """
         # Arrange
         records = (
             {"type": "contributor_stats", "data": None, "partial": True, "202_pending": True},
             {"type": "commits_50", "data": [{"author": name} for name in ("a", "b", "c", "d")]},
-            {"type": "commits", "data": [_iso(1)] * 5},
+            {"type": "commits", "data": [iso(1)] * 5},
         )
 
         # Act
-        result = vx.axis_result("3", _view(*records))
+        result = vx.axis_result("3", data_view(*records))
 
         # Assert
         assert (result["band"], result["score"], result["conf"]) == ("🟡", 5, 0.5)
         assert result["conf_fixed"].startswith("contributor stats 202_pending")
 
     def test_dormant_90d_window_is_red(self) -> None:
-        """Score a 90-day window without a non-bot commit 🔴, never the 🟡 an all-undefined clause set defaulted to."""
+        """Score a 90-day window without a non-bot commit 🔴, never the 🟡 an all-undefined clause set defaulted to.
+
+        Stats exist, but every weekly bucket of the last 90 days is zero. With every clause undefined the axis used to
+        default to 🟡; a repository without a non-bot commit in 90 days is 🔴.
+        """
         # Arrange
         metrics = self._metrics(None, None, None) | {"all_90d_weeks_zero": True}
 
         # Act
-        result = vx.score_axis3(_view({"type": "commits", "data": [_iso(1)] * 5}), metrics)
+        result = vx.score_axis3(data_view({"type": "commits", "data": [iso(1)] * 5}), metrics)
 
         # Assert
         assert (result["band"], result["score"], result["red_held"]) == (
@@ -657,9 +655,13 @@ class TestAxis4Bands:
         ],
     )
     def test_band(self, overrides: dict, band: str, score: int) -> None:
-        """Turn the axis 🔴 when any dimension is 🔴; a null ratio neither holds a clause nor triggers 🔴."""
+        """Turn the axis 🔴 when any dimension is 🔴; a null ratio neither holds a clause nor triggers 🔴.
+
+        Overrides move one dimension of a healthy queue (stale share, close rate, merge rate, review coverage) across or
+        onto a range boundary. A null ratio holds no clause and also triggers no 🔴.
+        """
         # Act
-        result = vx.score_axis4(_view(), _axis4(**overrides))
+        result = vx.score_axis4(data_view(), _axis4(**overrides))
 
         # Assert
         assert (result["band"], result["score"]) == (band, score)
@@ -680,12 +682,12 @@ class TestAxis4Bands:
         and escape 🔴.
         """
         # Arrange
-        opened = [{"createdAt": _iso(1), "updatedAt": _iso(1)}] * (200 - closed)
-        closed_issues = [{"createdAt": _iso(2), "closedAt": _iso(1)}] * closed
+        opened = [{"createdAt": iso(1), "updatedAt": iso(1)}] * (200 - closed)
+        closed_issues = [{"createdAt": iso(2), "closedAt": iso(1)}] * closed
         records = ({"type": "open_issues", "data": opened}, {"type": "closed_issues", "data": closed_issues})
 
         # Act
-        result = vx.axis_result("4", _view(*records))
+        result = vx.axis_result("4", data_view(*records))
 
         # Assert
         assert result["issues"]["close_rate"] == printed
@@ -708,9 +710,13 @@ class TestAxis8Bands:
         ],
     )
     def test_alert_band(self, severity: dict, secret_open: int, band: str, score: int) -> None:
-        """Band the alert counts with the worst band winning; an open secret-scanning alert is a high alert."""
+        """Band the alert counts with the worst band winning; an open secret-scanning alert is a high alert.
+
+        Severity counts and an open secret-scanning alert are combined: one high alert is 🟡, six high or one
+        critical is 🔴, and a secret-scanning alert counts as a high alert.
+        """
         # Act
-        result = vx.score_axis8(_view(), _axis8(severity, secret_open=secret_open))
+        result = vx.score_axis8(data_view(), _axis8(severity, secret_open=secret_open))
 
         # Assert
         assert (result["band"], result["score"]) == (band, score)
@@ -737,7 +743,7 @@ class TestAxis8Bands:
         metrics = _axis8({}, status="403") | {"partial_score_strict": partial}
 
         # Act
-        result = vx.score_axis8(_view(), metrics)
+        result = vx.score_axis8(data_view(), metrics)
 
         # Assert
         assert (result["band"], result["score"], result["conf"]) == (band, score, 0.4)
@@ -762,13 +768,13 @@ class TestAxis8Bands:
         records = (
             {"type": "root_contents", "data": ["SECURITY.md", ".github"]},
             {"type": "github_dir", "data": ["dependabot.yml"]},
-            {"type": "commits_50", "data": [{"message": "Bump foo from 1 to 2", "date": _iso(3), "author": "x"}]},
+            {"type": "commits_50", "data": [{"message": "Bump foo from 1 to 2", "date": iso(3), "author": "x"}]},
             {"type": "dependabot_alerts", "data": alerts},
             {"type": "secret_scanning_alerts", "data": []},
         )
 
         # Act
-        result = vx.axis_result("8", _view(*records))
+        result = vx.axis_result("8", data_view(*records))
 
         # Assert
         assert (result["band"], result["score"], result["conf"]) == (band, score, conf)
@@ -796,7 +802,7 @@ class TestConfidence:
         )
 
         # Act
-        result = vx.axis_result("5", _view(*records))
+        result = vx.axis_result("5", data_view(*records))
 
         # Assert
         assert result["conf"] == 0.85
@@ -806,23 +812,31 @@ class TestConfidence:
         ]
 
     def test_axis6_unfetched_contributing_costs_one_listed_degrader(self) -> None:
-        """Deduct -0.1 for CONTRIBUTING listed but unread, not an extra -0.05 for each of checkpoints 7–9."""
+        """Deduct -0.1 for CONTRIBUTING listed but unread, not an extra -0.05 for each of checkpoints 7–9.
+
+        README, changelog and docs are fully read, but CONTRIBUTING is listed and never fetched. That single gap costs
+        one listed degrader instead of -0.05 for each of the three checkpoints that read its text.
+        """
         # Arrange
         records = (
-            {"type": "readme_content", "data": "## Install\npip install x\n## Usage\n" + "x" * 600},
+            _raw_readme("## Install\npip install x\n## Usage\n" + "x" * 600),
             {"type": "root_contents", "data": ["README.md", "CHANGELOG.md", "docs", "examples", ".github"]},
             {"type": "github_dir", "data": ["CONTRIBUTING.md"]},
-            {"type": "changelog_headings", "data": {"head": [], "headings": [f"## 1.0 - {_iso(10)[:10]}"]}},
+            {"type": "changelog_headings", "data": {"head": [], "headings": [f"## 1.0 - {iso(10)[:10]}"]}},
         )
 
         # Act
-        result = vx.axis_result("6", _view(*records))
+        result = vx.axis_result("6", data_view(*records))
 
         # Assert
         assert result["conf"] == 0.9
 
     def test_axis7_unfetched_branch_flag_costs_one_listed_degrader(self) -> None:
-        """Deduct -0.1 for the missing protection flag and nothing for the admin-only rules record."""
+        """Deduct -0.1 for the missing protection flag and nothing for the admin-only rules record.
+
+        All governance files are listed but the protection flag was never fetched. The flag is the only listed degrader
+        that applies; the admin-only rules record is optional and costs nothing.
+        """
         # Arrange
         records = (
             {"type": "root_contents", "data": ["LICENSE", "SECURITY.md", "CODE_OF_CONDUCT.md", ".github"]},
@@ -830,7 +844,7 @@ class TestConfidence:
         )
 
         # Act
-        result = vx.axis_result("7", _view(*records))
+        result = vx.axis_result("7", data_view(*records))
 
         # Assert
         assert result["conf"] == 0.9
@@ -838,47 +852,62 @@ class TestConfidence:
             "default_branch_status missing (protection flag not fetched)"
         ]
 
-    def test_axis5_run_count_degrader_skips_a_repo_without_workflows(self) -> None:
-        """Skip the short-run-list degrader when no workflow file exists: checkpoint 5 is then decided, not unstable.
+    @pytest.mark.parametrize(
+        ("records", "band", "score"),
+        [
+            pytest.param(
+                [
+                    {"type": "root_contents", "data": ["README.md", "src"]},
+                    {"type": "ci_workflows", "data": {"count": 0, "names": [], "workflows": []}},
+                    {"type": "ci_runs", "data": []},
+                ],
+                "🔴",
+                0,
+                id="repository-without-workflows",
+            ),
+            pytest.param(
+                [
+                    {"type": "workflows_list", "data": ["ci.yml"]},
+                    {
+                        "type": "workflow_files",
+                        "listed": 1,
+                        "fetched": 1,
+                        "data": "--- workflow: ci.yml ---\npytest ruff\n",
+                    },
+                    {"type": "ci_runs", "partial": True, "data": [{"conclusion": "success"}] * 21},
+                ],
+                "🟢",
+                8,
+                id="full-run-sample",
+            ),
+        ],
+    )
+    def test_axis5_run_count_degrader_needs_an_unstable_sample(
+        self, records: list[dict], band: str, score: int
+    ) -> None:
+        """Skip the short-run-list degrader when checkpoint 5 is already decided: no workflow file, or 21 runs returned.
 
-        A repository with no CI scored 🔴 0 at confidence 0.9, as if its pass rate were merely noisy.
+        A repository with no CI scored 🔴 0 at confidence 0.9, as if its pass rate were merely noisy. 21 returned runs
+        prove at least 21 exist, so the newest 20 are complete and the confidence stays 1.0.
         """
-        # Arrange
-        records = (
-            {"type": "root_contents", "data": ["README.md", "src"]},
-            {"type": "ci_workflows", "data": {"count": 0, "names": [], "workflows": []}},
-            {"type": "ci_runs", "data": []},
-        )
-
         # Act
-        result = vx.axis_result("5", _view(*records))
+        result = vx.axis_result("5", data_view(*records))
 
         # Assert
-        assert (result["band"], result["score"], result["conf"]) == ("🔴", 0, 1.0)
-
-    def test_axis5_full_run_sample_is_not_a_degrader(self) -> None:
-        """Keep confidence 1.0 when 21 runs came back: that proves ≥21 runs exist, so the newest 20 are complete."""
-        # Arrange
-        records = (
-            {"type": "workflows_list", "data": ["ci.yml"]},
-            {"type": "workflow_files", "listed": 1, "fetched": 1, "data": "--- workflow: ci.yml ---\npytest ruff\n"},
-            {"type": "ci_runs", "partial": True, "data": [{"conclusion": "success"}] * 21},
-        )
-
-        # Act
-        result = vx.axis_result("5", _view(*records))
-
-        # Assert
-        assert (result["band"], result["score"], result["conf"]) == ("🟢", 8, 1.0)
+        assert (result["band"], result["score"], result["conf"]) == (band, score, 1.0)
 
     @pytest.mark.parametrize(
         ("partial", "conf"),
         [pytest.param(True, 0.9, id="truncated-short-window"), pytest.param(False, 1.0, id="complete-short-window")],
     )
     def test_axis9_window_degrader_needs_truncation(self, partial: bool, conf: float) -> None:
-        """Deduct the merged-PR window degrader only when the list is truncated AND covers under 90 days."""
+        """Deduct the merged-PR window degrader only when the list is truncated AND covers under 90 days.
+
+        Six PRs merged 26 days ago make a list covering under 90 days. Truncated, the window may hide older merges and
+        costs -0.1; complete, the same list is the whole history and costs nothing.
+        """
         # Arrange
-        merged = [{"author": {"login": f"u{i}"}, "createdAt": _iso(27), "mergedAt": _iso(26)} for i in range(6)]
+        merged = [{"author": {"login": f"u{i}"}, "createdAt": iso(27), "mergedAt": iso(26)} for i in range(6)]
         records = (
             {"type": "contributor_stats", "data": [{"author": "a", "weeks": [{"c": 1}] * 52}]},
             {"type": "merged_prs_90d", "partial": partial, "data": merged},
@@ -886,7 +915,7 @@ class TestConfidence:
         )
 
         # Act
-        result = vx.axis_result("9", _view(*records))
+        result = vx.axis_result("9", data_view(*records))
 
         # Assert
         assert result["conf"] == conf
@@ -907,7 +936,11 @@ class TestAxis9Boundaries:
         ],
     )
     def test_boundary_scores(self, scorer: object, sub: dict, score: int) -> None:
-        """Score a P90 age of exactly 30 days and a bot-bump share of exactly 0.50 as 🟢 (10)."""
+        """Score a P90 age of exactly 30 days and a bot-bump share of exactly 0.50 as 🟢 (10).
+
+        Each sub-signal scorer receives the exact boundary value and a value just past it: the boundary belongs
+        to 🟢 and the next step to 🟡.
+        """
         # Act
         result = scorer(sub)  # type: ignore[operator]
 
@@ -932,7 +965,7 @@ class TestAxis9Boundaries:
         axis respects, the inversion the Axis 8 partial-score cap was introduced to remove.
         """
         # Act
-        result = vx.score_axis9(_view(), _axis9(*subs))
+        result = vx.score_axis9(data_view(), _axis9(*subs))
 
         # Assert
         assert (result["band"], result["score"]) == (band, score)

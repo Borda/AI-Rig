@@ -1,14 +1,13 @@
-"""Integration tests for scan-index bin script.
+"""Tests for the scan-index implementation: index creation, incremental scans and per-file parsing.
 
-Verifies index creation, incremental update behaviour, dynamic import extraction,
-and config-file reference scanning.
+Verifies index creation through the real ``bin/scan-index`` CLI, incremental update behaviour, dynamic import
+extraction, config-file reference scanning, exclusion loading and pruning, collision de-duplication, degraded-file
+reporting and atomic index writes.
 
-Fixture layout:
-    gamma.py          — leaf module, no imports; defines func_gamma
-    beta.py           — imports gamma; defines func_beta calling func_gamma
-    alpha.py          — imports beta, gamma; defines func_alpha calling func_beta
-    pkg/__init__.py   — empty
-    pkg/delta.py      — imports alpha; defines func_delta calling func_alpha
+Fixture layout (shared ``conftest.py`` sources):     gamma.py          — leaf module, no imports; defines func_gamma
+beta.py           — imports gamma; defines func_beta calling func_gamma     alpha.py          — imports beta, gamma;
+defines func_alpha calling func_beta     pkg/__init__.py   — empty     pkg/delta.py      — imports alpha; defines
+func_delta calling func_alpha
 """
 
 from __future__ import annotations
@@ -16,11 +15,14 @@ from __future__ import annotations
 import ast
 import errno
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
+from unittest import mock
 
 import pytest
+from _scan_helpers import index_path_for, write_tree
 
 # The scan-index implementation now lives in the package:
 # discovery/parsing -> codemap_py.scanner, graph/dedup/index-write -> codemap_py.graph.
@@ -46,79 +48,123 @@ _dedup_key = _graph_mod._dedup_key
 _replace_with_windows_retry = _rwgate_mod._replace_with_windows_retry
 
 
+def _scan_command(scan_index: Path, root: Path, *extra: str) -> list[str]:
+    """Command line that runs the scan-index CLI over *root*."""
+    return [sys.executable, str(scan_index), "--root", str(root), *extra]
+
+
+def _run_scan(scan_index: Path, root: Path, *extra: str, env: dict[str, str] | None = None) -> None:
+    """Run the scan-index CLI over *root* with cwd at *root*, asserting a zero exit code."""
+    result = subprocess.run(
+        _scan_command(scan_index, root, *extra), capture_output=True, text=True, cwd=str(root), env=env
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def _scan_and_load(scan_index: Path, root: Path, *extra: str, env: dict[str, str] | None = None) -> dict:
+    """Run the scan-index CLI over *root* and return the parsed index it wrote."""
+    _run_scan(scan_index, root, *extra, env=env)
+    assert index_path_for(root).exists(), "scan-index did not produce an index file"
+    return json.loads(index_path_for(root).read_text())
+
+
+def _relative_paths(files: list[Path], root: Path) -> set[str]:
+    """POSIX paths of *files* relative to *root*."""
+    return {path.relative_to(root).as_posix() for path in files}
+
+
+def _pkg_mod_collision(scan_index: Path, root: Path, hash_seed: str) -> tuple[str, tuple[str, ...]]:
+    """Scan *root* under *hash_seed* and return ``(kept, sorted dropped)`` of the ``pkg.mod`` collision record."""
+    index = _scan_and_load(scan_index, root, env={**os.environ, "PYTHONHASHSEED": hash_seed})
+    collision = next((c for c in index["collisions"] if c["name"] == "pkg.mod"), None)
+    assert collision is not None, f"no pkg.mod collision recorded: {index['collisions']}"
+    return collision["kept"], tuple(sorted(collision["dropped"]))
+
+
+def _run_scans_concurrently(scan_index: Path, root: Path, count: int) -> list[tuple[int, str]]:
+    """Start *count* scan-index processes together and return each ``(exit code, stderr)``."""
+    procs = [
+        subprocess.Popen(
+            _scan_command(scan_index, root),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=str(root),
+        )
+        for _ in range(count)
+    ]
+    results = []
+    for proc in procs:
+        _, stderr = proc.communicate(timeout=60)
+        results.append((proc.returncode, stderr))
+    return results
+
+
+@mock.patch("codemap_py.graph.multiprocessing.get_context", autospec=True, return_value=object())
+@mock.patch(
+    "codemap_py.graph.ProcessPoolExecutor",
+    autospec=True,
+    side_effect=PermissionError(errno.EPERM, "Operation not permitted"),
+)
 def test_scan_falls_back_to_serial_when_process_pool_is_forbidden(
+    mock_pool: mock.Mock,
+    mock_context: mock.Mock,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """A sandbox-level pool EPERM must retain deterministic scan behavior."""
+    """A sandbox-level pool EPERM falls back to serial parsing with the same result.
+
+    The managed sandbox forbids creating a process pool. Scanning must still index every module (deterministically, in-
+    process) and tell the user why parsing went serial instead of failing the whole scan.
+    """
     (tmp_path / "module.py").write_text("def answer():\n    return 42\n", encoding="utf-8")
-
-    class ForbiddenPool:
-        """Reject process-pool construction like the managed sandbox."""
-
-        def __init__(self, *_args: object, **_kwargs: object) -> None:
-            """Raise the sandbox error as soon as the pool is constructed."""
-            raise PermissionError(errno.EPERM, "Operation not permitted")
-
-    monkeypatch.setattr(_graph_mod, "ProcessPoolExecutor", ForbiddenPool)
-    monkeypatch.setattr(_graph_mod.multiprocessing, "get_context", lambda _method: object())
     monkeypatch.setattr(_graph_mod.sys, "platform", "darwin")
 
     result = _graph_mod.scan(tmp_path)
 
+    assert mock_context.called
+    assert mock_pool.called
     assert [module["name"] for module in result["modules"]] == ["module"]
     assert result["modules"][0]["status"] == "ok"
     assert "process pool unavailable (EPERM); parsing serially" in capsys.readouterr().err
 
 
 def test_creates_index(tmp_path, gamma_src, beta_src, alpha_src, delta_src, scan_index):
-    """Scan-index writes .cache/codemap/<name>.json containing all modules."""
-    (tmp_path / "gamma.py").write_text(gamma_src)
-    (tmp_path / "beta.py").write_text(beta_src)
-    (tmp_path / "alpha.py").write_text(alpha_src)
-    (tmp_path / "pkg").mkdir()
-    (tmp_path / "pkg" / "__init__.py").write_text("")
-    (tmp_path / "pkg" / "delta.py").write_text(delta_src)
+    """Scan-index writes .cache/codemap/<name>.json containing all modules.
 
-    result = subprocess.run(
-        [sys.executable, str(scan_index), "--root", str(tmp_path)],
-        capture_output=True,
-        text=True,
-        cwd=str(tmp_path),
+    A small five-module project (one leaf, two dependents, one package) is scanned from scratch; every module must
+    appear in the written index under its dotted name.
+    """
+    write_tree(
+        tmp_path,
+        {
+            "gamma.py": gamma_src,
+            "beta.py": beta_src,
+            "alpha.py": alpha_src,
+            "pkg/__init__.py": "",
+            "pkg/delta.py": delta_src,
+        },
     )
-    assert result.returncode == 0, result.stderr
 
-    index_path = tmp_path / ".cache" / "codemap" / f"{tmp_path.name}.json"
-    assert index_path.exists()
-    index = json.loads(index_path.read_text())
-    names = {m["name"] for m in index["modules"]}
-    assert {"alpha", "beta", "gamma", "pkg", "pkg.delta"}.issubset(names)
+    index = _scan_and_load(scan_index, tmp_path)
+
+    assert {"alpha", "beta", "gamma", "pkg", "pkg.delta"}.issubset({m["name"] for m in index["modules"]})
 
 
 def test_incremental_picks_up_new_file(tmp_path, scan_index):
-    """Adding a file after initial scan; ``--incremental`` indexes it."""
+    """Adding a file after the initial scan, ``--incremental`` indexes it.
+
+    A full scan indexes ``base.py``; ``new_mod.py`` is then added and only ``--incremental`` is run, which must still
+    discover the newly created file.
+    """
     (tmp_path / "base.py").write_text("def f(): pass\n")
-    subprocess.run(
-        [sys.executable, str(scan_index), "--root", str(tmp_path)],
-        capture_output=True,
-        cwd=str(tmp_path),
-        check=True,
-    )
-
+    _run_scan(scan_index, tmp_path)
     (tmp_path / "new_mod.py").write_text("import base\n")
-    result = subprocess.run(
-        [sys.executable, str(scan_index), "--root", str(tmp_path), "--incremental"],
-        capture_output=True,
-        text=True,
-        cwd=str(tmp_path),
-    )
-    assert result.returncode == 0, result.stderr
 
-    index_path = tmp_path / ".cache" / "codemap" / f"{tmp_path.name}.json"
-    index = json.loads(index_path.read_text())
-    names = {m["name"] for m in index["modules"]}
-    assert "new_mod" in names
+    index = _scan_and_load(scan_index, tmp_path, "--incremental")
+
+    assert "new_mod" in {m["name"] for m in index["modules"]}
 
 
 class TestExtractDynamicImports:
@@ -137,6 +183,12 @@ class TestExtractDynamicImports:
             pytest.param(
                 "__import__('os.path')", [{"literal": "os.path", "line": 1}], id="dunder-import-string-literal"
             ),
+            # Several literal calls in one file are all returned, in source order.
+            pytest.param(
+                'import importlib\nimportlib.import_module("pkg.a")\nimportlib.import_module("pkg.b")\n',
+                [{"literal": "pkg.a", "line": 2}, {"literal": "pkg.b", "line": 3}],
+                id="multiple-calls-in-source-order",
+            ),
             # Ignore dynamic imports whose module name is not a literal.
             pytest.param("importlib.import_module(name)", [], id="dynamic-expression-skipped"),
             # Plain file with no dynamic imports returns empty list.
@@ -144,15 +196,12 @@ class TestExtractDynamicImports:
         ],
     )
     def test_literal_dynamic_imports_are_captured(self, src: str, expected: list[dict]):
-        """Only string-literal ``importlib.import_module`` / ``__import__`` calls are captured, with their line."""
-        assert extract_dynamic_imports(ast.parse(src)) == expected
+        """Only string-literal ``importlib.import_module`` / ``__import__`` calls are captured, with their line.
 
-    def test_multiple_calls_collected(self):
-        """Multiple dynamic imports across same file all returned."""
-        src = 'import importlib\nimportlib.import_module("pkg.a")\nimportlib.import_module("pkg.b")\n'
-        result = extract_dynamic_imports(ast.parse(src))
-        literals = [r["literal"] for r in result]
-        assert literals == ["pkg.a", "pkg.b"]
+        Static analysis can only record module names written as literals; calls with a computed name must be skipped
+        instead of guessed at.
+        """
+        assert extract_dynamic_imports(ast.parse(src)) == expected
 
 
 class TestClassifyEntity:
@@ -177,82 +226,120 @@ class TestClassifyEntity:
             pytest.param("src/pkg/conftest.py", "src.pkg.conftest", EntityType.TEST, "pkg", id="src-layout-test-strip"),
         ],
     )
-    def test_classification(self, path_str, name, expected_type, expected_pkg):
-        """_classify_entity returns correct (entity_type, package) for each path pattern."""
-        result = _classify_entity(Path(path_str), name)
-        assert result == (expected_type, expected_pkg)
+    def test_entity_type_and_package_by_path(self, path_str, name, expected_type, expected_pkg):
+        """_classify_entity returns the (entity_type, package) pair for each path pattern.
+
+        Tests, docs and examples are told apart from production modules by directory or file name, with a leading
+        ``src`` layout directory stripped from the package.
+        """
+        assert _classify_entity(Path(path_str), name) == (expected_type, expected_pkg)
 
 
 class TestScanConfigRefs:
     """Unit tests for scan_config_refs — config file module-path reference scanner."""
 
-    def test_pyproject_match(self, tmp_path: Path):
-        """Module name in pyproject.toml is detected."""
-        (tmp_path / "pyproject.toml").write_text('[tool.mypy]\nmodule = "mypackage.utils"\n')
-        refs = scan_config_refs(tmp_path, {"mypackage.utils"})
-        assert "mypackage.utils" in refs
-        assert refs["mypackage.utils"][0]["file"] == "pyproject.toml"
-
     @pytest.mark.parametrize(
         ("filename", "content", "module"),
         [
+            pytest.param(
+                "pyproject.toml", '[tool.mypy]\nmodule = "mypackage.utils"\n', "mypackage.utils", id="pyproject"
+            ),
             pytest.param("setup.cfg", "[options]\npackages = mypackage.core\n", "mypackage.core", id="setup-cfg"),
             pytest.param("conf.yaml", "defaults:\n  - module: mypackage.model\n", "mypackage.model", id="yaml-at-root"),
         ],
     )
-    def test_config_file_match(self, tmp_path: Path, filename: str, content: str, module: str):
-        """A known module name in a setup.cfg or a YAML file at the project root is detected."""
-        (tmp_path / filename).write_text(content)
-        refs = scan_config_refs(tmp_path, {module})
-        assert module in refs
+    def test_known_module_in_config_file_detected(self, tmp_path: Path, filename: str, content: str, module: str):
+        """A known module name in pyproject.toml, setup.cfg or a root-level YAML file is reported with its file.
 
-    def test_unknown_module_not_returned(self, tmp_path: Path):
-        """String matching no known module name is not included."""
-        (tmp_path / "pyproject.toml").write_text('name = "something.random"\n')
-        refs = scan_config_refs(tmp_path, {"mypackage.utils"})
-        assert refs == {}
+        Config files name modules (mypy overrides, package lists, Hydra defaults); a reference there keeps the module
+        alive for dead-code and impact queries.
+        """
+        (tmp_path / filename).write_text(content)
+
+        refs = scan_config_refs(tmp_path, {module})
+
+        assert refs[module][0]["file"] == filename
+
+    @pytest.mark.parametrize(
+        "files",
+        [
+            pytest.param({"pyproject.toml": 'name = "something.random"\n'}, id="unrelated-string"),
+            pytest.param({}, id="no-config-files"),
+        ],
+    )
+    def test_no_reference_returns_empty(self, tmp_path: Path, files: dict[str, str]):
+        """Config text that names no known module, or no config files at all, yields an empty mapping.
+
+        Only exact known module names count as references, so unrelated dotted strings must not be reported.
+        """
+        write_tree(tmp_path, files)
+
+        assert scan_config_refs(tmp_path, {"mypackage.utils"}) == {}
 
     def test_context_truncated_to_120(self, tmp_path: Path):
-        """Context field is at most 120 characters."""
-        long_line = "x = " + "mypackage.utils" + " # " + "a" * 200
-        (tmp_path / "setup.cfg").write_text(long_line + "\n")
-        refs = scan_config_refs(tmp_path, {"mypackage.utils"})
-        assert all(len(r["context"]) <= 120 for r in refs.get("mypackage.utils", []))
+        """Context field is at most 120 characters.
 
-    def test_no_config_files_returns_empty(self, tmp_path: Path):
-        """Directory with no config files returns empty dict."""
-        assert scan_config_refs(tmp_path, {"mypackage.utils"}) == {}
+        A matching line carrying 200 trailing characters must still be reported, with its context cut to 120 so the
+        index does not balloon on minified or generated config lines.
+        """
+        (tmp_path / "setup.cfg").write_text("x = mypackage.utils # " + "a" * 200 + "\n")
+
+        refs = scan_config_refs(tmp_path, {"mypackage.utils"})
+
+        assert refs["mypackage.utils"]
+        assert all(len(r["context"]) <= 120 for r in refs["mypackage.utils"])
 
 
 class TestLoadExclusions:
     """Loading extra dir-name/glob exclusions from pyproject.toml and .codemapignore."""
 
     def test_pyproject_exclude_dirs_and_globs(self, tmp_path: Path):
-        """[tool.codemap] exclude splits bare names into dirs and glob entries into globs."""
-        (tmp_path / "pyproject.toml").write_text('[tool.codemap]\nexclude = ["vendor", "gen/*.py"]\n')
+        """[tool.codemap] exclude splits bare names into dirs and glob entries into globs.
+
+        Bare names prune whole directories during the walk; entries with glob characters match individual files, and
+        each entry remembers which file it came from.
+        """
+        write_tree(tmp_path, {"pyproject.toml": '[tool.codemap]\nexclude = ["vendor", "gen/*.py"]\n'})
+
         ex = _load_exclusions(tmp_path)
+
         assert ex.dirs == frozenset({"vendor"})
         assert ex.globs == ("gen/*.py",)
         assert ex.sources == {"vendor": "pyproject.toml", "gen/*.py": "pyproject.toml"}
 
     def test_codemapignore_strips_comments_and_slashes(self, tmp_path: Path):
-        """.codemapignore drops comments/blanks and trailing slashes on dir names."""
-        (tmp_path / ".codemapignore").write_text("# header\nvendored/\n\n  build_out/*.py  \n")
+        """.codemapignore drops comments/blanks and trailing slashes on dir names.
+
+        The file is hand-edited, so comments, blank lines, padding and ``dir/`` spellings must all normalize to the same
+        exclusion entries.
+        """
+        write_tree(tmp_path, {".codemapignore": "# header\nvendored/\n\n  build_out/*.py  \n"})
+
         ex = _load_exclusions(tmp_path)
+
         assert ex.dirs == frozenset({"vendored"})
         assert ex.globs == ("build_out/*.py",)
 
     def test_both_sources_merge(self, tmp_path: Path):
-        """Entries from both files merge; provenance records the first-seen origin."""
-        (tmp_path / "pyproject.toml").write_text('[tool.codemap]\nexclude = ["a"]\n')
-        (tmp_path / ".codemapignore").write_text("b\n")
+        """Entries from both files merge; provenance records the first-seen origin.
+
+        A project may configure exclusions in both places; the union applies and each entry reports where it was
+        declared, which the scan summary surfaces.
+        """
+        write_tree(tmp_path, {"pyproject.toml": '[tool.codemap]\nexclude = ["a"]\n', ".codemapignore": "b\n"})
+
         ex = _load_exclusions(tmp_path)
+
         assert ex.dirs == frozenset({"a", "b"})
         assert ex.sources == {"a": "pyproject.toml", "b": ".codemapignore"}
 
-    def test_no_config_returns_empty(self, tmp_path: Path):
-        """Absent config files yield empty exclusions."""
+    def test_absent_config_yields_empty(self, tmp_path: Path):
+        """Absent config files yield empty exclusions.
+
+        A project without any exclusion config must scan everything outside the built-in skip list.
+        """
         ex = _load_exclusions(tmp_path)
+
         assert ex.dirs == frozenset()
         assert ex.globs == ()
 
@@ -261,37 +348,43 @@ class TestIterPythonFilesExclusions:
     """_iter_python_files honours SKIP_DIRS additions and configured exclusions."""
 
     def test_prunes_worktree_copy_and_vendored_entry(self, tmp_path: Path):
-        """A .claude/worktrees copy and a .codemapignore-named dir are both pruned; meta counts them."""
-        (tmp_path / "app.py").write_text("x = 1\n")
-        worktree = tmp_path / ".claude" / "worktrees" / "agent-x"
-        worktree.mkdir(parents=True)
-        (worktree / "app.py").write_text("x = 1\n")
-        vendored = tmp_path / "pytorch-lightning-master"
-        vendored.mkdir()
-        (vendored / "trainer.py").write_text("y = 2\n")
-        (tmp_path / ".codemapignore").write_text("pytorch-lightning-master\n")
+        """A .claude/worktrees copy and a .codemapignore-named dir are both pruned; meta counts them.
 
-        ex = _load_exclusions(tmp_path)
-        files, counts = _iter_python_files(tmp_path, ex)
+        Agent worktrees and vendored checkouts hold duplicate sources that would pollute the index with colliding module
+        names, so only the real ``app.py`` may be walked and each pruned root is counted.
+        """
+        write_tree(
+            tmp_path,
+            {
+                "app.py": "x = 1\n",
+                ".claude/worktrees/agent-x/app.py": "x = 1\n",
+                "pytorch-lightning-master/trainer.py": "y = 2\n",
+                ".codemapignore": "pytorch-lightning-master\n",
+            },
+        )
 
-        rels = {p.relative_to(tmp_path).as_posix() for p in files}
-        assert rels == {"app.py"}
-        assert not any(".claude" in r for r in rels)
+        files, counts = _iter_python_files(tmp_path, _load_exclusions(tmp_path))
+
+        assert _relative_paths(files, tmp_path) == {"app.py"}
         assert counts["pytorch-lightning-master"] == 1
 
     def test_glob_exclusion_skips_matching_files(self, tmp_path: Path):
-        """A glob entry removes matching files while leaving siblings indexed."""
-        (tmp_path / "keep.py").write_text("a = 1\n")
-        gen = tmp_path / "gen"
-        gen.mkdir()
-        (gen / "auto.py").write_text("b = 2\n")
-        (tmp_path / "pyproject.toml").write_text('[tool.codemap]\nexclude = ["gen/*.py"]\n')
+        """A glob entry removes matching files while leaving siblings indexed.
 
-        ex = _load_exclusions(tmp_path)
-        files, counts = _iter_python_files(tmp_path, ex)
+        ``gen/*.py`` names generated sources; only those files are skipped and the skip is counted under the pattern.
+        """
+        write_tree(
+            tmp_path,
+            {
+                "keep.py": "a = 1\n",
+                "gen/auto.py": "b = 2\n",
+                "pyproject.toml": '[tool.codemap]\nexclude = ["gen/*.py"]\n',
+            },
+        )
 
-        rels = {p.relative_to(tmp_path).as_posix() for p in files}
-        assert rels == {"keep.py"}
+        files, counts = _iter_python_files(tmp_path, _load_exclusions(tmp_path))
+
+        assert _relative_paths(files, tmp_path) == {"keep.py"}
         assert counts["gen/*.py"] == 1
 
 
@@ -310,7 +403,10 @@ class TestDedupKey:
         ],
     )
     def test_winner_sorts_before_loser(self, winner: str, loser: str, src_root: str):
-        """Candidate paths rank under-src first, then shortest, then lexicographic."""
+        """Candidate paths rank under-src first, then shortest, then lexicographic.
+
+        The key decides which copy of a duplicated module name survives, so each tie-break level must be pinned.
+        """
         assert _dedup_key(winner, src_root) < _dedup_key(loser, src_root)
 
 
@@ -318,22 +414,29 @@ class TestDedupModules:
     """_dedup_modules produces a deterministic winner and records collisions."""
 
     @pytest.mark.parametrize("reverse", [False, True])
-    def test_deterministic_winner_across_shuffles(self, reverse: bool):
-        """Same qualname at two paths yields the same winner regardless of input order."""
+    def test_winner_independent_of_input_order(self, reverse: bool):
+        """Same qualname at two paths yields the same winner regardless of input order.
+
+        The scan order of files is filesystem-dependent, so the surviving copy and the collision record must come out
+        identical for an input order and its reverse.
+        """
         entries = [{"name": "pkg.mod", "path": "copy/pkg/mod.py"}, {"name": "pkg.mod", "path": "src/pkg/mod.py"}]
-        winners = set()
         order = list(reversed(entries)) if reverse else entries
-        for _ in range(5):
-            kept, collisions = _dedup_modules(list(order), "src")
-            assert len(kept) == 1
-            winners.add(kept[0]["path"])
-            assert collisions == [{"name": "pkg.mod", "kept": "src/pkg/mod.py", "dropped": ["copy/pkg/mod.py"]}]
-        assert winners == {"src/pkg/mod.py"}
+
+        kept, collisions = _dedup_modules(list(order), "src")
+
+        assert [m["path"] for m in kept] == ["src/pkg/mod.py"]
+        assert collisions == [{"name": "pkg.mod", "kept": "src/pkg/mod.py", "dropped": ["copy/pkg/mod.py"]}]
 
     def test_no_collision_keeps_all(self):
-        """Distinct names are all kept with an empty collision list."""
+        """Distinct names are all kept with an empty collision list.
+
+        De-duplication must be a no-op when no two modules share a qualified name.
+        """
         entries = [{"name": "a", "path": "a.py"}, {"name": "b", "path": "b.py"}]
+
         kept, collisions = _dedup_modules(entries, "")
+
         assert {m["name"] for m in kept} == {"a", "b"}
         assert collisions == []
 
@@ -342,69 +445,54 @@ class TestScanExclusionMeta:
     """End-to-end: a real scan writes excluded_roots and collisions into the index meta."""
 
     def test_excluded_roots_and_collisions_in_index(self, tmp_path: Path, scan_index):
-        """Scanning a polluted tree prunes the worktree copy and records both meta keys."""
-        (tmp_path / "app.py").write_text("VALUE = 1\n")
-        worktree = tmp_path / ".claude" / "worktrees" / "agent-x"
-        worktree.mkdir(parents=True)
-        (worktree / "app.py").write_text("VALUE = 99\n")
-        vendored = tmp_path / "vendor_copy"
-        vendored.mkdir()
-        (vendored / "app.py").write_text("VALUE = 7\n")
-        (tmp_path / ".codemapignore").write_text("vendor_copy\n")
+        """Scanning a polluted tree prunes the worktree copy and records both meta keys.
 
-        result = subprocess.run(
-            [sys.executable, str(scan_index), "--root", str(tmp_path)],
-            capture_output=True,
-            text=True,
-            cwd=str(tmp_path),
+        The tree holds the real ``app.py`` plus a worktree copy and a ``.codemapignore``-d vendored copy; the CLI must
+        index only the real file, list the vendored pattern under ``excluded_roots`` and report no collisions.
+        """
+        write_tree(
+            tmp_path,
+            {
+                "app.py": "VALUE = 1\n",
+                ".claude/worktrees/agent-x/app.py": "VALUE = 99\n",
+                "vendor_copy/app.py": "VALUE = 7\n",
+                ".codemapignore": "vendor_copy\n",
+            },
         )
-        assert result.returncode == 0, result.stderr
 
-        index_path = tmp_path / ".cache" / "codemap" / f"{tmp_path.name}.json"
-        index = json.loads(index_path.read_text())
-        paths = {m["path"] for m in index["modules"]}
-        assert paths == {"app.py"}
-        patterns = {r["pattern"] for r in index["excluded_roots"]}
-        assert "vendor_copy" in patterns
+        index = _scan_and_load(scan_index, tmp_path)
+
+        assert {m["path"] for m in index["modules"]} == {"app.py"}
+        assert "vendor_copy" in {r["pattern"] for r in index["excluded_roots"]}
         assert index["collisions"] == []
 
-    def test_collision_recorded_and_deterministic(self, tmp_path: Path, scan_index):
-        """Two package trees sharing a top-level name collide; the winner is stable across runs.
+    def test_collision_recorded_and_winner_stable(self, tmp_path: Path, scan_index):
+        """Two package trees sharing a top-level name collide; the winner is identical under every hash seed.
 
         The canonical ``pkg`` tree and a whole-tree copy under ``wt/`` both resolve to the dotted name ``pkg.mod``. Only
-        one survives; the collision record names both, and the winner is identical on every run regardless of filesystem
-        walk order (acceptance).
+        one survives; the collision record names both, and the winner must not depend on set iteration order, which
+        ``PYTHONHASHSEED`` randomises between runs (acceptance).
         """
-        for parent in ("pkg", "wt/pkg"):
-            (tmp_path / parent).mkdir(parents=True)
-            (tmp_path / parent / "__init__.py").write_text("")
-        (tmp_path / "pkg" / "mod.py").write_text("Z = 1\n")
-        (tmp_path / "wt" / "pkg" / "mod.py").write_text("Z = 2\n")
+        write_tree(
+            tmp_path,
+            {"pkg/__init__.py": "", "wt/pkg/__init__.py": "", "pkg/mod.py": "Z = 1\n", "wt/pkg/mod.py": "Z = 2\n"},
+        )
 
-        winners = set()
-        collision = None
-        for _ in range(5):
-            result = subprocess.run(
-                [sys.executable, str(scan_index), "--root", str(tmp_path)],
-                capture_output=True,
-                text=True,
-                cwd=str(tmp_path),
-            )
-            assert result.returncode == 0, result.stderr
-            index = json.loads((tmp_path / ".cache" / "codemap" / f"{tmp_path.name}.json").read_text())
-            collision = next((c for c in index["collisions"] if c["name"] == "pkg.mod"), None)
-            assert collision is not None
-            winners.add(collision["kept"])
+        records = {_pkg_mod_collision(scan_index, tmp_path, seed) for seed in ("0", "1", "2", "3", "4")}
 
-        assert len(winners) == 1
-        assert set(collision["dropped"]) | {collision["kept"]} == {"pkg/mod.py", "wt/pkg/mod.py"}
+        assert len(records) == 1
+        kept, dropped = records.pop()
+        assert {kept, *dropped} == {"pkg/mod.py", "wt/pkg/mod.py"}
 
 
 class TestEncodingDegradation:
     """A file whose bytes are not valid UTF-8 must be marked degraded, not silently indexed."""
 
-    def test_invalid_utf8_parse_file_returns_encoding_degraded(self, tmp_path: Path):
-        """_parse_file returns a degraded entry with an 'encoding' reason for non-UTF-8 bytes."""
+    def test_parse_file_marks_invalid_utf8_degraded(self, tmp_path: Path):
+        """_parse_file returns a degraded entry with an 'encoding' reason for non-UTF-8 bytes.
+
+        Parsing replacement characters would index text the author never wrote, so such a file must carry no symbols.
+        """
         bad = tmp_path / "bad.py"
         bad.write_bytes(b"x = '\xff\xfe not utf8'\n")
 
@@ -414,20 +502,16 @@ class TestEncodingDegradation:
         assert entry["reason"].startswith("encoding:")
         assert "symbols" not in entry  # corrupted source never parsed into symbols
 
-    def test_invalid_utf8_not_silently_indexed(self, tmp_path: Path, scan_index):
-        """End-to-end: an invalid-UTF-8 module lands as degraded in the index, not status ok."""
+    def test_scan_index_marks_invalid_utf8_degraded(self, tmp_path: Path, scan_index):
+        """End-to-end: an invalid-UTF-8 module lands as degraded in the index, not status ok.
+
+        A healthy module sits beside a corrupt one; the CLI must succeed overall yet flag only the corrupt file.
+        """
         (tmp_path / "good.py").write_text("y = 1\n")
         (tmp_path / "bad.py").write_bytes(b"x = '\xff\xfe'\n")
 
-        result = subprocess.run(
-            [sys.executable, str(scan_index), "--root", str(tmp_path)],
-            capture_output=True,
-            text=True,
-            cwd=str(tmp_path),
-        )
-        assert result.returncode == 0, result.stderr
+        index = _scan_and_load(scan_index, tmp_path)
 
-        index = json.loads((tmp_path / ".cache" / "codemap" / f"{tmp_path.name}.json").read_text())
         bad = next(m for m in index["modules"] if m["path"] == "bad.py")
         assert bad["status"] == "degraded"
         assert bad["reason"].startswith("encoding:")
@@ -436,8 +520,11 @@ class TestEncodingDegradation:
 class TestFileTooLargeDegradation:
     """An oversized file is marked degraded with a 'reason' key so the print loop never KeyErrors."""
 
-    def test_too_large_uses_reason_key(self, tmp_path: Path, monkeypatch):
-        """_parse_file over the size cap returns a degraded entry keyed on 'reason', not 'error'."""
+    def test_too_large_uses_reason_key(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        """_parse_file over the size cap returns a degraded entry keyed on 'reason', not 'error'.
+
+        The size cap is lowered to 8 bytes so a tiny file trips it; the entry must use the unified ``reason`` key.
+        """
         monkeypatch.setattr(_scanner_mod.discovery, "_MAX_FILE_SIZE_BYTES", 8)
         big = tmp_path / "big.py"
         big.write_text("x = 1234567890\n")  # >8 bytes on disk
@@ -448,8 +535,12 @@ class TestFileTooLargeDegradation:
         assert "error" not in entry  # contract unified on 'reason'
         assert entry["reason"].startswith("file too large")
 
-    def test_all_degraded_reasons_printable(self, tmp_path: Path, monkeypatch):
-        """Every degraded branch of _parse_file exposes 'reason' — the key the print loop reads."""
+    def test_every_degraded_branch_exposes_reason(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        """Every degraded branch of _parse_file exposes 'reason' — the key the print loop reads.
+
+        An oversized file, invalid UTF-8 bytes and a syntax error each take a different degraded branch; the scan
+        summary reads ``m['reason']`` for all of them and must never raise KeyError.
+        """
         monkeypatch.setattr(_scanner_mod.discovery, "_MAX_FILE_SIZE_BYTES", 8)
         too_large = tmp_path / "big.py"
         too_large.write_text("x = 1234567890\n")
@@ -468,41 +559,38 @@ class TestAtomicIndexWrite:
     """Index write goes through a temp file so a kill mid-write leaves the prior index readable."""
 
     def test_no_stale_tmp_and_index_valid_after_write(self, tmp_path: Path, scan_index):
-        """A completed run leaves a parseable index and no leftover .json.tmp sidecar."""
+        """A completed run leaves a parseable index and no leftover .json.tmp sidecar.
+
+        The index is written to a temp file and renamed into place; after a normal run the rename must have consumed the
+        temp file.
+        """
         (tmp_path / "gamma.py").write_text("g = 1\n")
 
-        result = subprocess.run(
-            [sys.executable, str(scan_index), "--root", str(tmp_path)],
-            capture_output=True,
-            text=True,
-            cwd=str(tmp_path),
-        )
-        assert result.returncode == 0, result.stderr
+        _scan_and_load(scan_index, tmp_path)  # parses: the final index is complete
 
-        cache_dir = tmp_path / ".cache" / "codemap"
-        index_path = cache_dir / f"{tmp_path.name}.json"
-        json.loads(index_path.read_text())  # final index is complete/parseable
-        assert not (cache_dir / f"{tmp_path.name}.json.tmp").exists()  # os.replace consumed the tmp
+        assert not (index_path_for(tmp_path).parent / f"{tmp_path.name}.json.tmp").exists()
 
     def test_rerun_preserves_readable_index(self, tmp_path: Path, scan_index):
-        """Re-running over an existing index yields a still-parseable index (replace is atomic)."""
-        (tmp_path / "gamma.py").write_text("g = 1\n")
-        for _ in range(2):
-            result = subprocess.run(
-                [sys.executable, str(scan_index), "--root", str(tmp_path)],
-                capture_output=True,
-                text=True,
-                cwd=str(tmp_path),
-            )
-            assert result.returncode == 0, result.stderr
+        """Re-running over an existing index yields a still-parseable index (replace is atomic).
 
-        index = json.loads((tmp_path / ".cache" / "codemap" / f"{tmp_path.name}.json").read_text())
+        A first scan creates the index and a second scan replaces it; the replacement must leave a complete index that
+        still lists the module.
+        """
+        (tmp_path / "gamma.py").write_text("g = 1\n")
+        _run_scan(scan_index, tmp_path)
+
+        index = _scan_and_load(scan_index, tmp_path)
+
         assert any(m["name"] == "gamma" for m in index["modules"])
 
     def test_simulated_windows_replace_retries_transient_sharing_error(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
-        """WinError 5 retries without replacing the destination non-atomically."""
+        """WinError 5 retries without replacing the destination non-atomically.
+
+        On Windows an antivirus scanner or reader can briefly lock the index. The first two ``os.replace`` calls fail
+        with a sharing error; the helper must retry (sleep stubbed) until the third, real replace lands the new file.
+        """
         temp = tmp_path / "index.tmp"
         target = tmp_path / "index.json"
         temp.write_text('{"complete": true}')
@@ -538,45 +626,33 @@ class TestAtomicIndexWrite:
         """
         (tmp_path / "gamma.py").write_text("g = 1\n")
 
-        procs = [
-            subprocess.Popen(
-                [sys.executable, str(scan_index), "--root", str(tmp_path)],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                cwd=str(tmp_path),
-            )
-            for _ in range(2)
-        ]
-        for proc in procs:
-            _, stderr = proc.communicate(timeout=60)
-            assert proc.returncode == 0, stderr
+        results = _run_scans_concurrently(scan_index, tmp_path, 2)
 
-        cache_dir = tmp_path / ".cache" / "codemap"
-        index = json.loads((cache_dir / f"{tmp_path.name}.json").read_text())  # never corrupt/truncated
+        assert [code for code, _ in results] == [0, 0], results
+        index = json.loads(index_path_for(tmp_path).read_text())  # never corrupt/truncated
         assert any(m["name"] == "gamma" for m in index["modules"])
-        assert not list(cache_dir.glob(f"{tmp_path.name}.json.*.tmp"))  # no PID-suffixed temp leaked
+        assert not list(
+            index_path_for(tmp_path).parent.glob(f"{tmp_path.name}.json.*.tmp")
+        )  # no PID-suffixed temp leaked
 
 
 def test_dot_directories_pruned_from_walk(tmp_path, gamma_src, scan_index):
-    """Any dot-dir (vendored checkout, sandbox, agent scratch) is excluded from the index."""
-    (tmp_path / "gamma.py").write_text(gamma_src)
-    sandbox = tmp_path / ".sandbox" / "vendored" / "src"
-    sandbox.mkdir(parents=True)
-    (sandbox / "vendored_mod.py").write_text("def v():\n    return 1\n")
-    agents = tmp_path / ".agents"
-    agents.mkdir()
-    (agents / "scratch.py").write_text("def s():\n    return 2\n")
+    """Any dot-dir (vendored checkout, sandbox, agent scratch) is excluded from the index.
 
-    result = subprocess.run(
-        [sys.executable, str(scan_index), "--root", str(tmp_path)],
-        capture_output=True,
-        text=True,
-        cwd=str(tmp_path),
+    Dot-directories hold vendored checkouts, sandboxes and agent scratch copies that are not part of the project's
+    import space; only the real ``gamma`` module may be indexed.
+    """
+    write_tree(
+        tmp_path,
+        {
+            "gamma.py": gamma_src,
+            ".sandbox/vendored/src/vendored_mod.py": "def v():\n    return 1\n",
+            ".agents/scratch.py": "def s():\n    return 2\n",
+        },
     )
-    assert result.returncode == 0, result.stderr
 
-    index = json.loads((tmp_path / ".cache" / "codemap" / f"{tmp_path.name}.json").read_text())
+    index = _scan_and_load(scan_index, tmp_path)
+
     names = {m["name"] for m in index["modules"]}
     assert "gamma" in names
     assert not any("vendored_mod" in n or "scratch" in n for n in names)

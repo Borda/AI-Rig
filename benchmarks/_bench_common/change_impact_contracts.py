@@ -14,7 +14,7 @@ because this stage does not measure importer mention recall. Failure: Invalid ta
 shapes, stale source fingerprints, unresolved target calls, malformed envelopes, or a
 disagreement between static labels and in-memory migrated-call behavior fail closed.
 Used by: The opt-in benchmark provider adapters and
-``benchmarks/tests/test_change_impact_contracts.py``. It deliberately does not read a
+``benchmarks/tests/stages/test_change_impact_contracts.py``. It deliberately does not read a
 Codemap index, invoke a provider, write fixture files, or implement product heuristics.
 """
 

@@ -7,6 +7,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+import pytest
+
 
 def _private_filesystem_available() -> bool:
     """Probe the private modes and owner identity used by isolated benchmark homes."""
@@ -26,6 +28,11 @@ def _private_filesystem_available() -> bool:
             )
         except OSError:
             return False
+
+
+requires_private_filesystem = pytest.mark.skipif(
+    not _private_filesystem_available(), reason="requires POSIX private-mode and ownership semantics"
+)
 
 
 def _pinned_frozen_checkout_is_available(repo_path: Path, expected_commit: str) -> bool:

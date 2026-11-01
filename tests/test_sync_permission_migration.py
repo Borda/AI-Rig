@@ -14,6 +14,8 @@ import shlex
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable
+from functools import cache
 from itertools import pairwise
 from pathlib import Path
 
@@ -27,7 +29,9 @@ NEW_RULE = "Bash(gh api repos/*)"
 OVERLAY_INSTALL_RULE = "Bash(uv pip install:*)"
 PLUGINS = ["cc_foundry", "cc_oss", "cc_develop", "cc_research", "codemap-py"]
 RETIRED_DENY_PLUGINS = ["cc_foundry"]
+OTHER_DENY_PLUGINS = [plugin for plugin in PLUGINS if plugin not in RETIRED_DENY_PLUGINS]
 TRIMMED_ALLOW_PLUGINS = ["cc_oss", "cc_develop", "cc_research"]
+UNTRIMMED_ALLOW_PLUGINS = [plugin for plugin in PLUGINS if plugin not in TRIMMED_ALLOW_PLUGINS]
 GUARDED_ALLOW_RULES = {NEW_RULE, "Bash(gh api graphql:*)", "Bash(git branch:*)", "Bash(git tag:*)"}
 #: Exact allow rules each plugin's setup removes from user settings before merging its own list.
 RETIRED_SHELL_RULES = {"Bash(find:*)", "Bash(node:*)", "Bash(claude:*)", "Bash(sed:*)", "Bash(eval:*)"}
@@ -111,9 +115,40 @@ FORBIDDEN_COMMAND_FAMILIES = [
     "pip install example-package",
     "pip download example-package",
 ]
+#: Shared script every setup runs to merge its shipped permission lists; its call line is the executable contract.
+MERGE_SCRIPT = "bin/merge_settings_permissions.py"
+#: Flags of that call belonging to each array, so one merge can be executed without touching the other.
+MERGE_FLAGS = {"allow": ("--allow", "--drop-allow", "--drop-allow-file"), "deny": ("--deny", "--retire-deny-file")}
+#: PreToolUse hook that blocks a ``python`` Bash call whose arguments name ``gh`` with ``api`` or a write verb.
+GH_WRITE_GUARD = ROOT / "plugins" / "cc_foundry" / "hooks" / "gh-write-guard.js"
+#: Plugins whose setup skill runs the shared permissions merge script.
+MERGE_SCRIPT_PLUGINS = ["cc_foundry", "cc_oss", "cc_develop", "cc_research"]
+#: A gh write deny entry every hook plugin and codemap-py shipped before the gh write guard's one-time approval.
+RETIRED_GH_DENY = "Bash(gh pr merge:*)"
+#: Local branch and tag deletion denies every hook plugin and codemap-py shipped before local Git ran freely.
+RETIRED_LOCAL_DENY = ("Bash(git branch -D:*)", "Bash(git branch -d:*)", "Bash(git tag -d:*)")
+#: Force and mirror push denies every plugin keeps: no approval ever covers a force push.
+KEPT_FORCE_DENY = (
+    "Bash(git push --force:*)",
+    "Bash(git push --force-with-lease:*)",
+    "Bash(git push -f:*)",
+    "Bash(git push --force-if-includes:*)",
+    "Bash(git push --mirror:*)",
+)
+KEPT_DENY = KEPT_FORCE_DENY[0]
+
+_requires_node = pytest.mark.skipif(shutil.which("node") is None, reason="requires node to run the gh-write guard")
+_requires_jq = pytest.mark.skipif(JQ is None, reason="jq is required to execute the shipped setup migration")
+_FENCE_OPEN = re.compile(r"^[ \t]*(`{3,}|~{3,})")
 
 
-def _overlay_commands() -> list[str]:
+def _plugin_json(plugin: str, name: str) -> list[str]:
+    """Return one of a plugin's shipped ``.claude-plugin`` permission lists."""
+    return json.loads((ROOT / "plugins" / plugin / ".claude-plugin" / name).read_text(encoding="utf-8"))
+
+
+@cache
+def _overlay_commands() -> tuple[str, ...]:
     """Return every overlay command the oss review template prescribes, as Claude Code would match it.
 
     A leading environment assignment is kept and also stripped: Claude Code strips assignments of certain known-safe
@@ -122,7 +157,7 @@ def _overlay_commands() -> list[str]:
     text = OVERLAY_TEMPLATE.read_text(encoding="utf-8")
     spans = re.findall(r"`((?:uv pip install|PIP_CONFIG_FILE=)[^`]* --[^`]*)`", text)
     commands = [span.replace("<env-python>", ENV_PYTHON) for span in spans]
-    return commands + [re.sub(r"^[A-Z_]+=\S+ ", "", command) for command in commands]
+    return tuple(commands + [re.sub(r"^[A-Z_]+=\S+ ", "", command) for command in commands])
 
 
 def _bash_rule_matches(rule: str, command: str) -> bool:
@@ -147,103 +182,31 @@ def _bash_rule_matches(rule: str, command: str) -> bool:
     return re.fullmatch(regex, command, flags=re.DOTALL) is not None or (bare_allowed and command == pattern[:-2])
 
 
-@pytest.mark.parametrize("plugin", PLUGINS)
-def test_shipped_repository_api_rule_uses_wildcard_syntax(plugin: str) -> None:
-    """Repository API permissions must avoid mixing wildcard and legacy prefix syntax."""
-    rules = json.loads((ROOT / "plugins" / plugin / ".claude-plugin/permissions-allow.json").read_text())
+def _fenced_blocks(text: str) -> list[str]:
+    """Return the body of every fenced code block in ``text``, one string per block, each line newline-terminated.
 
-    assert (NEW_RULE in rules) is (plugin not in TRIMMED_ALLOW_PLUGINS)
-    assert OLD_RULE not in rules
-    assert not [rule for rule in rules if rule.endswith(":*)") and "*" in rule[:-3]]
+    A fence opens with three or more backticks or tildes (an info string may follow) and closes on a line holding only
+    that character, at least as many times as it opened.
 
-
-@pytest.mark.parametrize("plugin", PLUGINS)
-def test_shipped_allow_rules_preserve_the_foundry_only_guard_boundary(plugin: str) -> None:
-    """Sibling lists omit write-capable allows; Foundry and Codemap retain their accepted allows."""
-    rules = set(_plugin_json(plugin, "permissions-allow.json"))
-    if plugin in TRIMMED_ALLOW_PLUGINS:
-        assert rules.isdisjoint(GUARDED_ALLOW_RULES)
-    else:
-        assert GUARDED_ALLOW_RULES <= rules
-
-
-@pytest.mark.parametrize("plugin", PLUGINS)
-def test_shell_permissions_keep_only_scoped_commands(plugin: str) -> None:
-    """Retired command families, eval included, must prompt while Python and scoped utilities stay available."""
-    rules = set(_plugin_json(plugin, "permissions-allow.json"))
-    assert rules.isdisjoint(RETIRED_SHELL_RULES)
-    assert {rule for rule in rules if rule.startswith(("Bash(find", "Bash(node", "Bash(claude", "Bash(sed"))} == set(
-        NARROWED_SHELL_RULES[plugin]
-    )
-    assert {"Bash(python:*)", "Bash(node --check:*)", "Bash(find .temp*)"} <= rules
-    assert not any(
-        "sed -i" in rule or ("find " in rule and any(flag in rule for flag in ["-delete", "-exec"])) for rule in rules
-    )
-
-
-def test_no_plugin_ships_retired_shell_allows() -> None:
-    """Installing any plugin must not silently restore the retired broad command grants."""
-    sources = list((ROOT / "plugins").glob("*/.claude-plugin/permissions-allow.json"))
-    assert sources
-    assert {
-        str(path): sorted(RETIRED_SHELL_RULES.intersection(json.loads(path.read_text())))
-        for path in sources
-        if RETIRED_SHELL_RULES.intersection(json.loads(path.read_text()))
-    } == {}
-
-
-def test_overlay_command_extraction_finds_every_fetch_step() -> None:
-    """The template still spells the support check, fetch and both pip fallback commands where the scan finds them.
-
-    Without this guard a reworded template would leave the allow-list cross-check below scanning nothing and passing.
+    Examples:
+        >>> _fenced_blocks("a\\n```bash\\necho hi\\n```\\nb\\n~~~~\\nx\\n~~~~~\\n")
+        ['echo hi\\n', 'x\\n']
     """
-    commands = _overlay_commands()
-    assert [command.split(" --", 1)[0] for command in commands[:4]] == [
-        "uv pip install",
-        "uv pip install",
-        f"PIP_CONFIG_FILE=/dev/null {ENV_PYTHON} -m pip download",
-        f"PIP_CONFIG_FILE=/dev/null {ENV_PYTHON} -m pip install",
-    ]
-
-
-@pytest.mark.parametrize(
-    ("rule", "command_index", "matches"),
-    [
-        pytest.param(OVERLAY_INSTALL_RULE, 0, True, id="retired-install-rule"),
-        pytest.param("Bash(uv pip *)", 0, True, id="space-wildcard"),
-        pytest.param("Bash(uv*)", 0, True, id="glued-wildcard"),
-        pytest.param("Bash(uv pip list:*)", 0, False, id="read-only-sibling"),
-        pytest.param(f"Bash({ENV_PYTHON} -m pip:*)", 6, True, id="env-stripped-pip-fallback-is-checked"),
-        pytest.param("Bash(python:*)", 6, False, id="interpreter-prefix-misses-venv-python"),
-    ],
-)
-def test_allow_rule_matcher_catches_the_retired_rule(rule: str, command_index: int, matches: bool) -> None:
-    """The matcher behind the cross-check reports rules that cover a shipped overlay command, and only those.
-
-    Index 0 is the support check; index 6 is the pip-fallback download with its environment prefix stripped. A matcher
-    that never matched would let the cross-check pass even with the retired rule still shipped.
-    """
-    assert _bash_rule_matches(rule, _overlay_commands()[command_index]) is matches
-
-
-@pytest.mark.parametrize("plugin", PLUGINS)
-def test_no_shipped_allow_rule_preapproves_overlay_fetch(plugin: str) -> None:
-    """No plugin's shipped allow list may auto-approve the review overlay's download commands or their families.
-
-    The oss review contract makes each overlay command's permission prompt the user's approval; a merged ``Bash(uv pip
-    install:*)`` rule ran the support check and the wheel fetch with no prompt, and also covered installs into the
-    project environment and source builds the overlay forbids.
-    """
-    rules = json.loads((ROOT / "plugins" / plugin / ".claude-plugin/permissions-allow.json").read_text())
-    commands = _overlay_commands() + FORBIDDEN_COMMAND_FAMILIES
-
-    assert [(rule, command) for rule in rules for command in commands if _bash_rule_matches(rule, command)] == []
-
-
-#: Shared script every setup runs to merge its shipped permission lists; its call line is the executable contract.
-MERGE_SCRIPT = "bin/merge_settings_permissions.py"
-#: Flags of that call belonging to each array, so one merge can be executed without touching the other.
-MERGE_FLAGS = {"allow": ("--allow", "--drop-allow", "--drop-allow-file"), "deny": ("--deny", "--retire-deny-file")}
+    blocks: list[str] = []
+    body: list[str] = []
+    fence: str | None = None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if fence is None:
+            opened = _FENCE_OPEN.match(line)
+            fence = opened.group(1) if opened else None
+            body = []
+        elif len(stripped) >= len(fence) and stripped == fence[0] * len(stripped):
+            blocks.append("".join(f"{row}\n" for row in body))
+            fence = None
+        else:
+            body.append(line)
+    return blocks
 
 
 def _setup_source(plugin: str) -> tuple[Path, str]:
@@ -251,6 +214,12 @@ def _setup_source(plugin: str) -> tuple[Path, str]:
     root = ROOT / "plugins" / plugin
     source = root / ("README.md" if plugin == "codemap-py" else "skills/setup/SKILL.md")
     return root, source.read_text(encoding="utf-8")
+
+
+def _merge_blocks(plugin: str) -> tuple[Path, str, list[str]]:
+    """Return a plugin's root, its setup text, and the fenced blocks of that text that run the merge script."""
+    root, text = _setup_source(plugin)
+    return root, text, [block for block in _fenced_blocks(text) if MERGE_SCRIPT in block]
 
 
 def _merge_call_flags(text: str, root: Path) -> dict[str, list[str]]:
@@ -270,13 +239,6 @@ def _merge_call_flags(text: str, root: Path) -> dict[str, list[str]]:
     return flags
 
 
-#: PreToolUse hook that blocks a ``python`` Bash call whose arguments name ``gh`` with ``api`` or a write verb.
-GH_WRITE_GUARD = ROOT / "plugins" / "cc_foundry" / "hooks" / "gh-write-guard.js"
-#: Plugins whose setup skill runs the shared permissions merge script.
-MERGE_SCRIPT_PLUGINS = ["cc_foundry", "cc_oss", "cc_develop", "cc_research"]
-_requires_node = pytest.mark.skipif(shutil.which("node") is None, reason="requires node to run the gh-write guard")
-
-
 def _guard_exit_code(command: str) -> tuple[int, str]:
     """Return the gh-write guard's exit code and stderr for ``command`` sent as a Bash PreToolUse payload."""
     payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(ROOT)})
@@ -284,46 +246,6 @@ def _guard_exit_code(command: str) -> tuple[int, str]:
         ["node", str(GH_WRITE_GUARD)], input=payload, capture_output=True, encoding="utf-8", check=False
     )
     return result.returncode, result.stderr
-
-
-@pytest.mark.integration
-@_requires_node
-@pytest.mark.parametrize("expand_root", [pytest.param(False, id="unexpanded"), pytest.param(True, id="expanded")])
-@pytest.mark.parametrize("plugin", MERGE_SCRIPT_PLUGINS)
-def test_setup_merge_call_passes_gh_write_guard(plugin: str, expand_root: bool) -> None:
-    """Each shipped setup merge block, as the Bash tool receives it, is not blocked by the gh-write guard.
-
-    The guard reads every argument of a ``python`` call as interpreter code and blocks one that names ``gh api``, so a
-    retired ``Bash(gh api …)`` rule on the command line stops setup before ``settings.json`` is merged. The whole fenced
-    block, continuation lines included, is run through the real guard with ``$PLUGIN_ROOT`` left as written and
-    expanded, so the symptom cannot return in one plugin while another still passes.
-    """
-    root, text = _setup_source(plugin)
-    fences = re.finditer(r"^[ \t]*((`|~)\2{2,})[^\n]*\n(.*?)^[ \t]*\1\2*[ \t]*$", text, flags=re.DOTALL | re.MULTILINE)
-    blocks = [fence.group(3) for fence in fences if MERGE_SCRIPT in fence.group(3)]
-    calls = [line.strip() for line in text.splitlines() if MERGE_SCRIPT in line]
-    assert len(blocks) == 1
-    assert all(call in blocks[0] for call in calls)
-    command = blocks[0].replace("$PLUGIN_ROOT", root.as_posix()) if expand_root else blocks[0]
-
-    code, stderr = _guard_exit_code(command)
-
-    assert (code, stderr) == (0, "")
-
-
-@pytest.mark.integration
-@_requires_node
-def test_gh_write_guard_blocks_a_python_call_naming_gh_api() -> None:
-    """The guard still blocks a ``python`` call carrying ``gh api`` text, so the shipped-call test can fail.
-
-    Without this control a guard that stopped inspecting ``python`` arguments would make the shipped-call test pass for
-    any command line and the retired-rule workaround would look verified when it is not needed.
-    """
-    command = f"python bin/merge_settings_permissions.py --allow a.json --drop-allow '{OLD_RULE}'"
-
-    code, _ = _guard_exit_code(command)
-
-    assert code == 2
 
 
 def _run_merge_script(
@@ -339,10 +261,11 @@ def _run_merge_script(
         for value in flags.get(flag, []):
             command += [flag, value]
     env = {**os.environ, "HOME": str(home), "USERPROFILE": str(home)}
-    subprocess.run(command, env=env, capture_output=True, text=True, check=True)
-    first = json.loads(target.read_text(encoding="utf-8"))
-    subprocess.run(command, env=env, capture_output=True, text=True, check=True)
-    return first, json.loads(target.read_text(encoding="utf-8"))
+    runs = []
+    for _ in range(2):
+        subprocess.run(command, env=env, capture_output=True, encoding="utf-8", check=True)
+        runs.append(json.loads(target.read_text(encoding="utf-8")))
+    return runs[0], runs[1]
 
 
 def _run_merge_jq(
@@ -357,8 +280,8 @@ def _run_merge_jq(
     if kind == "deny" and retired.exists():
         command += ["--slurpfile", "retired", str(retired)]
     command.append(expressions[0])
-    first = subprocess.run(command, input=json.dumps(settings), capture_output=True, text=True, check=True)
-    second = subprocess.run(command, input=first.stdout, capture_output=True, text=True, check=True)
+    first = subprocess.run(command, input=json.dumps(settings), capture_output=True, encoding="utf-8", check=True)
+    second = subprocess.run(command, input=first.stdout, capture_output=True, encoding="utf-8", check=True)
     return json.loads(first.stdout), json.loads(second.stdout)
 
 
@@ -387,175 +310,350 @@ def _apply_setup_merge(
     return _run_merge_jq(root, text, kind, settings)
 
 
-@pytest.mark.integration
-@pytest.mark.skipif(JQ is None, reason="jq is required to execute the shipped setup migration")
-@pytest.mark.parametrize("plugin", PLUGINS)
-@pytest.mark.parametrize(
-    "settings",
-    [
-        pytest.param({}, id="first-install"),
-        pytest.param(
-            {
-                "permissions": {
-                    "allow": [
-                        *sorted(RETIRED_SHELL_RULES),
-                        *sorted(RETIRED_SHELL_RULES),
-                        "Bash(find .temp*)",
-                        "Bash(node --check:*)",
-                        "Bash(sed -n custom)",
-                        "Bash(claude plugin list)",
-                        "Bash(python:*)",
-                    ]
-                },
-                "theme": "dark",
-            },
-            id="retired-shell-rules-including-identical-user-grants",
-        ),
-        pytest.param({"permissions": {"allow": [OLD_RULE, OLD_RULE]}}, id="duplicate-stale-rules"),
-        pytest.param({"permissions": {"allow": [OLD_RULE, NEW_RULE]}}, id="old-and-new-rules"),
-        pytest.param(
-            {
-                "permissions": {
-                    "allow": [OLD_RULE, "Bash(custom-tool:*)", "Bash(gh api repos/custom:*)"],
-                    "deny": ["Bash(gh api repos/private/*)"],
-                },
-                "env": {"CUSTOM_SETTING": "preserved"},
-            },
-            id="preserve-user-settings",
-        ),
-        pytest.param(
-            {"permissions": {"allow": [OVERLAY_INSTALL_RULE, "Bash(uv pip list:*)", OLD_RULE]}},
-            id="retired-overlay-install-rule",
-        ),
-    ],
-)
-def test_setup_migrates_only_obsolete_rule(plugin: str, settings: dict[str, object], tmp_path: Path) -> None:
-    """Setup must remove only the exact rules that plugin retired, preserve user settings, and remain idempotent.
+class TestShippedAllowRules:
+    """The allow lists each plugin ships keep scoped commands, wildcard syntax and the Foundry-only guard boundary."""
 
-    Only oss shipped ``Bash(uv pip install:*)``, so only oss setup removes it; every other plugin's setup keeps a user's
-    own copy of that rule untouched.
-    """
-    root = ROOT / "plugins" / plugin
-    migrated, again = _apply_setup_merge(plugin, settings, "allow", tmp_path)
+    @pytest.mark.parametrize("plugin", PLUGINS)
+    def test_repository_api_rule_uses_wildcard_syntax(self, plugin: str) -> None:
+        """Repository API permissions avoid mixing wildcard and legacy prefix syntax.
 
-    shipped = json.loads((root / ".claude-plugin/permissions-allow.json").read_text())
-    original_permissions = settings.get("permissions", {})
-    original_allow = original_permissions.get("allow", [])
-    assert migrated["permissions"]["allow"] == _expected_merge(original_allow + shipped, RETIRED_RULES[plugin])
-    assert (NEW_RULE in migrated["permissions"]["allow"]) is (
-        plugin not in TRIMMED_ALLOW_PLUGINS or NEW_RULE in original_allow
+        Trimmed sibling lists omit the ``gh api repos`` allow entirely; the others ship only the wildcard spelling and
+        never a ``:*`` rule that also contains a mid-pattern ``*``.
+        """
+        rules = _plugin_json(plugin, "permissions-allow.json")
+
+        assert (NEW_RULE in rules) is (plugin not in TRIMMED_ALLOW_PLUGINS)
+        assert OLD_RULE not in rules
+        assert [rule for rule in rules if rule.endswith(":*)") and "*" in rule[:-3]] == []
+
+    @pytest.mark.parametrize("plugin", TRIMMED_ALLOW_PLUGINS)
+    def test_trimmed_siblings_omit_write_capable_allows(self, plugin: str) -> None:
+        """Sibling allow lists carry none of the write-capable gh, branch and tag allows.
+
+        Only Foundry's gh write guard and Codemap own those allows; a sibling shipping one would bypass the guard.
+        """
+        rules = set(_plugin_json(plugin, "permissions-allow.json"))
+
+        assert rules.isdisjoint(GUARDED_ALLOW_RULES)
+
+    @pytest.mark.parametrize("plugin", UNTRIMMED_ALLOW_PLUGINS)
+    def test_foundry_and_codemap_keep_accepted_allows(self, plugin: str) -> None:
+        """Foundry and Codemap retain the write-capable allows their guard boundary accepts."""
+        rules = set(_plugin_json(plugin, "permissions-allow.json"))
+
+        assert GUARDED_ALLOW_RULES <= rules
+
+    @pytest.mark.parametrize("plugin", PLUGINS)
+    def test_shell_permissions_keep_only_scoped_commands(self, plugin: str) -> None:
+        """Retired command families, eval included, prompt while Python and scoped utilities stay available.
+
+        The ``find``, ``node``, ``claude`` and ``sed`` rules must equal the plugin's narrowed list exactly, and none may
+        permit in-place edits, deletion or ``-exec``.
+        """
+        rules = set(_plugin_json(plugin, "permissions-allow.json"))
+        scoped = {rule for rule in rules if rule.startswith(("Bash(find", "Bash(node", "Bash(claude", "Bash(sed"))}
+        mutating = [
+            rule for rule in rules if "sed -i" in rule or ("find " in rule and ("-delete" in rule or "-exec" in rule))
+        ]
+
+        assert rules.isdisjoint(RETIRED_SHELL_RULES)
+        assert scoped == set(NARROWED_SHELL_RULES[plugin])
+        assert {"Bash(python:*)", "Bash(node --check:*)", "Bash(find .temp*)"} <= rules
+        assert mutating == []
+
+    def test_no_plugin_ships_retired_shell_allows(self) -> None:
+        """Installing any plugin must not silently restore the retired broad command grants.
+
+        Every shipped allow list under ``plugins/`` is scanned, including plugins outside the setup-merge set.
+        """
+        sources = sorted((ROOT / "plugins").glob("*/.claude-plugin/permissions-allow.json"))
+        shipped_retired = {
+            str(path.relative_to(ROOT)): sorted(RETIRED_SHELL_RULES & set(json.loads(path.read_text(encoding="utf-8"))))
+            for path in sources
+        }
+
+        assert sources
+        assert {path: rules for path, rules in shipped_retired.items() if rules} == {}
+
+
+class TestOverlayFetchRules:
+    """No shipped allow rule pre-approves the oss review overlay's download and install commands."""
+
+    def test_command_extraction_finds_every_fetch_step(self) -> None:
+        """The template still spells the support check, fetch and both pip fallback commands where the scan finds them.
+
+        Without this guard a reworded template would leave the allow-list cross-check below scanning nothing and
+        passing.
+        """
+        commands = _overlay_commands()
+
+        assert [command.split(" --", 1)[0] for command in commands[:4]] == [
+            "uv pip install",
+            "uv pip install",
+            f"PIP_CONFIG_FILE=/dev/null {ENV_PYTHON} -m pip download",
+            f"PIP_CONFIG_FILE=/dev/null {ENV_PYTHON} -m pip install",
+        ]
+
+    @pytest.mark.parametrize(
+        ("rule", "command_prefix", "matches"),
+        [
+            pytest.param(OVERLAY_INSTALL_RULE, "uv pip install", True, id="retired-install-rule"),
+            pytest.param("Bash(uv pip *)", "uv pip install", True, id="space-wildcard"),
+            pytest.param("Bash(uv*)", "uv pip install", True, id="glued-wildcard"),
+            pytest.param("Bash(uv pip list:*)", "uv pip install", False, id="read-only-sibling"),
+            pytest.param(
+                f"Bash({ENV_PYTHON} -m pip:*)",
+                f"{ENV_PYTHON} -m pip download",
+                True,
+                id="env-stripped-pip-fallback-is-checked",
+            ),
+            pytest.param(
+                "Bash(python:*)", f"{ENV_PYTHON} -m pip download", False, id="interpreter-prefix-misses-venv-python"
+            ),
+        ],
     )
-    assert again == migrated
-    expected = json.loads(json.dumps(settings))
-    expected.setdefault("permissions", {})["allow"] = migrated["permissions"]["allow"]
-    assert migrated == expected
+    def test_matcher_reports_rules_covering_an_overlay_command(
+        self, rule: str, command_prefix: str, matches: bool
+    ) -> None:
+        """The matcher behind the cross-check reports rules that cover a shipped overlay command, and only those.
+
+        The first command starting with ``uv pip install`` is the support check; the one starting with the bare
+        environment interpreter is the pip-fallback download with its environment prefix stripped. A matcher that never
+        matched would let the cross-check pass even with the retired rule still shipped.
+        """
+        command = next(command for command in _overlay_commands() if command.startswith(command_prefix))
+
+        assert _bash_rule_matches(rule, command) is matches
+
+    @pytest.mark.parametrize("plugin", PLUGINS)
+    def test_no_shipped_allow_rule_preapproves_overlay_fetch(self, plugin: str) -> None:
+        """No plugin's shipped allow list auto-approves the review overlay's download commands or their families.
+
+        The oss review contract makes each overlay command's permission prompt the user's approval; a merged ``Bash(uv
+        pip install:*)`` rule ran the support check and the wheel fetch with no prompt, and also covered installs into
+        the project environment and source builds the overlay forbids.
+        """
+        rules = _plugin_json(plugin, "permissions-allow.json")
+        commands = [*_overlay_commands(), *FORBIDDEN_COMMAND_FAMILIES]
+
+        assert [(rule, command) for rule in rules for command in commands if _bash_rule_matches(rule, command)] == []
 
 
-#: A gh write deny entry every hook plugin and codemap-py shipped before the gh write guard's one-time approval.
-RETIRED_GH_DENY = "Bash(gh pr merge:*)"
-#: Local branch and tag deletion denies every hook plugin and codemap-py shipped before local Git ran freely.
-RETIRED_LOCAL_DENY = ("Bash(git branch -D:*)", "Bash(git branch -d:*)", "Bash(git tag -d:*)")
-#: Force and mirror push denies every plugin keeps: no approval ever covers a force push.
-KEPT_FORCE_DENY = (
-    "Bash(git push --force:*)",
-    "Bash(git push --force-with-lease:*)",
-    "Bash(git push -f:*)",
-    "Bash(git push --force-if-includes:*)",
-    "Bash(git push --mirror:*)",
-)
-KEPT_DENY = KEPT_FORCE_DENY[0]
+class TestSetupMergeGuard:
+    """Each shipped setup merge block reaches ``settings.json`` past the gh-write guard."""
+
+    @pytest.mark.parametrize("plugin", MERGE_SCRIPT_PLUGINS)
+    def test_setup_documents_one_merge_block(self, plugin: str) -> None:
+        """Each setup skill holds exactly one fenced block running the merge script, with every call inside it.
+
+        The guard test below runs that single block; a second block or a call outside it would go unexercised.
+        """
+        _, text, blocks = _merge_blocks(plugin)
+        calls = [line.strip() for line in text.splitlines() if MERGE_SCRIPT in line]
+
+        assert len(blocks) == 1
+        assert [call for call in calls if call not in blocks[0]] == []
+
+    @pytest.mark.integration
+    @_requires_node
+    @pytest.mark.parametrize(
+        "expand",
+        [
+            pytest.param(lambda root: "$PLUGIN_ROOT", id="unexpanded"),
+            pytest.param(lambda root: root.as_posix(), id="expanded"),
+        ],
+    )
+    @pytest.mark.parametrize("plugin", MERGE_SCRIPT_PLUGINS)
+    def test_merge_call_passes_gh_write_guard(self, plugin: str, expand: Callable[[Path], str]) -> None:
+        """Each shipped setup merge block, as the Bash tool receives it, is not blocked by the gh-write guard.
+
+        The guard reads every argument of a ``python`` call as interpreter code and blocks one that names ``gh api``, so
+        a retired ``Bash(gh api …)`` rule on the command line stops setup before ``settings.json`` is merged. The whole
+        fenced block, continuation lines included, is run through the real guard with ``$PLUGIN_ROOT`` left as written
+        and expanded, so the symptom cannot return in one plugin while another still passes.
+        """
+        root, _, blocks = _merge_blocks(plugin)
+        command = blocks[0].replace("$PLUGIN_ROOT", expand(root))
+
+        code, stderr = _guard_exit_code(command)
+
+        assert (code, stderr) == (0, "")
+
+    @pytest.mark.integration
+    @_requires_node
+    def test_guard_blocks_a_python_call_naming_gh_api(self) -> None:
+        """The guard still blocks a ``python`` call carrying ``gh api`` text, so the shipped-call test can fail.
+
+        Without this control a guard that stopped inspecting ``python`` arguments would make the shipped-call test pass
+        for any command line and the retired-rule workaround would look verified when it is not needed.
+        """
+        command = f"python bin/merge_settings_permissions.py --allow a.json --drop-allow '{OLD_RULE}'"
+
+        code, _ = _guard_exit_code(command)
+
+        assert code == 2
 
 
-def _plugin_json(plugin: str, name: str) -> list[str]:
-    """Return one of a plugin's shipped ``.claude-plugin`` permission lists."""
-    return json.loads((ROOT / "plugins" / plugin / ".claude-plugin" / name).read_text(encoding="utf-8"))
+class TestAllowMigration:
+    """Setup removes each plugin's exact retired allow rules while preserving everything else."""
 
-
-@pytest.mark.parametrize("plugin", PLUGINS)
-def test_shipped_deny_list_holds_no_retired_entry(plugin: str) -> None:
-    """No shipped deny entry names a gh command or a local branch/tag deletion; every force push deny stays.
-
-    A settings deny rule still applies after a hook allows a call, so a shipped gh write deny would make every one-time
-    ``gh-write`` approval spend its token and still be denied. Sibling lists omit the corresponding broad allows.
-    """
-    deny = _plugin_json(plugin, "permissions-deny.json")
-    assert [rule for rule in deny if rule.startswith("Bash(gh ") or rule in RETIRED_LOCAL_DENY] == []
-    assert [rule for rule in KEPT_FORCE_DENY if rule not in deny] == []
-
-
-@pytest.mark.parametrize("plugin", PLUGINS)
-def test_only_foundry_ships_the_retired_deny_list(plugin: str) -> None:
-    """Foundry is the sole scrub point for stale gh and branch/tag deletion denies."""
-    path = ROOT / "plugins" / plugin / ".claude-plugin/permissions-deny-retired.json"
-    assert path.exists() is (plugin in RETIRED_DENY_PLUGINS)
-    if plugin not in RETIRED_DENY_PLUGINS:
-        return
-    deny = _plugin_json(plugin, "permissions-deny.json")
-    retired = _plugin_json(plugin, "permissions-deny-retired.json")
-    assert {RETIRED_GH_DENY, *RETIRED_LOCAL_DENY} <= set(retired)
-    assert [
-        rule for rule in retired if rule in deny or not (rule.startswith("Bash(gh ") or rule in RETIRED_LOCAL_DENY)
-    ] == []
-
-
-@pytest.mark.integration
-@pytest.mark.skipif(JQ is None, reason="jq is required to execute the shipped setup migration")
-@pytest.mark.parametrize("plugin", RETIRED_DENY_PLUGINS)
-@pytest.mark.parametrize(
-    "settings",
-    [
-        pytest.param({}, id="first-install"),
-        pytest.param({"permissions": {"deny": [RETIRED_GH_DENY, RETIRED_GH_DENY, KEPT_DENY]}}, id="retired-and-kept"),
-        pytest.param({"permissions": {"deny": [*RETIRED_LOCAL_DENY, KEPT_DENY]}}, id="retired-local-deletion"),
-        pytest.param(
-            {
-                "permissions": {
-                    "allow": ["Bash(custom-tool:*)"],
-                    "deny": [RETIRED_GH_DENY, "Bash(gh pr merge --admin:*)", "Bash(custom-deny:*)"],
+    @pytest.mark.integration
+    @_requires_jq
+    @pytest.mark.parametrize("plugin", PLUGINS)
+    @pytest.mark.parametrize(
+        "settings",
+        [
+            pytest.param({}, id="first-install"),
+            pytest.param(
+                {
+                    "permissions": {
+                        "allow": [
+                            *sorted(RETIRED_SHELL_RULES),
+                            *sorted(RETIRED_SHELL_RULES),
+                            "Bash(find .temp*)",
+                            "Bash(node --check:*)",
+                            "Bash(sed -n custom)",
+                            "Bash(claude plugin list)",
+                            "Bash(python:*)",
+                        ]
+                    },
+                    "theme": "dark",
                 },
-                "env": {"CUSTOM_SETTING": "preserved"},
-            },
-            id="preserve-user-settings",
-        ),
-    ],
-)
-def test_setup_retires_only_the_shipped_gh_write_denies(
-    plugin: str, settings: dict[str, object], tmp_path: Path
-) -> None:
-    """Setup removes exactly the retired gh write denies, adds the shipped ones, keeps the rest, and is idempotent.
+                id="retired-shell-rules-including-identical-user-grants",
+            ),
+            pytest.param({"permissions": {"allow": [OLD_RULE, OLD_RULE]}}, id="duplicate-stale-rules"),
+            pytest.param({"permissions": {"allow": [OLD_RULE, NEW_RULE]}}, id="old-and-new-rules"),
+            pytest.param(
+                {
+                    "permissions": {
+                        "allow": [OLD_RULE, "Bash(custom-tool:*)", "Bash(gh api repos/custom:*)"],
+                        "deny": ["Bash(gh api repos/private/*)"],
+                    },
+                    "env": {"CUSTOM_SETTING": "preserved"},
+                },
+                id="preserve-user-settings",
+            ),
+            pytest.param(
+                {"permissions": {"allow": [OVERLAY_INSTALL_RULE, "Bash(uv pip list:*)", OLD_RULE]}},
+                id="retired-overlay-install-rule",
+            ),
+        ],
+    )
+    def test_migrates_only_obsolete_rule(self, plugin: str, settings: dict[str, object], tmp_path: Path) -> None:
+        """Setup removes only the exact rules that plugin retired, preserves user settings, and is idempotent.
 
-    A user's own deny entry that only resembles a retired one (``Bash(gh pr merge --admin:*)``) stays: removal is an
-    exact string match against the plugin's retired list.
-    """
-    migrated, again = _apply_setup_merge(plugin, settings, "deny", tmp_path)
+        Only oss shipped ``Bash(uv pip install:*)``, so only oss setup removes it; every other plugin's setup keeps a
+        user's own copy of that rule untouched. The shipped merge is executed for real, twice, on isolated settings.
+        """
+        migrated, again = _apply_setup_merge(plugin, settings, "allow", tmp_path)
 
-    original_deny = settings.get("permissions", {}).get("deny", [])
-    shipped = _plugin_json(plugin, "permissions-deny.json")
-    retired = set(_plugin_json(plugin, "permissions-deny-retired.json"))
-    assert migrated["permissions"]["deny"] == _expected_merge(original_deny + shipped, retired)
-    assert again == migrated
-    expected = json.loads(json.dumps(settings))
-    expected.setdefault("permissions", {})["deny"] = migrated["permissions"]["deny"]
-    assert migrated == expected
+        shipped = _plugin_json(plugin, "permissions-allow.json")
+        original_allow = settings.get("permissions", {}).get("allow", [])
+        expected = json.loads(json.dumps(settings))
+        expected.setdefault("permissions", {})["allow"] = migrated["permissions"]["allow"]
+        assert migrated["permissions"]["allow"] == _expected_merge(original_allow + shipped, RETIRED_RULES[plugin])
+        assert (NEW_RULE in migrated["permissions"]["allow"]) is (
+            plugin not in TRIMMED_ALLOW_PLUGINS or NEW_RULE in original_allow
+        )
+        assert again == migrated
+        assert migrated == expected
 
 
-@pytest.mark.integration
-@pytest.mark.skipif(JQ is None, reason="jq is required to execute the shipped setup migration")
-@pytest.mark.parametrize("plugin", [plugin for plugin in PLUGINS if plugin not in RETIRED_DENY_PLUGINS])
-def test_other_plugins_merge_denies_additively(plugin: str, tmp_path: Path) -> None:
-    """Sibling setup and Codemap's manual merge preserve stale and custom denies for Foundry to scrub."""
-    settings = {
-        "permissions": {"deny": [RETIRED_GH_DENY, *RETIRED_LOCAL_DENY, "Bash(custom-deny:*)"]},
-        "env": {"CUSTOM_SETTING": "preserved"},
-    }
-    migrated, again = _apply_setup_merge(plugin, settings, "deny", tmp_path)
-    expected = {
-        **settings,
-        "permissions": {
-            "deny": _expected_merge(
-                settings["permissions"]["deny"] + _plugin_json(plugin, "permissions-deny.json"), set()
-            )
-        },
-    }
-    assert migrated == expected
-    assert again == expected
+class TestDenyLists:
+    """Shipped deny lists keep every force-push deny, drop gh write denies, and migrate through Foundry's scrub."""
+
+    @pytest.mark.parametrize("plugin", PLUGINS)
+    def test_shipped_list_holds_no_retired_entry(self, plugin: str) -> None:
+        """No shipped deny entry names a gh command or a local branch/tag deletion; every force push deny stays.
+
+        A settings deny rule still applies after a hook allows a call, so a shipped gh write deny would make every one-
+        time ``gh-write`` approval spend its token and still be denied. Sibling lists omit the corresponding broad
+        allows.
+        """
+        deny = _plugin_json(plugin, "permissions-deny.json")
+
+        assert [rule for rule in deny if rule.startswith("Bash(gh ") or rule in RETIRED_LOCAL_DENY] == []
+        assert [rule for rule in KEPT_FORCE_DENY if rule not in deny] == []
+
+    @pytest.mark.parametrize("plugin", PLUGINS)
+    def test_only_foundry_ships_the_retired_list(self, plugin: str) -> None:
+        """Foundry is the sole scrub point for stale gh and branch/tag deletion denies."""
+        path = ROOT / "plugins" / plugin / ".claude-plugin/permissions-deny-retired.json"
+
+        assert path.exists() is (plugin in RETIRED_DENY_PLUGINS)
+
+    @pytest.mark.parametrize("plugin", RETIRED_DENY_PLUGINS)
+    def test_retired_list_names_only_gh_and_local_deletion_denies(self, plugin: str) -> None:
+        """The retired list covers the known gh and deletion denies and never a deny the plugin still ships.
+
+        Removal is an exact string match, so a retired entry that is also shipped would be added and removed in the same
+        merge, and a non-gh, non-deletion entry would scrub a rule that should stay.
+        """
+        deny = _plugin_json(plugin, "permissions-deny.json")
+        retired = _plugin_json(plugin, "permissions-deny-retired.json")
+
+        assert {RETIRED_GH_DENY, *RETIRED_LOCAL_DENY} <= set(retired)
+        assert [
+            rule for rule in retired if rule in deny or not (rule.startswith("Bash(gh ") or rule in RETIRED_LOCAL_DENY)
+        ] == []
+
+    @pytest.mark.integration
+    @_requires_jq
+    @pytest.mark.parametrize("plugin", RETIRED_DENY_PLUGINS)
+    @pytest.mark.parametrize(
+        "settings",
+        [
+            pytest.param({}, id="first-install"),
+            pytest.param(
+                {"permissions": {"deny": [RETIRED_GH_DENY, RETIRED_GH_DENY, KEPT_DENY]}}, id="retired-and-kept"
+            ),
+            pytest.param({"permissions": {"deny": [*RETIRED_LOCAL_DENY, KEPT_DENY]}}, id="retired-local-deletion"),
+            pytest.param(
+                {
+                    "permissions": {
+                        "allow": ["Bash(custom-tool:*)"],
+                        "deny": [RETIRED_GH_DENY, "Bash(gh pr merge --admin:*)", "Bash(custom-deny:*)"],
+                    },
+                    "env": {"CUSTOM_SETTING": "preserved"},
+                },
+                id="preserve-user-settings",
+            ),
+        ],
+    )
+    def test_setup_retires_only_the_shipped_gh_write_denies(
+        self, plugin: str, settings: dict[str, object], tmp_path: Path
+    ) -> None:
+        """Setup removes exactly the retired gh write denies, adds the shipped ones, keeps the rest, and is idempotent.
+
+        A user's own deny entry that only resembles a retired one (``Bash(gh pr merge --admin:*)``) stays: removal is an
+        exact string match against the plugin's retired list.
+        """
+        migrated, again = _apply_setup_merge(plugin, settings, "deny", tmp_path)
+
+        original_deny = settings.get("permissions", {}).get("deny", [])
+        shipped = _plugin_json(plugin, "permissions-deny.json")
+        retired = set(_plugin_json(plugin, "permissions-deny-retired.json"))
+        expected = json.loads(json.dumps(settings))
+        expected.setdefault("permissions", {})["deny"] = migrated["permissions"]["deny"]
+        assert migrated["permissions"]["deny"] == _expected_merge(original_deny + shipped, retired)
+        assert again == migrated
+        assert migrated == expected
+
+    @pytest.mark.integration
+    @_requires_jq
+    @pytest.mark.parametrize("plugin", OTHER_DENY_PLUGINS)
+    def test_other_plugins_merge_denies_additively(self, plugin: str, tmp_path: Path) -> None:
+        """Sibling setup and Codemap's manual merge preserve stale and custom denies for Foundry to scrub."""
+        settings = {
+            "permissions": {"deny": [RETIRED_GH_DENY, *RETIRED_LOCAL_DENY, "Bash(custom-deny:*)"]},
+            "env": {"CUSTOM_SETTING": "preserved"},
+        }
+        expected_deny = _expected_merge(
+            settings["permissions"]["deny"] + _plugin_json(plugin, "permissions-deny.json"), set()
+        )
+
+        migrated, again = _apply_setup_merge(plugin, settings, "deny", tmp_path)
+
+        expected = {**settings, "permissions": {"deny": expected_deny}}
+        assert migrated == expected
+        assert again == expected

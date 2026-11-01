@@ -669,7 +669,8 @@ def read_index(path: os.PathLike[str] | str, *, timeout: float = DEFAULT_TIMEOUT
         >>> import tempfile, os, json
         >>> d = tempfile.mkdtemp()
         >>> p = os.path.join(d, "idx.json")
-        >>> _ = open(p, "w").write(json.dumps({"schema": 1}))
+        >>> with open(p, "w", encoding="utf-8") as fh:
+        ...     _ = fh.write(json.dumps({"schema": 1}))
         >>> with read_index(p, timeout=5) as data:
         ...     data["schema"]
         1
@@ -986,7 +987,8 @@ def publish_stream(index_path: os.PathLike[str] | str) -> Iterator[IO[str]]:
         >>> p = os.path.join(tempfile.mkdtemp(), "idx.json")
         >>> with publish_stream(p) as fh:
         ...     json.dump({"schema": 3}, fh)
-        >>> json.load(open(p))["schema"]
+        >>> with open(p, encoding="utf-8") as fh:
+        ...     json.load(fh)["schema"]
         3
     """
     target = Path(index_path)
@@ -1022,7 +1024,8 @@ def atomic_publish(index_path: os.PathLike[str] | str, data: bytes) -> None:
         >>> import tempfile, os
         >>> p = os.path.join(tempfile.mkdtemp(), "idx.json")
         >>> atomic_publish(p, b'{"schema": 1}')
-        >>> open(p, "rb").read()
+        >>> with open(p, "rb") as fh:
+        ...     fh.read()
         b'{"schema": 1}'
     """
     target = Path(index_path)

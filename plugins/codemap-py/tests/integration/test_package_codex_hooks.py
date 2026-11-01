@@ -27,9 +27,13 @@ _BUILD = _load_script("build_package")
 _VALIDATE = _load_script("validate_package")
 
 
-def _build_candidate(tmp_path: Path) -> Path:
-    """Build an isolated candidate from the checked-out plugin tree."""
-    candidate = tmp_path / "candidate"
+@pytest.fixture
+def candidate(tmp_path: Path) -> Path:
+    """Build an isolated package candidate from the checked-out plugin tree.
+
+    ``build_package`` clears its output directory by contract, so the candidate lives in its own ``tmp_path`` child.
+    """
+    out = tmp_path / "candidate"
     mode_map = _BUILD._git_exec_modes(_PLUGIN_ROOT)
     # Include the owned new payload before commit without staging the caller's index.
     for relative in (
@@ -39,8 +43,8 @@ def _build_candidate(tmp_path: Path) -> Path:
         ".codex-mcp.json",
     ):
         mode_map.setdefault(relative, False)
-    _BUILD.build_package(_PLUGIN_ROOT, candidate, mode_map)
-    return candidate
+    _BUILD.build_package(_PLUGIN_ROOT, out, mode_map)
+    return out
 
 
 def _replace_codex_manifest(candidate: Path, hooks: str) -> None:
@@ -57,25 +61,26 @@ def _replace_codex_manifest(candidate: Path, hooks: str) -> None:
 
 
 @pytest.mark.packaging
-def test_built_candidate_contains_codex_hook_config() -> None:
-    """The packaging inventory must ship the configuration the Codex manifest declares."""
-    # Kept local because build_package clears its output directory by contract.
-    import tempfile
+def test_built_candidate_contains_codex_hook_config(candidate: Path) -> None:
+    """The packaging inventory ships the hook configuration the Codex manifest declares.
 
-    with tempfile.TemporaryDirectory() as temp:
-        candidate = _build_candidate(Path(temp))
-        manifest = json.loads((candidate / ".codex-plugin" / "plugin.json").read_text())
+    A freshly built candidate must carry both the manifest pointer and the file it points at, otherwise Codex would
+    register hooks that do not exist in the installed package.
+    """
+    manifest = json.loads((candidate / ".codex-plugin" / "plugin.json").read_text())
 
-        assert manifest["hooks"] == "./hooks/codex-hooks.json"
-        assert (candidate / "hooks" / "codex-hooks.json").is_file()
+    assert manifest["hooks"] == "./hooks/codex-hooks.json"
+    assert (candidate / "hooks" / "codex-hooks.json").is_file()
 
 
 @pytest.mark.integration
 @pytest.mark.packaging
-def test_content_identity_matches_built_payload(tmp_path: Path) -> None:
-    """Source and built payload hashes must agree when their shipped files agree."""
-    candidate = _build_candidate(tmp_path)
+def test_content_identity_matches_built_payload(candidate: Path) -> None:
+    """Source and built payload content identities agree when their shipped files agree.
 
+    The audit compares the provider's source tree with the built package; a faithful build must therefore report the
+    same observed identity on both sides, or every audit would claim drift.
+    """
     source_identity = integration._provider_content_identity(_PLUGIN_ROOT, unreadable_reason="source_unreadable")
     candidate_identity = integration._provider_content_identity(candidate, unreadable_reason="candidate_unreadable")
 
@@ -86,9 +91,12 @@ def test_content_identity_matches_built_payload(tmp_path: Path) -> None:
 
 @pytest.mark.integration
 @pytest.mark.packaging
-def test_validator_rejects_missing_or_mismatched_codex_hook_pointer(tmp_path: Path) -> None:
-    """A candidate must fail closure when Codex points at a missing hook config."""
-    candidate = _build_candidate(tmp_path)
+def test_validator_rejects_missing_codex_hook_pointer(candidate: Path) -> None:
+    """A candidate fails package closure when Codex points at a missing hook config.
+
+    The built manifest is rewritten to name a hook file that is not in the package (with its inventory hash kept
+    accurate), so only the pointer check can catch the break.
+    """
     _replace_codex_manifest(candidate, "./hooks/missing-codex-hooks.json")
 
     findings = _VALIDATE.validate_package(candidate)

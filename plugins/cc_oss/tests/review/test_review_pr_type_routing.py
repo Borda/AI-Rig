@@ -31,6 +31,8 @@ _SCOPE_BLOCK = next(
     if "OTHER_CODE_FILES=" in block
 )
 _PR = "7"
+_BASH = shutil.which("bash")
+_skip_no_bash = pytest.mark.skipif(_BASH is None, reason="Review skill blocks run in Bash")
 
 
 def _run(block: str, tmp_path: Path, changed: list[str]) -> tuple[subprocess.CompletedProcess[str], dict[str, str]]:
@@ -46,7 +48,7 @@ def _run(block: str, tmp_path: Path, changed: list[str]) -> tuple[subprocess.Com
     environment = os.environ.copy()
     environment.update({"TMPDIR": str(tmp_path), "CLAUDE_CODE_SESSION_ID": "test"})
     completed = subprocess.run(
-        [shutil.which("bash"), "-c", block], cwd=tmp_path, env=environment, capture_output=True, text=True, check=False
+        [_BASH, "-c", block], cwd=tmp_path, env=environment, capture_output=True, text=True, check=False
     )
     flags_file = tmp_path / f"oss-review-mode-flags-{_PR}-test"
     flags = {}
@@ -55,7 +57,7 @@ def _run(block: str, tmp_path: Path, changed: list[str]) -> tuple[subprocess.Com
     return completed, flags
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="Review skill blocks run in Bash")
+@_skip_no_bash
 @pytest.mark.parametrize(
     ("changed", "expected_type"),
     [
@@ -68,7 +70,7 @@ def _run(block: str, tmp_path: Path, changed: list[str]) -> tuple[subprocess.Com
         pytest.param(["README.md", "src/pkg/x.pyi"], "DOCS_TYPING", id="docs-and-stubs-stay-docs-typing"),
     ],
 )
-def test_step0_pr_type(tmp_path: Path, changed: list[str], expected_type: str) -> None:
+def test_step0_classifies_pr_type(tmp_path: Path, changed: list[str], expected_type: str) -> None:
     """Only test-only and docs/stub-only PRs take the narrow Step 0 lineups; CI config, manifests, notebooks stay CODE.
 
     The narrow types switch off the challenger and skip File scope detection, so anything carrying CI, dependency or
@@ -78,7 +80,7 @@ def test_step0_pr_type(tmp_path: Path, changed: list[str], expected_type: str) -
     assert (completed.returncode, flags.get("PR_TYPE")) == (0, expected_type)
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="Review skill blocks run in Bash")
+@_skip_no_bash
 @pytest.mark.parametrize(
     ("changed", "expected"),
     [
@@ -93,7 +95,7 @@ def test_step0_pr_type(tmp_path: Path, changed: list[str], expected_type: str) -
         ),
     ],
 )
-def test_scope_detection_lineup(tmp_path: Path, changed: list[str], expected: tuple[str, str, str]) -> None:
+def test_scope_detection_picks_lineup(tmp_path: Path, changed: list[str], expected: tuple[str, str, str]) -> None:
     """Notebook, manifest and config changes never collapse into a docs- or CI-only lineup, and are never skipped.
 
     The tuple is (``CICD_ONLY_MODE``, ``DOCS_ONLY_MODE``, ``DOCS_CICD_MODE``); all three false means the full code
@@ -104,7 +106,7 @@ def test_scope_detection_lineup(tmp_path: Path, changed: list[str], expected: tu
     assert (completed.returncode, observed) == (0, expected)
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="Review skill blocks run in Bash")
+@_skip_no_bash
 def test_scope_detection_skips_only_unreviewable_changes(tmp_path: Path) -> None:
     """A PR touching only binary assets is skipped with an explicit message and no mode flags.
 

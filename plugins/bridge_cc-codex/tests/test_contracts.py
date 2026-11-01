@@ -1,14 +1,25 @@
-"""Acceptance checks for the bridge's shipped contracts."""
+"""Acceptance checks for the bridge's shipped contracts: schemas, MCP config, and skill and rule wording.
+
+Schemas are checked through a small keyword validator; skill and rule prose is checked by required phrases after
+whitespace is collapsed, so reflowing a paragraph never breaks a check.
+"""
 
 from __future__ import annotations
 
 import json
+import sys
 from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
+from _bridge_prose import read_prose
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
+if str(PLUGIN_ROOT / "bin") not in sys.path:
+    sys.path.insert(0, str(PLUGIN_ROOT / "bin"))
+
+import bridge_mcp  # noqa: E402  (loaded from the installed-plugin-equivalent bin directory)
+
 SCHEMAS_ROOT = PLUGIN_ROOT / "schemas"
 
 CORE_SCHEMA_PATH = SCHEMAS_ROOT / "envelope.schema.json"
@@ -188,6 +199,35 @@ CLAUDE_SKILL_CONTRACTS = {
     ),
 }
 
+PROVIDER_CONSENT_RULE_PHRASES = (
+    "Before every",
+    "An absent, invalid, unreadable or unsupported result stops dispatch",
+    "Never run interactive `grant` or `revoke` for them",
+    "session_effective=unverified",
+    "never treat cached consent as current",
+    "Do not ask a duplicate native question first",
+)
+SETUP_CONSENT_FLAG_SKILL_PHRASES = (
+    "explicitly supplied in the current user invocation",
+    "Reject it with `check`, `authenticate`, or `verify-live` before any setup operation",
+    "do not pass it to `bridge_setup.py`",
+    "grant --approve",
+    "otherwise use the operator-terminal approval",
+    "Follow either grant with a read-only recheck",
+)
+SETUP_CONSENT_FLAG_RULE_PHRASES = (
+    "Never invent the flag",
+    "request to implement this feature",
+    "Do not use it to bypass a host denial",
+    "`--approve <digest>` does not imply provider consent",
+)
+
+_SKILL_CONTRACT_CASES = [
+    pytest.param(skills_dir, name, requirements, id=f"{skills_dir}-{name}")
+    for skills_dir, contracts in (("codex-skills", CODEX_SKILL_CONTRACTS), ("claude-skills", CLAUDE_SKILL_CONTRACTS))
+    for name, requirements in sorted(contracts.items())
+]
+
 
 def _read_json(path: Path) -> dict[str, object]:
     """Read one JSON contract object with an exact top-level object assertion.
@@ -201,6 +241,11 @@ def _read_json(path: Path) -> dict[str, object]:
     parsed = json.loads(path.read_text(encoding="utf-8"))
     assert isinstance(parsed, dict), f"{path} must contain a JSON object"
     return parsed
+
+
+def _missing_phrases(text: str, phrases: tuple[str, ...]) -> list[str]:
+    """Return the required phrases absent from the text, in declaration order."""
+    return [phrase for phrase in phrases if phrase not in text]
 
 
 def _assert_value_matches_contract(schema: Mapping[str, object], value: object) -> None:
@@ -257,22 +302,79 @@ def _assert_value_matches_contract(schema: Mapping[str, object], value: object) 
             _assert_value_matches_contract(schema["additionalProperties"], item)
 
 
-@pytest.mark.parametrize("name", sorted(CODEX_SKILL_CONTRACTS))
-def test_codex_skills_retain_the_runtime_safety_contract(name: str) -> None:
-    """Prevent prompt compression from dropping Bridge's caller and safety boundaries."""
-    skills_root = PLUGIN_ROOT / "codex-skills"
-    skill = (skills_root / name / "SKILL.md").read_text(encoding="utf-8")
-    requirements = CODEX_SKILL_CONTRACTS[name]
-    assert not [requirement for requirement in requirements if requirement not in skill], name
+def _core_result(**overrides: object) -> dict[str, object]:
+    """Build a minimal valid model-authored envelope, with the given fields replaced."""
+    result = {
+        "status": "complete",
+        "verdict": "wrong layer",
+        "findings": [],
+        "files_touched": [],
+        "remaining": [],
+        "blockers": [],
+        "details": [],
+    }
+    return {**result, **overrides}
 
 
-@pytest.mark.parametrize("name", sorted(CLAUDE_SKILL_CONTRACTS))
-def test_claude_skills_retain_the_runtime_safety_contract(name: str) -> None:
-    """Prevent prompt compression from dropping Bridge's caller and safety boundaries."""
-    skills_root = PLUGIN_ROOT / "claude-skills"
-    skill = (skills_root / name / "SKILL.md").read_text(encoding="utf-8")
-    requirements = CLAUDE_SKILL_CONTRACTS[name]
-    assert not [requirement for requirement in requirements if requirement not in skill], name
+def _harness_result(**overrides: object) -> dict[str, object]:
+    """Build a minimal valid harness-observed envelope, with the given fields replaced."""
+    result = {
+        "status": "complete",
+        "verdict": "Harness result.",
+        "findings": [],
+        "files_touched": [],
+        "remaining": [],
+        "blockers": [],
+        "model": "test-model",
+        "effort": "low",
+        "effort_substituted": None,
+        "cost": 0.0,
+        "tokens": {"input": 0, "output": 0},
+        "duration_seconds": 0.0,
+        "depth": 0,
+        "run_id": "run-123",
+        "incident": None,
+        "session_id": None,
+        "transcript_path": ".temp/bridge/raw.txt",
+        "verb": "advise",
+        "direction": "claude_to_codex",
+    }
+    return {**result, **overrides}
+
+
+@pytest.fixture
+def core_schema() -> dict[str, object]:
+    """Load the model-authored core envelope schema."""
+    return _read_json(CORE_SCHEMA_PATH)
+
+
+@pytest.fixture
+def harness_schema() -> dict[str, object]:
+    """Load the harness-observed envelope schema."""
+    return _read_json(HARNESS_SCHEMA_PATH)
+
+
+@pytest.fixture
+def mcp_schema() -> dict[str, object]:
+    """Load the MCP tool-input schema."""
+    return _read_json(MCP_SCHEMA_PATH)
+
+
+@pytest.fixture
+def mcp_config() -> dict[str, object]:
+    """Load the shipped Codex MCP transport config."""
+    return _read_json(MCP_CONFIG_PATH)
+
+
+@pytest.mark.parametrize(("skills_dir", "name", "requirements"), _SKILL_CONTRACT_CASES)
+def test_skill_retains_safety_contract(skills_dir: str, name: str, requirements: tuple[str, ...]) -> None:
+    """A host skill still carries every caller and safety boundary the bridge depends on.
+
+    Each skill file is the only instruction the peer host reads before dispatching. Compressing or rewording it must not
+    drop a boundary such as approval handling, incident inspection, or the no-replay rule for write-capable tasks.
+    """
+    missing = _missing_phrases(read_prose(PLUGIN_ROOT / skills_dir / name / "SKILL.md"), requirements)
+    assert not missing, f"{skills_dir}/{name} lost: {missing}"
 
 
 @pytest.mark.parametrize(
@@ -289,87 +391,66 @@ def test_claude_skills_retain_the_runtime_safety_contract(name: str) -> None:
         "schemas/setup-result.schema.json",
     ],
 )
-def test_contract_artifacts_exist(relative_path: str) -> None:
-    """Prevent runtime dispatch without every declared source-of-truth contract."""
+def test_contract_artifact_exists(relative_path: str) -> None:
+    """Every declared source-of-truth contract file ships in the plugin.
+
+    Runtime dispatch reads these rules and schemas by path, so a missing one would only surface when a peer call runs.
+    """
     assert (PLUGIN_ROOT / relative_path).is_file(), relative_path
 
 
 class TestModelCoreSchema:
     """Contract checks for the model-authored core envelope schema."""
 
-    @pytest.fixture
-    def schema(self) -> dict[str, object]:
-        """Load the core envelope schema shared by every test in this class."""
-        return _read_json(CORE_SCHEMA_PATH)
-
-    def test_declares_peer_fields_and_excludes_harness_only_fields(self, schema: dict[str, object]) -> None:
+    def test_declares_peer_fields_and_excludes_harness_only_fields(self, core_schema: dict[str, object]) -> None:
         """Core schema exposes only peer fields and keeps them disjoint from harness-only ones.
 
         Prevents model output from claiming harness-observed lifecycle metadata (e.g. cost, tokens, transcript_path)
         that only the harness may attach after the model call returns.
         """
-        assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
-        assert schema["type"] == "object"
-        assert schema["additionalProperties"] is False
-        assert set(schema["required"]) == PEER_FIELDS
-        assert set(schema["properties"]) == PEER_FIELDS
-        assert schema["properties"]["status"]["enum"] == ["complete", "partial", "blocked"]
+        properties = core_schema["properties"]
+        assert core_schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
+        assert core_schema["type"] == "object"
+        assert core_schema["additionalProperties"] is False
+        assert set(core_schema["required"]) == PEER_FIELDS
+        assert set(properties) == PEER_FIELDS
+        assert properties["status"]["enum"] == ["complete", "partial", "blocked"]
         assert PEER_FIELDS.isdisjoint(HARNESS_ONLY_FIELDS)
-        assert "maxLength" not in schema["properties"]["verdict"]
-        for field in ("findings", "files_touched", "remaining", "blockers", "details"):
-            assert "maxItems" not in schema["properties"][field]
-            assert schema["properties"][field]["items"] == {"type": "string"}
 
-    def test_accepts_a_well_formed_peer_result(self, schema: dict[str, object]) -> None:
+    def test_leaves_verdict_and_list_fields_unbounded(self, core_schema: dict[str, object]) -> None:
+        """Verdict length and list sizes are not capped by the schema; list entries are plain strings.
+
+        The harness bounds output after the call, so a schema-level cap would reject legitimate long peer answers.
+        """
+        properties = core_schema["properties"]
+        list_fields = ("findings", "files_touched", "remaining", "blockers", "details")
+        assert "maxLength" not in properties["verdict"]
+        assert all("maxItems" not in properties[field] for field in list_fields)
+        assert all(properties[field]["items"] == {"type": "string"} for field in list_fields)
+
+    def test_accepts_a_well_formed_peer_result(self, core_schema: dict[str, object]) -> None:
         """A partial-status result carrying only peer fields, including bounded details, validates.
 
         Confirms the schema's positive path independently of the shape rules asserted above.
         """
-        _assert_value_matches_contract(
-            schema,
-            {
-                "status": "partial",
-                "verdict": "The bounded result is usable.",
-                "findings": ["one finding"],
-                "files_touched": [],
-                "remaining": ["one follow-up"],
-                "blockers": [],
-                "details": ["one transcript-only detail"],
-            },
+        result = _core_result(
+            status="partial",
+            verdict="The bounded result is usable.",
+            findings=["one finding"],
+            remaining=["one follow-up"],
+            details=["one transcript-only detail"],
         )
+        _assert_value_matches_contract(core_schema, result)
 
     @pytest.mark.parametrize(
-        "result",
+        "overrides",
         [
-            pytest.param(
-                {
-                    "status": "timeout",
-                    "verdict": "wrong layer",
-                    "findings": [],
-                    "files_touched": [],
-                    "remaining": [],
-                    "blockers": [],
-                    "details": [],
-                },
-                id="status-outside-model-authored-enum",
-            ),
-            pytest.param(
-                {
-                    "status": "complete",
-                    "verdict": "wrong layer",
-                    "findings": [],
-                    "files_touched": [],
-                    "remaining": [],
-                    "blockers": [],
-                    "details": [],
-                    "cost": 1.0,
-                },
-                id="harness-only-field-cost",
-            ),
+            pytest.param({"status": "timeout"}, id="status-outside-model-authored-enum"),
+            pytest.param({"cost": 1.0}, id="harness-only-field-cost"),
         ],
     )
     def test_rejects_a_result_claiming_harness_authority(
-        self, schema: dict[str, object], result: dict[str, object]
+        self, core_schema: dict[str, object], overrides: dict[str, object]
     ) -> None:
         """A result claiming a harness-only status or field is rejected at the model layer.
 
@@ -378,295 +459,319 @@ class TestModelCoreSchema:
         impersonating harness-attached telemetry it never computed.
         """
         with pytest.raises(AssertionError):
-            _assert_value_matches_contract(schema, result)
+            _assert_value_matches_contract(core_schema, _core_result(**overrides))
 
 
 class TestHarnessSchema:
     """Contract checks for the harness-observed envelope schema."""
 
-    @pytest.fixture
-    def schema(self) -> dict[str, object]:
-        """Load the harness envelope schema shared by every test in this class."""
-        return _read_json(HARNESS_SCHEMA_PATH)
-
-    def test_declares_core_and_harness_only_fields_with_terminal_statuses(self, schema: dict[str, object]) -> None:
+    def test_declares_core_and_harness_only_fields_with_terminal_statuses(
+        self, harness_schema: dict[str, object]
+    ) -> None:
         """Harness schema layers observed metadata and terminal statuses onto the core fields.
 
         Prevents timeout/refusal handling and telemetry from leaking into the model-authored core schema instead.
         """
-        assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
-        assert schema["type"] == "object"
-        assert schema["additionalProperties"] is False
-        assert set(schema["required"]) == CORE_FIELDS | HARNESS_ONLY_FIELDS
-        assert set(schema["properties"]) == CORE_FIELDS | HARNESS_ONLY_FIELDS | {"partial_output"}
-        assert "partial_output" not in schema["required"]
-        assert schema["properties"]["partial_output"]["type"] == "string"
-        assert schema["properties"]["partial_output"]["maxLength"] == 4096
-        assert schema["properties"]["status"]["enum"] == ["complete", "partial", "blocked", "timeout", "refused"]
+        properties = harness_schema["properties"]
+        assert harness_schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
+        assert harness_schema["type"] == "object"
+        assert harness_schema["additionalProperties"] is False
+        assert set(harness_schema["required"]) == CORE_FIELDS | HARNESS_ONLY_FIELDS
+        assert set(properties) == CORE_FIELDS | HARNESS_ONLY_FIELDS | {"partial_output"}
+        assert "partial_output" not in harness_schema["required"]
+        assert properties["partial_output"]["type"] == "string"
+        assert properties["partial_output"]["maxLength"] == 4096
+        assert properties["status"]["enum"] == ["complete", "partial", "blocked", "timeout", "refused"]
 
-    def test_partial_output_requires_a_blocked_codex_child(self, schema: dict[str, object]) -> None:
+    def test_partial_output_requires_a_blocked_codex_child(self, harness_schema: dict[str, object]) -> None:
         """Require schema routing guards and the consumer-enforced UTF-8 byte bound.
 
         The local fixture validator does not implement conditionals, so inspect their exact schema contract.
         """
-        assert schema["if"] == {"required": ["partial_output"]}
-        assert schema["then"] == {
+        description = harness_schema["properties"]["partial_output"]["description"]
+        assert harness_schema["if"] == {"required": ["partial_output"]}
+        assert harness_schema["then"] == {
             "properties": {"status": {"const": "blocked"}, "direction": {"const": "claude_to_codex"}}
         }
-        assert (
-            "consumers must also enforce the 4096-byte UTF-8 bound"
-            in schema["properties"]["partial_output"]["description"]
-        )
+        assert "consumers must also enforce the 4096-byte UTF-8 bound" in description
 
-    def test_accepts_a_refused_result_with_full_harness_metadata(self, schema: dict[str, object]) -> None:
+    def test_accepts_a_refused_result_with_full_harness_metadata(self, harness_schema: dict[str, object]) -> None:
         """A refused-status result carrying every harness-only field validates end to end.
 
         Exercises the recursion-refusal path together with the full set of harness telemetry fields (model, effort,
         cost, tokens, duration, depth, run_id, incident, ...).
         """
-        _assert_value_matches_contract(
-            schema,
-            {
-                "status": "refused",
-                "verdict": "Recursion was refused.",
-                "findings": [],
-                "files_touched": [],
-                "remaining": [],
-                "blockers": ["recursion-depth"],
-                "model": "test-model",
-                "effort": "low",
-                "effort_substituted": None,
-                "cost": None,
-                "tokens": {"input": 0, "output": 0},
-                "duration_seconds": 0.0,
-                "depth": 1,
-                "run_id": "run-123",
-                "incident": None,
-                "session_id": None,
-                "transcript_path": ".temp/bridge/raw.txt",
-                "verb": "advise",
-                "direction": "codex_to_claude",
-            },
+        result = _harness_result(
+            status="refused",
+            verdict="Recursion was refused.",
+            blockers=["recursion-depth"],
+            cost=None,
+            depth=1,
+            direction="codex_to_claude",
         )
+        _assert_value_matches_contract(harness_schema, result)
 
-    def test_rejects_a_negative_token_count(self, schema: dict[str, object]) -> None:
+    def test_rejects_a_negative_token_count(self, harness_schema: dict[str, object]) -> None:
         """A negative token count is rejected even though every other field is well-formed.
 
         Guards the `minimum: 0` constraint on the nested `tokens` object, distinct from the enum/shape checks covered
         elsewhere.
         """
         with pytest.raises(AssertionError):
-            _assert_value_matches_contract(
-                schema,
-                {
-                    "status": "complete",
-                    "verdict": "wrong token count",
-                    "findings": [],
-                    "files_touched": [],
-                    "remaining": [],
-                    "blockers": [],
-                    "model": "test-model",
-                    "effort": "low",
-                    "effort_substituted": None,
-                    "cost": 0.0,
-                    "tokens": {"input": -1},
-                    "duration_seconds": 0.0,
-                    "depth": 0,
-                    "run_id": "run-123",
-                    "incident": None,
-                    "session_id": None,
-                    "transcript_path": ".temp/bridge/raw.txt",
-                    "verb": "advise",
-                    "direction": "claude_to_codex",
-                },
-            )
+            _assert_value_matches_contract(harness_schema, _harness_result(tokens={"input": -1}))
 
 
-def test_setup_result_schema_cannot_impersonate_a_model_or_provider_result() -> None:
-    """Keep setup lifecycle evidence separate from inference, transcript, token, cost, and verb claims."""
-    schema = _read_json(SETUP_SCHEMA_PATH)
-    properties = schema["properties"]
-    forbidden = {"model", "effort", "cost", "tokens", "transcript_path", "incident", "verb", "findings"}
+class TestSetupResultSchema:
+    """Contract checks for the setup lifecycle result schema."""
 
-    assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
-    assert schema["additionalProperties"] is False
-    assert forbidden.isdisjoint(properties)
-    assert properties["status"]["enum"] == ["ready", "partial", "blocked", "manual", "unsupported", "denied", "failed"]
-    assert properties["authentication"]["enum"] == [
-        "not-checked",
-        "auth-flow-launched",
-        "host-authenticated",
-        "inference-unverified",
-        "live-verified",
-    ]
-    assert properties["provider_call"] == {"type": "boolean"}
+    @pytest.fixture
+    def schema(self) -> dict[str, object]:
+        """Load the setup result schema."""
+        return _read_json(SETUP_SCHEMA_PATH)
 
-    _assert_value_matches_contract(
-        schema,
-        {
-            "status": "partial",
-            "current_host": "codex",
-            "target": "claude",
-            "direction": "codex_to_claude",
-            "requested": {"action": "all", "target": "peer", "scope": "auto", "live": "prompt"},
-            "canonical_workspace": "/workspace",
-            "workspace_fingerprint": "a" * 64,
-            "resolved_scope": "user",
-            "approval_digest": "approval",
-            "state_fingerprint": "b" * 64,
-            "operations": [],
-            "classification": "static-ready",
-            "authentication": "host-authenticated",
-            "verification_level": "host-authenticated",
-            "state_changed": False,
-            "provider_call": False,
-            "ready_to_use": False,
-            "remaining": ["session-workspace-verification", "live-verification"],
-            "manual_next_action": "Verify the loaded session and workspace.",
-            "confidence": "high",
-            "limits": ["No provider call made."],
-        },
-    )
+    def test_cannot_impersonate_a_model_or_provider_result(self, schema: dict[str, object]) -> None:
+        """Setup lifecycle evidence stays separate from inference, transcript, token, cost, and verb claims.
 
+        A setup result that could carry model or provider fields would let static readiness be mistaken for a live
+        provider call.
+        """
+        properties = schema["properties"]
+        forbidden = {"model", "effort", "cost", "tokens", "transcript_path", "incident", "verb", "findings"}
+        assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
+        assert schema["additionalProperties"] is False
+        assert forbidden.isdisjoint(properties)
+        assert properties["provider_call"] == {"type": "boolean"}
 
-def test_mcp_input_contract_rejects_unknown_or_incomplete_request_fields() -> None:
-    """Prevent an MCP tool from receiving a request the bridge cannot safely route."""
-    schema = _read_json(MCP_SCHEMA_PATH)
-    definitions = schema["$defs"]
-    assert set(definitions) == {
-        "bridge_implement",
-        "bridge_advise",
-        "bridge_review",
-        "bridge_status",
-        "bridge_bind_workspace",
-    }
-    request = definitions["bridge_advise"]
-    assert isinstance(request, Mapping)
-    assert request["additionalProperties"] is False
-    assert set(request["required"]) == {"task", "binding_id"}
-    for name, definition in definitions.items():
-        if name == "bridge_status":
-            assert definition == {"additionalProperties": False, "properties": {}, "type": "object"}
-            continue
-        if name == "bridge_bind_workspace":
-            assert definition["additionalProperties"] is False
-            assert set(definition["properties"]) == {"proposed_workspace"}
-            assert definition["properties"]["proposed_workspace"]["type"] == "string"
-            continue
-        assert "workspace" not in definition["properties"]
-        assert "background" not in definition["properties"]
-        assert "session_id" not in definition["properties"]
-        assert definition["properties"]["task"]["pattern"] == "\\S"
-        assert definition["properties"]["task"]["maxLength"] == 16_384
-        assert {"trivial", "none"}.issubset(definition["properties"]["effort"]["enum"])
+    def test_pins_status_and_authentication_vocabulary(self, schema: dict[str, object]) -> None:
+        """Setup status and authentication levels are closed sets in a fixed order.
 
-    _assert_value_matches_contract(
-        request,
-        {
-            "task": "Summarize the local diff.",
-            "binding_id": "confirmed-binding",
-            "model": "test-model",
-            "effort": "low",
-            "depth": 0,
-            "run_id": "run-123",
-            "timeout_seconds": 120,
-            "supported_efforts": ["low", "medium"],
-        },
-    )
-    _assert_value_matches_contract(request, {"task": "Use bridge-owned defaults.", "binding_id": "confirmed-binding"})
-    _assert_value_matches_contract(
-        request, {"task": "Normalize a documented alias.", "effort": "none", "binding_id": "confirmed-binding"}
-    )
-    with pytest.raises(AssertionError):
+        Skills branch on these exact words, so an added or renamed level must be a deliberate contract change.
+        """
+        properties = schema["properties"]
+        assert properties["status"]["enum"] == [
+            "ready",
+            "partial",
+            "blocked",
+            "manual",
+            "unsupported",
+            "denied",
+            "failed",
+        ]
+        assert properties["authentication"]["enum"] == [
+            "not-checked",
+            "auth-flow-launched",
+            "host-authenticated",
+            "inference-unverified",
+            "live-verified",
+        ]
+
+    def test_accepts_a_static_ready_partial_result(self, schema: dict[str, object]) -> None:
+        """A partial result that made no provider call and still lists remaining verification validates."""
         _assert_value_matches_contract(
-            request,
+            schema,
             {
-                "task": "unknown field",
-                "model": "test-model",
-                "effort": "low",
-                "depth": 0,
-                "run_id": "run-123",
-                "surprise": True,
+                "status": "partial",
+                "current_host": "codex",
+                "target": "claude",
+                "direction": "codex_to_claude",
+                "requested": {"action": "all", "target": "peer", "scope": "auto", "live": "prompt"},
+                "canonical_workspace": "/workspace",
+                "workspace_fingerprint": "a" * 64,
+                "resolved_scope": "user",
+                "approval_digest": "approval",
+                "state_fingerprint": "b" * 64,
+                "operations": [],
+                "classification": "static-ready",
+                "authentication": "host-authenticated",
+                "verification_level": "host-authenticated",
+                "state_changed": False,
+                "provider_call": False,
+                "ready_to_use": False,
+                "remaining": ["session-workspace-verification", "live-verification"],
+                "manual_next_action": "Verify the loaded session and workspace.",
+                "confidence": "high",
+                "limits": ["No provider call made."],
             },
         )
 
 
-@pytest.mark.parametrize("name", ["bridge_implement", "bridge_advise", "bridge_review"])
-def test_reverse_timeout_limit_leaves_a_response_margin_before_the_mcp_deadline(name: str) -> None:
-    """Prevent the complete retry policy from outliving the MCP host that returns the envelope."""
-    schema = _read_json(MCP_SCHEMA_PATH)
-    config = _read_json(MCP_CONFIG_PATH)
-    definitions = schema["$defs"]
-    timeout_limits = {
-        name: definitions[name]["properties"]["timeout_seconds"]["maximum"]
-        for name in ("bridge_implement", "bridge_advise", "bridge_review")
-    }
-    maximum_attempts = {"bridge_implement": 1, "bridge_advise": 2, "bridge_review": 2}
+class TestMcpToolSchema:
+    """Contract checks for the MCP tool-input schema and its transport deadlines."""
 
-    assert timeout_limits == {
-        "bridge_implement": 700,
-        "bridge_advise": 350,
-        "bridge_review": 350,
-    }
-    timeout_seconds = timeout_limits[name]
-    worst_case = maximum_attempts[name] * (timeout_seconds * 1.2 + 9)
-    assert worst_case + 30 < config["mcpServers"]["bridge"]["tool_timeout_sec"]
+    @pytest.fixture
+    def definitions(self, mcp_schema: dict[str, object]) -> dict[str, dict[str, object]]:
+        """Return the per-tool request definitions."""
+        return mcp_schema["$defs"]
+
+    def test_declares_exactly_the_bridge_tools(self, definitions: dict[str, dict[str, object]]) -> None:
+        """The schema defines the five bridge tools and no others.
+
+        An extra or missing tool definition means the server would route a request the contract never reviewed.
+        """
+        assert set(definitions) == {
+            "bridge_implement",
+            "bridge_advise",
+            "bridge_review",
+            "bridge_status",
+            "bridge_bind_workspace",
+        }
+
+    def test_status_takes_no_arguments(self, definitions: dict[str, dict[str, object]]) -> None:
+        """The status tool accepts an empty object only."""
+        assert definitions["bridge_status"] == {"additionalProperties": False, "properties": {}, "type": "object"}
+
+    def test_bind_workspace_accepts_only_a_proposed_workspace_string(
+        self, definitions: dict[str, dict[str, object]]
+    ) -> None:
+        """Binding takes one proposed workspace path and nothing else, so the model cannot widen the binding."""
+        definition = definitions["bridge_bind_workspace"]
+        assert definition["additionalProperties"] is False
+        assert set(definition["properties"]) == {"proposed_workspace"}
+        assert definition["properties"]["proposed_workspace"]["type"] == "string"
+
+    @pytest.mark.parametrize("name", ["bridge_implement", "bridge_advise", "bridge_review"])
+    def test_verb_tool_hides_host_controlled_fields_and_bounds_the_task(
+        self, definitions: dict[str, dict[str, object]], name: str
+    ) -> None:
+        """Verb tools expose no workspace, background or session field, and bound a non-blank task.
+
+        Those fields are chosen by the host binding, never by model-controlled input; the task pattern rejects blank
+        text and the length bound keeps one request inside the MCP payload budget.
+        """
+        properties = definitions[name]["properties"]
+        assert {"workspace", "background", "session_id"}.isdisjoint(properties)
+        assert properties["task"]["pattern"] == "\\S"
+        assert properties["task"]["maxLength"] == 16_384
+        assert {"trivial", "none"}.issubset(properties["effort"]["enum"])
+
+    def test_advise_request_requires_task_and_binding_and_forbids_extras(
+        self, definitions: dict[str, dict[str, object]]
+    ) -> None:
+        """An advise request must name a task and a confirmed binding, and may carry no other field."""
+        request = definitions["bridge_advise"]
+        assert request["additionalProperties"] is False
+        assert set(request["required"]) == {"task", "binding_id"}
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            pytest.param(
+                {
+                    "task": "Summarize the local diff.",
+                    "binding_id": "confirmed-binding",
+                    "model": "test-model",
+                    "effort": "low",
+                    "depth": 0,
+                    "run_id": "run-123",
+                    "timeout_seconds": 120,
+                    "supported_efforts": ["low", "medium"],
+                },
+                id="every-optional-field",
+            ),
+            pytest.param({"task": "Use bridge-owned defaults.", "binding_id": "confirmed-binding"}, id="defaults-only"),
+            pytest.param(
+                {"task": "Normalize a documented alias.", "effort": "none", "binding_id": "confirmed-binding"},
+                id="documented-effort-alias",
+            ),
+        ],
+    )
+    def test_advise_request_accepts_valid_payloads(
+        self, definitions: dict[str, dict[str, object]], payload: dict[str, object]
+    ) -> None:
+        """Documented advise payloads, from bare defaults to every optional field, validate."""
+        _assert_value_matches_contract(definitions["bridge_advise"], payload)
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            pytest.param({"task": "unknown field", "binding_id": "confirmed-binding", "surprise": True}, id="unknown"),
+            pytest.param({"task": "no binding", "model": "test-model", "depth": 0}, id="missing-binding-id"),
+        ],
+    )
+    def test_advise_request_rejects_unknown_or_incomplete_fields(
+        self, definitions: dict[str, dict[str, object]], payload: dict[str, object]
+    ) -> None:
+        """An unknown field, or a request without a confirmed binding, is rejected.
+
+        Each case isolates one cause so a regression in `additionalProperties` and one in `required` cannot mask each
+        other.
+        """
+        with pytest.raises(AssertionError):
+            _assert_value_matches_contract(definitions["bridge_advise"], payload)
+
+    @pytest.mark.parametrize(
+        ("name", "maximum", "attempts"),
+        [
+            pytest.param("bridge_implement", 700, 1, id="implement"),
+            pytest.param("bridge_advise", 350, 2, id="advise"),
+            pytest.param("bridge_review", 350, 2, id="review"),
+        ],
+    )
+    def test_reverse_timeout_limit_leaves_response_margin_before_mcp_deadline(
+        self, mcp_schema: dict[str, object], mcp_config: dict[str, object], name: str, maximum: int, attempts: int
+    ) -> None:
+        """The longest retry policy still finishes, plus a 30 s margin, before the MCP host gives up.
+
+        Each attempt may run 1.2x its timeout plus 9 s of overhead; if the host deadline were shorter, the host would
+        discard an envelope the bridge was still about to return.
+        """
+        schema_maximum = mcp_schema["$defs"][name]["properties"]["timeout_seconds"]["maximum"]
+        worst_case = attempts * (maximum * 1.2 + 9)
+        assert schema_maximum == maximum
+        assert worst_case + 30 < mcp_config["mcpServers"]["bridge"]["tool_timeout_sec"]
 
 
-@pytest.mark.parametrize("name", ["bridge_implement", "bridge_advise", "bridge_review"])
-def test_mcp_python_constants_match_the_shipped_transport_config(name: str) -> None:
-    """Prevent the server's deadline model from drifting away from the declared MCP config."""
-    import sys
+class TestBridgeMcpConstants:
+    """The server module's deadline model matches the shipped transport config and schema."""
 
-    bin_root = PLUGIN_ROOT / "bin"
-    if str(bin_root) not in sys.path:
-        sys.path.insert(0, str(bin_root))
-    import bridge_mcp
+    def test_host_deadline_matches_transport_config(self, mcp_config: dict[str, object]) -> None:
+        """The module's host deadline equals the `tool_timeout_sec` shipped in the MCP config."""
+        assert bridge_mcp.MCP_HOST_DEADLINE_SECONDS == mcp_config["mcpServers"]["bridge"]["tool_timeout_sec"]
 
-    config = _read_json(MCP_CONFIG_PATH)
-    schema = _read_json(MCP_SCHEMA_PATH)
+    def test_tool_names_are_the_three_verbs(self) -> None:
+        """The server routes exactly the implement, advise and review tools."""
+        assert set(bridge_mcp.TOOL_NAMES) == {"bridge_implement", "bridge_advise", "bridge_review"}
 
-    assert bridge_mcp.MCP_HOST_DEADLINE_SECONDS == config["mcpServers"]["bridge"]["tool_timeout_sec"]
-    assert set(bridge_mcp.TOOL_NAMES) == {"bridge_implement", "bridge_advise", "bridge_review"}
-    verb = bridge_mcp.TOOL_NAMES[name]
-    schema_maximum = schema["$defs"][name]["properties"]["timeout_seconds"]["maximum"]
-    assert bridge_mcp.MAX_MCP_TIMEOUT_SECONDS_BY_VERB[verb] == schema_maximum
+    @pytest.mark.parametrize("name", ["bridge_implement", "bridge_advise", "bridge_review"])
+    def test_timeout_maximum_matches_schema(self, mcp_schema: dict[str, object], name: str) -> None:
+        """The server's per-verb timeout cap equals the schema's `timeout_seconds` maximum for that tool."""
+        schema_maximum = mcp_schema["$defs"][name]["properties"]["timeout_seconds"]["maximum"]
+        assert bridge_mcp.MAX_MCP_TIMEOUT_SECONDS_BY_VERB[bridge_mcp.TOOL_NAMES[name]] == schema_maximum
 
 
-def test_codex_setup_uses_portable_helper_launcher() -> None:
-    """Allow setup diagnosis without confusing its launcher with the MCP prerequisite."""
-    text = (PLUGIN_ROOT / "codex-skills/setup/SKILL.md").read_text(encoding="utf-8")
-    assert '"PLUGIN_ROOT/bin/python" "PLUGIN_ROOT/bin/bridge_setup.py"' in text
-    assert 'python "${PLUGIN_ROOT}/bin/bridge_setup.py"' not in text
-    assert "bin/python.cmd" in text
-    assert "MCP startup still requires" in text
+class TestCodexSkillProse:
+    """Wording contracts of the Codex setup skill and the provider-consent rule it shares."""
 
+    def test_setup_uses_portable_helper_launcher(self) -> None:
+        """Setup diagnosis launches its helper through the portable launcher, not a bare `python` call.
 
-@pytest.mark.parametrize("skill", ["setup", "advise", "review", "implement"])
-def test_codex_skills_consume_setup_owned_provider_consent(skill: str) -> None:
-    """Keep setup consent and every executable dispatch on the same installed rule."""
-    text = (PLUGIN_ROOT / "codex-skills" / skill / "SKILL.md").read_text(encoding="utf-8")
-    assert "../../rules/provider-consent.md" in text
-    rule = (PLUGIN_ROOT / "rules/provider-consent.md").read_text(encoding="utf-8")
-    assert "Before every" in rule
-    assert "An absent, invalid, unreadable or unsupported result stops dispatch" in rule
-    assert "Never run interactive `grant` or `revoke` for them" in rule
-    assert "session_effective=unverified" in rule
-    assert "never treat cached consent as current" in rule
-    assert "Do not ask a duplicate native question first" in rule
+        The launcher is distinct from the MCP server's own interpreter prerequisite, which the skill must still state.
+        """
+        text = read_prose(PLUGIN_ROOT / "codex-skills/setup/SKILL.md")
+        assert '"PLUGIN_ROOT/bin/python" "PLUGIN_ROOT/bin/bridge_setup.py"' in text
+        assert 'python "${PLUGIN_ROOT}/bin/bridge_setup.py"' not in text
+        assert "bin/python.cmd" in text
+        assert "MCP startup still requires" in text
 
+    @pytest.mark.parametrize("skill", ["setup", "advise", "review", "implement"])
+    def test_skill_links_the_setup_owned_consent_rule(self, skill: str) -> None:
+        """Setup and every dispatching skill point at the one installed provider-consent rule."""
+        assert "../../rules/provider-consent.md" in read_prose(PLUGIN_ROOT / "codex-skills" / skill / "SKILL.md")
 
-def test_setup_consent_flag_retains_explicit_authority_and_separate_approvals() -> None:
-    """Keep unattended consent opt-in and outside the action-bound setup planner."""
-    skill = (PLUGIN_ROOT / "codex-skills/setup/SKILL.md").read_text(encoding="utf-8")
-    rule = (PLUGIN_ROOT / "rules/provider-consent.md").read_text(encoding="utf-8")
-    assert "explicitly supplied in the current user invocation" in skill
-    assert "Reject it with `check`, `authenticate`, or `verify-live` before any setup operation" in skill
-    assert "do not pass it to `bridge_setup.py`" in skill
-    assert "grant --approve" in skill
-    assert "otherwise use the operator-terminal approval" in skill
-    assert "Follow either grant with a read-only recheck" in skill
-    assert "Never invent the flag" in rule
-    assert "request to implement this feature" in rule
-    assert "Do not use it to bypass a host denial" in rule
-    assert "`--approve <digest>` does not imply provider consent" in rule
+    @pytest.mark.parametrize(
+        ("relative_path", "phrases"),
+        [
+            pytest.param("rules/provider-consent.md", PROVIDER_CONSENT_RULE_PHRASES, id="rule-gates-dispatch"),
+            pytest.param(
+                "codex-skills/setup/SKILL.md", SETUP_CONSENT_FLAG_SKILL_PHRASES, id="setup-skill-consent-flag"
+            ),
+            pytest.param("rules/provider-consent.md", SETUP_CONSENT_FLAG_RULE_PHRASES, id="rule-consent-flag"),
+        ],
+    )
+    def test_retains_consent_boundaries(self, relative_path: str, phrases: tuple[str, ...]) -> None:
+        """Consent stays opt-in, current-invocation only, and separate from the action-bound setup approvals.
+
+        Dropping one of these sentences would let cached or inferred consent authorize a paid provider call.
+        """
+        missing = _missing_phrases(read_prose(PLUGIN_ROOT / relative_path), phrases)
+        assert not missing, f"{relative_path} lost: {missing}"

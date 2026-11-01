@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.74.1
+
+- Check local Codex activity before drafting commits, so contributions outside the Claude conversation are considered for co-author credit; ask once when only thread activity indicates possible involvement.
+- `check_agent_waits.py` also flags task calls that would cost a turn of their own: a task-only `text` block that sets `in_progress` (`standalone-in-progress`), a task-only block whose preceding text and body never say it rides with real work or precedes long output (`unexplained-task-block`), and a skill directory that drives tasks without stating that task calls ride with the next call (`missing-ride-rule`). Blocks are read line by line, so reflowing a paragraph never changes a verdict.
+- `check_bin_test_coverage.py` finds a script's test file at any depth under `tests/`, such as `tests/audit/plugin/test_foo.py`. A test nested two or more folders deep is now checked for empty or stub-only test functions like a flat one, instead of falling back to a name search across the test tree that reports "no test file" when nothing names the script.
+- `python-testing.md` sets a test-tree layout: a `tests/` directory past 15 test files groups them into topic subfolders of 4 or more files each, `_`-prefixed helpers and the tree-wide `conftest.py` stay at the test root and resolve from any depth, path anchors come from one shared helper or conftest constant because `parents[N]` shifts one per folder level, and single-consumer fixtures and data live beside their consumer.
+- `python-testing.md` adds test-design rules, so reviewers and `foundry:qa-specialist` flag more silent test defects:
+  - `while` loops count as test-body logic, like `if` and `for`.
+  - Test names state the observable outcome, without filler tokens such as `correctly`, `works` or `should`.
+  - Three uncollected-test shapes: a nested `def test_*`, a same-name redefinition and code after `return`.
+  - A check whose absence could break nothing undetected is linting and belongs in a pre-commit hook or Ruff rule, not pytest.
+  - Patches prefer the `autospec=True` decorator and always name a replacement shape; speed never justifies mocking a real-interaction test.
+  - Test helpers stay within one test tree, and production code never imports one.
+  - Tests reading Markdown or prose parse it line by line, and the Markdown is never edited to fit a test.
+  - The Ruff rules that enforce test style (`D100`–`D103`, `W505`, `TID251`, `PT`, `F811`) are listed, with the checks Ruff cannot express left to reviewers.
+- `foundry:qa-specialist` requires a docstring on every test, so a descriptive test name no longer waives it (Ruff `D102`/`D103`).
+
 ## 0.74.0
 
 - Require proportional planning and challenge before accepted execution, then consolidate actual results with independent review and verification; routine authorized work gains no user approval prompt. Validate bounded outcomes, decompose larger work, and complete branches depth-first with focused context and useful disjoint sibling delegation; parent consolidation retains valid-evidence and mandatory acceptance gates.

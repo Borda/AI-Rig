@@ -89,11 +89,12 @@ def expected_test(script: Path) -> Path:
 
 
 def _find_nested_test(test_file: Path) -> Path | None:
-    """Search one level of subdirectories under ``tests/`` for a script's test file.
+    """Search every level of subdirectories under ``tests/`` for a script's test file.
 
-    Some plugins group tests by category (``tests/scanner/test_foo.py``) instead of the flat
-    ``tests/test_foo.py`` layout ``expected_test`` assumes. Only used as a fallback when the flat
-    path is missing, so plugins using the flat layout see no behavior change.
+    Some plugins group tests by category (``tests/scanner/test_foo.py``) or by category and topic
+    (``tests/audit/plugin/test_foo.py``) instead of the flat ``tests/test_foo.py`` layout
+    ``expected_test`` assumes. Only used as a fallback when the flat path is missing, so plugins
+    using the flat layout see no behavior change.
 
     Args:
         test_file: The flat ``tests/test_<name>.py`` path that was not found.
@@ -104,7 +105,7 @@ def _find_nested_test(test_file: Path) -> Path | None:
     tests_dir = test_file.parent
     if not tests_dir.is_dir():
         return None
-    matches = sorted(tests_dir.glob(f"*/{test_file.name}"))
+    matches = sorted(tests_dir.rglob(test_file.name))
     return matches[0] if matches else None
 
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.33.1
+
+- `retro_analyze.py` returns p-value 1.0 and statistic 0.0 directly when every paired difference is zero, so the Wilcoxon comparison no longer emits a scipy RuntimeWarning from a zero standard error; the result keeps its success shape.
+
 ## 0.33.0
 
 - Require proportional planning and challenge before accepted execution, then consolidate actual results with independent review and verification; routine authorized work gains no user approval prompt. Validate bounded outcomes, decompose larger work, and complete branches depth-first with focused context and useful disjoint sibling delegation; parent consolidation retains valid-evidence and mandatory acceptance gates.

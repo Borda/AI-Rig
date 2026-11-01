@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.42.1
+
+- Accept the collector's exact canonical Git diff receipt during PR remediation while retaining both historical formats and rejecting altered revisions, transforms or path selection.
+- Prepare complete declared test environments without redundant bootstrap consent, including disposable standalone-review environments for unchanged declarations. Preserve required runtime capabilities across retries, distinguish restricted DNS failures from host outages, and keep downloads separate from sandboxed build/test execution.
+- Keep small reviews moving by selecting the existing parent-inspection route before optional specialist preparation, preserving generated native task identities, and distinguishing missing expected children from duplicate sessions. Execute permitted fallback through the normal review gates.
+- Keep authorized review preparation moving after incorrect helper invocations, and route genuine recovery decisions through native-form discovery with all three choices (New review, Resume last one, Stop), without a trailing status message dismissing an async question.
+- Extend the shipped coding standard's testing guidance so agents write tests that are collected, readable and honest: a docstring on every test module and test, outcome-stating names, and no control flow in test bodies, with Ruff enforcing the docstring and in-body skip rules. Guard against silently uncollected tests, require every patch to name its replacement shape while real-interaction tests stay unmocked, keep shared helpers inside one test tree, and parse Markdown line by line in tests. Test trees past 15 test files group into topic subfolders of four or more files, with shared helpers and the root `conftest.py` staying at the tree root.
+- Point the README's focused denial-protocol and installed-package gate commands and the release-evidence helper's documentation at the reorganized test locations, so the documented commands run against the current test tree.
+
 ## 0.42.0
 
 - Keep committed and PR review patches independent of Git display settings across collection and source verification, while accepting exact canonical receipts and retaining historical command forms. Record the same portable worktree coordinate passed to Git on Windows.

@@ -38,10 +38,7 @@ Query output is JSON-only — grep across ``codemap_py/query.py`` found no
 calls ``_print(json.dumps(...))`` unconditionally) — so there is no separate
 text-output mode to exercise here.
 
-FILE OWNERSHIP NOTE: duplicates the old-bin checkout / path-classes helpers
-from ``test_extraction_parity_scanner_discovery.py``/``test_extraction_parity_graph_coverage_testimpact.py`` rather than
-factoring them into ``conftest.py`` — this task's boundary permits editing
-only this new file plus the report, not the shared ``conftest.py``.
+The old-bin checkout and path classes are shared with the other parity suites through ``tests/_parity_helpers.py``.
 """
 
 from __future__ import annotations
@@ -50,60 +47,18 @@ import json
 import os
 import subprocess
 import sys
+from collections.abc import Callable
+from contextlib import nullcontext
 from pathlib import Path
 
 import pytest
+from _parity_helpers import PATH_CLASSES, materialize_old_bin
 
 _TESTS_DIR = Path(__file__).resolve().parents[1]
 _PLUGIN_ROOT = _TESTS_DIR.parent
 _SRC = _PLUGIN_ROOT / "src"
 _NEW_SCAN_QUERY = _PLUGIN_ROOT / "bin" / "scan-query"
-_PARITY_GOLDEN_DIR = _TESTS_DIR / "data" / "parity_golden"
 
-# The pre-extraction monolith and the three sibling shims it bare-imports
-# (all self-contained — stdlib only, confirmed by inspection at HEAD). Frozen
-# as static fixtures under tests/data/parity_golden/ rather than read via
-# `git show HEAD:...` — a HEAD-pinned checkout silently degrades to the
-# post-extraction thin launcher once the extraction commit lands (HEAD then
-# advances past the monolith), and is simply absent in a shallow CI clone that
-# never fetched the old SHA. See _assert_is_monolith for the loud-failure guard
-# against a golden fixture being accidentally overwritten in kind.
-_OLD_BIN_FILES = ("scan-query", "_exclusions.py", "_schema.py", "_telemetry.py")
-
-# The monolith is roughly 10x-100x larger than its post-extraction thin
-# launcher/shim counterpart; thresholds sit with headroom below the monolith
-# line count and well above the current thin-file line count.
-_MONOLITH_MIN_LINES = {
-    "scan-query": 500,
-    "_exclusions.py": 100,
-    "_schema.py": 50,
-    "_telemetry.py": 50,
-}
-
-# Substrings present in every current (post-extraction) bin/ shim or launcher
-# docstring, absent from every pre-extraction monolith source — their presence
-# in a golden fixture means it was accidentally overwritten with
-# post-extraction content instead of holding the frozen monolith.
-_POST_EXTRACTION_MARKERS = ("codemap_py", "thin launcher", "compatibility shim")
-
-
-def _assert_is_monolith(name: str, content: str) -> None:
-    """Fail loudly if *content* looks like the post-extraction shim, not the golden monolith."""
-    lines = content.splitlines()
-    assert len(lines) > _MONOLITH_MIN_LINES[name], (
-        f"parity_golden/{name} has only {len(lines)} lines (expected > {_MONOLITH_MIN_LINES[name]}) "
-        "— looks like the post-extraction thin bin/ file was committed in place of the "
-        "pre-extraction monolith golden"
-    )
-    for marker in _POST_EXTRACTION_MARKERS:
-        assert marker not in content, (
-            f"parity_golden/{name} contains {marker!r}, which only appears in post-extraction "
-            "bin/ sources — the golden fixture was accidentally overwritten with the thin "
-            "launcher/shim instead of the monolith"
-        )
-
-
-_PATH_CLASSES = ["proj", "proj café ünïcode dir"]
 
 # Every non-composite scan-query subcommand (batch/diff-impact are covered by
 # dedicated tests below since each needs its own input shape), with args that
@@ -143,26 +98,10 @@ _QUERY_CASES = [
 ]
 
 
-def _materialize_old_bin(dest: Path) -> Path:
-    """Copy the frozen pre-extraction monolithic ``scan-query`` + siblings into *dest*.
-
-    Returns the path to the copied ``scan-query`` script, written under the literal basename ``scan-query`` instead of a
-    random temporary name — argparse derives ``prog`` from ``os.path.basename(sys.argv[0])`` with no explicit override
-    in ``_build_parser()``, so keeping the golden script's basename identical to the current ``bin/scan-query``
-    launcher's is what makes even the argparse usage/error banners byte-identical between old and new (see module
-    docstring).
-    """
-    for name in _OLD_BIN_FILES:
-        content = (_PARITY_GOLDEN_DIR / name).read_text()
-        _assert_is_monolith(name, content)
-        (dest / name).write_text(content)
-    return dest / "scan-query"
-
-
 @pytest.fixture(name="old_scan_query", scope="module")
 def _old_scan_query(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """Session-stable path to the golden pre-extraction ``scan-query``."""
-    return _materialize_old_bin(tmp_path_factory.mktemp("old_bin_query_engine"))
+    return materialize_old_bin(tmp_path_factory.mktemp("old_bin_query_engine"), "scan-query")
 
 
 def _write_fixture_project(root: Path) -> None:
@@ -273,7 +212,7 @@ def _scan(root: Path) -> None:
     assert result.returncode == 0, result.stderr
 
 
-@pytest.fixture(name="built_project", scope="module", params=_PATH_CLASSES)
+@pytest.fixture(name="built_project", scope="module", params=PATH_CLASSES)
 def _built_project(tmp_path_factory: pytest.TempPathFactory, request: pytest.FixtureRequest) -> Path:
     """Build and scan the fixture project once per path class; return its root."""
     base = tmp_path_factory.mktemp("query_parity")
@@ -553,42 +492,78 @@ def _assert_golden_query_parity(
     assert all(isinstance(value, str) and value for value in semantics.values())
 
 
+def _no_corruption(legacy: dict, current: dict, platform: str) -> None:
+    """Leave both impact payloads valid."""
+
+
+def _corrupt_command_target(legacy: dict, current: dict, platform: str) -> None:
+    """Point the current pytest command at the wrong test file."""
+    current["pytest_cmd"] = "pytest 'tests/test_wrong.py'"
+
+
+def _corrupt_unquoted(legacy: dict, current: dict, platform: str) -> None:
+    """Drop the required Windows quoting, or append a shell injection on POSIX."""
+    current["pytest_cmd"] = (
+        "pytest tests/test_alpha.py" if platform == "win32" else "pytest tests/test_alpha.py; echo unexpected"
+    )
+
+
+def _corrupt_test_files(legacy: dict, current: dict, platform: str) -> None:
+    """List the wrong affected test file in the current payload."""
+    current["test_files"] = ["tests/test_wrong.py"]
+
+
+def _corrupt_total(legacy: dict, current: dict, platform: str) -> None:
+    """Change the affected-test total in the current payload."""
+    current["total"] = 2
+
+
+def _corrupt_legacy_command(legacy: dict, current: dict, platform: str) -> None:
+    """Make the frozen oracle's command disagree with the fixture's single test."""
+    legacy["pytest_cmd"] = "pytest tests/test_wrong.py"
+
+
 @pytest.mark.parametrize("platform", ["darwin", "win32"])
 @pytest.mark.parametrize("command", ["test-impact", "diff-impact"])
-@pytest.mark.parametrize("corruption", [None, "command-target", "unquoted", "test-files", "total", "legacy-command"])
+@pytest.mark.parametrize(
+    ("corrupt", "accepted"),
+    [
+        pytest.param(_no_corruption, True, id="valid"),
+        pytest.param(_corrupt_command_target, False, id="command-target"),
+        pytest.param(_corrupt_unquoted, False, id="unquoted"),
+        pytest.param(_corrupt_test_files, False, id="test-files"),
+        pytest.param(_corrupt_total, False, id="total"),
+        pytest.param(_corrupt_legacy_command, False, id="legacy-command"),
+    ],
+)
 def test_golden_impact_parity_checks_shell_command_and_targets(
-    monkeypatch: pytest.MonkeyPatch, platform: str, command: str, corruption: str | None
+    monkeypatch: pytest.MonkeyPatch,
+    platform: str,
+    command: str,
+    corrupt: Callable[[dict, dict, str], None],
+    accepted: bool,
 ) -> None:
-    """Allow the documented shell dialect without accepting wrong targets or other payload drift."""
+    """Allow the documented shell dialect without accepting wrong targets or other payload drift.
+
+    Synthetic legacy/current impact payloads are fed to the parity oracle: the valid pair must pass on both shell
+    dialects, and each single corruption (wrong target, unquoted command, wrong file list, wrong total, wrong legacy
+    command) must be rejected.
+    """
     legacy_impact = {"test_files": ["tests/test_alpha.py"], "pytest_cmd": "pytest tests/test_alpha.py", "total": 1}
     current_impact = {
         "test_files": ["tests/test_alpha.py"],
         "pytest_cmd": "pytest 'tests/test_alpha.py'" if platform == "win32" else "pytest tests/test_alpha.py",
         "total": 1,
     }
-    if corruption == "command-target":
-        current_impact["pytest_cmd"] = "pytest 'tests/test_wrong.py'"
-    elif corruption == "unquoted":
-        current_impact["pytest_cmd"] = (
-            "pytest tests/test_alpha.py" if platform == "win32" else "pytest tests/test_alpha.py; echo unexpected"
-        )
-    elif corruption == "test-files":
-        current_impact["test_files"] = ["tests/test_wrong.py"]
-    elif corruption == "total":
-        current_impact["total"] = 2
-    elif corruption == "legacy-command":
-        legacy_impact["pytest_cmd"] = "pytest tests/test_wrong.py"
+    corrupt(legacy_impact, current_impact, platform)
     legacy = legacy_impact if command == "test-impact" else {"test_impact": legacy_impact, "base": "HEAD"}
     current = current_impact if command == "test-impact" else {"test_impact": current_impact, "base": "HEAD"}
     old = subprocess.CompletedProcess([], 0, json.dumps(legacy), "")
     new = subprocess.CompletedProcess([], 0, json.dumps(current), "")
     monkeypatch.setattr(sys, "platform", platform)
 
-    if corruption is None:
+    with nullcontext() if accepted else pytest.raises(AssertionError):
         _assert_golden_query_parity(old, new, [command])
-    else:
-        with pytest.raises(AssertionError):
-            _assert_golden_query_parity(old, new, [command])
 
 
 class TestOldVsNewBinParity:
@@ -703,15 +678,28 @@ class TestCrossPathParity:
         assert new_bin.stdout == cli.stdout == ""
         assert _error_suffix(new_bin.stderr) == _error_suffix(cli.stderr)
 
+    def test_missing_required_arg_error_content_matches_module_dispatch(self, built_project: Path) -> None:
+        """A missing required positional's error content matches bin-vs-module (prog aside).
+
+        This case was previously nested inside the preceding module-level test and therefore never collected.
+        """
+        new_bin = _run_new_bin(["symbol"], built_project)
+        cli = _run_cli_module(["symbol"], built_project)
+        assert new_bin.returncode == cli.returncode == 2
+        assert new_bin.stdout == cli.stdout == ""
+        assert _error_suffix(new_bin.stderr) == _error_suffix(cli.stderr)
+
 
 @pytest.mark.parametrize("runner", [pytest.param(_run_new_bin, id="bin"), pytest.param(_run_cli_module, id="module")])
-def test_missing_index_is_prepared_before_ordinary_query(tmp_path: Path, runner: object) -> None:
+def test_missing_index_is_prepared_before_ordinary_query(
+    tmp_path: Path, runner: Callable[..., subprocess.CompletedProcess[str]]
+) -> None:
     """Both launch routes prepare their canonical index and answer real source graph facts."""
     (tmp_path / "leaf.py").write_text("VALUE = 1\n", encoding="utf-8")
     (tmp_path / "caller.py").write_text("import leaf\n", encoding="utf-8")
     index_path = tmp_path / ".cache" / "codemap" / f"{tmp_path.name}.json"
     assert not index_path.exists()
-    result = runner(["rdeps", "leaf"], tmp_path)  # type: ignore[operator]
+    result = runner(["rdeps", "leaf"], tmp_path)
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
     assert payload["imported_by"] == ["caller"]
@@ -726,14 +714,14 @@ def test_missing_index_is_prepared_before_ordinary_query(tmp_path: Path, runner:
 @pytest.mark.parametrize("runner", [pytest.param(_run_new_bin, id="bin"), pytest.param(_run_cli_module, id="module")])
 def test_coupled_top_five_is_ordered_by_internal_dependency_count(
     coupled_ranking_project: Path,
-    runner: object,
+    runner: Callable[..., subprocess.CompletedProcess[str]],
 ) -> None:
     """Sort on internal imports, not ``dep_count``.
 
     The deliberate inverse ``dep_count`` order means a total-dependency sort would look plausible but violate the
     command's documented coupling metric.
     """
-    result = runner(["coupled", "--top", "5"], coupled_ranking_project)  # type: ignore[operator]
+    result = runner(["coupled", "--top", "5"], coupled_ranking_project)
 
     assert result.returncode == 0, result.stderr
     rows = json.loads(result.stdout)["coupled"]
@@ -743,27 +731,21 @@ def test_coupled_top_five_is_ordered_by_internal_dependency_count(
 
 
 @pytest.mark.parametrize("runner", [pytest.param(_run_new_bin, id="bin"), pytest.param(_run_cli_module, id="module")])
-def test_coupled_help_explains_internal_import_ranking(coupled_ranking_project: Path, runner: object) -> None:
+def test_coupled_help_explains_internal_import_ranking(
+    coupled_ranking_project: Path, runner: Callable[..., subprocess.CompletedProcess[str]]
+) -> None:
     """Public help must state the ordering metric behind ``coupled --top``.
 
     Prevents a user from interpreting a rank as highest total ``dep_count`` and carrying that mismatch into benchmark
     ground truth or an agent prompt.
     """
-    result = runner(["coupled", "--help"], coupled_ranking_project)  # type: ignore[operator]
+    result = runner(["coupled", "--help"], coupled_ranking_project)
 
     assert result.returncode == 0
     assert "internal import count" in result.stdout.lower()
 
-    def test_missing_required_arg_error_content_matches_module_dispatch(self, built_project: Path) -> None:
-        """A missing required positional's error content matches bin-vs-module (prog aside)."""
-        new_bin = _run_new_bin(["symbol"], built_project)
-        cli = _run_cli_module(["symbol"], built_project)
-        assert new_bin.returncode == cli.returncode == 2
-        assert new_bin.stdout == cli.stdout == ""
-        assert _error_suffix(new_bin.stderr) == _error_suffix(cli.stderr)
 
-
-@pytest.fixture(name="diff_impact_project", scope="module", params=_PATH_CLASSES)
+@pytest.fixture(name="diff_impact_project", scope="module", params=PATH_CLASSES)
 def _diff_impact_project(tmp_path_factory: pytest.TempPathFactory, request: pytest.FixtureRequest) -> Path:
     """Git repo with one committed baseline, then one uncommitted tracked edit.
 

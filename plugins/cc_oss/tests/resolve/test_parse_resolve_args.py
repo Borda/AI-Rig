@@ -8,11 +8,13 @@ Covers:
   - Comment-dispatch (fallthrough; leading ``#`` stripped exactly once)
 * Doctest hookup for embedded examples
 * ``_emit`` shell-quoting safety (hostile input round-trip)
-* ``main()`` end-to-end via subprocess
+* ``main()`` mode routing in-process, plus the script end to end via subprocess
+* The shipped ``SKILL.md`` intake that consumes the parser output
 """
 
 from __future__ import annotations
 
+import doctest
 import io
 import re
 import shlex
@@ -21,14 +23,41 @@ import subprocess
 import sys
 from pathlib import Path
 
+import parse_resolve_args as parser_module  # loaded by conftest.py
 import pytest
-from parse_resolve_args import _emit, main, parse_resolve_args  # loaded by conftest.py
+from parse_resolve_args import _emit, main, parse_resolve_args
 
-_BIN = Path(__file__).resolve().parents[2] / "bin" / "parse-resolve-args.py"
+_PLUGIN = Path(__file__).resolve().parents[2]
+_BIN = _PLUGIN / "bin" / "parse-resolve-args.py"
+_SKILL = _PLUGIN / "skills" / "resolve" / "SKILL.md"
+_BASH = shutil.which("bash")
+_HOSTILE = "'; touch /tmp/pwned; echo 'x"
+
+_skip_without_bash = pytest.mark.skipif(not _BASH, reason="resolve Step 1 runs under Bash")
+
+
+def _assignments(stdout: str) -> dict[str, str]:
+    """Parse the parser's ``VAR=value`` lines, undoing shell quoting."""
+    return dict(token.split("=", 1) for token in shlex.split(stdout))
+
+
+def _unquoted_values(stdout: str) -> list[str]:
+    """Return the ``VAR=value`` lines whose value is neither empty-quoted, single-quoted nor shell-safe bare text."""
+    bad = []
+    for line in stdout.strip().splitlines():
+        value = line.partition("=")[2]
+        single_quoted = value.startswith("'") and value.endswith("'")
+        if not (value == "''" or single_quoted or all(c.isalnum() or c in "_-+/.:" for c in value)):
+            bad.append(line)
+    return bad
 
 
 def test_main_emits_lf_under_windows_newline_translation(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Bash reads assignments without carriage returns even when stdout defaults to CRLF."""
+    """Bash reads assignments without carriage returns even when stdout defaults to CRLF.
+
+    On Windows a text-mode stdout translates ``\\n`` to ``\\r\\n``; a stray ``\\r`` would end up inside every value the
+    skill's intake reads, so the parser must write bare LF whatever the stream's newline setting.
+    """
     output = io.BytesIO()
     stream = io.TextIOWrapper(output, encoding="utf-8", newline="\r\n", write_through=True)
     monkeypatch.setattr(sys, "stdout", stream)
@@ -212,168 +241,149 @@ class TestCommentDispatchMode:
         assert expected.items() <= result.items()
 
 
-# ---------------------------------------------------------------------------
-# _emit — shell-quoting safety
-# ---------------------------------------------------------------------------
+class TestEmit:
+    """``_emit``: render parsed values as shell assignments that are safe to read back as data."""
+
+    def test_produces_one_assignment_per_key(self) -> None:
+        """Every parsed key becomes one ``VAR=value`` line.
+
+        The skill's intake reads these lines one by one, so a missing or merged line would lose a variable silently.
+        """
+        output = _emit({"PR_NUMBER": "42", "PR_URL": "", "MODE": "pr", "ARGUMENTS": "42"})
+        lines = output.strip().splitlines()
+        assert len(lines) == 4
+        assert all("=" in line for line in lines)
+
+    def test_hostile_value_is_single_quoted(self) -> None:
+        """A hostile value is shell-quoted so that eval cannot execute injected commands.
+
+        ``shlex.quote`` wraps the value in single quotes with internal quotes escaped; the raw semicolons must never
+        appear unquoted in the assignment.
+        """
+        output = _emit({"PR_NUMBER": "", "PR_URL": "", "MODE": "comment-dispatch", "ARGUMENTS": _HOSTILE})
+        value = dict(line.split("=", 1) for line in output.strip().splitlines())["ARGUMENTS"]
+        assert value.startswith("'"), f"value should be single-quoted, got: {value!r}"
+
+    @pytest.mark.parametrize("value", ["plain text", _HOSTILE, "", "line1\nline2", "$(touch /tmp/pwned)"])
+    def test_shell_round_trip_preserves_hostile_values(self, value: str) -> None:
+        """A shell reader recovers every ARGUMENTS value exactly, whatever metacharacters it carries.
+
+        Quotes, empty text, embedded newlines and command substitutions all come back verbatim as data instead of being
+        evaluated or truncated.
+        """
+        parsed = {"PR_NUMBER": "", "PR_URL": "", "MODE": "comment-dispatch", "ARGUMENTS": value}
+        assert _assignments(_emit(parsed))["ARGUMENTS"] == value
 
 
-def test_emit_produces_shell_quoted_assignments() -> None:
-    """_emit wraps values with shlex.quote; assignments are VAR=value lines."""
-    parsed = {"PR_NUMBER": "42", "PR_URL": "", "MODE": "pr", "ARGUMENTS": "42"}
-    output = _emit(parsed)
-    lines = output.strip().splitlines()
-    assert len(lines) == 4
-    for line in lines:
-        assert "=" in line
+class TestMainRouting:
+    """``main``: argv → shell assignments, run in-process."""
+
+    @pytest.mark.parametrize(
+        ("argv", "expected_mode", "expected_pr_number"),
+        [
+            pytest.param(["99"], "pr", "99", id="99"),
+            pytest.param(["#99", "report"], "pr+report", "99", id="99-report"),
+            pytest.param(["https://github.com/o/r/pull/1"], "pr", "1", id="https-github.com-o-r-pull-1"),
+            pytest.param(
+                ["https://github.com/o/r/pull/1", "report"], "pr+report", "1", id="https-github.com-o-r-pull-1-report"
+            ),
+            pytest.param(["report"], "report", "", id="report"),
+            pytest.param(["some prose comment"], "comment-dispatch", "", id="some-prose-comment"),
+            pytest.param(["-x is broken"], "comment-dispatch", "", id="dash-leading-prose-not-misparsed-as-flag"),
+        ],
+    )
+    def test_emits_mode_and_pr_number(
+        self, capsys: pytest.CaptureFixture[str], argv: list[str], expected_mode: str, expected_pr_number: str
+    ) -> None:
+        """All six documented mode branches emit their MODE and PR_NUMBER assignments.
+
+        Blob-forward safety: a comment starting with ``-`` reaches the regex parser as comment-dispatch — argparse must
+        NOT intercept dash-leading blob content as an unknown flag, since the ``$ARGUMENTS`` blob is forwarded verbatim
+        to ``parse_resolve_args``.
+        """
+        assert main(argv) == 0
+        assignments = _assignments(capsys.readouterr().out)
+        assert (assignments["MODE"], assignments["PR_NUMBER"]) == (expected_mode, expected_pr_number)
 
 
-def test_emit_hostile_value_is_quoted() -> None:
-    """Hostile value is shell-quoted so that eval cannot execute injected commands."""
-    hostile = "'; touch /tmp/pwned; echo 'x"
-    parsed = {"PR_NUMBER": "", "PR_URL": "", "MODE": "comment-dispatch", "ARGUMENTS": hostile}
-    output = _emit(parsed)
-    # shlex.quote wraps in single quotes with internal quotes escaped; the raw
-    # semicolon must not appear unquoted in the assignment value.
-    assignments = dict(line.split("=", 1) for line in output.strip().splitlines())
-    value = assignments["ARGUMENTS"]
-    assert value.startswith("'"), f"value should be single-quoted, got: {value!r}"
+class TestScript:
+    """``parse-resolve-args.py`` run as the shipped executable, the way the skill invokes it."""
 
+    @staticmethod
+    def _run(*argv: str) -> subprocess.CompletedProcess[str]:
+        """Run the script with ``argv`` and require exit 0."""
+        return subprocess.run([sys.executable, str(_BIN), *argv], capture_output=True, text=True, check=True)
 
-@pytest.mark.parametrize(
-    "value",
-    ["plain text", "'; touch /tmp/pwned; echo 'x", "", "line1\nline2", "$(touch /tmp/pwned)"],
-)
-def test_emit_shell_round_trip_for_hostile_values(value: str) -> None:
-    parsed = {"PR_NUMBER": "", "PR_URL": "", "MODE": "comment-dispatch", "ARGUMENTS": value}
-    assignments = dict(token.split("=", 1) for token in shlex.split(_emit(parsed)))
-    assert assignments["ARGUMENTS"] == value
+    def test_hostile_input_is_eval_safe(self) -> None:
+        """Hostile ARGUMENTS value is shell-quoted — no unquoted metacharacters emitted.
 
+        This is the exact text the skill's intake reads, so every emitted value must be quoted or provably shell-safe.
+        """
+        assert _unquoted_values(self._run(_HOSTILE).stdout) == []
 
-def test_resolve_intake_reads_only_known_keys_as_data() -> None:
-    """The shipped intake validates parser output and never runs it as shell source."""
-    skill = (_BIN.parents[1] / "skills" / "resolve" / "SKILL.md").read_text(encoding="utf-8")
-    intake = skill.split("tmpenv=$(mktemp)", 1)[1].split("# sets:", 1)[0]
-    assert "grep -qvE" in intake
-    assert "exit 1" in intake
-    assert '. "$tmpenv"' not in intake
-    assert "eval " not in intake
-    assert "while IFS='=' read -r _K _V; do" in intake
-    assert 'case "$_V" in' in intake
-    assert r"_V=${_V#\'}; _V=${_V%\'}" in intake
-    assert re.findall(r"([A-Z_]+)\) ([A-Z_]+)=\$_V;;", intake) == [
-        ("PR_NUMBER", "PR_NUMBER"),
-        ("PR_URL", "PR_URL"),
-        ("MODE", "MODE"),
-        ("ARGUMENTS", "ARGUMENTS"),
-    ]
-    assert 'done < "$tmpenv"' in intake
+    def test_help_flag_prints_usage(self) -> None:
+        """``--help`` prints argparse usage and exits 0.
 
-
-# ---------------------------------------------------------------------------
-# Doctest hookup
-# ---------------------------------------------------------------------------
+        A real subprocess proves the file works as a script entry point, not only as an imported module.
+        """
+        assert "usage:" in self._run("--help").stdout
 
 
 def test_module_doctests_pass() -> None:
-    """Doctest examples embedded in parse-resolve-args.py must not regress."""
-    import doctest
+    """Doctest examples embedded in parse-resolve-args.py must not regress.
 
-    import parse_resolve_args as _mod
-
-    results = doctest.testmod(_mod, verbose=False)
+    The examples are the parser's own documentation of each mode, so a drifted example is a stale contract.
+    """
+    results = doctest.testmod(parser_module, verbose=False)
     assert results.failed == 0, f"{results.failed} doctest(s) failed"
 
 
-# ---------------------------------------------------------------------------
-# main() — subprocess end-to-end
-# ---------------------------------------------------------------------------
+class TestSkillIntake:
+    """The shipped ``resolve/SKILL.md`` Step 1 that consumes the parser output."""
 
+    def test_reads_only_known_keys_as_data(self) -> None:
+        """The shipped intake validates parser output and never runs it as shell source.
 
-def test_main_via_subprocess_hostile_input_is_eval_safe() -> None:
-    """Hostile ARGUMENTS value is shell-quoted — no unquoted metacharacters emitted."""
-    hostile = "'; touch /tmp/pwned; echo 'x"
-    result = subprocess.run(
-        [sys.executable, str(_BIN), hostile],
-        capture_output=True,
-        text=True,
-        check=True,
+        A value carrying outside text must stay data: the intake reads ``KEY=value`` lines in a loop and assigns only
+        the four known keys, never sourcing or evaluating the file.
+        """
+        skill = _SKILL.read_text(encoding="utf-8")
+        intake = skill.split("tmpenv=$(mktemp)", 1)[1].split("# sets:", 1)[0]
+        assert "grep -qvE" in intake
+        assert "exit 1" in intake
+        assert '. "$tmpenv"' not in intake
+        assert "eval " not in intake
+        assert "while IFS='=' read -r _K _V; do" in intake
+        assert 'case "$_V" in' in intake
+        assert r"_V=${_V#\'}; _V=${_V%\'}" in intake
+        assert re.findall(r"([A-Z_]+)\) ([A-Z_]+)=\$_V;;", intake) == [
+            ("PR_NUMBER", "PR_NUMBER"),
+            ("PR_URL", "PR_URL"),
+            ("MODE", "MODE"),
+            ("ARGUMENTS", "ARGUMENTS"),
+        ]
+        assert 'done < "$tmpenv"' in intake
+
+    @_skip_without_bash
+    @pytest.mark.parametrize(
+        ("pr_number", "blocked"),
+        [pytest.param("", True, id="issue-url-blocks"), pytest.param("7", False, id="pull-url-continues")],
     )
-    out = result.stdout
-    for line in out.strip().splitlines():
-        key, _, value = line.partition("=")
-        is_empty_quoted = value == "''"
-        is_single_quoted = value.startswith("'") and value.endswith("'")
-        is_bare_safe = all(c.isalnum() or c in "_-+/.:" for c in value)
-        assert is_empty_quoted or is_single_quoted or is_bare_safe, f"unsafe shell value for {key}: {value!r}"
+    def test_blocks_pr_mode_without_number(self, pr_number: str, blocked: bool) -> None:
+        """Resolve stops with a clear block when a GitHub URL carries no pull-request number.
 
-
-@pytest.mark.parametrize(
-    ("argv", "expected_mode", "expected_pr_number"),
-    [
-        pytest.param(["99"], "pr", "99", id="99"),
-        pytest.param(["#99", "report"], "pr+report", "99", id="99-report"),
-        pytest.param(["https://github.com/o/r/pull/1"], "pr", "1", id="https-github.com-o-r-pull-1"),
-        pytest.param(
-            ["https://github.com/o/r/pull/1", "report"], "pr+report", "1", id="https-github.com-o-r-pull-1-report"
-        ),
-        pytest.param(["report"], "report", "", id="report"),
-        pytest.param(["some prose comment"], "comment-dispatch", "", id="some-prose-comment"),
-        pytest.param(["-x is broken"], "comment-dispatch", "", id="dash-leading-prose-not-misparsed-as-flag"),
-    ],
-)
-def test_main_mode_routing_via_subprocess(argv: list[str], expected_mode: str, expected_pr_number: str) -> None:
-    """All six documented mode branches are reachable via subprocess invocation, with PR_NUMBER emitted.
-
-    Blob-forward safety: a comment starting with ``-`` reaches the regex parser as comment-dispatch — argparse must NOT
-    intercept dash-leading blob content as an unknown flag, since the ``$ARGUMENTS`` blob is forwarded verbatim to
-    ``parse_resolve_args``.
-    """
-    result = subprocess.run(
-        [sys.executable, str(_BIN), *argv],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    assignments = dict(line.split("=", 1) for line in result.stdout.strip().splitlines())
-    # MODE value is shell-quoted ('pr', 'pr+report', etc.); strip surrounding quotes.
-    raw_mode = assignments["MODE"].strip("'")
-    assert raw_mode == expected_mode, f"argv={argv!r}: expected MODE={expected_mode!r}, got {raw_mode!r}"
-    assert assignments["PR_NUMBER"].strip("'") == expected_pr_number
-
-
-def test_help_flag_exits_zero_via_subprocess() -> None:
-    """Print usage and exit 0 (argparse)."""
-    result = subprocess.run(
-        [sys.executable, str(_BIN), "--help"],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    assert result.returncode == 0
-    assert "usage:" in result.stdout
-
-
-_SKILL = Path(__file__).resolve().parents[2] / "skills" / "resolve" / "SKILL.md"
-_BASH = shutil.which("bash")
-
-
-@pytest.mark.skipif(not _BASH, reason="resolve Step 1 runs under Bash")
-@pytest.mark.parametrize(
-    ("pr_number", "blocked"),
-    [pytest.param("", True, id="issue-url-blocks"), pytest.param("7", False, id="pull-url-continues")],
-)
-def test_skill_blocks_pr_mode_without_number(pr_number: str, blocked: bool) -> None:
-    """Resolve stops with a clear block when a GitHub URL carries no pull-request number.
-
-    The parser deliberately keeps an issue or repo URL as MODE=pr with an empty PR_NUMBER so it never reaches comment
-    dispatch; every later PR step keys on PR_NUMBER, so the skill must stop right after parsing instead of running on.
-    """
-    guard = next(line for line in _SKILL.read_text(encoding="utf-8").splitlines() if "not a pull-request URL" in line)
-    result = subprocess.run(
-        [_BASH, "-c", f"MODE=pr; PR_NUMBER='{pr_number}'; PR_URL=https://github.com/o/r/issues/7\n{guard}"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert (result.returncode == 1) is blocked
-    assert ("! BLOCKED" in result.stdout) is blocked
+        The parser deliberately keeps an issue or repo URL as MODE=pr with an empty PR_NUMBER so it never reaches
+        comment dispatch; every later PR step keys on PR_NUMBER, so the skill must stop right after parsing. The guard
+        line is run under real bash.
+        """
+        guard = next(
+            line for line in _SKILL.read_text(encoding="utf-8").splitlines() if "not a pull-request URL" in line
+        )
+        result = subprocess.run(
+            [_BASH, "-c", f"MODE=pr; PR_NUMBER='{pr_number}'; PR_URL=https://github.com/o/r/issues/7\n{guard}"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert (result.returncode == 1) is blocked
+        assert ("! BLOCKED" in result.stdout) is blocked

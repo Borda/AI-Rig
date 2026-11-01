@@ -7,6 +7,9 @@
 # it exists solely to maintain the consistency and quality of the template
 # files in this repository.
 
+# The pre-commit.ci bot below autofixes pull requests and bumps hook versions. It does not replace
+# .github/workflows/ci-precommit.yml, which runs every hook (longer-running and repo-local ones
+# included) inside the project's own uv environment and gates the merge.
 ci:
   autofix_prs: true
   autoupdate_commit_msg: "[pre-commit.ci] bump ⬆ suggestions"
@@ -109,7 +112,7 @@ repos:
         # docformatter needs tomli to parse pyproject.toml when pre-commit selects Python 3.10.
         additional_dependencies: ["tomli"]
         # Docformatter 1.7.8 crashes while tokenizing multiline f-strings in these files.
-        exclude: ^(?:benchmarks/tests/test_run_all\.py|plugins/codex-rig/tests/remediate/test_code_remediate_(?:final_outcome|work_bucket)_validation\.py)$
+        exclude: ^(?:benchmarks/tests/entrypoints/test_run_all\.py|plugins/codex-rig/tests/remediate/validation/test_code_remediate_(?:final_outcome|work_bucket)_validation\.py)$
 
   - repo: https://github.com/codespell-project/codespell
     rev: v2.4.3
@@ -402,6 +405,69 @@ repos:
         entry: python3 scripts/check_test_path_separators.py
         files: (^|/)tests/.*test_[^/]*\.py$
 
+      - id: check-doctest-env
+        name: "🌱 doctests restore os.environ"
+        language: system
+        entry: python3 scripts/check_doctest_env.py
+        files: ^(?:plugins|benchmarks|tests)/.*\.py$
+        pass_filenames: true
+
+      - id: check-action-pins
+        name: "📌 workflow actions SHA-pinned"
+        language: system
+        entry: python3 scripts/check_action_pins.py
+        files: ^\.github/workflows/.*\.ya?ml$
+        pass_filenames: true
+
+      - id: check-plugin-inventories
+        name: "📋 plugin hook and investigator inventories"
+        language: system
+        entry: python3 scripts/check_plugin_inventories.py
+        pass_filenames: false
+        always_run: true
+
+      - id: check-codex-private-refs
+        name: "🔒 no private refs in codex-rig payload"
+        language: system
+        entry: python3 scripts/check_codex_private_refs.py
+        pass_filenames: false
+        always_run: true
+
+      - id: no-registration-order-claim
+        name: "🔢 no hook registration-order claim"
+        language: pygrep
+        entry: registered immediately after the sentinel hook
+        files: ^plugins/.*\.md$
+        exclude: /\.claude-plugin/
+
+      - id: check-policy-parity
+        name: "📎 policy paragraph parity"
+        language: system
+        entry: python3 scripts/check_policy_parity.py
+        pass_filenames: false
+        always_run: true
+
+      - id: check-codemap-skill-parity
+        name: "🪞 codemap claude/codex skill parity"
+        language: system
+        entry: python3 scripts/check_codemap_skill_parity.py
+        pass_filenames: false
+        always_run: true
+
+      - id: check-instruction-byte-budget
+        name: "📏 instruction byte budgets"
+        language: system
+        entry: python3 scripts/check_instruction_budget.py
+        files: ^(plugins/cc_foundry/rules/[^/]+\.md|plugins/codemap-py/codex-skills/query-code/SKILL\.md|plugins/codex-rig/assets/AGENTS\.md|scripts/check_instruction_budget\.py)$
+        pass_filenames: false
+
+      - id: check-agent-waits
+        name: "⏱ agent waits and task-turn cost"
+        language: system
+        entry: python3 plugins/cc_foundry/bin/check_agent_waits.py --scan-dir plugins
+        files: ^plugins/[^/]+/(skills/.+|agents/[^/]+)\.md$|^plugins/cc_foundry/bin/check_agent_waits\.py$
+        pass_filenames: false
+
       - id: no-literal-tmp-in-hooks
         name: "🌡️ No literal /tmp/ in hook source"
         language: pygrep
@@ -464,6 +530,21 @@ repos:
           version = json.loads((root / '.codex-plugin/plugin.json').read_text(encoding='utf-8'))['version'];
           heading = '## ' + version;
           sys.exit(0 if heading in (root / 'CHANGELOG.md').read_text(encoding='utf-8').splitlines() else 'Missing changelog heading: ' + heading)"
+        pass_filenames: false
+        always_run: true
+
+      - id: check-codex-roster
+        name: "🧾 Codex Rig roster, calibration and route-table parity"
+        language: system
+        entry: python3 scripts/check_codex_roster.py
+        pass_filenames: false
+        # always_run: a deletion-only commit (removed skill or role card) passes no file to a hook.
+        always_run: true
+
+      - id: check-pure-kernels
+        name: "🧱 pure agent-shim kernels stay I/O free"
+        language: system
+        entry: python3 scripts/check_pure_kernels.py
         pass_filenames: false
         always_run: true
 

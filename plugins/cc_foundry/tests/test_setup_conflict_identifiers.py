@@ -47,6 +47,12 @@ def _approved_file_expr(text: str) -> str:
     return match.group(1)
 
 
+def _approved_writers(text: str) -> list[str]:
+    """Return every line that appends to the approved-entries file Phase 4 greps."""
+    target = _approved_file_expr(text)
+    return [line for line in text.splitlines() if f'>> "{target}"' in line]
+
+
 class TestApprovedConflictIdentifiers:
     """Phase 3 must record approvals in the exact form Phase 4 looks up."""
 
@@ -86,7 +92,7 @@ class TestApprovedEntriesPersistence:
         The writer and the ``_approved`` reader share only that path expression, so a rename on one side would make
         every approval invisible to the other.
         """
-        writers = [line for line in skill_text.splitlines() if f'>> "{_approved_file_expr(skill_text)}"' in line]
+        writers = _approved_writers(skill_text)
         assert len(writers) == 1
         assert "[@]" not in writers[0]
 
@@ -95,7 +101,7 @@ class TestApprovedEntriesPersistence:
 
         Recording the literal placeholder would look like success while approving nothing.
         """
-        writers = [line for line in skill_text.splitlines() if f'>> "{_approved_file_expr(skill_text)}"' in line]
+        writers = _approved_writers(skill_text)
         assert "case \"$ENTRY\" in *'<'*'>'*|\"\") echo" in writers[0]
 
     def test_phase2_empties_the_file(self, skill_text: str) -> None:

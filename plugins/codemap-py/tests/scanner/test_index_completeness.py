@@ -1,9 +1,9 @@
 """Index-vs-reality completeness property tests for the codemap structural index.
 
 Nothing else in the suite validates that ``scan-index`` actually records the import and call edges present in real
-source. This module builds a small package that exercises every import shape codemap must reason about — plain plain,
-aliased, and relative imports, an ``__init__`` re-export consumed elsewhere, and cross-module function calls. It then
-compares ``scan-query`` output against an *independent* oracle built here with :mod:`ast`.
+source. This module builds a small package that exercises every import shape codemap must reason about — plain, aliased,
+and relative imports, an ``__init__`` re-export consumed elsewhere, and cross-module function calls. It then compares
+``scan-query`` output against an *independent* oracle built here with :mod:`ast`.
 
 Where the index legitimately cannot see an edge (module-less relative imports and ``from pkg import submodule`` are
 recorded by their raw base, never resolved to the submodule), the test asserts the gap is *disclosed* through the
@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import ast
 import json
+import os
 import subprocess
 import sys
 from collections.abc import Callable
@@ -233,6 +234,9 @@ def _collect_callers(tree: ast.Module, module_name: str, scope: dict[str, str], 
 # Fixtures — build the package once, scan it once, query via subprocess.
 # --------------------------------------------------------------------------- #
 
+# Module-scoped setup runs outside the function-scoped autouse env fixtures, so telemetry is switched off explicitly.
+_SUBPROCESS_ENV = {**os.environ, "CODEMAP_LOGGING": "false"}
+
 
 @pytest.fixture(name="completeness_project", scope="module")
 def _completeness_project(tmp_path_factory, scan_index) -> tuple[Path, Path]:
@@ -247,6 +251,7 @@ def _completeness_project(tmp_path_factory, scan_index) -> tuple[Path, Path]:
         capture_output=True,
         text=True,
         cwd=str(root),
+        env=_SUBPROCESS_ENV,
     )
     assert result.returncode == 0, result.stderr
     index_path = root / ".cache" / "codemap" / f"{root.name}.json"
@@ -266,11 +271,30 @@ def _cquery(completeness_project, scan_query) -> Callable[..., dict]:
             capture_output=True,
             text=True,
             cwd=str(root),
+            env=_SUBPROCESS_ENV,
         )
         assert result.returncode == 0, result.stderr + result.stdout
         return json.loads(result.stdout)
 
     return _run
+
+
+@pytest.fixture(name="core_rdeps", scope="module")
+def _core_rdeps(cquery) -> dict:
+    """Return the ``rdeps`` answer for ``mypkg.core``, queried once for every module-level assertion."""
+    return cquery("rdeps", _CORE_MODULE)
+
+
+@pytest.fixture(name="run_rdeps", scope="module")
+def _run_rdeps(cquery) -> dict:
+    """Return the ``fn-rdeps`` answer for ``mypkg.core::run``, queried once for every call-graph assertion."""
+    return cquery("fn-rdeps", "mypkg.core::run")
+
+
+@pytest.fixture(name="oracle_edges", scope="module")
+def _oracle() -> tuple[set[str], set[str]]:
+    """Return the AST oracle's ``(importers, callers)`` computed once from the fixture sources."""
+    return _oracle_edges()
 
 
 # --------------------------------------------------------------------------- #
@@ -279,22 +303,33 @@ def _cquery(completeness_project, scan_query) -> Callable[..., dict]:
 
 
 class TestModuleImportCompleteness:
-    """Require indexed functions to match the AST oracle or disclose incompleteness."""
+    """Module-level ``rdeps`` must match the AST oracle or disclose what it cannot see."""
 
-    def test_plain_and_aliased_imports_are_covered(self, cquery):
-        """Resolvable ``import mypkg.core[/ as c]`` edges appear in ``imported_by``."""
-        reported = set(cquery("rdeps", _CORE_MODULE)["imported_by"])
-        assert {"mypkg.plain_import", "mypkg.aliased"} <= reported
+    def test_plain_and_aliased_imports_are_covered(self, core_rdeps):
+        """Resolvable ``import mypkg.core[/ as c]`` edges appear in ``imported_by``.
 
-    def test_relative_and_submodule_importers_match_the_ast_oracle(self, cquery):
-        """Relative and parent-package submodule importers are retained."""
-        reported = set(cquery("rdeps", _CORE_MODULE)["imported_by"])
-        true_importers, _ = _oracle_edges()
-        assert reported == true_importers
+        These are the two simplest import shapes; if either is missing the index has lost basic edges.
+        """
+        assert {"mypkg.plain_import", "mypkg.aliased"} <= set(core_rdeps["imported_by"])
 
-    def test_resolved_import_forms_are_not_reported_as_coverage_gaps(self, cquery):
-        """The coverage block does not claim known static forms are omitted."""
-        not_covered = cquery("rdeps", _CORE_MODULE)["index"]["not_covered"]
+    def test_relative_and_submodule_importers_match_the_ast_oracle(self, core_rdeps, oracle_edges):
+        """Relative and parent-package submodule importers are retained.
+
+        The independent AST oracle resolves ``from . import core``, ``from ..core import run`` and ``from mypkg import
+        core`` as Python would; the index's importer set must equal it exactly, neither missing nor inventing edges.
+        """
+        true_importers, _ = oracle_edges
+
+        assert set(core_rdeps["imported_by"]) == true_importers
+
+    def test_resolved_import_forms_are_not_reported_as_coverage_gaps(self, core_rdeps):
+        """The coverage block does not claim known static forms are omitted.
+
+        Relative and from-import-submodule edges are resolved now, so listing them under ``not_covered`` would
+        understate the index's completeness.
+        """
+        not_covered = core_rdeps["index"]["not_covered"]
+
         assert "relative-import" not in not_covered
         assert "from-import-submodule" not in not_covered
 
@@ -305,11 +340,11 @@ class TestModuleImportCompleteness:
 
 
 class TestFunctionCallCompleteness:
-    """Require indexed classes to match the AST oracle or disclose incompleteness."""
+    """Function-level ``fn-rdeps`` must match the AST oracle or disclose what it cannot see."""
 
-    def test_resolvable_callers_are_covered(self, cquery):
+    def test_resolvable_callers_are_covered(self, run_rdeps):
         """Plain, from-import, aliased, dotted-relative, and local callers are all found."""
-        reported = {c["caller"] for c in cquery("fn-rdeps", "mypkg.core::run")["called_by"]}
+        reported = {c["caller"] for c in run_rdeps["called_by"]}
         expected = {
             "mypkg.core::Engine.start",
             "mypkg.plain_import::go",
@@ -317,21 +352,27 @@ class TestFunctionCallCompleteness:
             "mypkg.aliased::go3",
             "mypkg.sub.deep::go5",
         }
+
         assert expected <= reported
 
-    def test_relative_callers_match_the_ast_oracle(self, cquery):
-        """Module-less relative imports resolve call aliases before query time."""
-        reported = {c["caller"] for c in cquery("fn-rdeps", "mypkg.core::run")["called_by"]}
-        _, true_callers = _oracle_edges()
-        assert reported == true_callers
+    def test_relative_callers_match_the_ast_oracle(self, run_rdeps, oracle_edges):
+        """Module-less relative imports resolve call aliases before query time.
 
-    def test_relative_calls_are_not_reported_as_coverage_gaps(self, cquery):
+        ``from . import core`` followed by ``core.run()`` must be attributed to ``mypkg.core::run``; the reported caller
+        set must equal the oracle's.
+        """
+        _, true_callers = oracle_edges
+
+        assert {c["caller"] for c in run_rdeps["called_by"]} == true_callers
+
+    def test_relative_calls_are_not_reported_as_coverage_gaps(self, run_rdeps):
         """The coverage block does not claim resolved relative calls are omitted."""
-        not_covered = cquery("fn-rdeps", "mypkg.core::run")["index"]["not_covered"]
-        assert "relative-import" not in not_covered
+        assert "relative-import" not in run_rdeps["index"]["not_covered"]
 
-    def test_unique_caller_count_is_deduped_caller_total(self, cquery):
-        """Mirror the deduped caller list and ``count``."""
-        data = cquery("fn-rdeps", "mypkg.core::run")
-        assert data["unique_caller_count"] == len({c["caller"] for c in data["called_by"]})
-        assert data["unique_caller_count"] == data["count"]
+    def test_unique_caller_count_is_deduped_caller_total(self, run_rdeps):
+        """The unique caller count equals the deduped caller list and the response ``count``.
+
+        A caller that appears twice (two call sites) must still count once, and ``count`` must agree with that total.
+        """
+        assert run_rdeps["unique_caller_count"] == len({c["caller"] for c in run_rdeps["called_by"]})
+        assert run_rdeps["unique_caller_count"] == run_rdeps["count"]

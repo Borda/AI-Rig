@@ -120,6 +120,14 @@ def _new_block(family: str) -> str:
     return next(block for block in blocks if f'codemap_batch.py" build {family} ' in block)
 
 
+@pytest.fixture
+def shim(tmp_path: Path) -> Path:
+    """Write the stand-in ``codemap-py`` script once per test and return its path."""
+    path = tmp_path / "shim.py"
+    path.write_text(_SHIM, encoding="utf-8", newline="\n")
+    return path
+
+
 def _stage(work: Path, modules: str) -> Path:
     """Create the sentinels the supplement blocks reload and return the pre-seeded stage file."""
     work.mkdir()
@@ -133,6 +141,23 @@ def _stage(work: Path, modules: str) -> Path:
     )
     (work / "oss-review-changed-mods-pr7-t").write_text(modules, encoding="utf-8", newline="\n")
     return stage
+
+
+def _stage_pair(tmp_path: Path, modules: str) -> tuple[Path, Path]:
+    """Create the old-loop and new-block sentinel sets side by side and return both pre-seeded stage files."""
+    return _stage(tmp_path / "old", modules), _stage(tmp_path / "new", modules)
+
+
+def _close_gate_disabled(work: Path) -> None:
+    """Persist an explicit ``false`` codemap gate decision."""
+    (work / "review-codemap-enabled-t").write_text("false\n", encoding="utf-8", newline="\n")
+    (work / "review-codemap-currency-t").write_text("off\n", encoding="utf-8", newline="\n")
+
+
+def _close_gate_unresolved(work: Path) -> None:
+    """Remove the gate decision sentinel, as when Gate A never ran."""
+    (work / "review-codemap-enabled-t").unlink()
+    (work / "review-codemap-currency-t").write_text("off\n", encoding="utf-8", newline="\n")
 
 
 def _install_launcher(directory: Path, shim: Path) -> None:
@@ -207,7 +232,7 @@ def _run(block: str, work: Path, shim: Path, extra: dict[str, str] | None = None
         pytest.param("", id="no-modules"),
     ],
 )
-def test_batched_block_stages_the_same_bytes_as_the_old_loop(tmp_path: Path, family: str, modules: str) -> None:
+def test_batched_block_stages_the_same_bytes_as_the_old_loop(tmp_path: Path, shim: Path, family: str, modules: str):
     """The batched supplement block appends byte-identical text to the stage file as the per-module loop did.
 
     One stand-in ``codemap-py`` answers both the single-query and the batch entry point from one table, including a non-
@@ -216,10 +241,7 @@ def test_batched_block_stages_the_same_bytes_as_the_old_loop(tmp_path: Path, fam
     points, so this proves headers, blank lines, positions, encoding and error payloads; the real tool's differing key
     order for two queries is recorded in ``codemap_batch.py`` and is equal after parsing.
     """
-    shim = tmp_path / "shim.py"
-    shim.write_text(_SHIM, encoding="utf-8", newline="\n")
-    old_stage = _stage(tmp_path / "old", modules)
-    new_stage = _stage(tmp_path / "new", modules)
+    old_stage, new_stage = _stage_pair(tmp_path, modules)
 
     _run(_OLD_LOOPS[family], old_stage.parent, shim)
     _run(_new_block(family), new_stage.parent, shim)
@@ -231,14 +253,12 @@ def test_batched_block_stages_the_same_bytes_as_the_old_loop(tmp_path: Path, fam
 @_skip_shell_unavailable
 @pytest.mark.integration
 @pytest.mark.parametrize("family", ["qa", "docs"])
-def test_complete_batch_issues_no_single_query(tmp_path: Path, family: str) -> None:
+def test_complete_batch_issues_no_single_query(tmp_path: Path, shim: Path, family: str) -> None:
     """A batch that answers every query is the only ``codemap-py`` call the block makes.
 
     The fallback exists for the failure path. Healthy runs must keep the one-process cost that motivated batching, so
     the call log of the shipped block holds just the batch call.
     """
-    shim = tmp_path / "shim.py"
-    shim.write_text(_SHIM, encoding="utf-8", newline="\n")
     stage = _stage(tmp_path / "new", "pkg.alpha\npkg.beta\n")
 
     _run(_new_block(family), stage.parent, shim)
@@ -249,19 +269,19 @@ def test_complete_batch_issues_no_single_query(tmp_path: Path, family: str) -> N
 @_skip_shell_unavailable
 @pytest.mark.integration
 @pytest.mark.parametrize("family", ["qa", "docs"])
-@pytest.mark.parametrize("enabled", ["false", None])
-def test_disabled_or_unresolved_gate_does_not_run_supplement(tmp_path: Path, family: str, enabled: str | None) -> None:
-    """Healthy fixture defaults cannot hide a production regression that queries despite disabled or absent state."""
-    shim = tmp_path / "shim.py"
-    shim.write_text(_SHIM, encoding="utf-8", newline="\n")
+@pytest.mark.parametrize(
+    "close_gate",
+    [pytest.param(_close_gate_disabled, id="disabled"), pytest.param(_close_gate_unresolved, id="unresolved")],
+)
+def test_closed_gate_runs_no_supplement(tmp_path: Path, shim: Path, family: str, close_gate) -> None:
+    """A disabled or never-resolved codemap gate makes no query and leaves the stage file untouched.
+
+    The sentinel fixtures default to a healthy gate, which would hide a regression that queries despite an explicit
+    ``false`` decision or a missing one. Each case closes the gate its own way, then checks the calls and stage bytes.
+    """
     stage = _stage(tmp_path / "new", "pkg.alpha\npkg.beta\n")
     before = stage.read_bytes()
-    sentinel = stage.parent / "review-codemap-enabled-t"
-    if enabled is None:
-        sentinel.unlink()
-    else:
-        sentinel.write_text(enabled + "\n", encoding="utf-8", newline="\n")
-    (stage.parent / "review-codemap-currency-t").write_text("off\n", encoding="utf-8", newline="\n")
+    close_gate(stage.parent)
 
     _run(_new_block(family), stage.parent, shim)
 
@@ -272,29 +292,36 @@ def test_disabled_or_unresolved_gate_does_not_run_supplement(tmp_path: Path, fam
 @_skip_shell_unavailable
 @pytest.mark.integration
 @pytest.mark.parametrize("family", ["qa", "docs"])
-def test_batch_alarm_falls_back_to_single_queries_staging_the_old_loop_bytes(tmp_path: Path, family: str) -> None:
-    """When the whole-process alarm kills the batch, each query reruns alone and stages what the old loop staged.
+@pytest.mark.parametrize(
+    ("batch_failure", "rerun"),
+    [
+        pytest.param("timeout", slice(None), id="whole-batch-alarm"),
+        pytest.param("drop-last", slice(-1, None), id="last-item-dropped"),
+    ],
+)
+def test_failed_batch_reruns_only_unanswered_queries(
+    tmp_path: Path, shim: Path, family: str, batch_failure: str, rerun: slice
+) -> None:
+    """A dead or short batch reruns just the unanswered queries as old-style single calls and stages the old bytes.
 
-    The real tool exits 2 from its SIGALRM handler before it prints, so the batch leaves stdout empty and the pipe hides
-    the status. Before the fallback this blanked every module section; now the single-query calls must carry the exact
-    old argv (``query --timeout 5 <cmd> <flags> <module>``), in the old order, after the one batch call.
+    The real tool exits 2 from its SIGALRM handler before it prints, so a whole-batch alarm leaves stdout empty and the
+    pipe hides the status; every query must then rerun with the exact old argv (``query --timeout 5 <cmd> <flags>
+    <module>``) in the old order. A batch missing only its last item reruns exactly that query, since answered positions
+    are never repeated.
     """
-    shim = tmp_path / "shim.py"
-    shim.write_text(_SHIM, encoding="utf-8", newline="\n")
-    old_stage = _stage(tmp_path / "old", "pkg.alpha\npkg.beta\n")
-    new_stage = _stage(tmp_path / "new", "pkg.alpha\npkg.beta\n")
+    old_stage, new_stage = _stage_pair(tmp_path, "pkg.alpha\npkg.beta\n")
 
     _run(_OLD_LOOPS[family], old_stage.parent, shim)
-    _run(_new_block(family), new_stage.parent, shim, {"SHIM_BATCH": "timeout"})
+    _run(_new_block(family), new_stage.parent, shim, {"SHIM_BATCH": batch_failure})
 
     assert new_stage.read_bytes() == old_stage.read_bytes()
-    assert _calls(new_stage.parent) == [_BATCH_CALL, *_calls(old_stage.parent)]
+    assert _calls(new_stage.parent) == [_BATCH_CALL, *_calls(old_stage.parent)[rerun]]
 
 
 @_skip_shell_unavailable
 @pytest.mark.integration
 @pytest.mark.parametrize("family", ["qa", "docs"])
-def test_one_failing_single_query_loses_only_its_own_section(tmp_path: Path, family: str) -> None:
+def test_one_failing_single_query_loses_only_its_own_section(tmp_path: Path, shim: Path, family: str) -> None:
     """With the batch dead and one module's queries timing out, every other module still stages its lines.
 
     The slow module keeps its header and blank line but no query lines, exactly as the old loop left it, while the
@@ -302,10 +329,7 @@ def test_one_failing_single_query_loses_only_its_own_section(tmp_path: Path, fam
     """
     modules = "pkg.alpha\nslow.mod\npkg.beta\n"
     environment = {"SHIM_BATCH": "timeout", "SHIM_SLOW_MODULE": "slow.mod"}
-    shim = tmp_path / "shim.py"
-    shim.write_text(_SHIM, encoding="utf-8", newline="\n")
-    old_stage = _stage(tmp_path / "old", modules)
-    new_stage = _stage(tmp_path / "new", modules)
+    old_stage, new_stage = _stage_pair(tmp_path, modules)
 
     _run(_OLD_LOOPS[family], old_stage.parent, shim, environment)
     _run(_new_block(family), new_stage.parent, shim, environment)
@@ -316,35 +340,12 @@ def test_one_failing_single_query_loses_only_its_own_section(tmp_path: Path, fam
     assert [staged.count(f'"module": "{module}"') for module in ("pkg.alpha", "slow.mod", "pkg.beta")] == [2, 0, 2]
 
 
-@_skip_shell_unavailable
-@pytest.mark.integration
-@pytest.mark.parametrize("family", ["qa", "docs"])
-def test_short_batch_reruns_only_the_unanswered_query(tmp_path: Path, family: str) -> None:
-    """A batch missing its last item reruns exactly that query and keeps the answered ones from the batch.
-
-    Positions the batch answered are never repeated as single calls, so a partial result costs one extra process rather
-    than a full rerun.
-    """
-    shim = tmp_path / "shim.py"
-    shim.write_text(_SHIM, encoding="utf-8", newline="\n")
-    old_stage = _stage(tmp_path / "old", "pkg.alpha\npkg.beta\n")
-    new_stage = _stage(tmp_path / "new", "pkg.alpha\npkg.beta\n")
-
-    _run(_OLD_LOOPS[family], old_stage.parent, shim)
-    _run(_new_block(family), new_stage.parent, shim, {"SHIM_BATCH": "drop-last"})
-
-    assert new_stage.read_bytes() == old_stage.read_bytes()
-    assert _calls(new_stage.parent) == [_BATCH_CALL, _calls(old_stage.parent)[-1]]
-
-
-def test_cli_fallback_reruns_every_query_when_the_batch_printed_nothing(tmp_path: Path) -> None:
+def test_cli_fallback_reruns_every_query_when_the_batch_printed_nothing(tmp_path: Path, shim: Path) -> None:
     """``render --fallback`` over an empty batch stages one single-query answer per request item.
 
     Runs the script directly with the stand-in on ``PATH``, so it covers the fallback on hosts without Bash: the batch
     stage is simulated by empty stdin, as the real alarm leaves it.
     """
-    shim = tmp_path / "shim.py"
-    shim.write_text(_SHIM, encoding="utf-8", newline="\n")
     modules = tmp_path / "mods"
     modules.write_text("pkg.a\n", encoding="utf-8", newline="\n")
 
@@ -376,7 +377,10 @@ def test_fallback_without_codemap_py_keeps_headers_only(tmp_path: Path, monkeypa
 
 
 def test_build_request_orders_items_module_major_with_flags_before_module() -> None:
-    """Each module's queries stay adjacent, with flags ahead of the module exactly as the old argv had them."""
+    """Each module's queries stay adjacent, with flags ahead of the module exactly as the old argv had them.
+
+    The docs family carries ``--broken`` on its first query, so a swapped order would show up as a different argv.
+    """
     request = codemap_batch.build_request("docs", ["a.b", "c.d"])
     assert request == [
         {"cmd": "xrefs", "args": ["--broken", "a.b"]},
@@ -387,7 +391,11 @@ def test_build_request_orders_items_module_major_with_flags_before_module() -> N
 
 
 def test_load_modules_skips_unsafe_names_and_keeps_order(tmp_path: Path) -> None:
-    """A name that could parse as a flag or escape a path is dropped before it reaches a batch item."""
+    """A name that could parse as a flag or escape a path is dropped before it reaches a batch item.
+
+    The module list is derived from changed file names in a pull request, so option-shaped, traversal and whitespace
+    names must never become a ``codemap-py`` argument; safe names keep their order.
+    """
     source = tmp_path / "mods"
     source.write_text("pkg.a\n--top\n../etc\nspace name\n\npkg.b\n", encoding="utf-8", newline="\n")
     assert codemap_batch.load_modules(source) == ["pkg.a", "pkg.b"]
@@ -403,35 +411,58 @@ def test_load_modules_skips_unsafe_names_and_keeps_order(tmp_path: Path) -> None
     ],
 )
 def test_render_on_unusable_batch_output_keeps_headers_only(batch_text: str) -> None:
-    """When every codemap call printed nothing the old loop left headers and blank lines; the render matches."""
+    """Unusable batch output renders headers and blank lines only, as the old loop did when every call printed nothing.
+
+    Covers empty output, a traceback, a JSON object without a ``batch`` key and a ``batch`` that is not a list.
+    """
     assert codemap_batch.render("qa", ["m1", "m2"], batch_text) == "### QA queries: m1\n\n### QA queries: m2\n\n"
 
 
 def test_render_short_batch_fills_by_position_and_leaves_the_tail_out() -> None:
-    """A batch shorter than the request still renders the modules it covers, in position order."""
+    """A batch shorter than the request still renders the modules it covers, in position order.
+
+    Three answers for two modules (two queries each) fill the first module fully and the second module's first slot; the
+    missing tail is left out rather than guessed.
+    """
     batch_text = '{"batch": [{"result": {"n": 1}}, {"result": {"n": 2}}, {"result": {"n": 3}}]}'
     assert codemap_batch.render("qa", ["m1", "m2"], batch_text) == (
         '### QA queries: m1\n{"n": 1}\n{"n": 2}\n\n### QA queries: m2\n{"n": 3}\n\n'
     )
 
 
-def test_cli_round_trip_writes_lf_bytes(tmp_path: Path) -> None:
-    """The script emits LF-only bytes on every OS, because the staged file is byte-compared downstream."""
+@pytest.mark.parametrize(
+    ("command", "stdin", "expected"),
+    [
+        pytest.param(
+            "build",
+            b"",
+            b'[{"cmd": "mock-rdeps", "args": ["pkg.a"]}, {"cmd": "uncovered", "args": ["--top", "20", "pkg.a"]}]',
+            id="build-request",
+        ),
+        pytest.param(
+            "render",
+            b'{"batch": [{"result": {"ok": true}}]}',
+            b'### QA queries: pkg.a\n{"ok": true}\n\n',
+            id="render-batch",
+        ),
+    ],
+)
+def test_cli_writes_lf_bytes(tmp_path: Path, command: str, stdin: bytes, expected: bytes) -> None:
+    """The script emits LF-only bytes on every OS, because the staged file is byte-compared downstream.
+
+    Runs ``build`` and ``render`` through the real command line for one module; the byte-for-byte output must not pick
+    up CRLF or a different JSON separator on Windows.
+    """
     source = tmp_path / "mods"
     source.write_text("pkg.a\n", encoding="utf-8", newline="\n")
     script = _PLUGIN / "bin/codemap_batch.py"
-    built = subprocess.run(
-        [sys.executable, str(script), "build", "qa", str(source)], capture_output=True, check=True, timeout=30
-    )
-    rendered = subprocess.run(
-        [sys.executable, str(script), "render", "qa", str(source)],
-        input=b'{"batch": [{"result": {"ok": true}}]}',
+
+    completed = subprocess.run(
+        [sys.executable, str(script), command, "qa", str(source)],
+        input=stdin,
         capture_output=True,
         check=True,
         timeout=30,
     )
-    assert (
-        built.stdout
-        == b'[{"cmd": "mock-rdeps", "args": ["pkg.a"]}, {"cmd": "uncovered", "args": ["--top", "20", "pkg.a"]}]'
-    )
-    assert rendered.stdout == b'### QA queries: pkg.a\n{"ok": true}\n\n'
+
+    assert completed.stdout == expected

@@ -10,46 +10,40 @@ Two behaviours are exercised:
   ``rdeps`` re-scans the changed file and surfaces the new edge, bounded so a
   large change set falls back to the stale-honest result.
 
-The heal tests need a real git repo because the staleness diff is git-blob based.
+The heal tests need a real git repo because the staleness diff is git-blob based. Every test drives the real
+``scan-index`` and ``scan-query`` scripts, since the CLI answer is the contract.
 """
 
 from __future__ import annotations
 
 import json
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
+from _scan_helpers import index_path_for, init_repo, run_git, run_query, run_scan
+
+_LEAF_SOURCE = "def leaf_fn(x):\n    return x\n"
+_CONSUMER_SOURCE = "import leaf\n\ndef use(x):\n    return leaf.leaf_fn(x)\n"
+_NEW_CALLER_SOURCE = "import leaf\n\ndef also(x):\n    return leaf.leaf_fn(x)\n"
 
 
-def _scan(scan_index: Path, root: Path, *extra: str) -> None:
-    """Run scan-index over *root*, asserting success."""
-    result = subprocess.run(
-        [sys.executable, str(scan_index), "--root", str(root), *extra],
-        capture_output=True,
-        text=True,
-        cwd=str(root),
-    )
-    assert result.returncode == 0, result.stderr
+def _commit_all(root: Path, message: str, *add_options: str) -> None:
+    """Stage everything in *root* (with any extra ``git add`` options) and commit it."""
+    run_git(root, "add", "-A", *add_options)
+    run_git(root, "commit", "-q", "-m", message)
 
 
-def _query(scan_query: Path, root: Path, index_path: Path, *args: str) -> dict:
-    """Run scan-query against *index_path* and return the parsed JSON."""
-    result = subprocess.run(
-        [sys.executable, str(scan_query), "--index", str(index_path), *args],
-        capture_output=True,
-        text=True,
-        cwd=str(root),
-    )
-    assert result.returncode == 0, result.stderr + result.stdout
-    return json.loads(result.stdout)
+def _write_importers(root: Path, count: int) -> None:
+    """Write *count* modules ``mod0..`` that each import and call ``leaf.leaf_fn``."""
+    for i in range(count):
+        (root / f"mod{i}.py").write_text(f"import leaf\n\ndef f{i}(x):\n    return leaf.leaf_fn(x)\n")
 
 
-def _git(root: Path, *args: str) -> None:
-    """Run a git command inside *root*, asserting success."""
-    result = subprocess.run(["git", *args], cwd=str(root), capture_output=True, text=True)
-    assert result.returncode == 0, result.stderr
+def _inject_collision(index_path: Path, name: str) -> None:
+    """Write a `collisions` entry (as scan-index would on collision) into an existing index file."""
+    data = json.loads(index_path.read_text())
+    data["collisions"] = [{"name": name, "kept": f"{name}.a", "dropped": f"{name}.b"}]
+    index_path.write_text(json.dumps(data))
 
 
 @pytest.fixture(name="degraded_project", scope="module")
@@ -60,53 +54,15 @@ def _degraded_project(tmp_path_factory: pytest.TempPathFactory, scan_index: Path
     index (non-Git, so no self-heal rewrite), so one scan is shared across them.
     """
     root = tmp_path_factory.mktemp("degraded")
-    (root / "leaf.py").write_text("def leaf_fn(x):\n    return x\n")
-    (root / "consumer.py").write_text("import leaf\n\ndef use(x):\n    return leaf.leaf_fn(x)\n")
+    (root / "leaf.py").write_text(_LEAF_SOURCE)
+    (root / "consumer.py").write_text(_CONSUMER_SOURCE)
     (root / "broken.py").write_text("def oops(:\n    return\n")  # SyntaxError → degraded
     with pytest.MonkeyPatch.context() as patch:
         patch.setenv("CODEMAP_LOGGING", "false")  # the autouse gate is function-scoped, so it is off during setup
-        _scan(scan_index, root)
-    index_path = root / ".cache" / "codemap" / f"{root.name}.json"
+        run_scan(scan_index, root)
+    index_path = index_path_for(root)
     assert index_path.exists()
     return root, index_path
-
-
-class TestDirectionScopedCompleteness:
-    """query_complete is decided per command direction, gated by the degraded set."""
-
-    def test_degraded_module_is_indexed(self, degraded_project, scan_query):
-        """Sanity: the broken file registers as a degraded module in coverage."""
-        root, index_path = degraded_project
-        data = _query(scan_query, root, index_path, "deps", "consumer")
-        assert data["index"]["degraded"] == 1
-        assert any("broken.py" in entry["path"] for entry in data["index"]["degraded_files"])
-
-    def test_local_deps_on_healthy_module_complete(self, degraded_project, scan_query):
-        """Local `deps` on a cleanly-parsed module is complete despite a degraded file elsewhere."""
-        root, index_path = degraded_project
-        data = _query(scan_query, root, index_path, "deps", "consumer")
-        assert data["index"]["query_complete"] is True
-        assert data["index"]["exhaustive"] is True  # legacy alias tracks query_complete
-
-    def test_local_symbols_on_healthy_module_complete(self, degraded_project, scan_query):
-        """Local `symbols` on a healthy module is complete despite a degraded file elsewhere."""
-        root, index_path = degraded_project
-        data = _query(scan_query, root, index_path, "symbols", "leaf")
-        assert data["index"]["query_complete"] is True
-
-    def test_global_in_rdeps_incomplete_with_degraded(self, degraded_project, scan_query):
-        """Global-in `rdeps` is never complete while a degraded file could hide an inbound edge."""
-        root, index_path = degraded_project
-        data = _query(scan_query, root, index_path, "rdeps", "leaf")
-        assert data["index"]["query_complete"] is False
-        assert data["index"]["exhaustive"] is False
-        assert any("broken.py" in entry["path"] for entry in data["index"]["degraded_files"])
-
-    def test_whole_graph_central_incomplete_with_degraded(self, degraded_project, scan_query):
-        """Whole-graph `central` is never complete while any file is degraded."""
-        root, index_path = degraded_project
-        data = _query(scan_query, root, index_path, "central", "--top", "5")
-        assert data["index"]["query_complete"] is False
 
 
 @pytest.fixture(name="clean_project")
@@ -114,28 +70,10 @@ def _clean_project(tmp_path: Path, scan_index: Path) -> tuple[Path, Path]:
     """Create a healthy non-Git project for complete directional queries."""
     root = tmp_path / "clean"
     root.mkdir()
-    (root / "leaf.py").write_text("def leaf_fn(x):\n    return x\n")
-    (root / "consumer.py").write_text("import leaf\n\ndef use(x):\n    return leaf.leaf_fn(x)\n")
-    _scan(scan_index, root)
-    index_path = root / ".cache" / "codemap" / f"{root.name}.json"
-    return root, index_path
-
-
-class TestCleanGraphCompleteness:
-    """With zero degraded files, global-in and whole-graph queries reach completeness."""
-
-    def test_rdeps_complete_when_no_degraded(self, clean_project, scan_query):
-        """Global-in `rdeps` is complete on a clean, fresh (non-git → not-stale) index."""
-        root, index_path = clean_project
-        data = _query(scan_query, root, index_path, "rdeps", "leaf")
-        assert data["index"]["degraded"] == 0
-        assert data["index"]["query_complete"] is True
-
-    def test_central_complete_when_no_degraded(self, clean_project, scan_query):
-        """Whole-graph `central` is complete on a clean index."""
-        root, index_path = clean_project
-        data = _query(scan_query, root, index_path, "central", "--top", "5")
-        assert data["index"]["query_complete"] is True
+    (root / "leaf.py").write_text(_LEAF_SOURCE)
+    (root / "consumer.py").write_text(_CONSUMER_SOURCE)
+    run_scan(scan_index, root)
+    return root, index_path_for(root)
 
 
 @pytest.fixture(name="git_project")
@@ -143,90 +81,137 @@ def _git_project(tmp_path: Path, scan_index: Path) -> tuple[Path, Path]:
     """Create a committed project for staleness detection and repair."""
     root = tmp_path / "gitrepo"
     root.mkdir()
-    _git(root, "init", "-q")
-    _git(root, "config", "user.email", "t@t.t")
-    _git(root, "config", "user.name", "t")
-    (root / "leaf.py").write_text("def leaf_fn(x):\n    return x\n")
-    (root / "consumer.py").write_text("import leaf\n\ndef use(x):\n    return leaf.leaf_fn(x)\n")
-    _git(root, "add", "-A")
-    _git(root, "commit", "-q", "-m", "init")
-    _scan(scan_index, root)
-    index_path = root / ".cache" / "codemap" / f"{root.name}.json"
+    init_repo(root)
+    (root / "leaf.py").write_text(_LEAF_SOURCE)
+    (root / "consumer.py").write_text(_CONSUMER_SOURCE)
+    _commit_all(root, "init")
+    run_scan(scan_index, root)
+    return root, index_path_for(root)
+
+
+@pytest.fixture(name="stale_project")
+def _stale_project(git_project: tuple[Path, Path]) -> tuple[Path, Path]:
+    """Return ``git_project`` after committing a new importer of ``leaf``, so the stored index is stale."""
+    root, index_path = git_project
+    (root / "newcaller.py").write_text(_NEW_CALLER_SOURCE)
+    _commit_all(root, "add newcaller")
     return root, index_path
+
+
+class TestDirectionScopedCompleteness:
+    """query_complete is decided per command direction, gated by the degraded set."""
+
+    def test_degraded_module_is_indexed(self, degraded_project, scan_query):
+        """Sanity: the broken file registers as a degraded module in coverage.
+
+        Precondition for the completeness cases below: without a degraded file there would be nothing to veto.
+        """
+        root, index_path = degraded_project
+
+        data = run_query(scan_query, root, index_path, "deps", "consumer")
+
+        assert data["index"]["degraded"] == 1
+        assert any("broken.py" in entry["path"] for entry in data["index"]["degraded_files"])
+
+    def test_local_deps_on_healthy_module_complete(self, degraded_project, scan_query):
+        """Local `deps` on a cleanly-parsed module is complete despite a degraded file elsewhere."""
+        root, index_path = degraded_project
+
+        data = run_query(scan_query, root, index_path, "deps", "consumer")
+
+        assert data["index"]["query_complete"] is True
+        assert data["index"]["exhaustive"] is True  # legacy alias tracks query_complete
+
+    def test_local_symbols_on_healthy_module_complete(self, degraded_project, scan_query):
+        """Local `symbols` on a healthy module is complete despite a degraded file elsewhere."""
+        root, index_path = degraded_project
+
+        data = run_query(scan_query, root, index_path, "symbols", "leaf")
+
+        assert data["index"]["query_complete"] is True
+
+    def test_global_in_rdeps_incomplete_with_degraded(self, degraded_project, scan_query):
+        """Global-in `rdeps` is never complete while a degraded file could hide an inbound edge."""
+        root, index_path = degraded_project
+
+        data = run_query(scan_query, root, index_path, "rdeps", "leaf")
+
+        assert data["index"]["query_complete"] is False
+        assert data["index"]["exhaustive"] is False
+        assert any("broken.py" in entry["path"] for entry in data["index"]["degraded_files"])
+
+    def test_whole_graph_central_incomplete_with_degraded(self, degraded_project, scan_query):
+        """Whole-graph `central` is never complete while any file is degraded."""
+        root, index_path = degraded_project
+
+        data = run_query(scan_query, root, index_path, "central", "--top", "5")
+
+        assert data["index"]["query_complete"] is False
+
+
+class TestCleanGraphCompleteness:
+    """With zero degraded files, global-in and whole-graph queries reach completeness."""
+
+    @pytest.mark.parametrize(
+        "args",
+        [
+            pytest.param(("rdeps", "leaf"), id="global-in-rdeps"),
+            pytest.param(("central", "--top", "5"), id="whole-graph-central"),
+        ],
+    )
+    def test_complete_when_no_degraded(self, clean_project, scan_query, args):
+        """Global-in `rdeps` and whole-graph `central` are complete on a clean, fresh (non-git → not-stale) index."""
+        root, index_path = clean_project
+
+        data = run_query(scan_query, root, index_path, *args)
+
+        assert data["index"]["degraded"] == 0
+        assert data["index"]["query_complete"] is True
 
 
 class TestSelfHeal:
     """A stale index is refreshed inline (bounded) before the query answers."""
 
-    def test_heal_surfaces_new_edge(self, git_project, scan_query):
-        """Committing a new importer then querying rdeps auto-heals and reflects the new edge."""
-        root, index_path = git_project
-        # New module importing leaf, committed AFTER the index was built → index is stale.
-        (root / "newcaller.py").write_text("import leaf\n\ndef also(x):\n    return leaf.leaf_fn(x)\n")
-        _git(root, "add", "-A")
-        _git(root, "commit", "-q", "-m", "add newcaller")
+    def test_heal_surfaces_new_edge(self, stale_project, scan_query):
+        """Committing a new importer then querying rdeps auto-heals and reflects the new edge.
 
-        data = _query(scan_query, root, index_path, "rdeps", "leaf")
+        The importer was committed AFTER the index was built, so the index is stale; the query must re-scan the changed
+        file before answering.
+        """
+        root, index_path = stale_project
+
+        data = run_query(scan_query, root, index_path, "rdeps", "leaf")
+
         assert "newcaller" in data["imported_by"], "self-heal must surface the newly-committed edge"
         assert data["index"]["stale"] is False, "post-heal index must report fresh"
         assert data["index"]["query_complete"] is True
 
-    def test_no_heal_flag_keeps_stale_result(self, git_project, scan_query):
-        """Verify command-line option behavior.
+    def test_no_heal_flag_keeps_stale_result(self, stale_project, scan_query):
+        """``--no-heal`` answers from the stale index: new edge invisible, stale flagged honestly."""
+        root, index_path = stale_project
 
-        --no-heal answers from the stale index: new edge invisible, stale flagged honestly.
-        """
-        root, index_path = git_project
-        (root / "newcaller.py").write_text("import leaf\n\ndef also(x):\n    return leaf.leaf_fn(x)\n")
-        _git(root, "add", "-A")
-        _git(root, "commit", "-q", "-m", "add newcaller")
+        data = run_query(scan_query, root, index_path, "--no-heal", "rdeps", "leaf")
 
-        data = _query(scan_query, root, index_path, "--no-heal", "rdeps", "leaf")
         assert "newcaller" not in data["imported_by"], "stale index must not see the new edge"
         assert data["index"]["stale"] is True
         assert data["index"]["query_complete"] is False
 
 
-def test_fresh_index_with_stub_and_docs_is_not_falsely_stale(
-    tmp_path: Path, scan_index: Path, scan_query: Path
-) -> None:
-    """Query staleness must compare every source kind hashed by the scanner."""
-    root = tmp_path / "documented"
-    root.mkdir()
-    _git(root, "init", "-q")
-    _git(root, "config", "user.email", "t@t.t")
-    _git(root, "config", "user.name", "t")
-    (root / "module.py").write_text("def public():\n    return 1\n")
-    (root / "module.pyi").write_text("def public() -> int: ...\n")
-    (root / "guide.rst").write_text("Guide\n=====\n")
-    docs = root / "docs"
-    docs.mkdir()
-    (docs / "reference.md").write_text("# Reference\n")
-    _git(root, "add", "-A")
-    _git(root, "commit", "-q", "-m", "documented")
-    _scan(scan_index, root)
-    index_path = root / ".cache" / "codemap" / f"{root.name}.json"
-
-    data = _query(scan_query, root, index_path, "--no-heal", "central", "--top", "5")
-
-    assert data["index"]["stale"] is False
-    assert data["index"]["query_complete"] is True
-
-
 class TestHealBound:
     """The heal is bounded: a large change set falls back to the stale-honest result."""
 
-    def test_large_change_set_skips_heal(self, git_project, scan_query, monkeypatch):
-        """More changed files than the heal cap → answer from the stale index, flagged stale."""
-        root, index_path = git_project
-        # Add more changed files than the cap so the heal is skipped. The cap lives in
-        # scan-query as _HEAL_MAX_CHANGED_FILES (50); overshoot it deterministically.
-        for i in range(60):
-            (root / f"mod{i}.py").write_text(f"import leaf\n\ndef f{i}(x):\n    return leaf.leaf_fn(x)\n")
-        _git(root, "add", "-A")
-        _git(root, "commit", "-q", "-m", "many")
+    def test_large_change_set_skips_heal(self, git_project, scan_query):
+        """More changed files than the heal cap → answer from the stale index, flagged stale.
 
-        data = _query(scan_query, root, index_path, "rdeps", "leaf")
+        The cap lives in scan-query as ``_HEAL_MAX_CHANGED_FILES`` (50); 60 new importers overshoot it
+        deterministically, so the heal is skipped and the new edges stay invisible.
+        """
+        root, index_path = git_project
+        _write_importers(root, 60)
+        _commit_all(root, "many")
+
+        data = run_query(scan_query, root, index_path, "rdeps", "leaf")
+
         assert data["index"]["stale"] is True, "over-cap change set must leave the index stale"
         assert "mod0" not in data["imported_by"], "skipped heal must not surface new edges"
 
@@ -238,7 +223,9 @@ class TestUntrackedFileVeto:
         """Sanity: an uncommitted new .py file is reported in the coverage `untracked_py` list."""
         root, index_path = git_project
         (root / "orphan.py").write_text("x = 1\n")  # present but never `git add`-ed
-        data = _query(scan_query, root, index_path, "--no-heal", "deps", "consumer")
+
+        data = run_query(scan_query, root, index_path, "--no-heal", "deps", "consumer")
+
         assert any("orphan.py" in p for p in data["index"]["untracked_py"])
 
     def test_untracked_does_not_veto_local(self, git_project, scan_query):
@@ -248,7 +235,9 @@ class TestUntrackedFileVeto:
         """
         root, index_path = git_project
         (root / "orphan.py").write_text("x = 1\n")
-        data = _query(scan_query, root, index_path, "deps", "consumer")
+
+        data = run_query(scan_query, root, index_path, "deps", "consumer")
+
         assert data["index"]["query_complete"] is True
 
     def test_incomplete_note_matches_flag(self, git_project, scan_query):
@@ -258,7 +247,9 @@ class TestUntrackedFileVeto:
         """
         root, index_path = git_project
         (root / "orphan.py").write_text("x = 1\n")
-        data = _query(scan_query, root, index_path, "--no-heal", "rdeps", "leaf")
+
+        data = run_query(scan_query, root, index_path, "--no-heal", "rdeps", "leaf")
+
         assert data["index"]["query_complete"] is False
         assert "This result is complete" not in data["index"]["note"]
         assert "incomplete" in data["index"]["note"]
@@ -267,17 +258,13 @@ class TestUntrackedFileVeto:
 class TestCollisionVeto:
     """A qualname collision vetoes whole-graph always, but local only for the colliding module."""
 
-    def _inject_collision(self, index_path: Path, name: str) -> None:
-        """Write a `collisions` entry (as scan-index would on collision) into an existing index file."""
-        data = json.loads(index_path.read_text())
-        data["collisions"] = [{"name": name, "kept": f"{name}.a", "dropped": f"{name}.b"}]
-        index_path.write_text(json.dumps(data))
-
     def test_collision_count_surfaced(self, clean_project, scan_query):
         """collision_count reflects an injected collisions list (missing key would be 0)."""
         root, index_path = clean_project
-        self._inject_collision(index_path, "somewhere")
-        data = _query(scan_query, root, index_path, "deps", "consumer")
+        _inject_collision(index_path, "somewhere")
+
+        data = run_query(scan_query, root, index_path, "deps", "consumer")
+
         assert data["index"]["collision_count"] == 1
 
     @pytest.mark.parametrize(
@@ -297,8 +284,10 @@ class TestCollisionVeto:
         module outside the collision and is marked incomplete for the colliding module name itself.
         """
         root, index_path = clean_project
-        self._inject_collision(index_path, collided_name)
-        data = _query(scan_query, root, index_path, *query_args)
+        _inject_collision(index_path, collided_name)
+
+        data = run_query(scan_query, root, index_path, *query_args)
+
         assert data["index"]["query_complete"] is expected_complete
 
 
@@ -310,21 +299,17 @@ def _build_excluded_git_project(root: Path, scan_index: Path) -> tuple[Path, Pat
     exclusions).
     """
     root.mkdir()
-    _git(root, "init", "-q")
-    _git(root, "config", "user.email", "t@t.t")
-    _git(root, "config", "user.name", "t")
-    (root / "leaf.py").write_text("def leaf_fn(x):\n    return x\n")
-    (root / "consumer.py").write_text("import leaf\n\ndef use(x):\n    return leaf.leaf_fn(x)\n")
+    init_repo(root)
+    (root / "leaf.py").write_text(_LEAF_SOURCE)
+    (root / "consumer.py").write_text(_CONSUMER_SOURCE)
     (root / "vendored").mkdir()
     (root / "vendored" / "vendored.py").write_text("def v():\n    return 0\n")
     (root / ".codemapignore").write_text("vendored\n")
     (root / ".claude").mkdir()
     (root / ".claude" / "ghost.py").write_text("def ghost():\n    return 1\n")
-    _git(root, "add", "-A", "-f")  # -f so .claude/ghost.py is tracked despite common ignores
-    _git(root, "commit", "-q", "-m", "init")
-    _scan(scan_index, root)
-    index_path = root / ".cache" / "codemap" / f"{root.name}.json"
-    return root, index_path
+    _commit_all(root, "init", "-f")  # -f so .claude/ghost.py is tracked despite common ignores
+    run_scan(scan_index, root)
+    return root, index_path_for(root)
 
 
 @pytest.fixture(name="excluded_git_project")
@@ -348,22 +333,25 @@ def _pristine_excluded_git_project(tmp_path_factory: pytest.TempPathFactory, sca
 class TestExclusionAwareStaleness:
     """Apply scanner exclusions consistently during query staleness checks."""
 
-    def test_fresh_excluded_repo_not_stale(self, pristine_excluded_git_project, scan_query):
-        """A .codemapignore-excluded tracked .py must not force a false stale on a fresh index."""
-        root, index_path = pristine_excluded_git_project
-        data = _query(scan_query, root, index_path, "--no-heal", "deps", "consumer")
-        assert data["index"]["stale"] is False
+    def test_fresh_excluded_repo_local_query_not_stale_and_complete(self, pristine_excluded_git_project, scan_query):
+        """A fresh index over excluded/SKIP_DIR files is neither stale nor incomplete for a local `deps` query.
 
-    def test_excluded_repo_local_complete(self, pristine_excluded_git_project, scan_query):
-        """With no real change, local `deps` reaches completeness despite excluded/SKIP_DIR files."""
+        A .codemapignore-excluded tracked .py must not force a false stale, and with no real change the local query
+        reaches completeness despite the excluded files.
+        """
         root, index_path = pristine_excluded_git_project
-        data = _query(scan_query, root, index_path, "--no-heal", "deps", "consumer")
+
+        data = run_query(scan_query, root, index_path, "--no-heal", "deps", "consumer")
+
+        assert data["index"]["stale"] is False
         assert data["index"]["query_complete"] is True
 
     def test_excluded_repo_rdeps_complete(self, pristine_excluded_git_project, scan_query):
         """Global-in `rdeps` reaches completeness — excluded files are not phantom edges."""
         root, index_path = pristine_excluded_git_project
-        data = _query(scan_query, root, index_path, "--no-heal", "rdeps", "leaf")
+
+        data = run_query(scan_query, root, index_path, "--no-heal", "rdeps", "leaf")
+
         assert data["index"]["stale"] is False
         assert data["index"]["query_complete"] is True
 
@@ -383,47 +371,75 @@ class TestExclusionAwareStaleness:
         """
         root, index_path = excluded_git_project
         (root / excluded_dir / f"{orphan_name}.py").write_text(orphan_source)  # untracked, inside an excluded dir
-        data = _query(scan_query, root, index_path, "--no-heal", "rdeps", "leaf")
+
+        data = run_query(scan_query, root, index_path, "--no-heal", "rdeps", "leaf")
+
         assert not any(orphan_name in p for p in data["index"]["untracked_py"])
+        assert data["index"]["query_complete"] is True
+
+    def test_fresh_index_with_stub_and_docs_is_not_falsely_stale(self, tmp_path, scan_index, scan_query):
+        """Query staleness must compare every source kind hashed by the scanner.
+
+        A fresh index over a repo holding a ``.py``, its ``.pyi`` stub, an ``.rst`` guide and a Markdown doc must report
+        fresh and complete; a staleness check that ignored the stub or doc kinds would call it stale.
+        """
+        root = tmp_path / "documented"
+        root.mkdir()
+        init_repo(root)
+        (root / "module.py").write_text("def public():\n    return 1\n")
+        (root / "module.pyi").write_text("def public() -> int: ...\n")
+        (root / "guide.rst").write_text("Guide\n=====\n")
+        (root / "docs").mkdir()
+        (root / "docs" / "reference.md").write_text("# Reference\n")
+        _commit_all(root, "documented")
+        run_scan(scan_index, root)
+
+        data = run_query(scan_query, root, index_path_for(root), "--no-heal", "central", "--top", "5")
+
+        assert data["index"]["stale"] is False
         assert data["index"]["query_complete"] is True
 
 
 class TestUntrackedCompleteness:
     """Untracked files veto wide queries only while the index does not cover them."""
 
+    @pytest.fixture
+    def rescanned_scratch_project(self, git_project, scan_index):
+        """Return ``git_project`` with an untracked ``scratch.py`` importing ``leaf`` that a re-scan has indexed."""
+        root, index_path = git_project
+        scratch = root / "scratch.py"
+        scratch.write_text("import leaf\n")
+        run_scan(scan_index, root)
+        return root, index_path, scratch
+
     def test_new_untracked_file_vetoes_wide_query(self, git_project, scan_query):
         """A frozen query reports a newly discovered untracked importer as stale and incomplete."""
         root, index_path = git_project
         (root / "scratch.py").write_text("import leaf\n")
-        data = _query(scan_query, root, index_path, "--no-heal", "rdeps", "leaf")
+
+        data = run_query(scan_query, root, index_path, "--no-heal", "rdeps", "leaf")
+
         assert data["index"]["query_complete"] is False
         assert data["index"]["completeness_reason"] == "stale"
         assert "scratch.py" in data["index"]["untracked_py"]
 
-    def test_indexed_untracked_does_not_veto(self, git_project, scan_query):
+    def test_indexed_untracked_does_not_veto(self, rescanned_scratch_project, scan_query):
         """Once a re-scan indexes the still-untracked file, its edges are covered → no veto."""
-        root, index_path = git_project
-        scratch = root / "scratch.py"
-        scratch.write_text("import leaf\n")
-        _scan(_self_scan_index(scan_query), root)
-        data = _query(scan_query, root, index_path, "--no-heal", "rdeps", "leaf")
+        root, index_path, _scratch = rescanned_scratch_project
+
+        data = run_query(scan_query, root, index_path, "--no-heal", "rdeps", "leaf")
+
         assert data["index"]["untracked_py"] == []
         assert data["index"]["query_complete"] is True
         assert data["index"]["completeness_reason"] == "ok"
 
-    def test_indexed_untracked_edit_marks_stale(self, git_project, scan_query):
+    def test_indexed_untracked_edit_marks_stale(self, rescanned_scratch_project, scan_query):
         """Editing indexed untracked source marks a frozen query stale even within the same timestamp second."""
-        root, index_path = git_project
-        scratch = root / "scratch.py"
-        scratch.write_text("import leaf\n")
-        _scan(_self_scan_index(scan_query), root)
+        root, index_path, scratch = rescanned_scratch_project
         scratch.write_text("import consumer\n")
-        data = _query(scan_query, root, index_path, "--no-heal", "rdeps", "leaf")
+
+        data = run_query(scan_query, root, index_path, "--no-heal", "rdeps", "leaf")
+
         assert data["index"]["stale"] is True
         assert data["index"]["query_complete"] is False
         assert data["index"]["completeness_reason"] == "stale"
-
-
-def _self_scan_index(scan_query: Path) -> Path:
-    """Resolve the sibling scan-index binary from the scan-query path."""
-    return scan_query.parent / "scan-index"

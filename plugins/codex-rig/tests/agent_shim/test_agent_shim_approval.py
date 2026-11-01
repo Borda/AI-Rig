@@ -1,17 +1,20 @@
-"""Acceptance checks for complete no-write convergence approval binding."""
+"""Acceptance checks for complete no-write convergence approval binding.
+
+The approval kernel turns a candidate plan plus filesystem and runtime evidence into canonical approval bytes and a
+digest. These tests build matching and deliberately forged evidence and prove what the kernel binds or refuses.
+"""
 
 from __future__ import annotations
 
-import ast
 import hashlib
-import importlib.util
 import json
-import sys
 from dataclasses import replace
 from pathlib import Path
 from types import ModuleType
+from typing import NamedTuple
 
 import pytest
+from _modules import load_module_registered
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = PLUGIN_ROOT / "scripts"
@@ -24,28 +27,17 @@ APPROVAL_PATH = SCRIPTS / "_agent_shim_approval.py"
 INSTALL_ID = "123e4567-e89b-42d3-a456-426614174000"
 NONCE = "123e4567-e89b-42d3-a456-426614174001"
 DIGEST = "a" * 64
+LOCK_PATH = "/codex/.codex-rig-shims.lock"
 
 
-def _load_script(path: Path, name: str) -> ModuleType:
-    """Load one installed script with exact sibling module names."""
-    specification = importlib.util.spec_from_file_location(name, path)
-    assert specification is not None
-    assert specification.loader is not None
-    module = importlib.util.module_from_spec(specification)
-    sys.modules[name] = module
-    specification.loader.exec_module(module)
-    return module
+class Modules(NamedTuple):
+    """Hold the freshly loaded script modules one test works against."""
 
-
-def _modules() -> tuple[ModuleType, ModuleType, ModuleType, ModuleType]:
-    """Load the approval kernel and its direct value authorities."""
-    _load_script(GENERATOR_PATH, "generate_roles")
-    lifecycle = _load_script(LIFECYCLE_PATH, "_agent_shim_lifecycle")
-    _load_script(JOURNAL_PATH, "_agent_shim_journal")
-    observer = _load_script(OBSERVER_PATH, "_agent_shim_observe")
-    planner = _load_script(PLAN_PATH, "_agent_shim_plan")
-    approval = _load_script(APPROVAL_PATH, "codex_rig_agent_shim_approval")
-    return lifecycle, observer, planner, approval
+    generator: ModuleType
+    lifecycle: ModuleType
+    observer: ModuleType
+    planner: ModuleType
+    approval: ModuleType
 
 
 def _generated_roster(generator: ModuleType) -> object:
@@ -71,6 +63,11 @@ def _root(observer: ModuleType, path: str, inode: int) -> object:
     return observer.RootIdentity(path, 1, inode, 501, 20, "0700")
 
 
+def _existing_root(observer: ModuleType, identity: object) -> object:
+    """Build the observation of a root that exists exactly as ``identity`` describes."""
+    return observer.RootObservation(True, identity.canonical_path, identity, (), identity)
+
+
 def _root_observation(observer: ModuleType, path: str, inode: int, *, exists: bool) -> object:
     """Build one exact existing or single-component absent root observation."""
     home_path = path.rsplit("/", maxsplit=1)[0]
@@ -80,70 +77,37 @@ def _root_observation(observer: ModuleType, path: str, inode: int, *, exists: bo
     return observer.RootObservation(exists, path, ancestor, suffix, identity)
 
 
-def _candidate_and_observation(
-    loaded: tuple[ModuleType, ModuleType, ModuleType, ModuleType],
-    *,
-    action: str = "install",
-    roots_exist: bool = False,
-) -> tuple[object, object, object]:
-    """Build matching candidate operations and immutable filesystem evidence."""
-    lifecycle, observer, planner, _ = loaded
-    generator = sys.modules["generate_roles"]
-    roster = _generated_roster(generator)
-    targets = {role.target_name: lifecycle.TargetObservation("absent") for role in roster.roles}
-    candidate = planner.build_candidate(
-        action=action,
-        mode="converge",
-        roster=roster,
-        state_payload=None,
-        targets=targets,
-        install_id=INSTALL_ID,
-        transaction_nonce=NONCE,
-    )
-    home_identity = _root(observer, "/codex", 1)
-    home = observer.RootObservation(True, "/codex", home_identity, (), home_identity)
-    target = _root_observation(observer, "/codex/agents", 2, exists=roots_exist)
-    state = _root_observation(observer, "/codex/codex-rig/shims", 3, exists=roots_exist)
-    plugin = _root(observer, "/plugin", 4)
-    lock = observer.LockObservation("absent", "/codex/.codex-rig-shims.lock", None, None, None, None, None, None, None)
-    observation = observer.FilesystemObservation(
+def _absent_lock(observer: ModuleType, path: str = LOCK_PATH) -> object:
+    """Build the observation of a coordination lock that does not exist."""
+    return observer.LockObservation("absent", path, None, None, None, None, None, None, None)
+
+
+def _filesystem_observation(
+    observer: ModuleType, *, state: str, roots: tuple, state_payload: bytes | None, targets: dict
+):
+    """Build one degraded complete-scan observation; ``roots`` is home, plugin, target-root and state-root."""
+    home, plugin, target_root, state_root = roots
+    return observer.FilesystemObservation(
         "degraded",
         "runtime and mutation prerequisites remain unverified",
-        "absent",
-        "absent",
+        state,
+        state,
         "none",
         home,
         plugin,
-        target,
-        state,
-        lock,
-        None,
+        target_root,
+        state_root,
+        _absent_lock(observer),
+        state_payload,
         tuple(targets.items()),
         (),
         "complete",
     )
-    return roster, candidate, observation
 
 
-def _runtime(approval: ModuleType, *, eligible: bool = True) -> object:
-    """Build one doctor-supplied executable binding fixture."""
-    return approval.RuntimeBinding("/usr/bin/python3", "d" * 64, "/usr/bin/codex", "e" * 64, eligible)
-
-
-def _removed_candidate_and_observation(
-    loaded: tuple[ModuleType, ModuleType, ModuleType, ModuleType],
-    *,
-    target_inode: int,
-) -> tuple[object, object, object]:
-    """Build a removed tombstone and one current empty target-root identity."""
-    lifecycle, observer, planner, _ = loaded
-    generator = sys.modules["generate_roles"]
-    roster = _generated_roster(generator)
-    home_identity = _root(observer, "/codex", 1)
-    plugin_identity = _root(observer, "/plugin", 4)
-    state_identity = _root(observer, "/codex/codex-rig/shims", 3)
-    persisted_target = _root(observer, "/codex/agents", 2)
-    roles = [
+def _role_entries(roster: object) -> list[dict[str, str]]:
+    """Return the persisted-state role entries that describe every role in a roster."""
+    return [
         {
             "role_id": role.role_id,
             "target_name": role.target_name,
@@ -153,6 +117,54 @@ def _removed_candidate_and_observation(
         }
         for role in roster.roles
     ]
+
+
+def _encode(value: object) -> bytes:
+    """Encode one canonical compact JSON fixture."""
+    return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+
+
+def _candidate_and_observation(
+    loaded: Modules, *, action: str = "install", roots_exist: bool = False
+) -> tuple[object, object, object]:
+    """Build matching candidate operations and immutable filesystem evidence."""
+    roster = _generated_roster(loaded.generator)
+    targets = {role.target_name: loaded.lifecycle.TargetObservation("absent") for role in roster.roles}
+    candidate = loaded.planner.build_candidate(
+        action=action,
+        mode="converge",
+        roster=roster,
+        state_payload=None,
+        targets=targets,
+        install_id=INSTALL_ID,
+        transaction_nonce=NONCE,
+    )
+    observer = loaded.observer
+    home_identity = _root(observer, "/codex", 1)
+    roots = (
+        _existing_root(observer, home_identity),
+        _root(observer, "/plugin", 4),
+        _root_observation(observer, "/codex/agents", 2, exists=roots_exist),
+        _root_observation(observer, "/codex/codex-rig/shims", 3, exists=roots_exist),
+    )
+    observation = _filesystem_observation(observer, state="absent", roots=roots, state_payload=None, targets=targets)
+    return roster, candidate, observation
+
+
+def _runtime(approval: ModuleType, *, eligible: bool = True) -> object:
+    """Build one doctor-supplied executable binding fixture."""
+    return approval.RuntimeBinding("/usr/bin/python3", "d" * 64, "/usr/bin/codex", "e" * 64, eligible)
+
+
+def _removed_candidate_and_observation(loaded: Modules, *, target_inode: int) -> tuple[object, object, object]:
+    """Build a removed tombstone and one current empty target-root identity."""
+    observer = loaded.observer
+    roster = _generated_roster(loaded.generator)
+    home_identity = _root(observer, "/codex", 1)
+    plugin_identity = _root(observer, "/plugin", 4)
+    state_identity = _root(observer, "/codex/codex-rig/shims", 3)
+    persisted_target = _root(observer, "/codex/agents", 2)
+    role_tuples = tuple((role.role_id, role.target_name, role.card_path, role.role_hash) for role in roster.roles)
     state = {
         "schema": 1,
         "plugin": "codex-rig",
@@ -164,21 +176,19 @@ def _removed_candidate_and_observation(
         "plugin_root_identity": vars(plugin_identity),
         "state_root_identity": vars(state_identity),
         "target_root_identity": vars(persisted_target),
-        "roster_hash": generator.roster_identity_hash(
-            tuple((role.role_id, role.target_name, role.card_path, role.role_hash) for role in roster.roles)
-        ),
+        "roster_hash": loaded.generator.roster_identity_hash(role_tuples),
         "bootstrap": {
             "protocol": 1,
             "helper_path": "scripts/verify_role_link.py",
             "helper_hash": roster.bootstrap_hash,
         },
         "generator_version": roster.generator_version,
-        "roles": roles,
+        "roles": _role_entries(roster),
         "transaction_status": "removed",
     }
-    state_payload = json.dumps(state, sort_keys=True, separators=(",", ":")).encode()
-    targets = {role.target_name: lifecycle.TargetObservation("absent") for role in roster.roles}
-    candidate = planner.build_candidate(
+    state_payload = _encode(state)
+    targets = {role.target_name: loaded.lifecycle.TargetObservation("absent") for role in roster.roles}
+    candidate = loaded.planner.build_candidate(
         action="install",
         mode="converge",
         roster=roster,
@@ -187,58 +197,27 @@ def _removed_candidate_and_observation(
         install_id=INSTALL_ID,
         transaction_nonce=NONCE,
     )
-    current_target = _root(observer, "/codex/agents", target_inode)
-    observation = observer.FilesystemObservation(
-        "degraded",
-        "runtime and mutation prerequisites remain unverified",
-        "removed",
-        "removed",
-        "none",
-        observer.RootObservation(True, "/codex", home_identity, (), home_identity),
+    roots = (
+        _existing_root(observer, home_identity),
         plugin_identity,
-        observer.RootObservation(True, "/codex/agents", current_target, (), current_target),
-        observer.RootObservation(True, "/codex/codex-rig/shims", state_identity, (), state_identity),
-        observer.LockObservation(
-            "absent",
-            "/codex/.codex-rig-shims.lock",
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        ),
-        state_payload,
-        tuple(targets.items()),
-        (),
-        "complete",
+        _existing_root(observer, _root(observer, "/codex/agents", target_inode)),
+        _existing_root(observer, state_identity),
+    )
+    observation = _filesystem_observation(
+        observer, state="removed", roots=roots, state_payload=state_payload, targets=targets
     )
     return roster, candidate, observation
 
 
-def _migration_candidate_and_observation(
-    loaded: tuple[ModuleType, ModuleType, ModuleType, ModuleType],
-) -> tuple[object, object, object, dict[str, object]]:
+def _migration_candidate_and_observation(loaded: Modules) -> tuple[object, object, object, dict[str, object]]:
     """Build a forward migration from a different cached plugin root."""
-    lifecycle, observer, planner, _ = loaded
-    generator = sys.modules["generate_roles"]
-    roster = _generated_roster(generator)
+    observer, lifecycle = loaded.observer, loaded.lifecycle
+    roster = _generated_roster(loaded.generator)
     home_identity = _root(observer, "/codex", 1)
     target_identity = _root(observer, "/codex/agents", 2)
     state_identity = _root(observer, "/codex/codex-rig/shims", 3)
     prior_plugin_identity = _root(observer, "/plugin-cache/prior", 4)
     active_plugin_identity = _root(observer, "/plugin-cache/active", 5)
-    roles = [
-        {
-            "role_id": role.role_id,
-            "target_name": role.target_name,
-            "card_path": role.card_path,
-            "role_hash": role.role_hash,
-            "file_hash": role.file_hash,
-        }
-        for role in roster.roles
-    ]
     retired = {
         "role_id": "retired-specialist",
         "target_name": "codex-rig-retired-specialist.toml",
@@ -246,8 +225,7 @@ def _migration_candidate_and_observation(
         "role_hash": "d" * 64,
         "file_hash": "e" * 64,
     }
-    roles.append(retired)
-    roles.sort(key=lambda role: role["role_id"])
+    roles = sorted([*_role_entries(roster), retired], key=lambda role: role["role_id"])
     prior_package_hash = "f" * 64
     state = {
         "schema": 1,
@@ -261,22 +239,16 @@ def _migration_candidate_and_observation(
         "state_root_identity": vars(state_identity),
         "target_root_identity": vars(target_identity),
         "roster_hash": hashlib.sha256(
-            json.dumps(
-                [{key: role[key] for key in ("role_id", "target_name", "card_path", "role_hash")} for role in roles],
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode()
+            _encode(
+                [{key: role[key] for key in ("role_id", "target_name", "card_path", "role_hash")} for role in roles]
+            )
         ).hexdigest(),
-        "bootstrap": {
-            "protocol": 1,
-            "helper_path": "scripts/verify_role_link.py",
-            "helper_hash": "9" * 64,
-        },
+        "bootstrap": {"protocol": 1, "helper_path": "scripts/verify_role_link.py", "helper_hash": "9" * 64},
         "generator_version": 1,
         "roles": roles,
         "transaction_status": "current",
     }
-    state_payload = json.dumps(state, sort_keys=True, separators=(",", ":")).encode()
+    state_payload = _encode(state)
     targets = {
         role["target_name"]: lifecycle.TargetObservation(
             "regular",
@@ -286,7 +258,7 @@ def _migration_candidate_and_observation(
         for role in roles
     }
     targets = dict(sorted(targets.items()))
-    candidate = planner.build_candidate(
+    candidate = loaded.planner.build_candidate(
         action="install",
         mode="converge",
         roster=roster,
@@ -295,442 +267,516 @@ def _migration_candidate_and_observation(
         install_id=INSTALL_ID,
         transaction_nonce=NONCE,
     )
-    observation = observer.FilesystemObservation(
-        "degraded",
-        "runtime and mutation prerequisites remain unverified",
-        "current",
-        "current",
-        "none",
-        observer.RootObservation(True, "/codex", home_identity, (), home_identity),
+    roots = (
+        _existing_root(observer, home_identity),
         active_plugin_identity,
-        observer.RootObservation(True, "/codex/agents", target_identity, (), target_identity),
-        observer.RootObservation(True, "/codex/codex-rig/shims", state_identity, (), state_identity),
-        observer.LockObservation(
-            "absent",
-            "/codex/.codex-rig-shims.lock",
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        ),
-        state_payload,
-        tuple(targets.items()),
-        (),
-        "complete",
+        _existing_root(observer, target_identity),
+        _existing_root(observer, state_identity),
+    )
+    observation = _filesystem_observation(
+        observer, state="current", roots=roots, state_payload=state_payload, targets=targets
     )
     return roster, candidate, observation, state
 
 
-def test_approval_has_exact_contract_fields_and_deterministic_digest() -> None:
-    """Freeze complete canonical convergence bytes from matching evidence."""
-    loaded = _modules()
-    _, _, _, approval = loaded
-    roster, candidate, observation = _candidate_and_observation(loaded)
-
-    first = approval.build_convergence_approval(candidate, roster, observation, _runtime(approval))
-    second = approval.build_convergence_approval(candidate, roster, observation, _runtime(approval))
-    value = json.loads(first.canonical_bytes)
-
-    assert first == second
-    assert set(vars(first)) == {"canonical_bytes", "digest"}
-    assert first.digest == hashlib.sha256(first.canonical_bytes).hexdigest()
-    assert not first.canonical_bytes.endswith(b"\n")
-    assert set(value) == {
-        "schema",
-        "action",
-        "scope",
-        "mode",
-        "target_root_intent",
-        "recovery_disposition",
-        "codex_home_observation",
-        "coordination_lock_intent",
-        "coordination_lock_observation",
-        "target_root_observation",
-        "state_root_observation",
-        "canonical_target_root",
-        "canonical_state_root",
-        "canonical_plugin_root",
-        "plugin_root_identity",
-        "plugin_version",
-        "package_hash",
-        "bootstrap_protocol",
-        "bootstrap_path",
-        "bootstrap_hash",
-        "python_executable_path",
-        "python_executable_hash",
-        "codex_binary_path",
-        "codex_binary_hash",
-        "generator_version",
-        "install_id",
-        "transaction_nonce",
-        "roster_hash",
-        "source_state",
-        "journal_observation",
-        "recovery_observation",
-        "operations",
-    }
-    assert value["target_root_intent"] == "create"
-    assert value["source_state"] is None
-    assert set(value["operations"][0]) == {
-        "role_id",
-        "target_name",
-        "before_card_path",
-        "before_role_hash",
-        "after_card_path",
-        "after_role_hash",
-        "before_exists",
-        "before_hash",
-        "before_mode",
-        "after_exists",
-        "after_hash",
-        "after_mode",
-        "intent",
-    }
-    assert value["coordination_lock_intent"] == "create-if-absent"
-    assert value["coordination_lock_observation"] == {
-        "kind": "absent",
-        "canonical_path": "/codex/.codex-rig-shims.lock",
-        "device": None,
-        "inode": None,
-        "owner": None,
-        "group": None,
-        "mode": None,
-        "link_count": None,
-        "size": None,
-    }
-    assert value["target_root_observation"]["missing_suffix_components"] == ["agents"]
-    assert value["recovery_observation"] == {
-        "kind": None,
-        "relative_path": None,
-        "sha256": None,
-        "device": None,
-        "inode": None,
-        "owner": None,
-        "group": None,
-        "mode": None,
-        "link_count": None,
-        "entries": None,
-    }
-    approval.revalidate_approval_digest(first, first.digest)
+def _keep(loaded: Modules, observation: object) -> object:
+    """Return the observation unchanged."""
+    return observation
 
 
-def test_existing_roots_remain_unchanged_intent() -> None:
-    """Do not request target-root creation when the exact root exists."""
-    loaded = _modules()
-    _, _, _, approval = loaded
-    roster, candidate, observation = _candidate_and_observation(loaded, roots_exist=True)
-
-    value = json.loads(
-        approval.build_convergence_approval(candidate, roster, observation, _runtime(approval)).canonical_bytes
-    )
-
-    assert value["target_root_intent"] == "unchanged"
-    assert value["target_root_observation"]["missing_suffix_components"] == []
+def _block(loaded: Modules, observation: object) -> object:
+    """Mark the observation as blocked."""
+    return replace(observation, classification="blocked")
 
 
-@pytest.mark.parametrize(
-    ("target_inode", "expected"),
-    [pytest.param(2, "unchanged", id="same-root"), pytest.param(99, "rebind-removed-root", id="replaced-root")],
-)
-def test_removed_tombstone_binds_target_root_identity(target_inode: int, expected: str) -> None:
-    """Require explicit rebind approval when an empty removed root was replaced."""
-    loaded = _modules()
-    _, _, _, approval = loaded
-    roster, candidate, observation = _removed_candidate_and_observation(loaded, target_inode=target_inode)
-
-    plan = approval.build_convergence_approval(candidate, roster, observation, _runtime(approval))
-
-    assert json.loads(plan.canonical_bytes)["target_root_intent"] == expected
+def _stale_first_target(loaded: Modules, observation: object) -> object:
+    """Replace the first target observation with a present file the plan never saw."""
+    targets = list(observation.target_observations)
+    targets[0] = (targets[0][0], loaded.lifecycle.TargetObservation("regular", DIGEST))
+    return replace(observation, target_observations=tuple(targets))
 
 
-def test_forward_cache_migration_binds_exact_source_and_historical_union() -> None:
-    """Bind prior package evidence while allowing the active cache root to differ."""
-    loaded = _modules()
-    _, _, _, approval = loaded
-    roster, candidate, observation, state = _migration_candidate_and_observation(loaded)
-
-    plan = approval.build_convergence_approval(candidate, roster, observation, _runtime(approval))
-    value = json.loads(plan.canonical_bytes)
-
-    assert candidate.transition == "forward-upgrade"
-    assert value["canonical_plugin_root"] == "/plugin-cache/active"
-    assert value["source_state"] == {
-        "sha256": hashlib.sha256(observation.state_payload).hexdigest(),
-        "transition": "forward-upgrade",
-        "plugin_version": "0.1.0",
-        "package_hash": "f" * 64,
-        "bootstrap": state["bootstrap"],
-        "generator_version": 1,
-        "roster_hash": state["roster_hash"],
-        "plugin_root_identity": state["plugin_root_identity"],
-    }
-    retired = next(operation for operation in value["operations"] if operation["role_id"] == "retired-specialist")
-    assert retired == {
-        "role_id": "retired-specialist",
-        "target_name": "codex-rig-retired-specialist.toml",
-        "before_card_path": "roles/retired-specialist/ROLE.md",
-        "before_role_hash": "d" * 64,
-        "after_card_path": None,
-        "after_role_hash": None,
-        "before_exists": True,
-        "before_hash": "e" * 64,
-        "before_mode": "0600",
-        "after_exists": False,
-        "after_hash": None,
-        "after_mode": None,
-        "intent": "retire",
-    }
-    retained = next(operation for operation in value["operations"] if operation["role_id"] == "challenger")
-    assert retained["before_card_path"] == "roles/challenger/ROLE.md"
-    assert retained["before_role_hash"] == "b" * 64
-    assert retained["after_card_path"] == "roles/challenger/ROLE.md"
-    assert retained["after_role_hash"] == "b" * 64
+def _forge_root_owner(loaded: Modules, observation: object) -> object:
+    """Give the Codex-home identity a boolean owner."""
+    identity = replace(observation.codex_home_observation.identity, owner=True)
+    home = replace(observation.codex_home_observation, nearest_existing_ancestor=identity, identity=identity)
+    return replace(observation, codex_home_observation=home)
 
 
-@pytest.mark.parametrize(
-    ("field", "replacement"),
-    [
-        pytest.param("sha256", "0" * 64, id="sha256"),
-        pytest.param("transition", "development-rebuild", id="transition"),
-        pytest.param("plugin_version", "0.1.1", id="plugin_version"),
-        pytest.param("package_hash", "0" * 64, id="package_hash"),
-        pytest.param(
-            "bootstrap",
-            {"protocol": 1, "helper_path": "scripts/verify_role_link.py", "helper_hash": "0" * 64},
-            id="bootstrap",
-        ),
-        pytest.param("generator_version", 2, id="generator_version"),
-        pytest.param("roster_hash", "0" * 64, id="roster_hash"),
-        pytest.param(
+def _forge_root_ancestry(loaded: Modules, observation: object) -> object:
+    """Claim the target root is missing below an ancestor that is not its parent."""
+    ancestor = observation.codex_home_observation.identity
+    bad_target = loaded.observer.RootObservation(False, "/codex/agents", ancestor, ("other",), None)
+    return replace(observation, target_root_observation=bad_target)
+
+
+def _forge_classification(loaded: Modules, observation: object) -> object:
+    """Claim the targets are current when the observed targets are absent."""
+    return replace(observation, targets="current")
+
+
+def _wrong_lock_path(loaded: Modules, observation: object) -> object:
+    """Observe the coordination lock at a path other than the fixed one."""
+    return replace(observation, coordination_lock_observation=_absent_lock(loaded.observer, "/codex/other.lock"))
+
+
+@pytest.fixture
+def loaded() -> Modules:
+    """Load the approval kernel and its direct value authorities as fresh modules."""
+    generator = load_module_registered("generate_roles", GENERATOR_PATH)
+    lifecycle = load_module_registered("_agent_shim_lifecycle", LIFECYCLE_PATH)
+    load_module_registered("_agent_shim_journal", JOURNAL_PATH)
+    observer = load_module_registered("_agent_shim_observe", OBSERVER_PATH)
+    planner = load_module_registered("_agent_shim_plan", PLAN_PATH)
+    approval = load_module_registered("codex_rig_agent_shim_approval", APPROVAL_PATH)
+    return Modules(generator, lifecycle, observer, planner, approval)
+
+
+@pytest.fixture
+def approval(loaded: Modules) -> ModuleType:
+    """Return the approval kernel module."""
+    return loaded.approval
+
+
+@pytest.fixture
+def runtime(approval: ModuleType) -> object:
+    """Return an eligible doctor-supplied runtime binding."""
+    return _runtime(approval)
+
+
+@pytest.fixture
+def install_evidence(loaded: Modules) -> tuple[object, object, object]:
+    """Return matching roster, install candidate and observation for a host with no roots."""
+    return _candidate_and_observation(loaded)
+
+
+@pytest.fixture
+def migration_evidence(loaded: Modules) -> tuple[object, object, object, dict[str, object]]:
+    """Return roster, candidate, observation and prior state for a forward cache migration."""
+    return _migration_candidate_and_observation(loaded)
+
+
+@pytest.fixture
+def initial_plan(approval: ModuleType, runtime: object, install_evidence: tuple) -> object:
+    """Return the approval built for an initial install from matching evidence."""
+    roster, candidate, observation = install_evidence
+    return approval.build_convergence_approval(candidate, roster, observation, runtime)
+
+
+@pytest.fixture
+def initial_value(initial_plan: object) -> dict[str, object]:
+    """Return the parsed canonical value of the initial-install approval."""
+    return json.loads(initial_plan.canonical_bytes)
+
+
+class TestApprovalDocument:
+    """Group the exact bytes, fields and bindings a valid approval carries."""
+
+    def test_digest_is_deterministic_over_canonical_bytes(
+        self, approval: ModuleType, runtime: object, install_evidence: tuple, initial_plan: object
+    ) -> None:
+        """Building the same evidence twice yields equal approvals whose digest hashes the canonical bytes.
+
+        The user approves a digest, so identical evidence must always reproduce identical bytes, and the digest must be
+        exactly SHA-256 over them with no trailing newline.
+        """
+        roster, candidate, observation = install_evidence
+
+        second = approval.build_convergence_approval(candidate, roster, observation, runtime)
+
+        assert initial_plan == second
+        assert set(vars(initial_plan)) == {"canonical_bytes", "digest"}
+        assert initial_plan.digest == hashlib.sha256(initial_plan.canonical_bytes).hexdigest()
+        assert not initial_plan.canonical_bytes.endswith(b"\n")
+        approval.revalidate_approval_digest(initial_plan, initial_plan.digest)
+
+    def test_top_level_fields_exact(self, initial_value: dict[str, object]) -> None:
+        """The approval document has exactly the contracted top-level fields.
+
+        An extra or missing field changes what the user approves, so the key set of a freshly built plan is pinned.
+        """
+        assert set(initial_value) == {
+            "schema",
+            "action",
+            "scope",
+            "mode",
+            "target_root_intent",
+            "recovery_disposition",
+            "codex_home_observation",
+            "coordination_lock_intent",
+            "coordination_lock_observation",
+            "target_root_observation",
+            "state_root_observation",
+            "canonical_target_root",
+            "canonical_state_root",
+            "canonical_plugin_root",
             "plugin_root_identity",
-            {
-                "canonical_path": "/plugin-cache/other",
-                "device": 1,
-                "inode": 6,
-                "owner": 501,
-                "group": 20,
-                "mode": "0700",
-            },
-            id="plugin_root_identity",
-        ),
-    ],
-)
-def test_each_source_state_field_changes_approval_digest(field: str, replacement: object) -> None:
-    """Make every prior-state approval field independently digest-significant."""
-    loaded = _modules()
-    _, _, _, approval = loaded
-    roster, candidate, observation, _ = _migration_candidate_and_observation(loaded)
-    plan = approval.build_convergence_approval(candidate, roster, observation, _runtime(approval))
-    value = json.loads(plan.canonical_bytes)
-    value["source_state"][field] = replacement
-    changed = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+            "plugin_version",
+            "package_hash",
+            "bootstrap_protocol",
+            "bootstrap_path",
+            "bootstrap_hash",
+            "python_executable_path",
+            "python_executable_hash",
+            "codex_binary_path",
+            "codex_binary_hash",
+            "generator_version",
+            "install_id",
+            "transaction_nonce",
+            "roster_hash",
+            "source_state",
+            "journal_observation",
+            "recovery_observation",
+            "operations",
+        }
 
-    assert hashlib.sha256(changed).hexdigest() != plan.digest
+    def test_operation_fields_exact(self, initial_value: dict[str, object]) -> None:
+        """Each approved operation has exactly the contracted before-and-after fields.
 
+        Operations are what the apply step executes, so their key set is pinned for the first operation of an initial
+        install.
+        """
+        assert set(initial_value["operations"][0]) == {
+            "role_id",
+            "target_name",
+            "before_card_path",
+            "before_role_hash",
+            "after_card_path",
+            "after_role_hash",
+            "before_exists",
+            "before_hash",
+            "before_mode",
+            "after_exists",
+            "after_hash",
+            "after_mode",
+            "intent",
+        }
 
-def test_historical_target_union_must_remain_complete() -> None:
-    """Reject approval when a retired prior target disappears from observations."""
-    loaded = _modules()
-    _, _, _, approval = loaded
-    roster, candidate, observation, _ = _migration_candidate_and_observation(loaded)
-    incomplete = tuple(
-        item for item in observation.target_observations if item[0] != "codex-rig-retired-specialist.toml"
+    def test_initial_install_observations(self, initial_value: dict[str, object]) -> None:
+        """An initial install on a pristine host binds creation intents and absent observations.
+
+        With no roots, no lock, no prior state and no recovery residue, the approval must say so explicitly instead of
+        leaving the fields out.
+        """
+        assert initial_value["target_root_intent"] == "create"
+        assert initial_value["source_state"] is None
+        assert initial_value["coordination_lock_intent"] == "create-if-absent"
+        assert initial_value["coordination_lock_observation"] == {
+            "kind": "absent",
+            "canonical_path": LOCK_PATH,
+            "device": None,
+            "inode": None,
+            "owner": None,
+            "group": None,
+            "mode": None,
+            "link_count": None,
+            "size": None,
+        }
+        assert initial_value["target_root_observation"]["missing_suffix_components"] == ["agents"]
+        assert initial_value["recovery_observation"] == {
+            "kind": None,
+            "relative_path": None,
+            "sha256": None,
+            "device": None,
+            "inode": None,
+            "owner": None,
+            "group": None,
+            "mode": None,
+            "link_count": None,
+            "entries": None,
+        }
+
+    def test_existing_roots_keep_unchanged_intent(self, loaded: Modules, approval: ModuleType, runtime: object) -> None:
+        """Existing target and state roots are not asked to be created again.
+
+        When the exact roots already exist the approval must request no root creation and list no missing suffix.
+        """
+        roster, candidate, observation = _candidate_and_observation(loaded, roots_exist=True)
+
+        plan = approval.build_convergence_approval(candidate, roster, observation, runtime)
+
+        value = json.loads(plan.canonical_bytes)
+        assert value["target_root_intent"] == "unchanged"
+        assert value["target_root_observation"]["missing_suffix_components"] == []
+
+    @pytest.mark.parametrize(
+        ("target_inode", "expected"),
+        [pytest.param(2, "unchanged", id="same-root"), pytest.param(99, "rebind-removed-root", id="replaced-root")],
     )
+    def test_removed_tombstone_binds_target_root_identity(
+        self, loaded: Modules, approval: ModuleType, runtime: object, target_inode: int, expected: str
+    ) -> None:
+        """An empty removed root that was replaced needs explicit rebind approval.
 
-    with pytest.raises(approval.ApprovalBindingError, match=r"rebuilt|rosters"):
-        approval.build_convergence_approval(
-            candidate,
-            roster,
-            replace(observation, target_observations=incomplete),
-            _runtime(approval),
+        After a complete remove the tombstone remembers the target root's identity; the same inode needs no change and a
+        different inode must surface as a rebind the user approves.
+        """
+        roster, candidate, observation = _removed_candidate_and_observation(loaded, target_inode=target_inode)
+
+        plan = approval.build_convergence_approval(candidate, roster, observation, runtime)
+
+        assert json.loads(plan.canonical_bytes)["target_root_intent"] == expected
+
+    def test_forward_migration_binds_source_and_historical_union(
+        self, approval: ModuleType, runtime: object, migration_evidence: tuple
+    ) -> None:
+        """A forward cache migration binds the prior package evidence while the active cache root differs.
+
+        Upgrading from an older cached plugin retires a role the new roster no longer has, so the approval carries the
+        authenticated prior state, the active plugin root and a retire operation next to retained ones.
+        """
+        roster, candidate, observation, state = migration_evidence
+
+        plan = approval.build_convergence_approval(candidate, roster, observation, runtime)
+
+        value = json.loads(plan.canonical_bytes)
+        assert candidate.transition == "forward-upgrade"
+        assert value["canonical_plugin_root"] == "/plugin-cache/active"
+        assert value["source_state"] == {
+            "sha256": hashlib.sha256(observation.state_payload).hexdigest(),
+            "transition": "forward-upgrade",
+            "plugin_version": "0.1.0",
+            "package_hash": "f" * 64,
+            "bootstrap": state["bootstrap"],
+            "generator_version": 1,
+            "roster_hash": state["roster_hash"],
+            "plugin_root_identity": state["plugin_root_identity"],
+        }
+        retired = next(operation for operation in value["operations"] if operation["role_id"] == "retired-specialist")
+        assert retired == {
+            "role_id": "retired-specialist",
+            "target_name": "codex-rig-retired-specialist.toml",
+            "before_card_path": "roles/retired-specialist/ROLE.md",
+            "before_role_hash": "d" * 64,
+            "after_card_path": None,
+            "after_role_hash": None,
+            "before_exists": True,
+            "before_hash": "e" * 64,
+            "before_mode": "0600",
+            "after_exists": False,
+            "after_hash": None,
+            "after_mode": None,
+            "intent": "retire",
+        }
+        retained = next(operation for operation in value["operations"] if operation["role_id"] == "challenger")
+        assert retained["before_card_path"] == "roles/challenger/ROLE.md"
+        assert retained["before_role_hash"] == "b" * 64
+        assert retained["after_card_path"] == "roles/challenger/ROLE.md"
+        assert retained["after_role_hash"] == "b" * 64
+
+    @pytest.mark.parametrize(
+        ("field", "replacement"),
+        [
+            pytest.param("sha256", "0" * 64, id="sha256"),
+            pytest.param("transition", "development-rebuild", id="transition"),
+            pytest.param("plugin_version", "0.1.1", id="plugin_version"),
+            pytest.param("package_hash", "0" * 64, id="package_hash"),
+            pytest.param(
+                "bootstrap",
+                {"protocol": 1, "helper_path": "scripts/verify_role_link.py", "helper_hash": "0" * 64},
+                id="bootstrap",
+            ),
+            pytest.param("generator_version", 2, id="generator_version"),
+            pytest.param("roster_hash", "0" * 64, id="roster_hash"),
+            pytest.param(
+                "plugin_root_identity",
+                {
+                    "canonical_path": "/plugin-cache/other",
+                    "device": 1,
+                    "inode": 6,
+                    "owner": 501,
+                    "group": 20,
+                    "mode": "0700",
+                },
+                id="plugin_root_identity",
+            ),
+        ],
+    )
+    def test_each_source_state_field_changes_digest(
+        self, approval: ModuleType, runtime: object, migration_evidence: tuple, field: str, replacement: object
+    ) -> None:
+        """Every prior-state approval field is independently digest-significant.
+
+        If editing one source-state field left the digest unchanged, the user could approve a plan whose prior-package
+        evidence was swapped afterwards.
+        """
+        roster, candidate, observation, _ = migration_evidence
+        plan = approval.build_convergence_approval(candidate, roster, observation, runtime)
+        value = json.loads(plan.canonical_bytes)
+        value["source_state"][field] = replacement
+
+        assert hashlib.sha256(_encode(value)).hexdigest() != plan.digest
+
+    def test_existing_lock_is_bound(
+        self, loaded: Modules, approval: ModuleType, runtime: object, install_evidence: tuple
+    ) -> None:
+        """An existing coordination lock is bound by its device and inode.
+
+        Apply must acquire the very lock file the user approved, so a regular lock observation is carried verbatim into
+        the plan.
+        """
+        roster, candidate, observation = install_evidence
+        existing_lock = loaded.observer.LockObservation("regular", LOCK_PATH, 1, 9, 501, 20, "0600", 1, 0)
+
+        plan = approval.build_convergence_approval(
+            candidate, roster, replace(observation, coordination_lock_observation=existing_lock), runtime
         )
 
+        assert json.loads(plan.canonical_bytes)["coordination_lock_observation"] == {
+            "kind": "regular",
+            "canonical_path": LOCK_PATH,
+            "device": 1,
+            "inode": 9,
+            "owner": 501,
+            "group": 20,
+            "mode": "0600",
+            "link_count": 1,
+            "size": 0,
+        }
 
-@pytest.mark.parametrize("status", ["unavailable", "overflow", "malformed", "unreadable"])
-def test_namespace_inventory_must_be_complete_and_empty(status: str) -> None:
-    """Reject each incomplete namespace scan status."""
-    loaded = _modules()
-    _, _observer, _, approval = loaded
-    roster, candidate, observation = _candidate_and_observation(loaded)
 
-    with pytest.raises(approval.ApprovalBindingError, match="approval-eligible"):
-        approval.build_convergence_approval(
-            candidate,
-            roster,
-            replace(observation, namespace_inventory_status=status),
-            _runtime(approval),
+class TestApprovalRejections:
+    """Group the stale, forged or ineligible evidence that must never yield an approval."""
+
+    @pytest.mark.parametrize("status", ["unavailable", "overflow", "malformed", "unreadable"])
+    def test_rejects_incomplete_namespace_inventory(
+        self, approval: ModuleType, runtime: object, install_evidence: tuple, status: str
+    ) -> None:
+        """Each incomplete namespace scan status blocks approval.
+
+        An approval is only safe when the whole agent namespace was read, so an unavailable, overflowing, malformed or
+        unreadable scan must not be treated as empty.
+        """
+        roster, candidate, observation = install_evidence
+
+        with pytest.raises(approval.ApprovalBindingError, match="approval-eligible"):
+            approval.build_convergence_approval(
+                candidate, roster, replace(observation, namespace_inventory_status=status), runtime
+            )
+
+    def test_rejects_unmanaged_namespace_evidence(
+        self, loaded: Modules, approval: ModuleType, runtime: object, install_evidence: tuple
+    ) -> None:
+        """A complete scan that still reports an unmanaged namespace entry blocks approval.
+
+        A look-alike shim file the plugin does not own must be reported to the user, not silently overwritten.
+        """
+        roster, candidate, observation = install_evidence
+        unmanaged = (loaded.observer.NamespaceCandidateObservation("codex-rig-retired.toml", "regular"),)
+
+        with pytest.raises(approval.ApprovalBindingError, match="approval-eligible"):
+            approval.build_convergence_approval(
+                candidate, roster, replace(observation, namespace_candidates=unmanaged), runtime
+            )
+
+    @pytest.mark.parametrize(
+        ("tamper", "eligible"),
+        [
+            pytest.param(_keep, False, id="ineligible-runtime"),
+            pytest.param(_block, True, id="blocked-classification"),
+            pytest.param(_stale_first_target, True, id="stale-target"),
+        ],
+    )
+    def test_rejects_ineligible_evidence(
+        self, loaded: Modules, approval: ModuleType, install_evidence: tuple, tamper, eligible: bool
+    ) -> None:
+        """Non-eligible doctor, observer or target evidence cannot emit an approval.
+
+        Each case starts from matching evidence and breaks one eligibility input: the live doctor verdict, the
+        observer classification, or a target that changed since planning.
+        """
+        roster, candidate, observation = install_evidence
+
+        with pytest.raises(approval.ApprovalBindingError):
+            approval.build_convergence_approval(
+                candidate, roster, tamper(loaded, observation), _runtime(approval, eligible=eligible)
+            )
+
+    def test_rejects_zero_write_candidate(self, loaded: Modules, approval: ModuleType, runtime: object) -> None:
+        """A candidate whose operations are all noops cannot be approved.
+
+        Removing from a pristine host converges without writes, so there is nothing for the user to approve.
+        """
+        roster, candidate, observation = _candidate_and_observation(loaded, action="remove")
+
+        with pytest.raises(approval.ApprovalBindingError, match="zero-write"):
+            approval.build_convergence_approval(candidate, roster, observation, runtime)
+
+        assert all(operation.intent == "noop" for operation in candidate.operations)
+
+    @pytest.mark.parametrize(
+        ("tamper", "match"),
+        [
+            pytest.param(_forge_root_owner, "root owner", id="root-owner"),
+            pytest.param(_forge_root_ancestry, "ancestry", id="root-ancestry"),
+        ],
+    )
+    def test_rejects_inconsistent_root_evidence(
+        self, loaded: Modules, approval: ModuleType, runtime: object, install_evidence: tuple, tamper, match: str
+    ) -> None:
+        """Forged root metadata and ancestry are rejected before canonicalization.
+
+        A boolean masquerading as an owner id, or a missing root claimed below the wrong ancestor, would otherwise be
+        serialized into an approval.
+        """
+        roster, candidate, observation = install_evidence
+
+        with pytest.raises(approval.ApprovalBindingError, match=match):
+            approval.build_convergence_approval(candidate, roster, tamper(loaded, observation), runtime)
+
+    @pytest.mark.parametrize(
+        ("tamper", "match"),
+        [
+            pytest.param(_forge_classification, "classification", id="classification"),
+            pytest.param(_wrong_lock_path, "lock path", id="lock-path"),
+        ],
+    )
+    def test_rejects_forged_state_classification_or_lock(
+        self, loaded: Modules, approval: ModuleType, runtime: object, install_evidence: tuple, tamper, match: str
+    ) -> None:
+        """Classification claims and lock evidence not proven by observation are rejected.
+
+        The observer states what it saw; a classification the targets do not support, or a lock at another path, must
+        not reach the approval.
+        """
+        roster, candidate, observation = install_evidence
+
+        with pytest.raises(approval.ApprovalBindingError, match=match):
+            approval.build_convergence_approval(candidate, roster, tamper(loaded, observation), runtime)
+
+    def test_rejects_incomplete_historical_union(
+        self, approval: ModuleType, runtime: object, migration_evidence: tuple
+    ) -> None:
+        """A retired prior target missing from the observations blocks approval.
+
+        Migration must account for every role in the prior state, so dropping the retired role's target observation
+        looks like an incomplete roster rather than a clean upgrade.
+        """
+        roster, candidate, observation, _ = migration_evidence
+        incomplete = tuple(
+            item for item in observation.target_observations if item[0] != "codex-rig-retired-specialist.toml"
         )
 
+        with pytest.raises(approval.ApprovalBindingError, match=r"rebuilt|rosters"):
+            approval.build_convergence_approval(
+                candidate, roster, replace(observation, target_observations=incomplete), runtime
+            )
 
-def test_namespace_inventory_rejects_unmanaged_namespace_evidence() -> None:
-    """Reject a complete scan that still reports an unmanaged namespace entry."""
-    loaded = _modules()
-    _, observer, _, approval = loaded
-    roster, candidate, observation = _candidate_and_observation(loaded)
+    def test_rejects_semantically_forged_candidate(
+        self, approval: ModuleType, runtime: object, install_evidence: tuple
+    ) -> None:
+        """Self-consistent candidate bytes whose action contradicts their operations are rejected.
 
-    candidate_evidence = (observer.NamespaceCandidateObservation("codex-rig-retired.toml", "regular"),)
-    with pytest.raises(approval.ApprovalBindingError, match="approval-eligible"):
-        approval.build_convergence_approval(
-            candidate,
-            roster,
-            replace(observation, namespace_candidates=candidate_evidence),
-            _runtime(approval),
+        The forged candidate has a valid digest over its own bytes, so only an authoritative rebuild from the evidence
+        can notice that an install plan was relabelled as a remove.
+        """
+        roster, candidate, observation = install_evidence
+        value = json.loads(candidate.canonical_bytes)
+        value["action"] = "remove"
+        canonical = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+        forged = replace(
+            candidate, action="remove", canonical_bytes=canonical, digest=hashlib.sha256(canonical).hexdigest()
         )
 
-
-def test_blocked_stale_or_unhealthy_evidence_cannot_emit_approval() -> None:
-    """Reject noneligible doctor, observer, target, and zero-write candidates."""
-    loaded = _modules()
-    lifecycle, _, _, approval = loaded
-    roster, candidate, observation = _candidate_and_observation(loaded)
-    with pytest.raises(approval.ApprovalBindingError):
-        approval.build_convergence_approval(candidate, roster, observation, _runtime(approval, eligible=False))
-
-    blocked = replace(observation, classification="blocked")
-    with pytest.raises(approval.ApprovalBindingError):
-        approval.build_convergence_approval(candidate, roster, blocked, _runtime(approval))
-
-    stale_targets = list(observation.target_observations)
-    stale_targets[0] = (stale_targets[0][0], lifecycle.TargetObservation("regular", DIGEST))
-    stale = replace(observation, target_observations=tuple(stale_targets))
-    with pytest.raises(approval.ApprovalBindingError):
-        approval.build_convergence_approval(candidate, roster, stale, _runtime(approval))
-
-    remove_roster, noop, clean = _candidate_and_observation(loaded, action="remove")
-    assert all(operation.intent == "noop" for operation in noop.operations)
-    with pytest.raises(approval.ApprovalBindingError, match="zero-write"):
-        approval.build_convergence_approval(noop, remove_roster, clean, _runtime(approval))
-
-
-def test_inconsistent_root_evidence_cannot_emit_approval() -> None:
-    """Reject forged root metadata and ancestry before canonicalization."""
-    loaded = _modules()
-    _, observer, _, approval = loaded
-    roster, candidate, observation = _candidate_and_observation(loaded)
-
-    bad_identity = replace(observation.codex_home_observation.identity, owner=True)
-    bad_home = replace(
-        observation.codex_home_observation,
-        nearest_existing_ancestor=bad_identity,
-        identity=bad_identity,
-    )
-    with pytest.raises(approval.ApprovalBindingError, match="root owner"):
-        approval.build_convergence_approval(
-            candidate,
-            roster,
-            replace(observation, codex_home_observation=bad_home),
-            _runtime(approval),
-        )
-
-    bad_target = observer.RootObservation(
-        False,
-        "/codex/agents",
-        observation.codex_home_observation.identity,
-        ("other",),
-        None,
-    )
-    with pytest.raises(approval.ApprovalBindingError, match="ancestry"):
-        approval.build_convergence_approval(
-            candidate,
-            roster,
-            replace(observation, target_root_observation=bad_target),
-            _runtime(approval),
-        )
-
-
-def test_forged_state_classification_or_lock_cannot_emit_approval() -> None:
-    """Reject classification claims and lock evidence not proven by observation."""
-    loaded = _modules()
-    _, observer, _, approval = loaded
-    roster, candidate, observation = _candidate_and_observation(loaded)
-
-    with pytest.raises(approval.ApprovalBindingError, match="classification"):
-        approval.build_convergence_approval(
-            candidate,
-            roster,
-            replace(observation, targets="current"),
-            _runtime(approval),
-        )
-
-    wrong_lock = observer.LockObservation(
-        "absent",
-        "/codex/other.lock",
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-    )
-    with pytest.raises(approval.ApprovalBindingError, match="lock path"):
-        approval.build_convergence_approval(
-            candidate,
-            roster,
-            replace(observation, coordination_lock_observation=wrong_lock),
-            _runtime(approval),
-        )
-
-    existing_lock = observer.LockObservation(
-        "regular",
-        "/codex/.codex-rig-shims.lock",
-        1,
-        9,
-        501,
-        20,
-        "0600",
-        1,
-        0,
-    )
-    bound = approval.build_convergence_approval(
-        candidate,
-        roster,
-        replace(observation, coordination_lock_observation=existing_lock),
-        _runtime(approval),
-    )
-    assert json.loads(bound.canonical_bytes)["coordination_lock_observation"] == {
-        "kind": "regular",
-        "canonical_path": "/codex/.codex-rig-shims.lock",
-        "device": 1,
-        "inode": 9,
-        "owner": 501,
-        "group": 20,
-        "mode": "0600",
-        "link_count": 1,
-        "size": 0,
-    }
-
-
-def test_semantically_forged_candidate_cannot_emit_approval() -> None:
-    """Reject self-consistent bytes whose action contradicts their operations."""
-    loaded = _modules()
-    _, _, _, approval = loaded
-    roster, candidate, observation = _candidate_and_observation(loaded)
-    value = json.loads(candidate.canonical_bytes)
-    value["action"] = "remove"
-    canonical = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
-    forged = replace(
-        candidate,
-        action="remove",
-        canonical_bytes=canonical,
-        digest=hashlib.sha256(canonical).hexdigest(),
-    )
-
-    with pytest.raises(approval.ApprovalBindingError, match="authoritative rebuild"):
-        approval.build_convergence_approval(forged, roster, observation, _runtime(approval))
-
-
-def test_approval_kernel_has_no_filesystem_or_process_surface() -> None:
-    """Keep approval binding structurally incapable of external effects."""
-    tree = ast.parse(APPROVAL_PATH.read_text(encoding="utf-8"))
-    imported = {
-        alias.name.split(".")[0] for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names
-    }
-    imported.update((node.module or "").split(".")[0] for node in ast.walk(tree) if isinstance(node, ast.ImportFrom))
-    calls = {node.func.id for node in ast.walk(tree) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)}
-
-    assert imported.isdisjoint({"os", "pathlib", "shutil", "subprocess", "tempfile"})
-    assert calls.isdisjoint({"open", "exec", "eval", "compile", "input"})
+        with pytest.raises(approval.ApprovalBindingError, match="authoritative rebuild"):
+            approval.build_convergence_approval(forged, roster, observation, runtime)

@@ -10,40 +10,44 @@ from __future__ import annotations
 
 import os
 import re
-import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+from _host_skips import needs_git_and_bash
 
 _PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 _SKILL = _PLUGIN_ROOT / "claude-skills" / "rename-refs" / "SKILL.md"
-_BASH_BLOCK = re.compile(r"```bash\n(.*?)```", re.DOTALL)
-_HINT = re.compile(r"^argument-hint: (.*)$", re.MULTILINE)
+_HINT_PREFIX = "argument-hint: "
 _SINGLE_QUOTED_DECORATOR = re.compile(r"'(@[^']*)'")
 _CSID = "sess1"
 
 
-def _bash_runs_posix_script() -> bool:
-    """Reject launchers that exist on PATH but cannot execute a POSIX script, including WSL stubs."""
-    try:
-        result = subprocess.run(["bash", "-c", "printf ok"], capture_output=True, timeout=15, check=False)
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return result.returncode == 0 and result.stdout == b"ok"
-
-
-_needs_git_and_bash = pytest.mark.skipif(
-    shutil.which("git") is None or not _bash_runs_posix_script(), reason="needs git and a working POSIX bash"
-)
+def _bash_blocks(text: str) -> list[str]:
+    """Return the body of every fenced ``bash`` block, scanning line by line so prose wrapping is irrelevant."""
+    blocks: list[list[str]] = []
+    current: list[str] | None = None
+    for line in text.splitlines(keepends=True):
+        if current is None:
+            if line.strip() == "```bash":
+                current = []
+        elif line.strip() == "```":
+            blocks.append(current)
+            current = None
+        else:
+            current.append(line)
+    return ["".join(block) for block in blocks]
 
 
 def _argument_hint() -> str:
-    return _HINT.search(_SKILL.read_text(encoding="utf-8")).group(1)
+    """Return the ``argument-hint`` front-matter value of the skill."""
+    lines = _SKILL.read_text(encoding="utf-8").splitlines()
+    return next(line[len(_HINT_PREFIX) :] for line in lines if line.startswith(_HINT_PREFIX))
 
 
 def _hint_decorators() -> list[str]:
+    """Return the single-quoted decorator examples shown in the argument hint."""
     return _SINGLE_QUOTED_DECORATOR.findall(_argument_hint())
 
 
@@ -55,9 +59,7 @@ def run_step0(tmp_path: Path):
     subprocess.run(["git", "init", "-q"], cwd=repo, check=True, timeout=30)
     sentinels = tmp_path / "tmp"
     sentinels.mkdir()
-    block = next(
-        block for block in _BASH_BLOCK.findall(_SKILL.read_text(encoding="utf-8")) if "parse_rename_args.py" in block
-    )
+    block = next(block for block in _bash_blocks(_SKILL.read_text(encoding="utf-8")) if "parse_rename_args.py" in block)
     env = {
         **os.environ,
         "TMPDIR": str(sentinels),
@@ -78,7 +80,8 @@ def run_step0(tmp_path: Path):
 def test_argument_hint_documents_single_quoted_decorators() -> None:
     """The hint shows both decorator forms in single quotes and lists ``--no-deprecate``.
 
-    A double-quoted value in the hint is the form users copy; it always failed inside the skill's wrapper.
+    A double-quoted value in the hint is the form users copy; it always failed inside the skill's wrapper, so the hint
+    must only teach the single-quoted forms.
     """
     hint = _argument_hint()
 
@@ -87,31 +90,36 @@ def test_argument_hint_documents_single_quoted_decorators() -> None:
     assert "--no-deprecate" in hint
 
 
-@_needs_git_and_bash
-@pytest.mark.parametrize(
-    "decorator",
-    [
-        *[pytest.param(value, id=f"hint-{value.split('(')[0].lstrip('@')}") for value in _hint_decorators()],
-        pytest.param("@deprecated_class(target=NewName, deprecated_in=1.0)", id="spaces-and-parens"),
-    ],
-)
-def test_step0_parses_single_quoted_decorator(run_step0, decorator: str) -> None:
-    """A single-quoted ``--deprecate`` value reaches ``parse_rename_args.py`` intact and lands in its sentinel."""
-    result, sentinels = run_step0(f"symbol Old New --deprecate='{decorator}' --since 1.0")
+@needs_git_and_bash
+class TestStep0:
+    """The skill's real Step 0 bash block run with ``$ARGUMENTS`` pasted in as text."""
 
-    assert result.returncode == 0, result.stderr
-    assert (sentinels / f"codemap-proj-rename-DEPRECATE_DECORATOR-{_CSID}").read_text(
-        encoding="utf-8"
-    ) == f"{decorator}\n"
+    @pytest.mark.parametrize(
+        "decorator",
+        [
+            *[pytest.param(value, id=f"hint-{value.split('(')[0].lstrip('@')}") for value in _hint_decorators()],
+            pytest.param("@deprecated_class(target=NewName, deprecated_in=1.0)", id="spaces-and-parens"),
+        ],
+    )
+    def test_parses_single_quoted_decorator(self, run_step0, decorator: str) -> None:
+        """A single-quoted ``--deprecate`` value reaches ``parse_rename_args.py`` intact and lands in its sentinel.
 
+        Each decorator form shown in the hint, plus one with spaces and parentheses, is pasted as ``$ARGUMENTS``; the
+        helper must write the value back verbatim, proving the wrapper quoting did not split or mangle it.
+        """
+        result, sentinels = run_step0(f"symbol Old New --deprecate='{decorator}' --since 1.0")
 
-@_needs_git_and_bash
-def test_step0_double_quoted_decorator_fails_before_the_helper(run_step0) -> None:
-    """A double-quoted decorator with parentheses is a bash syntax error, so no sentinel is ever written.
+        assert result.returncode == 0, result.stderr
+        sentinel = sentinels / f"codemap-proj-rename-DEPRECATE_DECORATOR-{_CSID}"
+        assert sentinel.read_text(encoding="utf-8") == f"{decorator}\n"
 
-    This is the failure the Step 0 quoting guard exists to stop before the block runs.
-    """
-    result, sentinels = run_step0('symbol Old New --deprecate="@deprecated_class(target=New)"')
+    def test_double_quoted_decorator_fails_before_the_helper(self, run_step0) -> None:
+        """A double-quoted decorator with parentheses is a bash syntax error, so no sentinel is ever written.
 
-    assert result.returncode != 0
-    assert list(sentinels.iterdir()) == []
+        This is the failure the Step 0 quoting guard exists to stop before the block runs: the pasted ``"`` closes the
+        wrapper's own double-quoted word and the ``(`` that follows is a syntax error.
+        """
+        result, sentinels = run_step0('symbol Old New --deprecate="@deprecated_class(target=New)"')
+
+        assert result.returncode != 0
+        assert list(sentinels.iterdir()) == []

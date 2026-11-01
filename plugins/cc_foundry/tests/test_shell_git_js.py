@@ -25,7 +25,9 @@ import json
 import shlex
 import shutil
 import subprocess
+from functools import reduce
 from pathlib import Path
+from typing import NamedTuple
 
 import pytest
 
@@ -82,12 +84,38 @@ def _unreadable_reason(command: str, program: str = "gh") -> str:
     return json.loads(proc.stdout)
 
 
+class Reading(NamedTuple):
+    """The answer ``programInvocations`` gives for one command: its argv lists, the unreadable flag and the reason."""
+
+    invocations: list[list[str]] | None
+    unreadable: bool
+    reason: str
+
+
+def _analyse(command: object, program: str = "gh") -> Reading:
+    """Run ``programInvocations`` once and return the argv lists with the ``unreadable`` flag and reason it set.
+
+    One node process answers all three, so a test asserting on more than one of them pays one start-up.
+    """
+    proc = _node(
+        f"const info = {{}}; const result = lib.programInvocations({json.dumps(command)}, {json.dumps(program)}, info);"
+        " process.stdout.write(JSON.stringify({result, info}));"
+    )
+    assert proc.returncode == 0, proc.stderr
+    answer = json.loads(proc.stdout)
+    return Reading(answer["result"], answer["info"].get("unreadable"), answer["info"].get("unreadableReason"))
+
+
 @_skip_node_unavailable
 class TestModule:
     """The module loads cleanly and exposes only its one entry point."""
 
     def test_passes_node_syntax_check(self) -> None:
-        """``node --check`` accepts the file, as the pre-commit hook and both requiring hooks need."""
+        """``node --check`` accepts the file, as the pre-commit hook and both requiring hooks need.
+
+        The file is loaded by two hooks and checked by pre-commit; a syntax error would disable the push guard and the
+        rule injector at once, so it is caught here before any behaviour test runs.
+        """
         proc = subprocess.run(
             ["node", "--check", str(LIBRARY)], capture_output=True, text=True, timeout=15, check=False
         )
@@ -107,134 +135,492 @@ class TestModule:
 
     @pytest.mark.parametrize("command", [None, 42, ["git", "push"]])
     def test_non_string_command_yields_nothing(self, command: object) -> None:
-        """A malformed ``tool_input.command`` is no invocation rather than a crash inside a hook."""
+        """A malformed ``tool_input.command`` is no invocation rather than a crash inside a hook.
+
+        The hook payload field is untrusted JSON: ``None``, a number or a list reaches the finder when a caller
+        sends a malformed event. The finder must answer an empty set, because a throw would make the hook crash
+        instead of allowing or blocking.
+        """
         assert _readings(command) == set()
 
 
+def _prefixed(prefix: str, cases: list) -> list:
+    """Return ``cases`` with ``prefix-`` put in front of every id, so merged groups keep distinct readable ids."""
+    return [pytest.param(*case.values, id=f"{prefix}-{case.id}") for case in cases]
+
+
+def _expecting(prefix: str, expected: object, cases: list) -> list:
+    """Return ``cases`` with ``expected`` appended to every row and ``prefix-`` put in front of every id."""
+    return [pytest.param(*case.values, expected, id=f"{prefix}-{case.id}") for case in cases]
+
+
+# Recall — Every spelling that runs git surfaces the subcommand with its arguments.
+# [recall] The reading a hook acts on is among those returned, whatever wraps the call.
+_READING_RECALL = _prefixed(
+    "recall",
+    [
+        pytest.param("git push --force", "push --force", id="plain"),
+        pytest.param("cd /x && git push", "push", id="after-operator"),
+        pytest.param("{ git push --force; }", "push --force", id="brace-group"),
+        pytest.param("( git push --force )", "push --force", id="subshell"),
+        pytest.param("if true; then git push --force; fi", "push --force", id="if-then"),
+        pytest.param("while true; do git push -f; done", "push -f", id="loop-body"),
+        pytest.param("! git push", "push", id="negation"),
+        pytest.param("f() { git push -f; }; f", "push -f", id="function-body"),
+        pytest.param("time git push --force", "push --force", id="time"),
+        pytest.param("command git commit -m x", "commit -m x", id="command"),
+        pytest.param("nohup git push", "push", id="nohup"),
+        pytest.param("exec git add f", "add f", id="exec"),
+        pytest.param("sudo -u root git push -f", "push -f", id="sudo-option-value"),
+        pytest.param("sudo -u git git push -f", "push -f", id="sudo-user-named-git"),
+        pytest.param("env -u HOME git push --force", "push --force", id="env-unset-value"),
+        pytest.param("GIT_TRACE=1 /usr/bin/git push", "push", id="assignment-and-path"),
+        # xargs replaces `{}` and supplies no visible words: both read as run-time text
+        pytest.param("ls | xargs -I{} git add {}", "add $(xargs) $(xargs)", id="xargs-with-options"),
+        pytest.param('git -C "dir with space" push', "push", id="quoted-dir-with-space"),
+        pytest.param('git -C "a;b" push -f', "push -f", id="quoted-dir-with-operator"),
+        pytest.param('"git" commit -m x', "commit -m x", id="quoted-argv0"),
+        pytest.param("git push $'--force'", "push --force", id="ansi-c-quoting"),
+        pytest.param("$'\\x67it' push -f", "push -f", id="ansi-c-hex-escape-program"),
+        pytest.param("git push $'\\x2df'", "push -f", id="ansi-c-hex-escape-option"),
+        pytest.param("echo `git push -f`", "push -f", id="backticks"),
+        pytest.param('echo "$(git push -f)"', "push -f", id="substitution-in-double-quotes"),
+        pytest.param("diff <(git push -f) x", "push -f", id="process-substitution"),
+        pytest.param("cat <<EOF\n$(git push -f)\nEOF", "push -f", id="substitution-in-unquoted-heredoc"),
+        pytest.param('bash -c "git push -f"', "push -f", id="bash-c"),
+        pytest.param("sh -c 'cd /x && git push -f'", "push -f", id="sh-c-compound"),
+        pytest.param("eval 'git push -f'", "push -f", id="eval"),
+        pytest.param("env -S 'git push -f'", "push -f", id="env-split-string"),
+        pytest.param("bash <<'EOF'\ngit push -f\nEOF", "push -f", id="heredoc-to-shell"),
+        pytest.param("cat <<'EOF' | sh\ncd x; git push -f\nEOF", "push -f", id="heredoc-piped-to-shell"),
+        pytest.param("git push 2>&1 | tee log", "push", id="redirection-not-background"),
+        pytest.param("BASH -c 'git push -f'", "push -f", id="runner-name-case"),
+        pytest.param("bash <<< 'git push -f'", "push -f", id="here-string-to-shell"),
+        pytest.param('sh <<<"git push origin +main"', "push origin +main", id="here-string-glued"),
+        pytest.param("<<< 'git push -f' bash", "push -f", id="here-string-before-runner"),
+        pytest.param("cat <<< hi\ntime git push -f\nhi", "push -f", id="here-string-then-next-line"),
+        pytest.param("cat <<<hi\nsudo GIT push origin main", "push origin main", id="here-string-glued-next-line"),
+    ],
+)
+
+# [spelling] The program name ignores case and ``.exe``: macOS and Windows file systems run ``GIT`` as git.
+#
+# Probed live on macOS: ``/usr/bin/GIT --version`` reports git, so a case-sensitive match was a bypass.
+_READING_SPELLING = _prefixed(
+    "spelling",
+    [
+        pytest.param("GIT push --force", "push --force", id="upper-case"),
+        pytest.param("Git push -f", "push -f", id="mixed-case"),
+        pytest.param("/usr/bin/GIT push -f", "push -f", id="upper-case-path"),
+        pytest.param("GIT.EXE push -f", "push -f", id="upper-case-exe"),
+        pytest.param("git.exe push -f", "push -f", id="exe"),
+    ],
+)
+
+# [brace] Unquoted brace expansion is resolved before the words are read, as bash does, wherever the braces sit.
+_READING_BRACE = _prefixed(
+    "brace",
+    [
+        pytest.param("{git,} push -f", "push -f", id="program"),
+        pytest.param("git {push,} -f", "push -f", id="subcommand"),
+        pytest.param("git pu{s..s}h -f", "push -f", id="letter-sequence"),
+        pytest.param("git push {-f,origin} main", "push -f origin main", id="option"),
+        pytest.param("git push origin {+,}main", "push origin +main main", id="refspec-prefix"),
+        pytest.param("git push -{f..f} origin", "push -f origin", id="option-sequence"),
+    ],
+)
+
+# [alias] An alias defined in the command itself is read as what it runs.
+#
+# Every definition form here was probed live with ``status`` as the value before being pinned.
+_READING_ALIAS = _prefixed(
+    "alias",
+    [
+        pytest.param("git -c alias.p=push p -f", "push -f", id="alias"),
+        pytest.param("git -c alias.yolo='push --force' yolo", "push --force", id="alias-with-arguments"),
+        pytest.param("git -c alias.P=push p -f", "push -f", id="alias-name-ignores-case"),
+        pytest.param("git -c 'alias.y=-c alias.z=push z' y -f", "push -f", id="alias-of-global-options"),
+        pytest.param("git -c alias.x='!git push -f' x", "push -f", id="shell-alias"),
+        pytest.param("git -c alias.x='!git' x push -f", "push -f", id="shell-alias-arguments"),
+    ],
+)
+
+# [unresolvable-alias] An alias whose value the environment holds, or a loop, reads as ``push --force`` so a guard
+# fails closed.
+#
+# The loop case also proves the expansion terminates: git itself reports ``alias loop detected``.
+_READING_UNRESOLVABLE_ALIAS = _expecting(
+    "unresolvable-alias",
+    "push --force",
+    [
+        pytest.param("git --config-env=alias.q=FOO q", id="config-env-joined"),
+        pytest.param("git --config-env alias.q=FOO q", id="config-env-separate"),
+        pytest.param('git -c alias.q="$CMD" q', id="value-from-variable"),
+        pytest.param("git -c alias.a=b -c alias.b=a a", id="alias-loop"),
+    ],
+)
+
+# [autocorrect] A value that runs the correction, or one only the environment holds, adds a ``push --force`` reading.
+_READING_AUTOCORRECT = _expecting(
+    "autocorrect",
+    "push --force",
+    [
+        pytest.param("git -c help.autocorrect=immediate pussh --force origin main", id="immediate"),
+        pytest.param("git -c help.autocorrect=1 status", id="numeric-delay"),
+        pytest.param("git -c help.autocorrect=-1 status", id="negative-immediate"),
+        pytest.param("git -c help.autocorrect status", id="bare-key-is-true"),
+        pytest.param("time git -c help.autoCorrect=immediate pus -f", id="key-case-ignored"),
+        pytest.param("git --config-env help.autocorrect=V pus -f", id="config-env-run-time-value"),
+        pytest.param('git -c help.autocorrect="$V" status', id="variable-run-time-value"),
+        pytest.param("git -c help.autocorrect=0 -c help.autocorrect=1 status", id="last-value-wins-on"),
+    ],
+)
+
+# [glob] The glob argument is read as ``--force`` in an extra reading, also inside shell source a runner lexes.
+_READING_GLOB = _prefixed(
+    "glob",
+    [
+        pytest.param("git push origin -?", "push origin --force", id="question-mark-flag"),
+        pytest.param("git push origin ?main", "push origin --force", id="question-mark-refspec"),
+        pytest.param("git push origin ma*", "push origin --force", id="star"),
+        pytest.param("git push origin [+]main", "push origin --force", id="bracket"),
+        pytest.param("bash -c 'git push origin ma*'", "push origin --force", id="nested-shell-source"),
+    ],
+)
+
+# [global-option] An unknown global option is read both as a flag and as value-taking, so neither reading can hide a
+# push.
+_READING_GLOBAL_OPTION = _prefixed(
+    "global-option",
+    [
+        pytest.param("git --future-opt value push -f", "push -f", id="unknown-option-takes-value"),
+        pytest.param("git --future-flag push -f", "push -f", id="unknown-option-is-a-flag"),
+        pytest.param("git --attr-source HEAD push -f", "push -f", id="known-value-option"),
+        pytest.param("git --no-pager -c a=b push", "push", id="known-flag-and-value-option"),
+    ],
+)
+
+# HeredocBodies — A quoted heredoc body handed to a data command is data, even on a line that opens with ``git push``.
+#
+# The coarse pass splits raw text at newlines, so a body line opening with ``git push`` read as a push and blocked a
+# command that pushes nothing: release notes written with ``cat``, a commit message given on stdin. It skips such a
+# body only when the lexer read the whole command and every command in it is a data command; any body a shell, an
+# interpreter or an unknown program may run keeps its coarse reading.
+# [heredoc-body] A body fed to a shell, interpreter or unknown program, an unquoted body or an unparsed command still
+# reads.
+#
+# The coarse pass exists so the lexer only adds git detections; it gives up a body only where the whole command is
+# known to treat it as data. That includes text where the lexer reads a heredoc the shells do not: inside
+# ``$[…]``, ``${…}`` or ``((…))`` ``<<`` is a shift or literal text, and with CRLF line ends the delimiter word
+# keeps its CR, so bash and zsh run the line the lexer would take for body text (probed live on both).
+_READING_HEREDOC_BODY = _prefixed(
+    "heredoc-body",
+    [
+        pytest.param("bash <<'EOF'\ngit push origin main\nEOF", "push origin main", id="bash"),
+        pytest.param("sh <<'EOF'\n  git push origin main\nEOF", "push origin main", id="sh"),
+        pytest.param("python3 <<'EOF'\ngit push origin main\nEOF", "push origin main", id="interpreter"),
+        pytest.param(
+            "cat <<'EOF' | awk '{system($0)}'\ngit push origin main\nEOF", "push origin main", id="piped-to-awk"
+        ),
+        pytest.param(
+            "cat > x.sh <<'EOF'\ngit push origin main\nEOF\nchmod +x x.sh && ./x.sh",
+            "push origin main",
+            id="script-run-after",
+        ),
+        pytest.param("cat <<'EOF' > >(sh)\ngit push origin main\nEOF", "push origin main", id="process-substitution"),
+        pytest.param(
+            "git -c alias.x='!sh' x <<'EOF'\ngit push origin main\nEOF", "push origin main", id="git-inline-config"
+        ),
+        pytest.param(
+            "git bisect run awk '{system($0)}' <<'EOF'\ngit push origin main\nEOF",
+            "push origin main",
+            id="git-subcommand-running-a-program",
+        ),
+        pytest.param("cat > n.md <<EOF\ngit push origin main\nEOF", "push origin main", id="unquoted-delimiter"),
+        pytest.param(
+            "cat > n.md <<'EOF'\ngit push origin main\nEOF\necho 'unbalanced", "push origin main", id="unparsed"
+        ),
+        pytest.param("sudo cat <<'EOF'\ngit push origin main\nEOF", "push origin main", id="prefix-program"),
+        # `<<` the lexer reads as a heredoc where the shells read none: bash runs line 2 as a command
+        pytest.param("echo $[ 1 << 'X' ]\ngit push origin main\nX", "push origin main", id="arithmetic-bracket"),
+        pytest.param("echo ${x:-<<'X'}\ngit push origin main\nX", "push origin main", id="parameter-default"),
+        pytest.param("(( cat << '2' ))\ngit push origin main\n2", "push origin main", id="arithmetic-command"),
+        pytest.param("cat <<'EOF'\r\nbody\r\nEOF\r\ngit push origin main\r\n", "push origin main", id="crlf-delimiter"),
+    ],
+)
+
+# [redirection] Bash runs ``git push -f`` for each; read as the subcommand, the redirection hid the push from both
+# hooks.
+_READING_REDIRECTION = _expecting(
+    "redirection",
+    "push -f",
+    [
+        pytest.param("git 2>/dev/null push -f", id="before-the-subcommand"),
+        pytest.param("git > x push -f", id="separate-target-before-the-subcommand"),
+        pytest.param("{ git 2>/dev/null push -f; }", id="grouped"),
+    ],
+)
+
+# [unparsable] A lexer failure falls back to scanning every raw segment, so it cannot become a bypass.
+_READING_UNPARSEABLE = _prefixed(
+    "unparsable",
+    [
+        pytest.param("git commit -m 'unbalanced; echo git push -f", "push -f", id="unbalanced-single-quote"),
+        pytest.param('echo "unterminated && git push', "push", id="unbalanced-double-quote"),
+        pytest.param("echo $(git push -f", "push -f", id="unterminated-substitution"),
+    ],
+)
+
+# [raw-glob] The raw scan knows no quoting, so every glob character there counts as unquoted.
+_READING_RAW_GLOB = _prefixed(
+    "raw-glob",
+    [
+        pytest.param('git push origin "?main', "push origin --force", id="unbalanced-quote"),
+        pytest.param("git push origin ?main {1..300}", "push origin --force 1..300", id="oversized-braces"),
+    ],
+)
+
+# [shell-dependent-quoting] Git reads ``push --force`` beside its raw-segment fallback: the unreadable text may hide
+# the program word.
+_READING_SHELL_DEPENDENT_QUOTING = _expecting(
+    "shell-dependent-quoting",
+    "push --force",
+    [
+        pytest.param("git $'\\x{70}ush' -f origin main", id="hex-brace-subcommand"),
+        pytest.param("$'\\x{67}it' push", id="hex-brace-program"),
+        pytest.param('git $"push" -f', id="locale-subcommand"),
+    ],
+)
+
+# [unquoted-prose] ``echo run git push -f`` names a push in plain words; the finder prefers this false positive to a
+# miss.
+_READING_UNQUOTED_PROSE = [pytest.param("echo run git push -f", "push -f", id="unquoted-prose")]
+
+# [text] Quoted text, comments and heredoc bodies are data; only a real ``push`` subcommand counts.
+_NO_PUSH_TEXT = _prefixed(
+    "text",
+    [
+        pytest.param("echo 'git push --force'", id="single-quoted-text"),
+        pytest.param('echo "git push --force"', id="double-quoted-text"),
+        pytest.param('git log --grep "push --force"', id="quoted-pattern"),
+        pytest.param("git push-ish", id="look-alike-subcommand"),
+        pytest.param("git status # git push -f", id="comment"),
+        pytest.param(
+            "git commit -m \"$(cat <<'EOF'\nfix: x\n\nDon't git push --force here.\nEOF\n)\"",
+            id="commit-message-heredoc",
+        ),
+        pytest.param("cat <<< 'git push -f'", id="here-string-to-non-runner"),
+    ],
+)
+
+# [data-body] Every command here only stores or sends the body, so no reading is a push.
+#
+# Each was blocked as a push needing a token (round 9b live lane, F2), while the same text mid-line passed.
+_NO_PUSH_DATA_BODY = _prefixed(
+    "data-body",
+    [
+        pytest.param("cat > notes.md <<'EOF'\nline one\ngit push origin main\nline three\nEOF", id="plain"),
+        pytest.param("cat > n.md <<'EOF'\n  git push origin main\nEOF", id="indented"),
+        pytest.param("cat > n.md <<'EOF'\n```\ngit push origin main\n```\nEOF", id="markdown-fence"),
+        pytest.param("git commit -F - <<'EOF'\ngit push is documented here\nEOF", id="commit-message-on-stdin"),
+        pytest.param('cat > n.md <<"EOF"\ngit push origin main\nEOF', id="double-quoted-delimiter"),
+        pytest.param("cat > n.md <<\\EOF\ngit push origin main\nEOF", id="escaped-delimiter"),
+        pytest.param("cat <<-'EOF' > n.md\n\tgit push -f origin main\n\tEOF", id="tab-stripping-force-text"),
+        pytest.param("tee n.md <<'EOF'\ngit push --force\nEOF", id="tee"),
+        pytest.param("gh pr create --title x --body-file - <<'EOF'\ngit push origin main\nEOF", id="gh-body-on-stdin"),
+        pytest.param(
+            "git commit -m \"$(cat <<'EOF'\nfix: x\n\ngit push now works\nEOF\n)\"",
+            id="commit-message-substitution",
+        ),
+        pytest.param("mkdir -p docs && cat > docs/x.md <<'EOF'\ngit push origin main\nEOF", id="after-mkdir"),
+    ],
+)
+
+# [shell-body] Both bash and zsh feed these lines to ``cat`` (probed live), so no reading is a push.
+#
+# Two heredocs on one line are read in order; a body with no delimiter line runs to the end of the input.
+_NO_PUSH_SHELL_BODY = _prefixed(
+    "shell-body",
+    [
+        pytest.param("cat <<'EOF' <<'E2'\none\nEOF\ngit push origin main\nE2", id="second-heredoc-body"),
+        pytest.param("cat <<'EOF'\ngit push origin main", id="unterminated-body"),
+    ],
+)
+
+# [shell-dependent] Escapes and locale strings bash and zsh decode differently leave no exact argv: the caller fails
+# closed.
+#
+# The Bash tool runs the user's shell. zsh reads ``$'\x{63}'`` as a NUL then ``{63}`` and ``$"git"`` as ``$git``,
+# bash 3.2 has no ``\u``; no single reading is right for every shell.
+_NO_ARGV_SHELL_DEPENDENT = _prefixed(
+    "shell-dependent",
+    [
+        pytest.param("gh pr $'\\u0063reate'", id="unicode-escape"),
+        pytest.param("gh pr $'\\U00000063reate'", id="long-unicode-escape"),
+        pytest.param("gh pr $'\\x{63}reate'", id="hex-brace-escape"),
+        pytest.param("gh pr $'\\cA'", id="control-escape"),
+        pytest.param("gh pr $'cre\\qate'", id="unknown-escape"),
+        pytest.param("gh pr $'create\\x00junk'", id="nul"),
+        pytest.param('gh pr $"create"', id="locale-string"),
+        pytest.param("cat <<$'EOF'\nhi\nEOF\ngh pr merge 1", id="ansi-c-heredoc-delimiter"),
+        pytest.param('cat <<$"EOF"\nhi\nEOF\ngh pr merge 1', id="locale-heredoc-delimiter"),
+        pytest.param("x=$$'\\'; gh pr create #'", id="dollars-before-a-quote"),
+        pytest.param('x="${y:-\'"\'}"; gh pr create # "\'', id="single-quote-in-double-quoted-expansion"),
+        pytest.param('x="$${y:-"}"; gh pr create # "', id="dollars-before-a-brace-in-double-quotes"),
+        pytest.param('x="$$(echo ")"); gh pr create # "', id="dollars-before-a-paren-in-double-quotes"),
+        pytest.param('x="${y:-\\}\'"\'}"; gh pr create # "\'', id="escaped-brace-then-single-quote-in-expansion"),
+        pytest.param('x="${ gh pr create; }"', id="command-brace-in-double-quotes"),
+        pytest.param('x="${|gh pr create;}"', id="value-brace-in-double-quotes"),
+        pytest.param('x="${\tgh pr create; }"', id="command-brace-after-a-tab"),
+        pytest.param('x="${\ngh pr create; }"', id="command-brace-after-a-newline"),
+        pytest.param("x=${ gh pr create; }", id="command-brace-unquoted"),
+        pytest.param("cat <<EOF\n${ gh pr create; }\nEOF", id="command-brace-in-heredoc"),
+        pytest.param("cat <<EOF\n$$${ gh pr create; }\nEOF", id="command-brace-after-pid-in-heredoc"),
+        pytest.param('gh pr view "${ gh pr create --title t --body b; }"', id="command-brace-as-a-read-argument"),
+        pytest.param("gh pr view 1 $\\\n'\\''; gh pr create #'", id="continued-ansi-c-string"),
+        pytest.param("gh pr view 1 <<EO\\\nF\nx\nEOF\ngh pr create", id="continued-heredoc-delimiter"),
+        pytest.param("cat <<EOF\n$\\\n(gh pr create)\nEOF", id="continued-substitution-in-heredoc"),
+        pytest.param('gh pr view "$\\\n(gh pr create)"', id="continued-substitution-in-double-quotes"),
+        pytest.param('x="${\\\n gh pr create; }"', id="continued-command-brace"),
+        pytest.param("cat <<EOF\nEO\\\nF\ngh pr create\nEOF", id="continued-terminator-line"),
+        pytest.param("cat <\\\n<EOF\nx\nEOF", id="continued-redirection-operator"),
+    ],
+)
+
+# [unparsable] Without an exact argv the answer is null, never a guess, and the caller fails closed.
+#
+# Quote-stripped or code-split words shift positionals: ``--title 'a b' create`` read without quoting puts ``b``
+# where gh reads ``create``, so a guessed argv can hide a write instead of widening the answer.
+_NO_ARGV_UNPARSEABLE = _prefixed(
+    "unparsable",
+    [
+        pytest.param("gh pr --title 'a b' create 'x", id="unbalanced-quote"),
+        pytest.param("gh pr --title 'a b' create {1..300}", id="oversized-braces"),
+        pytest.param("echo $(gh pr create", id="unterminated-substitution"),
+        pytest.param('bash -c "gh pr create \'x"', id="unbalanced-nested-source"),
+        pytest.param("python3 -c \"import os; os.system('gh pr comment 1')\"", id="interpreter-code"),
+    ],
+)
+
+# [quoting-removed] Each invocation is its words from the program word on, quoting removed and glob marks never leaked.
+_ARGV_QUOTING_REMOVED = _prefixed(
+    "quoting-removed",
+    [
+        pytest.param("gh pr create -t x", ["gh", "pr", "create", "-t", "x"], id="plain"),
+        pytest.param("cd /x && { gh pr merge 1; }", ["gh", "pr", "merge", "1"], id="grouped-after-operator"),
+        pytest.param("bash -c 'gh pr create'", ["gh", "pr", "create"], id="bash-c"),
+        pytest.param('eval "gh issue close 3"', ["gh", "issue", "close", "3"], id="eval"),
+        pytest.param("sudo -u u GH.EXE repo delete", ["GH.EXE", "repo", "delete"], id="prefix-case-and-exe"),
+        pytest.param("bash <<< 'gh release create v1'", ["gh", "release", "create", "v1"], id="here-string"),
+        pytest.param(
+            "gh api graphql -f query='query { viewer { login } }'",
+            ["gh", "api", "graphql", "-f", "query=query { viewer { login } }"],
+            id="quoted-argument-stays-one-word",
+        ),
+        pytest.param("gh api repos/o/r/pulls?state=open", ["gh", "api", "repos/o/r/pulls?state=open"], id="glob-plain"),
+    ],
+)
+
+# [nested-quotes] ``"${x%"$y"}"`` nests its inner quotes in bash and zsh alike, so the command after it is still seen.
+_ARGV_NESTED_QUOTES = _prefixed(
+    "nested-quotes",
+    [
+        pytest.param('x="${a%"b"}"; gh pr merge 1', ["gh", "pr", "merge", "1"], id="nested-quotes-then-a-write"),
+        pytest.param('gh pr view "${N:-1}"', ["gh", "pr", "view", "${N:-1}"], id="expansion-as-an-argument"),
+        pytest.param('x="${a:-b\\}c}"; gh pr view 1', ["gh", "pr", "view", "1"], id="escaped-brace-stays-inside"),
+        pytest.param('gh pr view "$$" 1', ["gh", "pr", "view", "$$", "1"], id="pid-before-the-closing-quote"),
+        pytest.param('echo "${HOME} ${#x} ${z[@]}"; gh pr view', ["gh", "pr", "view"], id="parameters-stay-readable"),
+        pytest.param(
+            "cat <<EOF\n$$$(gh pr create)\nEOF", ["gh", "pr", "create"], id="pid-then-substitution-in-heredoc"
+        ),
+        pytest.param(
+            'x="`echo \\"\'\\"; gh pr create; \\"\'\\"`"',
+            ["gh", "pr", "create"],
+            id="escaped-double-quote-in-backticks-in-double-quotes",
+        ),
+        pytest.param("echo hi # note \\\ngh pr create", ["gh", "pr", "create"], id="comment-does-not-continue"),
+        pytest.param("trap 'gh pr create' EXIT", ["gh", "pr", "create"], id="trap-handler-is-source"),
+        pytest.param("echo 'gh pr view 1' | sh", ["gh", "pr", "view", "1"], id="text-printed-to-a-stdin-shell"),
+        pytest.param("let 'a[$(gh pr view 1)]=1'", ["gh", "pr", "view", "1"], id="subscript-substitution"),
+        pytest.param("echo 1 | xargs gh pr view", ["gh", "pr", "view", "$(xargs)"], id="xargs-tail"),
+    ],
+)
+
+# [count-operand] A count command evaluates its first operand as arithmetic, so a quoted ``$(gh …)`` in it runs and is
+# found.
+#
+# ``exit '$(gh pr merge 1)'`` reads as a benign exit; the quoted substitution the author stored re-expands on
+# arithmetic evaluation, running the gh write the guard must see.
+_ARGV_COUNT_OPERAND = _prefixed(
+    "count-operand",
+    [
+        pytest.param("exit '$(gh pr merge 1)'", ["gh", "pr", "merge", "1"], id="exit-count"),
+        pytest.param("shift '$(gh pr merge 1)'", ["gh", "pr", "merge", "1"], id="shift-count"),
+        pytest.param("return '$(gh pr merge 1)'", ["gh", "pr", "merge", "1"], id="return-count"),
+        pytest.param("break '$(gh pr merge 1)'", ["gh", "pr", "merge", "1"], id="break-count"),
+        pytest.param("repeat '$(gh pr merge 1)' true", ["gh", "pr", "merge", "1"], id="repeat-count"),
+        pytest.param("shift -p '$(gh pr merge 1)'", ["gh", "pr", "merge", "1"], id="shift-after-option"),
+    ],
+)
+
+
 @_skip_node_unavailable
-class TestRecall:
-    """Every spelling that runs git surfaces the subcommand with its arguments."""
+class TestGitReadings:
+    """``gitSubcommandArgs`` answers which git subcommands a command runs, however the shell spells them.
+
+    The case groups above hold the contracts (recall of every spelling, inline aliases and autocorrect, pathname
+    expansion, interpreter code, heredoc bodies, redirections, fail-closed fallbacks); the two tests below pin the two
+    shapes of answer a hook acts on.
+    """
 
     @pytest.mark.parametrize(
         ("command", "reading"),
         [
-            pytest.param("git push --force", "push --force", id="plain"),
-            pytest.param("cd /x && git push", "push", id="after-operator"),
-            pytest.param("{ git push --force; }", "push --force", id="brace-group"),
-            pytest.param("( git push --force )", "push --force", id="subshell"),
-            pytest.param("if true; then git push --force; fi", "push --force", id="if-then"),
-            pytest.param("while true; do git push -f; done", "push -f", id="loop-body"),
-            pytest.param("! git push", "push", id="negation"),
-            pytest.param("f() { git push -f; }; f", "push -f", id="function-body"),
-            pytest.param("time git push --force", "push --force", id="time"),
-            pytest.param("command git commit -m x", "commit -m x", id="command"),
-            pytest.param("nohup git push", "push", id="nohup"),
-            pytest.param("exec git add f", "add f", id="exec"),
-            pytest.param("sudo -u root git push -f", "push -f", id="sudo-option-value"),
-            pytest.param("sudo -u git git push -f", "push -f", id="sudo-user-named-git"),
-            pytest.param("env -u HOME git push --force", "push --force", id="env-unset-value"),
-            pytest.param("GIT_TRACE=1 /usr/bin/git push", "push", id="assignment-and-path"),
-            # xargs replaces `{}` and supplies no visible words: both read as run-time text
-            pytest.param("ls | xargs -I{} git add {}", "add $(xargs) $(xargs)", id="xargs-with-options"),
-            pytest.param('git -C "dir with space" push', "push", id="quoted-dir-with-space"),
-            pytest.param('git -C "a;b" push -f', "push -f", id="quoted-dir-with-operator"),
-            pytest.param('"git" commit -m x', "commit -m x", id="quoted-argv0"),
-            pytest.param("git push $'--force'", "push --force", id="ansi-c-quoting"),
-            pytest.param("$'\\x67it' push -f", "push -f", id="ansi-c-hex-escape-program"),
-            pytest.param("git push $'\\x2df'", "push -f", id="ansi-c-hex-escape-option"),
-            pytest.param("echo `git push -f`", "push -f", id="backticks"),
-            pytest.param('echo "$(git push -f)"', "push -f", id="substitution-in-double-quotes"),
-            pytest.param("diff <(git push -f) x", "push -f", id="process-substitution"),
-            pytest.param("cat <<EOF\n$(git push -f)\nEOF", "push -f", id="substitution-in-unquoted-heredoc"),
-            pytest.param('bash -c "git push -f"', "push -f", id="bash-c"),
-            pytest.param("sh -c 'cd /x && git push -f'", "push -f", id="sh-c-compound"),
-            pytest.param("eval 'git push -f'", "push -f", id="eval"),
-            pytest.param("env -S 'git push -f'", "push -f", id="env-split-string"),
-            pytest.param("bash <<'EOF'\ngit push -f\nEOF", "push -f", id="heredoc-to-shell"),
-            pytest.param("cat <<'EOF' | sh\ncd x; git push -f\nEOF", "push -f", id="heredoc-piped-to-shell"),
-            pytest.param("git push 2>&1 | tee log", "push", id="redirection-not-background"),
-            pytest.param("BASH -c 'git push -f'", "push -f", id="runner-name-case"),
-            pytest.param("bash <<< 'git push -f'", "push -f", id="here-string-to-shell"),
-            pytest.param('sh <<<"git push origin +main"', "push origin +main", id="here-string-glued"),
-            pytest.param("<<< 'git push -f' bash", "push -f", id="here-string-before-runner"),
-            pytest.param("cat <<< hi\ntime git push -f\nhi", "push -f", id="here-string-then-next-line"),
-            pytest.param("cat <<<hi\nsudo GIT push origin main", "push origin main", id="here-string-glued-next-line"),
+            *_READING_RECALL,
+            *_READING_SPELLING,
+            *_READING_BRACE,
+            *_READING_ALIAS,
+            *_READING_UNRESOLVABLE_ALIAS,
+            *_READING_AUTOCORRECT,
+            *_READING_GLOB,
+            *_READING_GLOBAL_OPTION,
+            *_READING_HEREDOC_BODY,
+            *_READING_REDIRECTION,
+            *_READING_UNPARSEABLE,
+            *_READING_RAW_GLOB,
+            *_READING_SHELL_DEPENDENT_QUOTING,
+            *_READING_UNQUOTED_PROSE,
         ],
     )
-    def test_invocation_is_found(self, command: str, reading: str) -> None:
-        """The reading a hook acts on is among those returned, whatever wraps the call."""
-        assert reading in _readings(command)
+    def test_reading_is_found(self, command: str, reading: str) -> None:
+        """The reading a hook acts on is among those the finder returns, whatever wraps or spells the call.
 
-    @pytest.mark.parametrize(
-        ("command", "reading"),
-        [
-            pytest.param("GIT push --force", "push --force", id="upper-case"),
-            pytest.param("Git push -f", "push -f", id="mixed-case"),
-            pytest.param("/usr/bin/GIT push -f", "push -f", id="upper-case-path"),
-            pytest.param("GIT.EXE push -f", "push -f", id="upper-case-exe"),
-            pytest.param("git.exe push -f", "push -f", id="exe"),
-        ],
-    )
-    def test_every_spelling_of_the_program_counts(self, command: str, reading: str) -> None:
-        """The program name ignores case and ``.exe``: macOS and Windows file systems run ``GIT`` as git.
-
-        Probed live on macOS: ``/usr/bin/GIT --version`` reports git, so a case-sensitive match was a bypass.
-        """
-        assert reading in _readings(command)
-
-    @pytest.mark.parametrize(
-        ("command", "reading"),
-        [
-            pytest.param("{git,} push -f", "push -f", id="program"),
-            pytest.param("git {push,} -f", "push -f", id="subcommand"),
-            pytest.param("git pu{s..s}h -f", "push -f", id="letter-sequence"),
-            pytest.param("git push {-f,origin} main", "push -f origin main", id="option"),
-            pytest.param("git push origin {+,}main", "push origin +main main", id="refspec-prefix"),
-            pytest.param("git push -{f..f} origin", "push -f origin", id="option-sequence"),
-        ],
-    )
-    def test_shell_expansion_is_resolved(self, command: str, reading: str) -> None:
-        """Unquoted brace expansion is resolved before the words are read, as bash does, wherever the braces sit."""
-        assert reading in _readings(command)
-
-
-@_skip_node_unavailable
-class TestInlineAliases:
-    """An alias defined with ``-c``/``--config-env`` on the command line changes which command runs."""
-
-    @pytest.mark.parametrize(
-        ("command", "reading"),
-        [
-            pytest.param("git -c alias.p=push p -f", "push -f", id="alias"),
-            pytest.param("git -c alias.yolo='push --force' yolo", "push --force", id="alias-with-arguments"),
-            pytest.param("git -c alias.P=push p -f", "push -f", id="alias-name-ignores-case"),
-            pytest.param("git -c 'alias.y=-c alias.z=push z' y -f", "push -f", id="alias-of-global-options"),
-            pytest.param("git -c alias.x='!git push -f' x", "push -f", id="shell-alias"),
-            pytest.param("git -c alias.x='!git' x push -f", "push -f", id="shell-alias-arguments"),
-        ],
-    )
-    def test_inline_alias_expands(self, command: str, reading: str) -> None:
-        """An alias defined in the command itself is read as what it runs.
-
-        Every definition form here was probed live with ``status`` as the value before being pinned.
+        Each case is a command that runs git (or must be assumed to) paired with the one subcommand reading a guard or
+        injector needs to see; extra readings beside it are allowed because the finder widens rather than narrows. A
+        miss here is a force-push bypass in the guard or a lost rule in the injector.
         """
         assert reading in _readings(command)
 
     @pytest.mark.parametrize(
         "command",
         [
-            pytest.param("git --config-env=alias.q=FOO q", id="config-env-joined"),
-            pytest.param("git --config-env alias.q=FOO q", id="config-env-separate"),
-            pytest.param('git -c alias.q="$CMD" q', id="value-from-variable"),
-            pytest.param("git -c alias.a=b -c alias.b=a a", id="alias-loop"),
+            *_NO_PUSH_TEXT,
+            *_NO_PUSH_DATA_BODY,
+            *_NO_PUSH_SHELL_BODY,
         ],
     )
-    def test_unresolvable_alias_reads_as_force_push(self, command: str) -> None:
-        """An alias whose value the environment holds, or a loop, reads as ``push --force`` so a guard fails closed.
+    def test_no_push_reading(self, command: str) -> None:
+        """Text that only names a push, such as quoted words, comments or heredoc bodies, yields no push reading.
 
-        The loop case also proves the expansion terminates: git itself reports ``alias loop detected``.
+        Each case mentions ``git push`` as data (a quoted string, a comment, a body handed to a data command or read by
+        the shells as body text). Reading it as a push would block a command that pushes nothing.
         """
-        assert "push --force" in _readings(command)
+        assert not any(reading.split(" ")[0] == "push" for reading in _readings(command))
+
+
+@_skip_node_unavailable
+class TestInlineAliases:
+    """An alias defined with ``-c``/``--config-env`` on the command line changes which command runs."""
 
     def test_builtin_keeps_its_literal_reading_beside_a_same_named_alias(self) -> None:
         """A builtin wins over a same-named alias, so the literal reading stays beside the expansion.
@@ -257,32 +643,23 @@ class TestInlineAutocorrect:
     """
 
     @pytest.mark.parametrize(
-        "command",
-        [
-            pytest.param("git -c help.autocorrect=immediate pussh --force origin main", id="immediate"),
-            pytest.param("git -c help.autocorrect=1 status", id="numeric-delay"),
-            pytest.param("git -c help.autocorrect=-1 status", id="negative-immediate"),
-            pytest.param("git -c help.autocorrect status", id="bare-key-is-true"),
-            pytest.param("time git -c help.autoCorrect=immediate pus -f", id="key-case-ignored"),
-            pytest.param("git --config-env help.autocorrect=V pus -f", id="config-env-run-time-value"),
-            pytest.param('git -c help.autocorrect="$V" status', id="variable-run-time-value"),
-            pytest.param("git -c help.autocorrect=0 -c help.autocorrect=1 status", id="last-value-wins-on"),
-        ],
-    )
-    def test_enabling_value_reads_every_subcommand_as_force_push(self, command: str) -> None:
-        """A value that runs the correction, or one only the environment holds, adds a ``push --force`` reading."""
-        assert "push --force" in _readings(command)
-
-    @pytest.mark.parametrize(
         "value",
         ["0", "false", "FALSE", "off", "no", "", "never", "show", "prompt"],
     )
     def test_disabling_value_adds_nothing(self, value: str) -> None:
-        """A value that never runs a guess leaves only the literal reading."""
+        """A value that never runs a guess leaves only the literal reading.
+
+        Starts from ``git -c help.autocorrect=<value> status`` with each value git does not treat as enabling. Reading
+        these as force pushes would block every command that merely sets the option off.
+        """
         assert _readings(f"git -c help.autocorrect={value} status") == {"status"}
 
     def test_last_value_wins_off(self) -> None:
-        """A later disabling entry overrides an earlier enabling one, as git reads repeated ``-c`` keys."""
+        """A later disabling entry overrides an earlier enabling one, as git reads repeated ``-c`` keys.
+
+        Two ``-c`` entries set the same key, enabling first and disabling last. Git keeps the last, so the finder must
+        not report the widened force reading from the earlier entry.
+        """
         assert _readings("git -c help.autocorrect=1 -c help.autocorrect=0 status") == {"status"}
 
 
@@ -293,20 +670,6 @@ class TestPathnameExpansion:
     ``touch ./-f; git push origin -?`` runs ``git push origin -f``. The literal reading stays, and a second reading
     reads each unquoted glob argument as ``--force``, so a guard fails closed. Readings remain plain strings.
     """
-
-    @pytest.mark.parametrize(
-        ("command", "reading"),
-        [
-            pytest.param("git push origin -?", "push origin --force", id="question-mark-flag"),
-            pytest.param("git push origin ?main", "push origin --force", id="question-mark-refspec"),
-            pytest.param("git push origin ma*", "push origin --force", id="star"),
-            pytest.param("git push origin [+]main", "push origin --force", id="bracket"),
-            pytest.param("bash -c 'git push origin ma*'", "push origin --force", id="nested-shell-source"),
-        ],
-    )
-    def test_glob_argument_adds_a_force_reading(self, command: str, reading: str) -> None:
-        """The glob argument is read as ``--force`` in an extra reading, also inside shell source a runner lexes."""
-        assert reading in _readings(command)
 
     @pytest.mark.parametrize(
         "command",
@@ -320,11 +683,20 @@ class TestPathnameExpansion:
         ],
     )
     def test_literal_glob_character_adds_nothing(self, command: str) -> None:
-        """Quoted, escaped and parameter characters never expand; git splits a plain alias without globbing."""
+        """Quoted, escaped and parameter characters never expand; git splits a plain alias without globbing.
+
+        Each command puts a glob character where no expansion happens: inside quotes, escaped, as a positional-
+        parameter expansion, an array subscript, or in a plain alias value. Widening these would flag ordinary
+        pushes as forced.
+        """
         assert "push origin --force" not in _readings(command)
 
     def test_every_reading_is_a_plain_string(self) -> None:
-        """The marks the lexer uses internally never leak: ``git add *.py`` reads as itself and as ``add --force``."""
+        """The marks the lexer uses internally never leak: ``git add *.py`` reads as itself and as ``add --force``.
+
+        ``git add *.py`` carries an unquoted glob. The internal glob marker the lexer attaches to the word must be gone
+        from the output, leaving only the literal reading and the widened ``--force`` one for the hooks to compare.
+        """
         assert _readings("git add *.py") == {"add *.py", "add --force"}
 
 
@@ -346,7 +718,12 @@ class TestInterpreterCode:
         ],
     )
     def test_code_naming_a_push_reads_as_one_carrying_its_tokens(self, command: str, token: str) -> None:
-        """The push reading carries every token of the code, so a force flag anywhere in it reaches the guard."""
+        """The push reading carries every token of the code, so a force flag anywhere in it reaches the guard.
+
+        Interpreter code such as ``python -c`` or ``node -e`` is not shell syntax, so the finder scans it raw. A force
+        flag anywhere in the code must still land in the push reading, or an interpreter wrapper would hide a force
+        push.
+        """
         assert any(reading.split(" ")[0] == "push" and token in reading.split(" ") for reading in _readings(command))
 
     @pytest.mark.parametrize(
@@ -358,21 +735,12 @@ class TestInterpreterCode:
         ],
     )
     def test_code_without_a_git_push_yields_nothing(self, command: str) -> None:
-        """A ``.push(`` method, a file named ``shell-git.js`` or a word containing push is not a git push."""
-        assert _readings(command) == set()
+        """A ``.push(`` method, a file named ``shell-git.js`` or a word containing push is not a git push.
 
-    @pytest.mark.parametrize(
-        ("command", "reading"),
-        [
-            pytest.param("git --future-opt value push -f", "push -f", id="unknown-option-takes-value"),
-            pytest.param("git --future-flag push -f", "push -f", id="unknown-option-is-a-flag"),
-            pytest.param("git --attr-source HEAD push -f", "push -f", id="known-value-option"),
-            pytest.param("git --no-pager -c a=b push", "push", id="known-flag-and-value-option"),
-        ],
-    )
-    def test_global_options_never_hide_the_subcommand(self, command: str, reading: str) -> None:
-        """An unknown global option is read both as a flag and as value-taking, so neither reading can hide a push."""
-        assert reading in _readings(command)
+        Code that mentions ``push`` without running git (an array method, a script path, a print) must not be read as a
+        git push, or ordinary node and python one-liners would be blocked.
+        """
+        assert _readings(command) == set()
 
 
 @_skip_node_unavailable
@@ -382,138 +750,25 @@ class TestPrecision:
     @pytest.mark.parametrize(
         "command",
         [
-            pytest.param("echo 'git push --force'", id="single-quoted-text"),
-            pytest.param('echo "git push --force"', id="double-quoted-text"),
-            pytest.param('git log --grep "push --force"', id="quoted-pattern"),
-            pytest.param("git push-ish", id="look-alike-subcommand"),
-            pytest.param("git status # git push -f", id="comment"),
-            pytest.param(
-                "git commit -m \"$(cat <<'EOF'\nfix: x\n\nDon't git push --force here.\nEOF\n)\"",
-                id="commit-message-heredoc",
-            ),
-            pytest.param("cat <<< 'git push -f'", id="here-string-to-non-runner"),
-        ],
-    )
-    def test_no_push_reading(self, command: str) -> None:
-        """Quoted text, comments and heredoc bodies are data; only a real ``push`` subcommand counts."""
-        assert not any(reading.split(" ")[0] == "push" for reading in _readings(command))
-
-    @pytest.mark.parametrize(
-        "command",
-        [
             pytest.param("git push origin '{-f,x}'", id="single-quoted"),
             pytest.param('git push origin "\\{-f,x\\}"', id="escaped"),
         ],
     )
     def test_quoted_braces_are_not_expanded(self, command: str) -> None:
-        """Quoted or escaped braces stay one literal refspec, so no reading gains a ``-f`` argument."""
+        """Quoted or escaped braces stay one literal refspec, so no reading gains a ``-f`` argument.
+
+        Single-quoted or backslash-escaped ``{-f,x}`` is one literal refspec in bash. Expanding it would invent a ``-f``
+        argument and block a push that is not forced.
+        """
         assert not any("-f" in reading.split(" ") for reading in _readings(command))
 
     def test_parameter_expansion_braces_are_not_brace_expansion(self) -> None:
-        """``${HOME%%,*}`` holds a comma inside ``${…}``; reading it as brace expansion would invent words."""
+        """``${HOME%%,*}`` holds a comma inside ``${…}``; reading it as brace expansion would invent words.
+
+        ``${HOME%%,*}`` contains a comma but is a parameter expansion. The finder must keep it as the single word it is;
+        brace-expanding it would fabricate extra readings.
+        """
         assert _readings("git log ${HOME%%,*}a") == {"log ${HOME%%,*}a"}
-
-
-@_skip_node_unavailable
-class TestHeredocBodies:
-    """A quoted heredoc body handed to a data command is data, even on a line that opens with ``git push``.
-
-    The coarse pass splits raw text at newlines, so a body line opening with ``git push`` read as a push and blocked a
-    command that pushes nothing: release notes written with ``cat``, a commit message given on stdin. It skips such a
-    body only when the lexer read the whole command and every command in it is a data command; any body a shell, an
-    interpreter or an unknown program may run keeps its coarse reading.
-    """
-
-    @pytest.mark.parametrize(
-        "command",
-        [
-            pytest.param("cat > notes.md <<'EOF'\nline one\ngit push origin main\nline three\nEOF", id="plain"),
-            pytest.param("cat > n.md <<'EOF'\n  git push origin main\nEOF", id="indented"),
-            pytest.param("cat > n.md <<'EOF'\n```\ngit push origin main\n```\nEOF", id="markdown-fence"),
-            pytest.param("git commit -F - <<'EOF'\ngit push is documented here\nEOF", id="commit-message-on-stdin"),
-            pytest.param('cat > n.md <<"EOF"\ngit push origin main\nEOF', id="double-quoted-delimiter"),
-            pytest.param("cat > n.md <<\\EOF\ngit push origin main\nEOF", id="escaped-delimiter"),
-            pytest.param("cat <<-'EOF' > n.md\n\tgit push -f origin main\n\tEOF", id="tab-stripping-force-text"),
-            pytest.param("tee n.md <<'EOF'\ngit push --force\nEOF", id="tee"),
-            pytest.param(
-                "gh pr create --title x --body-file - <<'EOF'\ngit push origin main\nEOF", id="gh-body-on-stdin"
-            ),
-            pytest.param(
-                "git commit -m \"$(cat <<'EOF'\nfix: x\n\ngit push now works\nEOF\n)\"",
-                id="commit-message-substitution",
-            ),
-            pytest.param("mkdir -p docs && cat > docs/x.md <<'EOF'\ngit push origin main\nEOF", id="after-mkdir"),
-        ],
-    )
-    def test_body_line_opening_with_push_is_data(self, command: str) -> None:
-        """Every command here only stores or sends the body, so no reading is a push.
-
-        Each was blocked as a push needing a token (round 9b live lane, F2), while the same text mid-line passed.
-        """
-        assert not any(reading.split(" ")[0] == "push" for reading in _readings(command))
-
-    @pytest.mark.parametrize(
-        ("command", "reading"),
-        [
-            pytest.param("bash <<'EOF'\ngit push origin main\nEOF", "push origin main", id="bash"),
-            pytest.param("sh <<'EOF'\n  git push origin main\nEOF", "push origin main", id="sh"),
-            pytest.param("python3 <<'EOF'\ngit push origin main\nEOF", "push origin main", id="interpreter"),
-            pytest.param(
-                "cat <<'EOF' | awk '{system($0)}'\ngit push origin main\nEOF", "push origin main", id="piped-to-awk"
-            ),
-            pytest.param(
-                "cat > x.sh <<'EOF'\ngit push origin main\nEOF\nchmod +x x.sh && ./x.sh",
-                "push origin main",
-                id="script-run-after",
-            ),
-            pytest.param(
-                "cat <<'EOF' > >(sh)\ngit push origin main\nEOF", "push origin main", id="process-substitution"
-            ),
-            pytest.param(
-                "git -c alias.x='!sh' x <<'EOF'\ngit push origin main\nEOF", "push origin main", id="git-inline-config"
-            ),
-            pytest.param(
-                "git bisect run awk '{system($0)}' <<'EOF'\ngit push origin main\nEOF",
-                "push origin main",
-                id="git-subcommand-running-a-program",
-            ),
-            pytest.param("cat > n.md <<EOF\ngit push origin main\nEOF", "push origin main", id="unquoted-delimiter"),
-            pytest.param(
-                "cat > n.md <<'EOF'\ngit push origin main\nEOF\necho 'unbalanced", "push origin main", id="unparsed"
-            ),
-            pytest.param("sudo cat <<'EOF'\ngit push origin main\nEOF", "push origin main", id="prefix-program"),
-            # `<<` the lexer reads as a heredoc where the shells read none: bash runs line 2 as a command
-            pytest.param("echo $[ 1 << 'X' ]\ngit push origin main\nX", "push origin main", id="arithmetic-bracket"),
-            pytest.param("echo ${x:-<<'X'}\ngit push origin main\nX", "push origin main", id="parameter-default"),
-            pytest.param("(( cat << '2' ))\ngit push origin main\n2", "push origin main", id="arithmetic-command"),
-            pytest.param(
-                "cat <<'EOF'\r\nbody\r\nEOF\r\ngit push origin main\r\n", "push origin main", id="crlf-delimiter"
-            ),
-        ],
-    )
-    def test_body_a_program_may_run_keeps_its_reading(self, command: str, reading: str) -> None:
-        """A body fed to a shell, interpreter or unknown program, an unquoted body or an unparsed command still reads.
-
-        The coarse pass exists so the lexer only adds git detections; it gives up a body only where the whole command is
-        known to treat it as data. That includes text where the lexer reads a heredoc the shells do not: inside
-        ``$[…]``, ``${…}`` or ``((…))`` ``<<`` is a shift or literal text, and with CRLF line ends the delimiter word
-        keeps its CR, so bash and zsh run the line the lexer would take for body text (probed live on both).
-        """
-        assert reading in _readings(command)
-
-    @pytest.mark.parametrize(
-        "command",
-        [
-            pytest.param("cat <<'EOF' <<'E2'\none\nEOF\ngit push origin main\nE2", id="second-heredoc-body"),
-            pytest.param("cat <<'EOF'\ngit push origin main", id="unterminated-body"),
-        ],
-    )
-    def test_shells_read_these_lines_as_body(self, command: str) -> None:
-        """Both bash and zsh feed these lines to ``cat`` (probed live), so no reading is a push.
-
-        Two heredocs on one line are read in order; a body with no delimiter line runs to the end of the input.
-        """
-        assert not any(reading.split(" ")[0] == "push" for reading in _readings(command))
 
 
 @_skip_node_unavailable
@@ -544,45 +799,25 @@ class TestRedirections:
         ],
     )
     def test_invocation_words(self, command: str, words: list[str]) -> None:
-        """Exactly the words bash passes to gh: redirections, their targets and fd numbers gone, quoted text kept."""
+        """Exactly the words bash passes to gh: redirections, their targets and fd numbers gone, quoted text kept.
+
+        Each case is a ``gh`` command with redirections placed before, inside or after its arguments, or quoted operator
+        characters. The write guard matches subcommands by position, so a redirection read as a word would shift them.
+        """
         assert _invocations(command, "gh") == [words]
 
-    @pytest.mark.parametrize(
-        "command",
-        [
-            pytest.param("git 2>/dev/null push -f", id="before-the-subcommand"),
-            pytest.param("git > x push -f", id="separate-target-before-the-subcommand"),
-            pytest.param("{ git 2>/dev/null push -f; }", id="grouped"),
-        ],
-    )
-    def test_redirection_never_reads_as_the_git_subcommand(self, command: str) -> None:
-        """Bash runs ``git push -f`` for each; read as the subcommand, the redirection hid the push from both hooks."""
-        assert "push -f" in _readings(command)
-
     def test_plain_alias_keeps_angle_brackets_as_arguments(self) -> None:
-        """Git splits a plain alias itself, so ``>`` there is an argument and the ``-f`` after it a push flag."""
+        """Git splits a plain alias itself, so ``>`` there is an argument and the ``-f`` after it a push flag.
+
+        A git alias value is split by git itself, with no shell redirection step, so ``>`` in it stays an argument and
+        the ``-f`` after it is still a push flag the guard must see.
+        """
         assert "push > -f" in _readings("git -c alias.p='push > -f' p")
 
 
 @_skip_node_unavailable
 class TestFailClosed:
     """Where the lexer cannot follow the command, any git word anywhere counts."""
-
-    @pytest.mark.parametrize(
-        ("command", "reading"),
-        [
-            pytest.param("git commit -m 'unbalanced; echo git push -f", "push -f", id="unbalanced-single-quote"),
-            pytest.param('echo "unterminated && git push', "push", id="unbalanced-double-quote"),
-            pytest.param("echo $(git push -f", "push -f", id="unterminated-substitution"),
-        ],
-    )
-    def test_unparseable_quoting_still_finds_git(self, command: str, reading: str) -> None:
-        """A lexer failure falls back to scanning every raw segment, so it cannot become a bypass."""
-        assert reading in _readings(command)
-
-    def test_unquoted_prose_counts_as_an_invocation(self) -> None:
-        """``echo run git push -f`` names a push in plain words; the finder prefers this false positive to a miss."""
-        assert "push -f" in _readings("echo run git push -f")
 
     def test_oversized_brace_expansion_fails_closed(self) -> None:
         """Nine two-way braces make 512 words, past the cap; the raw scan still reads a push carrying ``-f``.
@@ -593,16 +828,444 @@ class TestFailClosed:
 
         assert any(reading.startswith("push ") and reading.endswith(" -f") for reading in readings)
 
-    @pytest.mark.parametrize(
-        ("command", "reading"),
-        [
-            pytest.param('git push origin "?main', "push origin --force", id="unbalanced-quote"),
-            pytest.param("git push origin ?main {1..300}", "push origin --force 1..300", id="oversized-braces"),
-        ],
-    )
-    def test_glob_on_the_raw_path_reads_as_force(self, command: str, reading: str) -> None:
-        """The raw scan knows no quoting, so every glob character there counts as unquoted."""
-        assert reading in _readings(command)
+
+# Startup code, saved input, definitions and data-position eval expose the literal read.
+_LITERAL_CONSUMERS_AND_QUERIES = [
+    'fish -C "gh pr list" -c :',
+    'fish --init-command="gh pr list" --command :',
+    'fish -iC "gh pr list" -c :',
+    'fish -C"gh pr list" -c :',
+    'fish -ic "gh pr list"',
+    'fish --command="gh pr list"',
+    'exec 3<<< "gh pr list"; sh <&3',
+    'exec 3<<< "gh pr list"; sh 0<&3-',
+    'exec 3<<< "gh pr list"; sh 0<&3',
+    'exec 3<<< "gh pr list"; sh <&3-',
+    "exec 3<<'EOF'\ngh pr list\nEOF\nsh <&3",
+    "printf '%s' 'gh pr list' >s; exec 3<s; sh <&3",
+    "exec 3<<'EOF'\ngh pr list\nEOF\nexec 4<&3; sh <&4",
+    "alias -p; gh pr list",
+    "alias; gh pr list",
+    "alias f; gh pr list",
+    "function f { :; }; gh pr list",
+    "function f { gh pr list; }; f",
+    "function f() { gh pr list; }; f",
+    'f() { [ -f "$x" ]; case "$x" in *) :;; esac; }; gh pr list',
+    "alias f='gh pr list'; f",
+    "grep -F eval '$x'; gh pr list",
+    "env grep -F eval '$x'; gh pr list",
+]
+
+# Known substitution bytes, executable paths, startup files and templates expose the complete argv.
+_LITERAL_PROVEN_CONSUMER_SOURCE_IS_READ_EXACTLY = [
+    "eval \"$(printf g; printf 'h pr list')\"",
+    "bash -c \"$(printf '%s' 'gh pr list')\"",
+    "printf '%s' 'gh pr list' >s; exec ./s",
+    "printf '%s' 'gh pr list' >s; command source s",
+    "printf '%s' 'gh pr list' >s; BASH_ENV=s bash -c :",
+    "printf '%s' 'gh pr list' >s; ENV=s sh -ic :",
+    "printf '%s' 'gh pr list' >d/.zshenv; ZDOTDIR=d zsh -c :",
+    "find . -exec sh -c 'gh pr list' \\;",
+]
+
+# Resolving an executable path must preserve both its inline source and generated script operand.
+_LITERAL_PATH_COMMAND_KEEPS_ITS_SHELL_CONSUMERS = [
+    "P=/bin/bash; $P -c 'gh pr list'",
+    "P=/bin/bash; bash -c '$P -c \"gh pr list\"'",
+    "P=/bin/bash; printf '%s' 'gh pr list' > s.sh; $P s.sh",
+    "P=/bin/bash; printf '%s' 'gh pr list' | $P",
+]
+
+# Split-string printers and placeholders in nested source keep their stdin provenance.
+_LITERAL_REREAD_PRINTERS_AND_PLACEHOLDERS_SUPPLY_SOURCE = [
+    "print -f 'g%s pr list' h | sh",
+    "env -S \"printf 'g%s pr list' h\" | sh",
+    "echo 'gh pr list' | xargs -I X env -S 'sh -c \"X\"'",
+    "echo 'gh pr list' | parallel -I X env -S 'sh -c \"X\"'",
+    "env -S \"print -f 'g%s pr list' h\" > w.sh; source ./w.sh",
+    "sudo env -S \"printf 'g%s pr list' h\" | sh",
+    "echo 'gh pr list' | xargs -I X sh -c 'env -S \"sh -c X\"'",
+    "echo 'gh pr list' | xargs -I X env -S 'env -S \"sh -c X\"'",
+]
+
+# Shell source remains visible through clusters, stdin, generated files and literal formatting.
+_LITERAL_REPORTED_SOURCE_REGRESSIONS = [
+    pytest.param("bash -oc pipefail 'gh pr list'", id="shell-value-before-command-flag"),
+    pytest.param("env -S 'sh -s' <<'EOF'\ngh pr list\nEOF", id="env-split-inherits-heredoc"),
+    pytest.param("if true; then sh; fi <<'EOF'\ngh pr list\nEOF", id="compound-trailing-heredoc"),
+    pytest.param(
+        "cat > w.sh <<'EOF'\ngh pr list\nEOF\nbash <<'RUN'\nbash w.sh\nRUN",
+        id="script-discovered-in-shell-heredoc",
+    ),
+    pytest.param("echo 'gh pr list' | parallel -I X sh -c X", id="parallel-custom-replacement"),
+    pytest.param("printf 'g%s pr list' h | sh", id="printf-format-constructs-program"),
+    pytest.param("echo 'gh pr list' > w.sh; bash w.sh", id="printed-script-file"),
+]
+
+# Wrapper stdin, replacement operands and printed script files preserve literal executable text.
+_LITERAL_NESTED_STDIN_AND_WRITTEN_PRINT_OUTPUT_ARE_SOURCE = [
+    "env -S 'sh -s' <<< 'gh pr list'",
+    "echo 'gh pr list' | env -S 'sh -s'",
+    "echo 'gh pr list' > w.sh; env -S 'sh -s' < w.sh",
+    "echo 'gh pr list' >> w.sh; source w.sh",
+    "echo 'gh pr list' | tee w.sh; bash w.sh",
+    "cat <<'EOF' | tee w.sh\ngh pr list\nEOF\nbash w.sh",
+    "printf 'g%s pr list' h > w.sh; bash w.sh",
+    "echo 'gh pr list' | parallel --replace X sh -c X",
+    "echo 'gh pr list' | parallel --replace=X sh -c X",
+    "echo 'gh pr list' | parallel -iX sh -c X",
+    "echo 'gh pr list' | parallel -i X sh -c X",
+    "echo 'gh pr list' | parallel -IX sh -c X",
+    "{ echo 'gh pr list'; } > w.sh; bash w.sh",
+    "echo 'gh pr list' > w.sh; if true; then sh; fi < w.sh",
+]
+
+# Executable source retains its complete argv and remains readable.
+_LITERAL_SOURCE_POSITIONS_PRESERVE_REPORTED_ARGV = [
+    pytest.param("bash -co pipefail 'gh pr list'", id="shell-cluster-value"),
+    pytest.param("env --argv0 test -S 'gh pr list'", id="env-value-before-split"),
+    pytest.param("cat > /tmp/s <<'EOF'\ngh pr list\nEOF\nsource -- /tmp/s", id="source-option-terminator"),
+    pytest.param("cat > /tmp/s <<'EOF'\ngh pr list\nEOF\nenv -S 'bash /tmp/s'", id="nested-script-operand"),
+    pytest.param("cat <<'EOF' | if true; then bash; fi\ngh pr list\nEOF", id="compound-inherits-stdin"),
+    pytest.param("cat <<'EOF' | xargs -I{} sh -c '{}'\ngh pr list\nEOF", id="replacement-command-source"),
+    pytest.param("env -S 'bash -c \"gh\\_pr\\_list\"'", id="env-split-space-escape"),
+]
+
+# Dynamic source, invalid descriptors, modeled-name shadows and rejected splits fail closed.
+_REFUSE_UNKNOWN_CONSUMERS_REFUSE = [
+    'fish -C "$x" -c :',
+    'fish --init-command="$x" -c :',
+    'exec 3<<< "$x"; sh <&3',
+    'exec 3<<< "gh pr list"; exec 3<&-; sh <&3',
+    'exec 3<<< "gh pr list"; exec 3<<< "$x"; sh <&3',
+    'exec 3<"$x"; sh <&3',
+    "function gh { :; }; gh pr list",
+    "alias gh=':'; gh pr list",
+    "function f { $x; }; gh pr list",
+    'eval "$(cat f)"',
+    r"env -S 'printf %s gh\ pr\ list' | sh",
+]
+
+# Unknown generators, ambiguous file writes and joined replacements cannot hide source bytes.
+_REFUSE_UNKNOWN_CONSUMER_SOURCE_FAILS_CLOSED = [
+    'bash <<< "$SOURCE"',
+    'bash -c "$""V"',
+    'eval "$""V"',
+    'eval "$(cat input.txt)"',
+    "sed 's/^/gh /' <<< 'pr list' | eval sh",
+    "python generator.py | sh",
+    "sed -i 's/x/y/' s; bash s",
+    "command cp input s; bash s",
+    "nice mv input s; bash s",
+    "timeout 5 install input s; bash s",
+    "ln -s input s; bash s",
+    "printf '%s' 'gh pr list' | env xargs tee s; bash s",
+    "printf g >s; printf 'h pr list' >>s; sh s",
+    "printf '%s' 'h pr list' | xargs -I{} sh -c 'g{}'",
+    "printf '%s' 'h pr list' | parallel 'sh -c \"g{}\"'",
+    "alias p='printf %s'; p 'gh pr list' | sh",
+    "command() { printf '%s' 'gh pr list'; }; command echo ok | sh",
+]
+
+# Unknown command bytes and actual overwrites remain unreadable after narrowing argument values.
+_REFUSE_SOURCE_POSITIONS_AND_MATCHING_PATHS_REQUIRE_PROOF = [
+    'tee "$R/s.sh"; bash "$R/s.sh"',
+    'tee "${R}/d/../s.sh"; bash "$R/s.sh"',
+    'tee "$P"; "$P"',
+    "tee .venv/bin/python; P=.venv/bin/python; $P -c pass",
+    "P=./s; tee s; $P",
+    "tee d1.sh; for f in d1 d2; do bash $f.sh; done",
+    "tee d2.sh; for f in d1 d2; do /bin/bash ${f}.sh; done",
+    "tee s.sh; for f in s; do . $f.sh; done",
+    "tee /usr/bin/python; /usr/bin/python -m pytest",
+    "tee /bin/bash; /bin/bash existing.sh",
+    'tee "~/.cache/pre-commit/x/bin/ruff"; ~/.cache/pre-commit/x/bin/ruff check src/a',
+    "cat args | xargs -I{} sh -c '{}'",
+    "cat args | xargs -I{} sh -c '{} pr list'",
+    "cat args | parallel 'sh -c \"{}\"'",
+    'bash -c "$(cat code) pr list"',
+    'bash -c "${CMD} pr list"',
+    "bash -c '$CMD pr list'",
+    "bash <<'EOF'\n$CMD pr list\nEOF",
+    "P=/bin/bash; echo $(P=/bin/echo); sh -c '$P -c \"gh pr list\"'",
+    "P=/bin/bash; eval 'P=/bin/echo'; sh -c '$P -c \"gh pr list\"'",
+    'P=/bin/bash; printf -v P "%s" "$OTHER"; sh -c \'$P -c "gh pr list"\'',
+]
+
+# Normalized and possibly matching sink paths require proof, including literal tool overwrites.
+_REFUSE_MATCHING_MODELED_SINKS_REFUSE_UNKNOWN_FILE_CONTENTS = [
+    "sed -i 's/x/y/' ./s; bash s",
+    "env sed --in-place=.bak -e 's/x/y/' s; ./s",
+    "command perl -pi -e 's/x/y/' s; bash ./s",
+    "nice perl -i.bak -pe 's/x/y/' s; source s",
+    'install input "$SCRIPT"; bash "$SCRIPT"',
+    'ln -s input "$SCRIPT"; bash "$SCRIPT"',
+    "env xargs tee; bash s",
+    "xargs -I{} dd of={}; bash s",
+    "python generator.py > ./.venv/bin/python; .venv/bin/python -m pytest",
+    "cp input plugins/tool/bin/query; plugins/tool/bin/query --help",
+    "sed -i 's/x/y/' .venv/bin/python; .venv/bin/python -m pytest",
+    "perl -pi -e 's/x/y/' plugins/tool/bin/query; plugins/tool/bin/query --help",
+    "python helper.py 2>s; bash s",
+    "python helper.py >|s; bash s",
+    "python helper.py >>s; ./s",
+    "python helper.py >s; bash --init-file=s -ic :",
+    "python helper.py >s; env -S 'bash s'",
+    'sudo tee "./s"; bash dir/../s',
+    'tee "$SCRIPT"; bash "$SCRIPT"',
+]
+
+# An in-input generator invalidates the pre-existing-file residual at its code consumer.
+_REFUSE_UNKNOWN_GENERATED_SCRIPT_CONTENTS_FAIL_CLOSED = [
+    "python make_script.py | python -c 'print(input())' > generated.sh && bash generated.sh",
+    "sed 's/old()/new()/' input.sh > generated.sh; bash generated.sh",
+    "cat input.sh > generated.sh; bash generated.sh",
+]
+
+# Sibling output cannot prove unknown substitution bytes consumed by eval.
+_REFUSE_UNKNOWN_EVAL_OUTPUT_FAILS_CLOSED_INSIDE_COMPOUNDS = [
+    'if eval "$(python helper)"; then echo "$x"; fi',
+    '{ echo "$x"; eval "$(python helper)"; }',
+    '{ eval "`python helper`"; echo "$x"; }',
+    '{ eval "$(python helper)"; echo "gh pr create"; }',
+]
+
+# Unsupported env escapes, runtime printf arguments and unmodeled formats cannot hide code.
+_REFUSE_UNKNOWN_SOURCE_DECODING_FAILS_CLOSED = [
+    r"env -S 'bash -c gh\qpr'",
+    "env -S 'bash -c \"gh pr list\\c\"'",
+    "printf '%s pr list' \"$PROGRAM\" | sh",
+    "printf '%q pr list' gh | sh",
+    "printf '%s' *.sh | sh",
+    r"printf '%b' 'gh pr list\q' | sh",
+    "shopt -qs extglob; echo ok",
+    'shopt -q "$FLAGS"; echo ok',
+]
+
+# Data/source boundaries never admit code-running globs, indirect expansions or syntax-changing options.
+_REFUSE_EXECUTABLE_EXPANSIONS_REMAIN_UNREADABLE = [
+    "ls name()(e:'gh pr create':)",
+    "ls *(e:'gh pr create':)",
+    "ls (#qe:'gh pr create':)",
+    "setopt globsubst; gh pr view 2",
+    "shopt -s extglob; gh pr view 2",
+    "echo ${~words}; gh pr view 2",
+    "echo ${!words}; gh pr view 2",
+    "echo $[1+2]; gh pr view 2",
+    "exec {descriptor}>output; gh pr view 2",
+]
+
+# Modeled wrappers expose their shell command, and fed shells cannot hide option changes.
+_REFUSE_FED_OR_EXPLICIT_SOURCE_WITH_UNKNOWN_SHELL_OPTIONS_IS_UNREADABLE = [
+    "timeout 5 zsh -o rcquotes -c 'echo ok'; gh pr view 1",
+    "stdbuf -oL zsh -o rcquotes -c 'echo ok'",
+    "echo 'gh pr create' | { cat; zsh -o rcquotes; }",
+    "{ cat; zsh -o rcquotes; } <<< 'gh pr create'",
+    "echo 'gh pr create' | zsh -o rcquotes < script.sh",
+]
+
+# Unknown tools are not writers; unrelated sinks and expanded targets leave existing tools readable.
+_READABLE_ONLY_MATCHING_MODELED_WRITES_REQUIRE_FILE_CONTENT_PROOF = [
+    "cd project && .venv/bin/pre-commit run --files $(git diff --name-only) 2>&1 | grep -c ok",
+    "cd project && .venv/bin/python -m pytest plugins/x -q 2>&1 | tail -6",
+    '.venv/bin/python -m pytest -n 4 -q > output.txt 2>&1; echo "exit=$?"; tail -4 output.txt',
+    'FILES=$(sed p .temp/a | tr a b) && echo "$FILES" > .temp/b && .venv/bin/python -m pytest $FILES',
+    "S=project; mkdir -p $S/d; sed -e p $S/a.py > $S/b.py; .venv/bin/python $S/b.py > $S/inv 2>&1",
+    "plugins/codemap-py/bin/codemap-py query --help",
+    "generator ./s; bash s",
+    "python generator.py s; bash s",
+    "env dd; bash s",
+    "sed -e p s; bash s",
+    "xargs sed -e p; bash s",
+    "xargs perl -pe 's/x/y/'; bash s",
+    "awk -f program.awk s; ./s",
+    "python -m pytest > out.txt; ./s",
+    "python -m pytest 2>&1 > output.txt; ./s",
+    "sed -i 's/x/y/' other; bash s",
+    "perl -pi -e 's/x/y/' other; bash s",
+    'tee "$OUT"; .venv/bin/python -m pytest',
+    'tee "$OUT"; plugins/tool/bin/query --help',
+    'echo "$TEXT" > "$OUT"; ./.venv/bin/python -m pytest',
+    'tee "$FIRST"; ./"$SECOND"',
+    "cp input other; ./s",
+    "command cp input other; bash s",
+    "nice mv input other; bash s",
+    "timeout 5 install input other; bash s",
+    "sudo ln -s input other; bash s",
+]
+
+# Argument expansions and unrelated sinks do not turn ordinary tool runs into unknown source.
+_READABLE_RUNTIME_ARGUMENTS_AND_EXISTING_TOOL_PATHS_STAY_READABLE = [
+    "grep -n ok f | tail -1 | cut -d: -f1 | xargs -I{} sh -c 'sed -n \"{}p\" f'",
+    'bash -c ".venv/bin/python -m pytest \\$(cat $S/plan.txt) -q"',
+    "/usr/bin/time -p bash -c \"for i in \\$(seq 30); do .venv/bin/python -c 'print(1)'; done\"",
+    "P=.venv/bin/python; for flags in -B -E; do sh -c \"for i in 1 2 3; do $P $flags -c 'print(1)'; done\"; done",
+    'export CSID=one; IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/x"; bash "$IMPL_DIR/p3.sh"; '
+    'jq -c . "$IMPL_DIR/a.json" > "$IMPL_DIR/b.json"',
+    "SP=project; PYTHONPATH=src $SP/venv39/bin/python -m pytest tests/a -q 2>&1 | tail",
+    "R=project; for a in one two; do $R/.venv/bin/python check $a $R/src/x >/dev/null 2>$R/../.err; done",
+    "~/.cache/pre-commit/x/bin/ruff check --no-fix src/a src/b",
+    "git diff --name-only | grep ok | xargs pre-commit run ruff-format --files",
+    "cd project && for f in d1 d2; do /bin/bash $f.sh 2>&1 | head -6; /bin/zsh $f.sh; done",
+]
+
+# Expansion prefixes, normalized suffixes, literal tools and literal loop items bound path matches.
+_READABLE_EXPANSION_PATHS_ONLY_MATCH_COMPATIBLE_TARGETS = [
+    'tee "$R/b.json"; bash "$R/p3.sh"',
+    'tee "${R}/b.json"; bash "$R/p3.sh"',
+    'tee "$R/../.err"; $R/venv39/bin/python -m pytest',
+    'tee "$OUT"; bash "$R/p3.sh"',
+    'tee "$OUT"; bash existing.sh',
+    'tee "$OUT"; bash "$SCRIPT"',
+    'tee "$FIRST"; bash "$SECOND"',
+    'tee "$P"; $P',
+    'timeout 5 tee "$OUT"; bash s',
+    'sudo dd of="$OUT"; ./s',
+    'cp input "$OUT"; . s',
+    'mv input s; bash "$SCRIPT"',
+    'tee "$R/s"; bash "$S/s"',
+    'tee "$R/../s"; bash "$R/s"',
+    'tee "$OUT"; ~/.cache/pre-commit/x/bin/ruff check src/a',
+    'tee "$OUT"; /usr/bin/python -m pytest',
+    'tee "$OUT"; /bin/bash existing.sh',
+    'P=.venv/bin/python; tee "$OUT"; $P -c pass',
+    "P=./existing.sh; tee other.sh; $P",
+    "tee other.sh; for f in d1 d2; do bash $f.sh; done",
+    "tee d3.sh; for f in d1 d2; do bash $f.sh; done",
+]
+
+# The command-position contract supersedes the former scan of unknown programs' arguments.
+_READABLE_ORDINARY_ARGUMENTS_DO_NOT_RUN_SHELL_SOURCE = [
+    'echo "$TEXT" | grep env -S bash',
+    "man bash <<'TEXT'\ngh pr create\nTEXT",
+    "cat > helper.sh <<'TEXT'\ngh pr create\nTEXT\nman bash helper.sh",
+    "man bash -O extglob -c 'echo data'",
+    "man bash < script.sh | grep 'a\\|b'",
+    "echo 'gh pr create' | runner } bash",
+]
+
+# Different variable words carry no static relation, including array commands and state-file reads.
+_READABLE_DISTINCT_RUNTIME_WORDS_DO_NOT_PROVE_GENERATED_SOURCE = [
+    '"${R[@]}" pytest tests > "$_LOG" 2>&1',
+    'printf \'%s\\n\' "$STATE_FILE" > "${TMPDIR:-/tmp}/state-ref-${CSID}"; . "$STATE_FILE"',
+    'IFS= read -r METRIC_CMD < "${TMPDIR:-/tmp}/metric-${CSID}"; bash -c "$METRIC_CMD"',
+    'IFS= read -r GUARD_CMD < "${TMPDIR:-/tmp}/guard-${CSID}"; bash -c "$GUARD_CMD"',
+    'tee "$OUT"; $COMMAND',
+    'tee "$OUT"; source "$SCRIPT"',
+    'tee "$OUT"; bash --rcfile "$STARTUP" -ic :',
+    'tee "$OUT"; BASH_ENV="$STARTUP" bash -c :',
+    'tee "$OUT"; ${=COMMAND}',
+]
+
+# Only substitution stdout reaches eval; sibling compound commands write ordinary output.
+_READABLE_EVAL_SUBSTITUTION_DOES_NOT_CAPTURE_SIBLING_PRINTS = [
+    pytest.param("{ eval $(:);echo $x;}", id="minimal-compound"),
+    pytest.param('VALUE="$(echo "$x")" eval :', id="assignment-is-not-eval-source"),
+    pytest.param('env VALUE="$(echo "$x")" eval :', id="wrapper-assignment-is-not-eval-source"),
+    pytest.param('eval >"$(echo "$x")" :', id="redirection-is-not-eval-source"),
+]
+
+# Queries and quoted data do not make an ordinary command unreadable.
+_READABLE_REPORTED_READABILITY_REGRESSIONS = [
+    pytest.param("{ case x in (x) echo ok;; esac; }", id="case-after-brace-opener"),
+    pytest.param(
+        "printf '%s' 'data\\text' | xargs -I{} sh -c \"printf %s '{}'\"",
+        id="literal-backslash-printf-argument",
+    ),
+    pytest.param("shopt -q extglob; echo ok", id="shopt-query"),
+    pytest.param("bash --rcfile /dev/null -c 'echo ok'", id="shell-startup-file-option"),
+    pytest.param("env echo eval 'shopt -s extglob; echo ok'", id="wrapped-print-data"),
+]
+
+# Option inspection, wrapped print data and unrelated output files do not become source.
+_READABLE_QUERIES_AND_UNEXECUTED_PRINT_OUTPUT_STAY_READABLE = [
+    "shopt -p extglob; echo ok",
+    "shopt -qp extglob; echo ok",
+    "shopt -qo posix; echo ok",
+    "set -o; echo ok",
+    "set +o; echo ok",
+    "setopt; echo ok",
+    "bash --init-file /dev/null -c 'echo ok'",
+    "sudo echo eval 'shopt -s extglob; echo ok'",
+    "echo 'gh pr list' > notes.txt; bash w.sh",
+]
+
+# A closed compound and replacement in positional data cannot feed an unrelated shell.
+_READABLE_COMPOUND_SCOPE_AND_REPLACEMENT_DATA_DO_NOT_RUN_SOURCE = [
+    "cat <<'EOF' | if true; then cat; fi; bash\ngh pr list\nEOF",
+    "cat <<'EOF' | for item in one; do cat; done; bash\ngh pr list\nEOF",
+    "cat <<'EOF' | xargs -I token sh -c 'echo data' token\ngh pr list\nEOF",
+]
+
+# Only fed shell candidates consume printed text; pipeline heads and unrelated lists stay readable.
+_READABLE_UNFED_SHELL_CANDIDATES_DO_NOT_CONSUME_PIPELINE_TEXT = [
+    "man bash | col -b | grep -n 'alpha\\|beta' | head -5",
+    "brew info bash | grep -E 'x\\|y'",
+    "echo bash | sed 's/a\\|b/x/'",
+    "which zsh | sed 's/\\/bin//'",
+    "apropos zsh | grep 'a\\|b'",
+    "ls /bin | grep -c 'sh\\|bash'",
+    "bash -s | grep 'a\\|b'",
+    "echo 'gh pr create' | cat; bash",
+    "echo 'gh pr create' | cat && bash",
+    "echo 'gh pr create' | cat || bash",
+    "{ echo 'gh pr create' | cat; bash; }",
+    "(echo 'gh pr create' | cat; bash)",
+    "echo 'gh pr create'; echo \"$(bash)\" | cat",
+    "cat <(man bash | grep 'a\\|b')",
+]
+
+# Only executable input is shell source; script operands and unrelated heredocs remain data.
+_READABLE_DATA_ARGUMENTS_AND_GROUPING_REMAIN_READABLE = [
+    'bash helper.sh "fix(parser): read input"',
+    'env MODE=test python3 -c "print(2)"',
+    'env MODE=test python -W ignore -c "print(2)"',
+    "cat > helper.sh <<'TEXT'\n#!/bin/bash\necho \"(data)\"\nTEXT\nbash helper.sh",
+    "cat > notes.txt <<'TEXT'\necho (data)\nTEXT\nbash helper.sh",
+    "# note\nls",
+    "cat <<'TEXT'\necho (data)\nTEXT\nls; bash --version",
+    'for tag in a b; do [[ "$tag" =~ ^r[0-9]+(\\.[0-9]+)+$ ]]; done',
+    "time (ls | head -2)",
+    "time -p (ls)",
+    "helper(){ (ls); }; helper",
+    "ls; bash --version",
+    "ls; bash --help",
+    "setopt SH_WORD_SPLIT; ls",
+    "unsetopt shwordsplit; ls",
+    'bash helper.sh -c "fix(parser): still data"',
+    'bash helper.sh bash -c "fix(parser): still data"',
+    "bash --version <<'TEXT'\necho (data)\nTEXT",
+    "cat <<'TEXT'\ngh pr create; echo (data)\nTEXT\nbash",
+    "cat <<'TEXT'\ngh pr create; echo (data)\nTEXT\necho ok | sh",
+    "echo 'fix(parser): data'; bash",
+    "cat <<'TEXT' | cat\ngh pr create; echo (data)\nTEXT\npython3 helper.py",
+]
+
+# A consumer reads proven bytes or refuses; unknown output cannot become a readable empty result.
+_EITHER_CODE_CONSUMERS_NEVER_HIDE_GENERATED_INVOCATIONS = [
+    "bash -c \"$(printf '%s' 'gh pr list')\"",
+    "eval \"$(cat <<'EOF'\ngh pr list\nEOF\n)\"",
+    "eval \"$(printf g; printf 'h pr list')\"",
+    "printf '%s\\n' '#!/bin/sh' 'gh pr list' >s; chmod +x s; ./s",
+    "dd of=s <<'EOF'\ngh pr list\nEOF\nbash s",
+    "printf '%s' 'gh pr list' | env tee s; bash s",
+    "sed 's/^/gh /' <<< 'pr list' >s; bash s",
+    "echo() { printf '%s' 'gh pr list'; }; echo ok | sh",
+    'zsh -c \'alias p="printf %s"\np "gh pr list" | sh\'',
+    "printf '%s' 'gh pr list' | parallel 'sh -c \"{}\"'",
+    "printf '%s' 'gh pr list' >s; bash --rcfile s -ic :",
+]
+
+# Identical words and literal-bound dd targets still require proven source bytes.
+_EITHER_IDENTICAL_RUNTIME_FILE_WORDS_KEEP_GENERATED_CODE_VISIBLE = [
+    "printf '%s' 'gh pr list' > \"$X\"; bash \"$X\"",
+    "printf '%s' 'gh pr list' > \"$X\"; \"$X\"",
+    "printf '%s' 'gh pr list' > \"$X\"; source \"$X\"",
+    "printf '%s' 'gh pr list' > \"$X\"; bash --rcfile \"$X\" -ic :",
+    'dd of="$X"; bash "$X"',
+    'tee "$X"; bash --rcfile="$X" -ic :',
+    'X=script.sh; dd of="$X" <<\'EOF\'\ngh pr list\nEOF\nbash "$X"',
+]
 
 
 @_skip_node_unavailable
@@ -612,63 +1275,62 @@ class TestProgramInvocations:
     @pytest.mark.parametrize(
         "command",
         [
-            'fish -C "gh pr list" -c :',
-            'fish --init-command="gh pr list" --command :',
-            'fish -iC "gh pr list" -c :',
-            'fish -C"gh pr list" -c :',
-            'fish -ic "gh pr list"',
-            'fish --command="gh pr list"',
-            'exec 3<<< "gh pr list"; sh <&3',
-            'exec 3<<< "gh pr list"; sh 0<&3-',
-            'exec 3<<< "gh pr list"; sh 0<&3',
-            'exec 3<<< "gh pr list"; sh <&3-',
-            "exec 3<<'EOF'\ngh pr list\nEOF\nsh <&3",
-            "printf '%s' 'gh pr list' >s; exec 3<s; sh <&3",
-            "exec 3<<'EOF'\ngh pr list\nEOF\nexec 4<&3; sh <&4",
-            "alias -p; gh pr list",
-            "alias; gh pr list",
-            "alias f; gh pr list",
-            "function f { :; }; gh pr list",
-            "function f { gh pr list; }; f",
-            "function f() { gh pr list; }; f",
-            'f() { [ -f "$x" ]; case "$x" in *) :;; esac; }; gh pr list',
-            "alias f='gh pr list'; f",
-            "grep -F eval '$x'; gh pr list",
-            "env grep -F eval '$x'; gh pr list",
+            *_LITERAL_CONSUMERS_AND_QUERIES,
+            *_LITERAL_PROVEN_CONSUMER_SOURCE_IS_READ_EXACTLY,
+            *_LITERAL_PATH_COMMAND_KEEPS_ITS_SHELL_CONSUMERS,
+            *_LITERAL_REREAD_PRINTERS_AND_PLACEHOLDERS_SUPPLY_SOURCE,
+            *_LITERAL_REPORTED_SOURCE_REGRESSIONS,
+            *_LITERAL_NESTED_STDIN_AND_WRITTEN_PRINT_OUTPUT_ARE_SOURCE,
+            *_LITERAL_SOURCE_POSITIONS_PRESERVE_REPORTED_ARGV,
         ],
     )
-    def test_final_round_literal_consumers_and_queries(self, command: str) -> None:
-        """Startup code, saved input, definitions and data-position eval expose the literal read."""
-        assert _invocations(command, "gh") == [["gh", "pr", "list"]]
-        assert _unreadable(command) is False
+    def test_source_is_read_exactly(self, command: str) -> None:
+        """The command's one ``gh pr list`` is found with its full argv and the answer is readable.
+
+        Executable source (shell stdin, written scripts, printed text, startup files, wrappers) keeps the literal
+        invocation it holds, and queries or data that only look like source change nothing. Each case group is described
+        beside its constant above.
+        """
+        reading = _analyse(command)
+        assert reading.invocations == [["gh", "pr", "list"]]
+        assert reading.unreadable is False
 
     @pytest.mark.parametrize("shell", ["nu", "pwsh", "dash", "ksh", "csh", "tcsh", "xonsh", "elvish"])
-    def test_final_round_inline_shell_launchers(self, shell: str) -> None:
-        """Every supported inline launcher reads its operand or refuses its foreign syntax."""
+    def test_inline_shell_launchers(self, shell: str) -> None:
+        """Every supported inline launcher reads its operand or refuses its foreign syntax.
+
+        Shells other than bash (nu, pwsh, dash, ksh, csh, tcsh, xonsh, elvish) are given a quoted ``gh pr list``. Each
+        launcher must either surface the gh call or declare the command unreadable; silently dropping it would hide the
+        call.
+        """
         option = "-Command" if shell == "pwsh" else "-c"
         command = f'{shell} {option} "gh pr list"'
-        assert _unreadable(command) or _invocations(command, "gh") == [["gh", "pr", "list"]]
+        reading = _analyse(command)
+        assert reading.unreadable or reading.invocations == [["gh", "pr", "list"]]
 
     @pytest.mark.parametrize(
         "command",
         [
-            'fish -C "$x" -c :',
-            'fish --init-command="$x" -c :',
-            'exec 3<<< "$x"; sh <&3',
-            'exec 3<<< "gh pr list"; exec 3<&-; sh <&3',
-            'exec 3<<< "gh pr list"; exec 3<<< "$x"; sh <&3',
-            'exec 3<"$x"; sh <&3',
-            "function gh { :; }; gh pr list",
-            "alias gh=':'; gh pr list",
-            "function f { $x; }; gh pr list",
-            'eval "$(cat f)"',
-            r"env -S 'printf %s gh\ pr\ list' | sh",
+            *_REFUSE_UNKNOWN_CONSUMERS_REFUSE,
+            *_REFUSE_UNKNOWN_CONSUMER_SOURCE_FAILS_CLOSED,
+            *_REFUSE_SOURCE_POSITIONS_AND_MATCHING_PATHS_REQUIRE_PROOF,
+            *_REFUSE_MATCHING_MODELED_SINKS_REFUSE_UNKNOWN_FILE_CONTENTS,
+            *_REFUSE_UNKNOWN_GENERATED_SCRIPT_CONTENTS_FAIL_CLOSED,
+            *_REFUSE_UNKNOWN_EVAL_OUTPUT_FAILS_CLOSED_INSIDE_COMPOUNDS,
+            *_REFUSE_UNKNOWN_SOURCE_DECODING_FAILS_CLOSED,
+            *_REFUSE_EXECUTABLE_EXPANSIONS_REMAIN_UNREADABLE,
+            *_REFUSE_FED_OR_EXPLICIT_SOURCE_WITH_UNKNOWN_SHELL_OPTIONS_IS_UNREADABLE,
         ],
     )
-    def test_final_round_unknown_consumers_refuse(self, command: str) -> None:
-        """Dynamic source, invalid descriptors, modeled-name shadows and rejected splits fail closed."""
-        assert _invocations(command, "gh") is None
-        assert _unreadable(command) is True
+    def test_unknown_source_fails_closed(self, command: str) -> None:
+        """Source whose bytes or syntax the lexer cannot prove gives no argv and is reported unreadable.
+
+        A guard that fails closed on this answer blocks the command instead of letting generated or dynamic code hide a
+        ``gh`` write. Each case group is described beside its constant above.
+        """
+        reading = _analyse(command)
+        assert reading.invocations is None
+        assert reading.unreadable is True
 
     @pytest.mark.parametrize(
         "name",
@@ -689,21 +1351,36 @@ class TestProgramInvocations:
             "tee",
         ],
     )
-    def test_final_round_modeled_definition_names_refuse(self, name: str) -> None:
-        """Definitions cannot replace a command whose execution or output the lexer models."""
-        command = f"function {name} {{ :; }}; gh pr list"
-        assert _invocations(command, "gh") is None
-        assert _unreadable(command) is True
+    def test_modeled_definition_names_refuse(self, name: str) -> None:
+        """Definitions cannot replace a command whose execution or output the lexer models.
 
-    def test_final_round_rejected_env_split_has_specific_reason(self) -> None:
-        """The rejected split is handled at its cause instead of reaching the exception guard."""
+        A shell function defined with the name of a command the lexer models (gh, git, shells, ``env``, ``cat`` and so
+        on) could change what runs. The following ``gh pr list`` then has no provable argv, so the answer must be
+        unreadable.
+        """
+        command = f"function {name} {{ :; }}; gh pr list"
+        reading = _analyse(command)
+        assert reading.invocations is None
+        assert reading.unreadable is True
+
+    def test_rejected_env_split_has_specific_reason(self) -> None:
+        """The rejected split is handled at its cause instead of reaching the exception guard.
+
+        ``env -S`` with an escape or expansion that has no fixed reading is refused by name. The guard shows the reason
+        to the user, so it must name this cause rather than the generic exception message.
+        """
         assert (
             _unreadable_reason(r"env -S 'printf %s gh\ pr\ list' | sh")
             == "an env split-string escape or expansion without a fixed reading"
         )
 
-    def test_final_round_unexpected_lexer_error_is_unreadable(self) -> None:
-        """An unexpected internal error cannot escape the public classifier or yield readable emptiness."""
+    def test_unexpected_lexer_error_is_unreadable(self) -> None:
+        """An unexpected internal error cannot escape the public classifier or yield readable emptiness.
+
+        A node-side fault is injected by making ``String.prototype.split`` throw inside the library. The public call
+        must still return null with ``unreadable`` set and the reason ``lexer error``, so a bug in the lexer fails
+        closed.
+        """
         proc = _node(
             "const split = String.prototype.split;"
             "String.prototype.split = () => { throw new Error('injected lexer failure'); };"
@@ -719,32 +1396,33 @@ class TestProgramInvocations:
     @pytest.mark.parametrize("keyword", ["if", "for", "while", "case"])
     @pytest.mark.parametrize("parentheses", [True, False])
     def test_case_keyword_words_preserve_stdin_scope(self, keyword: str, parentheses: bool) -> None:
-        """Case subjects and patterns cannot open or close a keyword compound's input scope."""
+        """Case subjects and patterns cannot open or close a keyword compound's input scope.
+
+        A ``case`` statement uses ``if``, ``for``, ``while`` or ``case`` as subject and pattern, with and without
+        parentheses, then feeds a here-string to ``sh``. The words must not be mistaken for compound keywords that move
+        the input scope off ``sh``.
+        """
         pattern = f"({keyword})" if parentheses else f"{keyword})"
         command = f"case {keyword} in {pattern} sh;; esac <<<'gh pr list'"
-        assert _invocations(command, "gh") == [["gh", "pr", "list"]]
-        assert _unreadable(command) is False
+        reading = _analyse(command)
+        assert reading.invocations == [["gh", "pr", "list"]]
+        assert reading.unreadable is False
 
     @pytest.mark.parametrize(
         "command",
         [
-            "bash -c \"$(printf '%s' 'gh pr list')\"",
-            "eval \"$(cat <<'EOF'\ngh pr list\nEOF\n)\"",
-            "eval \"$(printf g; printf 'h pr list')\"",
-            "printf '%s\\n' '#!/bin/sh' 'gh pr list' >s; chmod +x s; ./s",
-            "dd of=s <<'EOF'\ngh pr list\nEOF\nbash s",
-            "printf '%s' 'gh pr list' | env tee s; bash s",
-            "sed 's/^/gh /' <<< 'pr list' >s; bash s",
-            "echo() { printf '%s' 'gh pr list'; }; echo ok | sh",
-            'zsh -c \'alias p="printf %s"\np "gh pr list" | sh\'',
-            "printf '%s' 'gh pr list' | parallel 'sh -c \"{}\"'",
-            "printf '%s' 'gh pr list' >s; bash --rcfile s -ic :",
+            *_EITHER_CODE_CONSUMERS_NEVER_HIDE_GENERATED_INVOCATIONS,
+            *_EITHER_IDENTICAL_RUNTIME_FILE_WORDS_KEEP_GENERATED_CODE_VISIBLE,
         ],
     )
-    def test_code_consumers_never_hide_generated_invocations(self, command: str) -> None:
-        """A consumer reads proven bytes or refuses; unknown output cannot become a readable empty result."""
-        invocations = _invocations(command, "gh")
-        assert _unreadable(command) or (invocations is not None and ["gh", "pr", "list"] in invocations)
+    def test_generated_code_is_never_hidden(self, command: str) -> None:
+        """Generated code is either reported unreadable or its ``gh pr list`` stays visible, never silently dropped.
+
+        A consumer reads proven bytes or refuses; unknown output cannot become a readable empty result. Each case group
+        is described beside its constant above.
+        """
+        reading = _analyse(command)
+        assert reading.unreadable or (reading.invocations is not None and ["gh", "pr", "list"] in reading.invocations)
 
     @pytest.mark.parametrize(
         ("command", "expected"),
@@ -762,111 +1440,40 @@ class TestProgramInvocations:
         ],
     )
     def test_consumer_checks_preserve_ordinary_commands(self, command: str, expected: list[list[str]]) -> None:
-        """File data and a non-shell command's stdin remain readable alongside known generated scripts."""
-        assert _invocations(command, "gh") == expected
-        assert _unreadable(command) is False
+        """File data and a non-shell command's stdin remain readable alongside known generated scripts.
+
+        Cases mix real generated scripts with file data: a command's stdin, an untouched script, a patch file.
+        Only genuine generated scripts expose their gh calls; plain data stays readable and empty.
+        """
+        reading = _analyse(command)
+        assert reading.invocations == expected
+        assert reading.unreadable is False
 
     @pytest.mark.parametrize(
         "command",
         [
-            "eval \"$(printf g; printf 'h pr list')\"",
-            "bash -c \"$(printf '%s' 'gh pr list')\"",
-            "printf '%s' 'gh pr list' >s; exec ./s",
-            "printf '%s' 'gh pr list' >s; command source s",
-            "printf '%s' 'gh pr list' >s; BASH_ENV=s bash -c :",
-            "printf '%s' 'gh pr list' >s; ENV=s sh -ic :",
-            "printf '%s' 'gh pr list' >d/.zshenv; ZDOTDIR=d zsh -c :",
-            "find . -exec sh -c 'gh pr list' \\;",
+            *_READABLE_ONLY_MATCHING_MODELED_WRITES_REQUIRE_FILE_CONTENT_PROOF,
+            *_READABLE_RUNTIME_ARGUMENTS_AND_EXISTING_TOOL_PATHS_STAY_READABLE,
+            *_READABLE_EXPANSION_PATHS_ONLY_MATCH_COMPATIBLE_TARGETS,
+            *_READABLE_ORDINARY_ARGUMENTS_DO_NOT_RUN_SHELL_SOURCE,
+            *_READABLE_DISTINCT_RUNTIME_WORDS_DO_NOT_PROVE_GENERATED_SOURCE,
+            *_READABLE_EVAL_SUBSTITUTION_DOES_NOT_CAPTURE_SIBLING_PRINTS,
+            *_READABLE_REPORTED_READABILITY_REGRESSIONS,
+            *_READABLE_QUERIES_AND_UNEXECUTED_PRINT_OUTPUT_STAY_READABLE,
+            *_READABLE_COMPOUND_SCOPE_AND_REPLACEMENT_DATA_DO_NOT_RUN_SOURCE,
+            *_READABLE_UNFED_SHELL_CANDIDATES_DO_NOT_CONSUME_PIPELINE_TEXT,
+            *_READABLE_DATA_ARGUMENTS_AND_GROUPING_REMAIN_READABLE,
         ],
     )
-    def test_proven_consumer_source_is_read_exactly(self, command: str) -> None:
-        """Known substitution bytes, executable paths, startup files and templates expose the complete argv."""
-        assert _invocations(command, "gh") == [["gh", "pr", "list"]]
-        assert _unreadable(command) is False
+    def test_ordinary_command_has_no_gh_and_is_readable(self, command: str) -> None:
+        """An ordinary command holding no ``gh`` yields an empty argv list and is not flagged unreadable.
 
-    @pytest.mark.parametrize(
-        "command",
-        [
-            'bash <<< "$SOURCE"',
-            'bash -c "$""V"',
-            'eval "$""V"',
-            'eval "$(cat input.txt)"',
-            "sed 's/^/gh /' <<< 'pr list' | eval sh",
-            "python generator.py | sh",
-            "sed -i 's/x/y/' s; bash s",
-            "command cp input s; bash s",
-            "nice mv input s; bash s",
-            "timeout 5 install input s; bash s",
-            "ln -s input s; bash s",
-            "printf '%s' 'gh pr list' | env xargs tee s; bash s",
-            "printf g >s; printf 'h pr list' >>s; sh s",
-            "printf '%s' 'h pr list' | xargs -I{} sh -c 'g{}'",
-            "printf '%s' 'h pr list' | parallel 'sh -c \"g{}\"'",
-            "alias p='printf %s'; p 'gh pr list' | sh",
-            "command() { printf '%s' 'gh pr list'; }; command echo ok | sh",
-        ],
-    )
-    def test_unknown_consumer_source_fails_closed(self, command: str) -> None:
-        """Unknown generators, ambiguous file writes and joined replacements cannot hide source bytes."""
-        assert _invocations(command, "gh") is None
-        assert _unreadable(command) is True
-
-    @pytest.mark.parametrize(
-        "command",
-        [
-            "cd project && .venv/bin/pre-commit run --files $(git diff --name-only) 2>&1 | grep -c ok",
-            "cd project && .venv/bin/python -m pytest plugins/x -q 2>&1 | tail -6",
-            '.venv/bin/python -m pytest -n 4 -q > output.txt 2>&1; echo "exit=$?"; tail -4 output.txt',
-            'FILES=$(sed p .temp/a | tr a b) && echo "$FILES" > .temp/b && .venv/bin/python -m pytest $FILES',
-            "S=project; mkdir -p $S/d; sed -e p $S/a.py > $S/b.py; .venv/bin/python $S/b.py > $S/inv 2>&1",
-            "plugins/codemap-py/bin/codemap-py query --help",
-            "generator ./s; bash s",
-            "python generator.py s; bash s",
-            "env dd; bash s",
-            "sed -e p s; bash s",
-            "xargs sed -e p; bash s",
-            "xargs perl -pe 's/x/y/'; bash s",
-            "awk -f program.awk s; ./s",
-            "python -m pytest > out.txt; ./s",
-            "python -m pytest 2>&1 > output.txt; ./s",
-            "sed -i 's/x/y/' other; bash s",
-            "perl -pi -e 's/x/y/' other; bash s",
-            'tee "$OUT"; .venv/bin/python -m pytest',
-            'tee "$OUT"; plugins/tool/bin/query --help',
-            'echo "$TEXT" > "$OUT"; ./.venv/bin/python -m pytest',
-            'tee "$FIRST"; ./"$SECOND"',
-            "cp input other; ./s",
-            "command cp input other; bash s",
-            "nice mv input other; bash s",
-            "timeout 5 install input other; bash s",
-            "sudo ln -s input other; bash s",
-        ],
-    )
-    def test_only_matching_modeled_writes_require_file_content_proof(self, command: str) -> None:
-        """Unknown tools are not writers; unrelated sinks and expanded targets leave existing tools readable."""
-        assert _invocations(command, "gh") == []
-        assert _unreadable(command) is False
-
-    @pytest.mark.parametrize(
-        "command",
-        [
-            "grep -n ok f | tail -1 | cut -d: -f1 | xargs -I{} sh -c 'sed -n \"{}p\" f'",
-            'bash -c ".venv/bin/python -m pytest \\$(cat $S/plan.txt) -q"',
-            "/usr/bin/time -p bash -c \"for i in \\$(seq 30); do .venv/bin/python -c 'print(1)'; done\"",
-            "P=.venv/bin/python; for flags in -B -E; do sh -c \"for i in 1 2 3; do $P $flags -c 'print(1)'; done\"; done",
-            'export CSID=one; IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/x"; bash "$IMPL_DIR/p3.sh"; '
-            'jq -c . "$IMPL_DIR/a.json" > "$IMPL_DIR/b.json"',
-            "SP=project; PYTHONPATH=src $SP/venv39/bin/python -m pytest tests/a -q 2>&1 | tail",
-            "R=project; for a in one two; do $R/.venv/bin/python check $a $R/src/x >/dev/null 2>$R/../.err; done",
-            "~/.cache/pre-commit/x/bin/ruff check --no-fix src/a src/b",
-            "git diff --name-only | grep ok | xargs pre-commit run ruff-format --files",
-            "cd project && for f in d1 d2; do /bin/bash $f.sh 2>&1 | head -6; /bin/zsh $f.sh; done",
-        ],
-    )
-    def test_runtime_arguments_and_existing_tool_paths_stay_readable(self, command: str) -> None:
-        """Argument expansions and unrelated sinks do not turn ordinary tool runs into unknown source."""
-        assert _invocations(command, "gh") == []
-        assert _unreadable(command) is False
+        Data arguments, queries, unrelated sinks and runtime words must not be mistaken for executable source, or every
+        everyday Bash command would be blocked. Each case group is described beside its constant above.
+        """
+        reading = _analyse(command)
+        assert reading.invocations == []
+        assert reading.unreadable is False
 
     @pytest.mark.parametrize(
         ("command", "expected"),
@@ -886,137 +1493,27 @@ class TestProgramInvocations:
         ],
     )
     def test_runtime_source_arguments_preserve_argv(self, command: str, expected: list[str]) -> None:
-        """Reading known source retains argument-position values exactly as the shell lexer spells them."""
-        assert _invocations(command, "gh") == [expected]
-        assert _unreadable(command) is False
+        """Reading known source retains argument-position values exactly as the shell lexer spells them.
 
-    @pytest.mark.parametrize(
-        "command",
-        [
-            'tee "$R/b.json"; bash "$R/p3.sh"',
-            'tee "${R}/b.json"; bash "$R/p3.sh"',
-            'tee "$R/../.err"; $R/venv39/bin/python -m pytest',
-            'tee "$OUT"; bash "$R/p3.sh"',
-            'tee "$OUT"; bash existing.sh',
-            'tee "$OUT"; bash "$SCRIPT"',
-            'tee "$FIRST"; bash "$SECOND"',
-            'tee "$P"; $P',
-            'timeout 5 tee "$OUT"; bash s',
-            'sudo dd of="$OUT"; ./s',
-            'cp input "$OUT"; . s',
-            'mv input s; bash "$SCRIPT"',
-            'tee "$R/s"; bash "$S/s"',
-            'tee "$R/../s"; bash "$R/s"',
-            'tee "$OUT"; ~/.cache/pre-commit/x/bin/ruff check src/a',
-            'tee "$OUT"; /usr/bin/python -m pytest',
-            'tee "$OUT"; /bin/bash existing.sh',
-            'P=.venv/bin/python; tee "$OUT"; $P -c pass',
-            "P=./existing.sh; tee other.sh; $P",
-            "tee other.sh; for f in d1 d2; do bash $f.sh; done",
-            "tee d3.sh; for f in d1 d2; do bash $f.sh; done",
-        ],
-    )
-    def test_expansion_paths_only_match_compatible_targets(self, command: str) -> None:
-        """Expansion prefixes, normalized suffixes, literal tools and literal loop items bound path matches."""
-        assert _invocations(command, "gh") == []
-        assert _unreadable(command) is False
-
-    @pytest.mark.parametrize(
-        "command",
-        [
-            'tee "$R/s.sh"; bash "$R/s.sh"',
-            'tee "${R}/d/../s.sh"; bash "$R/s.sh"',
-            'tee "$P"; "$P"',
-            "tee .venv/bin/python; P=.venv/bin/python; $P -c pass",
-            "P=./s; tee s; $P",
-            "tee d1.sh; for f in d1 d2; do bash $f.sh; done",
-            "tee d2.sh; for f in d1 d2; do /bin/bash ${f}.sh; done",
-            "tee s.sh; for f in s; do . $f.sh; done",
-            "tee /usr/bin/python; /usr/bin/python -m pytest",
-            "tee /bin/bash; /bin/bash existing.sh",
-            'tee "~/.cache/pre-commit/x/bin/ruff"; ~/.cache/pre-commit/x/bin/ruff check src/a',
-            "cat args | xargs -I{} sh -c '{}'",
-            "cat args | xargs -I{} sh -c '{} pr list'",
-            "cat args | parallel 'sh -c \"{}\"'",
-            'bash -c "$(cat code) pr list"',
-            'bash -c "${CMD} pr list"',
-            "bash -c '$CMD pr list'",
-            "bash <<'EOF'\n$CMD pr list\nEOF",
-            "P=/bin/bash; echo $(P=/bin/echo); sh -c '$P -c \"gh pr list\"'",
-            "P=/bin/bash; eval 'P=/bin/echo'; sh -c '$P -c \"gh pr list\"'",
-            'P=/bin/bash; printf -v P "%s" "$OTHER"; sh -c \'$P -c "gh pr list"\'',
-        ],
-    )
-    def test_source_positions_and_matching_paths_require_proof(self, command: str) -> None:
-        """Unknown command bytes and actual overwrites remain unreadable after narrowing argument values."""
-        assert _invocations(command, "gh") is None
-        assert _unreadable(command) is True
-
-    @pytest.mark.parametrize(
-        "command",
-        [
-            "P=/bin/bash; $P -c 'gh pr list'",
-            "P=/bin/bash; bash -c '$P -c \"gh pr list\"'",
-            "P=/bin/bash; printf '%s' 'gh pr list' > s.sh; $P s.sh",
-            "P=/bin/bash; printf '%s' 'gh pr list' | $P",
-        ],
-    )
-    def test_literal_path_command_keeps_its_shell_consumers(self, command: str) -> None:
-        """Resolving an executable path must preserve both its inline source and generated script operand."""
-        assert _invocations(command, "gh") == [["gh", "pr", "list"]]
-        assert _unreadable(command) is False
-
-    @pytest.mark.parametrize(
-        "command",
-        [
-            "sed -i 's/x/y/' ./s; bash s",
-            "env sed --in-place=.bak -e 's/x/y/' s; ./s",
-            "command perl -pi -e 's/x/y/' s; bash ./s",
-            "nice perl -i.bak -pe 's/x/y/' s; source s",
-            'install input "$SCRIPT"; bash "$SCRIPT"',
-            'ln -s input "$SCRIPT"; bash "$SCRIPT"',
-            "env xargs tee; bash s",
-            "xargs -I{} dd of={}; bash s",
-            "python generator.py > ./.venv/bin/python; .venv/bin/python -m pytest",
-            "cp input plugins/tool/bin/query; plugins/tool/bin/query --help",
-            "sed -i 's/x/y/' .venv/bin/python; .venv/bin/python -m pytest",
-            "perl -pi -e 's/x/y/' plugins/tool/bin/query; plugins/tool/bin/query --help",
-            "python helper.py 2>s; bash s",
-            "python helper.py >|s; bash s",
-            "python helper.py >>s; ./s",
-            "python helper.py >s; bash --init-file=s -ic :",
-            "python helper.py >s; env -S 'bash s'",
-            'sudo tee "./s"; bash dir/../s',
-            'tee "$SCRIPT"; bash "$SCRIPT"',
-        ],
-    )
-    def test_matching_modeled_sinks_refuse_unknown_file_contents(self, command: str) -> None:
-        """Normalized and possibly matching sink paths require proof, including literal tool overwrites."""
-        assert _invocations(command, "gh") is None
-        assert _unreadable(command) is True
+        The gh call inside known source ends with a runtime word (``$ARG``, ``$(cat args)``, a backtick form, a
+        replacement string). The argv keeps that word as spelled, so the guard sees an unknown argument instead of a
+        rewritten one.
+        """
+        reading = _analyse(command)
+        assert reading.invocations == [expected]
+        assert reading.unreadable is False
 
     @pytest.mark.parametrize("consumer", ["grep bash", "rg bash", "cat bash", "env grep bash", "sudo cat bash"])
     def test_shell_named_data_does_not_select_stdin_consumer(self, consumer: str) -> None:
-        """A shell name in ordinary argv does not execute the producer's expanded output."""
-        command = f'echo "$TEXT" | {consumer}'
-        assert _invocations(command, "gh") == []
-        assert _unreadable(command) is False
+        """A shell name in ordinary argv does not execute the producer's expanded output.
 
-    @pytest.mark.parametrize(
-        "command",
-        [
-            'echo "$TEXT" | grep env -S bash',
-            "man bash <<'TEXT'\ngh pr create\nTEXT",
-            "cat > helper.sh <<'TEXT'\ngh pr create\nTEXT\nman bash helper.sh",
-            "man bash -O extglob -c 'echo data'",
-            "man bash < script.sh | grep 'a\\|b'",
-            "echo 'gh pr create' | runner } bash",
-        ],
-    )
-    def test_ordinary_arguments_do_not_run_shell_source(self, command: str) -> None:
-        """The command-position contract supersedes the former scan of unknown programs' arguments."""
-        assert _invocations(command, "gh") == []
-        assert _unreadable(command) is False
+        The right side of the pipe is ``grep bash`` or ``cat bash`` (optionally behind ``env`` or ``sudo``): ``bash`` is
+        only data there. Treating it as a shell reading the producer would make every such pipeline unreadable.
+        """
+        command = f'echo "$TEXT" | {consumer}'
+        reading = _analyse(command)
+        assert reading.invocations == []
+        assert reading.unreadable is False
 
     @pytest.mark.parametrize(
         ("written", "executed", "matched"),
@@ -1034,72 +1531,30 @@ class TestProgramInvocations:
         ],
     )
     def test_written_script_matches_paths(self, written: str, executed: str, matched: bool) -> None:
-        """Literal paths normalize; runtime paths match only identical words or compatible literal suffixes."""
-        command = f'echo "$DATA" > {written}; sh {executed}'
-        assert _unreadable(command) is matched
-        assert _invocations(command, "gh") == (None if matched else [])
+        """Literal paths normalize; runtime paths match only identical words or compatible literal suffixes.
 
-    @pytest.mark.parametrize(
-        "command",
-        [
-            '"${R[@]}" pytest tests > "$_LOG" 2>&1',
-            'printf \'%s\\n\' "$STATE_FILE" > "${TMPDIR:-/tmp}/state-ref-${CSID}"; . "$STATE_FILE"',
-            'IFS= read -r METRIC_CMD < "${TMPDIR:-/tmp}/metric-${CSID}"; bash -c "$METRIC_CMD"',
-            'IFS= read -r GUARD_CMD < "${TMPDIR:-/tmp}/guard-${CSID}"; bash -c "$GUARD_CMD"',
-            'tee "$OUT"; $COMMAND',
-            'tee "$OUT"; source "$SCRIPT"',
-            'tee "$OUT"; bash --rcfile "$STARTUP" -ic :',
-            'tee "$OUT"; BASH_ENV="$STARTUP" bash -c :',
-            'tee "$OUT"; ${=COMMAND}',
-        ],
-    )
-    def test_distinct_runtime_words_do_not_prove_generated_source(self, command: str) -> None:
-        """Different variable words carry no static relation, including array commands and state-file reads."""
-        assert _invocations(command, "gh") == []
-        assert _unreadable(command) is False
+        A script is written to one path and a shell then runs another. Equal literal paths, or identical runtime words,
+        count as the same file and expose unknown bytes; any other spelling does not, so unrelated commands stay
+        readable.
+        """
+        command = f'echo "$DATA" > {written}; sh {executed}'
+        reading = _analyse(command)
+        assert reading.unreadable is matched
+        assert reading.invocations == (None if matched else [])
 
     @pytest.mark.parametrize("runner", ["bash -c", "eval"])
     @pytest.mark.parametrize("operand", ['"$V"', "$V", '"${V}"', '"${V:-literal}"', '"${V:-gh pr list}"', '"${=V}"'])
     def test_plain_runtime_source_operands_stay_out_of_scope(self, runner: str, operand: str) -> None:
-        """Whole variable operands remain unknown state values; later literal invocations stay visible."""
+        """Whole variable operands remain unknown state values; later literal invocations stay visible.
+
+        ``bash -c`` or ``eval`` is given a bare variable operand, followed by a literal ``gh pr list``. The variable's
+        value is unknown state outside this lexer's scope, so only the literal gh call is reported and the command stays
+        readable.
+        """
         command = f"{runner} {operand}; gh pr list"
-        assert _invocations(command, "gh") == [["gh", "pr", "list"]]
-        assert _unreadable(command) is False
-
-    @pytest.mark.parametrize(
-        "command",
-        [
-            "printf '%s' 'gh pr list' > \"$X\"; bash \"$X\"",
-            "printf '%s' 'gh pr list' > \"$X\"; \"$X\"",
-            "printf '%s' 'gh pr list' > \"$X\"; source \"$X\"",
-            "printf '%s' 'gh pr list' > \"$X\"; bash --rcfile \"$X\" -ic :",
-            'dd of="$X"; bash "$X"',
-            'tee "$X"; bash --rcfile="$X" -ic :',
-            'X=script.sh; dd of="$X" <<\'EOF\'\ngh pr list\nEOF\nbash "$X"',
-        ],
-    )
-    def test_identical_runtime_file_words_keep_generated_code_visible(self, command: str) -> None:
-        """Identical words and literal-bound dd targets still require proven source bytes."""
-        invocations = _invocations(command, "gh")
-        assert _unreadable(command) or (invocations is not None and ["gh", "pr", "list"] in invocations)
-
-    @pytest.mark.parametrize(
-        "command",
-        [
-            "print -f 'g%s pr list' h | sh",
-            "env -S \"printf 'g%s pr list' h\" | sh",
-            "echo 'gh pr list' | xargs -I X env -S 'sh -c \"X\"'",
-            "echo 'gh pr list' | parallel -I X env -S 'sh -c \"X\"'",
-            "env -S \"print -f 'g%s pr list' h\" > w.sh; source ./w.sh",
-            "sudo env -S \"printf 'g%s pr list' h\" | sh",
-            "echo 'gh pr list' | xargs -I X sh -c 'env -S \"sh -c X\"'",
-            "echo 'gh pr list' | xargs -I X env -S 'env -S \"sh -c X\"'",
-        ],
-    )
-    def test_reread_printers_and_placeholders_supply_source(self, command: str) -> None:
-        """Split-string printers and placeholders in nested source keep their stdin provenance."""
-        assert _invocations(command, "gh") == [["gh", "pr", "list"]]
-        assert _unreadable(command) is False
+        reading = _analyse(command)
+        assert reading.invocations == [["gh", "pr", "list"]]
+        assert reading.unreadable is False
 
     @pytest.mark.parametrize(
         "producer",
@@ -1123,10 +1578,16 @@ class TestProgramInvocations:
     )
     @pytest.mark.parametrize("sink", ["| sh", "> w.sh; source ./w.sh", '| eval "$(cat)"'])
     def test_printed_source_outside_closed_set_fails_closed(self, producer: str, sink: str) -> None:
-        """Every printer path uses the same literal-only source contract and refusal reason."""
+        """Every printer path uses the same literal-only source contract and refusal reason.
+
+        Many printer spellings (echo with options, print, env split, xargs, huge widths, multibyte padding) feed a shell
+        through a pipe, a written script or ``eval``. All share one rule: output outside the decoded set cannot be
+        proven, so the answer is null with a fixed reason.
+        """
         command = f"{producer} {sink}"
-        assert _invocations(command, "gh") is None
-        assert _unreadable_reason(command) == "printed shell source outside the decoded set"
+        reading = _analyse(command)
+        assert reading.invocations is None
+        assert reading.reason == "printed shell source outside the decoded set"
 
     @pytest.mark.parametrize(
         "template",
@@ -1148,10 +1609,15 @@ class TestProgramInvocations:
     def test_substituted_print_source_uses_closed_set(
         self, template: str, producer: str, expected: list[list[str]] | None
     ) -> None:
-        """Substitution output becomes source when eval or an expanding shell input consumes it."""
+        """Substitution output becomes source when eval or an expanding shell input consumes it.
+
+        A printer inside ``$(...)`` is consumed by ``eval`` or by a shell via here-string or heredoc. Literal output is
+        decoded and read; output the closed set cannot decode makes the whole answer null and unreadable.
+        """
         command = template.format(producer=producer)
-        assert _invocations(command, "gh") == expected
-        assert _unreadable(command) is (expected is None)
+        reading = _analyse(command)
+        assert reading.invocations == expected
+        assert reading.unreadable is (expected is None)
 
     @pytest.mark.parametrize(
         ("script_command", "expected"),
@@ -1163,31 +1629,53 @@ class TestProgramInvocations:
     def test_literal_printf_script_escapes_remain_readable(
         self, script_command: str, expected: list[list[str]]
     ) -> None:
-        """Printed script escapes are decoded before shell parsing; quoted runtime code remains literal data."""
+        """Printed script escapes are decoded before shell parsing; quoted runtime code remains literal data.
+
+        A script body printed with ``printf`` escapes is written to a file and run with ``bash``. The ``\\n`` escapes
+        are decoded before the shell parses it, so the embedded gh call (or its absence) is found exactly.
+        """
         command = (
             r"printf '#!/bin/bash\nset -o pipefail\n"
             + script_command
             + '\\nprintf "%%s\\\\n" "$?" > r.rc\\n\' > full.sh; bash full.sh'
         )
-        assert _invocations(command, "gh") == expected
-        assert _unreadable(command) is False
+        reading = _analyse(command)
+        assert reading.invocations == expected
+        assert reading.unreadable is False
 
     @pytest.mark.parametrize("sink", ["| sh", "> w.sh; bash w.sh", "> w.sh; zsh w.sh"])
     def test_echo_backslash_source_fails_closed(self, sink: str) -> None:
-        """Backslashes have shell-dependent echo semantics and are outside the decoded set."""
+        """Backslashes have shell-dependent echo semantics and are outside the decoded set.
+
+        ``echo 'gh\\tpr\\tlist'`` is a backslash string whose echo decoding differs between shells. Piped to ``sh`` or
+        written and run by bash or zsh, the source is unprovable and the answer must be unreadable.
+        """
         command = r"echo 'gh\tpr\tlist' " + sink
-        assert _invocations(command, "gh") is None
-        assert _unreadable(command) is True
+        reading = _analyse(command)
+        assert reading.invocations is None
+        assert reading.unreadable is True
 
     @pytest.mark.parametrize("producer", ["printf '%s' \"$SOURCE\"", 'printf "$FORMAT"', 'echo "$SOURCE"'])
     @pytest.mark.parametrize("sink", ["| sh", "> w.sh; bash w.sh"])
-    def test_nonliteral_print_output_fails_closed_only_when_executed(self, producer: str, sink: str) -> None:
-        """Expanded arguments or formats make generated source unknown; ordinary printing remains readable."""
-        assert _invocations(f"{producer} {sink}", "gh") is None
-        assert _unreadable(f"{producer} {sink}") is True
-        for data_sink in ("", "> notes.txt", "| cat"):
-            assert _invocations(f"{producer} {data_sink}", "gh") == []
-            assert _unreadable(f"{producer} {data_sink}") is False
+    def test_nonliteral_print_output_fails_closed_when_executed(self, producer: str, sink: str) -> None:
+        """Expanded print arguments or formats make the source a shell runs unknown, so the answer is unreadable.
+
+        A shell reading the printed text, directly or from a written script file, may run anything the expansion held.
+        """
+        reading = _analyse(f"{producer} {sink}")
+        assert reading.invocations is None
+        assert reading.unreadable is True
+
+    @pytest.mark.parametrize("producer", ["printf '%s' \"$SOURCE\"", 'printf "$FORMAT"', 'echo "$SOURCE"'])
+    @pytest.mark.parametrize("data_sink", ["", "> notes.txt", "| cat"])
+    def test_nonliteral_print_output_stays_readable_when_not_executed(self, producer: str, data_sink: str) -> None:
+        """Printing an expansion to the terminal, a data file or a pipe to ``cat`` is ordinary output, not source.
+
+        The same producers as the fail-closed case, with no shell consuming them: nothing may be reported unreadable.
+        """
+        reading = _analyse(f"{producer} {data_sink}")
+        assert reading.invocations == []
+        assert reading.unreadable is False
 
     @pytest.mark.parametrize("conversion", ["format", "%b"])
     @pytest.mark.parametrize(
@@ -1206,13 +1694,19 @@ class TestProgramInvocations:
         ],
     )
     def test_printf_escape_allowlist(self, conversion: str, escaped: str, decoded: str, allowed: bool) -> None:
-        """Only newline, tab and backslash format escapes are admitted; %b always refuses."""
+        """Only newline, tab and backslash format escapes are admitted; %b always refuses.
+
+        Each printf escape (newline, tab, carriage return, bell, octal, hex and others) is placed inside an argument of
+        a piped ``gh pr view``, as the format or through ``%b``. Only newline, tab and backslash in the format are
+        admitted; every other case refuses.
+        """
         source = f'gh pr view "a{escaped}b"'
         producer = "printf " + ("'%b' " if conversion == "%b" else "") + shlex.quote(source)
         command = producer + " | sh"
         expected = [["gh", "pr", "view", f"a{decoded}b"]] if allowed and conversion == "format" else None
-        assert _invocations(command, "gh") == expected
-        assert _unreadable(command) is (expected is None)
+        reading = _analyse(command)
+        assert reading.invocations == expected
+        assert reading.unreadable is (expected is None)
 
     @pytest.mark.parametrize(
         "producer",
@@ -1228,61 +1722,84 @@ class TestProgramInvocations:
         ],
     )
     def test_printf_removed_decodings_fail_closed(self, producer: str) -> None:
-        """Former general decodings refuse instead of guessing generated source."""
+        """Former general decodings refuse instead of guessing generated source.
+
+        Decodings the lexer once guessed (escaped quotes, octal, hex, ``%b`` forms) now refuse. Each producer is piped
+        to ``sh``; a guessed decoding could read a different command than the shell runs.
+        """
         command = producer + " | sh"
-        assert _invocations(command, "gh") is None
-        assert _unreadable(command) is True
+        reading = _analyse(command)
+        assert reading.invocations is None
+        assert reading.unreadable is True
 
     @pytest.mark.parametrize("option", ["", "-e", "-E"])
     def test_echo_does_not_union_interpretations(self, option: str) -> None:
-        """Default and option-selected echo decodings all refuse backslash source."""
+        """Default and option-selected echo decodings all refuse backslash source.
+
+        Echo without options, with ``-e`` and with ``-E`` decodes a backslash differently. None of the interpretations
+        is accepted, because merging them would pick one the actual shell may not use.
+        """
         command = f"echo {option} " + shlex.quote(r"gh pr view a\tb") + " | sh"
-        assert _invocations(command, "gh") is None
-        assert _unreadable(command) is True
+        reading = _analyse(command)
+        assert reading.invocations is None
+        assert reading.unreadable is True
 
     def test_echo_unknown_and_octal_escapes_fail_closed(self) -> None:
-        """Neither unknown nor octal echo escapes are modeled as executable output."""
+        """Neither unknown nor octal echo escapes are modeled as executable output.
+
+        ``\\h`` and octal ``\\147`` or ``\\047`` inside echo output that is piped to ``sh`` are not in the decoded set.
+        The three commands must all return null rather than a decoded guess.
+        """
         command = r"echo 'g\h pr list' | sh"
-        assert _invocations(command, "gh") is None
-        assert _unreadable(command) is True
+        reading = _analyse(command)
+        assert reading.invocations is None
+        assert reading.unreadable is True
         assert _invocations(r"echo 'gh pr view \147' | sh", "gh") is None
         assert _invocations(r"echo 'gh pr list\047' | sh", "gh") is None
 
     @pytest.mark.parametrize("producer", [r"printf 'gh\q pr list'", r"printf '%b' 'gh pr list\c'"])
     def test_unsupported_printf_escapes_still_fail_closed(self, producer: str) -> None:
-        """Unsupported format escapes and escaped-string termination keep the conservative refusal."""
-        assert _invocations(producer + " | sh", "gh") is None
-        assert _unreadable(producer + " | sh") is True
+        """Unsupported format escapes and escaped-string termination keep the conservative refusal.
+
+        ``\\q`` is an unknown format escape and ``\\c`` ends the ``%b`` string early. Both change what is printed in
+        ways the lexer does not model, so piping them to ``sh`` stays unreadable.
+        """
+        reading = _analyse(producer + " | sh")
+        assert reading.invocations is None
+        assert reading.unreadable is True
 
     def test_printf_variable_assignment_has_no_printed_stdout(self) -> None:
-        """Printf -v writes a variable, so its dynamic operands do not supply source to a redirected file."""
-        command = 'printf -v result "%s" "$SOURCE" > w.sh; bash w.sh'
-        assert _invocations(command, "gh") == []
-        assert _unreadable(command) is False
+        """Printf -v writes a variable, so its dynamic operands do not supply source to a redirected file.
 
-    @pytest.mark.parametrize(
-        "command",
-        [
-            "python make_script.py | python -c 'print(input())' > generated.sh && bash generated.sh",
-            "sed 's/old()/new()/' input.sh > generated.sh; bash generated.sh",
-            "cat input.sh > generated.sh; bash generated.sh",
-        ],
-    )
-    def test_unknown_generated_script_contents_fail_closed(self, command: str) -> None:
-        """An in-input generator invalidates the pre-existing-file residual at its code consumer."""
-        assert _invocations(command, "gh") is None
-        assert _unreadable(command) is True
+        ``printf -v result ... > w.sh`` writes the variable and leaves the file empty. The later ``bash w.sh`` therefore
+        runs nothing unknown, and the command must stay readable with no gh calls.
+        """
+        command = 'printf -v result "%s" "$SOURCE" > w.sh; bash w.sh'
+        reading = _analyse(command)
+        assert reading.invocations == []
+        assert reading.unreadable is False
 
     def test_generator_heredoc_input_stays_data(self) -> None:
-        """A generator's heredoc is data; a heredoc read directly by a shell remains executable source."""
+        """A generator's heredoc is data; a heredoc read directly by a shell remains executable source.
+
+        A python generator redirected to a script gets a heredoc as its own stdin, which is data. The script it writes
+        is still unknown, so the run is unreadable; a heredoc given directly to a shell is source and unreadable here
+        too.
+        """
         command = "python -c 'print(\"echo ok\")' > generated.sh <<'EOF'\necho (data)\nEOF\nbash generated.sh"
-        assert _invocations(command, "gh") is None
-        assert _unreadable(command) is True
-        assert _invocations("bash <<'EOF'\necho (data)\nEOF", "gh") is None
-        assert _unreadable("bash <<'EOF'\necho (data)\nEOF") is True
+        reading = _analyse(command)
+        assert reading.invocations is None
+        assert reading.unreadable is True
+        reading = _analyse("bash <<'EOF'\necho (data)\nEOF")
+        assert reading.invocations is None
+        assert reading.unreadable is True
 
     def test_generated_environment_source_fails_closed(self) -> None:
-        """A runtime validation command does not prove the generated source bytes to the lexer."""
+        """A runtime validation command does not prove the generated source bytes to the lexer.
+
+        A real skill block validates a generated env file with ``grep`` and then sources it. The lexer cannot prove the
+        generated bytes, so the whole command is unreadable and the guard blocks it rather than trust the grep.
+        """
         command = r"""tmpenv=$(mktemp)  # timeout: 3000
 trap 'rm -f "$tmpenv"' EXIT INT TERM
 python "${CLAUDE_PLUGIN_ROOT}/bin/parse-resolve-args.py" "$ARGUMENTS" >"$tmpenv"  # timeout: 5000
@@ -1293,8 +1810,9 @@ if grep -qvE "^[A-Z_][A-Z0-9_]*=([A-Za-z0-9_./:#@+-]*|'[^']*')$" "$tmpenv"; then
 fi
 . "$tmpenv"
 """
-        assert _invocations(command, "gh") is None
-        assert _unreadable(command) is True
+        reading = _analyse(command)
+        assert reading.invocations is None
+        assert reading.unreadable is True
 
     @pytest.mark.parametrize(
         ("command", "expected"),
@@ -1325,46 +1843,30 @@ fi
     def test_generated_output_residual_preserves_known_executions(
         self, command: str, expected: list[list[str]] | None
     ) -> None:
-        """A literal writer may ignore pipe input; transformed code must fail closed at execution."""
-        assert _invocations(command, "gh") == expected
-        assert _unreadable(command) is (expected is None)
+        """A literal writer may ignore pipe input; transformed code must fail closed at execution.
+
+        Generated scripts are written by pipelines that transform or forward text, by a literal printer that ignores its
+        pipe input, or by gh itself. Literal content is read; transformed or runtime content leaves the answer null and
+        unreadable.
+        """
+        reading = _analyse(command)
+        assert reading.invocations == expected
+        assert reading.unreadable is (expected is None)
 
     @pytest.mark.parametrize("substitution", ["$(cat; bash)", '"$(cat; bash)"', '"`cat; bash`"'])
     def test_substitution_consumes_input_without_executing_outer_echo_data(self, substitution: str) -> None:
-        """The nested shell consumes the incoming pipe; the final echo's expanded operand is ordinary output."""
+        """The nested shell consumes the incoming pipe; the final echo's expanded operand is ordinary output.
+
+        ``echo 'gh pr create' | echo $(cat; bash)``: the nested shell reads the pipe, so the gh call runs; the outer
+        echo only prints. Appending ``| sh`` then makes the printed expanded text source and the answer unreadable.
+        """
         command = f"echo 'gh pr create' | echo {substitution}"
-        assert _invocations(command, "gh") == [["gh", "pr", "create"]]
-        assert _unreadable(command) is False
-        assert _invocations(command + " | sh", "gh") is None
-        assert _unreadable(command + " | sh") is True
-
-    @pytest.mark.parametrize(
-        "command",
-        [
-            pytest.param("{ eval $(:);echo $x;}", id="minimal-compound"),
-            pytest.param('VALUE="$(echo "$x")" eval :', id="assignment-is-not-eval-source"),
-            pytest.param('env VALUE="$(echo "$x")" eval :', id="wrapper-assignment-is-not-eval-source"),
-            pytest.param('eval >"$(echo "$x")" :', id="redirection-is-not-eval-source"),
-        ],
-    )
-    def test_eval_substitution_does_not_capture_sibling_prints(self, command: str) -> None:
-        """Only substitution stdout reaches eval; sibling compound commands write ordinary output."""
-        assert _invocations(command, "gh") == []
-        assert _unreadable(command) is False
-
-    @pytest.mark.parametrize(
-        "command",
-        [
-            'if eval "$(python helper)"; then echo "$x"; fi',
-            '{ echo "$x"; eval "$(python helper)"; }',
-            '{ eval "`python helper`"; echo "$x"; }',
-            '{ eval "$(python helper)"; echo "gh pr create"; }',
-        ],
-    )
-    def test_unknown_eval_output_fails_closed_inside_compounds(self, command: str) -> None:
-        """Sibling output cannot prove unknown substitution bytes consumed by eval."""
-        assert _invocations(command, "gh") is None
-        assert _unreadable(command) is True
+        reading = _analyse(command)
+        assert reading.invocations == [["gh", "pr", "create"]]
+        assert reading.unreadable is False
+        reading = _analyse(command + " | sh")
+        assert reading.invocations is None
+        assert reading.unreadable is True
 
     @pytest.mark.parametrize(
         ("producer", "expected"),
@@ -1377,63 +1879,40 @@ fi
     def test_eval_substitution_inside_compound_retains_source_checks(
         self, producer: str, expected: list[list[str]] | None
     ) -> None:
-        """Narrowing capture scope still decodes or refuses the actual eval producer."""
+        """Narrowing capture scope still decodes or refuses the actual eval producer.
+
+        ``eval "$(producer)"`` sits inside a brace group followed by another command. The compound must not hide which
+        producer feeds eval, so literal output is decoded and runtime or unsupported output is refused.
+        """
         command = f'{{ eval "$({producer})"; echo "$status"; }}'
-        assert _invocations(command, "gh") == expected
-        assert _unreadable(command) is (expected is None)
+        reading = _analyse(command)
+        assert reading.invocations == expected
+        assert reading.unreadable is (expected is None)
 
     def test_historical_review_intake_refuses_unknown_eval_output(self) -> None:
-        """Python output passed to eval is unknown code; sibling diagnostic echoes remain outside eval input."""
+        """Python output passed to eval is unknown code; sibling diagnostic echoes remain outside eval input.
+
+        Runs the real shell block saved in ``tests/fixtures/historical_review_intake.sh``. It passes python output to
+        ``eval``, which is unknown code, and the answer must be unreadable with the printed-source reason.
+        """
         command = (LIBRARY.parents[2] / "tests" / "fixtures" / "historical_review_intake.sh").read_text(
             encoding="utf-8"
         )
-        assert _invocations(command, "gh") is None
-        assert _unreadable(command) is True
+        reading = _analyse(command)
+        assert reading.invocations is None
+        assert reading.unreadable is True
         assert _unreadable_reason(command) == "printed shell source outside the decoded set"
 
-    @pytest.mark.parametrize(
-        "command",
-        [
-            pytest.param("bash -oc pipefail 'gh pr list'", id="shell-value-before-command-flag"),
-            pytest.param("env -S 'sh -s' <<'EOF'\ngh pr list\nEOF", id="env-split-inherits-heredoc"),
-            pytest.param("if true; then sh; fi <<'EOF'\ngh pr list\nEOF", id="compound-trailing-heredoc"),
-            pytest.param(
-                "cat > w.sh <<'EOF'\ngh pr list\nEOF\nbash <<'RUN'\nbash w.sh\nRUN",
-                id="script-discovered-in-shell-heredoc",
-            ),
-            pytest.param("echo 'gh pr list' | parallel -I X sh -c X", id="parallel-custom-replacement"),
-            pytest.param("printf 'g%s pr list' h | sh", id="printf-format-constructs-program"),
-            pytest.param("echo 'gh pr list' > w.sh; bash w.sh", id="printed-script-file"),
-        ],
-    )
-    def test_reported_source_regressions(self, command: str) -> None:
-        """Shell source remains visible through clusters, stdin, generated files and literal formatting."""
-        assert _invocations(command, "gh") == [["gh", "pr", "list"]]
-        assert _unreadable(command) is False
-
-    @pytest.mark.parametrize(
-        "command",
-        [
-            pytest.param("{ case x in (x) echo ok;; esac; }", id="case-after-brace-opener"),
-            pytest.param(
-                "printf '%s' 'data\\text' | xargs -I{} sh -c \"printf %s '{}'\"",
-                id="literal-backslash-printf-argument",
-            ),
-            pytest.param("shopt -q extglob; echo ok", id="shopt-query"),
-            pytest.param("bash --rcfile /dev/null -c 'echo ok'", id="shell-startup-file-option"),
-            pytest.param("env echo eval 'shopt -s extglob; echo ok'", id="wrapped-print-data"),
-        ],
-    )
-    def test_reported_readability_regressions(self, command: str) -> None:
-        """Queries and quoted data do not make an ordinary command unreadable."""
-        assert _invocations(command, "gh") == []
-        assert _unreadable(command) is False
-
     def test_env_split_decodes_tab_in_command(self) -> None:
-        """Env decodes split-string escapes before a shell interprets its command operand."""
+        """Env decodes split-string escapes before a shell interprets its command operand.
+
+        ``env -S 'bash -c "gh\\tpr\\tcreate"'`` carries ``\\t`` escapes. Env turns them into real tabs before bash
+        splits the string, so the gh call must be found as three words.
+        """
         command = "env -S 'bash -c \"gh\\tpr\\tcreate\"'"
-        assert _invocations(command, "gh") == [["gh", "pr", "create"]]
-        assert _unreadable(command) is False
+        reading = _analyse(command)
+        assert reading.invocations == [["gh", "pr", "create"]]
+        assert reading.unreadable is False
 
     @pytest.mark.parametrize(
         "compound",
@@ -1448,72 +1927,38 @@ fi
     )
     @pytest.mark.parametrize("redirect", ["<<'EOF'\ngh pr list\nEOF", "<<< 'gh pr list'"])
     def test_trailing_compound_input_feeds_every_command(self, compound: str, redirect: str) -> None:
-        """A closing keyword, brace or parenthesis retains the commands its input feeds."""
+        """A closing keyword, brace or parenthesis retains the commands its input feeds.
+
+        A here-string or heredoc follows a closing ``fi``, ``done``, ``esac``, ``}`` or ``)`` whose body runs ``sh``.
+        The input feeds every command inside the compound, so the gh call in it is found.
+        """
         command = f"{compound} {redirect}"
-        assert _invocations(command, "gh") == [["gh", "pr", "list"]]
-        assert _unreadable(command) is False
+        reading = _analyse(command)
+        assert reading.invocations == [["gh", "pr", "list"]]
+        assert reading.unreadable is False
 
     @pytest.mark.parametrize(
-        "command",
+        ("command", "expected"),
         [
-            "env -S 'sh -s' <<< 'gh pr list'",
-            "echo 'gh pr list' | env -S 'sh -s'",
-            "echo 'gh pr list' > w.sh; env -S 'sh -s' < w.sh",
-            "echo 'gh pr list' >> w.sh; source w.sh",
-            "echo 'gh pr list' | tee w.sh; bash w.sh",
-            "cat <<'EOF' | tee w.sh\ngh pr list\nEOF\nbash w.sh",
-            "printf 'g%s pr list' h > w.sh; bash w.sh",
-            "echo 'gh pr list' | parallel --replace X sh -c X",
-            "echo 'gh pr list' | parallel --replace=X sh -c X",
-            "echo 'gh pr list' | parallel -iX sh -c X",
-            "echo 'gh pr list' | parallel -i X sh -c X",
-            "echo 'gh pr list' | parallel -IX sh -c X",
-            "{ echo 'gh pr list'; } > w.sh; bash w.sh",
-            "echo 'gh pr list' > w.sh; if true; then sh; fi < w.sh",
+            pytest.param("printf 'g%-2spr list' h | sh", ["gh", "pr", "list"], id="left-aligned-width"),
+            pytest.param("print -f 'g%s pr list' h | sh", ["gh", "pr", "list"], id="print-format"),
+            pytest.param("print -nr 'gh pr list' | sh", ["gh", "pr", "list"], id="print-raw"),
+            pytest.param("echo -n 'gh pr list' | sh", ["gh", "pr", "list"], id="echo-no-newline"),
+            pytest.param("printf '%s' g 'h pr list' | sh", ["gh", "pr", "list"], id="string-conversion"),
+            pytest.param(
+                "printf '%s%%s' 'gh pr list --json ' | sh", ["gh", "pr", "list", "--json", "%s"], id="literal-percent"
+            ),
         ],
     )
-    def test_nested_stdin_and_written_print_output_are_source(self, command: str) -> None:
-        """Wrapper stdin, replacement operands and printed script files preserve literal executable text."""
-        assert _invocations(command, "gh") == [["gh", "pr", "list"]]
-        assert _unreadable(command) is False
+    def test_literal_printf_conversions_construct_source(self, command: str, expected: list[str]) -> None:
+        """String, left-aligned width and literal percent conversions are applied before source lexing.
 
-    @pytest.mark.parametrize(
-        "command",
-        [
-            "shopt -p extglob; echo ok",
-            "shopt -qp extglob; echo ok",
-            "shopt -qo posix; echo ok",
-            "set -o; echo ok",
-            "set +o; echo ok",
-            "setopt; echo ok",
-            "bash --init-file /dev/null -c 'echo ok'",
-            "sudo echo eval 'shopt -s extglob; echo ok'",
-            "echo 'gh pr list' > notes.txt; bash w.sh",
-        ],
-    )
-    def test_queries_and_unexecuted_print_output_stay_readable(self, command: str) -> None:
-        """Option inspection, wrapped print data and unrelated output files do not become source."""
-        assert _invocations(command, "gh") == []
-        assert _unreadable(command) is False
-
-    @pytest.mark.parametrize(
-        "command",
-        [
-            "printf 'g%-2spr list' h | sh",
-            "print -f 'g%s pr list' h | sh",
-            "print -nr 'gh pr list' | sh",
-            "echo -n 'gh pr list' | sh",
-            "printf '%s' g 'h pr list' | sh",
-            "printf '%s%%s' 'gh pr list --json ' | sh",
-        ],
-    )
-    def test_literal_printf_conversions_construct_source(self, command: str) -> None:
-        """String, left-aligned width and literal percent conversions are applied before source lexing."""
-        expected = ["gh", "pr", "list"]
-        if "%%" in command:
-            expected += ["--json", "%s"]
-        assert _invocations(command, "gh") == [expected]
-        assert _unreadable(command) is False
+        Literal printers (``printf`` with width and ``%s`` conversions, ``print -f``, ``print -nr``, ``echo
+        -n``) are piped to ``sh``. The finished text is built first, then lexed, so the exact gh argv comes out.
+        """
+        reading = _analyse(command)
+        assert reading.invocations == [expected]
+        assert reading.unreadable is False
 
     @pytest.mark.parametrize(
         ("escape", "value"),
@@ -1532,88 +1977,85 @@ fi
         ],
     )
     def test_env_split_escapes_preserve_argument_boundaries(self, escape: str, value: str) -> None:
-        """Every supported env escape becomes literal argv data before the executable is read."""
+        """Every supported env escape becomes literal argv data before the executable is read.
+
+        A gh argument inside ``env -S`` holds each supported split-string escape (tab, newline, ``\\_``, ``\\#``,
+        quotes, backslash). The decoded character ends up inside one argument and never splits it.
+        """
         command = "env -S " + shlex.quote(f'gh pr view "a{escape}b"')
-        assert _invocations(command, "gh") == [["gh", "pr", "view", f"a{value}b"]]
-        assert _unreadable(command) is False
+        reading = _analyse(command)
+        assert reading.invocations == [["gh", "pr", "view", f"a{value}b"]]
+        assert reading.unreadable is False
 
     def test_env_split_stop_escape_ignores_remaining_source(self) -> None:
-        """The stop escape discards the rest of env's split string."""
-        command = r"env -S 'gh pr list\c gh pr create'"
-        assert _invocations(command, "gh") == [["gh", "pr", "list"]]
-        assert _unreadable(command) is False
+        """The stop escape discards the rest of env's split string.
 
-    @pytest.mark.parametrize(
-        "command",
-        [
-            r"env -S 'bash -c gh\qpr'",
-            "env -S 'bash -c \"gh pr list\\c\"'",
-            "printf '%s pr list' \"$PROGRAM\" | sh",
-            "printf '%q pr list' gh | sh",
-            "printf '%s' *.sh | sh",
-            r"printf '%b' 'gh pr list\q' | sh",
-            "shopt -qs extglob; echo ok",
-            'shopt -q "$FLAGS"; echo ok',
-        ],
-    )
-    def test_unknown_source_decoding_fails_closed(self, command: str) -> None:
-        """Unsupported env escapes, runtime printf arguments and unmodeled formats cannot hide code."""
-        assert _invocations(command, "gh") is None
-        assert _unreadable(command) is True
+        ``\\c`` in an ``env -S`` string ends it. The ``gh pr create`` after it never runs, so only ``gh pr list`` may be
+        reported; reporting both would block a command that does not create anything.
+        """
+        command = r"env -S 'gh pr list\c gh pr create'"
+        reading = _analyse(command)
+        assert reading.invocations == [["gh", "pr", "list"]]
+        assert reading.unreadable is False
 
     def test_script_discovery_reaches_a_fixed_point(self) -> None:
-        """A later executable heredoc can expose a chain of earlier generated scripts."""
+        """A later executable heredoc can expose a chain of earlier generated scripts.
+
+        Three scripts are written in order, each running the previous one, with the last run from a heredoc. Finding the
+        first script's gh call needs more than one discovery pass, which must continue until nothing new appears.
+        """
         command = (
             "cat > first.sh <<'ONE'\ngh pr list\nONE\n"
             "cat > second.sh <<'TWO'\nbash first.sh\nTWO\n"
             "bash <<'RUN'\nbash second.sh\nRUN"
         )
-        assert _invocations(command, "gh") == [["gh", "pr", "list"]]
-        assert _unreadable(command) is False
+        reading = _analyse(command)
+        assert reading.invocations == [["gh", "pr", "list"]]
+        assert reading.unreadable is False
 
     def test_source_beyond_the_nesting_limit_fails_closed(self) -> None:
-        """Bounded recursion refuses remaining source instead of silently dropping its command."""
-        command = "gh pr list"
-        for _ in range(6):
-            command = "bash -c " + shlex.quote(command)
-        assert _invocations(command, "gh") is None
-        assert _unreadable(command) is True
+        """Bounded recursion refuses remaining source instead of silently dropping its command.
 
-    @pytest.mark.parametrize(
-        "command",
-        [
-            pytest.param("bash -co pipefail 'gh pr list'", id="shell-cluster-value"),
-            pytest.param("env --argv0 test -S 'gh pr list'", id="env-value-before-split"),
-            pytest.param("cat > /tmp/s <<'EOF'\ngh pr list\nEOF\nsource -- /tmp/s", id="source-option-terminator"),
-            pytest.param("cat > /tmp/s <<'EOF'\ngh pr list\nEOF\nenv -S 'bash /tmp/s'", id="nested-script-operand"),
-            pytest.param("cat <<'EOF' | if true; then bash; fi\ngh pr list\nEOF", id="compound-inherits-stdin"),
-            pytest.param("cat <<'EOF' | xargs -I{} sh -c '{}'\ngh pr list\nEOF", id="replacement-command-source"),
-            pytest.param("env -S 'bash -c \"gh\\_pr\\_list\"'", id="env-split-space-escape"),
-        ],
-    )
-    def test_source_positions_preserve_reported_argv(self, command: str) -> None:
-        """Executable source retains its complete argv and remains readable."""
-        assert _invocations(command, "gh") == [["gh", "pr", "list"]]
-        assert _unreadable(command) is False
+        The command wraps ``gh pr list`` in six nested ``bash -c`` quotes, deeper than the lexer follows. Past the limit
+        the answer is null and unreadable; a silent stop would drop the command from view.
+        """
+        command = reduce(lambda inner, _: "bash -c " + shlex.quote(inner), range(6), "gh pr list")
+        reading = _analyse(command)
+        assert reading.invocations is None
+        assert reading.unreadable is True
 
     @pytest.mark.parametrize("program", ["echo", "printf", "print"])
     def test_printed_interpreter_options_are_data(self, program: str) -> None:
-        """An interpreter named in a printing command's argv cannot switch shell options."""
+        """An interpreter named in a printing command's argv cannot switch shell options.
+
+        ``echo``, ``printf`` and ``print`` get ``bash -o rcquotes -c text`` as arguments. These are printed words, so
+        they must not change the shell options used to read later text, and the command stays readable.
+        """
         command = f"{program} bash -o rcquotes -c text"
-        assert _invocations(command, "gh") == []
-        assert _unreadable(command) is False
+        reading = _analyse(command)
+        assert reading.invocations == []
+        assert reading.unreadable is False
 
     @pytest.mark.parametrize("prefix", ["echo", "printf", "print", "env echo", "sudo printf"])
     def test_printed_command_operand_is_not_reread(self, prefix: str) -> None:
-        """The same executed-position rule protects quoted data from a second shell parse."""
+        """The same executed-position rule protects quoted data from a second shell parse.
+
+        A printing command, alone or behind ``env`` or ``sudo``, is given ``bash -c 'echo (data)'``. The quoted text is
+        printed, not executed, so it is not parsed a second time and the command stays readable.
+        """
         command = f"{prefix} bash -c 'echo (data)'"
-        assert _invocations(command, "gh") == []
-        assert _unreadable(command) is False
+        reading = _analyse(command)
+        assert reading.invocations == []
+        assert reading.unreadable is False
 
     @pytest.mark.parametrize("shell", ["bash", "zsh", "sh", "dash"])
     @pytest.mark.parametrize("options", ["-co pipefail", "-eco pipefail", "-c -eo pipefail", "-o pipefail -c --"])
     def test_shell_clusters_consume_option_values(self, shell: str, options: str) -> None:
-        """Value-taking letters consume their operands before the pending command string."""
+        """Value-taking letters consume their operands before the pending command string.
+
+        Shell flag clusters such as ``-co pipefail`` or ``-c -eo pipefail`` put the option's value before the command
+        string. The command string must still be found, so the ``git status`` inside is reported for all four shells.
+        """
         command = f"{shell} {options} 'git status'"
         assert _invocations(command, "git") == [["git", "status"]]
         assert _unreadable(command) is False
@@ -1640,17 +2082,26 @@ fi
         ],
     )
     def test_env_values_do_not_end_split_source_scan(self, option: str) -> None:
-        """Every env value spelling leaves a following split-string option visible."""
+        """Every env value spelling leaves a following split-string option visible.
+
+        ``env`` options take values in many spellings (``--chdir test``, ``-Ctest``, ``-u=test``, clustered ``-iu
+        test``). The value must not be mistaken for the command, so the ``-S`` string after it is still read.
+        """
         command = f"env {option} -S 'gh pr list'"
-        assert _invocations(command, "gh") == [["gh", "pr", "list"]]
-        assert _unreadable(command) is False
+        reading = _analyse(command)
+        assert reading.invocations == [["gh", "pr", "list"]]
+        assert reading.unreadable is False
 
     @pytest.mark.parametrize(
         "runner",
         ["source -- /tmp/s", ". -- /tmp/s", "env -S 'bash /tmp/s'", "eval 'bash /tmp/s'", "bash -c 'bash /tmp/s'"],
     )
     def test_nested_source_discovers_written_scripts(self, runner: str) -> None:
-        """Script operands in re-read text expose the body written by the enclosing input."""
+        """Script operands in re-read text expose the body written by the enclosing input.
+
+        A heredoc writes ``/tmp/s`` and a runner (source, dot, ``env -S``, ``eval``, ``bash -c``) then runs it from re-
+        read text. The script body must be linked to the run, or its gh call would stay hidden.
+        """
         command = f"cat > /tmp/s <<'EOF'\ngh pr list\nEOF\n{runner}"
         assert _invocations(command, "gh") == [["gh", "pr", "list"]]
 
@@ -1669,10 +2120,15 @@ fi
         ],
     )
     def test_compound_commands_inherit_fed_stdin(self, compound: str) -> None:
-        """Separators inside every compound retain the input inherited from its pipeline."""
+        """Separators inside every compound retain the input inherited from its pipeline.
+
+        A heredoc is piped into an ``if``, ``while``, ``until``, ``for``, ``case``, brace group, subshell or function
+        whose body runs ``bash``. The shell reads the heredoc text, so its gh call is found.
+        """
         command = f"cat <<'EOF' | {compound}\ngh pr list\nEOF"
-        assert _invocations(command, "gh") == [["gh", "pr", "list"]]
-        assert _unreadable(command) is False
+        reading = _analyse(command)
+        assert reading.invocations == [["gh", "pr", "list"]]
+        assert reading.unreadable is False
 
     @pytest.mark.parametrize(
         "wrapper",
@@ -1689,54 +2145,27 @@ fi
         ],
     )
     def test_wrapper_replacement_command_reads_stdin(self, wrapper: str) -> None:
-        """Both default and explicit wrapper replacement strings make the command operand input source."""
+        """Both default and explicit wrapper replacement strings make the command operand input source.
+
+        A heredoc is piped to ``xargs`` (default and explicit replacement strings) or ``parallel`` running ``sh
+        -c '{}'``. The replaced command is the heredoc text, so its gh call is found.
+        """
         command = f"cat <<'EOF' | {wrapper} sh -c '{{}}'\ngh pr list\nEOF"
-        assert _invocations(command, "gh") == [["gh", "pr", "list"]]
-        assert _unreadable(command) is False
+        reading = _analyse(command)
+        assert reading.invocations == [["gh", "pr", "list"]]
+        assert reading.unreadable is False
 
     @pytest.mark.parametrize("option", ["-I slot", "-Jslot", "-islot", "--replace=slot"])
     def test_custom_replacement_inside_command_reads_stdin(self, option: str) -> None:
-        """A custom replacement inside a longer command string still inserts executable stdin."""
+        """A custom replacement inside a longer command string still inserts executable stdin.
+
+        ``xargs`` is given a custom replacement string and uses it as one word inside a longer ``sh -c`` command string.
+        The piped heredoc is inserted there and runs, so its gh call is found.
+        """
         command = f"cat <<'EOF' | xargs {option} sh -c 'echo ready; slot'\ngh pr list\nEOF"
-        assert _invocations(command, "gh") == [["gh", "pr", "list"]]
-        assert _unreadable(command) is False
-
-    @pytest.mark.parametrize(
-        "command",
-        [
-            "cat <<'EOF' | if true; then cat; fi; bash\ngh pr list\nEOF",
-            "cat <<'EOF' | for item in one; do cat; done; bash\ngh pr list\nEOF",
-            "cat <<'EOF' | xargs -I token sh -c 'echo data' token\ngh pr list\nEOF",
-        ],
-    )
-    def test_compound_scope_and_replacement_data_do_not_run_source(self, command: str) -> None:
-        """A closed compound and replacement in positional data cannot feed an unrelated shell."""
-        assert _invocations(command, "gh") == []
-        assert _unreadable(command) is False
-
-    @pytest.mark.parametrize(
-        "command",
-        [
-            "man bash | col -b | grep -n 'alpha\\|beta' | head -5",
-            "brew info bash | grep -E 'x\\|y'",
-            "echo bash | sed 's/a\\|b/x/'",
-            "which zsh | sed 's/\\/bin//'",
-            "apropos zsh | grep 'a\\|b'",
-            "ls /bin | grep -c 'sh\\|bash'",
-            "bash -s | grep 'a\\|b'",
-            "echo 'gh pr create' | cat; bash",
-            "echo 'gh pr create' | cat && bash",
-            "echo 'gh pr create' | cat || bash",
-            "{ echo 'gh pr create' | cat; bash; }",
-            "(echo 'gh pr create' | cat; bash)",
-            "echo 'gh pr create'; echo \"$(bash)\" | cat",
-            "cat <(man bash | grep 'a\\|b')",
-        ],
-    )
-    def test_unfed_shell_candidates_do_not_consume_pipeline_text(self, command: str) -> None:
-        """Only fed shell candidates consume printed text; pipeline heads and unrelated lists stay readable."""
-        assert _invocations(command, "gh") == []
-        assert _unreadable(command) is False
+        reading = _analyse(command)
+        assert reading.invocations == [["gh", "pr", "list"]]
+        assert reading.unreadable is False
 
     @pytest.mark.parametrize(
         "wrapper",
@@ -1757,10 +2186,16 @@ fi
         ],
     )
     def test_wrappers_select_their_program_not_shell_named_data(self, wrapper: str) -> None:
-        """Modeled wrapper values and an unfed program's arguments do not consume pipeline text."""
+        """Modeled wrapper values and an unfed program's arguments do not consume pipeline text.
+
+        Wrappers (``env``, ``sudo``, ``xargs``, ``time``, ``nohup``, ``ssh`` and others) are followed by ``man zsh |
+        grep``. The shell-named words are the wrapper's option values or its program's data, so nothing consumes the
+        pipeline and the command stays readable.
+        """
         command = f"{wrapper} man zsh | grep 'a\\|b'"
-        assert _invocations(command, "gh") == []
-        assert _unreadable(command) is False
+        reading = _analyse(command)
+        assert reading.invocations == []
+        assert reading.unreadable is False
 
     @pytest.mark.parametrize(
         "wrapper",
@@ -1781,49 +2216,24 @@ fi
             "sudo --unmodeled-option",
         ],
     )
-    def test_wrapped_shells_keep_pipeline_and_heredoc_source(self, wrapper: str) -> None:
-        """A wrapper still exposes the actual shell's input, conservatively including unmodeled options."""
-        for command in (
-            f"echo 'gh pr create' | {wrapper} sh",
-            f"{wrapper} sh <<'TEXT'\ngh pr create\nTEXT",
-            f"cat > helper.sh <<'TEXT'\ngh pr create\nTEXT\n{wrapper} sh helper.sh",
-        ):
-            assert ["gh", "pr", "create"] in _invocations(command, "gh")
-        decoded = f"printf 'gh pr create\\n' | {wrapper} sh"
-        assert ["gh", "pr", "create"] in _invocations(decoded, "gh")
-        assert _unreadable(decoded) is False
-
     @pytest.mark.parametrize(
-        "command",
+        "template",
         [
-            'bash helper.sh "fix(parser): read input"',
-            'env MODE=test python3 -c "print(2)"',
-            'env MODE=test python -W ignore -c "print(2)"',
-            "cat > helper.sh <<'TEXT'\n#!/bin/bash\necho \"(data)\"\nTEXT\nbash helper.sh",
-            "cat > notes.txt <<'TEXT'\necho (data)\nTEXT\nbash helper.sh",
-            "# note\nls",
-            "cat <<'TEXT'\necho (data)\nTEXT\nls; bash --version",
-            'for tag in a b; do [[ "$tag" =~ ^r[0-9]+(\\.[0-9]+)+$ ]]; done',
-            "time (ls | head -2)",
-            "time -p (ls)",
-            "helper(){ (ls); }; helper",
-            "ls; bash --version",
-            "ls; bash --help",
-            "setopt SH_WORD_SPLIT; ls",
-            "unsetopt shwordsplit; ls",
-            'bash helper.sh -c "fix(parser): still data"',
-            'bash helper.sh bash -c "fix(parser): still data"',
-            "bash --version <<'TEXT'\necho (data)\nTEXT",
-            "cat <<'TEXT'\ngh pr create; echo (data)\nTEXT\nbash",
-            "cat <<'TEXT'\ngh pr create; echo (data)\nTEXT\necho ok | sh",
-            "echo 'fix(parser): data'; bash",
-            "cat <<'TEXT' | cat\ngh pr create; echo (data)\nTEXT\npython3 helper.py",
+            pytest.param("echo 'gh pr create' | {wrapper} sh", id="pipeline"),
+            pytest.param("{wrapper} sh <<'TEXT'\ngh pr create\nTEXT", id="heredoc"),
+            pytest.param("cat > helper.sh <<'TEXT'\ngh pr create\nTEXT\n{wrapper} sh helper.sh", id="written-script"),
+            pytest.param("printf 'gh pr create\\n' | {wrapper} sh", id="printed-pipeline"),
         ],
     )
-    def test_data_arguments_and_grouping_remain_readable(self, command: str) -> None:
-        """Only executable input is shell source; script operands and unrelated heredocs remain data."""
-        assert _invocations(command, "gh") == []
-        assert _unreadable(command) is False
+    def test_wrapped_shells_keep_pipeline_and_heredoc_source(self, wrapper: str, template: str) -> None:
+        """A wrapper still exposes the actual shell's input, conservatively including unmodeled options.
+
+        The wrapper sits between the source (a pipe, a heredoc, a written script or printed text) and the shell, and
+        none of the modeled or unmodeled wrapper spellings may hide the ``gh`` write the source holds.
+        """
+        reading = _analyse(template.format(wrapper=wrapper))
+        assert ["gh", "pr", "create"] in reading.invocations
+        assert reading.unreadable is False
 
     @pytest.mark.parametrize(
         "command",
@@ -1881,7 +2291,12 @@ fi
         ],
     )
     def test_executable_text_still_exposes_writes(self, command: str) -> None:
-        """Shell scripts, eval operands, substitutions and shell stdin keep their literal invocation."""
+        """Shell scripts, eval operands, substitutions and shell stdin keep their literal invocation.
+
+        Dozens of spellings of the same ``gh pr create`` (wrappers, pipes, substitutions, process substitution, written
+        scripts, split strings). Each hands text to a shell in a different way, and the literal call must be found in
+        every one.
+        """
         assert ["gh", "pr", "create"] in _invocations(command, "gh")
 
     @pytest.mark.parametrize(
@@ -1902,66 +2317,14 @@ fi
         ],
     )
     def test_runtime_splitting_preserves_literal_invocations(self, command: str) -> None:
-        """Field splitting and either sense of reading-neutral options preserve the literal gh argv."""
-        assert _invocations(command, "gh") == [["gh", "pr", "view", "2"]]
-        assert _unreadable(command) is False
+        """Field splitting and either sense of reading-neutral options preserve the literal gh argv.
 
-    @pytest.mark.parametrize(
-        "command",
-        [
-            "ls name()(e:'gh pr create':)",
-            "ls *(e:'gh pr create':)",
-            "ls (#qe:'gh pr create':)",
-            "setopt globsubst; gh pr view 2",
-            "shopt -s extglob; gh pr view 2",
-            "echo ${~words}; gh pr view 2",
-            "echo ${!words}; gh pr view 2",
-            "echo $[1+2]; gh pr view 2",
-            "exec {descriptor}>output; gh pr view 2",
-        ],
-    )
-    def test_executable_expansions_remain_unreadable(self, command: str) -> None:
-        """Data/source boundaries never admit code-running globs, indirect expansions or syntax-changing options."""
-        assert _unreadable(command) is True
-        assert _invocations(command, "gh") is None
-
-    @pytest.mark.parametrize(
-        "command",
-        [
-            "timeout 5 zsh -o rcquotes -c 'echo ok'; gh pr view 1",
-            "stdbuf -oL zsh -o rcquotes -c 'echo ok'",
-            "echo 'gh pr create' | { cat; zsh -o rcquotes; }",
-            "{ cat; zsh -o rcquotes; } <<< 'gh pr create'",
-            "echo 'gh pr create' | zsh -o rcquotes < script.sh",
-        ],
-    )
-    def test_fed_or_explicit_source_with_unknown_shell_options_is_unreadable(self, command: str) -> None:
-        """Modeled wrappers expose their shell command, and fed shells cannot hide option changes."""
-        assert _unreadable(command) is True
-        assert _invocations(command, "gh") is None
-
-    @pytest.mark.parametrize(
-        ("command", "words"),
-        [
-            pytest.param("gh pr create -t x", ["gh", "pr", "create", "-t", "x"], id="plain"),
-            pytest.param("cd /x && { gh pr merge 1; }", ["gh", "pr", "merge", "1"], id="grouped-after-operator"),
-            pytest.param("bash -c 'gh pr create'", ["gh", "pr", "create"], id="bash-c"),
-            pytest.param('eval "gh issue close 3"', ["gh", "issue", "close", "3"], id="eval"),
-            pytest.param("sudo -u u GH.EXE repo delete", ["GH.EXE", "repo", "delete"], id="prefix-case-and-exe"),
-            pytest.param("bash <<< 'gh release create v1'", ["gh", "release", "create", "v1"], id="here-string"),
-            pytest.param(
-                "gh api graphql -f query='query { viewer { login } }'",
-                ["gh", "api", "graphql", "-f", "query=query { viewer { login } }"],
-                id="quoted-argument-stays-one-word",
-            ),
-            pytest.param(
-                "gh api repos/o/r/pulls?state=open", ["gh", "api", "repos/o/r/pulls?state=open"], id="glob-plain"
-            ),
-        ],
-    )
-    def test_invocation_is_found_with_quoting_removed(self, command: str, words: list[str]) -> None:
-        """Each invocation is its words from the program word on, quoting removed and glob marks never leaked."""
-        assert words in _invocations(command, "gh")
+        zsh options (``setopt``, ``unsetopt``) and ``${=words}`` word-splitting forms precede a literal ``gh pr view
+        2``. None changes how that call is read, so the exact argv is reported and the command is readable.
+        """
+        reading = _analyse(command)
+        assert reading.invocations == [["gh", "pr", "view", "2"]]
+        assert reading.unreadable is False
 
     @pytest.mark.parametrize(
         ("command", "word"),
@@ -1982,60 +2345,6 @@ fi
         assert ["gh", "pr", word] in _invocations(command, "gh")
 
     @pytest.mark.parametrize(
-        "command",
-        [
-            pytest.param("gh pr $'\\u0063reate'", id="unicode-escape"),
-            pytest.param("gh pr $'\\U00000063reate'", id="long-unicode-escape"),
-            pytest.param("gh pr $'\\x{63}reate'", id="hex-brace-escape"),
-            pytest.param("gh pr $'\\cA'", id="control-escape"),
-            pytest.param("gh pr $'cre\\qate'", id="unknown-escape"),
-            pytest.param("gh pr $'create\\x00junk'", id="nul"),
-            pytest.param('gh pr $"create"', id="locale-string"),
-            pytest.param("cat <<$'EOF'\nhi\nEOF\ngh pr merge 1", id="ansi-c-heredoc-delimiter"),
-            pytest.param('cat <<$"EOF"\nhi\nEOF\ngh pr merge 1', id="locale-heredoc-delimiter"),
-            pytest.param("x=$$'\\'; gh pr create #'", id="dollars-before-a-quote"),
-            pytest.param('x="${y:-\'"\'}"; gh pr create # "\'', id="single-quote-in-double-quoted-expansion"),
-            pytest.param('x="$${y:-"}"; gh pr create # "', id="dollars-before-a-brace-in-double-quotes"),
-            pytest.param('x="$$(echo ")"); gh pr create # "', id="dollars-before-a-paren-in-double-quotes"),
-            pytest.param('x="${y:-\\}\'"\'}"; gh pr create # "\'', id="escaped-brace-then-single-quote-in-expansion"),
-            pytest.param('x="${ gh pr create; }"', id="command-brace-in-double-quotes"),
-            pytest.param('x="${|gh pr create;}"', id="value-brace-in-double-quotes"),
-            pytest.param('x="${\tgh pr create; }"', id="command-brace-after-a-tab"),
-            pytest.param('x="${\ngh pr create; }"', id="command-brace-after-a-newline"),
-            pytest.param("x=${ gh pr create; }", id="command-brace-unquoted"),
-            pytest.param("cat <<EOF\n${ gh pr create; }\nEOF", id="command-brace-in-heredoc"),
-            pytest.param("cat <<EOF\n$$${ gh pr create; }\nEOF", id="command-brace-after-pid-in-heredoc"),
-            pytest.param('gh pr view "${ gh pr create --title t --body b; }"', id="command-brace-as-a-read-argument"),
-            pytest.param("gh pr view 1 $\\\n'\\''; gh pr create #'", id="continued-ansi-c-string"),
-            pytest.param("gh pr view 1 <<EO\\\nF\nx\nEOF\ngh pr create", id="continued-heredoc-delimiter"),
-            pytest.param("cat <<EOF\n$\\\n(gh pr create)\nEOF", id="continued-substitution-in-heredoc"),
-            pytest.param('gh pr view "$\\\n(gh pr create)"', id="continued-substitution-in-double-quotes"),
-            pytest.param('x="${\\\n gh pr create; }"', id="continued-command-brace"),
-            pytest.param("cat <<EOF\nEO\\\nF\ngh pr create\nEOF", id="continued-terminator-line"),
-            pytest.param("cat <\\\n<EOF\nx\nEOF", id="continued-redirection-operator"),
-        ],
-    )
-    def test_quoting_the_shells_read_differently_has_no_exact_argv(self, command: str) -> None:
-        """Escapes and locale strings bash and zsh decode differently leave no exact argv: the caller fails closed.
-
-        The Bash tool runs the user's shell. zsh reads ``$'\\x{63}'`` as a NUL then ``{63}`` and ``$"git"`` as ``$git``,
-        bash 3.2 has no ``\\u``; no single reading is right for every shell.
-        """
-        assert _invocations(command, "gh") is None
-
-    @pytest.mark.parametrize(
-        "command",
-        [
-            pytest.param("git $'\\x{70}ush' -f origin main", id="hex-brace-subcommand"),
-            pytest.param("$'\\x{67}it' push", id="hex-brace-program"),
-            pytest.param('git $"push" -f', id="locale-subcommand"),
-        ],
-    )
-    def test_quoting_the_shells_read_differently_reads_as_force_push(self, command: str) -> None:
-        """Git reads ``push --force`` beside its raw-segment fallback: the unreadable text may hide the program word."""
-        assert "push --force" in _readings(command)
-
-    @pytest.mark.parametrize(
         ("command", "unreadable"),
         [
             pytest.param("gh pr $'\\x{63}reate'", True, id="unreadable-escape"),
@@ -2045,7 +2354,11 @@ fi
         ],
     )
     def test_unreadable_flag_reports_shell_dependent_quoting(self, command: str, unreadable: bool) -> None:
-        """``info.unreadable`` comes from the lexer, not from a text search: ``'x$'`` is a plain quoted word."""
+        """``info.unreadable`` comes from the lexer, not from a text search: ``'x$'`` is a plain quoted word.
+
+        ``info.unreadable`` is set for constructs bash and zsh read differently (``$'\\x{63}'``, ``$"..."``) and unset
+        for readable ones, including a quoted ``'x$'`` and a hex escape both shells decode alike.
+        """
         assert _unreadable(command) is unreadable
 
     @pytest.mark.parametrize(
@@ -2083,37 +2396,12 @@ fi
         ],
     )
     def test_unreadable_reason_is_empty_for_readable_quoting(self, command: str) -> None:
-        """A command bash and zsh read alike carries no reason, unbalanced quoting included (that is not unreadable)."""
-        assert _unreadable_reason(command) == ""
+        """A command bash and zsh read alike carries no reason, unbalanced quoting included (that is not unreadable).
 
-    @pytest.mark.parametrize(
-        ("command", "words"),
-        [
-            pytest.param('x="${a%"b"}"; gh pr merge 1', ["gh", "pr", "merge", "1"], id="nested-quotes-then-a-write"),
-            pytest.param('gh pr view "${N:-1}"', ["gh", "pr", "view", "${N:-1}"], id="expansion-as-an-argument"),
-            pytest.param('x="${a:-b\\}c}"; gh pr view 1', ["gh", "pr", "view", "1"], id="escaped-brace-stays-inside"),
-            pytest.param('gh pr view "$$" 1', ["gh", "pr", "view", "$$", "1"], id="pid-before-the-closing-quote"),
-            pytest.param(
-                'echo "${HOME} ${#x} ${z[@]}"; gh pr view', ["gh", "pr", "view"], id="parameters-stay-readable"
-            ),
-            pytest.param(
-                "cat <<EOF\n$$$(gh pr create)\nEOF", ["gh", "pr", "create"], id="pid-then-substitution-in-heredoc"
-            ),
-            pytest.param(
-                'x="`echo \\"\'\\"; gh pr create; \\"\'\\"`"',
-                ["gh", "pr", "create"],
-                id="escaped-double-quote-in-backticks-in-double-quotes",
-            ),
-            pytest.param("echo hi # note \\\ngh pr create", ["gh", "pr", "create"], id="comment-does-not-continue"),
-            pytest.param("trap 'gh pr create' EXIT", ["gh", "pr", "create"], id="trap-handler-is-source"),
-            pytest.param("echo 'gh pr view 1' | sh", ["gh", "pr", "view", "1"], id="text-printed-to-a-stdin-shell"),
-            pytest.param("let 'a[$(gh pr view 1)]=1'", ["gh", "pr", "view", "1"], id="subscript-substitution"),
-            pytest.param("echo 1 | xargs gh pr view", ["gh", "pr", "view", "$(xargs)"], id="xargs-tail"),
-        ],
-    )
-    def test_double_quotes_nest_inside_a_double_quoted_expansion(self, command: str, words: list[str]) -> None:
-        """``"${x%"$y"}"`` nests its inner quotes in bash and zsh alike, so the command after it is still seen."""
-        assert words in _invocations(command, "gh")
+        A plain call, a decodable escape and unbalanced quoting all leave the reason text empty. A guard that prints a
+        reason for a readable command would mislead the user.
+        """
+        assert _unreadable_reason(command) == ""
 
     def test_ansi_c_closing_quote_is_found_before_decoding(self) -> None:
         """The string ends where the shell ends it: a backslash skips one character, ``\\\\`` included.
@@ -2129,25 +2417,6 @@ fi
         The coarse pass exists to keep the pre-lexer git hooks' detections; gh has no earlier detector to preserve.
         """
         assert _invocations("gh api graphql -f query='{ a }'", "gh") == [["gh", "api", "graphql", "-f", "query={ a }"]]
-
-    @pytest.mark.parametrize(
-        ("command", "words"),
-        [
-            pytest.param("exit '$(gh pr merge 1)'", ["gh", "pr", "merge", "1"], id="exit-count"),
-            pytest.param("shift '$(gh pr merge 1)'", ["gh", "pr", "merge", "1"], id="shift-count"),
-            pytest.param("return '$(gh pr merge 1)'", ["gh", "pr", "merge", "1"], id="return-count"),
-            pytest.param("break '$(gh pr merge 1)'", ["gh", "pr", "merge", "1"], id="break-count"),
-            pytest.param("repeat '$(gh pr merge 1)' true", ["gh", "pr", "merge", "1"], id="repeat-count"),
-            pytest.param("shift -p '$(gh pr merge 1)'", ["gh", "pr", "merge", "1"], id="shift-after-option"),
-        ],
-    )
-    def test_count_command_operand_is_arithmetic_and_re_expands(self, command: str, words: list[str]) -> None:
-        """A count command evaluates its first operand as arithmetic, so a quoted ``$(gh …)`` in it runs and is found.
-
-        ``exit '$(gh pr merge 1)'`` reads as a benign exit; the quoted substitution the author stored re-expands on
-        arithmetic evaluation, running the gh write the guard must see.
-        """
-        assert words in _invocations(command, "gh")
 
     @pytest.mark.parametrize(
         "command",
@@ -2168,8 +2437,9 @@ fi
         They were hard-blocking every ordinary Bash command that used them (round-10 F2); none changes quoting, globbing
         or word splitting, so the lexer reads past them and still finds the gh invocation.
         """
-        assert ["gh", "pr", "view", "1"] in _invocations(command, "gh")
-        assert _unreadable(command) is False
+        reading = _analyse(command)
+        assert ["gh", "pr", "view", "1"] in reading.invocations
+        assert reading.unreadable is False
 
     @pytest.mark.parametrize(
         "command",
@@ -2181,26 +2451,12 @@ fi
         ],
     )
     def test_text_naming_gh_is_no_invocation(self, command: object) -> None:
-        """Quoted text, look-alike words and a redirection target are data; a malformed command is no invocation."""
-        assert _invocations(command, "gh") == []
+        """Quoted text, look-alike words and a redirection target are data; a malformed command is no invocation.
 
-    @pytest.mark.parametrize(
-        "command",
-        [
-            pytest.param("gh pr --title 'a b' create 'x", id="unbalanced-quote"),
-            pytest.param("gh pr --title 'a b' create {1..300}", id="oversized-braces"),
-            pytest.param("echo $(gh pr create", id="unterminated-substitution"),
-            pytest.param('bash -c "gh pr create \'x"', id="unbalanced-nested-source"),
-            pytest.param("python3 -c \"import os; os.system('gh pr comment 1')\"", id="interpreter-code"),
-        ],
-    )
-    def test_no_exact_argv_is_null(self, command: str) -> None:
-        """Without an exact argv the answer is null, never a guess, and the caller fails closed.
-
-        Quote-stripped or code-split words shift positionals: ``--title 'a b' create`` read without quoting puts ``b``
-        where gh reads ``create``, so a guessed argv can hide a write instead of widening the answer.
+        Quoted text, a look-alike path (``ghx``), a redirection target and a non-string command all mention ``gh``
+        without running it. The answer is an empty list so these commands are not blocked.
         """
-        assert _invocations(command, "gh") is None
+        assert _invocations(command, "gh") == []
 
     def test_heredoc_delimiter_keeps_a_carriage_return(self) -> None:
         """A heredoc delimiter word ends only at a blank, newline or operator, as in the shells: a CR stays in it.
@@ -2213,13 +2469,56 @@ fi
         assert ["gh", "issue", "close", "1", "-c", "x\r"] in _invocations(command, "gh")
 
     def test_code_not_naming_the_program_keeps_the_answer(self) -> None:
-        """Interpreter code that never names gh leaves the rest of the command exactly read."""
+        """Interpreter code that never names gh leaves the rest of the command exactly read.
+
+        ``python3 -c 'print(1)'`` never names gh, so the interpreter code adds nothing, and the ``gh pr view 1`` after
+        ``&&`` is reported alone with its exact argv.
+        """
         assert _invocations("python3 -c 'print(1)' && gh pr view 1", "gh") == [["gh", "pr", "view", "1"]]
 
     def test_git_keeps_its_raw_segment_fallback(self) -> None:
-        """Git readings fail closed by widening, so the git target still answers where any other program's is null."""
+        """Git readings fail closed by widening, so the git target still answers where any other program's is null.
+
+        For ``git`` the lexer also scans raw segments, so an unbalanced quote does not hide the push. The same input
+        would give null for any other program; git instead widens its answer.
+        """
         assert ["git", "push", "x"] in _invocations("git push 'x", "git")
 
     def test_git_keeps_its_own_target(self) -> None:
-        """Asking for git returns the git invocations the readings use, coarse pass included."""
+        """Asking for git returns the git invocations the readings use, coarse pass included.
+
+        Asking for ``GIT`` in upper case on ``bash -c 'git push -f'`` must give the same invocation the git readings
+        use, including the coarse pass, so both hooks and the gh guard agree on one lexer.
+        """
         assert ["git", "push", "-f"] in _invocations("bash -c 'git push -f'", "GIT")
+
+    @pytest.mark.parametrize(
+        ("command", "words"),
+        [
+            *_ARGV_QUOTING_REMOVED,
+            *_ARGV_NESTED_QUOTES,
+            *_ARGV_COUNT_OPERAND,
+        ],
+    )
+    def test_gh_invocation_is_found(self, command: str, words: list[str]) -> None:
+        """The exact ``gh`` argv is among the invocations found, with quoting removed and no lexer marks leaked.
+
+        Each case spells one gh call so that a lexer shortcut would mangle it: nested quotes inside an expansion, a
+        count command whose operand re-expands, or plain quoting. The guard compares these words with its write list.
+        """
+        assert words in _invocations(command, "gh")
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            *_NO_ARGV_SHELL_DEPENDENT,
+            *_NO_ARGV_UNPARSEABLE,
+        ],
+    )
+    def test_no_exact_argv_is_null(self, command: str) -> None:
+        """Without an exact argv the answer is null, never a guess, and the caller fails closed.
+
+        Cases are quoting the shells read differently and syntax the lexer cannot follow: any guessed argv could shift
+        positionals and hide a write, so null (widened by the guard into a block) is the only safe answer.
+        """
+        assert _invocations(command, "gh") is None

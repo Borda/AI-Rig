@@ -13,6 +13,7 @@ import json
 from pathlib import Path
 
 import pytest
+from _bridge_prose import read_prose
 
 _PLUGIN = Path(__file__).resolve().parents[1]
 _MARKERS = json.loads((Path(__file__).parent / "data" / "observability_head_markers.json").read_text(encoding="utf-8"))
@@ -27,7 +28,11 @@ _ROWS = [
 
 @pytest.mark.parametrize(("relative", "marker"), _ROWS)
 def test_head_visible_output_still_present(relative: str, marker: str) -> None:
-    """Every output line the file showed at HEAD is still there verbatim."""
+    """Every output line the file showed at HEAD is still there verbatim.
+
+    Each case pins one recorded marker (a progress line, report header, checkpoint write, task update or run-dir
+    artifact) against its file, so a refactor that silently drops user-visible output fails here.
+    """
     assert marker in (_PLUGIN / relative).read_text(encoding="utf-8")
 
 
@@ -40,11 +45,17 @@ def test_head_visible_output_still_present(relative: str, marker: str) -> None:
     ],
 )
 def test_detached_job_state_stays_inspectable(skill: str, command: str) -> None:
-    """Replacing polling loops kept every lifecycle command, so a detached job's state is still visible on demand."""
-    assert command in (_PLUGIN / "claude-skills" / skill / "SKILL.md").read_text(encoding="utf-8")
+    """Replacing polling loops kept every lifecycle command, so a detached job's state is still visible on demand.
+
+    The status, result and cancel skills are the only way to see or stop a detached job once no loop waits on it.
+    """
+    assert command in read_prose(_PLUGIN / "claude-skills" / skill / "SKILL.md")
 
 
-def test_detached_dispatch_still_returns_the_job_identifier() -> None:
-    """A detached implement call still hands back the job identifier the lifecycle skills need."""
-    text = (_PLUGIN / "claude-skills" / "implement" / "SKILL.md").read_text(encoding="utf-8")
+def test_detached_dispatch_returns_the_job_identifier() -> None:
+    """A detached implement call still hands back the job identifier the lifecycle skills need.
+
+    Without the identifier the caller cannot name the job to `/bridge:status`, `/bridge:result` or cancel.
+    """
+    text = read_prose(_PLUGIN / "claude-skills" / "implement" / "SKILL.md")
     assert "If detached, return job identifier; direct caller to `/bridge:status`, `/bridge:result`" in text

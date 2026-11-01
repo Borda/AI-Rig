@@ -40,6 +40,36 @@ def _patch_run(monkeypatch: pytest.MonkeyPatch, responder: Any) -> None:
     monkeypatch.setattr(find_polluter.subprocess, "run", responder)
 
 
+@pytest.fixture
+def stub_pytest(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make ``main()`` resolve a bare ``pytest`` command without probing the host."""
+    monkeypatch.setattr(find_polluter, "_resolve_pytest_cmd", lambda: ["pytest"])
+
+
+class _SearchRun:
+    """Fake ``subprocess.run`` modelling a whole CLI search where one collected test contaminates the failing one.
+
+    Isolation runs pass, ``--collect-only`` prints ``collected``, and any batch holding ``polluter`` fails.
+    """
+
+    def __init__(self, polluter: str, collected: str) -> None:
+        """Remember the polluter and the collection output; start with no recorded collection calls."""
+        self.polluter = polluter
+        self.collected = collected
+        self.collect_argv: list[Sequence[str]] = []
+
+    def __call__(self, argv: Sequence[str], **_kw: Any) -> _FakeResult:
+        """Answer an isolation, collection or batch run the way the real search would."""
+        if "--tb=short" in argv:
+            return _FakeResult(stdout="1 passed in 0.01s\n")
+        if "--collect-only" in argv:
+            self.collect_argv.append(argv)
+            return _FakeResult(stdout=self.collected)
+        if self.polluter in _batch_from_argsfile(argv):
+            return _FakeResult(stdout="FAILED\n", returncode=1)
+        return _FakeResult(stdout="ok\n")
+
+
 def _batch_from_argsfile(argv: Sequence[str]) -> list[str]:
     """Return the batch node IDs ``_contaminates`` passed to pytest via ``@file``.
 
@@ -260,17 +290,19 @@ class TestCollectCandidates:
 class TestBinarySearch:
     """binary_search: convergence, single-candidate shortcut, empty-list rejection."""
 
-    def test_finds_polluter_in_first_half(
-        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    @pytest.mark.parametrize("polluter_idx", [pytest.param(1, id="first-half"), pytest.param(6, id="second-half")])
+    def test_finds_polluter_in_either_half(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], polluter_idx: int
     ) -> None:
-        """Polluter at index 1 among 8 candidates is found within O(log N) rounds."""
+        """A polluter among 8 candidates is found within O(log N) rounds, wherever it sits relative to the midpoint.
+
+        Index 1 sits in the first half; index 6 only survives when the first half passes and the second is retained.
+        """
         candidates = [f"tests/test_x.py::t{i}" for i in range(8)]
-        polluter_idx = 1
 
         def _fake_run(argv: Sequence[str], **_kw: Any) -> _FakeResult:
-            """Fail batches containing this test's first-half polluter."""
-            batch = _batch_from_argsfile(argv)
-            if candidates[polluter_idx] in batch:
+            """Fail every batch containing the chosen polluter."""
+            if candidates[polluter_idx] in _batch_from_argsfile(argv):
                 return _FakeResult(stdout="FAILED\n", returncode=1)
             return _FakeResult(stdout="ok\n")
 
@@ -310,23 +342,6 @@ class TestBinarySearch:
         log = StringIO()
         find_polluter.binary_search(candidates, "FAIL", ["pytest"], log=log)
         assert "Round" in log.getvalue()
-
-    def test_finds_polluter_in_second_half(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Polluter after the first midpoint is retained when the first half passes."""
-        candidates = [f"tests/test_x.py::t{i}" for i in range(8)]
-        polluter = candidates[6]
-
-        def _fake_run(argv: Sequence[str], **_kw: Any) -> _FakeResult:
-            """Fail batches containing this test's second-half polluter."""
-            batch = _batch_from_argsfile(argv)
-            if polluter in batch:
-                return _FakeResult(stdout="FAILED\n", returncode=1)
-            return _FakeResult(stdout="ok\n")
-
-        _patch_run(monkeypatch, _fake_run)
-        found, rounds = find_polluter.binary_search(candidates, "FAIL_TARGET", ["pytest"])
-        assert found == polluter
-        assert 1 <= rounds <= 4
 
 
 # ---------------------------------------------------------------------------
@@ -368,10 +383,9 @@ class TestMain:
         assert "test_dir rejected" in capsys.readouterr().err
 
     def test_pytest_timeout_exits_1_without_traceback(
-        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+        self, stub_pytest: None, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """A pytest run exceeding its timeout ends with exit 1 and a one-line message instead of a traceback."""
-        monkeypatch.setattr(find_polluter, "_resolve_pytest_cmd", lambda: ["pytest"])
 
         def _hang(argv: Sequence[str], **_kw: Any) -> _FakeResult:
             """Simulate pytest outliving the subprocess timeout."""
@@ -397,10 +411,9 @@ class TestMain:
         assert "pytest not found" in capsys.readouterr().err
 
     def test_isolation_failure_exits_1(
-        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+        self, stub_pytest: None, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Test that always fails in isolation → exit 1 with guidance."""
-        monkeypatch.setattr(find_polluter, "_resolve_pytest_cmd", lambda: ["pytest"])
 
         def _fake_run(_argv: Sequence[str], **_kw: Any) -> _FakeResult:
             """Return failure for the isolation-failure CLI path."""
@@ -411,9 +424,10 @@ class TestMain:
         assert rc == 1
         assert "fails in isolation" in capsys.readouterr().err
 
-    def test_no_candidates_exits_1(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_no_candidates_exits_1(
+        self, stub_pytest: None, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         """Zero candidates after exclusion → exit 1 with 'No candidate tests found'."""
-        monkeypatch.setattr(find_polluter, "_resolve_pytest_cmd", lambda: ["pytest"])
         failing = "tests/test_z.py::only"
 
         def _fake_run(argv: Sequence[str], **_kw: Any) -> _FakeResult:
@@ -430,74 +444,35 @@ class TestMain:
         assert "No candidate tests found" in capsys.readouterr().err
 
     def test_polluter_found_returns_0(
-        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+        self, stub_pytest: None, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Full happy path: polluter identified, output printed, return code 0."""
         failing = "tests/test_z.py::fail"
         polluter = "tests/test_a.py::one"
-        other = "tests/test_b.py::two"
-        monkeypatch.setattr(find_polluter, "_resolve_pytest_cmd", lambda: ["pytest"])
-
-        def _fake_run(argv: Sequence[str], **_kw: Any) -> _FakeResult:
-            """Model the successful CLI search for this fixture polluter."""
-            if "--tb=short" in argv:
-                return _FakeResult(stdout="1 passed in 0.01s\n")
-            if "--collect-only" in argv:
-                return _FakeResult(stdout=f"{polluter}\n{other}\n{failing}\n")
-            if polluter in _batch_from_argsfile(argv):
-                return _FakeResult(stdout="FAILED\n", returncode=1)
-            return _FakeResult(stdout="ok\n")
-
-        _patch_run(monkeypatch, _fake_run)
-        rc = find_polluter.main([failing, "tests"])
-        assert rc == 0
+        _patch_run(monkeypatch, _SearchRun(polluter, f"{polluter}\ntests/test_b.py::two\n{failing}\n"))
+        assert find_polluter.main([failing, "tests"]) == 0
         out = capsys.readouterr().out
         assert "Polluter found" in out
         assert polluter in out
 
     def test_report_includes_verify_command(
-        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+        self, stub_pytest: None, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Happy path stdout includes 'Verify with:' guidance block."""
         failing = "tests/test_z.py::fail"
         polluter = "tests/test_a.py::one"
-        monkeypatch.setattr(find_polluter, "_resolve_pytest_cmd", lambda: ["pytest"])
-
-        def _fake_run(argv: Sequence[str], **_kw: Any) -> _FakeResult:
-            """Model the successful search that prints verification guidance."""
-            if "--tb=short" in argv:
-                return _FakeResult(stdout="1 passed in 0.01s\n")
-            if "--collect-only" in argv:
-                return _FakeResult(stdout=f"{polluter}\n{failing}\n")
-            if polluter in _batch_from_argsfile(argv):
-                return _FakeResult(stdout="FAILED\n", returncode=1)
-            return _FakeResult(stdout="ok\n")
-
-        _patch_run(monkeypatch, _fake_run)
+        _patch_run(monkeypatch, _SearchRun(polluter, f"{polluter}\n{failing}\n"))
         find_polluter.main([failing, "tests"])
         out = capsys.readouterr().out
         assert "Verify with:" in out
         assert "Next steps:" in out
 
-    def test_default_test_dir_is_tests(
-        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_default_test_dir_is_tests(self, stub_pytest: None, monkeypatch: pytest.MonkeyPatch) -> None:
         """Omitting test-dir argument defaults to 'tests' directory."""
-        monkeypatch.setattr(find_polluter, "_resolve_pytest_cmd", lambda: ["pytest"])
-        collected_dirs: list[str] = []
-
-        def _fake_run(argv: Sequence[str], **_kw: Any) -> _FakeResult:
-            """Record the default collection directory used by the CLI."""
-            if "--tb=short" in argv:
-                return _FakeResult(stdout="1 passed in 0.01s\n")
-            if "--collect-only" in argv:
-                collected_dirs.extend(a for a in argv if not a.startswith("-") and a != "pytest")
-                return _FakeResult(stdout="")
-            return _FakeResult(stdout="ok\n")
-
-        _patch_run(monkeypatch, _fake_run)
+        run = _SearchRun("tests/never-collected.py::x", "")
+        _patch_run(monkeypatch, run)
         find_polluter.main(["tests/test_z.py::fail"])
-        assert "tests" in collected_dirs
+        assert [a for argv in run.collect_argv for a in argv if not a.startswith("-") and a != "pytest"] == ["tests"]
 
 
 # ---------------------------------------------------------------------------
@@ -516,25 +491,13 @@ class TestArgparseCli:
         assert "find-polluter.py" in capsys.readouterr().out
 
     def test_golden_single_positional_invocation(
-        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+        self, stub_pytest: None, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Cross-plugin call form ``find-polluter.py "<node-id>"`` parses and defaults test_dir to 'tests'."""
         failing = "tests/test_model.py::test_predict"
         polluter = "tests/test_a.py::one"
-        monkeypatch.setattr(find_polluter, "_resolve_pytest_cmd", lambda: ["pytest"])
-
-        def _fake_run(argv: Sequence[str], **_kw: Any) -> _FakeResult:
-            """Model the golden invocation's collection and search responses."""
-            if "--tb=short" in argv:
-                return _FakeResult(stdout="1 passed in 0.01s\n")
-            if "--collect-only" in argv:
-                assert "tests" in argv  # default test_dir applied
-                return _FakeResult(stdout=f"{polluter}\n{failing}\n")
-            if polluter in _batch_from_argsfile(argv):
-                return _FakeResult(stdout="FAILED\n", returncode=1)
-            return _FakeResult(stdout="ok\n")
-
-        _patch_run(monkeypatch, _fake_run)
-        rc = find_polluter.main([failing])
-        assert rc == 0
+        run = _SearchRun(polluter, f"{polluter}\n{failing}\n")
+        _patch_run(monkeypatch, run)
+        assert find_polluter.main([failing]) == 0
         assert polluter in capsys.readouterr().out
+        assert all("tests" in argv for argv in run.collect_argv)

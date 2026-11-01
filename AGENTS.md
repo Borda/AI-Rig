@@ -56,7 +56,7 @@ Claude recipe commands retain `python` identities used by allow rules and bluepr
 | Codex helper recipes and hooks | Explicit plugin `bin/python` on POSIX or `bin/python.cmd` on native Windows; quote paths for the host shell.                      |
 | Codex MCP servers              | Fixed `python` executable prerequisite, checked during setup; no global shim installation or automatic PATH modification.         |
 
-- Guards: `tests/test_hook_interpreter_fallback.py` and `plugins/codex-rig/tests/packaging/test_sync_codex.py`. Extend them when adding a launch layer.
+- Guards: `tests/test_hook_interpreter_fallback.py` and `plugins/codex-rig/tests/packaging/install/test_sync_codex.py`. Extend them when adding a launch layer.
 
 ## Adversarial Convergence Loop
 

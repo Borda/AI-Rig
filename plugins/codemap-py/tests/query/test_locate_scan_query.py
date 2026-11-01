@@ -14,6 +14,9 @@ Covers:
 * Tier 3 picks newest semver when multiple versions present
 * Tier 1 PATH takes precedence over lower tiers
 * Windows-portability invariants
+
+``shutil.which`` and the home/plugin-root environment are the only boundaries replaced; every executable is a real file
+in ``tmp_path``.
 """
 
 from __future__ import annotations
@@ -21,6 +24,7 @@ from __future__ import annotations
 import importlib.util
 import shutil
 import stat
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -42,62 +46,73 @@ def _make_executable(path: Path) -> Path:
     return path
 
 
-def _no_which(cmd: str) -> None:  # type: ignore[return]
-    """Stub for ``shutil.which`` that always returns ``None`` (simulates no PATH hit)."""
-    return None
+def _cache_exe(home: Path, version: str, *, marketplace: str = "borda-ai-rig", plugin: str = "codemap-py") -> Path:
+    """Create ``scan-query`` in the plugin cache layout under *home* for *version*."""
+    return _make_executable(
+        home / ".claude" / "plugins" / "cache" / marketplace / plugin / version / "bin" / "scan-query"
+    )
+
+
+@pytest.fixture
+def configure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Callable[..., None]:
+    """Return a setter that points the resolver at ``tmp_path`` as home, with chosen plugin root and PATH hit.
+
+    ``plugin_root`` defaults to unset (empty). ``path_hit`` is what ``shutil.which`` returns; ``None`` simulates no PATH
+    hit.
+    """
+
+    def _configure(*, plugin_root: Path | None = None, path_hit: Path | str | None = None) -> None:
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", "" if plugin_root is None else str(plugin_root))
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))  # Windows compat
+        monkeypatch.setattr(shutil, "which", lambda cmd: None if path_hit is None else str(path_hit))
+
+    return _configure
 
 
 class TestLocateScanQuery:
     """Unit tests for ``locate_scan_query()``."""
 
-    def test_tier1_path_hit(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Tier 1: shutil.which returns executable → used immediately."""
+    def test_tier1_path_hit(self, tmp_path, configure):
+        """Tier 1: an absolute executable found on PATH is used immediately."""
         exe = _make_executable(tmp_path / "scan-query")
-        monkeypatch.setattr(shutil, "which", lambda cmd: str(exe))
-        result = locate_scan_query()
-        assert result == exe
+        configure(path_hit=exe)
 
-    def test_tier2_claude_plugin_root(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Tier 2: executable at ``$CLAUDE_PLUGIN_ROOT/bin/scan-query``."""
+        assert locate_scan_query() == exe
+
+    def test_tier2_claude_plugin_root(self, tmp_path, configure):
+        """Tier 2: with no PATH hit, the executable at ``$CLAUDE_PLUGIN_ROOT/bin/scan-query`` is used."""
         exe = _make_executable(tmp_path / "bin" / "scan-query")
-        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path))
-        monkeypatch.setenv("HOME", str(tmp_path))
-        monkeypatch.setenv("USERPROFILE", str(tmp_path))  # Windows compat
-        monkeypatch.setattr(shutil, "which", _no_which)
-        result = locate_scan_query()
-        assert result == exe
+        configure(plugin_root=tmp_path)
 
-    def test_tier3_cache_glob(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Tier 3: resolves via ``~/.claude/plugins/cache/borda-ai-rig/codemap-py/*/bin/scan-query``."""
-        cache_exe = _make_executable(
-            tmp_path / ".claude" / "plugins" / "cache" / "borda-ai-rig" / "codemap-py" / "0.3.0" / "bin" / "scan-query"
-        )
-        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", "")
-        monkeypatch.setenv("HOME", str(tmp_path))
-        monkeypatch.setenv("USERPROFILE", str(tmp_path))
-        monkeypatch.setattr(shutil, "which", _no_which)
-        result = locate_scan_query()
-        assert result == cache_exe
+        assert locate_scan_query() == exe
 
-    def test_tier3_picks_newest_semver(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Tier 3: highest semver wins when multiple cache versions present."""
-        base = tmp_path / ".claude" / "plugins" / "cache" / "borda-ai-rig" / "codemap-py"
-        _make_executable(base / "0.1.0" / "bin" / "scan-query")
-        _make_executable(base / "0.2.1" / "bin" / "scan-query")
-        newest = _make_executable(base / "0.3.2" / "bin" / "scan-query")
-        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", "")
-        monkeypatch.setenv("HOME", str(tmp_path))
-        monkeypatch.setenv("USERPROFILE", str(tmp_path))
-        monkeypatch.setattr(shutil, "which", _no_which)
-        result = locate_scan_query()
-        assert result == newest
+    def test_tier3_cache_glob(self, tmp_path, configure):
+        """Tier 3: resolves via ``~/.claude/plugins/cache/borda-ai-rig/codemap-py/*/bin/scan-query``.
 
-    def test_not_found_raises(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """All tiers empty → ``FileNotFoundError`` raised."""
-        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", "")
-        monkeypatch.setenv("HOME", str(tmp_path))
-        monkeypatch.setenv("USERPROFILE", str(tmp_path))
-        monkeypatch.setattr(shutil, "which", _no_which)
+        No PATH hit and no plugin root, so only the cache layout under the fake home can answer.
+        """
+        cache_exe = _cache_exe(tmp_path, "0.3.0")
+        configure()
+
+        assert locate_scan_query() == cache_exe
+
+    def test_tier3_picks_newest_semver(self, tmp_path, configure):
+        """Tier 3: the highest semver wins when multiple cache versions are present.
+
+        Versions 0.1.0, 0.2.1 and 0.3.2 exist; a lexical or first-found pick would not return 0.3.2 reliably.
+        """
+        _cache_exe(tmp_path, "0.1.0")
+        _cache_exe(tmp_path, "0.2.1")
+        newest = _cache_exe(tmp_path, "0.3.2")
+        configure()
+
+        assert locate_scan_query() == newest
+
+    def test_raises_when_all_tiers_empty(self, configure):
+        """With no PATH hit, plugin root or cache entry, ``FileNotFoundError`` is raised."""
+        configure()
+
         with pytest.raises(FileNotFoundError):
             locate_scan_query()
 
@@ -108,93 +123,73 @@ class TestLocateScanQuery:
             pytest.param("borda-ai-rig", "codemap", id="legacy-plugin-name"),
         ],
     )
-    def test_tier3_ignores_unpinned_cache_dirs(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, marketplace: str, plugin: str
-    ) -> None:
+    def test_tier3_ignores_unpinned_cache_dirs(self, tmp_path, configure, marketplace, plugin):
         """Tier 3 does not accept a ``scan-query`` from another marketplace or from the pre-rename ``codemap`` name.
 
         Any marketplace able to ship a plugin directory with a matching name would otherwise supply an executable that
         the caller then runs.
         """
-        _make_executable(
-            tmp_path / ".claude" / "plugins" / "cache" / marketplace / plugin / "0.3.0" / "bin" / "scan-query"
-        )
-        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", "")
-        monkeypatch.setenv("HOME", str(tmp_path))
-        monkeypatch.setenv("USERPROFILE", str(tmp_path))
-        monkeypatch.setattr(shutil, "which", _no_which)
+        _cache_exe(tmp_path, "0.3.0", marketplace=marketplace, plugin=plugin)
+        configure()
+
         with pytest.raises(FileNotFoundError):
             locate_scan_query()
 
-    def test_tier1_relative_path_hit_is_skipped(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_tier1_relative_path_hit_is_skipped(self, tmp_path, configure):
         """A relative PATH hit (from a ``.`` or empty PATH entry) is skipped in favour of the pinned tiers.
 
         Such a hit resolves against the working directory, which may be an untrusted checkout shipping its own ``scan-
         query``; tier 2 must win instead.
         """
         exe = _make_executable(tmp_path / "bin" / "scan-query")
-        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path))
-        monkeypatch.setenv("HOME", str(tmp_path))
-        monkeypatch.setenv("USERPROFILE", str(tmp_path))
-        monkeypatch.setattr(shutil, "which", lambda cmd: "./scan-query")
-        result = locate_scan_query()
-        assert result == exe
+        configure(plugin_root=tmp_path, path_hit="./scan-query")
 
-    def test_tier1_wins_over_tier2(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Tier 1 (PATH) takes precedence over tier 2 (CLAUDE_PLUGIN_ROOT)."""
+        assert locate_scan_query() == exe
+
+    def test_tier1_wins_over_tier2(self, tmp_path, configure):
+        """Tier 1 (PATH) takes precedence over tier 2 (CLAUDE_PLUGIN_ROOT) when both exist."""
         path_exe = _make_executable(tmp_path / "path_bin" / "scan-query")
         _make_executable(tmp_path / "bin" / "scan-query")  # tier 2 candidate (should be ignored)
-        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path))
-        monkeypatch.setenv("HOME", str(tmp_path))
-        monkeypatch.setenv("USERPROFILE", str(tmp_path))
-        monkeypatch.setattr(shutil, "which", lambda cmd: str(path_exe))
-        result = locate_scan_query()
-        assert result == path_exe
+        configure(plugin_root=tmp_path, path_hit=path_exe)
+
+        assert locate_scan_query() == path_exe
 
 
 class TestMain:
     """Integration tests for ``main()``."""
 
-    def test_found_exits_0_and_prints_path(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_found_exits_0_and_prints_path(self, tmp_path, configure, capsys):
         """Executable found → exit 0 and absolute path printed to stdout."""
         exe = _make_executable(tmp_path / "bin" / "scan-query")
-        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path))
-        monkeypatch.setenv("HOME", str(tmp_path))
-        monkeypatch.setenv("USERPROFILE", str(tmp_path))
-        monkeypatch.setattr(shutil, "which", _no_which)
+        configure(plugin_root=tmp_path)
+
         rc = main([])
+
         assert rc == 0
         assert capsys.readouterr().out.strip() == str(exe)
 
-    def test_not_found_exits_1(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_not_found_exits_1(self, configure, capsys):
         """All tiers empty → exit 1 with message on stderr."""
-        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", "")
-        monkeypatch.setenv("HOME", str(tmp_path))
-        monkeypatch.setenv("USERPROFILE", str(tmp_path))
-        monkeypatch.setattr(shutil, "which", _no_which)
+        configure()
+
         rc = main([])
+
         assert rc == 1
         assert capsys.readouterr().err.strip() != ""
 
-    def test_output_has_no_crlf(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_output_has_no_crlf(self, tmp_path, configure, capsys):
         """Stdout must not contain CRLF (Windows text-mode regression guard)."""
         _make_executable(tmp_path / "bin" / "scan-query")
-        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path))
-        monkeypatch.setenv("HOME", str(tmp_path))
-        monkeypatch.setenv("USERPROFILE", str(tmp_path))
-        monkeypatch.setattr(shutil, "which", _no_which)
+        configure(plugin_root=tmp_path)
+
         main([])
+
         assert "\r" not in capsys.readouterr().out
 
-    def test_help_exits_0(self, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_help_exits_0(self, capsys):
         """Print command usage and exit successfully for a help request."""
         with pytest.raises(SystemExit) as exc:
             main(["--help"])
+
         assert exc.value.code == 0
         assert "usage" in capsys.readouterr().out.lower()

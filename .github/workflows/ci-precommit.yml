@@ -1,0 +1,56 @@
+name: CI pre-commit
+
+# Runs the whole .pre-commit-config.yaml on every pull request and push to main.
+#
+# This is not a duplicate of the pre-commit.ci bot (see the `ci:` block in .pre-commit-config.yaml).
+# The bot runs in its own sandbox: it comments on and autofixes pull requests and bumps hook versions.
+# This job runs every hook, including the longer-running and repo-local `language: system` ones
+# (cross-plugin parity, byte budgets, roster and inventory checks, manifest regeneration, lint),
+# inside the project's own uv environment, so a hook that depends on repository tooling, full git
+# history or a longer runtime still gates the merge. Hooks that cannot run on a runner are skipped
+# with SKIP, mirroring the bot's own skip list.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-precommit-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  precommit:
+    name: pre-commit (all hooks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      UV_PYTHON: "3.12"
+      # lychee: no binary on the runner; gitlint: commit-msg stage, not run over files.
+      SKIP: lychee,gitlint
+    steps:
+      # Full history: version-continuity hooks compare the working tree with HEAD and earlier tags.
+      - name: 📥 Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: 📦 Install uv and Python
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          python-version: ${{ env.UV_PYTHON }}
+
+      # The eslint hook builds its own environment but needs a Node runtime on PATH.
+      - name: 🟢 Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+
+      # `uv run` puts the project venv first on PATH, so the repo-local hooks (`python3 ...`) see the
+      # test dependencies they import. pre-commit itself is added for this run only.
+      - name: 🔍 Run all hooks
+        run: uv run --only-group test --with pre-commit pre-commit run --all-files --show-diff-on-failure --color always

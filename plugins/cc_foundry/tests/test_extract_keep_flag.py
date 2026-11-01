@@ -7,35 +7,29 @@ Covers:
     - ``--out-file`` redirection, parent creation, and the containment rejection.
     - ``--venue-choices`` validation and persistence.
     - Stale-contract clearing, which is CWD-relative and must not escape the test dir.
+    - Atomic sentinel writes and ownership refusal.
 """
 
 from __future__ import annotations
 
 import os
 import stat
-import tempfile
 from pathlib import Path
 
 # Loaded by conftest.py — `extract_keep_flag` is registered in sys.modules there.
 import extract_keep_flag as ekf
 import pytest
+from _hook_env import _symlinks_supported
+
+_ARGV0 = "extract-keep-flag.py"
 
 
-def _probe_symlink() -> bool:
-    """Return whether this process may create a symlink (capability probe, not a platform test)."""
-    with tempfile.TemporaryDirectory() as tmp:
-        try:
-            Path(tmp, "link").symlink_to(Path(tmp, "target"))
-        except (OSError, NotImplementedError):
-            return False
-        return True
-
-
-_skip_no_symlink = pytest.mark.skipif(not _probe_symlink(), reason="symlinks unavailable to this process")
+_skip_no_symlink = pytest.mark.skipif(not _symlinks_supported(), reason="symlinks unavailable to this process")
+_skip_without_uids = pytest.mark.skipif(not hasattr(os, "getuid"), reason="POSIX uids and mode bits unavailable")
 
 
 @pytest.fixture
-def session(tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> Path:
+def session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Isolate one run: temp dir, working directory, and session ID all inside ``tmp_path``.
 
     ``_CONTRACT`` is deliberately CWD-relative, so without the chdir every test would unlink the repository's own
@@ -46,6 +40,15 @@ def session(tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
     monkeypatch.chdir(tmp_path)
     return tmp_path
+
+
+@pytest.fixture
+def live_contract(session: Path) -> Path:
+    """Create a live skill contract file in the isolated working directory and return its path."""
+    contract = session / ".temp" / "state" / "skill-contract.md"
+    contract.parent.mkdir(parents=True)
+    contract.write_text("live\n", encoding="utf-8")
+    return contract
 
 
 class TestOptionValue:
@@ -75,10 +78,10 @@ class TestMain:
     def test_writes_and_prints_keep_value(self, session: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """A quoted ``--keep`` value lands in the session sentinel and on stdout.
 
-        This is the whole point of the script: the skill re-reads the sentinel after a
-        compaction, so a value that parses but is never written is silently lost.
+        This is the whole point of the script: the skill re-reads the sentinel after a compaction, so a value that
+        parses but is never written is silently lost.
         """
-        exit_code = ekf.main(["extract-keep-flag.py", "myskill", '--keep "run-dir, task ids"'])
+        exit_code = ekf.main([_ARGV0, "myskill", '--keep "run-dir, task ids"'])
         assert exit_code == 0
         assert (session / "myskill-keep-items-sess1").read_text(encoding="utf-8") == "run-dir, task ids\n"
         assert capsys.readouterr().out == "run-dir, task ids\n"
@@ -89,21 +92,18 @@ class TestMain:
         Callers read the sentinel unconditionally, so an absent file would be a missing read rather than a legitimately
         empty preserve list.
         """
-        exit_code = ekf.main(["extract-keep-flag.py", "myskill", "--other-flag x"])
+        exit_code = ekf.main([_ARGV0, "myskill", "--other-flag x"])
         assert exit_code == 0
         assert (session / "myskill-keep-items-sess1").read_text(encoding="utf-8") == "\n"
 
-    def test_clears_stale_contract_file(self, session: Path) -> None:
+    def test_clears_stale_contract_file(self, live_contract: Path) -> None:
         """A contract left by a crashed prior run is removed before the new value is written.
 
         A stale contract would otherwise leak its preserve items into an unrelated later compaction, which is the
         failure this clear exists to prevent.
         """
-        contract = session / ".temp" / "state" / "skill-contract.md"
-        contract.parent.mkdir(parents=True)
-        contract.write_text("stale\n", encoding="utf-8")
-        ekf.main(["extract-keep-flag.py", "myskill", '--keep "x"'])
-        assert not contract.exists()
+        ekf.main([_ARGV0, "myskill", '--keep "x"'])
+        assert not live_contract.exists()
 
     @pytest.mark.parametrize(
         ("stamp", "extra", "survives"),
@@ -112,12 +112,11 @@ class TestMain:
             pytest.param('{"session_id": "this-session"}', [], False, id="own-stamp-cleared"),
             pytest.param("not json", [], False, id="malformed-stamp-cleared"),
             pytest.param("[1]", [], False, id="non-object-stamp-cleared"),
-            pytest.param(None, [], False, id="no-stamp-cleared"),
             pytest.param('{"session_id": "this-session"}', ["--inlined"], True, id="inlined-keeps-own-contract"),
         ],
     )
-    def test_contract_clear_respects_owner_and_inlined(
-        self, session: Path, monkeypatch: pytest.MonkeyPatch, stamp: str | None, extra: list[str], survives: bool
+    def test_stamped_contract_clear_respects_owner_and_inlined(
+        self, live_contract: Path, monkeypatch: pytest.MonkeyPatch, stamp: str, extra: list[str], survives: bool
     ) -> None:
         """Another session's live contract and an inlined caller's parent contract are never deleted.
 
@@ -125,41 +124,54 @@ class TestMain:
         judge inline calls this script after writing its own loop contract; an unconditional clear erased both.
         """
         monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "this-session")
-        contract = session / ".temp" / "state" / "skill-contract.md"
-        contract.parent.mkdir(parents=True)
-        contract.write_text("live\n", encoding="utf-8")
-        if stamp is not None:
-            contract.with_suffix(".owner").write_text(stamp, encoding="utf-8")
-        assert ekf.main(["extract-keep-flag.py", "myskill", '--keep "x"', *extra]) == 0
-        assert contract.exists() is survives
+        live_contract.with_suffix(".owner").write_text(stamp, encoding="utf-8")
+        assert ekf.main([_ARGV0, "myskill", '--keep "x"', *extra]) == 0
+        assert live_contract.exists() is survives
+
+    def test_unstamped_contract_is_cleared_for_known_session(
+        self, live_contract: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A contract with no owner stamp is cleared even when the session ID is known.
+
+        A contract written before stamps existed has no claimed owner, so there is nobody to protect it from.
+        """
+        monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "this-session")
+        assert ekf.main([_ARGV0, "myskill", '--keep "x"']) == 0
+        assert not live_contract.exists()
 
     @pytest.mark.parametrize("identity", ["slug", "session"])
     @pytest.mark.parametrize("value", ["a..b", "../escape", "bad/name", "bad\nname"])
     def test_invalid_identity_preserves_state(
         self,
         session: Path,
+        live_contract: Path,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
         identity: str,
         value: str,
     ) -> None:
-        """Reject unsafe names before clearing the contract or writing any sentinel."""
-        contract = session / ".temp/state/skill-contract.md"
-        contract.parent.mkdir(parents=True)
-        contract.write_text("live\n", encoding="utf-8")
+        """Reject unsafe names before clearing the contract or writing any sentinel.
+
+        A slug or session ID with a dot run, separator or newline would name a file outside the sentinel directory, so
+        the script exits 2 with one error line and leaves the live contract and the directory untouched.
+        """
         slug = value if identity == "slug" else "safe.slug-1_2"
         monkeypatch.setenv("CSID", value if identity == "session" else "safe.session-1_2")
-        assert ekf.main(["extract-keep-flag.py", slug, '--keep "x"']) == 2
+        assert ekf.main([_ARGV0, slug, '--keep "x"']) == 2
         output = capsys.readouterr()
         assert output.out == ""
         assert len(output.err.splitlines()) == 1
-        assert contract.read_text(encoding="utf-8") == "live\n"
+        assert live_contract.read_text(encoding="utf-8") == "live\n"
         assert list(session.iterdir()) == [session / ".temp"]
 
     def test_valid_identity_punctuation(self, session: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Allow a single dot, underscore and hyphen in both filename components."""
+        """Allow a single dot, underscore and hyphen in both filename components.
+
+        The identity guard must reject traversal without rejecting the ordinary punctuation real skill names and session
+        tokens carry, or every such skill would fail at its first keep-flag read.
+        """
         monkeypatch.setenv("CSID", "session.1_2-3")
-        assert ekf.main(["extract-keep-flag.py", "skill.1_2-3", '--keep "x"']) == 0
+        assert ekf.main([_ARGV0, "skill.1_2-3", '--keep "x"']) == 0
         assert (session / "skill.1_2-3-keep-items-session.1_2-3").read_text(encoding="utf-8") == "x\n"
 
     def test_missing_slug_returns_two(self, session: Path) -> None:
@@ -167,7 +179,7 @@ class TestMain:
 
         The slug names the sentinel and prefixes every error message, so there is no sensible default to fall back on.
         """
-        assert ekf.main(["extract-keep-flag.py"]) == 2
+        assert ekf.main([_ARGV0]) == 2
 
     def test_missing_session_id_returns_two(self, session: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """An unset session ID exits 2 rather than guessing one.
@@ -176,7 +188,7 @@ class TestMain:
         caller ever reads back.
         """
         monkeypatch.delenv("CSID", raising=False)
-        assert ekf.main(["extract-keep-flag.py", "myskill", '--keep "x"']) == 2
+        assert ekf.main([_ARGV0, "myskill", '--keep "x"']) == 2
 
 
 class TestOutFile:
@@ -189,7 +201,7 @@ class TestOutFile:
         directory.
         """
         target = session / "myskill-state-sess1" / "keep-items"
-        exit_code = ekf.main(["extract-keep-flag.py", "myskill", '--keep "v"', "--out-file", str(target)])
+        exit_code = ekf.main([_ARGV0, "myskill", '--keep "v"', "--out-file", str(target)])
         assert exit_code == 0
         assert target.read_text(encoding="utf-8") == "v\n"
 
@@ -198,7 +210,7 @@ class TestOutFile:
 
         The fallback would exit 0 while writing somewhere the caller never reads, losing the keep value with no signal.
         """
-        exit_code = ekf.main(["extract-keep-flag.py", "myskill", '--keep "v"', "--out-file"])
+        exit_code = ekf.main([_ARGV0, "myskill", '--keep "v"', "--out-file"])
         assert exit_code == 2
         assert not (session / "myskill-keep-items-sess1").exists()
 
@@ -209,7 +221,7 @@ class TestOutFile:
         tree anywhere the process can write.
         """
         outside = session.parent / "elsewhere" / "keep-items"
-        exit_code = ekf.main(["extract-keep-flag.py", "myskill", '--keep "v"', "--out-file", str(outside)])
+        exit_code = ekf.main([_ARGV0, "myskill", '--keep "v"', "--out-file", str(outside)])
         assert exit_code == 2
         assert not outside.exists()
 
@@ -218,7 +230,7 @@ class TestAtomicSentinelWrite:
     """Sentinels sit at predictable names in a shared temp dir, so a planted symlink must never be written through."""
 
     @_skip_no_symlink
-    def test_symlink_planted_at_the_sentinel_is_replaced_not_followed(self, session: Path) -> None:
+    def test_replaces_planted_symlink_without_following(self, session: Path) -> None:
         """A symlink at the sentinel name ends up a regular file; the link's target is left untouched.
 
         ``write_text`` follows the link and overwrites whatever it points at, so another user able to pre-create
@@ -229,18 +241,22 @@ class TestAtomicSentinelWrite:
         victim.write_text("precious\n", encoding="utf-8")
         sentinel = session / "myskill-keep-items-sess1"
         sentinel.symlink_to(victim)
-        assert ekf.main(["extract-keep-flag.py", "myskill", '--keep "v"']) == 0
+        assert ekf.main([_ARGV0, "myskill", '--keep "v"']) == 0
         assert (victim.read_text(encoding="utf-8"), sentinel.is_symlink(), sentinel.read_text(encoding="utf-8")) == (
             "precious\n",
             False,
             "v\n",
         )
 
-    def test_replaces_an_existing_value_and_leaves_no_temp_file(self, session: Path) -> None:
-        """A rerun overwrites the previous value and the sibling temp file does not linger beside the sentinel."""
+    def test_rerun_replaces_value_and_leaves_no_temp_file(self, session: Path) -> None:
+        """A rerun overwrites the previous value and the sibling temp file does not linger beside the sentinel.
+
+        The write goes through a sibling temp file and a rename; a leftover temp file would accumulate in the shared
+        temp dir on every skill invocation.
+        """
         sentinel = session / "myskill-keep-items-sess1"
         sentinel.write_text("old\n", encoding="utf-8")
-        assert ekf.main(["extract-keep-flag.py", "myskill", '--keep "new"']) == 0
+        assert ekf.main([_ARGV0, "myskill", '--keep "new"']) == 0
         assert (sentinel.read_text(encoding="utf-8"), sorted(p.name for p in session.iterdir())) == (
             "new\n",
             ["myskill-keep-items-sess1"],
@@ -259,31 +275,23 @@ class TestVenue:
         ],
     )
     def test_venue_is_persisted(self, session: Path, keep_arg: str, expected: str) -> None:
-        """A venue in the allowed list is written to its own sentinel; an absent venue writes an empty one."""
-        exit_code = ekf.main(["extract-keep-flag.py", "myskill", keep_arg, "--venue-choices", "pr,issue"])
+        """A venue in the allowed list is written to its own sentinel; an absent venue writes an empty one.
+
+        Callers branch on the venue sentinel unconditionally, so even the no-venue run must leave a readable file.
+        """
+        exit_code = ekf.main([_ARGV0, "myskill", keep_arg, "--venue-choices", "pr,issue"])
         assert exit_code == 0
         assert (session / "myskill-venue-sess1").read_text(encoding="utf-8") == expected
 
     def test_invalid_venue_returns_two_after_keep_is_written(self, session: Path) -> None:
         """An unlisted venue exits 2, but the keep value written earlier still stands.
 
-        The documented ordering is deliberate: the caller owes no cleanup on this path
-        because the contract was already cleared and the keep sentinel already written.
+        The documented ordering is deliberate: the caller owes no cleanup on this path because the contract was already
+        cleared and the keep sentinel already written.
         """
-        exit_code = ekf.main(
-            [
-                "extract-keep-flag.py",
-                "myskill",
-                '--keep "v" --venue nowhere',
-                "--venue-choices",
-                "pr,issue",
-            ]
-        )
+        exit_code = ekf.main([_ARGV0, "myskill", '--keep "v" --venue nowhere', "--venue-choices", "pr,issue"])
         assert exit_code == 2
         assert (session / "myskill-keep-items-sess1").read_text(encoding="utf-8") == "v\n"
-
-
-_skip_without_uids = pytest.mark.skipif(not hasattr(os, "getuid"), reason="POSIX uids and mode bits unavailable")
 
 
 class TestSentinelOwnership:
@@ -302,7 +310,7 @@ class TestSentinelOwnership:
         sentinel.write_text("planted\n", encoding="utf-8")
         monkeypatch.setattr(ekf.os, "getuid", lambda: sentinel.stat().st_uid + 1, raising=False)
 
-        exit_code = ekf.main(["extract-keep-flag.py", "myskill", '--keep "v"'])
+        exit_code = ekf.main([_ARGV0, "myskill", '--keep "v"'])
 
         assert (exit_code, sentinel.read_text(encoding="utf-8")) == (1, "planted\n")
 
@@ -315,7 +323,7 @@ class TestSentinelOwnership:
         sentinel.write_text("old\n", encoding="utf-8")
         monkeypatch.delattr(ekf.os, "getuid", raising=False)
 
-        assert ekf.main(["extract-keep-flag.py", "myskill", '--keep "v"']) == 0
+        assert ekf.main([_ARGV0, "myskill", '--keep "v"']) == 0
         assert sentinel.read_text(encoding="utf-8") == "v\n"
 
     @_skip_without_uids
@@ -327,7 +335,7 @@ class TestSentinelOwnership:
         """
         state_dir = session / "myskill-state-sess1"
 
-        ekf.main(["extract-keep-flag.py", "myskill", '--keep "v"', "--out-file", str(state_dir / "keep-items")])
+        ekf.main([_ARGV0, "myskill", '--keep "v"', "--out-file", str(state_dir / "keep-items")])
 
         assert stat.S_IMODE(state_dir.stat().st_mode) == 0o700
 
@@ -342,6 +350,6 @@ class TestSentinelOwnership:
         state_dir.mkdir(mode=0o755)
         state_dir.chmod(0o755)
 
-        ekf.main(["extract-keep-flag.py", "myskill", '--keep "v"', "--out-file", str(state_dir / "keep-items")])
+        ekf.main([_ARGV0, "myskill", '--keep "v"', "--out-file", str(state_dir / "keep-items")])
 
         assert stat.S_IMODE(state_dir.stat().st_mode) == 0o755

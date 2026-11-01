@@ -11,11 +11,18 @@ from pathlib import Path
 import pytest
 
 _TESTS_DIR = Path(__file__).parent
-# Domain subdirectories share one flat module namespace so cross-group helper imports keep resolving after grouping.
-for _MODULE_DIR in (
-    _TESTS_DIR,
-    *sorted(path for path in _TESTS_DIR.iterdir() if path.is_dir() and path.name != "__pycache__"),
-):
+_OFF_PATH_PARTS = frozenset({"__pycache__", "fixtures"})
+
+
+def _module_dir(path: Path) -> bool:
+    """Return whether ``path`` is a test directory whose modules join the flat test namespace."""
+    parts = path.relative_to(_TESTS_DIR).parts
+    return path.is_dir() and _OFF_PATH_PARTS.isdisjoint(parts) and not any(part.startswith(".") for part in parts)
+
+
+# Domain subdirectories and their topic folders share one flat module namespace so cross-group helper imports keep
+# resolving after grouping; fixture trees stay off the path so their modules cannot shadow shipped ones.
+for _MODULE_DIR in (_TESTS_DIR, *sorted(filter(_module_dir, _TESTS_DIR.rglob("*")))):
     if str(_MODULE_DIR) not in sys.path:
         sys.path.insert(0, str(_MODULE_DIR))
 

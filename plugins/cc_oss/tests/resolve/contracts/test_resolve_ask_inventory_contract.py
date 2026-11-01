@@ -1,0 +1,240 @@
+"""Pin every user ask the resolve flow had before its gates moved up front, so no question is silently removed.
+
+Each row is one decision the user made in the committed baseline flow, mapped to where that same decision is asked now —
+kept in place, moved to the Step 3d gate, or kept as recovery. Removing a question, or replacing it with a silent
+default, deletes its marker and fails here.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+from _text_io import dispatch_text
+
+_RESOLVE = Path(__file__).resolve().parents[3] / "skills/resolve"
+
+
+def _section(text: str, start: str, end: str) -> str:
+    """Slice ``text`` from the first ``start`` marker up to the first ``end`` marker after it."""
+    begin = text.index(start)
+    return text[begin : text.index(end, begin)]
+
+
+def _dispatch_text() -> str:
+    """Join Step 8's dispatch files in load order: prelude, Phase 1, Phase 2, Phase 3."""
+    return dispatch_text(_RESOLVE)
+
+
+_SHARED = _RESOLVE.parent / "_shared"
+_SELECTION = ("## Step 3d", "## Step 7b join")  # opens with "invoke `AskUserQuestion` tool directly"
+
+#: (file, section start, section end, marker that only exists while the question is still asked there)
+_ASKS = [
+    pytest.param(
+        "SKILL.md",
+        "**Unsupported flag check**",
+        "### Reject-gate check",
+        "**Continue ignoring**",
+        id="unsupported-flag-kept",
+    ),
+    pytest.param(
+        "modes/report-intake.md",
+        "### Report source resolution",
+        "**Intake proceed** — only on",
+        "No readable review report for PR #<N>",
+        id="report-missing-kept",
+    ),
+    pytest.param("SKILL.md", *_SELECTION, "Bulk-action question — multiSelect: FALSE", id="bulk-action-kept"),
+    pytest.param("SKILL.md", *_SELECTION, 'header "Items to implement:"', id="item-checkboxes-kept"),
+    pytest.param("SKILL.md", *_SELECTION, 'AskUserQuestion: "Commit mode for selected items:"', id="commit-mode-kept"),
+    pytest.param("SKILL.md", *_SELECTION, "\"If 'By topic group' — how should items group?\"", id="topic-group-kept"),
+    pytest.param(
+        "SKILL.md",
+        *_SELECTION,
+        '"Phase 2 runs specialists in isolated worktrees. How should the work spread?"',
+        id="dispatch-kept",
+    ),
+    pytest.param("SKILL.md", *_SELECTION, "It records **push intent only**", id="push-intent-at-3d"),
+    pytest.param(
+        "SKILL.md",
+        *_SELECTION,
+        "(a) Push (confirm at Step 10), then open the PR in the browser",
+        id="post-pr-moved-into-push-intent",
+    ),
+    pytest.param("SKILL.md", *_SELECTION, "Assign a topic label to each implemented item", id="labels-moved-to-3d"),
+    pytest.param("SKILL.md", "**Straggler gate", "## Step 9", "No confirming commit found", id="straggler-kept"),
+    pytest.param(
+        "SKILL.md",
+        "## Step 10: Push",
+        "## Step 11",
+        "Diff stat: `$PUSH_STAT`",
+        id="push-confirmation-with-scope-at-step-10",
+    ),
+    pytest.param(
+        "SKILL.md",
+        "## Step 10: Push",
+        "## Step 11",
+        "Q2 — `unset` intent only — after the final report: (a) **Open PR in browser**",
+        id="post-pr-asked-at-step-10-without-intent",
+    ),
+    pytest.param(
+        "modes/dispatch-phase3.md",
+        "**`GROUP_STRATEGY=labels` only**",
+        "`auto` mapping",
+        "Assign a topic label to each implemented item",
+        id="labels-still-asked-at-step-8-when-lost",
+    ),
+    pytest.param(
+        "modes/dispatch-phase2.md",
+        "**Group-preview gate",
+        "Derive `<group_tag>`",
+        '"Phase 2 groups are formed. How should they run?"',
+        id="group-preview-kept",
+    ),
+    pytest.param(
+        "modes/dispatch-phase1.md",
+        "**Challenge double-timeout gate**",
+        "Drop block",
+        "The challenge for <N> item(s) timed out twice",
+        id="missing-challenge-verdict-asks-instead-of-blocking",
+    ),
+    pytest.param(
+        "modes/conflict-resolution.md",
+        "More than 20 conflicted files",
+        "## Step 6",
+        "Retry with base only",
+        id="too-many-conflicts-kept",
+    ),
+]
+
+
+@pytest.mark.parametrize(("relative", "section_start", "section_end", "marker"), _ASKS)
+def test_baseline_ask_still_happens(relative: str, section_start: str, section_end: str, marker: str) -> None:
+    """Every decision asked in the baseline flow is still asked — in place, moved earlier, or as recovery.
+
+    Moving a question is allowed only with the same decision and the same information; the marker is that question's own
+    text, and its section must name the AskUserQuestion tool so a prose mention cannot stand in for a real ask.
+    """
+    section = _section((_RESOLVE / relative).read_text(encoding="utf-8"), section_start, section_end)
+    assert marker in section
+    assert "AskUserQuestion" in section
+
+
+def test_codemap_gate_asks_only_for_the_lazy_preference(skill: str) -> None:
+    """Gate A prepares by default and retains a confirm-first question only when requested.
+
+    The user is asked about Codemap only when they set the explicit confirm-first preference; otherwise the gate
+    prepares the index itself, so a plain run never gains a new question.
+    """
+    gates = (_SHARED / "codemap-gates.md").read_text(encoding="utf-8")
+    assert 'cat "$_OSS_SHARED/codemap-gates.md"' in skill
+    assert "Gate A prepares automatically by default" in gates
+    assert "`LAZY_CODEMAP` is the explicit confirm-first preference" in gates
+    assert "SCAN_NO_AUTOBUILD=1" in gates
+    assert "detect_codemap.py --prefix <current-skill> --force-off" in gates
+
+
+def test_preloop_codemap_scan_reloads_disabled_and_stale_state() -> None:
+    """The next resolve consumer read suppresses queries after Skip and freezes accepted stale data.
+
+    A user who skipped Codemap, or accepted a stale index, made a decision that the dispatch prelude must reload from
+    the persisted sentinels instead of silently querying again.
+    """
+    prelude = (_RESOLVE / "modes" / "dispatch-prelude.md").read_text(encoding="utf-8")
+    assert 'IFS= read -r CODEMAP_ENABLED  2>/dev/null < "${TMPDIR:-/tmp}/resolve-codemap-enabled-${CSID}"' in prelude
+    assert 'IFS= read -r CODEMAP_CURRENCY  2>/dev/null < "${TMPDIR:-/tmp}/resolve-codemap-currency-${CSID}"' in prelude
+    assert 'if [ "$CODEMAP_ENABLED" = "true" ] && command -v codemap-py' in prelude
+    assert "codemap-py query --timeout 15 $_CODEMAP_NO_HEAL central" in prelude
+    assert "codemap-py query $_CODEMAP_NO_HEAL rdeps" in prelude
+
+
+@pytest.mark.parametrize(
+    ("band", "questions", "follow_up"),
+    [
+        pytest.param(
+            "0, closed items present",
+            "Q1 bulk · Q2 commit-mode · Q3 topic-group · Q4 dispatch",
+            "Q1 push, only when a PR number exists",
+            id="closed-only-keeps-explicit-selection-and-implementation-decisions",
+        ),
+        pytest.param(
+            "0, no closed items",
+            "Q1 push, only when a PR number exists; otherwise no call",
+            "None",
+            id="empty-list-keeps-push-only-without-item-questions",
+        ),
+    ],
+)
+def test_zero_pending_routes_preserve_the_available_decisions(
+    skill: str, band: str, questions: str, follow_up: str
+) -> None:
+    """Closed-only lists retain an ID-entry gate; truly empty lists retain the merge push decision.
+
+    This checks the shipped slot contract, not whether a model follows it in a live session. A generic zero-pending
+    bypass or item-checkbox slot would lose the closed-ID entry route or silently reopen history.
+    """
+    table = _section(skill, "| Pending | Call 1 slots |", "Checkbox mode holds")
+    rows = {
+        cells[0]: cells[1:]
+        for line in table.splitlines()
+        if line.startswith("|")
+        for cells in [[cell.strip() for cell in line.strip("|").split("|")]]
+    }
+    assert rows[band] == [questions, follow_up]
+    assert "\n\n- **Zero pending, closed items present**" in skill
+    assert "\n- **Zero pending, no closed items**" in skill
+
+
+@pytest.mark.parametrize(
+    ("fallback", "forbidden"),
+    [
+        pytest.param(
+            "Unanswered or dismissed → run **no** push block and **no** post-PR block",
+            "Unanswered → `skip` for both",
+            id="unanswered-push-is-asked-later-not-skipped",
+        ),
+        pytest.param(
+            "Skipped (empty response or blank) → fall back to `each`",
+            "grouping by change domain",
+            id="skipped-labels-fall-back-to-each",
+        ),
+    ],
+)
+def test_no_silent_default_replaces_an_answer(skill: str, fallback: str, forbidden: str) -> None:
+    """A question left unanswered keeps the baseline outcome; it is never replaced by a new silent default.
+
+    The baseline asked for the push and the labels later or fell back to `each`; skipping the push for both or grouping
+    by change domain would decide for the user without asking.
+    """
+    assert fallback in skill
+    assert forbidden not in skill
+
+
+def test_timeouts_never_answer_a_question(skill: str) -> None:
+    """The no-polling rule only informs: a timed-out agent never skips or defaults a user decision.
+
+    A stalled agent is reported with a timeout marker, but the pending question stays the user's to answer.
+    """
+    rule = _section(skill, "## Agent wait discipline", "## State checks")
+    assert "A ⏱ only informs. It never answers, skips, or defaults a user question" in rule
+
+
+@pytest.mark.parametrize(
+    "option",
+    [
+        "(a) Implement unchallenged — ⏱ noted in the Challenge Log and the final report",
+        "(b) Drop them — record as skipped, not implemented",
+        "(c) Retry the challenge once more",
+        "(d) Stop the run before implementation",
+    ],
+)
+def test_challenge_double_timeout_leaves_the_decision_to_the_user(option: str) -> None:
+    """A challenge that times out twice asks the user once per wave; no option is ever applied by default.
+
+    The baseline stopped the run on a missing verdict, so the decision was the user's; the gate keeps it the user's.
+    """
+    gate = _section(_dispatch_text(), "**Challenge double-timeout gate**", "Drop block")
+    assert option in gate
+    assert "ask **once** for all of them" in gate
+    assert "(d) or unanswered → stop" in gate

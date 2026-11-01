@@ -14,6 +14,11 @@ import extract_code_blocks as ecb
 import pytest
 
 
+def _emitted(capsys: pytest.CaptureFixture[str]) -> list[dict]:
+    """Return the JSONL objects ``main()`` printed to stdout."""
+    return [json.loads(ln) for ln in capsys.readouterr().out.splitlines() if ln.strip()]
+
+
 @pytest.fixture(name="md_dir")
 def _md_dir(tmp_path: Path) -> Path:
     """Directory with two .md files containing known code blocks."""
@@ -175,11 +180,22 @@ class TestParseBlocks:
 class TestIterMdFiles:
     """iter_md_files: directory walk returning sorted .md file paths, with custom pattern support."""
 
-    def test_finds_md_excludes_other(self, tmp_path: Path) -> None:
-        """Only .md files are returned; other extensions excluded."""
+    @pytest.mark.parametrize(
+        ("pattern", "expected"),
+        [
+            pytest.param(None, ["a.md"], id="default-md-only"),
+            pytest.param("*.txt", ["b.txt"], id="custom-glob"),
+        ],
+    )
+    def test_selects_files_by_pattern(self, tmp_path: Path, pattern: str | None, expected: list[str]) -> None:
+        """Only files matching the pattern are returned: ``.md`` by default, or the custom glob when one is given.
+
+        The directory holds one ``.md`` and one ``.txt`` file, so each pattern must exclude the other.
+        """
         (tmp_path / "a.md").write_text("x")
         (tmp_path / "b.txt").write_text("x")
-        assert [os.path.basename(p) for p in ecb.iter_md_files(str(tmp_path))] == ["a.md"]
+        kwargs = {} if pattern is None else {"pattern": pattern}
+        assert [os.path.basename(p) for p in ecb.iter_md_files(str(tmp_path), **kwargs)] == expected
 
     def test_recurses_subdirectories(self, tmp_path: Path) -> None:
         """Files in subdirectories are included."""
@@ -195,13 +211,6 @@ class TestIterMdFiles:
         result = [os.path.basename(p) for p in ecb.iter_md_files(str(tmp_path))]
         assert result == sorted(result)
 
-    def test_custom_pattern(self, tmp_path: Path) -> None:
-        """Custom glob pattern selects only matching files."""
-        (tmp_path / "a.md").write_text("x")
-        (tmp_path / "b.txt").write_text("x")
-        result = ecb.iter_md_files(str(tmp_path), pattern="*.txt")
-        assert [os.path.basename(p) for p in result] == ["b.txt"]
-
 
 class TestMain:
     """Main: CLI integration — JSONL output correctness, filtering flags (``--all``, ``--min-tokens``, ``--include``),
@@ -211,39 +220,39 @@ class TestMain:
         """Default mode emits only is_code=True blocks."""
         rc = ecb.main([str(md_dir)])
         assert rc == 0
-        objects = [json.loads(ln) for ln in capsys.readouterr().out.splitlines() if ln.strip()]
+        objects = _emitted(capsys)
         assert all(obj["is_code"] for obj in objects)
         langs = {obj["lang_detected"] for obj in objects}
         assert "bash" in langs
         assert "python" in langs
 
     def test_include_all_emits_non_code(self, md_dir: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """Verify command-line option behavior.
+        """``--all`` also emits blocks classified as not code.
 
-        --all flag includes is_code=False blocks.
+        The fixture holds a ``text`` block of prose, which the default mode drops.
         """
         ecb.main([str(md_dir), "--all"])
-        objects = [json.loads(ln) for ln in capsys.readouterr().out.splitlines() if ln.strip()]
+        objects = _emitted(capsys)
         assert False in {obj["is_code"] for obj in objects}
 
     def test_min_tokens_filters_small_blocks(self, md_dir: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """Verify command-line option behavior.
+        """``--min-tokens`` excludes blocks whose token estimate is below the threshold.
 
-        --min-tokens excludes blocks below threshold.
+        The fixture has blocks smaller than 10 tokens, so an unfiltered run would fail the assertion.
         """
         ecb.main([str(md_dir), "--min-tokens", "10"])
-        objects = [json.loads(ln) for ln in capsys.readouterr().out.splitlines() if ln.strip()]
+        objects = _emitted(capsys)
         assert all(obj["token_estimate"] >= 10 for obj in objects)
 
-    def test_bad_dir_returns_exit_1(self, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_bad_dir_returns_exit_1(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """Non-existent directory returns exit code 1 with error message."""
-        assert ecb.main(["/nonexistent/path/xyz"]) == 1
+        assert ecb.main([str(tmp_path / "missing")]) == 1
         assert "not a directory" in capsys.readouterr().err
 
     def test_jsonl_output_has_all_fields(self, md_dir: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """Each output line contains all required fields."""
         ecb.main([str(md_dir)])
-        obj = json.loads(capsys.readouterr().out.splitlines()[0])
+        obj = _emitted(capsys)[0]
         assert {
             "file",
             "lang_marker",
@@ -256,14 +265,14 @@ class TestMain:
         }.issubset(obj.keys())
 
     def test_include_pattern_filters_files(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """Verify command-line option behavior.
+        """``--include`` restricts the scan to files matching the glob.
 
-        --include glob restricts which files are scanned.
+        Two files each hold a code block; only ``SKILL.md`` matches, so exactly one object is emitted.
         """
         (tmp_path / "notes.md").write_text("```bash\necho hi\n```\n")
         (tmp_path / "SKILL.md").write_text("```python\nimport os\n```\n")
         ecb.main([str(tmp_path), "--include", "SKILL.md"])
-        objects = [json.loads(ln) for ln in capsys.readouterr().out.splitlines() if ln.strip()]
+        objects = _emitted(capsys)
         assert all("SKILL.md" in obj["file"] for obj in objects)
         assert len(objects) == 1
 
@@ -283,7 +292,7 @@ class TestBlockquotedFences:
             '> Full rule:\n>\n> ```bash\n> RULE="$(ls -td ~/x | head -1)"  # timeout: 5000\n> ```\n', encoding="utf-8"
         )
         ecb.main([str(tmp_path)])
-        objects = [json.loads(ln) for ln in capsys.readouterr().out.splitlines() if ln.strip()]
+        objects = _emitted(capsys)
         assert [(o["content"], o["line_start"], o["line_end"]) for o in objects] == [
             ('RULE="$(ls -td ~/x | head -1)"  # timeout: 5000', 3, 5)
         ]
@@ -295,5 +304,5 @@ class TestBlockquotedFences:
         """
         (tmp_path / "doc.md").write_text("> ```bash\n> echo a\n```bash\necho b\n```\n", encoding="utf-8")
         ecb.main([str(tmp_path)])
-        objects = [json.loads(ln) for ln in capsys.readouterr().out.splitlines() if ln.strip()]
+        objects = _emitted(capsys)
         assert [o["content"] for o in objects] == ["echo b"]

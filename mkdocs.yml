@@ -11,6 +11,7 @@ docs_dir: docs
 # conflict with index.md (both would map to the same index.html).
 exclude_docs: |
   NOTES.md
+  overrides/
 
 copyright: "Maintained by <a href='https://github.com/Borda'>Jiri Borovec (Borda)</a>"
 
@@ -19,7 +20,7 @@ hooks:
 
 theme:
   name: material
-  custom_dir: overrides
+  custom_dir: docs/overrides
   palette:
     - scheme: default
       primary: custom

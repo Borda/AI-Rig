@@ -38,6 +38,11 @@ import _rwgate  # noqa: E402  (path set above; also re-imported in spawn childre
 _SPAWN = multiprocessing.get_context("spawn")
 WIN = sys.platform == "win32"
 NO_FORK = pytest.mark.skipif(WIN, reason="POSIX fork semantics — no fork() on Windows")
+# The fork tests' own process starts no threads; the "multi-threaded" warning comes from the runner's threads
+# (pytest-rerunfailures' status-DB server, pytest-xdist's execnet worker) and is absent with neither loaded.
+IGNORE_RUNNER_THREAD_FORK_WARNING = pytest.mark.filterwarnings(
+    r"ignore:This process \(pid=\d+\) is multi-threaded, use of fork\(\) may lead to deadlocks:DeprecationWarning"
+)
 
 
 # ── worker functions (must be top-level for spawn pickling) ──────────────────
@@ -212,6 +217,32 @@ def _wait_for_event(log: str, name: str, timeout: float = 6.0) -> None:
     raise AssertionError(f"{name!r} never appeared in the gate event log within {timeout}s")
 
 
+def _start(procs: list) -> None:
+    """Start every worker process in order."""
+    for proc in procs:
+        proc.start()
+
+
+def _exclusive_window_report(events: list[dict]) -> tuple[bool, bool]:
+    """Walk append-ordered gate events and report ``(saw_exclusive_window, index_opened_inside_one)``.
+
+    Append order is real write order, so a reader parse during an exclusive window lands between the writer's enter and
+    exit markers.
+    """
+    open_writers: set[int] = set()
+    saw_window = False
+    opened_inside = False
+    for e in events:
+        if e["event"] == "writer_exclusive_enter":
+            open_writers.add(e["pid"])
+            saw_window = True
+        elif e["event"] == "writer_exclusive_exit":
+            open_writers.discard(e["pid"])
+        elif e["event"] == "index_open" and open_writers:
+            opened_inside = True
+    return saw_window, opened_inside
+
+
 def _pos(events: list[dict], name: str) -> int:
     """Return the append-order index of the first event named *name*.
 
@@ -230,11 +261,29 @@ def _index(tmp_path: Path) -> Path:
 
 
 @pytest.fixture(name="eventlog")
-def _eventlog(tmp_path: Path, monkeypatch) -> str:
+def _eventlog(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
     """Point the gate's cross-process event log at a temp file."""
     log = tmp_path / "events.jsonl"
     monkeypatch.setenv("CODEMAP_RWGATE_EVENTLOG", str(log))
     return str(log)
+
+
+@pytest.fixture(name="release")
+def _release():
+    """Provide a cross-process event that frees a holder; teardown sets it so no holder outlives a failure."""
+    event = _SPAWN.Event()
+    yield event
+    event.set()
+
+
+@pytest.fixture(name="readonly_root")
+def _readonly_root(tmp_path: Path):
+    """Create a coordination root without write permission and restore its mode at teardown."""
+    ro = tmp_path / "ro"
+    ro.mkdir()
+    os.chmod(ro, 0o500)
+    yield ro
+    os.chmod(ro, 0o700)  # restore so pytest can clean up
 
 
 @pytest.fixture(autouse=True)
@@ -246,7 +295,11 @@ def _clear_instrument():
 
 # ── reader / writer coordination ─────────────────────────────────────────────
 def test_reader_before_writer_drains_first(index: Path, tmp_path: Path, eventlog: str) -> None:
-    """A reader linearized before a writer must drain before the exclusive phase."""
+    """A reader linearized before a writer must drain before the exclusive phase.
+
+    A reader holds a lease briefly while a writer is started; the append-ordered event log must show the reader's
+    release before the writer's exclusive enter.
+    """
     ready = str(tmp_path / "r.ready")
     reader = _SPAWN.Process(target=_w_reader_hold, args=(str(index), ready, 0.5, 5.0))
     reader.start()
@@ -264,7 +317,11 @@ def test_reader_before_writer_drains_first(index: Path, tmp_path: Path, eventlog
 
 
 def test_writer_blocks_later_readers(index: Path, tmp_path: Path, eventlog: str) -> None:
-    """Once writer intent is live, a later reader waits until release."""
+    """Once writer intent is live, a later reader waits until release.
+
+    A writer sits in its exclusive phase; a reader started afterwards must open the index only after the writer exits
+    and must see the published value.
+    """
     writer = _SPAWN.Process(target=_w_writer_slow, args=(str(index), 1.0, 5.0))
     writer.start()
     _wait_for_event(eventlog, "writer_exclusive_enter")
@@ -282,110 +339,117 @@ def test_writer_blocks_later_readers(index: Path, tmp_path: Path, eventlog: str)
 
 
 def test_no_index_open_during_exclusive_phase(index: Path, tmp_path: Path, eventlog: str) -> None:
-    """Event-order oracle: no reader parses the index inside any exclusive window."""
+    """Event-order oracle: no reader parses the index inside any exclusive window.
+
+    Four readers race a slow writer; reconstructing the cross-process order from the event log shows whether any
+    ``index_open`` fell between a writer's enter and exit markers.
+    """
     writer = _SPAWN.Process(target=_w_writer_slow, args=(str(index), 0.4, 6.0))
     writer.start()
     _wait_for_event(eventlog, "writer_exclusive_enter")
     readers = [_SPAWN.Process(target=_w_reader_once, args=(str(index), str(tmp_path / f"r{i}"), 6.0)) for i in range(4)]
-    for proc in readers:
-        proc.start()
+    _start(readers)
     _join([writer, *readers])
 
-    ev = _events(eventlog)
-    # Walk the append-ordered log; assert no index_open falls between any writer's
-    # exclusive enter and its matching exit. Append order = real write order, so a
-    # reader parse during the exclusive window would land between the two markers.
-    open_writers: set[int] = set()
-    saw_window = False
-    for e in ev:
-        if e["event"] == "writer_exclusive_enter":
-            open_writers.add(e["pid"])
-            saw_window = True
-        elif e["event"] == "writer_exclusive_exit":
-            open_writers.discard(e["pid"])
-        elif e["event"] == "index_open":
-            assert not open_writers, "index opened during an exclusive phase"
+    saw_window, opened_inside = _exclusive_window_report(_events(eventlog))
+
     assert saw_window, "no exclusive window recorded"
+    assert not opened_inside, "index opened during an exclusive phase"
 
 
 def test_concurrent_readers_after_update(index: Path, tmp_path: Path) -> None:
-    """Acquisition race: many readers acquire tokens concurrently and all succeed."""
+    """Acquisition race: many readers acquire tokens concurrently and all succeed.
+
+    Eight reader processes start together on an idle index; shared leases must never exclude each other.
+    """
     outs = [str(tmp_path / f"r{i}.out") for i in range(8)]
     procs = [_SPAWN.Process(target=_w_reader_once, args=(str(index), out, 6.0)) for out in outs]
-    for proc in procs:
-        proc.start()
+    _start(procs)
     _join(procs)
-    for out in outs:
-        assert json.loads(Path(out).read_text())["v"] == 1
+
+    assert [json.loads(Path(out).read_text())["v"] for out in outs] == [1] * 8
 
 
 def test_competing_writers_serialize_without_lost_update(index: Path) -> None:
-    """Three writers serialize under the gate; no increment is lost."""
+    """Three writers serialize under the gate; no increment is lost.
+
+    Each writer reads, increments and publishes; without mutual exclusion two would read the same version and lose an
+    update.
+    """
     procs = [_SPAWN.Process(target=_w_writer_increment, args=(str(index), 8.0)) for _ in range(3)]
-    for proc in procs:
-        proc.start()
+    _start(procs)
     _join(procs)
     with _rwgate.read_index(index, timeout=5.0) as data:
         assert data["v"] == 1 + 3, "a concurrent writer's update was lost"
 
 
 def test_writer_not_starved_under_reader_load(index: Path, tmp_path: Path) -> None:
-    """Writer preference: a sustained reader stream does not starve the writer."""
+    """Writer preference: a sustained reader stream does not starve the writer.
+
+    Six processes read in a loop for over a second while a writer asks for the lease; the writer must still complete.
+    """
     marker = str(tmp_path / "w.done")
     load = [_SPAWN.Process(target=_w_reader_loop, args=(str(index), 1.2, 5.0)) for _ in range(6)]
     writer = _SPAWN.Process(target=_w_writer_marker, args=(str(index), marker, 8.0))
-    for proc in load:
-        proc.start()
-    writer.start()
+    _start([*load, writer])
     _join([writer, *load])
     assert Path(marker).exists(), "writer was starved by continuous readers"
 
 
 # ── timeouts: never a stale read ─────────────────────────────────────────────
 @pytest.mark.parametrize("contender_start_delay", [0.0, 2.0])
-def test_reader_timeout_returns_busy_never_stale(index: Path, tmp_path: Path, contender_start_delay: float) -> None:
-    """A reader hits IndexBusy while writer intent stays live, including delayed startup."""
+def test_reader_timeout_returns_busy_never_stale(
+    index: Path, tmp_path: Path, release: Event, contender_start_delay: float
+) -> None:
+    """A reader hits IndexBusy while writer intent stays live, including delayed startup.
+
+    A writer process holds intent until the test releases it; a reader with a 0.3s budget starts immediately or 2s late
+    (longer than the former timed hold) and must report busy instead of reading a stale snapshot. After release the
+    writer publishes and the new version is readable.
+    """
     ready = str(tmp_path / "w.ready")
-    release = _SPAWN.Event()
     holder = _SPAWN.Process(target=_w_writer_hold_intent, args=(str(index), ready, 30.0, release))
     out = str(tmp_path / "r.out")
     reader = _SPAWN.Process(target=_w_reader_expect_busy, args=(str(index), out, 0.3))
     holder.start()
-    try:
-        assert _wait_file(ready), "writer never took intent"
-        # Deliberately exceed the former timed hold to cover slow spawn/scheduling.
-        time.sleep(contender_start_delay)
-        reader.start()
-        _join([reader], timeout=5.0)
-        assert reader.exitcode == 0
-        assert json.loads(Path(out).read_text()) == {"busy": True}
-        assert holder.is_alive(), "writer released before reader timeout"
-    finally:
-        release.set()
-        _join([holder], timeout=5.0)
-        if reader.pid is not None:
-            _join([reader], timeout=5.0)
+    assert _wait_file(ready), "writer never took intent"
+    # Deliberately exceed the former timed hold to cover slow spawn/scheduling.
+    time.sleep(contender_start_delay)
+    reader.start()
+    _join([reader], timeout=5.0)
+    still_holding = holder.is_alive()
+    release.set()
+    _join([holder], timeout=5.0)
+
+    assert reader.exitcode == 0
+    assert json.loads(Path(out).read_text()) == {"busy": True}
+    assert still_holding, "writer released before reader timeout"
     assert holder.exitcode == 0
     with _rwgate.read_index(index, timeout=5.0) as data:
         assert data["v"] == 99, "writer did not publish after release"
 
 
 @pytest.mark.parametrize("contender_start_delay", [0.0, 2.0])
-def test_writer_drain_timeout_returns_busy(index: Path, tmp_path: Path, contender_start_delay: float) -> None:
-    """A writer times out without mutation while a reader remains live through delayed startup."""
+def test_writer_drain_timeout_returns_busy(
+    index: Path, tmp_path: Path, release: Event, contender_start_delay: float
+) -> None:
+    """A writer times out without mutation while a reader remains live through delayed startup.
+
+    A reader process holds a lease until the test releases it; a writer with a 0.3s budget (immediately or 2s late) must
+    raise IndexBusy and leave the published index unchanged.
+    """
     ready = str(tmp_path / "r.ready")
-    release = _SPAWN.Event()
     reader = _SPAWN.Process(target=_w_reader_hold, args=(str(index), ready, 30.0, 5.0, release))
     reader.start()
-    try:
-        assert _wait_file(ready), "reader never acquired"
-        time.sleep(contender_start_delay)
-        with pytest.raises(_rwgate.IndexBusy):
-            _rwgate.write_index(index, lambda t: _rwgate.atomic_publish(t, b'{"v": 2}'), timeout=0.3)
-        assert reader.is_alive(), "reader released before writer timeout"
-    finally:
-        release.set()
-        _join([reader], timeout=5.0)
+    assert _wait_file(ready), "reader never acquired"
+    time.sleep(contender_start_delay)
+    with pytest.raises(_rwgate.IndexBusy):
+        _rwgate.write_index(index, lambda t: _rwgate.atomic_publish(t, b'{"v": 2}'), timeout=0.3)
+    still_holding = reader.is_alive()
+    release.set()
+    _join([reader], timeout=5.0)
+
+    assert still_holding, "reader released before writer timeout"
     assert reader.exitcode == 0
     with _rwgate.read_index(index, timeout=5.0) as data:
         assert data["v"] == 1, "index was mutated despite drain timeout"
@@ -393,7 +457,11 @@ def test_writer_drain_timeout_returns_busy(index: Path, tmp_path: Path, contende
 
 # ── crash recovery (liveness, never PID/age) ─────────────────────────────────
 def test_dead_writer_intent_is_recovered(index: Path, tmp_path: Path) -> None:
-    """A hard-killed writer's intent is reclaimed by the next writer via liveness."""
+    """A hard-killed writer's intent is reclaimed by the next writer via liveness.
+
+    The victim is killed while holding intent (no cleanup runs); the next writer must detect the dead owner by liveness,
+    not PID age, and publish.
+    """
     ready = str(tmp_path / "w.ready")
     victim = _SPAWN.Process(target=_w_writer_hold_intent, args=(str(index), ready, 30.0))
     victim.start()
@@ -407,7 +475,11 @@ def test_dead_writer_intent_is_recovered(index: Path, tmp_path: Path) -> None:
 
 
 def test_midwrite_crash_preserves_last_index(index: Path, tmp_path: Path) -> None:
-    """A crash between temp write and publish preserves the last complete index."""
+    """A crash between temp write and publish preserves the last complete index.
+
+    The victim leaves an orphan temp payload and dies before ``os.replace``; the published file must stay intact, and
+    the next clean writer removes the orphan.
+    """
     ready = str(tmp_path / "w.ready")
     victim = _SPAWN.Process(target=_w_writer_crash_midwrite, args=(str(index), ready, 30.0))
     victim.start()
@@ -424,7 +496,11 @@ def test_midwrite_crash_preserves_last_index(index: Path, tmp_path: Path) -> Non
 
 # ── same-process thread safety ───────────────────────────────────────────────
 def test_same_process_reader_writer_no_false_stale(index: Path) -> None:
-    """One thread's live reader token is never treated as stale by another thread."""
+    """One thread's live reader token is never treated as stale by another thread.
+
+    POSIX locks are per-process, so a thread-level writer must still wait for a same-process reader instead of
+    reclaiming its token as dead.
+    """
     order: list[str] = []
     _rwgate.set_instrument(lambda name, fields: order.append(name))
     hold_started = threading.Event()
@@ -452,7 +528,11 @@ def test_same_process_reader_writer_no_false_stale(index: Path) -> None:
 # ── single registry handle discipline (POSIX trap) ───────────────────────────
 @NO_FORK
 def test_single_registry_handle_serializes_in_process(index: Path) -> None:
-    """Nested/sequential same-process acquisitions never drop another holder's lock."""
+    """Nested/sequential same-process acquisitions never drop another holder's lock.
+
+    Closing any descriptor on the registry file releases every POSIX lock on it, so the process must reuse one handle;
+    the descriptor number must be stable across sequential acquisitions.
+    """
     coord = index.parent / ".index-rw"
     reg = _rwgate._registry_for(coord)
     order: list[str] = []
@@ -501,8 +581,12 @@ def _run_in_fork(child) -> int:
 
 
 @NO_FORK
+@IGNORE_RUNNER_THREAD_FORK_WARNING
 def test_fork_idle_parent_child_operates(index: Path) -> None:
-    """Child of an idle parent gets fresh handles and completes a full cycle."""
+    """Child of an idle parent gets fresh handles and completes a full cycle.
+
+    After ``fork`` the child must not reuse inherited coordination state; a full write then read in the child proves it.
+    """
 
     def _child() -> None:
         """Exercise a complete write/read cycle in the forked child."""
@@ -514,8 +598,12 @@ def test_fork_idle_parent_child_operates(index: Path) -> None:
 
 
 @NO_FORK
+@IGNORE_RUNNER_THREAD_FORK_WARNING
 def test_fork_reader_parent_child_sees_foreign_token(index: Path) -> None:
-    """Child cannot steal the parent's live reader token; it must wait/IndexBusy."""
+    """Child cannot steal the parent's live reader token; it must wait/IndexBusy.
+
+    The parent holds a read lease across the fork; the child's writer must see a foreign live token and time out.
+    """
     with _rwgate.read_index(index, timeout=5.0):
 
         def _child() -> None:
@@ -531,8 +619,13 @@ def test_fork_reader_parent_child_sees_foreign_token(index: Path) -> None:
 
 
 @NO_FORK
+@IGNORE_RUNNER_THREAD_FORK_WARNING
 def test_fork_writer_intent_parent_child_blocked(index: Path, tmp_path: Path) -> None:
-    """Child cannot inherit or steal the parent's live writer intent."""
+    """Child cannot inherit or steal the parent's live writer intent.
+
+    The child is forked from inside the parent's build; its read must time out with IndexBusy because the intent belongs
+    to the parent.
+    """
     forked: dict[str, int] = {}
 
     def _build(target: Path) -> None:
@@ -554,8 +647,12 @@ def test_fork_writer_intent_parent_child_blocked(index: Path, tmp_path: Path) ->
 
 
 @NO_FORK
+@IGNORE_RUNNER_THREAD_FORK_WARNING
 def test_fork_mutex_holder_parent_child_no_deadlock(index: Path) -> None:
-    """Child forked while parent holds the registry mutex times out cleanly."""
+    """Child forked while parent holds the registry mutex times out cleanly.
+
+    A mutex inherited locked across ``fork`` must not deadlock the child; its bounded acquire reports IndexBusy.
+    """
     coord = index.parent / ".index-rw"
     reg = _rwgate._registry_for(coord)
     with reg.mutex(time.monotonic() + 5.0):
@@ -574,21 +671,21 @@ def test_fork_mutex_holder_parent_child_no_deadlock(index: Path) -> None:
 # ── read-only coordination root ──────────────────────────────────────────────
 @pytest.mark.skipif(WIN, reason="POSIX permission bits — unreliable chmod on Windows")
 @pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0, reason="root bypasses mode bits")
-def test_readonly_root_refused(tmp_path: Path) -> None:
-    """An unwritable coordination root is refused, never read without a token."""
-    ro = tmp_path / "ro"
-    ro.mkdir()
-    os.chmod(ro, 0o500)
-    try:
-        with pytest.raises(_rwgate.CoordinationUnavailable):
-            with _rwgate.read_index(ro / "idx.json", timeout=1.0):
-                pass
-    finally:
-        os.chmod(ro, 0o700)  # restore so pytest can clean up
+def test_readonly_root_refused(readonly_root: Path) -> None:
+    """An unwritable coordination root is refused, never read without a token.
+
+    Reading an index whose lock directory cannot be written would mean reading without registering a lease, so the gate
+    must raise ``CoordinationUnavailable`` instead.
+    """
+    with pytest.raises(_rwgate.CoordinationUnavailable):
+        with _rwgate.read_index(readonly_root / "idx.json", timeout=1.0):
+            pass
 
 
 # ── release-path exception safety ──────────────────────────
-def test_build_failure_with_contended_release_propagates_and_recovers(index: Path, monkeypatch) -> None:
+def test_build_failure_with_contended_release_propagates_and_recovers(
+    index: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Preserve build errors during contended release and intent cleanup.
 
     Forces the release-mutex reacquire to time out (a holder thread keeps the registry mutex through the writer's
@@ -635,7 +732,7 @@ def test_build_failure_with_contended_release_propagates_and_recovers(index: Pat
 
 
 # ── event-log append: Windows branch runs on every host (no OS skip) ─────────
-def test_append_event_line_win32_branch_writes_parseable_lines(tmp_path: Path, monkeypatch) -> None:
+def test_append_event_line_win32_branch_writes_parseable_lines(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The lock-guarded Windows append path emits whole, parseable JSON lines.
 
     Windows CRT ``_O_APPEND`` is seek-then-write, not atomic across processes; the guarded branch is the fix for torn
@@ -651,7 +748,7 @@ def test_append_event_line_win32_branch_writes_parseable_lines(tmp_path: Path, m
     assert [json.loads(ln)["seq"] for ln in lines] == list(range(5))
 
 
-def test_append_event_line_win32_branch_spins_until_lock(tmp_path: Path, monkeypatch) -> None:
+def test_append_event_line_win32_branch_spins_until_lock(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A briefly contended log lock delays the append instead of tearing or dropping.
 
     First acquisition attempt is refused (simulated contention); the spin loop must retry and still land the complete

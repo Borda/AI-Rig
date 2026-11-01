@@ -2,12 +2,25 @@
 
 from __future__ import annotations
 
+import doctest
 import json
 from enum import Enum
 
 import _schema
 import pytest
-from _schema import SCAN_VERSION, VALID_CALL_RESOLUTIONS, EntityType, Resolution, SymbolType
+from _schema import (
+    DEAD_SYMBOL_MIN_VER,
+    DOCSTRING_MIN_VER,
+    IMPORT_GROUPS_MIN_VER,
+    MOCK_PATCHES_MIN_VER,
+    SCAN_VERSION,
+    SPHINX_XREFS_MIN_VER,
+    UNCOVERED_MIN_VER,
+    VALID_CALL_RESOLUTIONS,
+    EntityType,
+    Resolution,
+    SymbolType,
+)
 
 #: Names of the per-feature min-version constants exported by ``_schema``.
 _PER_FEATURE_MIN_VER_NAMES = (
@@ -36,10 +49,12 @@ class TestSchemaStringEnums:
             pytest.param(Resolution, ["import", "local", "self", "builtin", "star", "unresolved"], id="resolution"),
         ],
     )
-    def test_members_are_direct_str_enum_subclasses_and_serialize_as_values(
-        self, enum_type: type[Enum], values: list[str]
-    ) -> None:
-        """Schema enums use Python 3.10-compatible base classes and original wire values."""
+    def test_direct_str_enum_base_serializes_as_values(self, enum_type: type[Enum], values: list[str]) -> None:
+        """Schema enums use Python 3.10-compatible base classes and original wire values.
+
+        Each enum must derive directly from ``(str, Enum)`` and dump to its original JSON strings, in declaration order,
+        so previously written indexes keep loading.
+        """
         assert enum_type.__bases__ == (str, Enum)
         assert json.loads(json.dumps(list(enum_type))) == values
 
@@ -47,34 +62,24 @@ class TestSchemaStringEnums:
 class TestResolutionEnum:
     """Resolution enum: string inheritance, expected members, value spelling."""
 
-    def test_all_members_inherit_str(self) -> None:
-        """Every Resolution member must be usable as a plain string (json.dumps relies on this)."""
-        for member in Resolution:
-            assert isinstance(member, str)
+    @pytest.mark.parametrize(
+        ("member", "value"),
+        [
+            pytest.param(Resolution.IMPORT, "import", id="import"),
+            pytest.param(Resolution.LOCAL, "local", id="local"),
+            pytest.param(Resolution.SELF, "self", id="self"),
+            pytest.param(Resolution.BUILTIN, "builtin", id="builtin"),
+            pytest.param(Resolution.STAR, "star", id="star"),
+            pytest.param(Resolution.UNRESOLVED, "unresolved", id="unresolved"),
+        ],
+    )
+    def test_member_is_plain_string_with_wire_value(self, member: Resolution, value: str) -> None:
+        """Each member is a plain string equal to its wire spelling (json.dumps relies on this).
 
-    def test_import_value(self) -> None:
-        """IMPORT serialises to 'import'."""
-        assert Resolution.IMPORT == "import"
-
-    def test_local_value(self) -> None:
-        """LOCAL serialises to 'local'."""
-        assert Resolution.LOCAL == "local"
-
-    def test_self_value(self) -> None:
-        """SELF serialises to 'self'."""
-        assert Resolution.SELF == "self"
-
-    def test_builtin_value(self) -> None:
-        """BUILTIN serialises to 'builtin'."""
-        assert Resolution.BUILTIN == "builtin"
-
-    def test_star_value(self) -> None:
-        """STAR serialises to 'star'."""
-        assert Resolution.STAR == "star"
-
-    def test_unresolved_value(self) -> None:
-        """UNRESOLVED serialises to 'unresolved'."""
-        assert Resolution.UNRESOLVED == "unresolved"
+        Index JSON stores the raw string, so a member must compare equal to it and pass ``isinstance(..., str)``.
+        """
+        assert isinstance(member, str)
+        assert member == value
 
     def test_complete_member_set(self) -> None:
         """Exactly six resolution kinds — adding/removing one must update this test."""
@@ -89,29 +94,24 @@ class TestValidCallResolutions:
         """Must be a frozenset — immutable, safe to share across modules."""
         assert isinstance(VALID_CALL_RESOLUTIONS, frozenset)
 
-    def test_includes_import(self) -> None:
-        """IMPORT represents cross-module calls — must be in the valid set."""
-        assert Resolution.IMPORT in VALID_CALL_RESOLUTIONS
+    @pytest.mark.parametrize(
+        ("member", "valid"),
+        [
+            pytest.param(Resolution.IMPORT, True, id="import-cross-module-included"),
+            pytest.param(Resolution.LOCAL, True, id="local-same-file-included"),
+            pytest.param(Resolution.SELF, True, id="self-method-to-method-included"),
+            pytest.param(Resolution.BUILTIN, False, id="builtin-outside-project-excluded"),
+            pytest.param(Resolution.STAR, False, id="star-unresolvable-excluded"),
+            pytest.param(Resolution.UNRESOLVED, False, id="unresolved-no-graph-info-excluded"),
+        ],
+    )
+    def test_membership(self, member: Resolution, valid: bool) -> None:
+        """Only resolutions that carry call-graph information are valid call edges.
 
-    def test_includes_local(self) -> None:
-        """LOCAL represents same-file calls — must be in the valid set."""
-        assert Resolution.LOCAL in VALID_CALL_RESOLUTIONS
-
-    def test_includes_self(self) -> None:
-        """SELF represents method-to-method calls — must be in the valid set."""
-        assert Resolution.SELF in VALID_CALL_RESOLUTIONS
-
-    def test_excludes_builtin(self) -> None:
-        """BUILTIN calls are outside the project graph — must be excluded."""
-        assert Resolution.BUILTIN not in VALID_CALL_RESOLUTIONS
-
-    def test_excludes_star(self) -> None:
-        """STAR imports are unresolvable — must be excluded."""
-        assert Resolution.STAR not in VALID_CALL_RESOLUTIONS
-
-    def test_excludes_unresolved(self) -> None:
-        """UNRESOLVED calls carry no graph information — must be excluded."""
-        assert Resolution.UNRESOLVED not in VALID_CALL_RESOLUTIONS
+        IMPORT, LOCAL and SELF link two project functions; BUILTIN, STAR and UNRESOLVED do not, so graph queries must
+        never see them.
+        """
+        assert (member in VALID_CALL_RESOLUTIONS) is valid
 
     def test_size(self) -> None:
         """Exactly three valid resolutions."""
@@ -130,39 +130,36 @@ class TestScanVersion:
         assert SCAN_VERSION >= 1
 
     def test_value_is_thirteen(self) -> None:
-        """v5.7 bumps SCAN_VERSION for resolved static submodule imports."""
+        """v5.7 bumps SCAN_VERSION for resolved static submodule imports.
+
+        A deliberate pin: changing the schema version must update this test together with the index-staleness logic.
+        """
         assert SCAN_VERSION == 13
 
 
 class TestPerFeatureVersionConstants:
     """Per-feature min-version constants: type, positivity, ordering."""
 
-    def test_all_are_int(self) -> None:
+    @pytest.mark.parametrize("name", _PER_FEATURE_MIN_VER_NAMES)
+    def test_is_int(self, name: str) -> None:
         """Each per-feature min-version constant must be a plain int."""
-        for name in _PER_FEATURE_MIN_VER_NAMES:
-            assert isinstance(getattr(_schema, name), int), f"{name} must be int"
+        assert isinstance(getattr(_schema, name), int), f"{name} must be int"
 
-    def test_all_positive(self) -> None:
+    @pytest.mark.parametrize("name", _PER_FEATURE_MIN_VER_NAMES)
+    def test_is_positive(self, name: str) -> None:
         """Each per-feature min-version constant must be ≥1."""
-        for name in _PER_FEATURE_MIN_VER_NAMES:
-            assert getattr(_schema, name) > 0, f"{name} must be positive"
+        assert getattr(_schema, name) > 0, f"{name} must be positive"
 
     def test_sphinx_before_dead_symbol(self) -> None:
         """Dead-symbol depends on sphinx_xref_count — its min version must be higher."""
-        from _schema import DEAD_SYMBOL_MIN_VER, SPHINX_XREFS_MIN_VER
-
         assert SPHINX_XREFS_MIN_VER < DEAD_SYMBOL_MIN_VER
 
     def test_v4_constants_equal(self) -> None:
         """v4.1–v4.4 all require the same index version."""
-        from _schema import DOCSTRING_MIN_VER, IMPORT_GROUPS_MIN_VER, MOCK_PATCHES_MIN_VER, UNCOVERED_MIN_VER
-
         assert MOCK_PATCHES_MIN_VER == UNCOVERED_MIN_VER == IMPORT_GROUPS_MIN_VER == DOCSTRING_MIN_VER
 
 
 def test_doctests_pass() -> None:
     """Doctest examples in _schema must not regress."""
-    import doctest
-
     results = doctest.testmod(_schema, verbose=False)
     assert results.failed == 0, f"{results.failed} doctest(s) failed"

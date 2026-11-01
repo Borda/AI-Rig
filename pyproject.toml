@@ -86,15 +86,27 @@ lint.select = [
 # complexity findings; gating them is a separate decision.
 lint.extend-select = [
   "C901",    # mccabe - function too complex (cyclomatic complexity above the limit)
+  "D100",    # pydocstyle - missing module docstring (tests only, see per-file-ignores)
+  "D101",    # pydocstyle - missing public class docstring (tests only)
+  "D102",    # pydocstyle - missing public method docstring (tests only)
+  "D103",    # pydocstyle - missing public function docstring (tests only)
   "D401",    # pydocstyle - docstring first line should be in imperative mood
   "D402",    # pydocstyle - docstring first line should not be the function signature
   "D403",    # pydocstyle - docstring first word should be capitalized
   "PLR0911", # pylint - too many return statements
   "PLR0912", # pylint - too many branches
   "PLR0915", # pylint - too many statements
+  "TID251",  # flake8-tidy-imports - banned API (pytest.skip() call, see banned-api below)
 ]
 lint.ignore = [
   "E501", # line too long; the formatter wraps code, but long string literals, prompts, and fixtures cannot be wrapped
+]
+# Docstring presence is a test-suite rule: every test module, class, test and fixture explains itself.
+lint.per-file-ignores."!**/tests/**" = [
+  "D100", # missing module docstring
+  "D101", # missing public class docstring
+  "D102", # missing public method docstring
+  "D103", # missing public function docstring
 ]
 # A `!` pattern ignores the listed rules in every file NOT matching it, so this keeps the gate
 # active inside codemap-py only. Any codemap-py exception is an inline `# noqa` with a reason.
@@ -132,6 +144,7 @@ lint.per-file-ignores."plugins/codemap-py/bin/gen_deprecation_wrapper.py" = [
 ]
 # Typographic characters that real output strings, docs, and test expectations use on purpose.
 lint.allowed-confusables = [ "ℹ", "×", "–", "’", "−", "∪" ]
+lint.flake8-tidy-imports.banned-api."pytest.skip".msg = "Use a skip/skipif mark, not a pytest.skip() call."
 lint.mccabe.max-complexity = 12
 lint.pycodestyle.max-doc-length = 120
 lint.pylint = { max-returns = 6, max-branches = 12, max-statements = 50 }

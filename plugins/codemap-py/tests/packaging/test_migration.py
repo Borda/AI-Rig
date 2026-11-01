@@ -12,8 +12,10 @@ import json
 import shutil
 import sys
 from pathlib import Path
+from unittest import mock
 
 import pytest
+from _scan_helpers import IGNORE_RUNNER_THREAD_FORK_WARNING
 
 _PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 _REPO_ROOT = _PLUGIN_ROOT.parents[1]
@@ -41,74 +43,97 @@ def _plugin_names(marketplace: Path) -> set[str]:
     return {entry["name"] for entry in catalog.get("plugins", [])}
 
 
-# --- dual-identity ban -----------------------------------------------------
+def _parsed_names(parse_mock: mock.MagicMock) -> list[str]:
+    """Return the file path of every call recorded on the patched ``_parse_file``."""
+    return [str(call.args[0]) for call in parse_mock.call_args_list]
 
 
-@pytest.mark.packaging
-def test_repo_tracks_exactly_one_plugin_identity() -> None:
-    """Exactly one of plugins/codemap or plugins/codemap-py exists on disk."""
-    legacy = _REPO_ROOT / "plugins" / "codemap"
-    renamed = _REPO_ROOT / "plugins" / "codemap-py"
-    assert renamed.is_dir()
-    assert not legacy.exists()
+class TestDualIdentityBan:
+    """The repository and the plugin cache never carry the legacy and renamed identities together."""
+
+    @pytest.mark.packaging
+    def test_repo_tracks_exactly_one_plugin_identity(self) -> None:
+        """Only ``plugins/codemap-py`` exists on disk; the legacy ``plugins/codemap`` directory is gone.
+
+        A leftover legacy directory would let two plugins register the same skills and hooks after the rename.
+        """
+        assert (_REPO_ROOT / "plugins" / "codemap-py").is_dir()
+        assert not (_REPO_ROOT / "plugins" / "codemap").exists()
+
+    @pytest.mark.parametrize("marketplace_rel", [".claude-plugin/marketplace.json", ".agents/plugins/marketplace.json"])
+    @pytest.mark.packaging
+    def test_marketplace_advertises_codemap_py_only(self, marketplace_rel: str) -> None:
+        """Each marketplace catalog lists ``codemap-py`` and never the legacy ``codemap`` name.
+
+        Both the Claude and the agents catalog are checked, since a stale entry in either would offer users the retired
+        plugin name.
+        """
+        names = _plugin_names(_REPO_ROOT / marketplace_rel)
+
+        assert "codemap-py" in names
+        assert "codemap" not in names
+
+    @pytest.mark.packaging
+    def test_resolver_selects_codemap_py_when_both_cached(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """With BOTH legacy and renamed plugin caches present, the shipped resolver picks ``codemap-py``.
+
+        An upgraded user can have both directories under the plugin cache; resolution must still land on the renamed
+        plugin's version, never on the legacy one.
+        """
+        home = tmp_path / "home"
+        _seed_plugin_cache(home, {"codemap": "1.0.0", "codemap-py": "0.25.0"})
+        monkeypatch.setenv("HOME", str(home))
+        # Path.home() reads USERPROFILE first on Windows (then HOMEDRIVE/HOMEPATH), so HOME alone
+        # leaves the resolver pointed at the real CI home and the seeded cache is never found.
+        monkeypatch.setenv("USERPROFILE", str(home))
+
+        resolved = index_paths.resolve_plugin_root(None)
+
+        assert resolved is not None
+        assert (resolved.parent.name, resolved.name) == ("codemap-py", "0.25.0")
+
+    @pytest.mark.parametrize(
+        ("entries", "expected"),
+        [
+            pytest.param({"codemap": "1.0.0", "codemap-py": "0.25.0"}, "dual_plugin_identity", id="both-cached"),
+            pytest.param({"codemap-py": "0.25.0"}, None, id="only-renamed-cached"),
+        ],
+    )
+    @pytest.mark.packaging
+    def test_detect_dual_identity(self, tmp_path: Path, entries: dict[str, str], expected: str | None) -> None:
+        """The shipped detector names the violation when both identities coexist and is silent otherwise.
+
+        The legacy-plus-renamed cache is the broken state to flag; a cache holding only ``codemap-py`` is the healthy
+        post-migration state and must report nothing.
+        """
+        cache_base = _seed_plugin_cache(tmp_path / "home", entries)
+
+        assert index_paths.detect_dual_identity(cache_base) == expected
 
 
-@pytest.mark.parametrize("marketplace_rel", [".claude-plugin/marketplace.json", ".agents/plugins/marketplace.json"])
-@pytest.mark.packaging
-def test_marketplace_advertises_codemap_py_only(marketplace_rel: str) -> None:
-    """Marketplace catalogs list codemap-py and never the legacy codemap name."""
-    names = _plugin_names(_REPO_ROOT / marketplace_rel)
-    assert "codemap-py" in names
-    assert "codemap" not in names
+class TestLegacyIndexLayout:
+    """The index keeps living under ``.cache/codemap`` so indexes built before the rename still resolve."""
 
+    @pytest.mark.packaging
+    def test_index_subdir_is_legacy_cache_codemap(self) -> None:
+        """The resolver's index subdir constant is still ``.cache/codemap``.
 
-# --- legacy cache path retained --------------------------------------------
+        Renaming the plugin must not rename the on-disk cache directory, or every existing index would be orphaned.
+        """
+        assert _index_identity.INDEX_SUBDIR == Path(".cache", "codemap")
 
+    @pytest.mark.packaging
+    def test_resolver_places_index_under_legacy_cache(self, tmp_path: Path) -> None:
+        """A default resolution nests the index file ``<root name>.json`` under ``.cache/codemap``.
 
-@pytest.mark.packaging
-def test_index_subdir_is_legacy_cache_codemap() -> None:
-    """The resolver's index subdir constant is still ``.cache/codemap``."""
-    assert _index_identity.INDEX_SUBDIR == Path(".cache", "codemap")
+        Complements the constant check by proving the resolver actually applies it to a real root.
+        """
+        identity = _index_identity.resolve_index(root=tmp_path, index_dir_override=None)
 
-
-@pytest.mark.packaging
-def test_resolver_places_index_under_legacy_cache(tmp_path: Path) -> None:
-    """A default resolution nests the index under ``.cache/codemap`` for a root."""
-    identity = _index_identity.resolve_index(root=tmp_path, index_dir_override=None)
-    assert identity.index_dir.parts[-2:] == (".cache", "codemap")
-    assert identity.index_path.name == f"{tmp_path.name}.json"
-
-
-# --- install-shaped dual-identity ban --------------------------------------
-
-
-@pytest.mark.packaging
-def test_resolver_selects_codemap_py_when_both_cached(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """With BOTH legacy and renamed plugin caches present, the shipped resolver picks codemap-py."""
-    home = tmp_path / "home"
-    _seed_plugin_cache(home, {"codemap": "1.0.0", "codemap-py": "0.25.0"})
-    monkeypatch.setenv("HOME", str(home))
-    # Path.home() reads USERPROFILE first on Windows (then HOMEDRIVE/HOMEPATH), so HOME alone
-    # leaves the resolver pointed at the real CI home and the seeded cache is never found.
-    monkeypatch.setenv("USERPROFILE", str(home))
-    resolved = index_paths.resolve_plugin_root(None)
-    assert resolved is not None
-    assert resolved.parent.name == "codemap-py"
-    assert resolved.name == "0.25.0"
-
-
-@pytest.mark.packaging
-def test_shipped_detect_dual_identity_fires_when_both_cached(tmp_path: Path) -> None:
-    """The shipped migration utility names the violation when both identities coexist."""
-    cache_base = _seed_plugin_cache(tmp_path / "home", {"codemap": "1.0.0", "codemap-py": "0.25.0"})
-    assert index_paths.detect_dual_identity(cache_base) == "dual_plugin_identity"
-
-
-@pytest.mark.packaging
-def test_shipped_detect_dual_identity_clean_when_only_renamed_cached(tmp_path: Path) -> None:
-    """The shipped detector is silent when only codemap-py is cached."""
-    cache_base = _seed_plugin_cache(tmp_path / "home", {"codemap-py": "0.25.0"})
-    assert index_paths.detect_dual_identity(cache_base) is None
+        assert identity.index_dir.parts[-2:] == (".cache", "codemap")
+        assert identity.index_path.name == f"{tmp_path.name}.json"
 
 
 # --- .pyi migration: exactly one rebuild via file_shas drift, then stable reuse ----
@@ -138,22 +163,8 @@ def _to_legacy_shape(index: dict) -> dict:
     return legacy
 
 
-class _CountingParse:
-    """Wrap ``graph._parse_file`` to record which files each scan actually re-parses."""
-
-    def __init__(self) -> None:
-        """Capture the real parser so calls can be counted without changing behavior."""
-        self._real = graph._parse_file
-        self.names: list[str] = []
-
-    def __call__(self, filepath: Path, root: Path, src_root: Path) -> dict:
-        """Record a parsed path, then delegate to the real parser."""
-        self.names.append(str(filepath))
-        return self._real(filepath, root, src_root)
-
-
-@pytest.fixture
-def legacy_pyi_project(tmp_path: Path, corpus_pyi_dir: Path) -> tuple[Path, dict]:
+@pytest.fixture(name="legacy_pyi_project")
+def _legacy_pyi_project(tmp_path: Path, corpus_pyi_dir: Path) -> tuple[Path, dict]:
     """Copy the .pyi corpus and reshape a fresh scan into a pre-migration legacy index."""
     root = tmp_path / "proj"
     shutil.copytree(corpus_pyi_dir, root)
@@ -161,62 +172,65 @@ def legacy_pyi_project(tmp_path: Path, corpus_pyi_dir: Path) -> tuple[Path, dict
     return root, legacy
 
 
-@pytest.fixture
-def migrated_index(legacy_pyi_project: tuple[Path, dict]) -> tuple[Path, dict]:
+@pytest.fixture(name="migrated_index")
+def _migrated_index(legacy_pyi_project: tuple[Path, dict]) -> tuple[Path, dict]:
     """Run the one-time .pyi migration scan and return the project root plus its rebuilt index."""
     root, legacy = legacy_pyi_project
     rebuilt = graph.incremental_scan(root, legacy)
     return root, rebuilt
 
 
-@pytest.mark.packaging
-def test_legacy_shape_excludes_pyi_and_stub_fields(legacy_pyi_project: tuple[Path, dict]) -> None:
-    """The simulated pre-migration index carries no ``.pyi`` or stub-derived fields.
+class TestPyiMigration:
+    """Adding ``.pyi`` discovery rebuilds a legacy index once, then reuses it byte-stable."""
 
-    Confirms the reshaping in ``_to_legacy_shape`` reflects a real pre-migration scanner run, where stubs were never
-    discovered, before the migration scan asserted below is exercised.
-    """
-    _root, legacy = legacy_pyi_project
-    assert not any(k.endswith(".pyi") for k in legacy["file_shas"])
-    assert not any(m.get("stub_only") for m in legacy["modules"])
+    @pytest.mark.packaging
+    @IGNORE_RUNNER_THREAD_FORK_WARNING
+    def test_legacy_shape_excludes_pyi_and_stub_fields(self, legacy_pyi_project: tuple[Path, dict]) -> None:
+        """The simulated pre-migration index carries no ``.pyi`` or stub-derived fields.
 
+        Confirms the reshaping in ``_to_legacy_shape`` reflects a real pre-migration scanner run, where stubs were never
+        discovered, before the migration scan asserted below is exercised.
+        """
+        _root, legacy = legacy_pyi_project
 
-@pytest.mark.packaging
-def test_migration_scan_parses_pyi_exactly_once(
-    legacy_pyi_project: tuple[Path, dict], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The first scan after the .pyi migration rebuilds by parsing the new stub set exactly once.
+        assert not any(k.endswith(".pyi") for k in legacy["file_shas"])
+        assert not any(m.get("stub_only") for m in legacy["modules"])
 
-    Executable oracle: a parse-invocation counter proves only the newly-discovered ``.pyi``
-    files are parsed, each at most once, and the rebuilt index now carries stub fields.
-    """
-    root, legacy = legacy_pyi_project
-    counter = _CountingParse()
-    monkeypatch.setattr(graph, "_parse_file", counter)
+    @mock.patch.object(graph, "_parse_file", autospec=True, side_effect=graph._parse_file)
+    @pytest.mark.packaging
+    @IGNORE_RUNNER_THREAD_FORK_WARNING
+    def test_migration_scan_parses_pyi_exactly_once(
+        self, parse_mock: mock.MagicMock, legacy_pyi_project: tuple[Path, dict]
+    ) -> None:
+        """The first scan after the .pyi migration rebuilds by parsing the new stub set exactly once.
 
-    rebuilt = graph.incremental_scan(root, legacy)
+        Executable oracle: a parse-invocation counter proves only the newly-discovered ``.pyi``
+        files are parsed, each at most once, and the rebuilt index now carries stub fields.
+        """
+        root, legacy = legacy_pyi_project
 
-    assert counter.names, "the migration scan must rebuild (parse the new .pyi set)"
-    assert all(n.endswith(".pyi") for n in counter.names), counter.names
-    assert len(counter.names) == len(set(counter.names)), "each stub parsed at most once"
-    assert any(m.get("stub_only") for m in rebuilt["modules"]), "stubs now indexed"
-    assert any(k.endswith(".pyi") for k in rebuilt["file_shas"]), "stubs now in the hash set"
+        rebuilt = graph.incremental_scan(root, legacy)
 
+        names = _parsed_names(parse_mock)
+        assert names, "the migration scan must rebuild (parse the new .pyi set)"
+        assert all(n.endswith(".pyi") for n in names), names
+        assert len(names) == len(set(names)), "each stub parsed at most once"
+        assert any(m.get("stub_only") for m in rebuilt["modules"]), "stubs now indexed"
+        assert any(k.endswith(".pyi") for k in rebuilt["file_shas"]), "stubs now in the hash set"
 
-@pytest.mark.packaging
-def test_stable_reuse_after_migration_reparses_nothing(
-    migrated_index: tuple[Path, dict], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A scan following the migration reuses the rebuilt index byte-stable with zero reparsing.
+    @mock.patch.object(graph, "_parse_file", autospec=True, side_effect=graph._parse_file)
+    @pytest.mark.packaging
+    @IGNORE_RUNNER_THREAD_FORK_WARNING
+    def test_stable_reuse_reparses_nothing(self, parse_mock: mock.MagicMock, migrated_index: tuple[Path, dict]) -> None:
+        """A scan following the migration reuses the rebuilt index byte-stable with zero reparsing.
 
-    Starting from the already-migrated index with no further drift, the next incremental scan must not touch the parser
-    and must reproduce identical canonical bytes.
-    """
-    root, rebuilt = migrated_index
-    counter = _CountingParse()
-    monkeypatch.setattr(graph, "_parse_file", counter)
+        Starting from the already-migrated index with no further drift, the next incremental scan must not touch the
+        parser and must reproduce identical canonical bytes.
+        """
+        root, rebuilt = migrated_index
+        parse_mock.reset_mock()
 
-    stable = graph.incremental_scan(root, rebuilt)
+        stable = graph.incremental_scan(root, rebuilt)
 
-    assert counter.names == [], "stable reuse must not re-parse any file"
-    assert _canonical(stable) == _canonical(rebuilt), "index bytes stable across reuse"
+        assert _parsed_names(parse_mock) == [], "stable reuse must not re-parse any file"
+        assert _canonical(stable) == _canonical(rebuilt), "index bytes stable across reuse"

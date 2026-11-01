@@ -6,6 +6,7 @@ tests pin the riding/no-polling rules and every baseline ask, mapped by id, so a
 
 from __future__ import annotations
 
+import functools
 from pathlib import Path
 
 import pytest
@@ -41,23 +42,24 @@ _ASKS = [
 ]
 
 
+@functools.cache
+def _skill() -> str:
+    """Read the release skill once."""
+    return (_RELEASE / "SKILL.md").read_text(encoding="utf-8")
+
+
 @pytest.mark.parametrize(("relative", "marker"), _ASKS)
-def test_baseline_ask_still_happens(relative: str, marker: str) -> None:
+def test_baseline_ask_kept_next_to_tool_name(relative: str, marker: str) -> None:
     """Every question the baseline release flow asked is still asked, on the same line as the tool name.
 
     No release ask moved: each depends on information (draft, demo result, classification evidence) that exists only
-    at its own step, so front-loading would change what the user sees when answering.
+    at its own step, so front-loading would change what the user sees when answering. The check looks one line either
+    side of the marker, so it does not depend on how a paragraph is wrapped.
     """
     lines = (_RELEASE / relative).read_text(encoding="utf-8").splitlines()
     hits = [number for number, line in enumerate(lines) if marker in line]
     assert hits, marker
-    window = "\n".join(lines[max(0, hits[0] - 1) : hits[0] + 2])
-    assert "AskUserQuestion" in window
-
-
-def _skill() -> str:
-    """Read the release skill."""
-    return (_RELEASE / "SKILL.md").read_text(encoding="utf-8")
+    assert "AskUserQuestion" in "\n".join(lines[max(0, hits[0] - 1) : hits[0] + 2])
 
 
 @pytest.mark.parametrize(
@@ -70,12 +72,18 @@ def _skill() -> str:
         "git_state_snapshot.py",
     ],
 )
-def test_efficiency_rules_present(rule: str) -> None:
-    """Riding bookkeeping, deadline-based agent waits and one-call state checks are stated in the skill."""
+def test_efficiency_rule_stated(rule: str) -> None:
+    """Riding bookkeeping, deadline-based agent waits and one-call state checks are stated in the skill.
+
+    Dropping any of these lines brings back the per-run polling and bookkeeping-only turns the rules removed.
+    """
     assert rule in _skill()
 
 
 @pytest.mark.parametrize("batch", ["gather", "changelog-audit", "adversarial", "shepherd"])
-def test_every_spawn_batch_is_named(batch: str) -> None:
-    """Each release spawn has a named watch batch, so no agent wait falls back to polling."""
+def test_spawn_batch_named(batch: str) -> None:
+    """Each release spawn has a named watch batch, so no agent wait falls back to polling.
+
+    An unnamed batch has no deadline file, which is what lets an agent wait degrade into a poll loop.
+    """
     assert f"`{batch}`" in _skill()

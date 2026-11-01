@@ -9,6 +9,7 @@ unless a message was deliberately reworded). These tests fail when any entry sto
 
 from __future__ import annotations
 
+import functools
 import json
 import re
 from pathlib import Path
@@ -21,6 +22,7 @@ _SKILLS = _PLUGIN / "skills"
 _BASELINE = json.loads((Path(__file__).parent / "data/observability_baseline.json").read_text(encoding="utf-8"))
 
 
+@functools.cache
 def _skill_text(skill: str) -> str:
     """Concatenate every Markdown file one skill ships, so an output moved between its files still counts."""
     return "\n".join(path.read_text(encoding="utf-8") for path in sorted((_SKILLS / skill).rglob("*.md")))
@@ -36,6 +38,8 @@ def _rows(key: str) -> list:
 
 
 class TestBaselineOutputsStillProduced:
+    """Every artifact, path and status line the baseline skills produced still appears in the current skill text."""
+
     @pytest.mark.parametrize(("skill", "artifact"), _rows("artifacts"))
     def test_run_dir_artifact(self, skill: str, artifact: str) -> None:
         """Every run-dir file the baseline skill wrote is still named in the skill, so it is still written.
@@ -62,6 +66,8 @@ class TestBaselineOutputsStillProduced:
 
 
 class TestRestoredVisibility:
+    """Outputs the turn-cost rework dropped and then restored stay in place; the liveness probe stays informative."""
+
     @pytest.mark.parametrize(
         ("skill", "relative", "needle"),
         [
@@ -104,8 +110,19 @@ class TestRestoredVisibility:
 
     @pytest.mark.parametrize("field", ["branch", "head_subject"])
     def test_state_snapshot_covers_git_output(self, field: str) -> None:
-        """The one-call snapshot still shows what the separate ``git branch``/``git log -1`` calls printed."""
+        """The one-call snapshot still shows what the separate ``git branch``/``git log -1`` calls printed.
+
+        Merging those calls into ``git_state_snapshot.py`` must keep the branch name and head subject in its output
+        keys, or the user loses the git context line the old calls displayed.
+        """
         assert f'"{field}"' in (_PLUGIN / "bin/git_state_snapshot.py").read_text(encoding="utf-8")
+
+
+_TASK_CALL = re.compile(
+    r"TaskUpdate\((?:status=\")?(in_progress|completed|deleted)"
+    r"|TaskUpdate\(task_id=\w+, status=\"(in_progress|completed|deleted)\""
+    r"|TaskCreate\(subject="
+)
 
 
 def _task_call_counts(text: str) -> dict[str, int]:
@@ -117,14 +134,9 @@ def _task_call_counts(text: str) -> dict[str, int]:
     return counts
 
 
-_TASK_CALL = re.compile(
-    r"TaskUpdate\((?:status=\")?(in_progress|completed|deleted)"
-    r"|TaskUpdate\(task_id=\w+, status=\"(in_progress|completed|deleted)\""
-    r"|TaskCreate\(subject="
-)
-
-
 class TestTaskVisibility:
+    """Step tasks stay created and transitioned as often as in the baseline, so progress stays visible."""
+
     @pytest.mark.parametrize("skill", list(_BASELINE))
     def test_task_transitions_match_baseline(self, skill: str) -> None:
         """Each skill still creates and moves as many step tasks as the baseline did, so progress stays visible.
@@ -136,5 +148,9 @@ class TestTaskVisibility:
 
     @pytest.mark.parametrize(("skill", "phase"), _rows("task_phases"))
     def test_named_phase_task(self, skill: str, phase: str) -> None:
-        """Phase task names the baseline listed for creation are still listed (analyse vitality's seven steps)."""
+        """Phase task names the baseline listed for creation are still listed (analyse vitality's seven steps).
+
+        Scenario: a skill that creates one task per phase must keep each quoted phase name, or that phase stops
+        showing in the task list.
+        """
         assert f'"{phase}"' in _skill_text(skill)

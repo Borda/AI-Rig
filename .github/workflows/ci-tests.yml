@@ -9,7 +9,8 @@ on:
       - "plugins/**"
       - "benchmarks/**"
       - "pyproject.toml"
-      - "tests/test_github_action_pins.py"
+      - "scripts/**"
+      - "tests/**"
 
 defaults:
   run:

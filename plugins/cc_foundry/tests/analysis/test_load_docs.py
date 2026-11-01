@@ -68,88 +68,120 @@ def _fake_plugin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return root
 
 
-def test_load_mode_emits_file_verbatim(fake_plugin: Path, capsysbinary: pytest.CaptureFixture[bytes]) -> None:
-    """Resolved file is written to stdout byte-for-byte, exit 0."""
-    assert load_mode.main(["demo", "modes", "one.md"]) == 0
-    assert capsysbinary.readouterr().out == b"mode body\n"
+_SHARED_ARGS = ["foundry", "skills/_shared"]
 
 
-def test_load_mode_passes_crlf_through_unchanged(fake_plugin: Path, capsysbinary: pytest.CaptureFixture[bytes]) -> None:
-    """A CRLF file emits CRLF — the loader is a byte pipe, never a newline translator."""
-    (fake_plugin / "skills" / "demo" / "modes" / "crlf.md").write_bytes(b"line one\r\nline two\r\n")
+class TestLoadersEmit:
+    """Both loaders are byte pipes: the resolved file reaches stdout unchanged with exit 0."""
 
-    assert load_mode.main(["demo", "modes", "crlf.md"]) == 0
+    @pytest.mark.parametrize(
+        ("module", "args", "expected"),
+        [
+            pytest.param(load_mode, ["demo", "modes", "one.md"], b"mode body\n", id="load-mode"),
+            pytest.param(load_shared_doc, [*_SHARED_ARGS, "doc.md"], b"shared body\n", id="load-shared-doc"),
+        ],
+    )
+    def test_emits_file_verbatim(
+        self,
+        fake_plugin: Path,
+        capsysbinary: pytest.CaptureFixture[bytes],
+        module: ModuleType,
+        args: list[str],
+        expected: bytes,
+    ) -> None:
+        """The resolved file is written to stdout byte-for-byte and the loader exits 0.
 
-    assert capsysbinary.readouterr().out == b"line one\r\nline two\r\n"
+        Call sites cat the output straight into the agent's context, so any byte the loader adds or drops is visible.
+        """
+        assert module.main(args) == 0
+        assert capsysbinary.readouterr().out == expected
 
-
-def test_load_mode_missing_subdir_breaks(fake_plugin: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """Report an unresolvable mode directory and exit with status 1.
-
-    The stdout diagnostic begins with ``! BREAKING``.
-    """
-    assert load_mode.main(["demo", "nosuchdir", "one.md"]) == 1
-    captured = capsys.readouterr()
-    assert captured.out == "! BREAKING: demo/nosuchdir not found — run /foundry:setup first\n"
-    assert captured.err == ""
-
-
-def test_load_mode_missing_file_breaks(fake_plugin: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """Resolved dir but absent file also breaks with exit 1."""
-    assert load_mode.main(["demo", "modes", "absent.md"]) == 1
-    assert capsys.readouterr().out.startswith("! BREAKING: absent.md not found in ")
-
-
-def test_load_mode_rejects_path_separator(fake_plugin: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """Traversal in the file argument is an argument error (exit 2), not a load."""
-    assert load_mode.main(["demo", "modes", "../x.md"]) == 2
-    assert "plain file name" in capsys.readouterr().err
-
-
-def test_load_mode_fallback_source_finds_sibling_tree(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Resolve this install's own skills dir when the cascade misses."""
-    monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
-    assert load_mode.source_fallback_dir("audit", "modes") is not None
-    assert load_mode.source_fallback_dir("__nonexistent__", "modes") is None
+    def test_load_mode_passes_crlf_through_unchanged(
+        self, fake_plugin: Path, capsysbinary: pytest.CaptureFixture[bytes]
+    ) -> None:
+        """A CRLF file emits CRLF: the loader is a byte pipe, never a newline translator."""
+        (fake_plugin / "skills" / "demo" / "modes" / "crlf.md").write_bytes(b"line one\r\nline two\r\n")
+        assert load_mode.main(["demo", "modes", "crlf.md"]) == 0
+        assert capsysbinary.readouterr().out == b"line one\r\nline two\r\n"
 
 
-def test_load_shared_doc_emits_file_verbatim(fake_plugin: Path, capsysbinary: pytest.CaptureFixture[bytes]) -> None:
-    """Shared doc is written to stdout byte-for-byte, exit 0."""
-    assert load_shared_doc.main(["foundry", "skills/_shared", "doc.md"]) == 0
-    assert capsysbinary.readouterr().out == b"shared body\n"
+class TestLoadersReject:
+    """Failure contracts shared by both loaders."""
+
+    @pytest.mark.parametrize(
+        ("module", "args"),
+        [
+            pytest.param(load_mode, ["demo", "modes", "absent.md"], id="load-mode"),
+            pytest.param(load_shared_doc, [*_SHARED_ARGS, "absent.md"], id="load-shared-doc"),
+        ],
+    )
+    def test_missing_file_breaks(
+        self, fake_plugin: Path, capsys: pytest.CaptureFixture[str], module: ModuleType, args: list[str]
+    ) -> None:
+        """A resolved directory without the requested file prints ``! BREAKING`` on stdout and exits 1.
+
+        Without the flag a missing doc must fail loudly instead of leaving a raw ``cat`` error in the agent's context.
+        """
+        assert module.main(args) == 1
+        assert capsys.readouterr().out.startswith("! BREAKING: absent.md not found in ")
+
+    @pytest.mark.parametrize(
+        ("module", "args"),
+        [
+            pytest.param(load_mode, ["demo", "modes", "../x.md"], id="load-mode"),
+            pytest.param(load_shared_doc, [*_SHARED_ARGS, "sub/doc.md"], id="load-shared-doc"),
+            pytest.param(load_shared_doc, ["--optional", *_SHARED_ARGS, "sub/doc.md"], id="optional-is-no-escape"),
+        ],
+    )
+    def test_path_separator_is_an_argument_error(
+        self, fake_plugin: Path, capsys: pytest.CaptureFixture[str], module: ModuleType, args: list[str]
+    ) -> None:
+        """A path separator in the file argument exits 2 and never loads, even under ``--optional``.
+
+        Traversal is a caller bug; ``--optional`` softens only missing docs, not malformed arguments.
+        """
+        assert module.main(args) == 2
+        assert "plain file name" in capsys.readouterr().err
 
 
-def test_load_shared_doc_missing_file_breaks(fake_plugin: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """Absent shared doc breaks with exit 1 rather than a raw cat error."""
-    assert load_shared_doc.main(["foundry", "skills/_shared", "absent.md"]) == 1
-    assert capsys.readouterr().out.startswith("! BREAKING: absent.md not found in ")
+class TestLoadMode:
+    """Directory resolution specific to the skill ``modes/``/``templates/`` loader."""
 
+    def test_missing_subdir_breaks(self, fake_plugin: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """An unresolvable mode directory exits 1 with a ``!
 
-def test_load_shared_doc_rejects_path_separator(fake_plugin: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """File argument validation is shared with ``load_mode`` — no duplicated rule."""
-    assert load_shared_doc.main(["foundry", "skills/_shared", "sub/doc.md"]) == 2
-    assert "plain file name" in capsys.readouterr().err
+        BREAKING`` diagnostic on stdout and nothing on stderr.
+        """
+        assert load_mode.main(["demo", "nosuchdir", "one.md"]) == 1
+        captured = capsys.readouterr()
+        assert (captured.out, captured.err) == ("! BREAKING: demo/nosuchdir not found — run /foundry:setup first\n", "")
+
+    @pytest.mark.parametrize(
+        ("skill", "found"),
+        [pytest.param("audit", True, id="existing-skill"), pytest.param("__nonexistent__", False, id="unknown-skill")],
+    )
+    def test_fallback_source_finds_sibling_tree(self, monkeypatch: pytest.MonkeyPatch, skill: str, found: bool) -> None:
+        """Without ``CLAUDE_PLUGIN_ROOT`` the loader falls back to this install's skills dir when the skill exists."""
+        monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
+        assert (load_mode.source_fallback_dir(skill, "modes") is not None) is found
 
 
 class TestOptional:
-    """``--optional`` turns every missing-doc case into one warning line with exit 0 — warn-and-skip."""
+    """``--optional`` turns every missing-doc case into one warning line with exit 0: warn-and-skip."""
 
     def test_present_doc_is_emitted_verbatim(
         self, fake_plugin: Path, capsysbinary: pytest.CaptureFixture[bytes]
     ) -> None:
         """A doc that exists loads exactly as without the flag: bytes on stdout, nothing else."""
-        assert load_shared_doc.main(["--optional", "foundry", "skills/_shared", "doc.md"]) == 0
+        assert load_shared_doc.main(["--optional", *_SHARED_ARGS, "doc.md"]) == 0
         captured = capsysbinary.readouterr()
-        assert captured.out == b"shared body\n"
-        assert captured.err == b""
+        assert (captured.out, captured.err) == (b"shared body\n", b"")
 
     def test_missing_file_warns_and_exits_zero(self, fake_plugin: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """An absent file prints one warning line and no doc — the caller's skip path, not a failure."""
-        assert load_shared_doc.main(["--optional", "foundry", "skills/_shared", "absent.md"]) == 0
-        out = capsys.readouterr().out
-        assert (
-            out == f"⚠ WARNING: absent.md not found at {(fake_plugin / 'skills' / '_shared').as_posix()} — skipping\n"
-        )
+        """An absent file prints one warning line and no doc: the caller's skip path, not a failure."""
+        assert load_shared_doc.main(["--optional", *_SHARED_ARGS, "absent.md"]) == 0
+        shared_dir = (fake_plugin / "skills" / "_shared").as_posix()
+        assert capsys.readouterr().out == f"⚠ WARNING: absent.md not found at {shared_dir} — skipping\n"
 
     @pytest.mark.parametrize(
         ("plugin", "subdir"),
@@ -163,18 +195,4 @@ class TestOptional:
     ) -> None:
         """An unresolvable plugin or directory prints the same single-line warning, exit 0, no doc output."""
         assert load_shared_doc.main(["--optional", plugin, subdir, "doc.md"]) == 0
-        out = capsys.readouterr().out
-        assert out == f"⚠ WARNING: {plugin}/{subdir} not found — skipping doc.md\n"
-
-    def test_argument_errors_still_exit_two(self, fake_plugin: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """A malformed file argument is a caller bug, never softened into a skip."""
-        assert load_shared_doc.main(["--optional", "foundry", "skills/_shared", "sub/doc.md"]) == 2
-        assert "plain file name" in capsys.readouterr().err
-
-    def test_default_stays_fail_loud(self, fake_plugin: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """Without the flag a missing doc still breaks with ``!
-
-        BREAKING`` and exit 1.
-        """
-        assert load_shared_doc.main(["foundry", "skills/_shared", "absent.md"]) == 1
-        assert capsys.readouterr().out.startswith("! BREAKING: absent.md not found in ")
+        assert capsys.readouterr().out == f"⚠ WARNING: {plugin}/{subdir} not found — skipping doc.md\n"

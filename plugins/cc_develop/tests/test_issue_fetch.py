@@ -1,186 +1,168 @@
 """Tests for ``bin/issue_fetch.py``.
 
 The script strips a leading ``#`` from the issue number, validates digits-only, then delegates to ``gh issue view`` with
-``--comments``. ``subprocess.run`` is monkeypatched throughout — no actual ``gh`` invocation. ``shutil.which`` is
-patched to return a fake path so ``_resolve`` succeeds even when ``gh`` is not installed.
+``--comments``. ``subprocess.run`` is mocked throughout — no actual ``gh`` invocation. ``which`` is mocked to return a
+fake path so ``_resolve`` succeeds even when ``gh`` is not installed.
 """
 
 from __future__ import annotations
 
-from typing import Any
+import subprocess
+from collections.abc import Iterator
+from unittest import mock
 
 import issue_fetch  # type: ignore[import-not-found]
 import pytest
 
-
-class _FakeCompleted:
-    """Minimal stand-in for ``subprocess.CompletedProcess``."""
-
-    def __init__(self, returncode: int = 0) -> None:
-        """Store the subprocess status exposed to the wrapper under test."""
-        self.returncode = returncode
+_GH = "/fake/path/to/gh"
 
 
-@pytest.fixture(name="captured_argv")
-def _captured_argv(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
-    """Patch ``subprocess.run`` and ``shutil.which`` inside the script; record argv lists."""
-    recorded: list[list[str]] = []
-
-    def _fake_run(cmd: list[str], **_kwargs: Any) -> _FakeCompleted:
-        """Record delegated GitHub CLI argv and return success."""
-        recorded.append(list(cmd))
-        return _FakeCompleted(returncode=0)
-
-    monkeypatch.setattr(issue_fetch.subprocess, "run", _fake_run)
-    monkeypatch.setattr(issue_fetch, "which", lambda _name: "/fake/path/to/gh")
-    return recorded
+@pytest.fixture
+def gh_which() -> Iterator[mock.MagicMock]:
+    """Mock executable lookup inside the script so ``gh`` resolves to a fake path."""
+    with mock.patch("issue_fetch.which", autospec=True, return_value=_GH) as which:
+        yield which
 
 
-@pytest.mark.parametrize(
-    ("raw", "expected"),
-    [
-        pytest.param("42", "42", id="plain-number"),
-        pytest.param("#42", "42", id="hash-prefixed-number"),
-        pytest.param("001", "001", id="leading-zeroes"),
-        pytest.param(" 42 ", "42", id="surrounding-whitespace"),
-    ],
-)
-def test_valid_issue_numbers(captured_argv: list[list[str]], raw: str, expected: str) -> None:
-    """Valid issue number forms are normalized before invoking gh."""
-    rc = issue_fetch.main([raw])
-    assert rc == 0
-    assert len(captured_argv) == 1
-    assert captured_argv[0] == ["/fake/path/to/gh", "issue", "view", expected, "--comments"]
+@pytest.fixture
+def gh_run(gh_which: mock.MagicMock) -> Iterator[mock.MagicMock]:
+    """Mock ``subprocess.run`` inside the script; it reports success unless a test sets ``return_value``."""
+    with mock.patch("issue_fetch.subprocess.run", autospec=True) as run:
+        run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
+        yield run
 
 
-@pytest.mark.parametrize("raw", ["abc", "#", "##42", "-1", "1.2", "12abc"])
-def test_rejects_invalid_issue_numbers(
-    captured_argv: list[list[str]],
-    capsys: pytest.CaptureFixture[str],
-    raw: str,
-) -> None:
-    """Non-numeric input → exit 1; gh never invoked; stderr contains diagnostic."""
-    rc = issue_fetch.main([raw])
-    assert rc == 1
-    assert captured_argv == []  # gh never called
-    err = capsys.readouterr().err
-    assert "invalid issue number" in err
+def _delegated_argv(gh_run: mock.MagicMock) -> list[list[str]]:
+    """Return the argv of every delegated ``gh`` call."""
+    return [call.args[0] for call in gh_run.call_args_list]
 
 
-def test_rejects_empty_input(
-    captured_argv: list[list[str]],
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """No argument → empty string → invalid; gh not invoked."""
-    rc = issue_fetch.main([])
-    assert rc == 1
-    assert captured_argv == []
-    assert "invalid issue number" in capsys.readouterr().err
+class TestIssueNumber:
+    """The issue number argument is normalized, or rejected before ``gh`` ever starts."""
+
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            pytest.param("42", "42", id="plain-number"),
+            pytest.param("#42", "42", id="hash-prefixed-number"),
+            pytest.param("001", "001", id="leading-zeroes"),
+            pytest.param(" 42 ", "42", id="surrounding-whitespace"),
+            pytest.param("#7 --repo evil/repo --foo bar", "7", id="blob-with-dash-tokens-uses-first-token"),
+        ],
+    )
+    def test_valid_forms_are_normalized(self, gh_run: mock.MagicMock, raw: str, expected: str) -> None:
+        """Valid issue number forms are normalized before invoking gh.
+
+        The last case is the raw ``$ARGUMENTS`` blob: only its first token is the number and the embedded ``--repo`` is
+        not consumed as an outer flag (the blob is never handed to argparse), so no ``--repo`` reaches gh.
+        """
+        rc = issue_fetch.main([raw])
+        assert (rc, _delegated_argv(gh_run)) == (0, [[_GH, "issue", "view", expected, "--comments"]])
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            pytest.param(["abc"], id="letters"),
+            pytest.param(["#"], id="bare-hash"),
+            pytest.param(["##42"], id="double-hash"),
+            pytest.param(["-1"], id="negative"),
+            pytest.param(["1.2"], id="decimal"),
+            pytest.param(["12abc"], id="digits-then-letters"),
+            pytest.param([], id="no-argument"),
+        ],
+    )
+    def test_invalid_number_exits_1(
+        self, gh_run: mock.MagicMock, capsys: pytest.CaptureFixture[str], argv: list[str]
+    ) -> None:
+        """Non-numeric or missing input → exit 1; gh never invoked; stderr carries the diagnostic.
+
+        No argument is treated as an empty string, which is just as invalid as a non-digit one.
+        """
+        rc = issue_fetch.main(argv)
+        assert (rc, gh_run.called, "invalid issue number" in capsys.readouterr().err) == (1, False, True)
 
 
-def test_passes_through_exit_code(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Preserve a delegated command's exit status."""
+class TestRepoOption:
+    """``--repo`` is forwarded only when it is a well-formed ``[HOST/]OWNER/REPO``."""
 
-    def _fake_run(_cmd: list[str], **_kwargs: Any) -> _FakeCompleted:
-        """Return the delegated command's failure status without running it."""
-        return _FakeCompleted(returncode=3)
+    @pytest.mark.parametrize(
+        "repo",
+        [
+            pytest.param("owner/repo", id="owner-repo"),
+            pytest.param("ghe.example.com/owner/repo", id="host-qualified"),
+            pytest.param("owner/.github", id="dot-leading-repo"),
+        ],
+    )
+    def test_valid_repo_is_forwarded_unchanged(self, gh_run: mock.MagicMock, repo: str) -> None:
+        """``[HOST/]OWNER/REPO`` forms ``gh --repo`` understands, including a ``.github`` repo, are forwarded unchanged.
 
-    monkeypatch.setattr(issue_fetch.subprocess, "run", _fake_run)
-    monkeypatch.setattr(issue_fetch, "which", lambda _name: "/fake/gh")
-    assert issue_fetch.main(["99"]) == 3
+        The plain ``owner/repo`` case is the golden call site ``issue_fetch.py "$ARGUMENTS" --repo owner/repo``.
+        """
+        rc = issue_fetch.main(["42", "--repo", repo])
+        assert (rc, _delegated_argv(gh_run)) == (0, [[_GH, "issue", "view", "42", "--comments", "--repo", repo]])
 
+    @pytest.mark.parametrize(
+        "repo",
+        [
+            pytest.param("-owner/repo", id="flag-shaped-owner"),
+            pytest.param("owner/-repo", id="flag-shaped-repo"),
+            pytest.param("../repo", id="dot-dot-owner"),
+            pytest.param("owner", id="single-segment"),
+            pytest.param("a/b/c/d", id="too-many-segments"),
+            pytest.param("owner/re po", id="whitespace"),
+            pytest.param("owner/repo\nx", id="newline"),
+        ],
+    )
+    def test_malformed_repo_exits_1(
+        self, gh_run: mock.MagicMock, capsys: pytest.CaptureFixture[str], repo: str
+    ) -> None:
+        """A ``--repo`` that is not ``[HOST/]OWNER/REPO`` exits 1 and gh is never started.
 
-def test_resolve_raises_when_gh_missing(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Propagate ``FileNotFoundError`` when ``gh`` not on PATH."""
-
-    def _no_run(*_args: Any, **_kwargs: Any) -> _FakeCompleted:  # pragma: no cover
-        """Fail if command execution occurs after the executable lookup fails."""
-        raise AssertionError("subprocess.run should not be called when gh is missing")
-
-    monkeypatch.setattr(issue_fetch.subprocess, "run", _no_run)
-    monkeypatch.setattr(issue_fetch, "which", lambda _name: None)
-    with pytest.raises(FileNotFoundError, match="gh"):
-        issue_fetch.main(["1"])
-
-
-def test_help_exits_zero(capsys: pytest.CaptureFixture[str]) -> None:
-    """Print usage and exit 0 (argparse) before any gh call."""
-    with pytest.raises(SystemExit) as exc:
-        issue_fetch.main(["--help"])
-    assert exc.value.code == 0
-    assert "issue_fetch.py" in capsys.readouterr().out
-
-
-def test_golden_invocation_with_repo(captured_argv: list[list[str]]) -> None:
-    """Golden call site ``issue_fetch.py "$ARGUMENTS" --repo owner/repo`` forwards both."""
-    rc = issue_fetch.main(["42", "--repo", "owner/repo"])
-    assert rc == 0
-    assert captured_argv[0] == ["/fake/path/to/gh", "issue", "view", "42", "--comments", "--repo", "owner/repo"]
-
-
-@pytest.mark.parametrize(
-    "repo",
-    [
-        pytest.param("ghe.example.com/owner/repo", id="host-qualified"),
-        pytest.param("owner/.github", id="dot-leading-repo"),
-    ],
-)
-def test_accepts_host_and_dot_leading_repo(captured_argv: list[list[str]], repo: str) -> None:
-    """``[HOST/]OWNER/REPO`` forms ``gh --repo`` understands, including a ``.github`` repo, are forwarded unchanged."""
-    assert issue_fetch.main(["42", "--repo", repo]) == 0
-    assert captured_argv[0][-2:] == ["--repo", repo]
+        The override can be read from a shared-temp sentinel another local process may have planted, so a malformed
+        value is refused instead of being handed to ``gh`` as an argument.
+        """
+        rc = issue_fetch.main(["42", "--repo", repo])
+        assert (rc, gh_run.called, "invalid --repo" in capsys.readouterr().err) == (1, False, True)
 
 
-@pytest.mark.parametrize(
-    "repo",
-    [
-        pytest.param("-owner/repo", id="flag-shaped-owner"),
-        pytest.param("owner/-repo", id="flag-shaped-repo"),
-        pytest.param("../repo", id="dot-dot-owner"),
-        pytest.param("owner", id="single-segment"),
-        pytest.param("a/b/c/d", id="too-many-segments"),
-        pytest.param("owner/re po", id="whitespace"),
-        pytest.param("owner/repo\nx", id="newline"),
-    ],
-)
-def test_rejects_malformed_repo(captured_argv: list[list[str]], capsys: pytest.CaptureFixture[str], repo: str) -> None:
-    """A ``--repo`` that is not ``[HOST/]OWNER/REPO`` exits 1 and gh is never started.
+class TestDelegation:
+    """The wrapper hands the terminal to ``gh`` and reports its status."""
 
-    The override can be read from a shared-temp sentinel another local process may have planted, so a malformed value is
-    refused instead of being handed to ``gh`` as an argument.
-    """
-    assert issue_fetch.main(["42", "--repo", repo]) == 1
-    assert captured_argv == []
-    assert "invalid --repo" in capsys.readouterr().err
+    def test_passes_through_exit_code(self, gh_run: mock.MagicMock) -> None:
+        """Preserve a delegated command's exit status.
 
+        Callers branch on the status, so a failing ``gh issue view`` must not be flattened to success.
+        """
+        gh_run.return_value = subprocess.CompletedProcess(args=[], returncode=3)
+        assert issue_fetch.main(["99"]) == 3
 
-def test_blob_with_dash_tokens_reaches_extraction_unmangled(captured_argv: list[list[str]]) -> None:
-    """A blob whose first token is the issue number but which also carries ``--``-shaped tokens still yields the correct
-    issue number — the blob is never handed to argparse."""
-    rc = issue_fetch.main(["#7 --repo evil/repo --foo bar"])
-    assert rc == 0
-    # Only the first token (#7 → 7) is used; embedded --repo inside the blob is ignored,
-    # not consumed as an outer flag, so no --repo reaches gh.
-    assert captured_argv[0] == ["/fake/path/to/gh", "issue", "view", "7", "--comments"]
+    def test_missing_gh_raises(self, gh_which: mock.MagicMock, gh_run: mock.MagicMock) -> None:
+        """Propagate ``FileNotFoundError`` when ``gh`` is not on PATH, without starting any subprocess.
 
+        A missing CLI is an install problem; surfacing it as an exception beats a confusing "invalid issue" exit.
+        """
+        gh_which.return_value = None
+        with pytest.raises(FileNotFoundError, match="gh"):
+            issue_fetch.main(["1"])
+        gh_run.assert_not_called()
 
-def test_passthrough_no_capture(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Sanity: ``subprocess.run`` is called WITHOUT ``capture_output=True``.
+    def test_output_streams_are_inherited(self, gh_run: mock.MagicMock) -> None:
+        """``subprocess.run`` is called WITHOUT capture, so ``gh`` output reaches the user directly.
 
-    Both stdout and stderr must remain inherited from the caller so the user sees
-    ``gh``'s output directly (mirrors bash ``2>&1``).
-    """
-    recorded_kwargs: dict[str, Any] = {}
+        Both stdout and stderr stay inherited from the caller (mirrors bash ``2>&1``).
+        """
+        issue_fetch.main(["7"])
+        kwargs = gh_run.call_args.kwargs
+        assert (kwargs.get("capture_output"), kwargs.get("stdout"), kwargs.get("stderr")) in {
+            (None, None, None),
+            (False, None, None),
+        }
 
-    def _fake_run(_cmd: list[str], **kwargs: Any) -> _FakeCompleted:
-        """Capture subprocess keyword arguments while returning success."""
-        recorded_kwargs.update(kwargs)
-        return _FakeCompleted(returncode=0)
+    def test_help_exits_zero(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """Print usage and exit 0 (argparse) before any gh call.
 
-    monkeypatch.setattr(issue_fetch.subprocess, "run", _fake_run)
-    monkeypatch.setattr(issue_fetch, "which", lambda _name: "/fake/gh")
-    issue_fetch.main(["7"])
-    # No capture flags — stdout/stderr inherit by default.
-    assert recorded_kwargs.get("capture_output") in (None, False)
-    assert "stdout" not in recorded_kwargs or recorded_kwargs["stdout"] is None
-    assert "stderr" not in recorded_kwargs or recorded_kwargs["stderr"] is None
+        ``--help`` needs no ``gh`` lookup, so it works even where the CLI is not installed.
+        """
+        with pytest.raises(SystemExit) as exc:
+            issue_fetch.main(["--help"])
+        assert (exc.value.code, "issue_fetch.py" in capsys.readouterr().out) == (0, True)

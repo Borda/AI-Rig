@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.12.2
+
+- Close the child's capture pipes after each supervised call once both output readers have finished, and reap the detached background supervisor on a daemon thread, so a long-lived host such as the MCP server no longer accumulates open pipe objects, `subprocess N is still running` ResourceWarnings or unreaped children.
+- Keep output-reader cleanup bounded by a named 2-second join limit, and allow the detached cancellation test to poll child startup for up to 10 seconds so slower parallel runs can still verify process-tree cleanup.
+
 ## 0.12.1
 
 - Keep completed Codex commands with large output running: a record proven, once fully parsed, to be a completed command with output may use a bounded 8 MiB raw buffer before compaction to full-output byte counts and SHA-256; retained records stay within 256 KiB, while other oversized records still stop the run.

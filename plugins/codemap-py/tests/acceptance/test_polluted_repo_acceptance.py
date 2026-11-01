@@ -18,6 +18,9 @@ The ``with_collision=True`` variant adds ``wt/pkg/…`` to create a real ``pkg.*
 excluded paths out of the index ``file_shas`` while scan-query's staleness diff applies the same exclusions (shared via
 ``bin/_exclusions.py``), so a ``.codemapignore``-excluded tracked ``.py`` (here ``vendored-lib/vendored.py``) no longer
 counts as "added" and the index is not falsely reported stale.
+
+Every test here drives the real ``scan-index`` / ``scan-query`` scripts and a real git repo: the subprocess round trip
+is the contract, so nothing is mocked.
 """
 
 from __future__ import annotations
@@ -28,18 +31,9 @@ import sys
 from pathlib import Path
 
 import pytest
+from _scan_helpers import run_git, run_query
 
-
-def _query(scan_query: Path, root: Path, index_path: Path, *args: str) -> dict:
-    """Run scan-query against *index_path* under *root* and return parsed JSON."""
-    result = subprocess.run(
-        [sys.executable, str(scan_query), "--index", str(index_path), *args],
-        capture_output=True,
-        text=True,
-        cwd=str(root),
-    )
-    assert result.returncode == 0, result.stderr + result.stdout
-    return json.loads(result.stdout)
+_NEWCALLER_SRC = "import pkg.leaf\n\n\ndef also(x):\n    return pkg.leaf.leaf_fn(x)\n"
 
 
 def _rescan(scan_index: Path, root: Path) -> None:
@@ -53,10 +47,9 @@ def _rescan(scan_index: Path, root: Path) -> None:
     assert result.returncode == 0, result.stderr
 
 
-def _git(root: Path, *args: str) -> None:
-    """Run a git command inside *root*, asserting success."""
-    result = subprocess.run(["git", *args], cwd=str(root), capture_output=True, text=True)
-    assert result.returncode == 0, result.stderr
+def _load_index(index_path: Path) -> dict:
+    """Return the parsed index JSON stored at *index_path*."""
+    return json.loads(index_path.read_text())
 
 
 def _module_paths(index: dict) -> set[str]:
@@ -64,37 +57,77 @@ def _module_paths(index: dict) -> set[str]:
     return {m["path"] for m in index.get("modules", [])}
 
 
+def _collision_paths(index: dict) -> set[str]:
+    """Return every path named as kept or dropped by any collision record in an index."""
+    return {p for c in index["collisions"] for p in (c["kept"], *c["dropped"])}
+
+
+def _commit_all(root: Path, message: str) -> None:
+    """Stage everything under *root* and commit it."""
+    run_git(root, "add", "-A")
+    run_git(root, "commit", "-q", "-m", message)
+
+
+def _commit_newcaller(root: Path) -> None:
+    """Commit a new ``pkg/newcaller.py`` that imports ``pkg.leaf``, leaving the index stale."""
+    (root / "pkg" / "newcaller.py").write_text(_NEWCALLER_SRC)
+    _commit_all(root, "add newcaller")
+
+
+def _winners_over_rescans(scan_index: Path, root: Path, index_path: Path, rounds: int) -> set[str]:
+    """Rescan *root* *rounds* times and return the distinct kept paths recorded for ``pkg.leaf``."""
+    winners = set()
+    for _ in range(rounds):
+        _rescan(scan_index, root)
+        collision = next(c for c in _load_index(index_path)["collisions"] if c["name"] == "pkg.leaf")
+        winners.add(collision["kept"])
+    return winners
+
+
 @pytest.mark.integration
 class TestExclusions:
     """The ghost worktree and vendored dir never enter the module index."""
 
-    def test_no_modules_under_excluded_roots(self, polluted_repo):
-        """Fresh scan indexes zero modules under .claude/ or the vendored dir."""
+    @pytest.mark.parametrize("excluded_prefix", [".claude/", "vendored-lib/"])
+    def test_no_modules_under_excluded_roots(self, polluted_repo, excluded_prefix):
+        """A fresh scan indexes zero modules under the built-in ``.claude/`` or the ``.codemapignore``d dir.
+
+        The tree holds a ghost worktree copy and a vendored copy; both must be pruned before indexing so they cannot
+        shadow or duplicate the real package.
+        """
         _root, index_path = polluted_repo()
-        paths = _module_paths(json.loads(index_path.read_text()))
-        assert not any(p.startswith(".claude/") for p in paths), paths
-        assert not any(p.startswith("vendored-lib/") for p in paths), paths
+        paths = _module_paths(_load_index(index_path))
+        assert not any(p.startswith(excluded_prefix) for p in paths), paths
 
     def test_healthy_pkg_modules_survive(self, polluted_repo):
-        """Real package modules are still indexed after exclusions are applied."""
+        """Real package modules are still indexed after exclusions are applied.
+
+        Guards against over-eager pruning: the collision-free tree must still index ``pkg/leaf.py`` and
+        ``pkg/consumer.py`` next to the excluded copies.
+        """
         _root, index_path = polluted_repo()
-        paths = _module_paths(json.loads(index_path.read_text()))
-        assert {"pkg/leaf.py", "pkg/consumer.py"} <= paths
+        assert {"pkg/leaf.py", "pkg/consumer.py"} <= _module_paths(_load_index(index_path))
 
     def test_codemapignore_entry_in_excluded_roots_meta(self, polluted_repo):
-        """A .codemapignore dir appears in `excluded_roots` with source and a non-zero count."""
+        """A .codemapignore dir appears in `excluded_roots` with source and a non-zero count.
+
+        ``vendored-lib`` holds one tracked ``.py``, so its metadata record must name the source file and count it.
+        """
         _root, index_path = polluted_repo()
-        index = json.loads(index_path.read_text())
+        index = _load_index(index_path)
         record = next((r for r in index["excluded_roots"] if r["pattern"] == "vendored-lib"), None)
         assert record is not None, index["excluded_roots"]
         assert record["source"] == ".codemapignore"
         assert record["count"] >= 1, "vendored dir held a .py file that must be counted"
 
     def test_builtin_skip_dir_stays_implicit(self, polluted_repo):
-        """The built-in .claude SKIP_DIR is pruned but deliberately omitted from meta."""
+        """The built-in .claude SKIP_DIR is pruned but deliberately omitted from meta.
+
+        Only user-configured exclusions are reported in ``excluded_roots``; the always-on ``.claude`` prune must not
+        leak into that list.
+        """
         _root, index_path = polluted_repo()
-        index = json.loads(index_path.read_text())
-        patterns = {r["pattern"] for r in index["excluded_roots"]}
+        patterns = {r["pattern"] for r in _load_index(index_path)["excluded_roots"]}
         assert ".claude" not in patterns
 
 
@@ -103,37 +136,43 @@ class TestDedupDeterminism:
     """The non-excluded duplicate tree collides deterministically."""
 
     def test_collision_recorded_for_shared_qualname(self, polluted_repo):
-        """pkg/leaf.py and wt/pkg/leaf.py share dotted name pkg.leaf → one collision record."""
+        """pkg/leaf.py and wt/pkg/leaf.py share dotted name pkg.leaf → one collision record.
+
+        The ``wt/`` copy is not excluded, so both files map to ``pkg.leaf`` and the index must record which one was kept
+        and which dropped.
+        """
         _root, index_path = polluted_repo(with_collision=True)
-        index = json.loads(index_path.read_text())
+        index = _load_index(index_path)
         collision = next((c for c in index["collisions"] if c["name"] == "pkg.leaf"), None)
         assert collision is not None, index["collisions"]
         assert set(collision["dropped"]) | {collision["kept"]} == {"pkg/leaf.py", "wt/pkg/leaf.py"}
 
     def test_no_collision_in_collision_free_variant(self, polluted_repo):
-        """Without the wt/ copy the index records no collisions."""
+        """Without the wt/ copy the index records no collisions.
+
+        Pruned ghost and vendored copies must not leave collision records behind.
+        """
         _root, index_path = polluted_repo()
-        assert json.loads(index_path.read_text())["collisions"] == []
+        assert _load_index(index_path)["collisions"] == []
 
     def test_ghost_copy_never_collides(self, polluted_repo):
-        """The excluded .claude ghost copy is pruned before dedup, so it is in no collision record."""
+        """The excluded .claude ghost copy is pruned before dedup, so it is in no collision record.
+
+        Even with a genuine ``wt/`` collision present, the ghost tree under ``.claude/`` must not appear as a kept or
+        dropped path.
+        """
         _root, index_path = polluted_repo(with_collision=True)
-        index = json.loads(index_path.read_text())
-        involved: set[str] = set()
-        for c in index["collisions"]:
-            involved.add(c["kept"])
-            involved |= set(c["dropped"])
+        involved = _collision_paths(_load_index(index_path))
         assert not any(p.startswith(".claude/") for p in involved), involved
 
     def test_winner_stable_across_repeated_scans(self, polluted_repo, scan_index):
-        """The dedup winner for pkg.leaf is identical across repeated full scans."""
+        """The dedup winner for pkg.leaf is identical across repeated full scans.
+
+        Three real rescans of the colliding tree must keep the same path each time; a filesystem-order-dependent winner
+        would flip between runs.
+        """
         root, index_path = polluted_repo(with_collision=True)
-        winners = set()
-        for _ in range(3):
-            _rescan(scan_index, root)
-            index = json.loads(index_path.read_text())
-            collision = next(c for c in index["collisions"] if c["name"] == "pkg.leaf")
-            winners.add(collision["kept"])
+        winners = _winners_over_rescans(scan_index, root, index_path, rounds=3)
         assert len(winners) == 1, f"dedup winner must be deterministic, saw {winners}"
 
 
@@ -142,9 +181,12 @@ class TestDirectionScopedIncompleteness:
     """A degraded file forces global-in / whole-graph queries to report incomplete."""
 
     def test_degraded_file_registered(self, polluted_repo, scan_query):
-        """broken.py registers as the sole degraded module, surfaced in degraded_files."""
+        """broken.py registers as the sole degraded module, surfaced in degraded_files.
+
+        The syntax-error module must be counted once and named in the query's index metadata.
+        """
         root, index_path = polluted_repo()
-        data = _query(scan_query, root, index_path, "--no-heal", "rdeps", "pkg.leaf")
+        data = run_query(scan_query, root, index_path, "--no-heal", "rdeps", "pkg.leaf")
         assert data["index"]["degraded"] == 1
         assert any("broken.py" in entry["path"] for entry in data["index"]["degraded_files"])
 
@@ -159,9 +201,13 @@ class TestDirectionScopedIncompleteness:
         ],
     )
     def test_global_and_whole_graph_incomplete_with_degraded(self, polluted_repo, scan_query, command, args):
-        """Every global-in / whole-graph query reports incomplete while a degraded file exists."""
+        """Every global-in / whole-graph query reports incomplete while a degraded file exists.
+
+        An unparsed file may hold importers the index cannot see, so answers that span the whole graph must not claim
+        completeness.
+        """
         root, index_path = polluted_repo()
-        data = _query(scan_query, root, index_path, "--no-heal", command, *args)
+        data = run_query(scan_query, root, index_path, "--no-heal", command, *args)
         assert data["index"]["query_complete"] is False
 
 
@@ -169,32 +215,23 @@ class TestDirectionScopedIncompleteness:
 class TestSelfHeal:
     """A stale index is refreshed inline before the query answers."""
 
-    def test_new_committed_edge_surfaces_via_heal(self, polluted_repo, scan_query):
-        """Committing a new importer then querying rdeps auto-heals and reflects the new edge."""
-        root, index_path = polluted_repo()
-        (root / "pkg" / "newcaller.py").write_text(
-            "import pkg.leaf\n\n\ndef also(x):\n    return pkg.leaf.leaf_fn(x)\n"
-        )
-        _git(root, "add", "-A")
-        _git(root, "commit", "-q", "-m", "add newcaller")
+    @pytest.mark.parametrize(
+        ("flags", "sees_new_edge"),
+        [
+            pytest.param((), True, id="heal-surfaces-new-edge"),
+            pytest.param(("--no-heal",), False, id="no-heal-keeps-stale-result"),
+        ],
+    )
+    def test_committed_edge_visibility(self, polluted_repo, scan_query, flags, sees_new_edge):
+        """A newly committed importer is visible to `rdeps` only when scan-query may self-heal.
 
-        data = _query(scan_query, root, index_path, "rdeps", "pkg.leaf")
-        assert "pkg.newcaller" in data["imported_by"], "self-heal must surface the newly-committed edge"
-
-    def test_no_heal_flag_keeps_stale_result(self, polluted_repo, scan_query):
-        """Verify command-line option behavior.
-
-        --no-heal answers from the stale index: the new edge stays invisible.
+        The index is built, then a new importer is committed. Default queries must refresh inline and show the edge;
+        `--no-heal` must answer from the stale index and leave it invisible.
         """
         root, index_path = polluted_repo()
-        (root / "pkg" / "newcaller.py").write_text(
-            "import pkg.leaf\n\n\ndef also(x):\n    return pkg.leaf.leaf_fn(x)\n"
-        )
-        _git(root, "add", "-A")
-        _git(root, "commit", "-q", "-m", "add newcaller")
-
-        data = _query(scan_query, root, index_path, "--no-heal", "rdeps", "pkg.leaf")
-        assert "pkg.newcaller" not in data["imported_by"], "stale index must not see the new edge"
+        _commit_newcaller(root)
+        data = run_query(scan_query, root, index_path, *flags, "rdeps", "pkg.leaf")
+        assert ("pkg.newcaller" in data["imported_by"]) is sees_new_edge
 
 
 @pytest.mark.integration
@@ -208,26 +245,33 @@ class TestExcludedPathStaleness:
     against the earlier bug where any excluded tracked Python file forced the index to remain stale.
     """
 
-    def test_fresh_index_reports_not_stale(self, polluted_repo, scan_query):
-        """A freshly scanned, unmodified repo reports a fresh (non-stale) index."""
-        root, index_path = polluted_repo()
-        data = _query(scan_query, root, index_path, "--no-heal", "deps", "pkg.consumer")
-        assert data["index"]["stale"] is False
+    @pytest.mark.parametrize(
+        ("key", "expected"),
+        [
+            pytest.param("stale", False, id="fresh-index-not-stale"),
+            pytest.param("query_complete", True, id="local-deps-on-healthy-module-complete"),
+        ],
+    )
+    def test_local_deps_on_fresh_index(self, polluted_repo, scan_query, key, expected):
+        """A local `deps` query on a freshly scanned repo is fresh and complete despite a degraded file elsewhere.
 
-    def test_local_deps_on_healthy_module_complete(self, polluted_repo, scan_query):
-        """Local `deps` on a cleanly-parsed module is complete despite a degraded file elsewhere."""
+        The tracked-but-excluded vendored file must not count as an added blob, and `pkg.consumer` parses cleanly, so
+        neither staleness nor the degraded `pkg.broken` may taint the answer.
+        """
         root, index_path = polluted_repo()
-        data = _query(scan_query, root, index_path, "--no-heal", "deps", "pkg.consumer")
-        assert data["index"]["query_complete"] is True
+        data = run_query(scan_query, root, index_path, "--no-heal", "deps", "pkg.consumer")
+        assert data["index"][key] is expected
 
     def test_rdeps_complete_after_broken_removed(self, polluted_repo, scan_query, scan_index):
-        """Removing broken.py then rescanning flips global-in `rdeps` to complete."""
+        """Removing broken.py then rescanning flips global-in `rdeps` to complete.
+
+        With the only degraded module gone and the index rebuilt, nothing constrains the global-in direction anymore.
+        """
         root, index_path = polluted_repo()
         (root / "pkg" / "broken.py").unlink()
-        _git(root, "add", "-A")
-        _git(root, "commit", "-q", "-m", "remove broken")
+        _commit_all(root, "remove broken")
         _rescan(scan_index, root)
 
-        data = _query(scan_query, root, index_path, "--no-heal", "rdeps", "pkg.leaf")
+        data = run_query(scan_query, root, index_path, "--no-heal", "rdeps", "pkg.leaf")
         assert data["index"]["degraded"] == 0
         assert data["index"]["query_complete"] is True

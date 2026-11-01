@@ -10,6 +10,7 @@ or the user routes off the default index, or whose routing cannot be determined,
 
 from __future__ import annotations
 
+from functools import cache
 from pathlib import Path
 
 import pytest
@@ -17,8 +18,9 @@ import pytest
 _TEMPLATES = Path(__file__).resolve().parents[2] / "skills/review/templates"
 
 
+@cache
 def _template(name: str) -> str:
-    """Read one review template as the orchestrator loads it."""
+    """Read one review template as the orchestrator loads it; the shipped text is immutable during a run."""
     return (_TEMPLATES / name).read_text(encoding="utf-8")
 
 
@@ -30,7 +32,11 @@ def _procedure() -> str:
 
 
 def test_procedure_follows_the_evidence_standard() -> None:
-    """The procedure sits beside the finding evidence standard, so every agent prompt carries it."""
+    """The procedure sits beside the finding evidence standard, so every agent prompt carries it.
+
+    Agents read the evidence standard before they report a gap; a procedure placed ahead of it would be read without the
+    rule that decides when a gap needs closing.
+    """
     text = _template("agent-prompts.md")
     assert text.index("**Finding evidence standard") < text.index("**Missing-package evidence gap — close it")
 
@@ -44,7 +50,11 @@ def test_procedure_follows_the_evidence_standard() -> None:
     ],
 )
 def test_procedure_scope_and_gate(marker: str) -> None:
-    """The procedure binds every agent and rides the run's existing permission to execute PR code."""
+    """The procedure binds every agent and rides the run's existing permission to execute PR code.
+
+    The overlay may run only where the review already executes PR code, so a reviewer in a read-only sandbox keeps the
+    gap instead of widening what it may run.
+    """
     assert marker in _procedure()
 
 
@@ -66,11 +76,6 @@ def test_approval_is_the_exact_command_prompt(marker: str) -> None:
     assert marker in _procedure()
 
 
-def test_no_blanket_no_approval_claim() -> None:
-    """The superseded claim that the procedure needs no approval stays removed."""
-    assert "needs no extra approval" not in _procedure()
-
-
 @pytest.mark.parametrize(
     "marker",
     [
@@ -85,7 +90,11 @@ def test_no_blanket_no_approval_claim() -> None:
     ],
 )
 def test_only_base_declared_packages(marker: str) -> None:
-    """Names come from the base branch's dependency files with a citation, never from untrusted PR text."""
+    """Names come from the base branch's dependency files with a citation, never from untrusted PR text.
+
+    A package name taken from a PR body or code string would let a contributor choose what the reviewer downloads and
+    runs; the base branch is the only trusted source of what the project already depends on.
+    """
     assert marker in _procedure()
 
 
@@ -98,7 +107,10 @@ def test_only_base_declared_packages(marker: str) -> None:
     ],
 )
 def test_new_dependency_is_a_finding_not_an_install(marker: str) -> None:
-    """A package the PR newly adds is reported for provenance review instead of being installed and imported."""
+    """A package the PR newly adds is reported for provenance review instead of being installed and imported.
+
+    A name only the PR head declares has no base-branch trust, so installing it would run unreviewed third-party code.
+    """
     assert marker in _procedure()
 
 
@@ -121,7 +133,11 @@ def test_new_dependency_is_a_finding_not_an_install(marker: str) -> None:
     ],
 )
 def test_wheel_only_on_default_index(marker: str) -> None:
-    """The support check refuses source builds and every repository-declared or inherited index."""
+    """The support check refuses source builds and every repository-declared or inherited index.
+
+    A source build executes arbitrary build code during the fetch step, and a non-default index can serve a squatted
+    name; wheels from the default index keep the fetch inert.
+    """
     assert marker in _procedure()
 
 
@@ -248,12 +264,18 @@ def test_resolver_environment_is_allow_listed(marker: str) -> None:
 @pytest.mark.parametrize(
     "superseded",
     [
+        pytest.param("needs no extra approval", id="blanket-no-approval-claim"),
         pytest.param("env -u UV_CONFIG_FILE", id="env-unset-prefix"),
         pytest.param("`not on default index`", id="absence-only-reason"),
+        pytest.param("uv run --no-project", id="combined-download-and-execute"),
     ],
 )
-def test_superseded_index_clearing_is_gone(superseded: str) -> None:
-    """The procedure no longer strips inherited index settings and substitutes PyPI silently."""
+def test_superseded_wording_is_gone(superseded: str) -> None:
+    """Retired procedure wording stays removed: blanket no-approval, silent index clearing, combined fetch-and-run.
+
+    Each phrase once licensed an unsafe shortcut (allow-listing `uv run`, stripping a user's index settings so PyPI
+    answered, or downloading and executing in one command), so its reappearance is a regression.
+    """
     assert superseded not in _procedure()
 
 
@@ -275,13 +297,12 @@ def test_superseded_index_clearing_is_gone(superseded: str) -> None:
     ],
 )
 def test_fetch_and_run_are_split(marker: str) -> None:
-    """Downloading wheels and executing PR code are separate commands, each approved on its own."""
+    """Downloading wheels and executing PR code are separate commands, each approved on its own.
+
+    A fetch with no code execution can be approved cheaply; the run step then executes PR code over a fixed overlay with
+    no network, so neither command carries the other's risk.
+    """
     assert marker in _procedure()
-
-
-def test_superseded_combined_overlay_command_is_gone() -> None:
-    """The procedure no longer prescribes the combined download-and-execute overlay command."""
-    assert "uv run --no-project" not in _procedure()
 
 
 @pytest.mark.parametrize(
@@ -301,17 +322,29 @@ def test_superseded_combined_overlay_command_is_gone() -> None:
     ],
 )
 def test_overlay_is_ephemeral(marker: str) -> None:
-    """The run layers over the project env, which must stay byte-for-byte the same package set."""
+    """The run layers over the project env, which must stay byte-for-byte the same package set.
+
+    Reviewing a PR must not change the environment the next review or the user's own work runs in, so installs go to a
+    run-local target and a before/after package listing proves nothing leaked.
+    """
     assert marker in _procedure()
 
 
 def test_import_origin_proof_required() -> None:
-    """An editable install pointing at another tree must not silently test the wrong checkout."""
+    """An editable install pointing at another tree must not silently test the wrong checkout.
+
+    The overlay evidence only counts when the imported package path is the reviewed checkout, so the procedure demands
+    that proof before reporting a result.
+    """
     assert "path must be the reviewed checkout" in _procedure()
 
 
 def test_evidence_line_records_every_field() -> None:
-    """The evidence line names package, version, wheel, declaring specs, both commands, result and env check."""
+    """The evidence line names package, version, wheel, declaring specs, both commands, result and env check.
+
+    The consolidator copies this line verbatim into the report, so a missing field would leave the reader unable to
+    reproduce or trust the closed gap.
+    """
     assert (
         "under `### Ephemeral dependency evidence`: `<pkg>==<ver> · wheel <filename> · spec base <file:line> head "
         "<file:line> '<spec>' · fetch <full command> · run <full command> · result <N passed, M failed> · "
@@ -330,7 +363,11 @@ def test_evidence_line_records_every_field() -> None:
     ],
 )
 def test_failure_keeps_gap_with_concrete_reason(marker: str) -> None:
-    """No wheel, network failure or timeout keeps the gap, stated with the failed step and its reason."""
+    """No wheel, network failure or timeout keeps the gap, stated with the failed step and its reason.
+
+    A bare "not installed" gap hid that the procedure was never tried; naming the failed step turns it into an evidence
+    limit a reader can act on.
+    """
     assert marker in _procedure()
 
 
@@ -346,12 +383,20 @@ def test_failure_keeps_gap_with_concrete_reason(marker: str) -> None:
     ],
 )
 def test_consolidator_closes_or_flags_package_gaps(marker: str) -> None:
-    """An evidence line closes another reviewer's matching gap; a bare gap is flagged as not attempted."""
+    """An evidence line closes another reviewer's matching gap; a bare gap is flagged as not attempted.
+
+    Several agents may report the same missing package; the consolidator keeps the one with evidence and must not score
+    a gap that another agent already closed.
+    """
     assert marker in _template("consolidator-prompt.md")
 
 
 def test_report_template_has_evidence_slot() -> None:
-    """The report template gives the consolidator a fixed place for the evidence line, in the agents' field order."""
+    """The report template gives the consolidator a fixed place for the evidence line, in the agents' field order.
+
+    The slot lives under ``### Review Confidence``; keeping the same field order as the agents' line lets the
+    consolidator paste it without rewording.
+    """
     text = _template("review-report.md")
     slot = text[text.index("### Review Confidence") :]
     assert "**Ephemeral dependency evidence**: `<pkg>==<ver> · wheel <filename> · spec base <file:line>" in slot

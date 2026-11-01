@@ -11,6 +11,8 @@ Covers:
 
 Sibling-plugin wrapper tests skip when the sibling files are absent (installed-plugin isolation:
 a lone codemap install has no develop/oss tree next to it).
+
+Prose assertions compare against whitespace-collapsed text, so reflowing a Markdown paragraph never breaks them.
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from _codemap_skill_text import between, flat_file
 from codemap_py import integration
 
 _PLUGIN_ROOT = Path(__file__).parent.parent.parent
@@ -66,6 +69,23 @@ def _find_working_posix_bash() -> str | None:
 
 
 _POSIX_BASH = _find_working_posix_bash()
+_skip_no_posix_bash = pytest.mark.skipif(_POSIX_BASH is None, reason="no working POSIX bash on this host")
+
+# Shell fragments shared by the stubbed ``codemap-py query`` bodies. The snippet probes ``query --help`` once to learn
+# whether this build knows ``--format``; that probe is capability detection, not a query, so it stays out of the trace.
+_RECORD_QUERY = 'printf "%s\\n" "$*" >> "$TRACE"; printf \'%s\\n\' \'{"query_complete":true}\';'
+_TARGET_ENV = {"TARGET_FN": "target", "TARGET_MODULE": "package.module", "TARGET_QUALIFIED": "package.module::target"}
+
+
+def _batch_snippet() -> str:
+    """Return the bash block of the contract's batch pre-flight pattern."""
+    contract = _CONTEXT_CONTRACT.read_text(encoding="utf-8")
+    return contract.split("## Batch pre-flight pattern", 1)[1].split("```bash", 1)[1].split("```", 1)[0]
+
+
+def _help_branch(usage: str) -> str:
+    """Return a stub ``query`` case branch answering ``--help`` with *usage*."""
+    return f'case "$1" in --help) printf "%s\\n" "{usage}"; return 0;; esac; '
 
 
 def _codemap_py_stubs(query_body: str) -> str:
@@ -77,13 +97,55 @@ def _codemap_py_stubs(query_body: str) -> str:
     return f'_cm_query() {{ {query_body} }}\ncodemap-py() {{ case "$1" in index) return 0;; query) shift; _cm_query "$@";; esac; }}'
 
 
+def _make_index(tmp_path: Path) -> None:
+    """Create the empty per-project index file the batch snippet probes for."""
+    index_dir = tmp_path / ".cache" / "codemap"
+    index_dir.mkdir(parents=True)
+    (index_dir / f"{tmp_path.name}.json").write_text("{}\n", encoding="utf-8")
+
+
+def _run_batch(tmp_path: Path, query_body: str, **env: str) -> subprocess.CompletedProcess[str]:
+    """Run the batch snippet in bash against a stubbed ``git`` and ``codemap-py`` and return the result.
+
+    Shell functions, not executables on PATH: whether an extensionless file carrying a shebang counts as executable is
+    a property of the host — Git-for-Windows decides it from mount flags and content sniffing, and Python's chmod
+    cannot set that bit at all. The tests measure which queries the snippet issues, never how a host resolves a
+    command, and ``command -v`` reports functions, so the snippet's own guard still runs. Values the shell reads are
+    spelled the way it reads them: ``basename`` does not split on a backslash, so a native ``C:\\...\\repo`` would
+    leave the whole string as the project name and the index probe would never match.
+    """
+    stubs = f'git() {{ printf "%s\\n" "$FAKE_REPO"; }}\n{_codemap_py_stubs(query_body)}\n'
+    full_env = os.environ | {
+        "FAKE_REPO": tmp_path.as_posix(),
+        "TRACE": (tmp_path / "queries.txt").as_posix(),
+        **env,
+    }
+    return subprocess.run(
+        [_POSIX_BASH, "-c", stubs + _batch_snippet()],
+        cwd=tmp_path,
+        env=full_env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _queries(tmp_path: Path) -> list[str]:
+    """Return the query lines the stubbed ``codemap-py`` recorded, or an empty list when none ran."""
+    trace = tmp_path / "queries.txt"
+    return trace.read_text(encoding="utf-8").splitlines() if trace.exists() else []
+
+
 class TestContextContract:
     """The shipped context contract is the plugin-agnostic single source of truth."""
 
     def test_has_version_header(self):
-        """Contract header carries an explicit version string feeding the injection version check."""
-        text = _CONTEXT_CONTRACT.read_text(encoding="utf-8")
-        assert "# Codemap context contract — v5" in text
+        """Contract header carries an explicit version string feeding the injection version check.
+
+        The injection version check compares this header, so a contract edited without bumping it would go stale in
+        every consumer silently.
+        """
+        assert "# Codemap context contract — v5" in _CONTEXT_CONTRACT.read_text(encoding="utf-8")
 
     @pytest.mark.parametrize(
         "section",
@@ -99,53 +161,84 @@ class TestContextContract:
         ],
     )
     def test_carries_required_section(self, section: str):
-        """Every generic section the wrappers delegate to must be present in the contract."""
-        assert section in _CONTEXT_CONTRACT.read_text(encoding="utf-8")
+        """Every generic section the wrappers delegate to must be present in the contract.
 
-    def test_carries_evidence_line_and_completeness_semantics(self):
-        """The evidence line and all four completeness states are defined once in the contract."""
-        text = _CONTEXT_CONTRACT.read_text(encoding="utf-8")
-        assert "codemap_evidence:" in text
-        for state in ("exhaustive", "partial", "stale", "unknown"):
-            assert state in text
+        Wrappers point at these headings instead of copying them, so a renamed or dropped section leaves a dangling
+        delegation.
+        """
+        assert section in flat_file(_CONTEXT_CONTRACT)
 
-    def test_routes_localized_edits_only_when_a_structural_fact_remains(self):
-        """A known local edit skips retrieval unless a fact or explicit requirement still needs it."""
+    @pytest.mark.parametrize("term", ["codemap_evidence:", "exhaustive", "partial", "stale", "unknown"])
+    def test_defines_evidence_line_and_completeness_state(self, term: str):
+        """The evidence line and all four completeness states are defined once in the contract.
+
+        Consumers quote these exact words in their evidence line, so each state must exist in the single source.
+        """
+        assert term in flat_file(_CONTEXT_CONTRACT)
+
+    @pytest.mark.parametrize(
+        "phrase",
+        [
+            "exact file",
+            "symbol",
+            "localized",
+            "skip codemap",
+            "caller",
+            "dependency",
+            "blast radius",
+            "test impact",
+            "explicit structural",
+            "tool requirement",
+            "override",
+            "smallest complete query",
+        ],
+    )
+    def test_routes_localized_edits_only_when_a_structural_fact_remains(self, phrase: str):
+        """A known local edit skips retrieval unless a fact or explicit requirement still needs it.
+
+        The routing guidance is prose; hyphens and wrapping are normalised so the check pins the vocabulary, not the
+        layout.
+        """
         text = " ".join(_CONTEXT_CONTRACT.read_text(encoding="utf-8").lower().replace("-", " ").split())
 
-        for phrase in ("exact file", "symbol", "localized", "skip codemap"):
-            assert phrase in text
-        for fact in ("caller", "dependency", "blast radius", "test impact"):
-            assert fact in text
-        for override in ("explicit structural", "tool requirement", "override"):
-            assert override in text
-        assert "smallest complete query" in text
+        assert phrase in text
+
+    @pytest.mark.parametrize(
+        "route", ["skip", "central", "callers", "blast", "dependencies", "test-impact", "coupling", "standard"]
+    )
+    def test_documents_every_adaptive_route(self, route: str):
+        """Each adaptive retrieval route is named in the consumer-facing target derivation section.
+
+        Consumers choose a route by name, so an undocumented route would be unreachable from the wrappers.
+        """
+        text = _CONTEXT_CONTRACT.read_text(encoding="utf-8")
+
+        assert f"`{route}`" in between(text, "## Target derivation", "## Core query map")
 
     def test_adaptive_routes_exclude_unscoped_symbol_lookup(self):
-        """Quick routes must not turn a module-qualified target into an ambiguous bare symbol query."""
+        """Quick routes must not turn a module-qualified target into an ambiguous bare symbol query.
+
+        A bare ``imports``/``source`` route would look a symbol up by name alone; only the ``standard`` fallback may
+        issue ``symbol --with-imports``.
+        """
         text = _CONTEXT_CONTRACT.read_text(encoding="utf-8")
-        derivation = text.split("## Target derivation", 1)[1].split("## Core query map", 1)[0]
-        batch = text.split('case "$_CM_ROUTE" in', 1)[1].split("    esac", 1)[0]
+        derivation = between(text, "## Target derivation", "## Core query map")
+        batch = between(text, 'case "$_CM_ROUTE" in', "    esac")
         standard = batch.split("        *)", 1)[1]
 
-        for route in ("skip", "central", "callers", "blast", "dependencies", "test-impact", "coupling", "standard"):
-            assert f"`{route}`" in derivation
         assert "`imports`" not in derivation
         assert "`source`" not in derivation
         assert "imports)" not in batch
         assert "source)" not in batch
         assert "symbol --with-imports" in standard
 
-    @pytest.mark.skipif(_POSIX_BASH is None, reason="no working POSIX bash on this host")
+    @_skip_no_posix_bash
     @pytest.mark.parametrize(
         ("query_kind", "expected_queries", "index_present"),
         [
             pytest.param("skip", [], True, id="localized-skip"),
             pytest.param(
-                "callers",
-                ["--timeout 5 fn-rdeps package.module::target --exclude-tests"],
-                True,
-                id="direct-callers",
+                "callers", ["--timeout 5 fn-rdeps package.module::target --exclude-tests"], True, id="direct-callers"
             ),
             pytest.param(
                 "test-impact", ["--timeout 5 test-impact package.module::target"], True, id="targeted-test-impact"
@@ -168,142 +261,98 @@ class TestContextContract:
         ],
     )
     def test_batch_preflight_executes_only_the_selected_route(
-        self,
-        tmp_path: Path,
-        query_kind: str,
-        expected_queries: list[str],
-        index_present: bool,
+        self, tmp_path: Path, query_kind: str, expected_queries: list[str], index_present: bool
     ) -> None:
-        """The executable guard must skip retrieval or issue only the mapped compact query."""
-        contract = _CONTEXT_CONTRACT.read_text(encoding="utf-8")
-        batch = contract.split("## Batch pre-flight pattern", 1)[1].split("```bash", 1)[1].split("```", 1)[0]
-        trace = tmp_path / "queries.txt"
+        """The executable guard must skip retrieval or issue only the mapped compact query.
 
-        # Shell functions, not executables on PATH: whether an extensionless file carrying a
-        # shebang counts as executable is a property of the host — Git-for-Windows decides it
-        # from mount flags and content sniffing, and Python's chmod cannot set that bit at all.
-        # This test measures which queries the snippet issues, never how a host resolves a
-        # command, and `command -v` reports functions, so the snippet's own guard still runs.
-        stubs = "\n".join(
-            (
-                'git() { printf "%s\\n" "$FAKE_REPO"; }',
-                # The snippet probes `codemap-py query --help` once to learn whether this build knows
-                # `--format`. That probe is capability detection, not a query, so it stays out of
-                # the trace; $SCAN_HELP decides which answer the stub gives.
-                _codemap_py_stubs(
-                    'case "$1" in --help) printf "%s\\n" "${SCAN_HELP:-usage: codemap-py query}"; return 0;; esac; '
-                    'printf "%s\\n" "$*" >> "$TRACE"; printf \'%s\\n\' \'{"query_complete":true}\';'
-                ),
-                "",
-            )
-        )
-
-        index_dir = tmp_path / ".cache" / "codemap"
-        index_dir.mkdir(parents=True)
+        The contract's bash block runs for real against stubbed ``git`` and ``codemap-py``; only the stub's trace of
+        issued queries is compared, so the snippet's own routing decides the outcome.
+        """
         if index_present:
-            (index_dir / f"{tmp_path.name}.json").write_text("{}\n", encoding="utf-8")
-        env = os.environ | {
-            "CODEMAP_QUERY_KIND": query_kind,
-            # Values the *shell* reads, so both are spelled the way it reads them: `basename`
-            # does not split on a backslash, so a native `C:\...\repo` would leave the whole
-            # string as the project name and the index probe below would never match.
-            "FAKE_REPO": tmp_path.as_posix(),
-            "TARGET_FN": "target",
-            "TARGET_MODULE": "package.module",
-            "TARGET_QUALIFIED": "package.module::target",
-            "TRACE": trace.as_posix(),
-        }
+            _make_index(tmp_path)
 
-        subprocess.run(
-            [_POSIX_BASH, "-c", stubs + batch],
-            cwd=tmp_path,
-            env=env,
-            check=True,
-            capture_output=True,
-            text=True,
+        _run_batch(
+            tmp_path,
+            _help_branch("usage: codemap-py query") + _RECORD_QUERY,
+            CODEMAP_QUERY_KIND=query_kind,
+            **_TARGET_ENV,
         )
 
-        queries = trace.read_text(encoding="utf-8").splitlines() if trace.exists() else []
-        assert queries == expected_queries
+        assert _queries(tmp_path) == expected_queries
 
-    @pytest.mark.skipif(_POSIX_BASH is None, reason="no working POSIX bash on this host")
+    @_skip_no_posix_bash
     @pytest.mark.parametrize(
-        ("currency", "freeze", "lazy", "enabled"),
+        ("currency", "freeze", "lazy", "enabled", "no_heal"),
         [
-            pytest.param("stale", "0", "", "true", id="persisted-continue-stale-choice"),
-            pytest.param("current", "1", "", "true", id="inherited-autobuild-freeze"),
-            pytest.param("current", "0", "1", "true", id="lazy-preference-alone-allows-query-heal"),
-            pytest.param("current", "0", "", "false", id="persisted-skip-blocks-later-query"),
-            pytest.param("current", "0", "", None, id="unset-enabled-preserves-auto-query"),
+            pytest.param("stale", "0", "", {"CODEMAP_ENABLED": "true"}, True, id="persisted-continue-stale-choice"),
+            pytest.param("current", "1", "", {"CODEMAP_ENABLED": "true"}, True, id="inherited-autobuild-freeze"),
+            pytest.param(
+                "current", "0", "1", {"CODEMAP_ENABLED": "true"}, False, id="lazy-preference-alone-allows-query-heal"
+            ),
+            pytest.param("current", "0", "", {}, False, id="unset-enabled-preserves-auto-query"),
         ],
     )
     def test_stale_or_frozen_queries_reach_cli_with_no_heal(
-        self, tmp_path: Path, currency: str, freeze: str, lazy: str, enabled: str | None
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        currency: str,
+        freeze: str,
+        lazy: str,
+        enabled: dict[str, str],
+        no_heal: bool,
     ) -> None:
-        """A persisted stale choice reaches the CLI as ``--no-heal``; LAZY alone does not freeze queries."""
-        contract = _CONTEXT_CONTRACT.read_text(encoding="utf-8")
-        batch = contract.split("## Batch pre-flight pattern", 1)[1].split("```bash", 1)[1].split("```", 1)[0]
-        trace = tmp_path / "queries.txt"
-        stubs = "\n".join(
-            (
-                'git() { printf "%s\\n" "$FAKE_REPO"; }',
-                _codemap_py_stubs(
-                    'case "$1" in --help) printf "%s\\n" "usage: codemap-py query"; return 0;; esac; '
-                    'printf "%s\\n" "$*" >> "$TRACE"; printf \'%s\\n\' \'{"query_complete":true}\';'
-                ),
-                "",
-            )
-        )
-        env = os.environ.copy()
-        env.pop("CODEMAP_ENABLED", None)
-        env.update(
-            {
-                "CODEMAP_QUERY_KIND": "central",
-                "CODEMAP_CURRENCY": currency,
-                "SCAN_NO_AUTOBUILD": freeze,
-                "LAZY_CODEMAP": lazy,
-                "FAKE_REPO": tmp_path.as_posix(),
-                "TRACE": trace.as_posix(),
-            }
-        )
-        if enabled is not None:
-            env["CODEMAP_ENABLED"] = enabled
-        subprocess.run(
-            [_POSIX_BASH, "-c", stubs + batch],
-            cwd=tmp_path,
-            env=env,
-            check=True,
-            capture_output=True,
-            text=True,
+        """A persisted stale choice reaches the CLI as ``--no-heal``; LAZY alone does not freeze queries.
+
+        ``CODEMAP_ENABLED`` is cleared from the inherited environment and set only through ``enabled``; the single
+        recorded query must carry ``--no-heal`` exactly when the index is stale or the autobuild freeze is inherited.
+        """
+        monkeypatch.delenv("CODEMAP_ENABLED", raising=False)
+
+        _run_batch(
+            tmp_path,
+            _help_branch("usage: codemap-py query") + _RECORD_QUERY,
+            CODEMAP_QUERY_KIND="central",
+            CODEMAP_CURRENCY=currency,
+            SCAN_NO_AUTOBUILD=freeze,
+            LAZY_CODEMAP=lazy,
+            **enabled,
         )
 
-        queries = trace.read_text(encoding="utf-8").splitlines() if trace.exists() else []
-        if enabled == "false":
-            assert queries == []
-            return
+        queries = _queries(tmp_path)
         assert len(queries) == 1
-        assert ("--no-heal" in queries[0]) is (currency == "stale" or freeze == "1")
+        assert ("--no-heal" in queries[0]) is no_heal
         assert queries[0].endswith("central --top 5")
 
-    @pytest.mark.skipif(_POSIX_BASH is None, reason="no working POSIX bash on this host")
+    @_skip_no_posix_bash
+    def test_persisted_skip_blocks_later_query(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A persisted ``CODEMAP_ENABLED=false`` stops the snippet from issuing any query.
+
+        The user chose to skip codemap for this skill run; a later query in the same run must honour that choice.
+        """
+        monkeypatch.delenv("CODEMAP_ENABLED", raising=False)
+
+        _run_batch(
+            tmp_path,
+            _help_branch("usage: codemap-py query") + _RECORD_QUERY,
+            CODEMAP_QUERY_KIND="central",
+            CODEMAP_CURRENCY="current",
+            SCAN_NO_AUTOBUILD="0",
+            LAZY_CODEMAP="",
+            CODEMAP_ENABLED="false",
+        )
+
+        assert _queries(tmp_path) == []
+
+    @_skip_no_posix_bash
     @pytest.mark.parametrize(
         ("query_kind", "tsv_commands", "json_commands"),
         [
             pytest.param("central", ["central --top 5"], [], id="central-is-tabular"),
             pytest.param("coupling", ["coupled"], [], id="coupled-is-tabular"),
-            pytest.param(
-                "callers",
-                ["fn-rdeps package.module::target --exclude-tests"],
-                [],
-                id="fn-rdeps-is-tabular",
-            ),
+            pytest.param("callers", ["fn-rdeps package.module::target --exclude-tests"], [], id="fn-rdeps-is-tabular"),
             pytest.param("blast", ["fn-blast package.module::target"], [], id="fn-blast-is-tabular"),
-            pytest.param(
-                "test-impact",
-                [],
-                ["test-impact package.module::target"],
-                id="test-impact-refuses-tsv",
-            ),
+            pytest.param("test-impact", [], ["test-impact package.module::target"], id="test-impact-refuses-tsv"),
             pytest.param("dependencies", [], ["rdeps package.module"], id="rdeps-refuses-tsv"),
             pytest.param(
                 "standard",
@@ -318,11 +367,7 @@ class TestContextContract:
         ],
     )
     def test_tsv_is_requested_only_for_the_commands_that_render_as_one_table(
-        self,
-        tmp_path: Path,
-        query_kind: str,
-        tsv_commands: list[str],
-        json_commands: list[str],
+        self, tmp_path: Path, query_kind: str, tsv_commands: list[str], json_commands: list[str]
     ) -> None:
         """Only four query kinds may carry ``--format tsv``.
 
@@ -331,104 +376,49 @@ class TestContextContract:
         payload and whose ``source`` field would become a single quoted multi-line cell — tabular, and still the wrong
         format.
         """
-        contract = _CONTEXT_CONTRACT.read_text(encoding="utf-8")
-        batch = contract.split("## Batch pre-flight pattern", 1)[1].split("```bash", 1)[1].split("```", 1)[0]
-        trace = tmp_path / "queries.txt"
-        stubs = "\n".join(
-            (
-                'git() { printf "%s\\n" "$FAKE_REPO"; }',
-                _codemap_py_stubs(
-                    'case "$1" in --help) printf "%s\\n" "usage: codemap-py query [--format {json,tsv}]"; return 0;; esac; '
-                    'printf "%s\\n" "$*" >> "$TRACE"; printf \'%s\\n\' \'{"query_complete":true}\';'
-                ),
-                "",
-            )
+        _make_index(tmp_path)
+
+        _run_batch(
+            tmp_path,
+            _help_branch("usage: codemap-py query [--format {json,tsv}]") + _RECORD_QUERY,
+            CODEMAP_QUERY_KIND=query_kind,
+            **_TARGET_ENV,
         )
 
-        index_dir = tmp_path / ".cache" / "codemap"
-        index_dir.mkdir(parents=True)
-        (index_dir / f"{tmp_path.name}.json").write_text("{}\n", encoding="utf-8")
-        env = os.environ | {
-            "CODEMAP_QUERY_KIND": query_kind,
-            "FAKE_REPO": tmp_path.as_posix(),
-            "TARGET_FN": "target",
-            "TARGET_MODULE": "package.module",
-            "TARGET_QUALIFIED": "package.module::target",
-            "TRACE": trace.as_posix(),
-        }
-
-        subprocess.run(
-            [_POSIX_BASH, "-c", stubs + batch],
-            cwd=tmp_path,
-            env=env,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-
-        queries = trace.read_text(encoding="utf-8").splitlines() if trace.exists() else []
-        assert queries == [f"--timeout 5 --format tsv {c}" for c in tsv_commands] + [
+        assert _queries(tmp_path) == [f"--timeout 5 --format tsv {c}" for c in tsv_commands] + [
             f"--timeout 5 {c}" for c in json_commands
         ]
 
-    @pytest.mark.skipif(_POSIX_BASH is None, reason="no working POSIX bash on this host")
+    @_skip_no_posix_bash
     def test_an_older_scan_query_without_format_keeps_every_query_on_json(self, tmp_path: Path) -> None:
         """``--format`` arrived in 0.37.0; an older build on PATH must not be handed the flag.
 
         Argparse rejects an unknown option with exit 2 and an empty stdout, which the wrapper would score as a miss on
         the four commands worth the most.
         """
-        contract = _CONTEXT_CONTRACT.read_text(encoding="utf-8")
-        batch = contract.split("## Batch pre-flight pattern", 1)[1].split("```bash", 1)[1].split("```", 1)[0]
-        trace = tmp_path / "queries.txt"
-        stubs = "\n".join(
-            (
-                'git() { printf "%s\\n" "$FAKE_REPO"; }',
-                _codemap_py_stubs(
-                    'case "$1" in --help) printf "%s\\n" "usage: codemap-py query [--timeout N]"; return 0;; esac; '
-                    'case "$*" in *--format*) printf "%s\\n" "unrecognized arguments: --format" >&2; return 2;; esac; '
-                    'printf "%s\\n" "$*" >> "$TRACE"; printf \'%s\\n\' \'{"query_complete":true}\';'
-                ),
-                "",
-            )
+        _make_index(tmp_path)
+        reject_format = (
+            'case "$*" in *--format*) printf "%s\\n" "unrecognized arguments: --format" >&2; return 2;; esac; '
         )
 
-        index_dir = tmp_path / ".cache" / "codemap"
-        index_dir.mkdir(parents=True)
-        (index_dir / f"{tmp_path.name}.json").write_text("{}\n", encoding="utf-8")
-        env = os.environ | {
-            "CODEMAP_QUERY_KIND": "central",
-            "FAKE_REPO": tmp_path.as_posix(),
-            "TRACE": trace.as_posix(),
-        }
-
-        result = subprocess.run(
-            [_POSIX_BASH, "-c", stubs + batch],
-            cwd=tmp_path,
-            env=env,
-            check=True,
-            capture_output=True,
-            text=True,
+        result = _run_batch(
+            tmp_path,
+            _help_branch("usage: codemap-py query [--timeout N]") + reject_format + _RECORD_QUERY,
+            CODEMAP_QUERY_KIND="central",
         )
 
-        assert trace.read_text(encoding="utf-8").splitlines() == ["--timeout 5 central --top 5"]
+        assert _queries(tmp_path) == ["--timeout 5 central --top 5"]
         assert "completeness=exhaustive" in result.stdout
 
-    @pytest.mark.skipif(_POSIX_BASH is None, reason="no working POSIX bash on this host")
+    @_skip_no_posix_bash
     @pytest.mark.parametrize(
         ("envelope", "expected"),
         [
             pytest.param('{"index": {"stale": true}}', "completeness=stale", id="stale-on-stderr"),
-            pytest.param(
-                '{"index": {"query_complete": false}}',
-                "completeness=partial",
-                id="incomplete-on-stderr",
-            ),
+            pytest.param('{"index": {"query_complete": false}}', "completeness=partial", id="incomplete-on-stderr"),
             pytest.param('{"index": {"stale": false}}', "completeness=partial", id="missing-completeness"),
             pytest.param(
-                '{"index": {"stale": false, "query_complete": true}}',
-                "completeness=exhaustive",
-                id="clean-on-stderr",
+                '{"index": {"stale": false, "query_complete": true}}', "completeness=exhaustive", id="clean-on-stderr"
             ),
         ],
     )
@@ -439,115 +429,66 @@ class TestContextContract:
         skip re-querying on exactly that value — so the failure would be silently wrong answers rather than a missing
         optimisation.
         """
-        contract = _CONTEXT_CONTRACT.read_text(encoding="utf-8")
-        batch = contract.split("## Batch pre-flight pattern", 1)[1].split("```bash", 1)[1].split("```", 1)[0]
-        stubs = "\n".join(
-            (
-                'git() { printf "%s\\n" "$FAKE_REPO"; }',
-                _codemap_py_stubs(
-                    'case "$1" in --help) printf "%s\\n" "usage: codemap-py query [--format {json,tsv}]"; return 0;; esac; '
-                    'printf "%s\\n" "name\tn" ; printf "%s\\n" "a\t1"; printf "%s\\n" "$ENVELOPE" >&2;'
-                ),
-                "",
-            )
+        _make_index(tmp_path)
+        tsv_body = _help_branch("usage: codemap-py query [--format {json,tsv}]") + (
+            'printf "%s\\n" "name\tn" ; printf "%s\\n" "a\t1"; printf "%s\\n" "$ENVELOPE" >&2;'
         )
 
-        index_dir = tmp_path / ".cache" / "codemap"
-        index_dir.mkdir(parents=True)
-        (index_dir / f"{tmp_path.name}.json").write_text("{}\n", encoding="utf-8")
-        env = os.environ | {
-            "CODEMAP_QUERY_KIND": "central",
-            "ENVELOPE": envelope,
-            "FAKE_REPO": tmp_path.as_posix(),
-        }
-
-        result = subprocess.run(
-            [_POSIX_BASH, "-c", stubs + batch],
-            cwd=tmp_path,
-            env=env,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
+        result = _run_batch(tmp_path, tsv_body, CODEMAP_QUERY_KIND="central", ENVELOPE=envelope)
 
         assert expected in result.stdout
         assert "hits=1" in result.stdout
 
-    @pytest.mark.skipif(_POSIX_BASH is None, reason="no working POSIX bash on this host")
+    @_skip_no_posix_bash
     def test_an_empty_tsv_table_counts_as_a_hit(self, tmp_path: Path) -> None:
         """A query that matched nothing is an answer, not a retrieval failure.
 
         Under JSON an empty result still carries its keys, so the wrapper saw a non-empty stdout. Under TSV it writes no
         rows at all, and judging emptiness on stdout would score it a miss and drop completeness to ``unknown``.
         """
-        contract = _CONTEXT_CONTRACT.read_text(encoding="utf-8")
-        batch = contract.split("## Batch pre-flight pattern", 1)[1].split("```bash", 1)[1].split("```", 1)[0]
-        stubs = "\n".join(
-            (
-                'git() { printf "%s\\n" "$FAKE_REPO"; }',
-                _codemap_py_stubs(
-                    'case "$1" in --help) printf "%s\\n" "usage: codemap-py query [--format {json,tsv}]"; return 0;; esac; '
-                    'printf "%s\\n" \'{"index": {"stale": false, "query_complete": true}}\' >&2;'
-                ),
-                "",
-            )
+        _make_index(tmp_path)
+        empty_table_body = _help_branch("usage: codemap-py query [--format {json,tsv}]") + (
+            'printf "%s\\n" \'{"index": {"stale": false, "query_complete": true}}\' >&2;'
         )
 
-        index_dir = tmp_path / ".cache" / "codemap"
-        index_dir.mkdir(parents=True)
-        (index_dir / f"{tmp_path.name}.json").write_text("{}\n", encoding="utf-8")
-        env = os.environ | {"CODEMAP_QUERY_KIND": "central", "FAKE_REPO": tmp_path.as_posix()}
-
-        result = subprocess.run(
-            [_POSIX_BASH, "-c", stubs + batch],
-            cwd=tmp_path,
-            env=env,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
+        result = _run_batch(tmp_path, empty_table_body, CODEMAP_QUERY_KIND="central")
 
         assert "queries_run=1 hits=1" in result.stdout
         assert "completeness=exhaustive" in result.stdout
 
-    @pytest.mark.skipif(_POSIX_BASH is None, reason="no working POSIX bash on this host")
+    @_skip_no_posix_bash
     @pytest.mark.parametrize("failure", ["nonzero", "error", "empty"])
     def test_partial_preflight_never_claims_exhaustive(self, tmp_path: Path, failure: str) -> None:
-        """One successful query cannot hide another failed or missing direction."""
-        contract = _CONTEXT_CONTRACT.read_text(encoding="utf-8")
-        batch = contract.split("## Batch pre-flight pattern", 1)[1].split("```bash", 1)[1].split("```", 1)[0]
-        stubs = (
-            'git() { printf "%s\\n" "$FAKE_REPO"; }\n'
-            + _codemap_py_stubs(
-                'case "$*" in --help) return 0;; *rdeps*) '
-                "case \"$FAILURE\" in nonzero) printf '%s\\n' '{\"query_complete\":true}'; return 1;; "
-                "error) printf '%s\\n' '{\"error\":\"unavailable\"}'; return 0;; empty) return 0;; esac;; esac; "
-                "printf '%s\\n' '{\"query_complete\":true}';"
-            )
-            + "\n"
+        """One successful query cannot hide another failed or missing direction.
+
+        The ``standard`` route runs two directional queries; the stub makes the ``rdeps`` direction fail in one of three
+        ways while the other succeeds, and the summary must read ``partial`` rather than ``exhaustive``.
+        """
+        _make_index(tmp_path)
+        failing_rdeps_body = (
+            'case "$*" in --help) return 0;; *rdeps*) '
+            "case \"$FAILURE\" in nonzero) printf '%s\\n' '{\"query_complete\":true}'; return 1;; "
+            "error) printf '%s\\n' '{\"error\":\"unavailable\"}'; return 0;; empty) return 0;; esac;; esac; "
+            "printf '%s\\n' '{\"query_complete\":true}';"
         )
-        index_dir = tmp_path / ".cache" / "codemap"
-        index_dir.mkdir(parents=True)
-        (index_dir / f"{tmp_path.name}.json").write_text("{}\n", encoding="utf-8")
-        result = subprocess.run(
-            [_POSIX_BASH, "-c", stubs + batch],
-            cwd=tmp_path,
-            capture_output=True,
-            text=True,
-            check=True,
-            env=os.environ
-            | {
-                "CODEMAP_QUERY_KIND": "standard",
-                "TARGET_MODULE": "pkg.mod",
-                "TARGET_FN": "",
-                "FAKE_REPO": tmp_path.as_posix(),
-                "FAILURE": failure,
-            },
+
+        result = _run_batch(
+            tmp_path,
+            failing_rdeps_body,
+            CODEMAP_QUERY_KIND="standard",
+            TARGET_MODULE="pkg.mod",
+            TARGET_FN="",
+            FAILURE=failure,
         )
+
         assert "queries_run=2 hits=1 completeness=partial" in result.stdout
 
     def test_block_reference_target_matches_contract(self):
-        """The managed block identifies the shipped integration contract."""
+        """The managed block identifies the shipped integration contract.
+
+        The rendered block names ``shared/integration-contract.md``; that file must also exist in the plugin, or the
+        reference points at nothing.
+        """
         body = integration._managed_block_body("claude", "develop", "1.0.0")
         rendered = integration._render_managed_block(body)
         assert "Contract: shared/integration-contract.md" in rendered
@@ -583,11 +524,19 @@ class TestGatesContract:
         ],
     )
     def test_carries_gate_machinery(self, marker: str):
-        """Both gates and every option/action survive in the generic gates contract."""
-        assert marker in _GATES_CONTRACT.read_text(encoding="utf-8")
+        """Both gates and every option/action survive in the generic gates contract.
+
+        Consumers delegate their gate prompts to these exact phrases, so a reworded option silently changes behaviour in
+        every wrapper.
+        """
+        assert marker in flat_file(_GATES_CONTRACT)
 
     def test_build_action_never_model_invokes_disabled_skill(self):
-        """Build/rebuild action must not Skill()-call scan-codebase — it is disable-model-invocation:true."""
+        """Build/rebuild action must not Skill()-call scan-codebase — it is disable-model-invocation:true.
+
+        A model-invoked call to a disabled skill fails at run time, so the contract must route the build through the CLI
+        instead.
+        """
         assert 'Skill(skill="codemap:scan-codebase")' not in _GATES_CONTRACT.read_text(encoding="utf-8")
 
 
@@ -596,21 +545,43 @@ class TestDevelopWrapper:
     """The develop context wrapper references the contract and keeps only its per-plugin surface."""
 
     def test_never_uses_bare_relative_cross_plugin_path(self):
-        """Wrapper must not cross-reference the codemap plugin via a bare relative path."""
-        text = _DEVELOP_CONTEXT.read_text(encoding="utf-8")
-        assert "../codemap" not in text
+        """Wrapper must not cross-reference the codemap plugin via a bare relative path.
 
-    def test_fix_consumer_selects_the_shared_zero_or_task_fit_query_route(self) -> None:
-        """The production fix workflow must classify retrieval before loading the shared batch."""
-        wrapper = _DEVELOP_CONTEXT.read_text(encoding="utf-8")
-        fix = _DEVELOP_FIX.read_text(encoding="utf-8")
+        A relative path breaks once the plugins install into separate cache directories.
+        """
+        assert "../codemap" not in _DEVELOP_CONTEXT.read_text(encoding="utf-8")
+
+    def test_wrapper_exports_the_route_variable(self):
+        """The develop wrapper defines the query-kind variable and its ``skip`` route for the shared batch.
+
+        The shared batch reads ``CODEMAP_QUERY_KIND``; a wrapper that never sets it would fall through to ``standard``
+        on every task.
+        """
+        wrapper = flat_file(_DEVELOP_CONTEXT)
 
         assert "CODEMAP_QUERY_KIND" in wrapper
         assert "CODEMAP_QUERY_KIND=skip" in wrapper
-        for marker in ("CODEMAP_QUERY_KIND", "exact file/symbol", "explicit structural/tool request", "`standard`"):
-            assert marker in fix
 
-        route_guidance = fix.split("**Codemap route and target derivation**", 1)[1].split("```bash", 1)[0]
+    @pytest.mark.parametrize(
+        "marker", ["CODEMAP_QUERY_KIND", "exact file/symbol", "explicit structural/tool request", "`standard`"]
+    )
+    def test_fix_workflow_classifies_retrieval_before_the_batch(self, marker: str):
+        """The production fix workflow must classify retrieval before loading the shared batch.
+
+        Each marker is part of the route decision the fix skill hands to the shared batch.
+        """
+        assert marker in flat_file(_DEVELOP_FIX)
+
+    def test_fix_route_guidance_excludes_removed_routes(self):
+        """The fix workflow's route guidance never offers the removed ``imports`` and ``source`` routes.
+
+        Those routes would issue an unscoped symbol lookup; the guidance sits between the route heading and the first
+        bash block.
+        """
+        fix = _DEVELOP_FIX.read_text(encoding="utf-8")
+
+        route_guidance = between(fix, "**Codemap route and target derivation**", "```bash")
+
         assert "`imports`" not in route_guidance
         assert "`source`" not in route_guidance
 
@@ -622,17 +593,19 @@ class TestDevelopWrapper:
         `parse_target_qname.py` when the block was extracted. Pin it at its current home so this gate keeps testing the
         contract rather than a shell spelling.
         """
-        fix = _DEVELOP_FIX.read_text(encoding="utf-8")
-        assert "fails safe to standard" in fix
-
         qname = _DEVELOP_QNAME.read_text(encoding="utf-8")
+
+        assert "fails safe to standard" in flat_file(_DEVELOP_FIX)
         assert '_DEFAULT_QUERY_KIND = "standard"' in qname
         assert "query_kind = _DEFAULT_QUERY_KIND" in qname
 
     @pytest.mark.parametrize("surface", ["uncovered --top 20", "mock-rdeps", "undocumented", "codemap_scan.py"])
     def test_retains_per_plugin_surface(self, surface: str):
-        """Develop-specific dimensions and the batch producer script stay in the wrapper."""
-        assert surface in _DEVELOP_CONTEXT.read_text(encoding="utf-8")
+        """Develop-specific dimensions and the batch producer script stay in the wrapper.
+
+        The shared contract is plugin-agnostic, so these develop-only query dimensions must live in the wrapper.
+        """
+        assert surface in flat_file(_DEVELOP_CONTEXT)
 
     def test_cache_script_documented_as_oss_owned_not_invoked(self):
         """The wrapper names `codemap_cache.py` only as oss-owned; develop never carries its command block.
@@ -640,7 +613,7 @@ class TestDevelopWrapper:
         The `write`/`read`/`report` fence used to live here and reached into the oss plugin's `bin/`; the ownership
         paragraph replaced it, so the name must survive in prose while the invocation must not come back.
         """
-        text = _DEVELOP_CONTEXT.read_text(encoding="utf-8")
+        text = flat_file(_DEVELOP_CONTEXT)
         assert "`codemap_cache.py` ship in the oss plugin" in text
         assert "bin/codemap_cache.py" not in text
 
@@ -743,8 +716,11 @@ class TestRequiredPhrases:
         ],
     )
     def test_file_carries_both_phrases(self, path: Path, first_phrase: str, second_phrase: str):
-        """The shipped file contains both phrases that pin its consumer declaration or fallback surface."""
-        text = path.read_text(encoding="utf-8")
+        """The shipped file contains both phrases that pin its consumer declaration or fallback surface.
+
+        Consumers and the injection check key off these literals, so removing one breaks them without a visible error.
+        """
+        text = flat_file(path)
         assert first_phrase in text
         assert second_phrase in text
 
@@ -766,7 +742,11 @@ class TestStrangerFixtureManagedBlock:
     """A fresh consumer uses the current plan/apply protocol, never legacy injection."""
 
     def test_apply_plan_writes_contract_bound_block(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-        """Plan then apply writes the allowlisted oss gates block with the contract reference."""
+        """Plan then apply writes the allowlisted oss gates block with the contract reference.
+
+        A fresh committed project with only an oss manifest is planned and applied for real (real ``git`` supplies the
+        dirty-overlap guard); the written gates file must reference the shipped integration contract.
+        """
         root = tmp_path / "fixture"
         manifest = root / "plugins" / "cc_oss" / ".claude-plugin" / "plugin.json"
         manifest.parent.mkdir(parents=True)

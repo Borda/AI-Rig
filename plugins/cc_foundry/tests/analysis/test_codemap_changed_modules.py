@@ -7,7 +7,9 @@ shape of ``codemap-py query central``, so the tests never need the provider inst
 from __future__ import annotations
 
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
+from unittest import mock
 
 import codemap_changed_modules as ccm
 import pytest
@@ -65,6 +67,17 @@ def _repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return repo
 
 
+@pytest.fixture
+def stub_index(monkeypatch: pytest.MonkeyPatch) -> Callable[[object], None]:
+    """Return a factory faking an installed ``codemap-py`` whose ``query central`` call yields the given payload."""
+
+    def _install(payload: object) -> None:
+        monkeypatch.setattr(ccm.shutil, "which", lambda _name: "codemap-py")
+        monkeypatch.setattr(ccm, "_central_payload", lambda _codemap: payload)
+
+    return _install
+
+
 @pytest.mark.integration
 class TestGitDiff:
     """Finding the comparison point and the changed Python files in a real repository."""
@@ -113,54 +126,47 @@ class TestGitDiff:
 class TestChangedModules:
     """End to end from the diff to module names, with a stubbed index."""
 
-    def test_names_come_from_the_index_in_changed_file_order(self, repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_names_come_from_the_index_in_changed_file_order(self, repo: Path, stub_index: Callable) -> None:
         """``pkg/__init__.py`` resolves to ``pkg`` (the index name), not ``pkg.__init__``; unindexed files drop out.
 
         ``pkg/a,b.py`` is changed but absent from the index, so it contributes nothing instead of a guessed name.
         """
-        monkeypatch.setattr(ccm.shutil, "which", lambda _name: "codemap-py")
-        monkeypatch.setattr(ccm, "_central_payload", lambda _codemap: _CENTRAL)
+        stub_index(_CENTRAL)
         assert ccm.changed_modules() == ["pkg", "pkg.new"]
 
-    def test_cap_limits_the_output(self, repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_cap_limits_the_output(self, repo: Path, stub_index: Callable) -> None:
         """At most ``cap`` names come back, keeping the first in changed-file order."""
-        monkeypatch.setattr(ccm.shutil, "which", lambda _name: "codemap-py")
-        monkeypatch.setattr(ccm, "_central_payload", lambda _codemap: _CENTRAL)
+        stub_index(_CENTRAL)
         assert ccm.changed_modules(cap=1) == ["pkg"]
 
-    def test_nothing_changed_skips_the_index_query(self, repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    @mock.patch("codemap_changed_modules._central_payload", autospec=True)
+    def test_nothing_changed_skips_the_index_query(
+        self, central_payload: mock.MagicMock, repo: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """When HEAD already equals the base there is nothing to resolve and the index is never queried."""
         _git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
         monkeypatch.setattr(ccm.shutil, "which", lambda _name: "codemap-py")
-
-        def _never(_codemap: str) -> object:
-            raise AssertionError("index queried although no Python file changed")
-
-        monkeypatch.setattr(ccm, "_central_payload", _never)
         assert ccm.changed_modules() == []
+        central_payload.assert_not_called()
 
     @pytest.mark.parametrize(
         "payload",
         [pytest.param(None, id="query-failed"), pytest.param(["not", "a", "dict"], id="unexpected-shape")],
     )
-    def test_unusable_index_payload_yields_nothing(
-        self, repo: Path, monkeypatch: pytest.MonkeyPatch, payload: object
-    ) -> None:
+    def test_unusable_index_payload_yields_nothing(self, repo: Path, stub_index: Callable, payload: object) -> None:
         """A failed or malformed index query prints nothing, so the agent's per-module loop simply does not run."""
-        monkeypatch.setattr(ccm.shutil, "which", lambda _name: "codemap-py")
-        monkeypatch.setattr(ccm, "_central_payload", lambda _codemap: payload)
+        stub_index(payload)
         assert ccm.changed_modules() == []
 
 
-def test_absent_codemap_cli_yields_nothing_without_touching_git(monkeypatch: pytest.MonkeyPatch) -> None:
+@mock.patch("codemap_changed_modules.comparison_point", autospec=True)
+def test_absent_codemap_cli_yields_nothing_without_touching_git(
+    comparison_point: mock.MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Without ``codemap-py`` on PATH the script is a silent no-op, matching the old ``command -v`` guard."""
     monkeypatch.setattr(ccm.shutil, "which", lambda _name: None)
-
-    def _never(_base: str) -> str:
-        raise AssertionError("git consulted although codemap-py is absent")
-
-    monkeypatch.setattr(ccm, "comparison_point", _never)
     assert ccm.changed_modules() == []
+    comparison_point.assert_not_called()
 
 
 class TestCentralPayload:

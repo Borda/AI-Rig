@@ -48,11 +48,17 @@ Host-supplied developer tool inventories do not count as reviewer tool calls; ac
 
 Low-risk reviews can use complete parent-only coverage when independence was not requested, disclosing the missing independent specialists and retaining all required source and checks. Review completion requires the full ordered closure after manifest preflight: render the handoff, write the candidate, pass review-specific and shared validation, promote the result, then validate the selected completed run before emitting its bound output; newer-run discovery remains a separate remediation-intake check. `+review` can discover the result after that closure succeeds; notes and unpromoted candidates remain ineligible. A failed applicable check remains failed until an equivalent canonical rerun succeeds; a launcher failure or direct-check receipt cannot justify `not-applicable`. Incomplete reviews resume at the first unmet checkpoint with retained evidence. An ineligible reviewer repair continues through the permitted parent fallback when source is verified and independence is not required; merely collecting another run does not finish that fallback. Nested review completes and admits its report before continuing the original remediation, without requiring a new user invocation.
 
-Routine missing-dependency recovery prepares the complete declared environment for the selected test lane. For `code-remediate +review`, the remediation parent owns preparation even before finding selection and resumes the joined workflow after review validation.
+PR remediation accepts the collector's canonical diff command and retained legacy receipt forms through exact comparison; altered revisions, transforms and path filters remain rejected.
+
+Routine missing-dependency recovery prepares the complete declared environment for the selected test lane without another bootstrap-consent question. Standalone review can use a disposable environment when bootstrap, declarations, lock and routing are unchanged; source and invoking environments stay untouched. Retries preserve required runtime capabilities, while actual denials and sandboxed build/test boundaries remain controlling. For `code-remediate +review`, the remediation parent owns preparation even before finding selection and resumes the joined workflow after review validation.
 
 Resuming an older review keeps valid evidence and reruns missing, stale or unverifiable work through the current workflow. Old execution plans remain preserved history; recovery does not require repairing their protocol or restarting usable work.
 
 Unstarted review work is not itself a blocker: the agent continues it in the current turn. When recovery needs a user decision, the native question offers **New review**, **Resume last one**, or **Stop**, explains the blocker and retained evidence, and waits for the answer. Stop ends a waiting joined remediation too.
+
+Small `TRIVIAL` or `LOCAL` reviews may select the existing parent-inspection route before preparing specialists when independence is not explicitly required; all required inspection axes and closing gates remain. Independent dispatches preserve every generated argument, including the digest-bound task name. A missing expected direct child is reported separately from duplicate sessions, and permitted parent recovery runs through completion rather than ending with a fallback announcement.
+
+Review preparation uses its packaged skill-local helper path and recovers incorrect invocations before asking for a decision. Recovery questions discover the packaged native form before considering async; an accepted async question receives no trailing final or status message.
 
 When PR remediation requests existing report evidence (`+report`, report aliases or an explicit path) and no eligible completed report exists, Codex first assesses the retained evidence and recovers what it can on its own: deterministic derived repairs resume the owning Code Review run without a question, and a version mismatch alone never asks. A substantive gap that remains is a question, even when available findings can be fixed: **New review**, **Resume last one**, or **Stop**, with the feasibility and consequences of each route explained. Continuing without a completed review requires explicit user confirmation; an existing answer for the unchanged target and decision is reused. A fresh review invokes the normal Code Review skill end-to-end, returns its exact completed report to the same remediation run, and resumes report admission, source collection, selection and fixes without a review-only final stop; a failed checkpoint first follows the review's bounded recovery without a generic request for another message. A proved dispatch-order failure preserves the rejected wave and revalidates source before the existing parent fallback, rather than recollecting unchanged PR evidence; explicit independence, runtime denial and retry limits still apply. Stop preserves artifacts and changes without continuing remediation; only a separate explicit instruction authorizes continuing with available findings. An unanswered or dismissed question stays pending. Native question controls own the question and choices; commentary does not duplicate their menu.
 
@@ -66,7 +72,7 @@ Selected read-only review passes run concurrently by default and may inspect the
 
 The package covers capabilities Codex can currently install and verify. It includes a local native-question provider and no native bundled agent registrations. Parallel work uses runtime blank agent with exact role card injected when that route is available; inline role pass is serial fallback. Persistent named-agent routing remains platform-blocked until Codex exposes verifiable custom-agent selector. The split schema, approval allowlist, synchronization gates, runtime evidence, telemetry, fallback, and promotion lifecycle are defined in [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
-> Current source version: `0.42.0`. Codex Rig is peer product to foundry, oss, develop, research, and codemap-py—not copy of repository's `.codex/` configuration.
+> Current source version: `0.42.1`. Codex Rig is peer product to foundry, oss, develop, research, and codemap-py—not copy of repository's `.codex/` configuration.
 
 Adversarial-loop updates show the cumulative convergence table once after each newly validated challenge, not while a review is pending or before any round is validated; new final Results rows show carried + newly found counts and weighted score in every numeric cell. New assessed review candidates must include reviewer attribution and the aggregate summary before promotion, while historical report intake stays compatible. Non-PR assessed candidates additionally need a `Review Snapshot` table whose Scope is the normalized review scope and whose Revision binds retained diff bytes; the collector does not structurally retain target or commit identity.
 
@@ -779,14 +785,14 @@ The package is accepted only when generated manifest is current, every recorded 
 The denial gate is deterministic and offline: it validates local JSON Lines transcript, requires one exact `item/commandExecution/requestApproval` callback followed by `decline`, matching resolution and declined completion, rejects output or fallback execution, and requires later local recovery item. Run its focused tests and inspect supported probe interface with:
 
 ```bash
-python3 -m pytest -q plugins/codex-rig/tests/review/test_local_reviewer_denial_protocol.py
+python3 -m pytest -q plugins/codex-rig/tests/review/reviewers/test_local_reviewer_denial_protocol.py
 plugins/codex-rig/bin/python plugins/codex-rig/tests/local_reviewer_denial_probe.py --help
 ```
 
 The installed-package-safe gate copies only manifest-declared payload into disposable cache and runs explicit package-safe test selection without checkout context (`Makefile`, `.github`, and `.git`). Run it with:
 
 ```bash
-python3 -m pytest -q plugins/codex-rig/tests/packaging/test_installed_package_gate.py
+python3 -m pytest -q plugins/codex-rig/tests/packaging/package/test_installed_package_gate.py
 ```
 
 > **CI matrix:** The repository CI test matrix runs complete plugin test suite on Linux, macOS, and Windows with Python 3.10, 3.11, 3.12, and 3.13. The synthetic denial gate and installed-package-safe gate are included in that offline matrix.

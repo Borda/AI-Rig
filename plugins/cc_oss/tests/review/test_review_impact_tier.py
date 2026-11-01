@@ -8,6 +8,8 @@ lineup, because a trimmed review of a risky change is the failure this script ex
 from __future__ import annotations
 
 import io
+import shutil
+from unittest import mock
 
 import pytest
 import review_impact_tier as rit
@@ -29,6 +31,8 @@ def _callers(*pairs: tuple[str, str]):
 
 
 class TestClassify:
+    """Classify: the tier follows the code path a changed symbol sits on, never the diff size."""
+
     def test_private_helper_on_main_path_is_full(self) -> None:
         """A private helper called by a public main-path function gets the full review.
 
@@ -36,7 +40,8 @@ class TestClassify:
         """
         payload = _payload(_module("src/pkg/core.py", "pkg.core::_prep"))
         tier, reason = rit.classify(payload, _callers(("pkg.core::run", "src/pkg/core.py")))
-        assert (tier, "pkg.core::run" in reason) == ("FULL", True)
+        assert tier == "FULL"
+        assert "pkg.core::run" in reason
 
     @pytest.mark.parametrize(
         ("module", "callers", "expected_tier"),
@@ -87,6 +92,8 @@ class TestClassify:
 
 
 class TestFailSafe:
+    """Classify: any input it cannot fully map or query falls back to the full lineup."""
+
     @pytest.mark.parametrize(
         "payload",
         [
@@ -103,7 +110,8 @@ class TestFailSafe:
         """A failed fn-blast query for a private symbol means unknown callers, so FULL."""
         payload = _payload(_module("src/pkg/core.py", "pkg.core::_prep"))
         tier, reason = rit.classify(payload, lambda _qname: None)
-        assert (tier, reason.startswith("impact unknown")) == ("FULL", True)
+        assert tier == "FULL"
+        assert reason.startswith("impact unknown")
 
     def test_symbol_cap_exceeded_is_full(self) -> None:
         """More changed symbols than the query cap are not silently skipped; the run fails safe to FULL."""
@@ -111,14 +119,20 @@ class TestFailSafe:
         payload = _payload(_module("src/pkg/viz/draw.py", *symbols))
         assert rit.classify(payload, _callers())[0] == "FULL"
 
-    def test_missing_codemap_binary_is_full(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Without a codemap-py binary on PATH the real fn-blast runner fails safe to FULL."""
-        monkeypatch.setattr(rit.shutil, "which", lambda _name: None)
+    @mock.patch("review_impact_tier.shutil.which", new=mock.create_autospec(shutil.which, return_value=None))
+    def test_missing_codemap_binary_is_full(self) -> None:
+        """Without a codemap-py binary on PATH the real fn-blast runner fails safe to FULL.
+
+        ``classify`` is called without a blast function, so it uses the default runner; with no ``codemap-py`` found the
+        private symbol's callers are unknown and the review must not be trimmed.
+        """
         payload = _payload(_module("src/pkg/core.py", "pkg.core::_prep"))
         assert rit.classify(payload)[0] == "FULL"
 
 
 class TestStdinCap:
+    """Main: diff-impact JSON read from stdin is bounded before parsing."""
+
     @pytest.mark.parametrize(
         ("stdin_text", "expected_line"),
         [
@@ -146,4 +160,6 @@ class TestStdinCap:
         monkeypatch.setattr(rit, "MAX_INPUT_CHARS", 32)
         monkeypatch.setattr(rit.sys, "stdin", stream)
         exit_code = rit.main([])
-        assert (exit_code, capsys.readouterr().out.strip(), stream.tell() <= 33) == (0, expected_line, True)
+        assert exit_code == 0
+        assert capsys.readouterr().out.strip() == expected_line
+        assert stream.tell() <= 33

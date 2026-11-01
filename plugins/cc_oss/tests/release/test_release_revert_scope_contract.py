@@ -1,5 +1,6 @@
 """Pin release-skill revert handling and the stop-after-redirect scope rule."""
 
+import functools
 from pathlib import Path
 
 import pytest
@@ -7,6 +8,7 @@ import pytest
 _RELEASE = Path(__file__).resolve().parents[2] / "skills/release"
 
 
+@functools.cache
 def _read(relative: str) -> str:
     """Return one shipped release-skill file as text."""
     return (_RELEASE / relative).read_text(encoding="utf-8")
@@ -25,6 +27,10 @@ def _read(relative: str) -> str:
         pytest.param("modes/release-draft-template.md", "DRAFT.md has no Reverted section", id="draft-no-reverted"),
     ],
 )
-def test_release_revert_and_scope_contract(relative: str, phrase: str) -> None:
-    """Each revert or scope rule stays present in its shipped release-skill file."""
+def test_revert_and_scope_rule_present(relative: str, phrase: str) -> None:
+    """Each revert or scope rule stays present in its shipped release-skill file.
+
+    A reverted commit must be detected by type and by trailer, kept out of DRAFT.md, and a redirected request must stop
+    after the redirect. Removing any of these phrases silently drops one of those behaviours.
+    """
     assert phrase in _read(relative)

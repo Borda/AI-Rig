@@ -52,9 +52,9 @@ _STANDARD_HELP_SCRIPTS = [
 ]
 
 
-@pytest.mark.parametrize("module_name", [pytest.param(name, id=name) for name in _STANDARD_HELP_SCRIPTS])
+@pytest.mark.parametrize("module_name", _STANDARD_HELP_SCRIPTS)
 def test_help_flag_exits_zero(module_name: str, capsys: pytest.CaptureFixture[str]) -> None:
-    """Print command usage before exiting successfully.
+    """Every ``bin/`` script prints usage and exits 0 on ``--help``.
 
     Every script in ``bin/`` except the dedicated-test and no-help-surface exclusions (module-level sets above) uses
     argparse's own ``-h`` handling directly, which always raises before any other argument is validated. A script
@@ -67,9 +67,9 @@ def test_help_flag_exits_zero(module_name: str, capsys: pytest.CaptureFixture[st
     assert "usage:" in capsys.readouterr().out
 
 
-@pytest.mark.parametrize("module_name", [pytest.param(name, id=name) for name in sorted(_RETURNS_INSTEAD_OF_RAISING)])
+@pytest.mark.parametrize("module_name", sorted(_RETURNS_INSTEAD_OF_RAISING))
 def test_help_flag_returns_zero_without_raising(module_name: str, capsys: pytest.CaptureFixture[str]) -> None:
-    """Print usage and return 0 without raising ``SystemExit``.
+    """Scripts that swallow argparse's exit print usage and return 0 from ``main``.
 
     ``fetch_gh_data_group2.py`` and ``detect_thread_type.py`` wrap argparse's ``parse_args`` in a try/except that
     catches the SystemExit raised for ``-h`` and converts it to a plain return value, so that bad positional args

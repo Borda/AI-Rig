@@ -50,66 +50,62 @@ def _one_changed_file(monkeypatch) -> None:
     monkeypatch.setattr(_query_mod.index_io, "_changed_py_files", lambda index: ["pkg/mod.py"])
 
 
-@pytest.mark.usefixtures("one_changed_file")
-def test_skips_spawn_while_another_writer_is_active(
-    stale_index: dict, spawn_recorder: list, tmp_path: Path, monkeypatch
-) -> None:
-    """No second scan is spawned when the gate reports a live writer.
-
-    This is the hook-refresh collision: the detached refresh already holds the writer
-    lease, so spawning here can only queue and die at the cap.
-    """
-    monkeypatch.setattr(_query_mod.rwgate, "writer_active", lambda path: True)
-
-    result = maybe_self_heal(stale_index, tmp_path / "idx.json", tmp_path)
-
-    assert spawn_recorder == []
-    assert result is stale_index
-
-
-@pytest.mark.usefixtures("one_changed_file")
-def test_spawns_when_no_writer_is_active(stale_index: dict, spawn_recorder: list, tmp_path: Path, monkeypatch) -> None:
-    """An idle gate still heals — the guard must not disable self-heal outright."""
-    monkeypatch.setattr(_query_mod.rwgate, "writer_active", lambda path: False)
-
-    maybe_self_heal(stale_index, tmp_path / "idx.json", tmp_path)
-
-    assert len(spawn_recorder) == 1
-
-
-@pytest.mark.usefixtures("one_changed_file")
-def test_returns_the_stale_index_rather_than_failing(stale_index: dict, tmp_path: Path, monkeypatch) -> None:
-    """Standing down answers from the current index; it never turns into a query error.
-
-    A stale answer flagged as stale is the documented contract. Raising here would turn a routine refresh collision into
-    a failed query.
-    """
-    monkeypatch.setattr(_query_mod.rwgate, "writer_active", lambda path: True)
-
-    assert maybe_self_heal(stale_index, tmp_path / "idx.json", tmp_path) is stale_index
-
-
-def test_gate_is_not_consulted_when_the_index_is_fresh(tmp_path: Path, monkeypatch) -> None:
-    """A fresh index returns before the gate — no probe cost on the common path.
-
-    Nearly every query runs against a fresh index, so the probe must sit after the change-set check, not before it.
-    """
+@pytest.fixture(name="writer_probe")
+def _writer_probe(monkeypatch) -> list[Path]:
+    """Report no active writer and record every path the gate is asked about."""
     probed: list[Path] = []
-    monkeypatch.setattr(_query_mod.index_io, "_changed_py_files", lambda index: [])
     monkeypatch.setattr(_query_mod.rwgate, "writer_active", lambda path: probed.append(path) or False)
-
-    maybe_self_heal({"file_shas": {}, "source_fingerprint": "0" * 64}, tmp_path / "idx.json", tmp_path)
-
-    assert probed == []
+    return probed
 
 
-def test_gate_is_not_consulted_when_the_change_set_exceeds_the_cap(tmp_path: Path, monkeypatch) -> None:
-    """An oversized change set is refused before the gate, as it was before gating existed."""
-    probed: list[Path] = []
-    oversized = [f"pkg/mod_{n}.py" for n in range(_query_mod._HEAL_MAX_CHANGED_FILES + 1)]
-    monkeypatch.setattr(_query_mod.index_io, "_changed_py_files", lambda index: oversized)
-    monkeypatch.setattr(_query_mod.rwgate, "writer_active", lambda path: probed.append(path) or False)
+@pytest.mark.usefixtures("one_changed_file")
+class TestSelfHealWriterGating:
+    """The heal spawn is gated on the writer probe, after the cheaper change-set checks."""
 
-    maybe_self_heal({"file_shas": {}, "source_fingerprint": "0" * 64}, tmp_path / "idx.json", tmp_path)
+    def test_skips_spawn_and_returns_stale_index_while_writer_active(
+        self, stale_index: dict, spawn_recorder: list, tmp_path: Path, monkeypatch
+    ) -> None:
+        """A live writer means no second scan is spawned and the query is answered from the current index.
 
-    assert probed == []
+        This is the hook-refresh collision: the detached refresh already holds the writer lease, so spawning here can
+        only queue and die at the cap. Standing down returns the stale index flagged as stale (the documented
+        contract); raising would turn a routine refresh collision into a failed query.
+        """
+        monkeypatch.setattr(_query_mod.rwgate, "writer_active", lambda path: True)
+
+        result = maybe_self_heal(stale_index, tmp_path / "idx.json", tmp_path)
+
+        assert spawn_recorder == []
+        assert result is stale_index
+
+    def test_spawns_when_no_writer_active(self, stale_index: dict, spawn_recorder: list, tmp_path: Path, writer_probe):
+        """An idle gate still heals — the guard must not disable self-heal outright.
+
+        The same stale index as the busy-writer case, but nothing holds the lease, so exactly one scan is spawned.
+        """
+        maybe_self_heal(stale_index, tmp_path / "idx.json", tmp_path)
+
+        assert len(spawn_recorder) == 1
+
+
+class TestGateNotConsulted:
+    """Cheap early exits return before the writer probe is paid for."""
+
+    @pytest.mark.parametrize(
+        "changed",
+        [
+            pytest.param([], id="fresh-index"),
+            pytest.param([f"pkg/mod_{n}.py" for n in range(_query_mod._HEAL_MAX_CHANGED_FILES + 1)], id="over-cap"),
+        ],
+    )
+    def test_writer_probe_skipped(self, tmp_path: Path, monkeypatch, writer_probe: list[Path], changed: list[str]):
+        """A fresh index, or a change set above the heal cap, returns before the gate is asked.
+
+        Nearly every query runs against a fresh index, so the probe must sit after the change-set check, not before it;
+        an oversized change set is refused before the gate exactly as it was before gating existed.
+        """
+        monkeypatch.setattr(_query_mod.index_io, "_changed_py_files", lambda index: changed)
+
+        maybe_self_heal({"file_shas": {}, "source_fingerprint": "0" * 64}, tmp_path / "idx.json", tmp_path)
+
+        assert writer_probe == []

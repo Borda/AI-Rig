@@ -68,8 +68,10 @@ def _answer_region(output_text: str, labels: tuple[str, ...]) -> tuple[str, bool
         True
     """
     earliest: int | None = None
+    # Bold marks come from a raw string: docformatter 1.7.8 on CPython 3.12.3 corrupts "\*{{0,2}}" inside an f-string.
+    bold = r"\*{0,2}"
     for label in labels:
-        pat = rf"(?im)^[ \t]*(?:#{{1,6}}[ \t]*)?\*{{0,2}}[ \t]*{re.escape(label)}[ \t]*:?[ \t]*\*{{0,2}}[ \t]*$"
+        pat = rf"(?im)^[ \t]*(?:#{{1,6}}[ \t]*)?{bold}[ \t]*{re.escape(label)}[ \t]*:?[ \t]*{bold}[ \t]*$"
         m = re.search(pat, output_text)
         if m and (earliest is None or m.start() < earliest):
             earliest = m.start()

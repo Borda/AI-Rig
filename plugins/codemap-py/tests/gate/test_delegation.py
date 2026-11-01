@@ -149,116 +149,150 @@ def _scan_env(counter: Path) -> dict:
     }
 
 
-# ── identity resolution (no scanner) ──────────────────────────────────────────
-def test_identity_same_path_from_repo_subdir(project: Path) -> None:
-    ident = ii.resolve_index(root=project)
-    sub = project / "a" / "b"
-    sub.mkdir(parents=True)
-    id_sub = ii.resolve_index(cwd=sub)
-    assert id_sub.index_path == ident.index_path
-    assert id_sub.root == ident.root
-    assert id_sub.coordination_dir == ident.coordination_dir
-    assert not ident.override
-
-
-def test_override_flat_layout(tmp_path: Path) -> None:
-    """Under an override the index is flat ``<override>/<project>.json``.
-
-    The resolver previously root-keyed this path while every writer stayed flat, so the gate coordinated a file nobody
-    read. root_key survives as a path-free identity for reporting; it is no longer a directory component.
-    """
-    root = tmp_path / "proj"
-    root.mkdir()
-    override = tmp_path / "shared"
-    ident = ii.resolve_index(root=root, index_dir_override=str(override))
-    assert ident.override
-    assert ident.root_key == ii.root_key(ident.root)
-    assert ident.index_path == override.resolve() / "proj.json"
-    assert ident.coordination_dir == override.resolve() / ii.COORDINATION_DIRNAME
-
-
-def test_equal_basename_under_one_override_collides_and_is_diagnosed(tmp_path: Path) -> None:
-    """Equal-basename projects sharing one override resolve to ONE file — detected, not silent.
-
-    Behaviour change from the root-keyed layout: two ``proj`` directories under a single ``CODEMAP_INDEX_DIR`` no
-    longer get independent indexes. The flat convention is what every writer already used, so the alternative was a
-    resolver pointing somewhere nothing was ever written. The collision is surfaced as ``index_root_collision`` instead
-    of silently serving another project's index; the fix is one override dir per project.
-    """
-    a = tmp_path / "a" / "proj"
-    b = tmp_path / "b" / "proj"
-    a.mkdir(parents=True)
-    b.mkdir(parents=True)
+@pytest.fixture(name="override_dir")
+def _override_dir(tmp_path: Path) -> Path:
+    """Create the shared ``CODEMAP_INDEX_DIR`` override directory."""
     override = tmp_path / "shared"
     override.mkdir()
-    ia = ii.resolve_index(root=a, index_dir_override=str(override))
-    ib = ii.resolve_index(root=b, index_dir_override=str(override))
-    assert ia.project == ib.project == "proj"
-    assert ia.root_key != ib.root_key  # identity still distinguishes them
-    assert ia.index_path == ib.index_path == override.resolve() / "proj.json"
-
-    # With A's index in place, resolving B reports the collision rather than serving it.
-    ia.index_path.write_text(json.dumps({"scan_root": str(ia.root), "tok": "A"}), encoding="utf-8")
-    assert ii.resolve_index(root=a, index_dir_override=str(override)).diagnostics == ()
-    collided = ii.resolve_index(root=b, index_dir_override=str(override))
-    assert ii.INDEX_ROOT_COLLISION in [d.code for d in collided.diagnostics]
-    assert json.loads(ia.index_path.read_text())["tok"] == "A"  # never overwritten by resolution
+    return override
 
 
-@_skip_directory_symlink_unavailable
-def test_symlink_alias_same_identity(tmp_path: Path) -> None:
-    """A directory symlink resolves to the same index and root identity as its target."""
-    real = tmp_path / "real_proj"
-    real.mkdir()
-    link = tmp_path / "link_proj"
-    link.symlink_to(real, target_is_directory=True)
-    id_real = ii.resolve_index(root=real)
-    id_link = ii.resolve_index(root=link)
-    assert id_real.index_path == id_link.index_path
-    assert id_real.root_key == id_link.root_key
+class TestResolveIndex:
+    """The canonical resolver maps working directories and overrides to index identities without any scanner run."""
 
+    def test_same_path_from_repo_subdir(self, project: Path) -> None:
+        """Resolving from a nested directory of a repo yields the repo root's index path and identity.
 
-def test_flat_index_matching_root_resolves_clean(tmp_path: Path) -> None:
-    """An existing flat index built for this same root is the target, with no diagnostic.
+        Both runtimes may start in different subdirectories of one repository; they must still agree on a single index,
+        root and coordination directory.
+        """
+        ident = ii.resolve_index(root=project)
+        sub = project / "a" / "b"
+        sub.mkdir(parents=True)
 
-    Formerly this file was a read-only "legacy candidate" beside a distinct root-keyed target. Flat is now the only
-    layout, so a matching occupant is simply the index.
-    """
-    root = tmp_path / "proj"
-    root.mkdir()
-    override = tmp_path / "shared"
-    override.mkdir()
-    existing = override / "proj.json"
-    existing.write_text(json.dumps({"scan_root": str(root.resolve())}), encoding="utf-8")
-    ident = ii.resolve_index(root=root, index_dir_override=str(override))
-    assert ident.index_path == existing
-    assert ident.diagnostics == ()
-    assert json.loads(existing.read_text())["scan_root"] == str(root.resolve())
+        id_sub = ii.resolve_index(cwd=sub)
 
+        assert id_sub.index_path == ident.index_path
+        assert id_sub.root == ident.root
+        assert id_sub.coordination_dir == ident.coordination_dir
+        assert not ident.override
 
-def test_legacy_flat_mismatch_emits_collision_diagnostic(tmp_path: Path) -> None:
-    root = tmp_path / "proj"
-    root.mkdir()
-    other = tmp_path / "other"
-    other.mkdir()
-    override = tmp_path / "shared"
-    override.mkdir()
-    occupant = override / "proj.json"
-    occupant.write_text(json.dumps({"scan_root": str(other.resolve())}), encoding="utf-8")
-    ident = ii.resolve_index(root=root, index_dir_override=str(override))
-    assert ii.INDEX_ROOT_COLLISION in [d.code for d in ident.diagnostics]
-    # Resolution reports the collision; it never rewrites the path or touches the file.
-    assert ident.index_path == occupant
-    assert json.loads(occupant.read_text())["scan_root"] == str(other.resolve())
+    def test_override_uses_flat_layout(self, tmp_path: Path, root: Path) -> None:
+        """Under an override the index is flat ``<override>/<project>.json``.
 
+        The resolver previously root-keyed this path while every writer stayed flat, so the gate coordinated a file
+        nobody read. root_key survives as a path-free identity for reporting; it is no longer a directory component.
+        """
+        override = tmp_path / "shared"
 
-def test_split_index_roots_diagnostic(tmp_path: Path) -> None:
-    a = ii.resolve_index(root=tmp_path / "a")
-    b = ii.resolve_index(root=tmp_path / "b")
-    diag = ii.diagnose_split_index_roots(a.index_path, b.index_path)
-    assert diag is not None
-    assert diag.code == ii.SPLIT_INDEX_ROOTS
-    assert ii.diagnose_split_index_roots(a.index_path, a.index_path) is None
+        ident = ii.resolve_index(root=root, index_dir_override=str(override))
+
+        assert ident.override
+        assert ident.root_key == ii.root_key(ident.root)
+        assert ident.index_path == override.resolve() / "proj.json"
+        assert ident.coordination_dir == override.resolve() / ii.COORDINATION_DIRNAME
+
+    def test_equal_basename_projects_share_one_override_file(self, tmp_path: Path, override_dir: Path) -> None:
+        """Equal-basename projects sharing one override resolve to ONE file but keep distinct identities.
+
+        Behaviour change from the root-keyed layout: two ``proj`` directories under a single ``CODEMAP_INDEX_DIR`` no
+        longer get independent indexes. The flat convention is what every writer already used, so the alternative was a
+        resolver pointing somewhere nothing was ever written; the fix is one override dir per project.
+        """
+        a = tmp_path / "a" / "proj"
+        b = tmp_path / "b" / "proj"
+        a.mkdir(parents=True)
+        b.mkdir(parents=True)
+
+        ia = ii.resolve_index(root=a, index_dir_override=str(override_dir))
+        ib = ii.resolve_index(root=b, index_dir_override=str(override_dir))
+
+        assert ia.project == ib.project == "proj"
+        assert ia.root_key != ib.root_key  # identity still distinguishes them
+        assert ia.index_path == ib.index_path == override_dir.resolve() / "proj.json"
+
+    def test_equal_basename_collision_is_diagnosed_not_silent(self, tmp_path: Path, override_dir: Path) -> None:
+        """With project A's index in place, resolving equal-basename project B reports ``index_root_collision``.
+
+        The collision is surfaced instead of silently serving another project's index, and resolution never rewrites
+        the occupant: A's own resolution stays diagnostic-free.
+        """
+        a = tmp_path / "a" / "proj"
+        b = tmp_path / "b" / "proj"
+        a.mkdir(parents=True)
+        b.mkdir(parents=True)
+        ia = ii.resolve_index(root=a, index_dir_override=str(override_dir))
+        ia.index_path.write_text(json.dumps({"scan_root": str(ia.root), "tok": "A"}), encoding="utf-8")
+
+        collided = ii.resolve_index(root=b, index_dir_override=str(override_dir))
+
+        assert ii.resolve_index(root=a, index_dir_override=str(override_dir)).diagnostics == ()
+        assert ii.INDEX_ROOT_COLLISION in [d.code for d in collided.diagnostics]
+        assert json.loads(ia.index_path.read_text())["tok"] == "A"  # never overwritten by resolution
+
+    @_skip_directory_symlink_unavailable
+    def test_symlink_alias_shares_identity(self, tmp_path: Path) -> None:
+        """A directory symlink resolves to the same index and root identity as its target.
+
+        A project reached through a link must not get a second index next to the one built through the real path.
+        """
+        real = tmp_path / "real_proj"
+        real.mkdir()
+        link = tmp_path / "link_proj"
+        link.symlink_to(real, target_is_directory=True)
+
+        id_real = ii.resolve_index(root=real)
+        id_link = ii.resolve_index(root=link)
+
+        assert id_real.index_path == id_link.index_path
+        assert id_real.root_key == id_link.root_key
+
+    def test_matching_flat_index_resolves_clean(self, root: Path, override_dir: Path) -> None:
+        """An existing flat index built for this same root is the target, with no diagnostic.
+
+        Formerly this file was a read-only "legacy candidate" beside a distinct root-keyed target. Flat is now the only
+        layout, so a matching occupant is simply the index.
+        """
+        existing = override_dir / "proj.json"
+        existing.write_text(json.dumps({"scan_root": str(root.resolve())}), encoding="utf-8")
+
+        ident = ii.resolve_index(root=root, index_dir_override=str(override_dir))
+
+        assert ident.index_path == existing
+        assert ident.diagnostics == ()
+        assert json.loads(existing.read_text())["scan_root"] == str(root.resolve())
+
+    def test_mismatched_flat_index_emits_collision_diagnostic(
+        self, tmp_path: Path, root: Path, override_dir: Path
+    ) -> None:
+        """A flat index built for a different root is reported as a collision and left untouched.
+
+        Resolution reports the collision; it never rewrites the path or touches the occupant's file.
+        """
+        other = tmp_path / "other"
+        other.mkdir()
+        occupant = override_dir / "proj.json"
+        occupant.write_text(json.dumps({"scan_root": str(other.resolve())}), encoding="utf-8")
+
+        ident = ii.resolve_index(root=root, index_dir_override=str(override_dir))
+
+        assert ii.INDEX_ROOT_COLLISION in [d.code for d in ident.diagnostics]
+        assert ident.index_path == occupant
+        assert json.loads(occupant.read_text())["scan_root"] == str(other.resolve())
+
+    def test_split_index_roots_diagnostic(self, tmp_path: Path) -> None:
+        """Two different index paths produce ``split_index_roots``; identical paths produce none.
+
+        The diagnostic tells a consumer its probe and the provider are reading different indexes.
+        """
+        a = ii.resolve_index(root=tmp_path / "a")
+        b = ii.resolve_index(root=tmp_path / "b")
+
+        diag = ii.diagnose_split_index_roots(a.index_path, b.index_path)
+
+        assert diag is not None
+        assert diag.code == ii.SPLIT_INDEX_ROOTS
+        assert ii.diagnose_split_index_roots(a.index_path, a.index_path) is None
 
 
 @dataclass(frozen=True, slots=True)
@@ -287,50 +321,65 @@ def _built_index(project: Path, shim: Path, tmp_path: Path, monkeypatch: pytest.
     return _BuiltIndex(ident=ident, counter=counter, h0=_sha(ident.index_path), m0=ident.index_path.stat().st_mtime_ns)
 
 
-def test_scan_once_builds_index(built_index: _BuiltIndex) -> None:
-    """One scan-index invocation records exactly one scan and leaves a readable index file."""
-    assert _count(built_index.counter) == 1
-    assert built_index.ident.index_path.is_file()
+class TestBuiltIndexReuse:
+    """After one build, resolving and reading the index never triggers another scan."""
 
+    def test_scan_once_builds_index(self, built_index: _BuiltIndex) -> None:
+        """One scan-index invocation records exactly one scan and leaves a readable index file.
 
-def test_subdir_resolves_to_built_index(built_index: _BuiltIndex, project: Path) -> None:
-    """Resolving from a nested working directory returns the same index path as the repo root.
+        This pins the scanner-invocation counter oracle the reuse tests below rely on: the baseline is exactly one.
+        """
+        assert _count(built_index.counter) == 1
+        assert built_index.ident.index_path.is_file()
 
-    Cross-runtime delegation depends on both runtimes agreeing on the index path even when invoked from different
-    subdirectories of the same repo, not only from the repo root.
-    """
-    sub = project / "pkg" / "deep"
-    sub.mkdir(parents=True)
-    id_sub = ii.resolve_index(cwd=sub)
-    assert id_sub.index_path == built_index.ident.index_path
+    def test_subdir_resolves_to_built_index(self, built_index: _BuiltIndex, project: Path) -> None:
+        """Resolving from a nested working directory returns the same index path as the repo root.
 
+        Cross-runtime delegation depends on both runtimes agreeing on the index path even when invoked from different
+        subdirectories of the same repo, not only from the repo root.
+        """
+        sub = project / "pkg" / "deep"
+        sub.mkdir(parents=True)
 
-def test_cross_runtime_read_does_not_trigger_rebuild(built_index: _BuiltIndex) -> None:
-    """Claude then codex reading the same built index through the gate never triggers a rebuild.
+        id_sub = ii.resolve_index(cwd=sub)
 
-    Runtime identity only routes the log, never the index path: the scanner-invocation counter must stay at one, and the
-    index bytes/mtime must be untouched after both runtimes have read it.
-    """
-    ident = built_index.ident
-    for runtime in ("claude", "codex"):
-        with rw.read_index(ident.index_path, timeout=5) as data:
-            assert data["scan_root"] == str(ident.root)
-            assert data["project"] == ident.project
-    assert _count(built_index.counter) == 1  # no rebuild on reuse
-    assert _sha(ident.index_path) == built_index.h0
-    assert ident.index_path.stat().st_mtime_ns == built_index.m0
+        assert id_sub.index_path == built_index.ident.index_path
 
+    def test_two_runtime_reads_do_not_trigger_rebuild(self, built_index: _BuiltIndex) -> None:
+        """Two successive gated reads (the Claude then the Codex runtime) never rebuild the index.
 
-def test_cross_runtime_read_writes_per_runtime_log(built_index: _BuiltIndex, project: Path, tmp_path: Path) -> None:
-    """Each runtime's delegated read writes its own runtime-scoped delegation log file."""
-    ident = built_index.ident
-    log_root = tmp_path / "logs"
-    for runtime in ("claude", "codex"):
-        with rw.read_index(ident.index_path, timeout=5):
+        Runtime identity only routes the log, never the index path: the scanner-invocation counter must stay at one, and
+        the index bytes/mtime must be untouched after both reads.
+        """
+        ident = built_index.ident
+
+        with rw.read_index(ident.index_path, timeout=5) as claude_view:
+            pass
+        with rw.read_index(ident.index_path, timeout=5) as codex_view:
+            pass
+
+        assert [claude_view["scan_root"], codex_view["scan_root"]] == [str(ident.root)] * 2
+        assert [claude_view["project"], codex_view["project"]] == [ident.project] * 2
+        assert _count(built_index.counter) == 1  # no rebuild on reuse
+        assert _sha(ident.index_path) == built_index.h0
+        assert ident.index_path.stat().st_mtime_ns == built_index.m0
+
+    @pytest.mark.parametrize("runtime", ["claude", "codex"])
+    def test_delegated_read_writes_per_runtime_log(
+        self, built_index: _BuiltIndex, project: Path, tmp_path: Path, runtime: str
+    ) -> None:
+        """A runtime's delegated read writes its own runtime-scoped delegation log file.
+
+        The gated read and the ``reused_index`` log record are the pair a delegating runtime performs; the record must
+        land under that runtime's own subtree of the log root.
+        """
+        log_root = tmp_path / "logs"
+
+        with rw.read_index(built_index.ident.index_path, timeout=5):
             pass
         rl.write_log(runtime, {"event": "reused_index"}, session="deleg", root=project, override=str(log_root))
-    assert (log_root / "claude" / "cli_deleg.jsonl").is_file()
-    assert (log_root / "codex" / "cli_deleg.jsonl").is_file()
+
+        assert (log_root / runtime / "cli_deleg.jsonl").is_file()
 
 
 # ── stale index: concurrent writers are serialized by the engine's own lease ──

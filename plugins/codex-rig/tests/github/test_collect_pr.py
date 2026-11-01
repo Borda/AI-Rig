@@ -2,20 +2,24 @@
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
 from typing import Any
+from unittest import mock
 
 import pytest
+from _modules import load_module
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 COLLECTOR = PLUGIN_ROOT / "shared" / "collect_pr.py"
 BASE_OID = "a" * 40
 HEAD_OID = "b" * 40
+CONNECTION_RESET = b"connection reset by peer"
+PR_17_URL = "https://github.com/Borda/AI-Rig/pull/17"
 
 
 def _review_worktree_add(output: Path) -> list[str]:
@@ -26,16 +30,11 @@ def _review_worktree_add(output: Path) -> list[str]:
 def _load_collector() -> ModuleType:
     """Load the standalone collector without requiring package installation."""
     assert COLLECTOR.is_file(), COLLECTOR
-    specification = importlib.util.spec_from_file_location("codex_rig_collect_pr", COLLECTOR)
-    assert specification is not None
-    assert specification.loader is not None
-    module = importlib.util.module_from_spec(specification)
     sys.path.insert(0, str(COLLECTOR.parent))
     try:
-        specification.loader.exec_module(module)
+        return load_module("codex_rig_collect_pr", COLLECTOR)
     finally:
         sys.path.pop(0)
-    return module
 
 
 @pytest.mark.parametrize(
@@ -386,10 +385,43 @@ class FakeRunner:
         return subprocess.CompletedProcess(argv, 0, stdout=stdout, stderr=b"")
 
 
-def _configure_collector(monkeypatch: pytest.MonkeyPatch, module: ModuleType, runner: FakeRunner) -> None:
+def _fixture_which(command: str) -> str:
+    """Report every external command as installed under a fixed fake prefix."""
+    return f"/fixture/{command}"
+
+
+def _stub_which(monkeypatch: pytest.MonkeyPatch, module: ModuleType) -> None:
+    """Make command discovery deterministic so tests never depend on the host's installed tools."""
+    monkeypatch.setattr(module.shutil, "which", _fixture_which)
+
+
+def _configure_collector(monkeypatch: pytest.MonkeyPatch, module: ModuleType, runner: Callable[..., Any]) -> None:
     """Install deterministic command discovery and execution boundaries."""
-    monkeypatch.setattr(module.shutil, "which", lambda command: f"/fixture/{command}")
+    _stub_which(monkeypatch, module)
     monkeypatch.setattr(module.subprocess, "run", runner)
+
+
+def _error_text(output: Path) -> str:
+    """Return the collector's recorded error, or an empty string, for use as an assertion message."""
+    error = output / "pr-error.txt"
+    return error.read_text(encoding="utf-8") if error.exists() else ""
+
+
+def _read_json_if_present(path: Path) -> Any:
+    """Return the parsed JSON document at a path, or None when the collector did not write it."""
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+
+
+def _gh_pr_view_fails(delegate: Callable[..., Any], stderr: bytes) -> Callable[..., subprocess.CompletedProcess[bytes]]:
+    """Return a runner that fails only `gh pr view` with the given stderr and delegates every other command."""
+
+    def run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        """Fail the authenticated PR read or pass the command to the delegate runner."""
+        if argv[:3] == ["gh", "pr", "view"]:
+            return subprocess.CompletedProcess(argv, 1, stdout=b"", stderr=stderr)
+        return delegate(argv, **kwargs)
+
+    return run
 
 
 def test_collect_pr_writes_complete_noncheckout_artifact_schema(
@@ -403,7 +435,7 @@ def test_collect_pr_writes_complete_noncheckout_artifact_schema(
 
     result = module.collect_pr(target="17", output=output, checkout=False, timeout_seconds=5)
 
-    assert result == 0, (output / "pr-error.txt").read_text() if (output / "pr-error.txt").exists() else ""
+    assert result == 0, _error_text(output)
     assert {path.name for path in output.iterdir()} == {
         "comments.json",
         "diff.patch",
@@ -449,96 +481,134 @@ def test_collect_pr_writes_complete_noncheckout_artifact_schema(
     assert all(call[1]["timeout"] == 5 for call in _runner.calls)
 
 
-def test_collect_pr_degrades_incomplete_review_thread_pagination(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("runner_options", "expected_error"),
+    [
+        pytest.param({"paginated": True}, "review-thread-pagination-incomplete", id="thread-page"),
+        pytest.param({"nested_paginated": True}, "review-comment-pagination-incomplete", id="inline-comment-page"),
+    ],
+)
+def test_collect_pr_degrades_incomplete_pagination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, runner_options: dict[str, bool], expected_error: str
 ) -> None:
-    """Keep source review available while recording incomplete supplemental thread evidence."""
+    """Source review stays available while incomplete supplemental thread evidence is recorded as unavailable.
+
+    GitHub reports another page of review threads, or of comments inside a thread. The collector cannot prove it saw
+    everything, so it must succeed without threads rather than present a partial list as complete.
+    """
     module = _load_collector()
-    _runner = FakeRunner(paginated=True)
-    _configure_collector(monkeypatch, module, _runner)
+    _configure_collector(monkeypatch, module, FakeRunner(**runner_options))
     output = tmp_path / "pr"
 
     result = module.collect_pr(target="", output=output, checkout=False, timeout_seconds=5)
 
     assert result == 0
     assert not (output / "pr-error.txt").exists()
-    assert (output / "review-threads-error.txt").read_text(encoding="utf-8") == (
-        "review-thread-pagination-incomplete\n"
-    )
+    assert (output / "review-threads-error.txt").read_text(encoding="utf-8") == f"{expected_error}\n"
     summary = json.loads((output / "online-review-summary.json").read_text())
     assert summary["review_threads_status"] == "unavailable"
-    assert summary["review_threads_error"] == "review-thread-pagination-incomplete"
+    assert summary["review_threads_error"] == expected_error
     assert json.loads((output / "review-threads.json").read_text()) == []
 
 
-def test_collect_pr_degrades_incomplete_inline_comment_pagination(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_graphql_query_requests_page_info_for_nested_comments() -> None:
+    """The review-thread query asks for pagination metadata so incomplete comment pages can be detected."""
+    assert "pageInfo { hasNextPage endCursor }" in _load_collector().GRAPHQL_QUERY
+
+
+def _thread_list(payload: dict[str, Any]) -> dict[str, Any]:
+    """Return the object holding the review-thread node array."""
+    return payload["data"]["repository"]["pullRequest"]["reviewThreads"]
+
+
+def _comment_list(payload: dict[str, Any]) -> dict[str, Any]:
+    """Return the object holding the first thread's comment node array."""
+    return _thread_list(payload)["nodes"][0]["comments"]
+
+
+def _add_graphql_errors(payload: dict[str, Any]) -> None:
+    """Mark the response as partial by attaching a GraphQL errors entry."""
+    payload["errors"] = [{"message": "One requested field is unavailable."}]
+
+
+def _drop_thread_page_info(payload: dict[str, Any]) -> None:
+    """Remove the thread-level pagination metadata."""
+    del _thread_list(payload)["pageInfo"]
+
+
+def _drop_comment_page_info(payload: dict[str, Any]) -> None:
+    """Remove the nested comment pagination metadata."""
+    del _comment_list(payload)["pageInfo"]
+
+
+NODE_LEVELS = [pytest.param(_thread_list, id="threads"), pytest.param(_comment_list, id="comments")]
+
+
+@pytest.mark.parametrize(
+    ("damage", "match"),
+    [
+        pytest.param(_add_graphql_errors, None, id="graphql-errors"),
+        pytest.param(_drop_thread_page_info, None, id="missing-thread-page-info"),
+        pytest.param(_drop_comment_page_info, "invalid-json:review-thread-comments", id="missing-comment-page-info"),
+    ],
+)
+def test_review_threads_rejects_partial_graphql_response(
+    damage: Callable[[dict[str, Any]], None], match: str | None
 ) -> None:
-    """Treat a partial nested comment page as unavailable thread evidence."""
-    module = _load_collector()
-    _runner = FakeRunner(nested_paginated=True)
-    _configure_collector(monkeypatch, module, _runner)
-    output = tmp_path / "pr"
+    """Partial GraphQL results are never labeled complete supplemental evidence.
 
-    assert module.collect_pr(target="", output=output, checkout=False, timeout_seconds=5) == 0
-    summary = json.loads((output / "online-review-summary.json").read_text())
-    assert summary["review_threads_status"] == "unavailable"
-    assert summary["review_threads_error"] == "review-comment-pagination-incomplete"
-    assert json.loads((output / "review-threads.json").read_text()) == []
-    assert "pageInfo { hasNextPage endCursor }" in module.GRAPHQL_QUERY
-
-
-def test_review_threads_rejects_missing_nested_pagination_metadata() -> None:
-    """Reject a response that cannot prove whether inline comments are complete."""
+    A response that cannot prove whether threads or inline comments are complete must be rejected instead of read.
+    """
     module = _load_collector()
     payload = _threads_payload()
-    payload["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"][0]["comments"].pop("pageInfo")
+    damage(payload)
 
-    with pytest.raises(module.CollectionError, match="invalid-json:review-thread-comments"):
+    with pytest.raises(module.CollectionError, match=match):
         module._review_threads(payload)
 
 
-@pytest.mark.parametrize("problem", ["errors", "missing-page-info"])
-def test_review_threads_rejects_partial_graphql_response(problem: str) -> None:
-    """Keep partial GraphQL results from being labeled complete supplemental evidence."""
+@pytest.mark.parametrize("container_of", NODE_LEVELS)
+def test_review_threads_rejects_missing_nodes(container_of: Callable[[dict[str, Any]], dict[str, Any]]) -> None:
+    """A missing node array is distinguished from a genuinely empty one."""
     module = _load_collector()
     payload = _threads_payload()
-    if problem == "errors":
-        payload["errors"] = [{"message": "One requested field is unavailable."}]
-    else:
-        del payload["data"]["repository"]["pullRequest"]["reviewThreads"]["pageInfo"]
-    with pytest.raises(module.CollectionError):
-        module._review_threads(payload)
+    container_of(payload).pop("nodes")
 
-
-@pytest.mark.parametrize("level", ["threads", "comments"])
-@pytest.mark.parametrize("problem", ["missing", "null", "object", "invalid-node"])
-def test_review_threads_rejects_incomplete_node_arrays(level: str, problem: str) -> None:
-    """Distinguish missing GraphQL evidence from genuinely empty node arrays."""
-    module = _load_collector()
-    payload = _threads_payload()
-    container = payload["data"]["repository"]["pullRequest"]["reviewThreads"]
-    if level == "comments":
-        container = container["nodes"][0]["comments"]
-    if problem == "missing":
-        container.pop("nodes")
-    else:
-        container["nodes"] = {"null": None, "object": {}, "invalid-node": [None]}[problem]
     with pytest.raises(module.CollectionError, match="invalid-json:review-thread"):
         module._review_threads(payload)
 
 
-@pytest.mark.parametrize("level", ["threads", "comments"])
-def test_review_threads_accepts_explicit_empty_nodes(level: str) -> None:
-    """Preserve complete empty results as available supplemental evidence."""
+@pytest.mark.parametrize("container_of", NODE_LEVELS)
+@pytest.mark.parametrize(
+    "nodes", [pytest.param(None, id="null"), pytest.param({}, id="object"), pytest.param([None], id="invalid-node")]
+)
+def test_review_threads_rejects_malformed_nodes(
+    container_of: Callable[[dict[str, Any]], dict[str, Any]], nodes: object
+) -> None:
+    """A node array that is null, an object, or holds a non-object entry is rejected."""
     module = _load_collector()
     payload = _threads_payload()
-    container = payload["data"]["repository"]["pullRequest"]["reviewThreads"]
-    expected = container["nodes"]
-    if level == "threads":
-        container["nodes"] = []
-        expected = []
-    assert module._review_threads(payload) == expected
+    container_of(payload)["nodes"] = nodes
+
+    with pytest.raises(module.CollectionError, match="invalid-json:review-thread"):
+        module._review_threads(payload)
+
+
+def test_review_threads_accepts_explicit_empty_thread_list() -> None:
+    """An explicitly empty thread list is complete evidence, not an error."""
+    module = _load_collector()
+    payload = _threads_payload()
+    _thread_list(payload)["nodes"] = []
+
+    assert module._review_threads(payload) == []
+
+
+def test_review_threads_accepts_explicit_empty_comment_list() -> None:
+    """Threads whose comment lists are explicitly empty are returned unchanged as available evidence."""
+    module = _load_collector()
+    payload = _threads_payload()
+
+    assert module._review_threads(payload) == _thread_list(payload)["nodes"]
 
 
 @pytest.mark.parametrize("level", ["threads", "comments"])
@@ -589,7 +659,7 @@ def test_collect_pr_does_not_require_fallback_identity_when_primary_gh_succeeds(
         timeout_seconds=5,
     )
 
-    assert result == 0, (output / "pr-error.txt").read_text() if (output / "pr-error.txt").exists() else ""
+    assert result == 0, _error_text(output)
     assert json.loads((output / "online-review-summary.json").read_text())["pr_metadata_transport"] == "gh"
 
 
@@ -681,7 +751,7 @@ def test_collect_pr_uses_public_metadata_fallback_with_trusted_pr_identity(
         timeout_seconds=5,
     )
 
-    assert result == 0, (output / "pr-error.txt").read_text() if (output / "pr-error.txt").exists() else ""
+    assert result == 0, _error_text(output)
     assert public_requests == ["https://api.github.com/repos/Borda/AI-Rig/pulls/17"]
     assert any(
         argv == ["git", "fetch", "--no-tags", "--refmap=", "origin", "refs/pull/17/head"] for argv, _ in _runner.calls
@@ -757,48 +827,49 @@ def test_collect_pr_keeps_ambiguous_denied_or_missing_metadata_out_of_public_fal
     module = _load_collector()
     reader = sys.modules["github_read"]
     output = tmp_path / "pr"
-    _runner = FakeRunner(github_remotes=github_remotes)
-
-    def _unavailable_gh(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
-        """Return the configured authenticated PR failure and delegate other commands."""
-        if argv[:3] == ["gh", "pr", "view"]:
-            return subprocess.CompletedProcess(argv, 1, stdout=b"", stderr=stderr)
-        return _runner(argv, **kwargs)
-
-    def _public_get(*args: Any, **kwargs: Any) -> bytes:
-        """Fail if an ambiguous authenticated result activates public fallback."""
-        raise AssertionError("ambiguous selectors and permission failures must not activate public HTTPS fallback")
-
-    _configure_collector(monkeypatch, module, _unavailable_gh)
-    monkeypatch.setattr(reader, "public_github_get", _public_get)
+    _configure_collector(monkeypatch, module, _gh_pr_view_fails(FakeRunner(github_remotes=github_remotes), stderr))
+    public_get = mock.Mock(
+        side_effect=AssertionError(
+            "ambiguous selectors and permission failures must not activate public HTTPS fallback"
+        )
+    )
+    monkeypatch.setattr(reader, "public_github_get", public_get)
 
     assert module.collect_pr(target=target, output=output, checkout=checkout, timeout_seconds=5) == 2
     assert (output / "pr-error.txt").read_text(encoding="utf-8") == f"{expected_error}\n"
     assert not (output / "pr.json").exists()
 
 
-@pytest.mark.parametrize("failure_class", ["github-not-found", "github-network"])
+@pytest.mark.parametrize(
+    ("failure_class", "diagnostic"),
+    [
+        pytest.param("github-not-found", None, id="not-found-keeps-no-diagnostic"),
+        pytest.param(
+            "github-network",
+            {
+                "exit_code": 1,
+                "failure_class": "github-network",
+                "failure_reason": "connection-reset",
+                "label": "gh-pr-view",
+            },
+            id="network-records-diagnostic",
+        ),
+    ],
+)
 def test_collect_pr_fails_closed_when_public_fallback_cannot_read_pr(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure_class: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure_class: str, diagnostic: dict[str, Any] | None
 ) -> None:
-    """Do not emit partial PR evidence when a canonical URL is private or unavailable publicly."""
+    """No partial PR evidence is emitted when a canonical URL is private or unavailable publicly.
+
+    The authenticated read fails with a network error and the public fallback then reports the given failure class; only
+    a network failure leaves a command-failure diagnostic behind.
+    """
     module = _load_collector()
     reader = sys.modules["github_read"]
     output = tmp_path / "pr"
-    _runner = FakeRunner()
-
-    def _unavailable_gh(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
-        """Return an unavailable authenticated PR response for fallback testing."""
-        if argv[:3] == ["gh", "pr", "view"]:
-            return subprocess.CompletedProcess(argv, 1, stdout=b"", stderr=b"connection reset by peer")
-        return _runner(argv, **kwargs)
-
-    def _public_get(*args: Any, **kwargs: Any) -> bytes:
-        """Return the expected public-read failure without creating partial evidence."""
-        raise reader.GitHubReadError(f"{failure_class}:gh-pr-view")
-
-    _configure_collector(monkeypatch, module, _unavailable_gh)
-    monkeypatch.setattr(reader, "public_github_get", _public_get)
+    _configure_collector(monkeypatch, module, _gh_pr_view_fails(FakeRunner(), CONNECTION_RESET))
+    public_get = mock.Mock(side_effect=reader.GitHubReadError(f"{failure_class}:gh-pr-view"))
+    monkeypatch.setattr(reader, "public_github_get", public_get)
 
     assert (
         module.collect_pr(
@@ -811,16 +882,7 @@ def test_collect_pr_fails_closed_when_public_fallback_cannot_read_pr(
     )
     assert (output / "pr-error.txt").read_text(encoding="utf-8") == f"{failure_class}:gh-pr-view\n"
     assert not (output / "pr.json").exists()
-    diagnostic_path = output / "command-failure.json"
-    if failure_class == "github-network":
-        assert json.loads(diagnostic_path.read_text(encoding="utf-8")) == {
-            "exit_code": 1,
-            "failure_class": "github-network",
-            "failure_reason": "connection-reset",
-            "label": "gh-pr-view",
-        }
-    else:
-        assert not diagnostic_path.exists()
+    assert _read_json_if_present(output / "command-failure.json") == diagnostic
 
 
 def test_collect_pr_rejects_canonical_url_without_matching_configured_github_remote(
@@ -831,19 +893,11 @@ def test_collect_pr_rejects_canonical_url_without_matching_configured_github_rem
     reader = sys.modules["github_read"]
     output = tmp_path / "pr"
     _runner = FakeRunner(github_remotes={"origin": ["https://github.com/Borda/other-repository.git"]})
-
-    def _unavailable_gh(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
-        """Return a network failure for authenticated metadata and delegate other commands."""
-        if argv[:3] == ["gh", "pr", "view"]:
-            return subprocess.CompletedProcess(argv, 1, stdout=b"", stderr=b"connection reset by peer")
-        return _runner(argv, **kwargs)
-
-    def _public_get(*args: Any, **kwargs: Any) -> bytes:
-        """Fail if a remote URL without a matching local remote requests metadata."""
-        raise AssertionError("a URL without matching configured remote must not request public metadata")
-
-    _configure_collector(monkeypatch, module, _unavailable_gh)
-    monkeypatch.setattr(reader, "public_github_get", _public_get)
+    _configure_collector(monkeypatch, module, _gh_pr_view_fails(_runner, CONNECTION_RESET))
+    public_get = mock.Mock(
+        side_effect=AssertionError("a URL without matching configured remote must not request public metadata")
+    )
+    monkeypatch.setattr(reader, "public_github_get", public_get)
 
     assert (
         module.collect_pr(
@@ -917,7 +971,7 @@ def test_collect_pr_uses_verified_local_diff_when_review_thread_fetch_fails(
 
     result = module.collect_pr(target="17", output=output, checkout=True, timeout_seconds=5)
 
-    assert result == 0, (output / "pr-error.txt").read_text() if (output / "pr-error.txt").exists() else ""
+    assert result == 0, _error_text(output)
     assert json.loads((output / "pr.json").read_text())["body"].startswith("Fix checkpoint")
     assert (output / "review-threads-error.txt").read_text() == "github-network:gh-review-threads\n"
     assert (output / "diff.patch").read_bytes() == b"diff --git a/a.py b/a.py\n"
@@ -976,7 +1030,7 @@ def test_collect_pr_fetches_fork_head_before_creating_review_worktree(
 
     result = module.collect_pr(target="17", output=output, checkout=True, timeout_seconds=5)
 
-    assert result == 0, (output / "pr-error.txt").read_text() if (output / "pr-error.txt").exists() else ""
+    assert result == 0, _error_text(output)
     calls = [argv for argv, _ in runner.calls]
     target_fetch = ["git", "fetch", "--no-tags", "--refmap=", "origin", "main"]
     assert calls.index(target_fetch) < calls.index(fork_fetch) < calls.index(review_add)
@@ -1205,57 +1259,80 @@ def test_collect_pr_records_unrelated_main_dirtiness_without_blocking_review(
     assert any(argv == _review_worktree_add(output) for argv, _ in _runner.calls)
 
 
-@pytest.mark.parametrize(
-    ("failure", "expected_code", "expected_error"),
-    [
-        pytest.param("oversized-main", 0, None, id="optional-main-context"),
-        pytest.param(
-            "oversized-review", 2, "command-output-oversized:review-worktree-status", id="required-review-source"
-        ),
-        pytest.param(
-            "failed-main", 2, "command-failed:source-worktree-context-untracked-worktree-paths", id="other-main-error"
-        ),
-    ],
-)
-def test_review_only_tolerates_output_limit_in_informational_main_context(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    failure: str,
-    expected_code: int,
-    expected_error: str | None,
-) -> None:
-    """Apply the real output cap only as a soft limit for invoking-tree context."""
-    module = _load_collector()
+def _collect_with_scan_failure(module: ModuleType, monkeypatch: pytest.MonkeyPatch, output: Path, failure: str) -> int:
+    """Run a checkout collection where one untracked-file or status scan returns oversized or failing output.
+
+    `failure` is `oversized-main`, `oversized-review` or `failed-main`; every other command succeeds as usual.
+    """
     runner = FakeRunner()
     oversized = b"cache/file\0" * (module.MAX_OUTPUT_BYTES // len(b"cache/file\0") + 1)
+    scans = {
+        "oversized-main": (["git", "ls-files", "--others", "-z"], 0, oversized, b""),
+        "failed-main": (["git", "ls-files", "--others", "-z"], 128, b"", b"fatal: unable to read index"),
+    }
 
     def run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
         """Supply command output at the informational or required source boundary."""
         result = runner(argv, **kwargs)
-        main_scan = argv == ["git", "ls-files", "--others", "-z"]
         review_scan = argv[:2] == ["git", "-C"] and argv[3:] == ["status", "--porcelain", "-z"]
-        if (failure == "oversized-main" and main_scan) or (failure == "oversized-review" and review_scan):
+        if failure == "oversized-review" and review_scan:
             return subprocess.CompletedProcess(argv, 0, stdout=oversized, stderr=b"")
-        if failure == "failed-main" and main_scan:
-            return subprocess.CompletedProcess(argv, 128, stdout=b"", stderr=b"fatal: unable to read index")
+        scan_argv, returncode, stdout, stderr = scans.get(failure, (None, 0, b"", b""))
+        if argv == scan_argv:
+            return subprocess.CompletedProcess(argv, returncode, stdout=stdout, stderr=stderr)
         return result
 
-    monkeypatch.setattr(module.shutil, "which", lambda command: f"/fixture/{command}")
+    _stub_which(monkeypatch, module)
+    return module.collect_pr(target="17", output=output, checkout=True, timeout_seconds=5, run=run)
+
+
+def test_review_tolerates_output_limit_in_informational_main_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The real output cap is only a soft limit for the invoking tree's context scan.
+
+    An oversized untracked-file listing in the main checkout is recorded as unavailable context; review of the isolated
+    worktree still completes.
+    """
     output = tmp_path / "pr"
 
-    result = module.collect_pr(target="17", output=output, checkout=True, timeout_seconds=5, run=run)
+    result = _collect_with_scan_failure(_load_collector(), monkeypatch, output, "oversized-main")
 
-    assert result == expected_code
-    if expected_error is not None:
-        assert (output / "pr-error.txt").read_text(encoding="utf-8") == f"{expected_error}\n"
-        assert not (output / "local-checkout.json").exists()
-    else:
-        context = json.loads((output / "source-worktree-context.json").read_text(encoding="utf-8"))
-        assert context["status"] == "unavailable"
-        assert context["reason"] == "command-output-oversized:source-worktree-context-untracked-worktree-paths"
-        checkout = json.loads((output / "local-checkout.json").read_text(encoding="utf-8"))
-        assert checkout["local_head"] == HEAD_OID
-        assert not (output / "pr-error.txt").exists()
+    assert result == 0
+    context = json.loads((output / "source-worktree-context.json").read_text(encoding="utf-8"))
+    assert context["status"] == "unavailable"
+    assert context["reason"] == "command-output-oversized:source-worktree-context-untracked-worktree-paths"
+    checkout = json.loads((output / "local-checkout.json").read_text(encoding="utf-8"))
+    assert checkout["local_head"] == HEAD_OID
+    assert not (output / "pr-error.txt").exists()
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected_error"),
+    [
+        pytest.param(
+            "oversized-review", "command-output-oversized:review-worktree-status", id="required-review-source"
+        ),
+        pytest.param(
+            "failed-main", "command-failed:source-worktree-context-untracked-worktree-paths", id="other-main-error"
+        ),
+    ],
+)
+def test_review_fails_on_required_scan_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str, expected_error: str
+) -> None:
+    """An oversized review-worktree status, or any non-limit failure of the main scan, still fails collection.
+
+    Only the output cap on informational main-tree context is tolerated; the isolated review source is required
+    evidence, and a genuine Git error is never downgraded to unavailable.
+    """
+    output = tmp_path / "pr"
+
+    result = _collect_with_scan_failure(_load_collector(), monkeypatch, output, failure)
+
+    assert result == 2
+    assert (output / "pr-error.txt").read_text(encoding="utf-8") == f"{expected_error}\n"
+    assert not (output / "local-checkout.json").exists()
 
 
 def test_collect_pr_records_main_dirty_paths_overlapping_pr_diff(
@@ -1307,7 +1384,7 @@ def test_collect_pr_checkout_writes_verified_fetch_and_checkout_artifacts(
 
     result = module.collect_pr(target="17", output=output, checkout=True, timeout_seconds=5)
 
-    assert result == 0, (output / "pr-error.txt").read_text() if (output / "pr-error.txt").exists() else ""
+    assert result == 0, _error_text(output)
     target = json.loads((output / "target-branch.json").read_text())
     assert target["local_head"] == BASE_OID
     assert target["base_matches_pr_metadata"] is True
@@ -1339,16 +1416,10 @@ def test_checkout_file_inventory_uses_complete_verified_git_comparison(
 
     result = module.collect_pr(target="17", output=output, checkout=True, timeout_seconds=5)
 
-    assert result == 0, (output / "pr-error.txt").read_text() if (output / "pr-error.txt").exists() else ""
+    assert result == 0, _error_text(output)
     assert (output / "files.txt").read_text(encoding="utf-8").splitlines() == sorted(actual_paths)
     assert any(argv[-5:] == ["diff", "--name-only", "-z", f"{BASE_OID}...{HEAD_OID}", "--"] for argv, _ in runner.calls)
-    specification = importlib.util.spec_from_file_location(
-        "review_routing_complete_pr", PLUGIN_ROOT / "skills/code-review/review_routing.py"
-    )
-    assert specification is not None
-    assert specification.loader is not None
-    routing = importlib.util.module_from_spec(specification)
-    specification.loader.exec_module(routing)
+    routing = load_module("review_routing_complete_pr", PLUGIN_ROOT / "skills/code-review/review_routing.py")
     tier, evidence, mandatory = routing.derive_mechanical_risk(output)
     assert tier == "HIGH_RISK"
     assert "axis_cicd_steward" in mandatory
@@ -1387,7 +1458,7 @@ def test_collect_pr_accepts_open_pr_when_target_advanced_from_recorded_base(
 
     result = module.collect_pr(target="17", output=output, checkout=True, timeout_seconds=5)
 
-    assert result == 0, (output / "pr-error.txt").read_text() if (output / "pr-error.txt").exists() else ""
+    assert result == 0, _error_text(output)
     target = json.loads((output / "target-branch.json").read_text())
     assert target["base_relation"] == "advanced"
     assert target["expected_base_is_ancestor"] is True
@@ -1520,7 +1591,7 @@ def test_collect_pr_checks_out_merged_pr_when_its_named_head_branch_is_deleted(
 def test_collect_pr_timeout_is_bounded_and_records_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Convert a stalled external command into the stable collection failure contract."""
     module = _load_collector()
-    monkeypatch.setattr(module.shutil, "which", lambda command: f"/fixture/{command}")
+    _stub_which(monkeypatch, module)
 
     def _timeout(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
         """Timeout the authenticated PR read while returning success for other commands."""
@@ -1553,7 +1624,7 @@ def test_collect_pr_removes_terminal_failure_markers_after_successful_retry(
             return subprocess.CompletedProcess(argv, 1, stdout=b"", stderr=b"error connecting to api.github.com")
         return success_runner(argv, **kwargs)
 
-    monkeypatch.setattr(module.shutil, "which", lambda command: f"/fixture/{command}")
+    _stub_which(monkeypatch, module)
     output = tmp_path / "pr"
 
     assert module.collect_pr(target="17", output=output, checkout=False, timeout_seconds=5, run=_runner) == 2
@@ -1585,7 +1656,7 @@ def test_collect_pr_removes_stale_diagnostic_before_nondiagnostic_failure(
             return subprocess.CompletedProcess(argv, 0, stdout=b"not-json", stderr=b"")
         raise AssertionError(f"unexpected command: {argv}")
 
-    monkeypatch.setattr(module.shutil, "which", lambda command: f"/fixture/{command}")
+    _stub_which(monkeypatch, module)
     output = tmp_path / "pr"
 
     assert module.collect_pr(target="17", output=output, checkout=False, timeout_seconds=5, run=_runner) == 2
@@ -1602,7 +1673,7 @@ def test_collect_pr_failure_clears_prior_attempt_before_retaining_current_diagno
     """Prevent stale source evidence while retaining diagnostics produced by the failed attempt."""
     module = _load_collector()
     output = tmp_path / "pr"
-    monkeypatch.setattr(module.shutil, "which", lambda command: f"/fixture/{command}")
+    _stub_which(monkeypatch, module)
 
     assert module.collect_pr(target="17", output=output, checkout=False, timeout_seconds=5, run=FakeRunner()) == 0
     assert (output / "pr.json").is_file()
@@ -1635,7 +1706,7 @@ def test_collect_pr_fails_when_initial_git_status_cannot_be_captured(
             return subprocess.CompletedProcess(argv, 1, stdout=b"", stderr=b"status failed github_pat_secret")
         return success_runner(argv, **kwargs)
 
-    monkeypatch.setattr(module.shutil, "which", lambda command: f"/fixture/{command}")
+    _stub_which(monkeypatch, module)
     output = tmp_path / "pr"
 
     assert module.collect_pr(target="17", output=output, checkout=False, timeout_seconds=5, run=_runner) == 2
@@ -1652,8 +1723,8 @@ def test_collect_pr_fails_when_initial_git_status_cannot_be_captured(
 @pytest.mark.parametrize(
     ("argv", "label"),
     [
-        pytest.param(["gh", "pr", "merge", "17", "--merge"], "gh-pr-merge", id="gh-pr-merge-17---merge"),
-        pytest.param(["gh", "auth", "status"], "gh-auth-status", id="gh-auth-status"),
+        pytest.param(["gh", "pr", "merge", "17", "--merge"], "gh-pr-merge", id="pr-merge"),
+        pytest.param(["gh", "auth", "status"], "gh-auth-status", id="auth-status"),
         pytest.param(
             [
                 "gh",
@@ -1669,24 +1740,23 @@ def test_collect_pr_fails_when_initial_git_status_cannot_be_captured(
                 "query=mutation { closePullRequest(input: {}) { pullRequest { id } } }",
             ],
             "gh-review-threads",
-            id="gh-api-graphql--f-owner-borda--f-name-ai-rig--f-number-17--f-query-mutat",
+            id="graphql-mutation",
         ),
     ],
 )
 def test_run_rejects_non_read_only_gh_command(argv: list[str], label: str) -> None:
-    """Reject a GitHub CLI command outside the shared read-only boundary."""
-    module = _load_collector()
-    calls: list[list[str]] = []
+    """A GitHub CLI command outside the shared read-only boundary is refused before it can run.
 
-    def _runner(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
-        """Record an unsafe command invocation if the read-only guard regresses."""
-        calls.append(argv)
-        return subprocess.CompletedProcess(argv, 0, stdout=b"", stderr=b"")
+    The collector's own runner wrapper must apply the same allowlist as the shared reader, so a regression there would
+    let a merge, credential query or GraphQL mutation reach the process boundary.
+    """
+    module = _load_collector()
+    runner = mock.Mock()
 
     with pytest.raises(module.CollectionError, match=f"unsafe-gh-command:{label}"):
-        module._run(_runner, argv, 5, label)
+        module._run(runner, argv, 5, label)
 
-    assert calls == []
+    runner.assert_not_called()
 
 
 def test_run_preserves_classified_gh_failure_details() -> None:
@@ -1728,7 +1798,7 @@ def test_collect_pr_writes_classified_opaque_failure_artifact(tmp_path: Path, mo
             stderr=b"error connecting to api.github.com using github_pat_exampletoken\n",
         )
 
-    monkeypatch.setattr(module.shutil, "which", lambda command: f"/fixture/{command}")
+    _stub_which(monkeypatch, module)
     output = tmp_path / "pr"
 
     result = module.collect_pr(target="17", output=output, checkout=False, timeout_seconds=5, run=_runner)

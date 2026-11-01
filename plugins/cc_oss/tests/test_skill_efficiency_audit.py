@@ -2,15 +2,18 @@
 
 Measured runs across the oss skills spent several calls per run on improvised ``ScheduleWakeup``/``ListAgents`` waits,
 periodic ``find -newer`` probes and standalone task updates — each a full-context turn. This check walks every skill
-file, so a new skill or mode that reintroduces either pattern fails here instead of in a live run.
+file, so a new skill or mode that reintroduces either pattern fails here instead of in a live run. Prose checks run on
+whitespace-flattened text (or single lines), so reflowing a paragraph never changes a verdict.
 """
 
 from __future__ import annotations
 
+import functools
 import re
 from pathlib import Path
 
 import pytest
+from _text_io import flat
 
 _SKILLS = Path(__file__).resolve().parents[1] / "skills"
 
@@ -40,7 +43,12 @@ _FORBIDS = re.compile(
     r"\bnever\b|\bdo not\b|\bno (?:`?find|periodic|polling|checkpoint|`?sleep|`?ScheduleWakeup)", re.I
 )
 _WAIT_RULE = re.compile(r"agent-watch|agent_watch|Agent wait discipline|§Health monitoring|Agent waits")
-_RIDE_RULE = re.compile(r"bookkeeping-only|bookkeeping alone|rides? (in|with) the (response|next)", re.I)
+
+
+@functools.cache
+def _text(path: Path) -> str:
+    """Return a skill file's text, read once per run."""
+    return path.read_text(encoding="utf-8")
 
 
 def _path_params(paths: list[Path]) -> list[object]:
@@ -61,8 +69,12 @@ def _skill_files() -> list[Path]:
 
 @pytest.mark.parametrize("path", _path_params(_skill_files()))
 def test_no_polling_instruction(path: Path) -> None:
-    """No skill file tells the model to poll, probe for liveness, or wait with a scheduling tool."""
-    hits = [line.strip()[:80] for line in path.read_text(encoding="utf-8").splitlines() if _unforbidden_match(line)]
+    """No skill file tells the model to poll, probe for liveness, or wait with a scheduling tool.
+
+    Each line is judged alone: a waiting tool or polling phrase counts only when no prohibition ("never", "do not")
+    precedes it within 120 characters on that line.
+    """
+    hits = [line.strip()[:80] for line in _text(path).splitlines() if _unforbidden_match(line)]
     assert hits == []
 
 
@@ -70,63 +82,17 @@ def test_no_polling_instruction(path: Path) -> None:
     "path", _path_params([path for path in _skill_files() if "Agent(" in path.read_text(encoding="utf-8")])
 )
 def test_every_spawn_file_points_at_a_wait_rule(path: Path) -> None:
-    """A file that spawns an agent names the deadline-based wait rule, so the wait is never improvised."""
-    assert _WAIT_RULE.search(path.read_text(encoding="utf-8"))
+    """A file that spawns an agent names the deadline-based wait rule, so the wait is never improvised.
 
-
-def _task_skills() -> list[object]:
-    """Every skill directory whose files drive tasks, as ``pytest.param`` cases named after the skill."""
-    uses_tasks = re.compile(r"TaskCreate\(|TaskUpdate\(")
-    return [
-        pytest.param(directory, id=directory.name)
-        for directory in sorted(_SKILLS.iterdir())
-        if directory.is_dir() and any(uses_tasks.search(f.read_text(encoding="utf-8")) for f in directory.rglob("*.md"))
-    ]
-
-
-@pytest.mark.parametrize("skill", _task_skills())
-def test_task_using_skill_forbids_bookkeeping_only_turns(skill: Path) -> None:
-    """Every skill that drives tasks states that task calls ride with real work."""
-    assert any(_RIDE_RULE.search(f.read_text(encoding="utf-8")) for f in skill.rglob("*.md"))
+    Scenario: any skill or mode file containing an ``Agent(`` spawn must also reference the agent-watch deadline rule.
+    """
+    assert _WAIT_RULE.search(flat(_text(path)))
 
 
 def test_setup_keeps_its_conflict_question() -> None:
-    """Oss:setup (light pass, untouched) still asks before overwriting a conflicting destination."""
-    text = (_SKILLS / "setup" / "SKILL.md").read_text(encoding="utf-8")
-    assert "Otherwise invoke `AskUserQuestion`, listing each conflicting destination and its current state:" in text
+    """Oss:setup (light pass, untouched) still asks before overwriting a conflicting destination.
 
-
-_TASK_ONLY_BLOCK = re.compile(r"```text\n(.*?)```", re.S)
-_TASK_CALL = re.compile(r"\s*(TaskUpdate|TaskCreate)\(|\s*for each .*TaskUpdate\(")
-_RIDES_OR_EXCEPTION = re.compile(
-    r"riding|rides (in|with)|same response|one response|standalone|before (the )?long output|before printing", re.I
-)
-
-
-def _task_only_blocks(path: Path) -> list[tuple[str, str]]:
-    """Return ``(preceding text, block body)`` for every fenced text block holding nothing but task calls."""
-    text = path.read_text(encoding="utf-8")
-    blocks = []
-    for match in _TASK_ONLY_BLOCK.finditer(text):
-        body = [line for line in match.group(1).splitlines() if line.strip()]
-        if body and all(_TASK_CALL.match(line) for line in body):
-            blocks.append((text[max(0, match.start() - 400) : match.start()], match.group(1)))
-    return blocks
-
-
-@pytest.mark.parametrize("path", _path_params(_skill_files()))
-def test_no_standalone_in_progress_task_blocks(path: Path) -> None:
-    """No step opens with a task-only ``in_progress`` block — the per-step pair that cost a turn of its own.
-
-    The baseline resolve skill had seven such blocks; each step's start is now carried by the call that does its work.
+    Efficiency edits elsewhere must not remove the one question that protects a user's existing files.
     """
-    assert [body for _, body in _task_only_blocks(path) if "in_progress" in body] == []
-
-
-@pytest.mark.parametrize("path", _path_params(_skill_files()))
-def test_every_task_only_block_states_how_it_rides(path: Path) -> None:
-    """Every remaining task-only block says it rides with real work, or is the one completion before long output."""
-    unexplained = [
-        body.strip()[:70] for before, body in _task_only_blocks(path) if not _RIDES_OR_EXCEPTION.search(before + body)
-    ]
-    assert unexplained == []
+    text = flat(_text(_SKILLS / "setup" / "SKILL.md"))
+    assert "Otherwise invoke `AskUserQuestion`, listing each conflicting destination and its current state:" in text

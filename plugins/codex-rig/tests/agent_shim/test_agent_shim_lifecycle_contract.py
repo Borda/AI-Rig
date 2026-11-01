@@ -1,10 +1,16 @@
-"""Acceptance checks for the public thin-shim lifecycle contract."""
+"""Acceptance checks for the public thin-shim lifecycle contract.
+
+Reads the shipped ``runtime/agent-shim-lifecycle.json`` contract and pins each documented section (actions, approval
+plan, transaction journal, recovery, doctor and shim format) so an edit that widens or drops a rule fails here.
+"""
 
 from __future__ import annotations
 
 import hashlib
 import json
 from pathlib import Path
+
+import pytest
 
 try:
     import tomllib
@@ -34,166 +40,200 @@ EXPECTED_ROLES = {
 }
 
 
-def _load_contract() -> dict[str, object]:
+@pytest.fixture
+def contract() -> dict[str, object]:
     """Load the lifecycle contract as one JSON object."""
     payload = json.loads(CONTRACT_PATH.read_text(encoding="utf-8"))
     assert isinstance(payload, dict)
     return payload
 
 
-def test_public_grammar_scope_and_exit_contract_are_frozen() -> None:
-    """Prevent lifecycle scope or user interaction from widening silently."""
-    contract = _load_contract()
-
-    assert contract["schema"] == 1
-    assert contract["release"] == "0.2.0"
-    assert contract["public_actions"] == {
-        "arguments": "exactly one positional action and no extras",
-        "actions": ["doctor", "status", "install", "remove"],
-        "read_only": ["doctor", "status"],
-        "whole_roster_mutations": ["install", "remove"],
-        "approval": "install and remove require explicit approval of the exact canonical plan digest",
-        "fresh_session_after_mutation": True,
-        "forbidden": ["subset mutation", "force", "adoption", "overwrite unowned", "noninteractive approval bypass"],
-    }
-    assert contract["exit_codes"] == {
-        "0": "success or already converged",
-        "2": "usage error",
-        "3": "user cancelled before mutation",
-        "4": "drift, conflict, or blocked or partial removal",
-        "5": "environment or active-plugin prerequisite blocked",
-        "6": "corrupt, future, inconsistent, or untrusted state",
-        "7": "internal failure or failed recovery",
-    }
-    assert contract["scope"]["name"] == "user"
-    assert contract["scope"]["target_root"] == "<CODEX_HOME>/agents"
-    assert contract["scope"]["state_root"] == "<CODEX_HOME>/codex-rig/shims"
-    assert contract["scope"]["coordination_lock"] == "<CODEX_HOME>/.codex-rig-shims.lock"
-    assert {"project scope", "native Windows", "network or distributed filesystems"} <= set(
-        contract["scope"]["unsupported"]
-    )
+@pytest.fixture
+def approval(contract: dict[str, object]) -> dict[str, object]:
+    """Return the ``approval_plan`` section of the lifecycle contract."""
+    return contract["approval_plan"]
 
 
-def test_exact_whole_roster_and_target_names_are_frozen() -> None:
-    """Prevent subset behavior, filename drift, or namespace-only cleanup."""
-    contract = _load_contract()
-    roles = contract["roles"]
-    role_ids = [item["id"] for item in roles]
-    targets = [item["target"] for item in roles]
-
-    assert set(role_ids) == EXPECTED_ROLES
-    assert role_ids == sorted(role_ids)
-    assert len(targets) == len(set(targets)) == 15
-    assert targets == [f"codex-rig-{role_id}.toml" for role_id in role_ids]
-    assert contract["marker"]["ownership_rule"].startswith("marker and filename never prove ownership")
-    assert contract["safe_removal_predicates"] == [
-        "target name is derived from the exact canonical role allowlist",
-        "target is a contained regular file reached without following symlinks",
-        "valid state matches plugin, scope, install ID, package, roots, bootstrap, role, card, and full file hash",
-        "line-one marker matches the same valid state",
-        "complete current file hash matches the state file hash",
-        "under-lock observation matches the approved plan",
-    ]
+@pytest.fixture
+def transaction(contract: dict[str, object]) -> dict[str, object]:
+    """Return the ``transaction`` section of the lifecycle contract."""
+    return contract["transaction"]
 
 
-def test_marker_state_and_input_bounds_are_complete() -> None:
-    """Prevent ambiguous provenance parsing or unbounded lifecycle inputs."""
-    contract = _load_contract()
-    marker = contract["marker"]
-    state = contract["state"]
+@pytest.fixture
+def recovery(contract: dict[str, object]) -> dict[str, object]:
+    """Return the ``recovery`` section of the lifecycle contract."""
+    return contract["recovery"]
 
-    assert marker["line"] == 1
-    assert marker["encoding"] == "UTF-8 without BOM"
-    assert marker["newline"] == "LF"
-    assert marker["maximum_bytes"] == 1024
-    assert marker["grammar"].startswith("# codex-rig-shim schema=1 plugin=codex-rig")
-    assert set(marker["required_fields"]) == {
-        "schema",
-        "plugin",
-        "install_id",
-        "role_id",
-        "package_hash",
-        "role_hash",
-        "bootstrap",
-        "generator",
-    }
-    assert state["schema"] == 1
-    assert state["mode"] == "0600"
-    assert state["directory_mode"] == "0700"
-    assert state["extra_fields"] == "rejected at every object level"
-    assert state["ownership_reconstruction"] is False
-    assert state["state_root_rebind"] is False
-    assert "explicitly approved rebind-removed-root" in state["removed_tombstone_rebind"]
-    assert state["field_schema"]["roles"].startswith("array of one through 128 entries sorted")
-    assert set(state["root_identity_fields"]) == {
-        "canonical_path",
-        "device",
-        "inode",
-        "owner",
-        "group",
-        "mode",
-    }
-    assert set(state["role_fields"]) == {"role_id", "target_name", "card_path", "role_hash", "file_hash"}
-    assert state["role_schema"]["target_name"].startswith("derived basename exactly codex-rig-")
-    assert any("same precedence" in refusal for refusal in state["compatibility_refusals"])
-    assert any("historical roster" in refusal for refusal in state["compatibility_refusals"])
-    assert "authenticate the persisted package" in state["forward_migration"]
-    assert all(isinstance(value, int) and value > 0 for value in contract["bounded_inputs"].values())
-    assert {
-        key: contract["bounded_inputs"][key]
-        for key in (
-            "state_roles",
-            "operation_roles",
-            "target_directory_entries",
-            "recovery_directory_entries",
+
+class TestPublicContract:
+    """Group the public action, roster, marker and target-matrix contracts."""
+
+    def test_actions_scope_and_exit_codes_frozen(self, contract) -> None:
+        """The public actions, scope roots and exit codes cannot widen silently.
+
+        Reads the shipped lifecycle contract and pins the four public actions, the user scope roots and the exit-code
+        table, so any widening of scope or user interaction becomes a visible failure.
+        """
+        assert contract["schema"] == 1
+        assert contract["release"] == "0.2.0"
+        assert contract["public_actions"] == {
+            "arguments": "exactly one positional action and no extras",
+            "actions": ["doctor", "status", "install", "remove"],
+            "read_only": ["doctor", "status"],
+            "whole_roster_mutations": ["install", "remove"],
+            "approval": "install and remove require explicit approval of the exact canonical plan digest",
+            "fresh_session_after_mutation": True,
+            "forbidden": [
+                "subset mutation",
+                "force",
+                "adoption",
+                "overwrite unowned",
+                "noninteractive approval bypass",
+            ],
+        }
+        assert contract["exit_codes"] == {
+            "0": "success or already converged",
+            "2": "usage error",
+            "3": "user cancelled before mutation",
+            "4": "drift, conflict, or blocked or partial removal",
+            "5": "environment or active-plugin prerequisite blocked",
+            "6": "corrupt, future, inconsistent, or untrusted state",
+            "7": "internal failure or failed recovery",
+        }
+        assert contract["scope"]["name"] == "user"
+        assert contract["scope"]["target_root"] == "<CODEX_HOME>/agents"
+        assert contract["scope"]["state_root"] == "<CODEX_HOME>/codex-rig/shims"
+        assert contract["scope"]["coordination_lock"] == "<CODEX_HOME>/.codex-rig-shims.lock"
+        assert {"project scope", "native Windows", "network or distributed filesystems"} <= set(
+            contract["scope"]["unsupported"]
         )
-    } == {
-        "state_roles": 128,
-        "operation_roles": 256,
-        "target_directory_entries": 4096,
-        "recovery_directory_entries": 256,
-    }
 
+    def test_whole_roster_and_target_names_frozen(self, contract) -> None:
+        """The contract names exactly the fifteen roles and their derived shim file names.
 
-def test_target_matrix_preserves_every_untrusted_or_modified_file() -> None:
-    """Prevent adoption, marker-only removal, or partial whole-roster mutation."""
-    contract = _load_contract()
-    matrix = {item["state"]: item for item in contract["target_classification"]}
+        Guards against subset behavior, filename drift and namespace-only cleanup by checking the sorted role ids, one
+        unique target per role and the safe-removal predicates.
+        """
+        roles = contract["roles"]
+        role_ids = [item["id"] for item in roles]
+        targets = [item["target"] for item in roles]
 
-    assert matrix["regular target without matching ownership state"] == {
-        "state": "regular target without matching ownership state",
-        "install": "preserve and block whole roster",
-        "remove": "preserve and refuse ownership claim",
-    }
-    assert matrix["owned marker but full file hash differs"] == {
-        "state": "owned marker but full file hash differs",
-        "install": "preserve and block whole roster",
-        "remove": "preserve and report modified",
-    }
-    for unsafe in (
-        "missing, corrupt, future, or inconsistent state",
-        "symlink, non-regular, escaped, aliased, or case-colliding target",
-    ):
-        assert "preserve" in matrix[unsafe]["install"]
-        assert "preserve" in matrix[unsafe]["remove"]
-    repaired = matrix["valid current state with one or more owned targets absent and every present owned target exact"]
-    assert repaired["install"] == "transactionally repair missing owned targets after whole-roster approval"
-    assert repaired["remove"] == ("transactionally remove exact present owned targets and commit a removed tombstone")
-    assert matrix["valid removed tombstone with every allowlisted target absent"]["remove"] == (
-        "zero-write converged success"
-    )
-    assert matrix["valid removed tombstone with any allowlisted target present"]["install"] == (
-        "preserve and block whole roster"
-    )
+        assert set(role_ids) == EXPECTED_ROLES
+        assert role_ids == sorted(role_ids)
+        assert len(targets) == len(set(targets)) == 15
+        assert targets == [f"codex-rig-{role_id}.toml" for role_id in role_ids]
+        assert contract["marker"]["ownership_rule"].startswith("marker and filename never prove ownership")
+        assert contract["safe_removal_predicates"] == [
+            "target name is derived from the exact canonical role allowlist",
+            "target is a contained regular file reached without following symlinks",
+            "valid state matches plugin, scope, install ID, package, roots, bootstrap, role, card, and full file hash",
+            "line-one marker matches the same valid state",
+            "complete current file hash matches the state file hash",
+            "under-lock observation matches the approved plan",
+        ]
+
+    def test_marker_state_and_input_bounds(self, contract) -> None:
+        """Marker grammar, state schema and input bounds are fully specified.
+
+        Provenance parsing must stay unambiguous and every lifecycle input bounded, so the marker fields, state fields,
+        compatibility refusals and numeric bounds are pinned.
+        """
+        marker = contract["marker"]
+        state = contract["state"]
+
+        assert marker["line"] == 1
+        assert marker["encoding"] == "UTF-8 without BOM"
+        assert marker["newline"] == "LF"
+        assert marker["maximum_bytes"] == 1024
+        assert marker["grammar"].startswith("# codex-rig-shim schema=1 plugin=codex-rig")
+        assert set(marker["required_fields"]) == {
+            "schema",
+            "plugin",
+            "install_id",
+            "role_id",
+            "package_hash",
+            "role_hash",
+            "bootstrap",
+            "generator",
+        }
+        assert state["schema"] == 1
+        assert state["mode"] == "0600"
+        assert state["directory_mode"] == "0700"
+        assert state["extra_fields"] == "rejected at every object level"
+        assert state["ownership_reconstruction"] is False
+        assert state["state_root_rebind"] is False
+        assert "explicitly approved rebind-removed-root" in state["removed_tombstone_rebind"]
+        assert state["field_schema"]["roles"].startswith("array of one through 128 entries sorted")
+        assert set(state["root_identity_fields"]) == {
+            "canonical_path",
+            "device",
+            "inode",
+            "owner",
+            "group",
+            "mode",
+        }
+        assert set(state["role_fields"]) == {"role_id", "target_name", "card_path", "role_hash", "file_hash"}
+        assert state["role_schema"]["target_name"].startswith("derived basename exactly codex-rig-")
+        assert any("same precedence" in refusal for refusal in state["compatibility_refusals"])
+        assert any("historical roster" in refusal for refusal in state["compatibility_refusals"])
+        assert "authenticate the persisted package" in state["forward_migration"]
+        assert all(isinstance(value, int) and value > 0 for value in contract["bounded_inputs"].values())
+        expected = {
+            "state_roles": 128,
+            "operation_roles": 256,
+            "target_directory_entries": 4096,
+            "recovery_directory_entries": 256,
+        }
+        assert {key: contract["bounded_inputs"][key] for key in expected} == expected
+
+    def test_target_matrix_preserves_untrusted_files(self, contract) -> None:
+        """Install and remove preserve every untrusted or modified target.
+
+        The classification matrix must never adopt a foreign file, remove on a marker alone or mutate part of the
+        roster; rows for unowned, modified and unsafe targets are checked.
+        """
+        matrix = {item["state"]: item for item in contract["target_classification"]}
+
+        assert matrix["regular target without matching ownership state"] == {
+            "state": "regular target without matching ownership state",
+            "install": "preserve and block whole roster",
+            "remove": "preserve and refuse ownership claim",
+        }
+        assert matrix["owned marker but full file hash differs"] == {
+            "state": "owned marker but full file hash differs",
+            "install": "preserve and block whole roster",
+            "remove": "preserve and report modified",
+        }
+        unsafe_rows = [
+            matrix["missing, corrupt, future, or inconsistent state"],
+            matrix["symlink, non-regular, escaped, aliased, or case-colliding target"],
+        ]
+        assert all("preserve" in row["install"] and "preserve" in row["remove"] for row in unsafe_rows)
+        repaired = matrix[
+            "valid current state with one or more owned targets absent and every present owned target exact"
+        ]
+        assert repaired["install"] == "transactionally repair missing owned targets after whole-roster approval"
+        assert repaired["remove"] == (
+            "transactionally remove exact present owned targets and commit a removed tombstone"
+        )
+        assert matrix["valid removed tombstone with every allowlisted target absent"]["remove"] == (
+            "zero-write converged success"
+        )
+        assert matrix["valid removed tombstone with any allowlisted target present"]["install"] == (
+            "preserve and block whole roster"
+        )
 
 
 class TestLifecycleApprovalContract:
     """Group approval-plan schema, digest, and intent contracts."""
 
-    def test_has_identity_and_operation_bounds(self) -> None:
-        """Keep approval inputs, observations, and bounds exact."""
-        approval = _load_contract()["approval_plan"]
+    def test_identity_and_operation_bounds(self, approval) -> None:
+        """Approval inputs, hash preimages and operation bounds are exact.
 
+        Pins the canonical encoding, digest rule, hash preimages, intent values and the required field names that bind
+        an approved plan.
+        """
         assert approval["encoding"].startswith("json.dumps with ensure_ascii=true")
         assert approval["digest"].startswith("SHA-256 over the complete canonical plan bytes")
         assert approval["hash_preimages"] == {
@@ -229,10 +269,12 @@ class TestLifecycleApprovalContract:
             "recovery_disposition",
         } <= set(approval["required_fields"])
 
-    def test_has_root_observation_schema(self) -> None:
-        """Keep existing and not-yet-created root observations exact."""
-        approval = _load_contract()["approval_plan"]
+    def test_root_observation_schema(self, approval) -> None:
+        """Root observations describe existing and not-yet-created roots exactly.
 
+        A root that does not exist yet binds its nearest existing ancestor and creation suffix; the field list and the
+        per-field schema are pinned.
+        """
         assert set(approval["root_observation_fields"]) == {
             "exists",
             "canonical_path",
@@ -269,10 +311,12 @@ class TestLifecycleApprovalContract:
             "mode": "four-character lowercase octal permission string when exists=true, otherwise JSON null",
         }
 
-    def test_has_recovery_observation_schema(self) -> None:
-        """Keep recovery intent and evidence fields complete and bounded."""
-        approval = _load_contract()["approval_plan"]
+    def test_recovery_observation_schema(self, approval) -> None:
+        """Lock intent, recovery disposition and recovery evidence fields are complete.
 
+        Recovery plans must name an exact observed residue and disposition; the allowed values and the per-entry schemas
+        are pinned.
+        """
         assert approval["coordination_lock_intent_values"] == ["open-existing", "create-if-absent"]
         assert "refreshes every non-lock observation" in approval["coordination_lock_intent_rule"]
         assert approval["recovery_disposition_values"] == [
@@ -300,17 +344,15 @@ class TestLifecycleApprovalContract:
         )
         assert set(approval["operation_schema"]) == set(approval["operation_fields"])
 
-    def test_binds_digest_and_apply_inputs(self) -> None:
-        """Keep canonical bytes and approved apply inputs immutable."""
-        approval = _load_contract()["approval_plan"]
+    def test_digest_and_apply_inputs_bound(self, approval) -> None:
+        """The canonical test vector and apply inputs stay immutable.
 
+        Re-encodes the published vector to prove the digest recipe, then checks the operation field list and that apply
+        reuses the approved identifiers.
+        """
         vector = approval["canonical_test_vector"]
         vector_bytes = json.dumps(
-            vector["value"],
-            ensure_ascii=True,
-            allow_nan=False,
-            sort_keys=True,
-            separators=(",", ":"),
+            vector["value"], ensure_ascii=True, allow_nan=False, sort_keys=True, separators=(",", ":")
         ).encode()
         assert vector_bytes.decode() == vector["utf8"]
         assert hashlib.sha256(vector_bytes).hexdigest() == vector["sha256"]
@@ -333,10 +375,12 @@ class TestLifecycleApprovalContract:
         assert "preserve the approved coordination_lock_intent" in approval["apply_rule"]
         assert "recovery completes alone" in approval["recovery_plan_rule"]
 
-    def test_has_top_level_schema(self) -> None:
-        """Keep every top-level field and nested schema link exact."""
-        approval = _load_contract()["approval_plan"]
+    def test_top_level_schema(self, approval) -> None:
+        """Every top-level plan field has an exact schema entry.
 
+        The field schema, source-state fields and lock-observation fields must all stay in step with the required field
+        list.
+        """
         assert approval["top_level_field_schema"] == {
             "schema": "JSON integer exactly 1",
             "action": "string exactly install or remove",
@@ -394,10 +438,12 @@ class TestLifecycleApprovalContract:
             approval["coordination_lock_observation_fields"]
         )
 
-    def test_enforces_cross_field_rules(self) -> None:
-        """Keep identities and package inputs mutually consistent."""
-        approval = _load_contract()["approval_plan"]
+    def test_cross_field_rules(self, approval) -> None:
+        """Cross-field rules keep identities and package inputs consistent.
 
+        Paths, identities, package, executables, install id, nonce and operations must agree with one verified identity;
+        the rule text is pinned.
+        """
         assert approval["top_level_cross_field_rules"] == {
             "action_scope": "action is install or remove and scope is user; no other action or scope is representable",
             "mode": (
@@ -437,10 +483,11 @@ class TestLifecycleApprovalContract:
             ),
         }
 
-    def test_rejects_invalid_operation_intents(self) -> None:
-        """Keep action-specific before-to-after intent rules exact."""
-        approval = _load_contract()["approval_plan"]
+    def test_operation_intent_consistency(self, approval) -> None:
+        """Each operation intent has an exact before-to-after rule.
 
+        Install and remove actions admit only their listed intents, and a recovery plan adds no convergence operation.
+        """
         assert approval["operation_intent_consistency"] == {
             "noop": (
                 "before and after are both absent with null hashes and modes, or both present with identical hashes and "
@@ -478,10 +525,12 @@ class TestLifecycleApprovalContract:
 class TestLifecycleTransactionContract:
     """Group durable transaction, probe, and retirement contracts."""
 
-    def test_has_lock_and_journal_shape(self) -> None:
-        """Keep lock validation and durable journal fields exact."""
-        transaction = _load_contract()["transaction"]
+    def test_lock_and_journal_shape(self, transaction) -> None:
+        """The coordination lock and journal fields are exact.
 
+        Pins the lock validation rules, the seven journal states, the journal path and the required journal and
+        operation fields.
+        """
         assert transaction["lock"].startswith("one persistent 0600 coordination file")
         assert "link count one" in transaction["lock_validation"]
         assert "blocks without replacement" in transaction["lock_validation"]
@@ -541,10 +590,12 @@ class TestLifecycleTransactionContract:
             "one exact rollback_state_progress_values string"
         )
 
-    def test_orders_mutation_phases(self) -> None:
-        """Keep mutation order and no-clobber primitives exact."""
-        transaction = _load_contract()["transaction"]
+    def test_mutation_phase_order(self, transaction) -> None:
+        """Mutation phases and no-clobber primitives keep the documented order.
 
+        A reordered phase list, for example mutating before PREPARED is durable, would break crash recovery, so the
+        order and the create, update and journal primitives are frozen.
+        """
         assert transaction["phases"] == [
             "read-only whole-roster preflight",
             "explicit digest approval",
@@ -569,10 +620,12 @@ class TestLifecycleTransactionContract:
         assert "journal.next.json with exclusive create" in transaction["journal_update_primitive"]
         assert "journal.json remains the authority" in transaction["journal_temp_recovery"]
 
-    def test_tracks_probe_cleanup(self) -> None:
-        """Keep probe receipt progress and cleanup recoverable."""
-        transaction = _load_contract()["transaction"]
+    def test_probe_cleanup_progress(self, transaction) -> None:
+        """Probe receipts and cleanup progress stay recoverable.
 
+        A crash during the private probes must leave a receipt and artifact progress that a later approved clean-probe
+        can finish.
+        """
         assert transaction["probe_directory"].startswith("<state_root>/.probe-<transaction_nonce>")
         assert transaction["probe_artifacts"] == ["source", "published", "replacement", "fsync-file", "fsync-directory"]
         assert "valid residue is recoverable only through an approved clean-probe" in transaction["probe_receipt"]
@@ -588,10 +641,12 @@ class TestLifecycleTransactionContract:
         assert "persists the missed REMOVED transition" in transaction["probe_cleanup_progress_rule"]
         assert "approved clean-empty-probe directory" in transaction["probe_retirement"]
 
-    def test_has_resumable_retirement(self) -> None:
-        """Keep commit and rollback retirement resumable."""
-        transaction = _load_contract()["transaction"]
+    def test_resumable_retirement(self, transaction) -> None:
+        """Commit and rollback retirement orders are resumable and non-recursive.
 
+        Pins the ordered removal steps after COMMITTED and ROLLED_BACK and the forbidden primitives, so retirement can
+        resume after an interruption without deleting recursively.
+        """
         assert transaction["transaction_retirement_order"] == [
             "remove remaining exact journal-listed artifact files including state.publish.json when present",
             "remove valid journal.next.json if present",
@@ -614,10 +669,11 @@ class TestLifecycleTransactionContract:
             transaction["forbidden_primitives"]
         )
 
-    def test_has_durable_successors(self) -> None:
-        """Keep journal and operation successor states monotonic."""
-        transaction = _load_contract()["transaction"]
+    def test_durable_successors(self, transaction) -> None:
+        """Journal and operation progress advance only along listed successors.
 
+        Pins the successor tables per journal state and per intent plus the rule that durable progress never decreases.
+        """
         assert transaction["journal_state_successors"] == {
             "PREPARING": ["PREPARED", "RECOVERY_REQUIRED"],
             "PREPARED": ["MUTATING", "RECOVERY_REQUIRED"],
@@ -647,10 +703,12 @@ class TestLifecycleTransactionContract:
             "retire": {"PLANNED": ["DETACHED"], "DETACHED": ["VERIFIED"], "VERIFIED": []},
         }
 
-    def test_recognizes_exact_crash_observations(self) -> None:
-        """Keep intent-specific recoverable observations exact."""
-        transaction = _load_contract()["transaction"]
+    def test_crash_observations(self, transaction) -> None:
+        """Only listed current-or-next observations are recoverable after a crash.
 
+        Journal progress is a lower bound; each intent and progress pair lists the physical target and quarantine
+        observations that recovery accepts.
+        """
         assert transaction["journal_operation_crash_observations"] == {
             "noop": {"VERIFIED": ["the exact unchanged before and after observation"]},
             "create": {
@@ -698,10 +756,12 @@ class TestLifecycleTransactionContract:
             "are recognized, and every mismatch or observation farther ahead preserves evidence and requires failed recovery"
         )
 
-    def test_restores_monotonic_progress(self) -> None:
-        """Keep rollback progress monotonic through restored state."""
-        transaction = _load_contract()["transaction"]
+    def test_rollback_progress_monotonic(self, transaction) -> None:
+        """Rollback progress is monotonic through the restored state.
 
+        Operation and state rollback progress move only NOT_STARTED to TARGET_RESTORED and PENDING to RESTORED, with the
+        crash rules that persist a missed transition.
+        """
         assert transaction["journal_operation_rollback_progress"] == ["NOT_STARTED", "TARGET_RESTORED"]
         assert transaction["journal_operation_rollback_progress_successors"] == {
             "NOT_STARTED": ["TARGET_RESTORED"],
@@ -717,10 +777,12 @@ class TestLifecycleTransactionContract:
 class TestLifecycleRecoveryContract:
     """Group fail-closed rollback and pristine outcome contracts."""
 
-    def test_fails_closed(self) -> None:
-        """Keep recovery evidence-preserving and idempotent."""
-        recovery = _load_contract()["recovery"]
+    def test_fails_closed(self, recovery) -> None:
+        """Recovery preserves evidence and is idempotent.
 
+        Pins the no-forward-resume policy, the never-clobber rule and the post-recovery instruction, so recovery cannot
+        silently continue an install.
+        """
         assert "never forward-resume mutation" in recovery["policy"]
         assert recovery["idempotent"] is True
         assert "never clobber" in recovery["concurrent_target_rule"]
@@ -732,10 +794,12 @@ class TestLifecycleRecoveryContract:
         assert "persists ROLLED_BACK before canonical resumable retirement" in recovery["mutation_behavior"]
         assert recovery["post_recovery"].endswith("the user reruns install or remove")
 
-    def test_has_ordered_decision_matrix(self) -> None:
-        """Keep exact rollback rows and fallback priority frozen."""
-        recovery = _load_contract()["recovery"]
+    def test_rollback_decision_matrix(self, recovery) -> None:
+        """The seven-row rollback decision matrix is frozen.
 
+        Rows are exact and ordered by priority 1 to 7, with the last row as the preserve-and-stay-recovery-required
+        fallback.
+        """
         assert recovery["rollback_decision_matrix"] == [
             {
                 "priority": 1,
@@ -810,10 +874,12 @@ class TestLifecycleRecoveryContract:
         priorities = [row["priority"] for row in recovery["rollback_decision_matrix"]]
         assert priorities == list(range(1, 8))
 
-    def test_selects_one_terminal_path(self) -> None:
-        """Keep rollback selection and terminal behavior deterministic."""
-        recovery = _load_contract()["recovery"]
+    def test_rollback_selects_one_terminal_path(self, recovery) -> None:
+        """Rollback selection and its terminal behavior are deterministic.
 
+        Exactly one matrix row is effective per role in canonical role order, and the terminal rule persists ROLLED_BACK
+        only after the before-state is verified.
+        """
         assert recovery["rollback_matrix_selection_rule"] == (
             "evaluate rows by ascending unique priority; exact rows 1 through 6 are mutually exclusive; the final "
             "catch-all is selected only when no exact row matches; exactly one row is effective for every complete "
@@ -836,10 +902,12 @@ class TestLifecycleRecoveryContract:
             "install or remove convergence"
         )
 
-    def test_keeps_pristine_paths_zero_write(self) -> None:
-        """Keep pristine doctor, status, and remove outcomes zero-write."""
-        contract = _load_contract()
+    def test_pristine_paths_zero_write(self, contract) -> None:
+        """Doctor, status and remove on a pristine host write nothing.
 
+        A host with no state, target or residue must report success with exit code 0 and perform no write for each of
+        the three actions.
+        """
         assert contract["pristine_exit_outcomes"] == {
             "doctor": {
                 "precondition": (
@@ -864,164 +932,181 @@ class TestLifecycleRecoveryContract:
             },
         }
 
+    def test_prepared_create_rollback_reaches_retirement(self, transaction, recovery) -> None:
+        """A crash before create publication is recoverable through retirement.
 
-def test_rollback_contract_reaches_terminal_retirement_from_prepared_create() -> None:
-    """Keep a crash before create publication recoverable through retirement."""
-    contract = _load_contract()
-    transaction = contract["transaction"]
-    recovery = contract["recovery"]
+        Matrix row 1 needs no mutation, rollback has successors to ROLLED_BACK and RESTORED, and no earlier row deletes
+        recovery artifacts.
+        """
+        assert "ROLLED_BACK" in transaction["journal_state_successors"]["RECOVERY_REQUIRED"]
+        assert transaction["journal_operation_rollback_progress_successors"]["NOT_STARTED"] == ["TARGET_RESTORED"]
+        assert transaction["rollback_state_progress_successors"]["PENDING"] == ["RESTORED"]
 
-    assert "ROLLED_BACK" in transaction["journal_state_successors"]["RECOVERY_REQUIRED"]
-    assert transaction["journal_operation_rollback_progress_successors"]["NOT_STARTED"] == ["TARGET_RESTORED"]
-    assert transaction["rollback_state_progress_successors"]["PENDING"] == ["RESTORED"]
-
-    prepared_create = recovery["rollback_decision_matrix"][0]
-    assert prepared_create == {
-        "priority": 1,
-        "target": "absent",
-        "before": "absent",
-        "after": "absent or exact after image",
-        "quarantine": "absent",
-        "decision": "before state is already restored; perform no target mutation",
-    }
-    assert recovery["rollback_decision_matrix"][-1]["priority"] == 7
-    for row in recovery["rollback_decision_matrix"][:-1]:
-        decision = row["decision"].lower()
-        assert "retire" not in decision
-        assert "delete" not in decision
-        assert "remove recovery artifact" not in decision
-    assert transaction["rollback_retirement_order"][0].startswith("require journal state ROLLED_BACK")
-    assert "prior absence" in transaction["rollback_retirement_order"][1]
+        prepared_create = recovery["rollback_decision_matrix"][0]
+        assert prepared_create == {
+            "priority": 1,
+            "target": "absent",
+            "before": "absent",
+            "after": "absent or exact after image",
+            "quarantine": "absent",
+            "decision": "before state is already restored; perform no target mutation",
+        }
+        assert recovery["rollback_decision_matrix"][-1]["priority"] == 7
+        exact_row_decisions = [row["decision"].lower() for row in recovery["rollback_decision_matrix"][:-1]]
+        forbidden = ("retire", "delete", "remove recovery artifact")
+        assert not any(word in decision for decision in exact_row_decisions for word in forbidden)
+        assert transaction["rollback_retirement_order"][0].startswith("require journal state ROLLED_BACK")
+        assert "prior absence" in transaction["rollback_retirement_order"][1]
 
 
-def test_doctor_and_approved_apply_probes_do_not_contradict_zero_write_status() -> None:
-    """Prevent read-only diagnostics from secretly depending on mutating probes."""
-    contract = _load_contract()
-    doctor = contract["doctor"]
-    invariants = contract["zero_write_invariants"]
+class TestShimAndDoctorContract:
+    """Group doctor, thin-shim format and portability contracts."""
 
-    assert doctor["writes"] is False
-    assert all("probe" not in check for check in doctor["read_only_install_checks"])
-    assert len(doctor["approved_apply_probes"]) == 4
-    assert "write-dependent probes are explicitly pending approved apply" in doctor["classification_rule"]
-    assert "under lock before journal, state, or target mutation" in doctor["install_rule"]
-    assert "recovery plan" in doctor["recovery_rule"]
-    assert invariants == [
-        (
-            "doctor and status issue no mutating filesystem operation and do not change content, ownership, "
-            "permissions, link identity, modification time, or change time; access time is excluded because read "
-            "effects follow host mount policy"
-        ),
-        "usage errors and cancelled approval do not write",
-        "blocked or indeterminate read-only doctor prevents approval and every install write",
-        (
-            "stale approved digest may create only the fixed persistent coordination lock and never creates target "
-            "roots, state roots, journals, state, or shims"
-        ),
-        (
-            "approved apply probe failure with successful cleanup leaves no probe, journal, state file, or target "
-            "shim; cleanup uncertainty may leave only an authenticated private probe receipt and recognized probe "
-            "artifacts for approved clean-probe recovery, plus the fixed lock and safely created roots"
-        ),
-        "foreign, modified, unsafe, ambiguous, or incompatible target blocks before journal creation",
-        "repeated current install and repeated complete remove converge without writes",
-    ]
+    def test_doctor_probes_do_not_contradict_zero_write_status(self, contract) -> None:
+        """Read-only diagnostics never depend on mutating probes.
 
+        Doctor must stay write-free: its read-only checks name no probe, write-dependent probes stay pending until
+        approved apply, and the zero-write invariants are pinned.
+        """
+        doctor = contract["doctor"]
+        invariants = contract["zero_write_invariants"]
 
-def test_thin_shim_format_is_exact_and_contains_no_role_body() -> None:
-    """Prevent generator implementations from inventing incompatible shim bytes."""
-    contract = _load_contract()
-    shim = contract["shim_format"]
-    thin_link = contract["thin_link"]
+        assert doctor["writes"] is False
+        assert all("probe" not in check for check in doctor["read_only_install_checks"])
+        assert len(doctor["approved_apply_probes"]) == 4
+        assert "write-dependent probes are explicitly pending approved apply" in doctor["classification_rule"]
+        assert "under lock before journal, state, or target mutation" in doctor["install_rule"]
+        assert "recovery plan" in doctor["recovery_rule"]
+        assert invariants == [
+            (
+                "doctor and status issue no mutating filesystem operation and do not change content, ownership, "
+                "permissions, link identity, modification time, or change time; access time is excluded because read "
+                "effects follow host mount policy"
+            ),
+            "usage errors and cancelled approval do not write",
+            "blocked or indeterminate read-only doctor prevents approval and every install write",
+            (
+                "stale approved digest may create only the fixed persistent coordination lock and never creates target "
+                "roots, state roots, journals, state, or shims"
+            ),
+            (
+                "approved apply probe failure with successful cleanup leaves no probe, journal, state file, or target "
+                "shim; cleanup uncertainty may leave only an authenticated private probe receipt and recognized probe "
+                "artifacts for approved clean-probe recovery, plus the fixed lock and safely created roots"
+            ),
+            "foreign, modified, unsafe, ambiguous, or incompatible target blocks before journal creation",
+            "repeated current install and repeated complete remove converge without writes",
+        ]
 
-    assert shim["encoding"] == "UTF-8 without BOM"
-    assert shim["newline"] == "LF with one final LF"
-    assert shim["mode"] == "0600"
-    assert shim["maximum_bytes"] == contract["bounded_inputs"]["shim_bytes"]
-    assert shim["template_lines"][0] == "{marker}"
-    assert shim["template_lines"][-1].endswith('fallback role body."""')
-    assert shim["verifier_argv"][0] == "<absolute-python-executable>"
-    assert shim["verifier_argv"][1].endswith("/scripts/verify_role_link.py")
-    assert {"canonical role-card body", "substantive behavioral fallback", "unbound executable or cache lookup"} <= set(
-        shim["forbidden_content"]
-    )
-    assert set(shim["unavailable_reason_values"]) == {
-        "invalid-arguments",
-        "plugin-root-mismatch",
-        "helper-hash-mismatch",
-        "manifest-hash-mismatch",
-        "manifest-invalid",
-        "package-identity-mismatch",
-        "bootstrap-manifest-mismatch",
-        "invalid-codex-binary",
-        "codex-binary-mismatch",
-        "codex-home-invalid",
-        "active-package-oracle-failed",
-        "active-package-oracle-invalid",
-        "active-package-oracle-oversized",
-        "active-package-mismatch",
-        "active-package-transition",
-        "codex-binary-transition",
-        "role-not-allowlisted",
-        "invalid-package-path",
-        "role-manifest-mismatch",
-        "role-hash-mismatch",
-        "unsafe-file",
-        "oversized-file",
-        "invalid-digest",
-        "verification-error",
-    }
-    assert thin_link["contains"] == [
-        "documented custom-agent configuration",
-        "one canonical ownership marker",
-        "minimal routing description",
-        "exact verifier, package, role, and runtime identity arguments",
-        "instruction to verify and load the current canonical role card before substantive work",
-        "bounded unavailable-response contract",
-    ]
-    assert "unavailable-link traces" in thin_link["release_gate"]
+    def test_thin_shim_format_has_no_role_body(self, contract) -> None:
+        """The shim format is exact and carries no copied role body.
 
+        Pins encoding, mode, template lines, verifier argv shape, forbidden content, unavailable reasons and what a thin
+        link may contain, so implementations cannot invent incompatible bytes.
+        """
+        shim = contract["shim_format"]
+        thin_link = contract["thin_link"]
 
-def test_verifier_argv_survives_json_and_toml_parsing() -> None:
-    """Prevent legal quoted or backslashed paths from changing verifier arguments."""
-    contract = _load_contract()
-    encoding_rule = contract["shim_format"]["dynamic_fields"]["toml_escaped_verifier_argv_json"]
-    argv = ['/tmp/python"quoted', "/tmp/plugin\\root/scripts/verify_role_link.py", "--role", "challenger"]
-    argv_json = json.dumps(argv, ensure_ascii=True, separators=(",", ":"))
-    toml_escaped = argv_json.replace("\\", "\\\\").replace('"', '\\"')
-    parsed = tomllib.loads(f'developer_instructions = """\n{toml_escaped}\n"""\n')
+        assert shim["encoding"] == "UTF-8 without BOM"
+        assert shim["newline"] == "LF with one final LF"
+        assert shim["mode"] == "0600"
+        assert shim["maximum_bytes"] == contract["bounded_inputs"]["shim_bytes"]
+        assert shim["template_lines"][0] == "{marker}"
+        assert shim["template_lines"][-1].endswith('fallback role body."""')
+        assert shim["verifier_argv"][0] == "<absolute-python-executable>"
+        assert shim["verifier_argv"][1].endswith("/scripts/verify_role_link.py")
+        assert {
+            "canonical role-card body",
+            "substantive behavioral fallback",
+            "unbound executable or cache lookup",
+        } <= set(shim["forbidden_content"])
+        assert set(shim["unavailable_reason_values"]) == {
+            "invalid-arguments",
+            "plugin-root-mismatch",
+            "helper-hash-mismatch",
+            "manifest-hash-mismatch",
+            "manifest-invalid",
+            "package-identity-mismatch",
+            "bootstrap-manifest-mismatch",
+            "invalid-codex-binary",
+            "codex-binary-mismatch",
+            "codex-home-invalid",
+            "active-package-oracle-failed",
+            "active-package-oracle-invalid",
+            "active-package-oracle-oversized",
+            "active-package-mismatch",
+            "active-package-transition",
+            "codex-binary-transition",
+            "role-not-allowlisted",
+            "invalid-package-path",
+            "role-manifest-mismatch",
+            "role-hash-mismatch",
+            "unsafe-file",
+            "oversized-file",
+            "invalid-digest",
+            "verification-error",
+        }
+        assert thin_link["contains"] == [
+            "documented custom-agent configuration",
+            "one canonical ownership marker",
+            "minimal routing description",
+            "exact verifier, package, role, and runtime identity arguments",
+            "instruction to verify and load the current canonical role card before substantive work",
+            "bounded unavailable-response contract",
+        ]
+        assert "unavailable-link traces" in thin_link["release_gate"]
 
-    assert "replace each backslash with two backslashes" in encoding_rule
-    assert json.loads(parsed["developer_instructions"].strip()) == argv
+    def test_verifier_argv_survives_json_and_toml(self, contract) -> None:
+        """A quoted or backslashed path survives JSON then TOML escaping unchanged.
 
+        Encodes an argv holding a quote and a backslash with the documented rule and parses it back with tomllib; a
+        failure would change the verifier arguments.
+        """
+        encoding_rule = contract["shim_format"]["dynamic_fields"]["toml_escaped_verifier_argv_json"]
+        argv = ['/tmp/python"quoted', "/tmp/plugin\\root/scripts/verify_role_link.py", "--role", "challenger"]
+        argv_json = json.dumps(argv, ensure_ascii=True, separators=(",", ":"))
+        toml_escaped = argv_json.replace("\\", "\\\\").replace('"', '\\"')
+        parsed = tomllib.loads(f'developer_instructions = """\n{toml_escaped}\n"""\n')
 
-def test_python_310_toml_parser_is_exactly_pinned() -> None:
-    """Prevent the compatibility parser from depending on user-site packages."""
-    assert TEST_REQUIREMENTS_PATH.read_text(encoding="utf-8") == ('tomli==2.2.1; python_version < "3.11"\n')
+        assert "replace each backslash with two backslashes" in encoding_rule
+        assert json.loads(parsed["developer_instructions"].strip()) == argv
 
+    def test_python_310_toml_parser_pinned(self) -> None:
+        """The Python 3.10 TOML fallback is pinned exactly.
 
-def test_runtime_unknowns_have_named_evidence_owners() -> None:
-    """Prevent platform limitations from being presented as closed contracts."""
-    contract = _load_contract()
-    owners = contract["runtime_evidence_owners"]
+        tests/requirements.txt must pin tomli below Python 3.11 so the compatibility parser never comes from user-site
+        packages.
+        """
+        assert TEST_REQUIREMENTS_PATH.read_text(encoding="utf-8") == ('tomli==2.2.1; python_version < "3.11"\n')
 
-    assert set(owners) == {
-        "active plugin and cache selection",
-        "bootstrap before substantive role work",
-        "custom model, sandbox, approval, and nesting fidelity",
-        "macOS and Linux filesystem behavior",
-        "session activation after mutation",
-    }
-    assert contract["thin_link"]["copies_role_body"] is False
-    assert contract["thin_link"]["copies_helper_or_card_outside_cache"] is False
-    assert contract["thin_link"]["broken_after_plugin_removal"] is True
-    assert contract["thin_link"]["stale_after_plugin_version_or_cache_change"] is True
-    assert "does not natively enforce" in contract["thin_link"]["behavioral_limit"]
+    def test_runtime_unknowns_have_evidence_owners(self, contract) -> None:
+        """Platform limitations name an evidence owner instead of a closed claim.
 
+        The contract lists the runtime unknowns and states that the thin link neither copies role bodies nor survives
+        plugin removal or a version change.
+        """
+        owners = contract["runtime_evidence_owners"]
 
-def test_contract_contains_no_machine_local_absolute_paths() -> None:
-    """Keep the tracked lifecycle contract portable across user homes."""
-    text = CONTRACT_PATH.read_text(encoding="utf-8")
+        assert set(owners) == {
+            "active plugin and cache selection",
+            "bootstrap before substantive role work",
+            "custom model, sandbox, approval, and nesting fidelity",
+            "macOS and Linux filesystem behavior",
+            "session activation after mutation",
+        }
+        assert contract["thin_link"]["copies_role_body"] is False
+        assert contract["thin_link"]["copies_helper_or_card_outside_cache"] is False
+        assert contract["thin_link"]["broken_after_plugin_removal"] is True
+        assert contract["thin_link"]["stale_after_plugin_version_or_cache_change"] is True
+        assert "does not natively enforce" in contract["thin_link"]["behavioral_limit"]
 
-    assert "/Users/" not in text
-    assert "/home/" not in text
+    @pytest.mark.parametrize("home_prefix", ["/Users/", "/home/"])
+    def test_contains_no_machine_local_path(self, home_prefix: str) -> None:
+        """The tracked lifecycle contract names no user-home absolute path.
+
+        A path under a macOS or Linux home directory would only resolve on the author's machine, so the contract must
+        stay portable across user homes.
+        """
+        text = CONTRACT_PATH.read_text(encoding="utf-8")
+
+        assert home_prefix not in text

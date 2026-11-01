@@ -1,17 +1,22 @@
 """Keep foundry:challenger usable as the adversarial loop's reviewer: a round must fold into the loop table."""
 
+import functools
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+from _markdown_text import flat_text
 
 _PLUGINS = Path(__file__).resolve().parents[2]
-_CHALLENGER = _PLUGINS / "cc_foundry" / "agents" / "challenger.md"
+_CHALLENGER = "cc_foundry/agents/challenger.md"
+_LOOP_RULE = "cc_foundry/rules/_full/adversarial-loop.md"
+
+
+_flat = functools.partial(flat_text, _PLUGINS)
 
 
 def _find_bash() -> str | None:
@@ -31,6 +36,28 @@ def _find_bash() -> str | None:
 
 
 _BASH = _find_bash()
+_skip_bash_unavailable = pytest.mark.skipif(_BASH is None, reason="working bash not available")
+
+
+def _claude_resolver() -> str:
+    """Return the ledger-checker resolver command exactly as the loop rule prints it for Claude."""
+    line = next(
+        line for line in (_PLUGINS / _LOOP_RULE).read_text(encoding="utf-8").splitlines() if '`_AL="$(ls -td' in line
+    )
+    return "_AL=" + line.split("`_AL=", 1)[1].split("`", 1)[0]
+
+
+@pytest.fixture
+def loop_ledger(tmp_path: Path) -> Path:
+    """Write a minimal valid loop ledger header and return its path."""
+    header = {
+        "schema_version": 2,
+        "implementation_author": "lead",
+        "current_snapshot": {"revision": "HEAD", "diff_digest": "0" * 64},
+    }
+    ledger = tmp_path / "loop-ledger.json"
+    ledger.write_text(json.dumps(header), encoding="utf-8")
+    return ledger
 
 
 @pytest.mark.parametrize(
@@ -58,7 +85,7 @@ def test_challenger_states_delivery_rule(clause: str) -> None:
     generator file were still stopped once the agent searched on its own, and none reached Codex: a definition without
     the ``Skill`` tool cannot call ``bridge:review``, and the skip went unreported.
     """
-    assert clause in _CHALLENGER.read_text(encoding="utf-8")
+    assert clause in _flat(_CHALLENGER)
 
 
 @pytest.mark.parametrize("tier", ["security", "critical", "high", "medium", "low", "nit"])
@@ -68,7 +95,26 @@ def test_challenger_maps_findings_to_loop_tier(tier: str) -> None:
     The challenger's own Blocker/Concern/Nitpick scale has no weight in the loop score; without the mapping a completed
     round still cannot be scored.
     """
-    assert f"| `{tier}` |" in _CHALLENGER.read_text(encoding="utf-8")
+    assert f"| `{tier}` |" in _flat(_CHALLENGER)
+
+
+@pytest.mark.parametrize(
+    "clause",
+    [
+        pytest.param("Coverage table: from the filtered language's authoritative grammar", id="coverage-table-step"),
+        pytest.param("Every `unmodeled` cell is a finding", id="unmodeled-is-finding"),
+        pytest.param("an incomplete table forbids a clean verdict", id="no-clean-without-table"),
+        pytest.param("signature names the invariant it violates", id="invariant-signature"),
+        pytest.param("`maps_to: <signature>`", id="maps-to-known"),
+    ],
+)
+def test_challenger_filter_review_covers_grammar(clause: str) -> None:
+    """A challenger security-filter review fills a grammar coverage table and names findings by invariant.
+
+    Probe search alone found a few bypasses per round and named each after its route, hiding that every one broke an
+    invariant an earlier round had already reported.
+    """
+    assert clause in _flat(_CHALLENGER)
 
 
 @pytest.mark.parametrize(
@@ -90,11 +136,14 @@ def test_dispatch_site_records_challenger_failure(relative: str) -> None:
     corrected re-dispatch, and keeps Codex enabled so the challenger's own cross-check runs the bypass search. A reply
     cut off before its closing block is listed as a cause too, or it reads as a complete round with fewer findings.
     """
-    text = (_PLUGINS / relative).read_text(encoding="utf-8")
-    assert "agent failure" in text
-    assert "reply truncated before its required closing block" in text
-    assert "probe generator" in text
-    assert "no `--no-codex`" in text
+    clauses = [
+        "agent failure",
+        "reply truncated before its required closing block",
+        "probe generator",
+        "no `--no-codex`",
+    ]
+    text = _flat(relative)
+    assert [clause for clause in clauses if clause not in text] == []
 
 
 @pytest.mark.parametrize(
@@ -126,8 +175,7 @@ def test_loop_rule_records_reviewer_round_failure(clause: str) -> None:
     The quality-gates files cover the challenger; the loop rule itself must say the same for every reviewer, or a caller
     reading only ``_full/adversarial-loop.md`` records the round as ``not-run`` and loses its cause.
     """
-    text = (_PLUGINS / "cc_foundry/rules/_full/adversarial-loop.md").read_text(encoding="utf-8")
-    assert clause in text
+    assert clause in _flat(_LOOP_RULE)
 
 
 def test_loop_rule_redispatch_is_not_gated_on_retry_contract() -> None:
@@ -136,8 +184,7 @@ def test_loop_rule_redispatch_is_not_gated_on_retry_contract() -> None:
     Codex Rig's specialist retry policy allows only timeout, transport and rate-limit retries; a qualifier tying the re-
     dispatch to that contract silently removed it there while every rule and changelog promised it.
     """
-    text = (_PLUGINS / "cc_foundry/rules/_full/adversarial-loop.md").read_text(encoding="utf-8")
-    assert "Where the owning workflow's retry contract permits that class, re-dispatch" not in text
+    assert "Where the owning workflow's retry contract permits that class, re-dispatch" not in _flat(_LOOP_RULE)
 
 
 @pytest.mark.parametrize(
@@ -164,68 +211,45 @@ def test_loop_rule_closes_route_by_route_drift(clause: str) -> None:
     the repeat root-cause and third-occurrence rules never fired; each review searched by probe, so gaps surfaced one
     per round; each fix closed the cited route; and no Claude-side checker existed, so the run kept no ledger.
     """
-    text = (_PLUGINS / "cc_foundry/rules/_full/adversarial-loop.md").read_text(encoding="utf-8")
-    assert clause in text
+    assert clause in _flat(_LOOP_RULE)
 
 
-@pytest.mark.parametrize(
-    "clause",
-    [
-        pytest.param("Coverage table: from the filtered language's authoritative grammar", id="coverage-table-step"),
-        pytest.param("Every `unmodeled` cell is a finding", id="unmodeled-is-finding"),
-        pytest.param("an incomplete table forbids a clean verdict", id="no-clean-without-table"),
-        pytest.param("signature names the invariant it violates", id="invariant-signature"),
-        pytest.param("`maps_to: <signature>`", id="maps-to-known"),
-    ],
-)
-def test_challenger_filter_review_covers_grammar(clause: str) -> None:
-    """A challenger security-filter review fills a grammar coverage table and names findings by invariant.
+def test_eager_foundry_rule_points_at_challenger_rounds() -> None:
+    """The always-loaded foundry rule sends every challenger dispatch to the full Challenger Rounds section.
 
-    Probe search alone found a few bypasses per round and named each after its route, hiding that every one broke an
-    invariant an earlier round had already reported.
+    The procedure lives in ``_full/quality-gates.md`` to keep the eager rule set small; without this pointer a caller
+    would brief the challenger before ever reading it.
     """
-    assert clause in _CHALLENGER.read_text(encoding="utf-8")
+    assert "`_full/quality-gates.md` §Challenger Rounds" in _flat("cc_foundry/rules/quality-gates.md")
 
 
 @pytest.mark.parametrize("plugin", ["cc_foundry", "cc_oss", "cc_develop", "cc_research"])
-def test_claude_loop_checker_runs_standalone(plugin: str, tmp_path: Path) -> None:
+def test_claude_loop_checker_runs_standalone(plugin: str, loop_ledger: Path) -> None:
     """Each Claude plugin's copy of the loop checker validates a ledger without the Codex plugin installed.
 
     The rule tells Claude loops to run a byte-identical copy; a copy that imported a Codex-only module would fail where
     it is the only checker available.
     """
-    header = {
-        "schema_version": 2,
-        "implementation_author": "lead",
-        "current_snapshot": {"revision": "HEAD", "diff_digest": "0" * 64},
-    }
-    ledger = tmp_path / "loop-ledger.json"
-    ledger.write_text(json.dumps(header), encoding="utf-8")
     script = _PLUGINS / plugin / "bin" / "adversarial_loop.py"
-    result = subprocess.run([sys.executable, str(script), "--ledger", str(ledger)], capture_output=True, text=True)
+    result = subprocess.run(
+        [sys.executable, str(script), "--ledger", str(loop_ledger)], capture_output=True, text=True, timeout=60
+    )
     assert json.loads(result.stdout)["status"] != "invalid", result.stdout + result.stderr
 
 
-@pytest.mark.skipif(_BASH is None, reason="working bash not available")
-def test_loop_rule_claude_command_resolves_without_plugin_root(tmp_path: Path) -> None:
+@_skip_bash_unavailable
+def test_loop_rule_claude_command_resolves_without_plugin_root(tmp_path: Path, loop_ledger: Path) -> None:
     """The rule's Claude ledger command finds a checker when no plugin-root variable is set.
 
     A rule file gets no plugin-root substitution and the Bash tool exports none, so a command built on that variable
     named ``/bin/adversarial_loop.py`` and exited 2, leaving the loop ledger-less. The resolver line is run as the rule
     prints it, from the source tree with an empty home, so only its fallback can supply the checker.
     """
-    text = (_PLUGINS / "cc_foundry/rules/_full/adversarial-loop.md").read_text(encoding="utf-8")
-    resolver = re.search(r'`(_AL="\$\(ls -td [^`]+)`', text).group(1)
-    header = {
-        "schema_version": 2,
-        "implementation_author": "lead",
-        "current_snapshot": {"revision": "HEAD", "diff_digest": "0" * 64},
-    }
-    ledger = tmp_path / "loop-ledger.json"
-    ledger.write_text(json.dumps(header), encoding="utf-8")
     env = {key: value for key, value in os.environ.items() if key != "CLAUDE_PLUGIN_ROOT"} | {"HOME": str(tmp_path)}
-    script = f'{resolver}; python "$_AL" --ledger "{ledger.as_posix()}"'
-    result = subprocess.run([_BASH, "-c", script], cwd=_PLUGINS.parent, env=env, capture_output=True, text=True)
+    script = f'{_claude_resolver()}; python "$_AL" --ledger "{loop_ledger.as_posix()}"'
+    result = subprocess.run(
+        [_BASH, "-c", script], cwd=_PLUGINS.parent, env=env, capture_output=True, text=True, timeout=60
+    )
     assert json.loads(result.stdout)["status"] != "invalid", result.stdout + result.stderr
 
 
@@ -236,7 +260,7 @@ def _install_checker(checker: Path, mtime: int) -> None:
     os.utime(checker, (mtime, mtime))
 
 
-@pytest.mark.skipif(_BASH is None, reason="working bash not available")
+@_skip_bash_unavailable
 def test_loop_rule_claude_command_skips_orphaned_cache_copy(tmp_path: Path) -> None:
     """The rule's Claude resolver takes the newest installed checker whose version directory is not orphaned.
 
@@ -244,8 +268,6 @@ def test_loop_rule_claude_command_skips_orphaned_cache_copy(tmp_path: Path) -> N
     version Claude Code has marked ``.orphaned_at`` is no longer installed, and a newest-first pick that ignored the
     marker ran it whenever it was touched last. The resolver line is run as the rule prints it against a fake cache.
     """
-    text = (_PLUGINS / "cc_foundry/rules/_full/adversarial-loop.md").read_text(encoding="utf-8")
-    resolver = re.search(r'`(_AL="\$\(ls -td [^`]+)`', text).group(1)
     cache = tmp_path / ".claude" / "plugins" / "cache" / "borda-ai-rig"
     _install_checker(cache / "oss" / "0.53.0" / "bin" / "adversarial_loop.py", 1_000_000_000)
     _install_checker(cache / "foundry" / "0.71.0" / "bin" / "adversarial_loop.py", 2_000_000_000)
@@ -255,17 +277,12 @@ def test_loop_rule_claude_command_skips_orphaned_cache_copy(tmp_path: Path) -> N
     }
 
     result = subprocess.run(
-        [_BASH, "-c", f'{resolver}; printf "%s" "$_AL"'], cwd=tmp_path, env=env, capture_output=True, text=True
+        [_BASH, "-c", f'{_claude_resolver()}; printf "%s" "$_AL"'],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
 
     assert result.stdout.endswith("/oss/0.53.0/bin/adversarial_loop.py"), result.stdout + result.stderr
-
-
-def test_eager_foundry_rule_points_at_challenger_rounds() -> None:
-    """The always-loaded foundry rule sends every challenger dispatch to the full Challenger Rounds section.
-
-    The procedure lives in ``_full/quality-gates.md`` to keep the eager rule set small; without this pointer a caller
-    would brief the challenger before ever reading it.
-    """
-    text = (_PLUGINS / "cc_foundry/rules/quality-gates.md").read_text(encoding="utf-8")
-    assert "`_full/quality-gates.md` §Challenger Rounds" in text

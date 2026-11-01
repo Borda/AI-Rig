@@ -7285,6 +7285,6 @@
       "src": "skills/resolve/SKILL.md:148"
     }
   },
-  "plugin": "cc_oss@0.56.0",
+  "plugin": "cc_oss@0.56.1",
   "schema": 1
 }

@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import subprocess
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -60,8 +61,6 @@ def _session_id(request: pytest.FixtureRequest) -> Iterator[str]:
 
 def _rm(sid: str) -> None:
     """Remove the batch-nudge state directory for one isolated session."""
-    import shutil
-
     shutil.rmtree(_hook_tmp_base() / f"claude-state-{sid}", ignore_errors=True)
 
 
@@ -202,40 +201,73 @@ class TestBatchNudge:
         assert [_nudged(r) for r in results] == ([False] * (NUDGE_THRESHOLD - 1) + [True]) * 2
 
     @pytest.mark.parametrize(
-        "calls",
+        ("interrupt", "agent_id"),
         [
-            pytest.param((("Read", {}), ("Read", {})), id="parallel-reads"),
-            pytest.param((("Read", {}), ("Edit", {})), id="mixed-batch"),
+            pytest.param(lambda sid: _batch(sid, ("Read", {}), ("Read", {})), None, id="parallel-reads"),
+            pytest.param(lambda sid: _batch(sid, ("Read", {}), ("Edit", {})), None, id="mixed-batch"),
+            pytest.param(lambda sid: _batch(sid, ("Edit", {})), None, id="non-batchable-tool"),
+            pytest.param(_user_prompt, None, id="user-prompt-submit"),
+            pytest.param(lambda sid: _subagent_event(sid, "SubagentStart", "agent-b"), "agent-b", id="subagent-start"),
+            pytest.param(lambda sid: _subagent_event(sid, "SubagentStop", "agent-b"), "agent-b", id="subagent-stop"),
         ],
     )
-    def test_multi_call_batch_resets_streak(
-        self, session_id: str, run_hook: Callable, tmp_path: Path, calls: tuple
+    def test_interruption_resets_streak(
+        self,
+        session_id: str,
+        run_hook: Callable,
+        tmp_path: Path,
+        interrupt: Callable[[str], dict],
+        agent_id: str | None,
     ) -> None:
-        """A batch of two or more calls is already parallel and clears the streak."""
-        _run_singles(run_hook, session_id, tmp_path, NUDGE_THRESHOLD - 1)
-        run_hook("batch-nudge.js", _batch(session_id, *calls), cwd=tmp_path)
+        """A parallel batch, a dependency-breaking tool, a new user turn or a subagent boundary clears the streak.
 
-        results = _run_singles(run_hook, session_id, tmp_path, NUDGE_THRESHOLD - 1)
+        Scenario: an agent builds a streak one short of the threshold, then an interruption arrives. A batch of two or
+        more calls is already parallel; an Edit usually signals a real dependency; a user turn resets the main agent;
+        SubagentStart (spawn, resume, a teammate's new message) and SubagentStop end that subagent's turn. Afterwards it
+        needs a full new streak, so a further threshold-minus-one singles stay silent.
+        """
+        _run_singles(run_hook, session_id, tmp_path, NUDGE_THRESHOLD - 1, agent_id=agent_id)
+        run_hook("batch-nudge.js", interrupt(session_id), cwd=tmp_path)
 
-        assert [r.stdout for r in results] == [""] * (NUDGE_THRESHOLD - 1)
-
-    def test_non_batchable_tool_resets_streak(self, session_id: str, run_hook: Callable, tmp_path: Path) -> None:
-        """An Edit batch mid-streak resets the counter — a dependency break, not a missed batch."""
-        _run_singles(run_hook, session_id, tmp_path, NUDGE_THRESHOLD - 1)
-        _run_singles(run_hook, session_id, tmp_path, 1, tool_name="Edit")
-
-        results = _run_singles(run_hook, session_id, tmp_path, NUDGE_THRESHOLD - 1)
+        results = _run_singles(run_hook, session_id, tmp_path, NUDGE_THRESHOLD - 1, agent_id=agent_id)
 
         assert [r.stdout for r in results] == [""] * (NUDGE_THRESHOLD - 1)
 
-    def test_user_prompt_submit_resets_streak(self, session_id: str, run_hook: Callable, tmp_path: Path) -> None:
-        """A new user turn resets the main agent's streak regardless of what came before."""
-        _run_singles(run_hook, session_id, tmp_path, NUDGE_THRESHOLD - 1)
-        run_hook("batch-nudge.js", _user_prompt(session_id), cwd=tmp_path)
+    @pytest.mark.parametrize(
+        ("interrupt", "agent_id"),
+        [
+            pytest.param(
+                lambda sid: _batch(sid, ("Read", {}), ("Read", {}), agent_id="agent-a"),
+                "agent-b",
+                id="other-agent-parallel-batch",
+            ),
+            pytest.param(_user_prompt, "agent-b", id="user-prompt-submit-for-subagent"),
+            pytest.param(lambda sid: _subagent_event(sid, "SubagentStart", "agent-b"), None, id="other-agent"),
+            pytest.param(lambda sid: _subagent_event(sid, "SubagentStop", None), None, id="no-agent-id"),
+            pytest.param(lambda sid: _subagent_event(sid, "SubagentStop", ""), None, id="empty-agent-id"),
+            pytest.param(lambda sid: _subagent_event(sid, "SubagentStart", "main"), None, id="agent-id-main"),
+        ],
+    )
+    def test_unrelated_event_keeps_streak(
+        self,
+        session_id: str,
+        run_hook: Callable,
+        tmp_path: Path,
+        interrupt: Callable[[str], dict],
+        agent_id: str | None,
+    ) -> None:
+        """An event that is no boundary for this agent leaves its streak intact, so the next single call nudges.
 
-        results = _run_singles(run_hook, session_id, tmp_path, NUDGE_THRESHOLD - 1)
+        Scenario: another agent's parallel batch, a user turn for a background subagent, and subagent events for a
+        different agent, with no usable ``agent_id`` or spelled ``main`` (internal agents such as prompt suggestions
+        also fire SubagentStop) must never reset or address the streak under test.
+        """
+        _run_singles(run_hook, session_id, tmp_path, NUDGE_THRESHOLD - 1, agent_id=agent_id)
+        run_hook("batch-nudge.js", interrupt(session_id), cwd=tmp_path)
 
-        assert [r.stdout for r in results] == [""] * (NUDGE_THRESHOLD - 1)
+        results = _run_singles(run_hook, session_id, tmp_path, 1, agent_id=agent_id)
+
+        assert _nudged(results[0])
 
     def test_interleaved_agents_keep_separate_streaks(
         self, session_id: str, run_hook: Callable, tmp_path: Path
@@ -253,73 +285,6 @@ class TestBatchNudge:
         results = [run_hook("batch-nudge.js", payload, cwd=tmp_path) for payload in order]
 
         assert [_nudged(r) for r in results] == [False] * (2 * (NUDGE_THRESHOLD - 1)) + [True]
-
-    def test_other_agent_parallel_batch_keeps_streak(self, session_id: str, run_hook: Callable, tmp_path: Path) -> None:
-        """One agent's parallel batch does not reset another agent's streak."""
-        _run_singles(run_hook, session_id, tmp_path, NUDGE_THRESHOLD - 1, agent_id="agent-b")
-        run_hook("batch-nudge.js", _batch(session_id, ("Read", {}), ("Read", {}), agent_id="agent-a"), cwd=tmp_path)
-
-        results = _run_singles(run_hook, session_id, tmp_path, 1, agent_id="agent-b")
-
-        assert _nudged(results[0])
-
-    def test_user_prompt_submit_keeps_subagent_streak(
-        self, session_id: str, run_hook: Callable, tmp_path: Path
-    ) -> None:
-        """A user turn is no boundary for a background subagent, so its streak survives UserPromptSubmit."""
-        _run_singles(run_hook, session_id, tmp_path, NUDGE_THRESHOLD - 1, agent_id="agent-b")
-        run_hook("batch-nudge.js", _user_prompt(session_id), cwd=tmp_path)
-
-        results = _run_singles(run_hook, session_id, tmp_path, 1, agent_id="agent-b")
-
-        assert _nudged(results[0])
-
-    @pytest.mark.parametrize(
-        "event",
-        [
-            pytest.param("SubagentStart", id="start-or-resume"),
-            pytest.param("SubagentStop", id="stop"),
-        ],
-    )
-    def test_subagent_boundary_resets_its_streak(
-        self, session_id: str, run_hook: Callable, tmp_path: Path, event: str
-    ) -> None:
-        """A subagent's streak never spans its turns.
-
-        Scenario: the subagent reads three files one at a time, finishes, and is later resumed (SubagentStart also
-        fires when a teammate handles a new message). Its first single read of the new turn must not draw a nudge
-        built on the previous turn's count.
-        """
-        _run_singles(run_hook, session_id, tmp_path, NUDGE_THRESHOLD - 1, agent_id="agent-b")
-        run_hook("batch-nudge.js", _subagent_event(session_id, event, "agent-b"), cwd=tmp_path)
-
-        results = _run_singles(run_hook, session_id, tmp_path, 1, agent_id="agent-b")
-
-        assert not _nudged(results[0])
-
-    @pytest.mark.parametrize(
-        ("event", "agent_id"),
-        [
-            pytest.param("SubagentStart", "agent-b", id="other-agent"),
-            pytest.param("SubagentStop", None, id="no-agent-id"),
-            pytest.param("SubagentStop", "", id="empty-agent-id"),
-            pytest.param("SubagentStart", "main", id="agent-id-main"),
-        ],
-    )
-    def test_subagent_event_keeps_main_streak(
-        self, session_id: str, run_hook: Callable, tmp_path: Path, event: str, agent_id: str | None
-    ) -> None:
-        """A subagent event never resets the main agent's streak, whatever its ``agent_id``.
-
-        Scenario: internal agents such as prompt suggestions also fire SubagentStop, possibly without a usable id, and
-        an id spelled ``main`` must not address the main agent's file.
-        """
-        _run_singles(run_hook, session_id, tmp_path, NUDGE_THRESHOLD - 1)
-        run_hook("batch-nudge.js", _subagent_event(session_id, event, agent_id), cwd=tmp_path)
-
-        results = _run_singles(run_hook, session_id, tmp_path, 1)
-
-        assert _nudged(results[0])
 
     def test_subagent_stop_removes_state_file(self, session_id: str, run_hook: Callable, tmp_path: Path) -> None:
         """A finished subagent leaves no state file behind, so per-agent files do not pile up over a session."""
@@ -464,7 +429,10 @@ class TestBatchNudgeWiring:
         assert registered == ["PostToolBatch", "SubagentStart", "SubagentStop", "UserPromptSubmit"]
 
     def test_cited_rule_section_exists(self) -> None:
-        """The reminder cites §Turn Batching, so the shipped claude-config rule must carry that heading."""
-        rule = CLAUDE_CONFIG_RULE.read_text(encoding="utf-8")
+        """The reminder cites §Turn Batching, so the shipped claude-config rule must carry that heading.
 
-        assert "\n## Turn Batching" in rule
+        The rule is read line by line, so reflowing a paragraph elsewhere in it cannot break the check.
+        """
+        lines = CLAUDE_CONFIG_RULE.read_text(encoding="utf-8").splitlines()
+
+        assert any(line.startswith("## Turn Batching") for line in lines)

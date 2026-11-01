@@ -12,6 +12,8 @@ After automatic or authorized recovery, run both producer artifact validators, n
 
 ## Incomplete review decision
 
+First apply [User Questions](../../../shared/codex-user-questions.md): confirm a decision is missing, inspect exposed controls and discover deferred `ask_user` before considering async. Follow the shared eligibility and fallback rules; a visible async tool alone does not establish usable native rendering. An accepted async question owns the pending decision: yield without a final or status message. Unstarted authorized review work continues without this question.
+
 After permitted automatic recovery and independent work, explain the concrete blocker, retained run and which evidence remains usable. Ask through the host's native user-question tool: `How should we continue the review of <target>?` Replace the target with the actual linked PR or local scope. Present exactly these three options, with recommendations in descriptions rather than changing the labels:
 
 - `New review`: start a fresh run, recollect current source and perform the full review. Preserve the old run. This choice does not clear denied capabilities, recurrence history or stopped-route limits.

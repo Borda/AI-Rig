@@ -115,8 +115,7 @@ _VISIBLE = [
 
 @pytest.mark.parametrize(("relative", "marker"), _VISIBLE)
 def test_baseline_visible_output_survives(relative: str, marker: str) -> None:
-    """A status line, artifact, progress entry, timeout report or telemetry event visible at the baseline is still
-    there.
+    """A status line, artifact, progress entry, timeout report or telemetry event visible at the baseline remains.
 
     Every marker existed in the committed baseline; losing one means the rollout made something the user or tooling used
     to see invisible.

@@ -1,6 +1,6 @@
 """Symmetric optionality — provider-only lane.
 
-``-k provider_only``: with every declared consumer hidden/absent, ``codemap-py``'s own six skills stay discoverable, the
+``-k ProviderOnly``: with every declared consumer hidden/absent, ``codemap-py``'s own six skills stay discoverable, the
 shared-index/logging surface resolves fine, and the non-mutating ``integrate audit`` inspection path names absent
 consumers from bytes on disk alone — never by importing, locating, or installing a ``cc_*``/``codex-rig`` package.
 """
@@ -12,10 +12,12 @@ import json
 from pathlib import Path
 
 import pytest
+from _scan_helpers import tree_snapshot
 from codemap_py import integration
 
 _PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 _CANONICAL_SKILLS = {"scan-codebase", "query-code", "test-impact", "rename-refs", "integration", "debrief-coding"}
+_ABSENT_FIELDS = {"manifest_present": False, "name_matches": False, "source_version": None, "installed_version": None}
 
 
 def _write_manifest(plugin_dir: Path, runtime: integration.Runtime, name: str, version: str) -> None:
@@ -34,16 +36,21 @@ def _provider_only_root(base: Path) -> Path:
     return root
 
 
-def _tree_snapshot(root: Path) -> dict[str, bytes]:
-    """Capture fixture-file bytes keyed by root-relative POSIX paths.
-
-    >>> from tempfile import TemporaryDirectory
-    >>> with TemporaryDirectory() as directory:
-    ...     root = Path(directory); _ = (root / "a.txt").write_bytes(b"x")
-    ...     sorted(_tree_snapshot(root))
-    ['a.txt']
-    """
-    return {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+def _consumer_imports(pkg_root: Path) -> list[tuple[Path, list[str]]]:
+    """Return ``(file, names)`` for every ``cc_*``/``codex_rig`` import found in Python files under *pkg_root*."""
+    offenders: list[tuple[Path, list[str]]] = []
+    for path in pkg_root.rglob("*.py"):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"), filename=str(path))):
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                names = [node.module or ""]
+            else:
+                continue
+            bad = [name for name in names if name.startswith(("cc_", "codex_rig"))]
+            if bad:
+                offenders.append((path, bad))
+    return offenders
 
 
 @pytest.fixture(name="provider_only_repo")
@@ -55,91 +62,94 @@ def _provider_only_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path
     return root
 
 
-# --------------------------------------------------------------------------------------
-# No cc_* / codex_rig import anywhere in the shipped package source.
-# --------------------------------------------------------------------------------------
+class TestProviderOnly:
+    """Provider-only lane: every declared consumer is absent from the tree."""
 
+    def test_package_source_has_no_consumer_imports(self) -> None:
+        """No module under ``codemap_py`` imports a ``cc_*`` consumer package or ``codex_rig``.
 
-def test_provider_only_no_cc_star_import_in_package_source() -> None:
-    """No module under ``codemap_py`` imports a ``cc_*`` consumer package or ``codex_rig``."""
-    pkg_root = Path(integration.__file__).resolve().parent
-    offenders: list[tuple[Path, list[str]]] = []
-    for path in pkg_root.rglob("*.py"):
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                names = [alias.name for alias in node.names]
-            elif isinstance(node, ast.ImportFrom):
-                names = [node.module or ""]
-            else:
-                continue
-            bad = [name for name in names if name.startswith("cc_") or name.startswith("codex_rig")]
-            if bad:
-                offenders.append((path, bad))
-    assert offenders == []
+        The provider must stay installable and importable alone, so any import of a consumer package in its shipped
+        source would turn an absent optional consumer into a hard failure.
+        """
+        assert _consumer_imports(Path(integration.__file__).resolve().parent) == []
 
+    def test_six_skills_discoverable_without_consumers(self) -> None:
+        """The six-skill rosters are static package content, discoverable with zero consumers installed.
 
-def test_provider_only_six_skills_discoverable_regardless_of_consumers() -> None:
-    """The six-skill rosters are static package content — discoverable with zero consumers installed."""
-    claude_names = {p.name for p in (_PLUGIN_ROOT / "claude-skills").iterdir() if (p / "SKILL.md").is_file()}
-    codex_names = {p.name for p in (_PLUGIN_ROOT / "codex-skills").iterdir() if (p / "SKILL.md").is_file()}
-    assert claude_names == _CANONICAL_SKILLS
-    assert codex_names == _CANONICAL_SKILLS
+        Both the Claude and the Codex skill trees are listed straight from disk; neither may depend on a consumer plugin
+        to contribute or hide a skill.
+        """
+        claude_names = {p.name for p in (_PLUGIN_ROOT / "claude-skills").iterdir() if (p / "SKILL.md").is_file()}
+        codex_names = {p.name for p in (_PLUGIN_ROOT / "codex-skills").iterdir() if (p / "SKILL.md").is_file()}
 
+        assert claude_names == _CANONICAL_SKILLS
+        assert codex_names == _CANONICAL_SKILLS
 
-# --------------------------------------------------------------------------------------
-# `integrate audit` names absent consumers from bytes only — zero-write, no import.
-# --------------------------------------------------------------------------------------
+    @pytest.mark.parametrize("runtime_name", ["claude", "codex"])
+    def test_audit_names_absent_consumers_from_bytes(self, provider_only_repo: Path, runtime_name: str) -> None:
+        """Hidden consumers are reported as named absent states rather than errors.
 
+        With only the provider manifests on disk and native discovery disabled, ``integrate audit`` must still list each
+        declared consumer, with no manifest, no version and an absent managed block, derived from bytes alone.
+        """
+        report = integration.build_audit_report("both", provider_only_repo / integration.PROVIDER_DIR)
 
-def test_provider_only_audit_names_absent_consumers_from_bytes(provider_only_repo: Path) -> None:
-    """Report hidden consumers as named absent states rather than errors."""
-    report = integration.build_audit_report("both", provider_only_repo / integration.PROVIDER_DIR)
-    for runtime_name in ("claude", "codex"):
         block = report["provider"]["runtimes"][runtime_name]
+        observed = [{key: status[key] for key in _ABSENT_FIELDS} for status in block["consumers"].values()]
         assert block["probe_available"] is False
-        for consumer_status in block["consumers"].values():
-            assert {
-                key: consumer_status[key]
-                for key in ("manifest_present", "name_matches", "source_version", "installed_version")
-            } == {
-                "manifest_present": False,
-                "name_matches": False,
-                "source_version": None,
-                "installed_version": None,
-            }
-            assert consumer_status["managed_block"]["status"] == "absent"
+        assert observed
+        assert all(item == _ABSENT_FIELDS for item in observed)
+        assert all(status["managed_block"]["status"] == "absent" for status in block["consumers"].values())
 
+    def test_audit_is_zero_write(self, provider_only_repo: Path) -> None:
+        """A provider-only audit leaves the fixture tree byte-identical.
 
-def test_provider_only_audit_is_zero_write(provider_only_repo: Path) -> None:
-    """Keep provider-only audits free of fixture-tree mutations."""
-    before = _tree_snapshot(provider_only_repo)
-    integration.build_audit_report("both", provider_only_repo / integration.PROVIDER_DIR)
-    assert _tree_snapshot(provider_only_repo) == before
+        ``audit`` is the non-mutating inspection path, so it must not create manifests, blocks or logs even when every
+        consumer is missing.
+        """
+        before = tree_snapshot(provider_only_repo)
 
+        integration.build_audit_report("both", provider_only_repo / integration.PROVIDER_DIR)
 
-def test_provider_only_audit_cli_exits_zero(provider_only_repo: Path) -> None:
-    """Exit 0 with absent optional consumers and evidence warnings."""
-    code = integration.run(["audit", "--runtime", "both", "--json"], provider_only_repo / integration.PROVIDER_DIR)
-    assert code == 0
+        assert tree_snapshot(provider_only_repo) == before
 
+    def test_audit_cli_exits_zero(self, provider_only_repo: Path) -> None:
+        """The audit CLI exits 0 with absent optional consumers and evidence warnings.
 
-def test_provider_only_plan_rejects_unknown_but_reports_known_absent(provider_only_repo: Path) -> None:
-    """A known closed-set consumer name still resolves (as absent-on-disk), never a discovery lookup."""
-    targets = integration.resolve_targets("claude", ["oss"])
-    assert [t.consumer for t in targets] == ["oss"]  # known name resolves even though unwired on disk
-    with pytest.raises(integration.IntegrationError) as exc:
-        integration.resolve_targets("claude", ["not-a-real-consumer"])
-    assert exc.value.code == "unknown_target"
+        Absent consumers are an expected state of a provider-only install, not a failure a caller should branch on.
+        """
+        code = integration.run(["audit", "--runtime", "both", "--json"], provider_only_repo / integration.PROVIDER_DIR)
 
+        assert code == 0
 
-# --------------------------------------------------------------------------------------
-# Shared-index / logging resolve fine with zero consumers installed.
-# --------------------------------------------------------------------------------------
+    def test_known_consumer_resolves_though_absent_on_disk(self, provider_only_repo: Path) -> None:
+        """A known closed-set consumer name still resolves (as absent-on-disk), never through a discovery lookup.
 
+        The consumer set is a closed list in the provider, so naming ``oss`` yields a target even though nothing for it
+        is wired in the fixture tree.
+        """
+        targets = integration.resolve_targets("claude", ["oss"])
 
-def test_provider_only_shared_index_and_logging_resolve(provider_only_repo: Path) -> None:
-    """Shared-index identity and runtime-log isolation resolve with no consumer installed."""
-    report = integration.build_audit_report("claude", provider_only_repo / integration.PROVIDER_DIR)
-    assert report["shared_index"]["root"] == str(provider_only_repo.resolve())
-    assert set(report["runtime_logs"]["selected"]) == {"claude"}
+        assert [t.consumer for t in targets] == ["oss"]
+
+    def test_unknown_consumer_is_rejected(self, provider_only_repo: Path) -> None:
+        """A name outside the closed consumer set is rejected with ``unknown_target``.
+
+        Rejecting by the closed list, not by looking on disk, is what keeps an absent known consumer distinct from a
+        typo.
+        """
+        with pytest.raises(integration.IntegrationError) as exc:
+            integration.resolve_targets("claude", ["not-a-real-consumer"])
+
+        assert exc.value.code == "unknown_target"
+
+    def test_shared_index_and_logging_resolve(self, provider_only_repo: Path) -> None:
+        """Shared-index identity and runtime-log isolation resolve with no consumer installed.
+
+        Both come from the provider alone, so the audit can still report the project root and the selected runtime's log
+        directory when every consumer is missing.
+        """
+        report = integration.build_audit_report("claude", provider_only_repo / integration.PROVIDER_DIR)
+
+        assert report["shared_index"]["root"] == str(provider_only_repo.resolve())
+        assert set(report["runtime_logs"]["selected"]) == {"claude"}

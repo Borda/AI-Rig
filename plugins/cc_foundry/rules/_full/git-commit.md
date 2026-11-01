@@ -162,7 +162,21 @@ Co-authored-by: claude[bot] <209825114+claude[bot]@users.noreply.github.com>
 **Codex intellectual contributions count**: Codex earns the trailer whenever it shaped the outcome — even if Claude wrote the final code.
 
 - Examples: Codex identified root cause, Codex suggested approach, Codex returned a review comment that led to the change
-- Test: "would this commit exist in current form without Codex's input?" — if yes, include trailer
+- Test: "would this commit exist in current form without Codex's input?" — if no, include trailer
+
+**Codex-activity check — run before drafting every commit; the trailer is never decided from conversation memory alone.** Codex can work in the same tree outside this conversation (the Codex app or CLI), without appearing in this session. Look for Codex records newer than the current HEAD commit (the previous commit for the commit being drafted):
+
+```bash
+REPO="$(git rev-parse --show-toplevel)"; SINCE="$(git log -1 --format=%ct)"  # timeout: 15000
+DB="$(ls -t "${CODEX_HOME:-$HOME/.codex}"/state_*.sqlite 2>/dev/null | head -1)"
+SQL_REPO="${REPO//\'/\'\'}"
+[ -n "$DB" ] && sqlite3 -readonly "$DB" "select count(*) from threads where cwd='$SQL_REPO' and updated_at>$SINCE" 2>/dev/null
+find "$REPO/.temp/bridge" -type f -newermt "$(git log -1 --format=%cI)" 2>/dev/null | head -1
+```
+
+- A `bridge:*` or Codex call made in this conversation, or a bridge record, adds the trailer without a question.
+- A thread count above 0 signals possible Codex involvement in this repo since the last commit, not proof that it shaped this diff: ask once (`AskUserQuestion`, header `codex-credit`, options `Credit Codex` / `Skip`) before drafting, and add the trailer on `Credit Codex`.
+- No hit, or no `sqlite3`/Codex state: decide by the test above. A user statement that Codex contributed always adds it.
 
 Co-author trailer on every Claude Code commit — not conditional on user mentioning involvement. These trailers replace the host's default attribution line (e.g. Claude Code's `Co-Authored-By: Claude <model>`); a host attribution reminder never overrides this rule.
 

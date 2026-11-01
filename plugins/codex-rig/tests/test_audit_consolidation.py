@@ -8,6 +8,7 @@ import json
 import runpy
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -94,6 +95,11 @@ def make_report(tmp_path: Path) -> dict[str, Any]:
     }
 
 
+def empty_report() -> dict[str, Any]:
+    """Return a schema-valid report with nothing to consolidate."""
+    return {"schema_version": 1, "sources": [], "items": [], "coverage": [], "candidates": [], "excluded": []}
+
+
 def _review(report: dict[str, Any], settle: Any, verdict: str = "holds") -> None:
     """Attach a review of exactly the derived input, never a self-declared validation flag."""
     report["candidates"][0]["review"] = {
@@ -124,98 +130,145 @@ def test_cli_settles_reviewed_advice_without_writing_sources(
 
 @pytest.mark.parametrize("verdict", ["weakens", "loses"])
 def test_negative_review_rejects_proposal(report: dict[str, Any], settle: Any, verdict: str) -> None:
+    """A review that finds the proposal weaker than the sources rejects it."""
     _review(report, settle, verdict)
+
     assert settle(report)["outcomes"][0]["status"] == "rejected"
 
 
-def test_missing_then_stale_review_never_becomes_reviewed(report: dict[str, Any], settle: Any) -> None:
+def test_missing_review_stays_unvalidated(report: dict[str, Any], settle: Any) -> None:
+    """A proposal with no review is advice that has not been validated.
+
+    A fresh report carries `review: None`; only an attached review of the derived input may promote it.
+    """
     assert settle(report)["outcomes"][0]["status"] == "unvalidated"
+
+
+def test_stale_review_stays_unvalidated(report: dict[str, Any], settle: Any) -> None:
+    """Editing the proposal after its review invalidates that review instead of leaving it reviewed.
+
+    The review digest binds the exact derived input, so an appended sentence must drop the outcome back.
+    """
     _review(report, settle)
     report["candidates"][0]["edits"][0]["replacement"] += " Additional explanation."
+
     assert settle(report)["outcomes"][0]["status"] == "unvalidated"
 
 
-@pytest.mark.parametrize("underline", ["-", "--", "=", "==", "---", "==="])
-def test_every_setext_underline_remains_unsupported(report: dict[str, Any], settle: Any, underline: str) -> None:
-    """A short underline is still heading syntax and cannot bypass the structural ceiling."""
-    report["candidates"][0]["edits"][0]["replacement"] += "\n" + underline
+@pytest.mark.parametrize(
+    "suffix", ["-", "--", "=", "==", "---", "===", pytest.param("<!--", id="unterminated-comment")]
+)
+def test_unsupported_markup_in_replacement_stays_unvalidated(report: dict[str, Any], settle: Any, suffix: str) -> None:
+    """A replacement ending in markup the validator cannot model cannot be reviewed into acceptance.
+
+    Every short setext underline is still heading syntax and an open comment hides text, so both stay under the
+    structural ceiling even when a review of the derived input is attached.
+    """
+    report["candidates"][0]["edits"][0]["replacement"] += "\n" + suffix
     _review(report, settle)
+
     assert settle(report)["outcomes"][0]["status"] == "unvalidated"
 
 
 @pytest.mark.parametrize("identity", ["first", "caller"])
 def test_source_and_citing_drift_invalidate_review(report: dict[str, Any], settle: Any, identity: str) -> None:
+    """Changing a member source or the citing file after review is reported as source drift.
+
+    The hashes recorded in the report no longer match disk, so settling must raise instead of reusing the review.
+    """
     _review(report, settle)
     source = next(source for source in report["sources"] if source["id"] == identity)
     Path(source["path"]).write_text("Changed source.\n", encoding="utf-8")
+
     with pytest.raises(ValueError, match="source-drift"):
         settle(report)
 
 
 def test_refreshing_citation_hash_does_not_reuse_old_review(report: dict[str, Any], settle: Any) -> None:
+    """Rewriting the citing file and refreshing its hash still invalidates an earlier review.
+
+    The citing text is part of the reviewed input, so a consistent new hash must not carry the old verdict over.
+    """
     _review(report, settle)
     source = report["sources"][-1]
     Path(source["path"]).write_text("Read first.md §Approval and retain its actor.\n", encoding="utf-8")
     source["sha256"] = hashlib.sha256(Path(source["path"]).read_bytes()).hexdigest()
+
     assert settle(report)["outcomes"][0]["status"] == "unvalidated"
 
 
+def _patch_items(report: dict[str, Any], indexes: tuple[int, ...], patch: dict[str, Any]) -> None:
+    """Apply one field patch to the selected report items."""
+    for index in indexes:
+        report["items"][index].update(patch)
+
+
 @pytest.mark.parametrize(
-    "damage", ["lazy", "unknown", "mixed-load", "different-group", "blocked", "syntax", "heading", "structure"]
+    ("indexes", "patch"),
+    [
+        pytest.param((0, 1), {"load": "lazy"}, id="lazy"),
+        pytest.param((0, 1), {"load": "unknown"}, id="unknown"),
+        pytest.param((1,), {"load": "scoped"}, id="mixed-load"),
+        pytest.param((1,), {"group": "another-project-layer"}, id="different-group"),
+        pytest.param((1,), {"blocked": ["policy-sibling needs coordinated edit"]}, id="blocked"),
+        pytest.param((1,), {"syntax_supported": False}, id="syntax"),
+        pytest.param((1,), {"start_line": 1}, id="heading"),
+    ],
 )
-def test_review_cannot_override_structural_ineligibility(report: dict[str, Any], settle: Any, damage: str) -> None:
-    item = report["items"][1]
-    if damage in {"lazy", "unknown"}:
-        for entry in report["items"]:
-            entry["load"] = damage
-    elif damage == "mixed-load":
-        item["load"] = "scoped"
-    elif damage == "different-group":
-        item["group"] = "another-project-layer"
-    elif damage == "blocked":
-        item["blocked"] = ["policy-sibling needs coordinated edit"]
-    elif damage == "syntax":
-        item["syntax_supported"] = False
-    elif damage == "heading":
-        item["start_line"] = 1
-    else:
-        report["candidates"][0]["edits"][0]["replacement"] += "\n<!--"
+def test_review_cannot_override_structural_ineligibility(
+    report: dict[str, Any], settle: Any, indexes: tuple[int, ...], patch: dict[str, Any]
+) -> None:
+    """A holding review never promotes a merge whose items are structurally ineligible to merge.
+
+    Lazy or unknown loading, mixed load scopes, different groups, blocked items, unsupported syntax and a protected
+    heading line each cap the outcome at unvalidated whatever the reviewer concluded.
+    """
+    _patch_items(report, indexes, patch)
     _review(report, settle)
+
     assert settle(report)["outcomes"][0]["status"] == "unvalidated"
 
 
 @pytest.mark.parametrize(
-    "damage",
-    ["source-id", "item-id", "candidate-id", "overlap", "coverage", "mapping", "quote", "edit", "member", "review"],
+    "corrupt",
+    [
+        pytest.param(lambda r: r["sources"].append(copy.deepcopy(r["sources"][0])), id="source-id"),
+        pytest.param(lambda r: r["items"].append(copy.deepcopy(r["items"][0])), id="item-id"),
+        pytest.param(lambda r: r["candidates"].append(copy.deepcopy(r["candidates"][0])), id="candidate-id"),
+        pytest.param(lambda r: r["items"].append(dict(r["items"][0], id="overlap")), id="overlap"),
+        pytest.param(lambda r: r["coverage"].pop(), id="coverage"),
+        pytest.param(lambda r: r["candidates"][0]["obligations"].pop(), id="mapping"),
+        pytest.param(
+            lambda r: r["candidates"][0]["obligations"][0].update(original="An obligation absent from the source."),
+            id="quote",
+        ),
+        pytest.param(
+            lambda r: r["candidates"][0]["edits"].append(copy.deepcopy(r["candidates"][0]["edits"][0])), id="edit"
+        ),
+        pytest.param(lambda r: r["candidates"][0].update(members=["first", "first"]), id="member"),
+        pytest.param(
+            lambda r: r["candidates"][0].update(review={"digest": "a" * 64, "verdict": "holds", "evidence": None}),
+            id="review",
+        ),
+    ],
 )
-def test_malformed_or_incomplete_evidence_cannot_promote(report: dict[str, Any], settle: Any, damage: str) -> None:
-    candidate = report["candidates"][0]
-    if damage == "source-id":
-        report["sources"].append(copy.deepcopy(report["sources"][0]))
-    elif damage == "item-id":
-        report["items"].append(copy.deepcopy(report["items"][0]))
-    elif damage == "candidate-id":
-        report["candidates"].append(copy.deepcopy(candidate))
-    elif damage == "overlap":
-        duplicate = dict(report["items"][0], id="overlap")
-        report["items"].append(duplicate)
-    elif damage == "coverage":
-        report["coverage"].pop()
-    elif damage == "mapping":
-        candidate["obligations"].pop()
-    elif damage == "quote":
-        candidate["obligations"][0]["original"] = "An obligation absent from the source."
-    elif damage == "edit":
-        candidate["edits"].append(copy.deepcopy(candidate["edits"][0]))
-    elif damage == "member":
-        candidate["members"][1] = "first"
-    else:
-        candidate["review"] = {"digest": "a" * 64, "verdict": "holds", "evidence": None}
+def test_malformed_or_incomplete_evidence_cannot_promote(
+    report: dict[str, Any], settle: Any, corrupt: Callable[[dict[str, Any]], object]
+) -> None:
+    """Duplicate ids, uncovered items, unmapped or misquoted obligations and empty reviews are refused outright.
+
+    Each corruption breaks one structural invariant of the report, so settling raises a consolidation error rather than
+    producing any outcome.
+    """
+    corrupt(report)
+
     with pytest.raises(ValueError, match="consolidation"):
         settle(report)
 
 
-def test_lazy_sharpen_stays_local_and_keep_needs_no_review(report: dict[str, Any], settle: Any) -> None:
+@pytest.fixture(name="sharpened")
+def _sharpened(report: dict[str, Any]) -> dict[str, Any]:
+    """Turn the report into a `sharpen` candidate whose two lazy items each keep their own obligation."""
     candidate = report["candidates"][0]
     candidate["decision"] = "sharpen"
     for item, edit, obligation in zip(report["items"], candidate["edits"], candidate["obligations"], strict=True):
@@ -223,15 +276,31 @@ def test_lazy_sharpen_stays_local_and_keep_needs_no_review(report: dict[str, Any
         item["group"] = f"independent-skill-{item['id']}"
         edit["replacement"] = "Before publishing a release, the owner must approve publication."
         obligation["to_item"] = item["id"]
-    _review(report, settle)
-    assert settle(report)["outcomes"][0]["status"] == "reviewed"
-    candidate["obligations"][1]["to_item"] = "first"
+    return report
+
+
+def test_lazy_sharpen_stays_local(sharpened: dict[str, Any], settle: Any) -> None:
+    """Sharpening lazy independent items can be reviewed because each obligation stays in its own item."""
+    _review(sharpened, settle)
+
+    assert settle(sharpened)["outcomes"][0]["status"] == "reviewed"
+
+
+def test_sharpen_rejects_moving_an_obligation(sharpened: dict[str, Any], settle: Any) -> None:
+    """Sharpening must not relocate an obligation into another lazy item, which would change what loads when."""
+    sharpened["candidates"][0]["obligations"][1]["to_item"] = "first"
+
     with pytest.raises(ValueError, match="sharpen-moves-obligation"):
-        settle(report)
-    candidate.update(decision="keep", edits=[], obligations=[], review=None)
-    assert settle(report)["outcomes"][0]["status"] == "keep"
+        settle(sharpened)
+
+
+def test_keep_needs_no_review(sharpened: dict[str, Any], settle: Any) -> None:
+    """A `keep` decision with no edits settles as keep without any attached review."""
+    sharpened["candidates"][0].update(decision="keep", edits=[], obligations=[], review=None)
+
+    assert settle(sharpened)["outcomes"][0]["status"] == "keep"
 
 
 def test_empty_scope_has_explicit_successful_advice(settle: Any) -> None:
-    report = {"schema_version": 1, "sources": [], "items": [], "coverage": [], "candidates": [], "excluded": []}
-    assert settle(report) == {"outcomes": [], "review_inputs": []}
+    """A report with no sources or candidates settles to empty outcomes instead of failing."""
+    assert settle(empty_report()) == {"outcomes": [], "review_inputs": []}

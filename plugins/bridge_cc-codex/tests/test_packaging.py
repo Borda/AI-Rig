@@ -1,4 +1,8 @@
-"""Acceptance checks for the bridge's install-shaped package boundary."""
+"""Acceptance checks for the bridge's install-shaped package boundary.
+
+The disposable package is built once per module by the real build script. Tests that only read it share that tree; tests
+that execute or mutate it work on a private copy so no case can leak state into another.
+"""
 
 from __future__ import annotations
 
@@ -7,6 +11,7 @@ import io
 import json
 import os
 import runpy
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -29,43 +34,127 @@ assert _VALIDATE_SPECIFICATION.loader is not None
 validate_package = importlib.util.module_from_spec(_VALIDATE_SPECIFICATION)
 _VALIDATE_SPECIFICATION.loader.exec_module(validate_package)
 
+#: Runtime files whose absence or change the doctor's payload fingerprint must notice.
+FINGERPRINTED_RUNTIME_FILES = ("bin/bridge_consent.py", "rules/claude-transfer-policy.txt", "rules/provider-consent.md")
+
+
+class _Terminal(io.StringIO):
+    """Stand in for the operator terminal that alone may mint a one-time consent token."""
+
+    def isatty(self) -> bool:
+        """Report a terminal so the installed helper accepts the mint."""
+        return True
+
+
+def _read_json(path: Path) -> dict[str, object]:
+    """Read one JSON file as UTF-8."""
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _run(script: Path, *args: str, **kwargs: object) -> subprocess.CompletedProcess[str]:
+    """Run a Python script with the current interpreter, capturing text output without raising on failure."""
+    return subprocess.run([sys.executable, str(script), *args], check=False, capture_output=True, text=True, **kwargs)
+
+
+def _issue_operator_token(package: Path, home: Path, monkeypatch: pytest.MonkeyPatch) -> str:
+    """Mint the one-time operator token in-process, with a fake terminal on stdin and stdout, and return it."""
+    printed = _Terminal()
+    with monkeypatch.context() as patch:
+        patch.setenv("CODEX_HOME", str(home))
+        patch.setattr(sys, "stdout", printed)
+        patch.setattr(sys, "stdin", _Terminal())
+        assert runpy.run_path(str(package / "bin/bridge_consent.py"))["main"](["issue-token"]) == 0
+    return printed.getvalue().splitlines()[1]
+
+
+@pytest.fixture(scope="module")
+def built_package(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Build the disposable package once with the real build script; read-only tests share the result."""
+    output = tmp_path_factory.mktemp("bridge-package") / "bridge"
+    built = _run(BUILD_SCRIPT, "--output", str(output))
+    assert built.returncode == 0, built.stderr
+    return output
+
+
+@pytest.fixture
+def package_copy(built_package: Path, tmp_path: Path) -> Path:
+    """Copy the built package so a test may execute or mutate it without touching the shared tree."""
+    copy = tmp_path / "bridge"
+    shutil.copytree(built_package, copy)
+    return copy
+
+
+@pytest.fixture
+def codex_home(tmp_path: Path) -> Path:
+    """Create an empty native Codex home, so consent never touches the developer's real one."""
+    home = tmp_path / "native-home"
+    home.mkdir()
+    return home
+
+
+@pytest.fixture
+def installed_package(package_copy: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Point the doctor at the built package copy, as if it were the installed plugin."""
+    monkeypatch.setattr(bridge_diagnose, "__file__", str(package_copy / "bin/bridge_diagnose.py"))
+    return package_copy
+
 
 @pytest.mark.integration
 @pytest.mark.packaging
-def test_build_and_validate_use_only_the_disposable_package_copy(tmp_path: Path) -> None:
-    """Prove package validation resolves payload paths without source-tree context."""
-    output = tmp_path / "bridge"
-    built = subprocess.run(
-        [sys.executable, str(BUILD_SCRIPT), "--output", str(output)],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    assert built.returncode == 0, built.stderr
+class TestBuiltPackage:
+    """The disposable package built from source is complete, clean, and valid on its own."""
 
-    validated = subprocess.run(
-        [sys.executable, str(VALIDATE_SCRIPT), str(output)],
-        check=False,
-        capture_output=True,
-        text=True,
-        cwd=tmp_path,
+    def test_validates_without_source_tree_context(self, built_package: Path, tmp_path: Path) -> None:
+        """Package validation resolves payload paths from the built copy, run from an unrelated directory.
+
+        A validator that quietly read the source tree would pass in a checkout and fail on a user's installed plugin.
+        """
+        validated = _run(VALIDATE_SCRIPT, str(built_package), cwd=tmp_path)
+        assert validated.returncode == 0, validated.stderr
+
+    def test_excludes_workspace_artifacts_and_tests(self, built_package: Path) -> None:
+        """Run directories, macOS metadata and the test tree never ship in the package."""
+        top_level = {path.name for path in built_package.iterdir()}
+        assert {".temp", ".reports", "tests"}.isdisjoint(top_level)
+        assert not any(path.name == ".DS_Store" for path in built_package.rglob("*"))
+
+    @pytest.mark.parametrize(
+        "relative",
+        [
+            "claude-skills/implement/SKILL.md",
+            "codex-skills/implement/SKILL.md",
+            "bin/bridge_setup.py",
+            "schemas/setup-result.schema.json",
+        ],
     )
-    assert validated.returncode == 0, validated.stderr
-    assert ".temp" not in {path.name for path in output.iterdir()}
-    assert ".reports" not in {path.name for path in output.iterdir()}
-    assert not any(path.name == ".DS_Store" for path in output.rglob("*"))
-    assert not (output / "tests").exists()
-    assert (output / "claude-skills" / "implement" / "SKILL.md").is_file()
-    assert (output / "codex-skills" / "implement" / "SKILL.md").is_file()
-    assert (output / "bin" / "bridge_setup.py").is_file()
-    assert (output / "schemas" / "setup-result.schema.json").is_file()
-    question_policy = output / "rules" / "codex-user-questions.md"
-    assert question_policy.is_file()
-    assert (question_policy.parent / "codex-user-questions-details.md").is_file()
-    assert "codex-user-questions-details.md" in question_policy.read_text(encoding="utf-8")
-    for skill in (output / "codex-skills").glob("*/SKILL.md"):
-        assert "../../rules/codex-user-questions.md" in skill.read_text(encoding="utf-8")
-        assert (skill.parent / "../../rules/codex-user-questions.md").resolve() == question_policy
+    def test_ships_payload_file(self, built_package: Path, relative: str) -> None:
+        """Each runtime file a host loads after install is present in the built package."""
+        assert (built_package / relative).is_file()
+
+    def test_ships_question_policy_with_its_details(self, built_package: Path) -> None:
+        """The Codex question policy ships beside the details file it points to."""
+        policy = built_package / "rules" / "codex-user-questions.md"
+        assert policy.is_file()
+        assert (policy.parent / "codex-user-questions-details.md").is_file()
+        assert "codex-user-questions-details.md" in policy.read_text(encoding="utf-8")
+
+    def test_codex_skills_resolve_the_question_policy_relative_link(self, built_package: Path) -> None:
+        """Every Codex skill links the question policy by a relative path that lands on the shipped file.
+
+        The link is relative to the skill directory, so it only resolves if the skill and rule keep their installed
+        layout; a moved file would leave the skill pointing at nothing.
+        """
+        policy = built_package / "rules" / "codex-user-questions.md"
+        skills = list((built_package / "codex-skills").glob("*/SKILL.md"))
+        assert skills
+        assert all("../../rules/codex-user-questions.md" in skill.read_text(encoding="utf-8") for skill in skills)
+        assert all((skill.parent / "../../rules/codex-user-questions.md").resolve() == policy for skill in skills)
+
+
+@pytest.mark.packaging
+def test_disposable_package_has_no_nested_marketplace(built_package: Path) -> None:
+    """The disposable package must not carry a redundant nested marketplace."""
+    assert not (built_package / ".claude-plugin" / "marketplace.json").exists()
 
 
 @pytest.mark.packaging
@@ -78,148 +167,141 @@ def test_claude_code_has_no_mcp_surface() -> None:
     never uses and that previously broke (the ``${PLUGIN_ROOT}``/``${CLAUDE_PLUGIN_ROOT}`` mismatch). The absence of
     the file, not a correctly-configured one, is what shields Claude Code from it.
     """
+    claude_manifest = _read_json(PLUGIN_ROOT / ".claude-plugin" / "plugin.json")
     assert not (PLUGIN_ROOT / ".mcp.json").exists()
-    claude_manifest = json.loads((PLUGIN_ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
     assert "mcpServers" not in claude_manifest
 
 
 @pytest.mark.packaging
-def test_validate_package_rejects_a_stray_claude_mcp_file(tmp_path: Path) -> None:
+def test_validate_package_rejects_a_stray_claude_mcp_file(package_copy: Path, tmp_path: Path) -> None:
     """Guard the no-MCP-surface contract against regression, not just document it.
 
     A future edit re-adding ``.mcp.json`` at the plugin root would silently reintroduce Claude Code's auto-discovery
     exposure; the package gate must refuse it rather than accept it as a harmless extra file.
     """
-    output = tmp_path / "bridge"
-    built = subprocess.run(
-        [sys.executable, str(BUILD_SCRIPT), "--output", str(output)],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    assert built.returncode == 0, built.stderr
-    (output / ".mcp.json").write_text((output / ".codex-mcp.json").read_text(encoding="utf-8"), encoding="utf-8")
+    (package_copy / ".mcp.json").write_text((package_copy / ".codex-mcp.json").read_text(encoding="utf-8"), "utf-8")
 
-    validated = subprocess.run(
-        [sys.executable, str(VALIDATE_SCRIPT), str(output)],
-        check=False,
-        capture_output=True,
-        text=True,
-        cwd=tmp_path,
-    )
+    validated = _run(VALIDATE_SCRIPT, str(package_copy), cwd=tmp_path)
+
     assert validated.returncode != 0
     assert "no MCP surface" in validated.stderr
 
 
 @pytest.mark.packaging
-def test_codex_mcp_server_resolves_from_installed_plugin_root() -> None:
-    """Resolve MCP entry points against the installed plugin's configured working directory."""
-    codex_manifest = json.loads((PLUGIN_ROOT / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
-    assert codex_manifest["mcpServers"] == "./.codex-mcp.json"
-    config = json.loads((PLUGIN_ROOT / ".codex-mcp.json").read_text(encoding="utf-8"))
-    server = config["mcpServers"]["bridge"]
-    assert server["command"] in {"python", "python3"}
-    assert server["args"] == ["bin/bridge_mcp.py", "--stdio"]
-    assert server["cwd"] == "."
+class TestCodexMcpConfig:
+    """The Codex MCP server entry points at the installed plugin root."""
 
+    def test_manifest_selects_the_shipped_config(self) -> None:
+        """The Codex manifest names the `.codex-mcp.json` file this package ships."""
+        assert _read_json(PLUGIN_ROOT / ".codex-plugin" / "plugin.json")["mcpServers"] == "./.codex-mcp.json"
 
-@pytest.mark.packaging
-def test_codex_mcp_env_vars_carry_the_recursion_guard_variable() -> None:
-    """Pin ``env_vars`` absolutely, not just as a byproduct of the plugin-root variable check.
+    def test_server_resolves_from_installed_plugin_root(self) -> None:
+        """The server command, script and working directory resolve against the installed plugin's own root."""
+        server = _read_json(PLUGIN_ROOT / ".codex-mcp.json")["mcpServers"]["bridge"]
+        assert server["command"] in {"python", "python3"}
+        assert server["args"] == ["bin/bridge_mcp.py", "--stdio"]
+        assert server["cwd"] == "."
 
-    `rules/recursion-guard.md` depends on ``CC_CODEX_BRIDGE_DEPTH`` reaching the peer MCP process through this list;
-    `_validate_mcp` checks the plugin-root variable and script path but not `env_vars` content, so a silent edit
-    dropping this variable would pass every existing gate while disabling the guard.
-    """
-    config = json.loads((PLUGIN_ROOT / ".codex-mcp.json").read_text(encoding="utf-8"))
-    env_vars = config["mcpServers"]["bridge"]["env_vars"]
-    assert set(env_vars) >= {"HOME", "PATH", "CODEX_HOME", "CC_CODEX_BRIDGE_DEPTH"}
+    def test_env_vars_carry_the_recursion_guard_variable(self) -> None:
+        """Pin ``env_vars`` absolutely, not just as a byproduct of the plugin-root variable check.
+
+        `rules/recursion-guard.md` depends on ``CC_CODEX_BRIDGE_DEPTH`` reaching the peer MCP process through this list;
+        `_validate_mcp` checks the plugin-root variable and script path but not `env_vars` content, so a silent edit
+        dropping this variable would pass every existing gate while disabling the guard.
+        """
+        env_vars = _read_json(PLUGIN_ROOT / ".codex-mcp.json")["mcpServers"]["bridge"]["env_vars"]
+        assert set(env_vars) >= {"HOME", "PATH", "CODEX_HOME", "CC_CODEX_BRIDGE_DEPTH"}
 
 
 @pytest.mark.packaging
 def test_source_package_validation_ignores_non_payload_test_and_cache_files() -> None:
-    """Keep the validator's documented default useful in a development checkout."""
-    validated = subprocess.run(
-        [sys.executable, str(VALIDATE_SCRIPT)],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    """Keep the validator's documented default useful in a development checkout.
+
+    Run with no argument against the live source tree, so tests and bytecode caches there must not count as payload.
+    """
+    validated = _run(VALIDATE_SCRIPT)
 
     assert validated.returncode == 0, validated.stderr
     assert "Package validation passed" in validated.stdout
 
 
 @pytest.mark.packaging
-def test_host_manifests_select_disjoint_skill_surfaces() -> None:
-    """Prevent either host from discovering the other host's execution instructions."""
-    claude = json.loads((PLUGIN_ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
-    codex = json.loads((PLUGIN_ROOT / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
+class TestHostManifests:
+    """Each host manifest selects its own skill surface and nothing of the other host's."""
 
-    assert claude["name"] == "bridge"
-    assert codex["name"] == "bridge"
-    # Version EQUALITY across the two host manifests is enforced repo-wide by the
-    # check-plugin-version-sync pre-commit hook (check_plugin_version_sync.py) —
-    # no hardcoded version literal here, which broke on every legitimate bump.
-    assert codex["interface"]["displayName"] == "bridge_CC-Codex"
-    assert claude["skills"] == "./claude-skills/"
-    assert codex["skills"] == "./codex-skills/"
-    assert {path.parent.name for path in (PLUGIN_ROOT / "claude-skills").glob("*/SKILL.md")} == {
-        "advise",
-        "cancel",
-        "implement",
-        "result",
-        "review",
-        "setup",
-        "status",
-    }
-    assert {path.parent.name for path in (PLUGIN_ROOT / "codex-skills").glob("*/SKILL.md")} == {
-        "advise",
-        "implement",
-        "review",
-        "setup",
-    }
+    @pytest.mark.parametrize(
+        ("manifest", "skills_path", "skills_dir", "expected_skills"),
+        [
+            pytest.param(
+                ".claude-plugin/plugin.json",
+                "./claude-skills/",
+                "claude-skills",
+                {"advise", "cancel", "implement", "result", "review", "setup", "status"},
+                id="claude",
+            ),
+            pytest.param(
+                ".codex-plugin/plugin.json",
+                "./codex-skills/",
+                "codex-skills",
+                {"advise", "implement", "review", "setup"},
+                id="codex",
+            ),
+        ],
+    )
+    def test_selects_disjoint_skill_surface(
+        self, manifest: str, skills_path: str, skills_dir: str, expected_skills: set[str]
+    ) -> None:
+        """Each host names the bridge plugin and discovers only its own skill directory.
+
+        Prevents either host from discovering the other host's execution instructions. Version equality across the two
+        manifests is enforced repo-wide by the `check-plugin-version-sync` pre-commit hook, so no version literal is
+        pinned here.
+        """
+        data = _read_json(PLUGIN_ROOT / manifest)
+        found = {path.parent.name for path in (PLUGIN_ROOT / skills_dir).glob("*/SKILL.md")}
+        assert data["name"] == "bridge"
+        assert data["skills"] == skills_path
+        assert found == expected_skills
+
+    def test_codex_display_name(self) -> None:
+        """The Codex catalog shows the bridge under its public display name."""
+        assert (
+            _read_json(PLUGIN_ROOT / ".codex-plugin" / "plugin.json")["interface"]["displayName"] == "bridge_CC-Codex"
+        )
 
 
 @pytest.mark.packaging
-def test_repository_marketplaces_advertise_both_host_installations() -> None:
-    """Prevent a complete bridge package from becoming undiscoverable in either host catalog."""
-    claude_marketplace = json.loads(
-        (REPOSITORY_ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8")
-    )
-    codex_marketplace = json.loads(
-        (REPOSITORY_ROOT / ".agents" / "plugins" / "marketplace.json").read_text(encoding="utf-8")
-    )
+@pytest.mark.parametrize(
+    ("marketplace", "expected_entry"),
+    [
+        pytest.param(
+            ".claude-plugin/marketplace.json",
+            {
+                "description": "bridge_CC-Codex: guided setup plus bounded implementation, advice, and review across Claude Code and Codex.",
+                "name": "bridge",
+                "source": "./plugins/bridge_cc-codex",
+            },
+            id="claude",
+        ),
+        pytest.param(
+            ".agents/plugins/marketplace.json",
+            {
+                "category": "Productivity",
+                "name": "bridge",
+                "policy": {"authentication": "ON_INSTALL", "installation": "AVAILABLE"},
+                "source": {"path": "./plugins/bridge_cc-codex", "source": "local"},
+            },
+            id="codex",
+        ),
+    ],
+)
+def test_repository_marketplace_advertises_bridge(marketplace: str, expected_entry: dict[str, object]) -> None:
+    """Each host's repository catalog lists the bridge with its exact install entry.
 
-    claude_entry = next(entry for entry in claude_marketplace["plugins"] if entry["name"] == "bridge")
-    codex_entry = next(entry for entry in codex_marketplace["plugins"] if entry["name"] == "bridge")
-
-    assert claude_entry == {
-        "description": "bridge_CC-Codex: guided setup plus bounded implementation, advice, and review across Claude Code and Codex.",
-        "name": "bridge",
-        "source": "./plugins/bridge_cc-codex",
-    }
-    assert codex_entry == {
-        "category": "Productivity",
-        "name": "bridge",
-        "policy": {"authentication": "ON_INSTALL", "installation": "AVAILABLE"},
-        "source": {"path": "./plugins/bridge_cc-codex", "source": "local"},
-    }
-
-
-@pytest.mark.packaging
-def test_disposable_package_has_no_nested_marketplace(tmp_path: Path) -> None:
-    """The disposable package must not carry a redundant nested marketplace."""
-    output = tmp_path / "bridge"
-    built = subprocess.run(
-        [sys.executable, str(BUILD_SCRIPT), "--output", str(output)],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    assert built.returncode == 0, built.stderr
-    assert not (output / ".claude-plugin" / "marketplace.json").exists()
+    Prevents a complete bridge package from becoming undiscoverable in either host catalog.
+    """
+    plugins = _read_json(REPOSITORY_ROOT / marketplace)["plugins"]
+    assert next(entry for entry in plugins if entry["name"] == "bridge") == expected_entry
 
 
 @pytest.mark.packaging
@@ -238,76 +320,93 @@ def test_diagnose_payload_fingerprint_stays_inside_the_validated_package_manifes
 
 @pytest.mark.integration
 @pytest.mark.packaging
-def test_packaged_consent_runtime_is_executable_and_fingerprinted(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Verify setup consent works from its installed layout and missing runtime fails diagnosis."""
-    output = tmp_path / "bridge"
-    built = subprocess.run(
-        [sys.executable, str(BUILD_SCRIPT), "--output", str(output)], capture_output=True, text=True, check=False
-    )
-    assert built.returncode == 0, built.stderr
-    home = tmp_path / "native-home"
-    home.mkdir()
-    env = {**os.environ, "CODEX_HOME": str(home)}
-    for action in ("--help", "check"):
-        result = subprocess.run(
-            [sys.executable, str(output / "bin/bridge_consent.py"), action],
-            cwd=tmp_path,
-            env=env,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+class TestPackagedConsentHelper:
+    """The consent helper runs from the built package layout, outside the source tree."""
+
+    @pytest.fixture
+    def consent_env(self, codex_home: Path) -> dict[str, str]:
+        """Return the process environment with `CODEX_HOME` pointing at the empty native home."""
+        return {**os.environ, "CODEX_HOME": str(codex_home)}
+
+    def test_help_exits_zero(self, package_copy: Path, tmp_path: Path, consent_env: dict[str, str]) -> None:
+        """The installed helper starts and prints usage when run from the built package."""
+        result = _run(package_copy / "bin/bridge_consent.py", "--help", cwd=tmp_path, env=consent_env)
         assert result.returncode == 0, result.stderr
-        if action == "check":
-            assert json.loads(result.stdout)["consent"] == "absent"
-    assert not (home / "config.toml").exists()
 
-    class _Terminal(io.StringIO):
-        """Stand in for the operator terminal that alone may mint a one-time consent token."""
+    def test_check_reports_absent_consent_without_writing_config(
+        self, package_copy: Path, tmp_path: Path, codex_home: Path, consent_env: dict[str, str]
+    ) -> None:
+        """A read-only `check` on a fresh Codex home reports no consent and creates no config file.
 
-        def isatty(self) -> bool:
-            """Report a terminal so the installed helper accepts the mint."""
-            return True
+        A status probe that wrote `config.toml` would itself grant state the operator never approved.
+        """
+        result = _run(package_copy / "bin/bridge_consent.py", "check", cwd=tmp_path, env=consent_env)
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout)["consent"] == "absent"
+        assert not (codex_home / "config.toml").exists()
 
-    printed = _Terminal()
-    with monkeypatch.context() as patch:
-        patch.setenv("CODEX_HOME", str(home))
-        patch.setattr(sys, "stdout", printed)
-        patch.setattr(sys, "stdin", _Terminal())
-        assert runpy.run_path(str(output / "bin/bridge_consent.py"))["main"](["issue-token"]) == 0
-    granted = subprocess.run(
-        [sys.executable, str(output / "bin/bridge_consent.py"), "grant", "--approve"],
-        cwd=tmp_path,
-        env={**env, "BRIDGE_OPERATOR_TOKEN": printed.getvalue().splitlines()[1]},
-        stdin=subprocess.DEVNULL,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert granted.returncode == 0, granted.stderr
-    checked = subprocess.run(
-        [sys.executable, str(output / "bin/bridge_consent.py"), "check"],
-        cwd=tmp_path,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert checked.returncode == 0, checked.stderr
-    assert json.loads(checked.stdout)["consent"] == "configured"
-    monkeypatch.setattr(bridge_diagnose, "__file__", str(output / "bin/bridge_diagnose.py"))
-    before = bridge_diagnose._installed_payload_identity()
-    assert before["complete"] is True
-    for relative in ("bin/bridge_consent.py", "rules/claude-transfer-policy.txt", "rules/provider-consent.md"):
-        path = output / relative
-        original = path.read_bytes()
-        path.unlink()
-        missing = bridge_diagnose._installed_payload_identity()
-        assert missing["complete"] is False
-        assert relative in missing["missing"]
-        path.write_bytes(original + b"\n")
-        changed = bridge_diagnose._installed_payload_identity()
-        assert changed["fingerprint"] != before["fingerprint"]
-        path.write_bytes(original)
+    def test_operator_token_grant_configures_consent(
+        self,
+        package_copy: Path,
+        tmp_path: Path,
+        codex_home: Path,
+        consent_env: dict[str, str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Minting a token on the operator terminal, then granting with it, turns `check` from absent to configured.
+
+        The grant runs as a separate non-interactive process with the token in its environment, as the installed
+        workflow does; consent must work from the packaged layout end to end.
+        """
+        token = _issue_operator_token(package_copy, codex_home, monkeypatch)
+
+        granted = _run(
+            package_copy / "bin/bridge_consent.py",
+            "grant",
+            "--approve",
+            cwd=tmp_path,
+            env={**consent_env, "BRIDGE_OPERATOR_TOKEN": token},
+            stdin=subprocess.DEVNULL,
+        )
+        checked = _run(package_copy / "bin/bridge_consent.py", "check", cwd=tmp_path, env=consent_env)
+
+        assert granted.returncode == 0, granted.stderr
+        assert checked.returncode == 0, checked.stderr
+        assert json.loads(checked.stdout)["consent"] == "configured"
+
+
+@pytest.mark.integration
+@pytest.mark.packaging
+class TestInstalledPayloadIdentity:
+    """The doctor fingerprints the installed runtime payload and flags a missing or changed file."""
+
+    def test_pristine_package_is_complete(self, installed_package: Path) -> None:
+        """A freshly built package reports a complete payload."""
+        assert bridge_diagnose._installed_payload_identity()["complete"] is True
+
+    @pytest.mark.parametrize("relative", FINGERPRINTED_RUNTIME_FILES)
+    def test_missing_runtime_file_marks_payload_incomplete(self, installed_package: Path, relative: str) -> None:
+        """Deleting a fingerprinted runtime file makes the payload incomplete and names that file.
+
+        Setup consent depends on these files; a package missing one must fail diagnosis rather than look installed.
+        """
+        (installed_package / relative).unlink()
+
+        identity = bridge_diagnose._installed_payload_identity()
+
+        assert identity["complete"] is False
+        assert relative in identity["missing"]
+
+    @pytest.mark.parametrize("relative", FINGERPRINTED_RUNTIME_FILES)
+    def test_changed_runtime_file_changes_fingerprint(self, installed_package: Path, relative: str) -> None:
+        """Appending one byte to a fingerprinted runtime file changes the payload fingerprint.
+
+        Sync trusts the fingerprint to detect a stale install, so any edit to these files must move it.
+        """
+        before = bridge_diagnose._installed_payload_identity()
+        path = installed_package / relative
+        path.write_bytes(path.read_bytes() + b"\n")
+
+        after = bridge_diagnose._installed_payload_identity()
+
+        assert after["fingerprint"] != before["fingerprint"]

@@ -14,7 +14,8 @@ from __future__ import annotations
 import json
 import re
 import shutil
-from collections.abc import Iterator
+import uuid
+from collections.abc import Callable, Iterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -38,13 +39,14 @@ def _strip_ansi(s: str) -> str:
 
 
 @pytest.fixture(name="sid")
-def _sid(tmp_path: Path) -> Iterator[str]:
+def _sid() -> Iterator[str]:
     """Yield a unique session id; clean its ``claude-state-<id>`` dir on teardown.
 
     Base resolved via ``_hook_tmp_base()`` so teardown targets the same directory the hook's ``getSentinelDir()`` writes
-    on this platform.
+    on this platform. The hook's state base is machine-global, so the id is random: a name derived from the test would
+    collide with a concurrent pytest session running the same test.
     """
-    s = f"pytest-{tmp_path.name}"
+    s = f"pytest-{uuid.uuid4().hex}"
     yield s
     shutil.rmtree(_hook_tmp_base() / f"claude-state-{s}", ignore_errors=True)
 
@@ -57,6 +59,18 @@ def _tmp_home(tmp_path: Path) -> Path:
     sub_dir.mkdir(parents=True)
     (sub_dir / "subscription.json").write_text("{}", encoding="utf-8")
     return h
+
+
+@pytest.fixture
+def render(sid: str, tmp_home: Path, run_hook) -> Callable[[], str]:
+    """Return a callable that runs ``statusline.js`` for the session and gives back its ANSI-stripped stdout."""
+
+    def _render() -> str:
+        result = run_hook("statusline.js", _payload(sid), home=tmp_home)
+        assert result.returncode == 0, result.stderr
+        return _strip_ansi(result.stdout)
+
+    return _render
 
 
 # ── Payload helper ───────────────────────────────────────────────────────────
@@ -150,12 +164,10 @@ def _ago(seconds: float | None) -> str | None:
 class TestAgentDisplay:
     """statusline.js: 🤖 segment rendering across empty, active, and stale agents."""
 
-    def test_no_agents_shows_none(self, sid: str, tmp_home: Path, run_hook) -> None:
+    def test_no_agents_shows_none(self, render) -> None:
         """Empty state directory renders the ``🤖 none`` marker for the agent segment."""
-        result = run_hook("statusline.js", _payload(sid), home=tmp_home)
+        rendered = render()
 
-        assert result.returncode == 0, result.stderr
-        rendered = _strip_ansi(result.stdout)
         assert "🤖 none" in rendered
 
     @pytest.mark.parametrize(
@@ -167,30 +179,26 @@ class TestAgentDisplay:
         ],
     )
     def test_active_agent_shows_type_label(
-        self, sid: str, tmp_home: Path, run_hook, agent_id: str, agent_type: str, expected_label: str
+        self, sid: str, render, agent_id: str, agent_type: str, expected_label: str
     ) -> None:
         """One fresh agent entry renders its short type label in the 🤖 segment."""
         _write_agent(sid, agent_id, since=datetime.now(timezone.utc).isoformat(), agent_type=agent_type)
 
-        result = run_hook("statusline.js", _payload(sid), home=tmp_home)
+        rendered = render()
 
-        assert result.returncode == 0, result.stderr
-        rendered = _strip_ansi(result.stdout)
         assert "🤖" in rendered
         assert expected_label in rendered
         assert "🤖 none" not in rendered
 
-    def test_multiple_active_agents_show_total_and_group_counts(self, sid: str, tmp_home: Path, run_hook) -> None:
+    def test_multiple_active_agents_show_total_and_group_counts(self, sid: str, render) -> None:
         """Multiple fresh agents render total count and per-label grouped counts."""
         now = datetime.now(timezone.utc).isoformat()
         _write_agent(sid, "a1", since=now, agent_type="foundry:sw-engineer")
         _write_agent(sid, "a2", since=now, agent_type="foundry:sw-engineer")
         _write_agent(sid, "a3", since=now, agent_type="codex:rescue")
 
-        result = run_hook("statusline.js", _payload(sid), home=tmp_home)
+        rendered = render()
 
-        assert result.returncode == 0, result.stderr
-        rendered = _strip_ansi(result.stdout)
         assert "🤖 3" in rendered
         assert "sw-engineer(2)" in rendered
         assert "rescue" in rendered
@@ -210,7 +218,7 @@ class TestAgentDisplay:
         ],
     )
     def test_long_running_agent_stays_visible(
-        self, sid: str, tmp_home: Path, run_hook, since_s: float, last_active_s: float | None
+        self, sid: str, render, since_s: float, last_active_s: float | None
     ) -> None:
         """An agent older than the old 10-min cutoff stays visible while it is within its liveness backstop.
 
@@ -219,10 +227,8 @@ class TestAgentDisplay:
         """
         _write_agent(sid, "a-longrun", since=_ago(since_s), last_active=_ago(last_active_s))
 
-        result = run_hook("statusline.js", _payload(sid), home=tmp_home)
+        rendered = render()
 
-        assert result.returncode == 0, result.stderr
-        rendered = _strip_ansi(result.stdout)
         assert "sw-engineer" in rendered
         assert "🤖 none" not in rendered
 
@@ -235,9 +241,7 @@ class TestAgentDisplay:
             pytest.param(20 * 60, 20 * 60, id="idle-agent-with-stale-last-active"),
         ],
     )
-    def test_stale_agent_dropped(
-        self, sid: str, tmp_home: Path, run_hook, since_s: float, last_active_s: float | None
-    ) -> None:
+    def test_stale_agent_dropped(self, sid: str, render, since_s: float, last_active_s: float | None) -> None:
         """An agent past its staleness backstop is dropped → ``🤖 none`` rendered.
 
         Scenario: a non-worktree agent past the 30-min backstop is dropped; an agent whose ``last_active`` is also older
@@ -245,52 +249,43 @@ class TestAgentDisplay:
         """
         _write_agent(sid, "a-stale", since=_ago(since_s), last_active=_ago(last_active_s))
 
-        result = run_hook("statusline.js", _payload(sid), home=tmp_home)
+        rendered = render()
 
-        assert result.returncode == 0, result.stderr
-        rendered = _strip_ansi(result.stdout)
         assert "🤖 none" in rendered
 
 
 class TestCodexDisplay:
     """statusline.js: codex:* agents shown in 🤖 segment via agents/ dir."""
 
-    def test_active_codex_dir_agent_shows_label(self, sid: str, tmp_home: Path, run_hook) -> None:
+    def test_active_codex_dir_agent_shows_label(self, sid: str, render) -> None:
         """Codex agent tracked in the codex/ dir (not agents/) still renders in the 🤖 segment."""
         _write_codex(sid, "tu-cdx-dir", since=datetime.now(timezone.utc).isoformat())
 
-        result = run_hook("statusline.js", _payload(sid), home=tmp_home)
+        rendered = render()
 
-        assert result.returncode == 0, result.stderr
-        rendered = _strip_ansi(result.stdout)
         assert "🤖" in rendered
         assert "rescue" in rendered
         assert "🤖 none" not in rendered
 
-    def test_stale_codex_dir_agent_dropped(self, sid: str, tmp_home: Path, run_hook) -> None:
+    def test_stale_codex_dir_agent_dropped(self, sid: str, render) -> None:
         """Codex/ entry (non-worktree, since-only) older than the 30-min backstop is dropped → ``🤖 none`` rendered."""
         stale = (datetime.now(timezone.utc) - timedelta(minutes=70)).isoformat()
         _write_codex(sid, "tu-cdx-stale", since=stale)
 
-        result = run_hook("statusline.js", _payload(sid), home=tmp_home)
+        rendered = render()
 
-        assert result.returncode == 0, result.stderr
-        rendered = _strip_ansi(result.stdout)
         assert "🤖 none" in rendered
 
 
 class TestToolDisplay:
     """statusline.js: 🛠️ segment freshness — ``last`` beats ``since``, inflight survives the 30s window."""
 
-    def test_no_tools_shows_none(self, sid: str, tmp_home: Path, run_hook) -> None:
+    def test_no_tools_shows_none(self, render) -> None:
         """Empty state directory renders ``🛠️ none`` — the correct display at an idle prompt.
 
         task-log.js clears ``tools/`` at Stop and UserPromptSubmit, so the segment is per-turn by design.
         """
-        result = run_hook("statusline.js", _payload(sid), home=tmp_home)
-
-        assert result.returncode == 0, result.stderr
-        assert "🛠️ none" in _strip_ansi(result.stdout)
+        assert "🛠️ none" in render()
 
     @pytest.mark.parametrize(
         ("tool", "since_s", "last_s", "count", "inflight", "expected"),
@@ -305,8 +300,7 @@ class TestToolDisplay:
     def test_visible_call_shows_type_and_count(
         self,
         sid: str,
-        tmp_home: Path,
-        run_hook,
+        render,
         tool: str,
         since_s: float,
         last_s: float | None,
@@ -322,10 +316,7 @@ class TestToolDisplay:
         """
         _write_tool(sid, tool, since=_ago(since_s), last=_ago(last_s), count=count, inflight=inflight)
 
-        result = run_hook("statusline.js", _payload(sid), home=tmp_home)
-
-        assert result.returncode == 0, result.stderr
-        assert expected in _strip_ansi(result.stdout)
+        assert expected in render()
 
     @pytest.mark.parametrize(
         ("age_s", "count", "inflight"),
@@ -334,9 +325,7 @@ class TestToolDisplay:
             pytest.param(20 * 60, 1, 1, id="leaked-inflight-past-10-min-cap"),
         ],
     )
-    def test_expired_call_dropped(
-        self, sid: str, tmp_home: Path, run_hook, age_s: float, count: int, inflight: int
-    ) -> None:
+    def test_expired_call_dropped(self, sid: str, render, age_s: float, count: int, inflight: int) -> None:
         """A returned call older than 30 s, or an inflight slot leaked past the 10-min cap, is dropped.
 
         Scenario: a returned call (inflight 0) older than 30 s is dropped; an inflight slot leaked by a missing
@@ -344,12 +333,9 @@ class TestToolDisplay:
         """
         _write_tool(sid, "Bash", since=_ago(age_s), last=_ago(age_s), count=count, inflight=inflight)
 
-        result = run_hook("statusline.js", _payload(sid), home=tmp_home)
+        assert "Bash" not in render()
 
-        assert result.returncode == 0, result.stderr
-        assert "Bash" not in _strip_ansi(result.stdout)
-
-    def test_task_log_write_renders_end_to_end(self, sid: str, tmp_home: Path, run_hook) -> None:
+    def test_task_log_write_renders_end_to_end(self, sid: str, tmp_home: Path, run_hook, render) -> None:
         """State written by the real ``task-log.js`` renders in the real ``statusline.js``.
 
         Closes the writer/reader seam: every other test in this class seeds ``tools/`` by hand, so a field renamed on
@@ -365,7 +351,4 @@ class TestToolDisplay:
         }
         assert run_hook("task-log.js", pre, home=tmp_home).returncode == 0
 
-        result = run_hook("statusline.js", _payload(sid), home=tmp_home)
-
-        assert result.returncode == 0, result.stderr
-        assert "Bash:1x" in _strip_ansi(result.stdout)
+        assert "Bash:1x" in render()

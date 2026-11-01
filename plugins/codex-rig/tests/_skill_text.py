@@ -6,7 +6,40 @@ applies. A contract test then checks the union of both files, so the rule stays 
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
+
+
+def flat(text: str) -> str:
+    """Collapse every whitespace run to one space so a phrase check ignores where Markdown source wraps.
+
+    Example:
+        >>> flat("alpha    beta")
+        'alpha beta'
+    """
+    return " ".join(text.split())
+
+
+def missing_phrases(text: str, phrases: Iterable[str]) -> list[str]:
+    """Return the phrases absent from ``text`` so a failure names every lost phrase at once.
+
+    Both sides are whitespace-collapsed first, so neither the text nor a phrase depends on line wrapping.
+
+    Example:
+        >>> missing_phrases("alpha  beta", ("alpha beta", "gamma"))
+        ['gamma']
+    """
+    collapsed = flat(text)
+    return [phrase for phrase in phrases if flat(phrase) not in collapsed]
+
+
+def found_phrases(text: str, phrases: Iterable[str]) -> list[str]:
+    """Return the phrases still present in ``text``, for claims that must be gone.
+
+    Whitespace is collapsed on both sides, exactly as in ``missing_phrases``.
+    """
+    collapsed = flat(text)
+    return [phrase for phrase in phrases if flat(phrase) in collapsed]
 
 
 def read_with_references(skill_md: Path, *references: str) -> str:

@@ -12,19 +12,7 @@ from pathlib import Path
 
 import pytest
 import vitality_extract as vx
-
-_NOW = 1_800_000_000
-_DAY = 86400
-
-
-def _iso(days_ago: float) -> str:
-    """Return an ISO-8601 UTC timestamp ``days_ago`` days before ANALYSIS_NOW."""
-    return datetime.fromtimestamp(_NOW - days_ago * _DAY, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def _view(*records: dict) -> vx.DataView:
-    """Build a DataView from ``{"type", "data", ...}`` records at the fixed ANALYSIS_NOW."""
-    return vx.DataView(records={r["type"]: r for r in records}, now=_NOW)
+from _vitality_data import DAY, NOW, data_view, iso
 
 
 def _weeks(*counts: int) -> list[dict]:
@@ -35,6 +23,32 @@ def _weeks(*counts: int) -> list[dict]:
 def _states(axis: dict) -> dict[str, str]:
     """Checkpoint number → state of one checkpoint axis."""
     return {number: checkpoint["state"] for number, checkpoint in axis["checkpoints"].items()}
+
+
+def _responsiveness(issues: list[dict], prs: list[dict]) -> vx.DataView:
+    """View holding a ``responsiveness_gql`` record with the given issue and pull-request nodes."""
+    repository = {"issues": {"nodes": issues}, "pullRequests": {"nodes": prs}}
+    return data_view({"type": "responsiveness_gql", "data": {"data": {"repository": repository}}})
+
+
+def _ci_view(*records: dict, listed: str = "ci.yml") -> vx.DataView:
+    """View of a repository whose default branch lists one workflow file, plus ``records``."""
+    return data_view({"type": "workflows_list", "data": [listed]}, *records)
+
+
+def _step_view(step: str, name: str) -> vx.DataView:
+    """View of one fully read workflow file ``name`` whose only content is the ``step`` line."""
+    content = {"type": "workflow_files", "listed": 1, "fetched": 1, "data": f"--- workflow: {name} ---\n{step}\n"}
+    return _ci_view(content, listed=name)
+
+
+def _dataset_split(records: dict, group: vx.AxisGroup, names: set[str]) -> tuple[list[str], list[str]]:
+    """Dataset ``names`` the extractor reports as ``missing`` (fetch gap) and as ``not_present`` (proven absent)."""
+    datasets = vx.extract(records, group, analysis_now=NOW)["datasets"]
+    return (
+        sorted(name for name in datasets["missing"] if name in names),
+        sorted(name for name in datasets["not_present"] if name in names),
+    )
 
 
 @pytest.mark.parametrize(
@@ -50,7 +64,11 @@ def _states(axis: dict) -> dict[str, str]:
     ],
 )
 def test_is_bot(login: str | None, flag: bool | None, expected: bool) -> None:
-    """Classify automation accounts conservatively, under-filtering unknown names."""
+    """Classify automation accounts conservatively, under-filtering unknown names.
+
+    Logins ending in ``[bot]`` or ``-bot``, GitHub Apps and known automation names are bots. Unknown names and deleted
+    users (no login) count as humans, so a real contributor is never filtered out; an explicit flag wins.
+    """
     # Act
     result = vx.is_bot(login, flag)
 
@@ -59,7 +77,11 @@ def test_is_bot(login: str | None, flag: bool | None, expected: bool) -> None:
 
 
 def test_load_records_keeps_last_per_type_and_skips_malformed(capsys: pytest.CaptureFixture[str]) -> None:
-    """Take the last record of each type and warn about lines that are not JSON."""
+    """Take the last record of each type and warn about lines that are not JSON.
+
+    DATA_FILE is JSONL written by several scrape steps: a later record of a type supersedes an earlier one, and a
+    broken or typeless line must not abort the analysis, only warn with its line number.
+    """
     # Arrange
     text = '{"type": "a", "data": 1}\n{broken\n\n{"type": "a", "data": 2}\n{"no_type": 1}\n'
 
@@ -76,7 +98,11 @@ def test_load_records_keeps_last_per_type_and_skips_malformed(capsys: pytest.Cap
     [pytest.param(None, 1_700_000_000, id="record-timestamp"), pytest.param(123, 123, id="explicit-override")],
 )
 def test_analysis_now_prefers_override_then_record_timestamp(override: int | None, expected: int) -> None:
-    """Measure time windows from the explicit override, else the scrape timestamp."""
+    """Measure time windows from the explicit override, else the scrape timestamp.
+
+    Time windows are measured from ANALYSIS_NOW. A replayed scrape passes the override; otherwise the timestamp stored
+    in the records pins the clock, so rerunning the same file gives the same windows.
+    """
     # Arrange
     records = {
         "readme_content": {"type": "readme_content", "data": "x"},
@@ -90,45 +116,35 @@ def test_analysis_now_prefers_override_then_record_timestamp(override: int | Non
     assert result["analysis_now"] == expected
 
 
-class TestGroupA:
-    """Axes 1, 2, 5 and 6."""
+class TestAxis1Responsiveness:
+    """Axis 1 — first non-author response times and the shares answered or left open."""
 
-    def test_axis1_counts_only_non_author_first_events(self) -> None:
-        """Count an issue answered by someone else and treat an author-first comment as unresponded."""
+    def test_counts_only_non_author_first_events(self) -> None:
+        """Count an issue answered by someone else and treat an author-first comment as unresponded.
+
+        Two issues and a pull request share the sample: one issue answered by a maintainer, one answered only by
+        its own author, and one PR reviewed by a maintainer. Only the maintainer events may count as responses.
+        """
         # Arrange
-        payload = {
-            "data": {
-                "repository": {
-                    "issues": {
-                        "nodes": [
-                            {
-                                "createdAt": _iso(10),
-                                "author": {"login": "u1"},
-                                "comments": {"nodes": [{"createdAt": _iso(8), "author": {"login": "m"}}]},
-                            },
-                            {
-                                "createdAt": _iso(10),
-                                "author": {"login": "u2"},
-                                "comments": {"nodes": [{"createdAt": _iso(9), "author": {"login": "u2"}}]},
-                            },
-                        ]
-                    },
-                    "pullRequests": {
-                        "nodes": [
-                            {
-                                "createdAt": _iso(5),
-                                "author": {"login": "c"},
-                                "reviews": {"nodes": [{"createdAt": _iso(4), "author": {"login": "m"}}]},
-                                "comments": {"nodes": []},
-                            }
-                        ]
-                    },
-                }
-            }
+        answered = {
+            "createdAt": iso(10),
+            "author": {"login": "u1"},
+            "comments": {"nodes": [{"createdAt": iso(8), "author": {"login": "m"}}]},
+        }
+        self_answered = {
+            "createdAt": iso(10),
+            "author": {"login": "u2"},
+            "comments": {"nodes": [{"createdAt": iso(9), "author": {"login": "u2"}}]},
+        }
+        reviewed_pr = {
+            "createdAt": iso(5),
+            "author": {"login": "c"},
+            "reviews": {"nodes": [{"createdAt": iso(4), "author": {"login": "m"}}]},
+            "comments": {"nodes": []},
         }
 
         # Act
-        axis = vx.axis1_responsiveness(_view({"type": "responsiveness_gql", "data": payload}))
+        axis = vx.axis1_responsiveness(_responsiveness([answered, self_answered], [reviewed_pr]))
 
         # Assert
         assert axis["issues_sampled"] == 2
@@ -145,7 +161,7 @@ class TestGroupA:
             pytest.param({"login": "codecov"}, id="known-login-without-typename"),
         ],
     )
-    def test_axis1_skips_bot_responses(self, bot_author: dict) -> None:
+    def test_skips_bot_responses(self, bot_author: dict) -> None:
         """A bot comment seconds after PR creation is not a response; the first human event is.
 
         Coverage, CLA and security apps comment on every PR at once, and GraphQL drops their ``[bot]`` suffix, so
@@ -153,62 +169,388 @@ class TestGroupA:
         """
         # Arrange
         pr = {
-            "createdAt": _iso(5),
+            "createdAt": iso(5),
             "author": {"login": "c"},
-            "comments": {"nodes": [{"createdAt": _iso(5), "author": bot_author}]},
-            "reviews": {"nodes": [{"createdAt": _iso(3), "author": {"login": "m", "__typename": "User"}}]},
+            "comments": {"nodes": [{"createdAt": iso(5), "author": bot_author}]},
+            "reviews": {"nodes": [{"createdAt": iso(3), "author": {"login": "m", "__typename": "User"}}]},
         }
-        payload = {"data": {"repository": {"issues": {"nodes": []}, "pullRequests": {"nodes": [pr]}}}}
 
         # Act
-        axis = vx.axis1_responsiveness(_view({"type": "responsiveness_gql", "data": payload}))
+        axis = vx.axis1_responsiveness(_responsiveness([], [pr]))
 
         # Assert
         assert axis["median_pr_response_days"] == 2.0
 
-    def test_axis1_censors_young_unanswered_issues(self) -> None:
+    def test_censors_young_unanswered_issues(self) -> None:
         """Drop an unanswered issue younger than 7 days from both percentages; its 7-day outcome is still open.
 
         Counting it as unanswered deflated busy repositories, whose newest sampled issues are hours old.
         """
         # Arrange
         answered = {
-            "createdAt": _iso(10),
+            "createdAt": iso(10),
             "author": {"login": "u1"},
-            "comments": {"nodes": [{"createdAt": _iso(8), "author": {"login": "m"}}]},
+            "comments": {"nodes": [{"createdAt": iso(8), "author": {"login": "m"}}]},
         }
-        young = {"createdAt": _iso(1), "author": {"login": "u2"}, "comments": {"nodes": []}}
-        payload = {"data": {"repository": {"issues": {"nodes": [answered, young]}, "pullRequests": {"nodes": []}}}}
+        young = {"createdAt": iso(1), "author": {"login": "u2"}, "comments": {"nodes": []}}
 
         # Act
-        axis = vx.axis1_responsiveness(_view({"type": "responsiveness_gql", "data": payload}))
+        axis = vx.axis1_responsiveness(_responsiveness([answered, young], []))
 
         # Assert
         assert (axis["issues_too_young"], axis["pct_responded_7d"], axis["pct_unresponded"]) == (1, 100.0, 0.0)
 
-    def test_axis1_counts_unanswered_items_with_full_event_lists(self) -> None:
-        """Count unanswered items whose fetched event list is full, since a human reply may lie past the cap."""
+    def test_counts_unanswered_items_with_full_event_lists(self) -> None:
+        """Count unanswered items whose fetched event list is full, since a human reply may lie past the cap.
+
+        An issue whose ten fetched comments all come from its author has hit the event cap, so a later human reply may
+        exist unseen; the report must surface that count instead of silently treating the issue as unanswered.
+        """
         # Arrange
-        events = {"nodes": [{"createdAt": _iso(9), "author": {"login": "u1"}}] * 10}
-        issue = {"createdAt": _iso(10), "author": {"login": "u1"}, "comments": events}
-        payload = {"data": {"repository": {"issues": {"nodes": [issue]}, "pullRequests": {"nodes": []}}}}
+        events = {"nodes": [{"createdAt": iso(9), "author": {"login": "u1"}}] * 10}
+        issue = {"createdAt": iso(10), "author": {"login": "u1"}, "comments": events}
 
         # Act
-        axis = vx.axis1_responsiveness(_view({"type": "responsiveness_gql", "data": payload}))
+        axis = vx.axis1_responsiveness(_responsiveness([issue], []))
 
         # Assert
         assert axis["issues_unresponded_at_event_cap"] == 1
 
-    def test_axis2_missing_commits_are_null_not_zero(self) -> None:
-        """Report 30/90-day commit counts as null when the commit list was not fetched, never as a measured 0."""
+    def test_unavailable_without_dataset(self) -> None:
+        """Mark responsiveness unavailable instead of reporting zero samples as measured.
+
+        A DATA_FILE without a ``responsiveness_gql`` record carries no sample; the scorer must see an explicit marker,
+        not an empty sample it could read as a measured zero.
+        """
         # Act
-        axis = vx.axis2_maintenance(_view())
+        axis = vx.axis1_responsiveness(data_view())
+
+        # Assert
+        assert axis == {"available": False, "reason": "responsiveness_gql missing"}
+
+
+class TestAxis2Maintenance:
+    """Axis 2 — commit windows, release cadence and abandonment signals."""
+
+    def test_missing_commits_are_null_not_zero(self) -> None:
+        """Report 30/90-day commit counts as null when the commit list was not fetched, never as a measured 0.
+
+        The scrape can fail before the commit list is stored. A scorer reading 0 would place a healthy repository in the
+        stalled band, so the counts stay null and ``commits_available`` says why.
+        """
+        # Act
+        axis = vx.axis2_maintenance(data_view())
 
         # Assert
         assert (axis["commits_available"], axis["commits_30d"], axis["commits_90d"]) == (False, None, None)
 
-    def test_axis5_workflow_file_name_never_meets_a_content_checkpoint(self) -> None:
-        """Ignore the ``--- workflow: <name> ---`` header: ``codeql.yml`` running only ``make check`` is no scan."""
+    def test_counts_windows_and_flags_truncated_lower_bound(self) -> None:
+        """Count 30/90-day commits and flag the counts as lower bounds when the 100-commit list is truncated.
+
+        Commits 2, 20 and 60 days old, releases at 10, 40 and 100 days and a README discontinuation banner. The commit
+        list is flagged partial, so the 90-day count is a lower bound while the 30-day count stays exact.
+        """
+        # Arrange
+        commits = {"type": "commits", "partial": True, "data": [iso(2), iso(20), iso(60)]}
+        releases = {
+            "type": "releases",
+            "data": [
+                {"tag": "v0.9.0", "published": iso(10)},
+                {"tag": "v0.8.0", "published": iso(40)},
+                {"tag": "v0.7.0", "published": iso(100)},
+            ],
+        }
+        readme = {"type": "readme_content", "data": "# Tool\nThis project is no longer maintained.\n"}
+
+        # Act
+        axis = vx.axis2_maintenance(data_view(commits, releases, readme))
+
+        # Assert
+        assert (axis["commits_30d"], axis["commits_90d"]) == (2, 3)
+        assert axis["days_since_last_commit"] == 2.0
+        assert axis["commits_30d_is_lower_bound"] is False
+        assert axis["commits_90d_is_lower_bound"] is True
+        assert axis["release_cadence_days"] == 45.0
+        assert axis["latest_release_tag"] == "v0.9.0"
+        assert axis["pre_release_tag"] is True
+        assert axis["abandonment_keywords"] == ["this project is no longer maintained"]
+
+
+class TestAxis3Contributors:
+    """Axis 3 — bus factor, retention and the commit-author fallback."""
+
+    def test_bus_factor_retention_and_weeks_summary(self) -> None:
+        """Derive bus factor, top share and retention from the last 13 weeks, excluding bots.
+
+        Alice commits six of the seven non-bot commits in the last 13 weeks and Bob one, while a bot commits more than
+        both. Bus factor, top share and retention come from the weekly buckets and must ignore the bot.
+        """
+        # Arrange
+        stats = [
+            {"author": "alice", "weeks": _weeks(*[0] * 40, 3, *[0] * 5, 3, *[0] * 6)},
+            {"author": "bob", "weeks": _weeks(*[0] * 40, 1, *[0] * 12)},
+            {"author": "renovate[bot]", "weeks": _weeks(*[0] * 52, 9)},
+        ]
+
+        # Act
+        axis = vx.axis3_contributors(data_view({"type": "contributor_stats", "data": stats}))
+
+        # Assert
+        assert (axis["contributors"], axis["commits_90d_total"], axis["bus_factor"]) == (2, 7, 1)
+        assert (axis["top_contributor"], vx._display(axis)["top_contributor_pct"]) == ("alice", 85.7)
+        assert (axis["retention_active_q1"], axis["retention_active_both"], axis["retention_pct"]) == (2, 1, 50.0)
+        assert axis["axis3_weeks"] == {
+            "contributors": 2,
+            "pool_recent_26w": 2,
+            "pool_prior_26w": 0,
+            "q1_active": 2,
+            "q1q2_active": 1,
+        }
+
+    def test_pending_stats_return_fallback_only(self) -> None:
+        """Expose the commit-author fallback and a null weeks summary while stats are pending.
+
+        GitHub answers 202 while it computes contributor stats. The axis falls back to distinct commit authors and marks
+        the weekly summary unavailable instead of inventing one.
+        """
+        # Arrange
+        records = (
+            {"type": "contributor_stats", "data": None, "partial": True, "202_pending": True},
+            {"type": "commits_50", "data": [{"author": "alice"}, {"author": "bob"}, {"author": "dependabot[bot]"}]},
+        )
+
+        # Act
+        axis = vx.axis3_contributors(data_view(*records))
+
+        # Assert
+        assert axis["stats_status"] == "202_pending"
+        assert axis["axis3_weeks"] is None
+        assert axis["fallback"]["unique_non_bot_authors"] == 2
+        assert axis["fallback"]["approx_bus_factor"] == 2
+
+    def test_fallback_caps_at_three_and_skips_unresolved_authors(self) -> None:
+        """Approximate the bus factor as distinct non-bot authors capped at 3; ``unknown`` may be several people.
+
+        Seven sampled commits by four named authors, an unresolved login and a bot. The approximation counts distinct
+        humans and stops at 3, since the two ``unknown`` commits may be several people.
+        """
+        # Arrange
+        authors = ["a", "b", "c", "d", "unknown", "unknown", "renovate[bot]"]
+        records = (
+            {"type": "contributor_stats", "data": None, "202_pending": True},
+            {"type": "commits_50", "data": [{"author": name} for name in authors]},
+        )
+
+        # Act
+        fallback = vx.axis3_contributors(data_view(*records))["fallback"]
+
+        # Assert
+        assert fallback == {"commits_sampled": 7, "unique_non_bot_authors": 4, "approx_bus_factor": 3}
+
+    def test_skips_contributors_without_an_author(self) -> None:
+        """Skip null-author stats entries instead of merging every deleted account into one contributor.
+
+        Two stats entries have no author (deleted accounts). Merging them into one contributor would inflate its share
+        and could crown a phantom top contributor.
+        """
+        # Arrange
+        stats = [
+            {"author": None, "weeks": _weeks(*[0] * 40, 5, *[0] * 12)},
+            {"author": None, "weeks": _weeks(*[0] * 40, 5, *[0] * 12)},
+            {"author": "alice", "weeks": _weeks(*[0] * 40, 1, *[0] * 12)},
+        ]
+
+        # Act
+        axis = vx.axis3_contributors(data_view({"type": "contributor_stats", "data": stats}))
+
+        # Assert
+        assert (axis["contributors"], axis["commits_90d_total"], axis["bus_factor"]) == (1, 1, 1)
+
+
+class TestAxis4IssuePr:
+    """Axis 4 — issue and pull-request queue health."""
+
+    def test_issue_and_pr_rates(self) -> None:
+        """Compute stale share, 30-day close rate, abandoned share and 30-day merge rate.
+
+        Two open issues (one stale), one closed issue, one idle open PR, one merged and one rejected PR. Covers the
+        stale share, the 30-day close and merge rates, the abandoned share and the rejection ratio.
+        """
+        # Arrange
+        records = (
+            {
+                "type": "open_issues",
+                "data": [
+                    {"createdAt": iso(200), "updatedAt": iso(100)},
+                    {"createdAt": iso(5), "updatedAt": iso(5)},
+                ],
+            },
+            {"type": "closed_issues", "data": [{"createdAt": iso(10), "closedAt": iso(3)}]},
+            {"type": "open_prs", "data": [{"createdAt": iso(40), "updatedAt": iso(35)}]},
+            {
+                "type": "closed_prs",
+                "data": [
+                    {"createdAt": iso(9), "closedAt": iso(2), "mergedAt": iso(2)},
+                    {"createdAt": iso(8), "closedAt": iso(1), "mergedAt": None},
+                ],
+            },
+        )
+
+        # Act
+        axis = vx.axis4_issue_pr(data_view(*records))
+
+        # Assert
+        assert (axis["issues"]["stale_pct"], axis["issues"]["opened_30d"], axis["issues"]["close_rate"]) == (
+            50.0,
+            2,
+            0.5,
+        )
+        assert (axis["prs"]["abandoned_pct"], axis["prs"]["merged_30d"], axis["prs"]["merge_rate"]) == (100.0, 1, 0.5)
+        assert axis["prs"]["closed_without_merge_ratio"] == 0.5
+
+    @pytest.mark.parametrize(
+        ("records", "close_rate", "extra"),
+        [
+            pytest.param(
+                [{"type": "open_issues", "data": [{"createdAt": iso(5), "updatedAt": iso(5)}]}],
+                None,
+                {"closed_available": False, "closed_30d": None},
+                id="closed-list-missing",
+            ),
+            pytest.param(
+                [
+                    {"type": "open_issues", "data": [{"createdAt": iso(50), "updatedAt": iso(5)}]},
+                    {"type": "closed_issues", "data": []},
+                ],
+                None,
+                {"rate_null_reason": "no issues opened in 30d"},
+                id="empty-30d-window",
+            ),
+        ],
+    )
+    def test_close_rate_is_null_without_a_denominator(
+        self, records: list[dict], close_rate: float | None, extra: dict
+    ) -> None:
+        """Leave the close rate null when its list is missing or nothing opened in 30 days, never a 🔴-forcing 0.
+
+        A repository with no closed-issue list, or none opened inside the 30-day window, has no meaningful rate.
+        Reporting 0 would force the red band on a project that merely lacks data.
+        """
+        # Act
+        issues = vx.axis4_issue_pr(data_view(*records))["issues"]
+
+        # Assert
+        assert issues["close_rate"] is close_rate
+        assert {key: issues[key] for key in extra} == extra
+
+    @pytest.mark.parametrize(
+        ("closed_ages", "partial", "lower_bound"),
+        [
+            pytest.param([1, 20], True, True, id="truncated-inside-window"),
+            pytest.param([1, 40], True, True, id="truncated-beyond-window-still-unordered"),
+            pytest.param([1, 20], False, False, id="complete-list"),
+        ],
+    )
+    def test_closed_list_lower_bound(self, closed_ages: list[int], partial: bool, lower_bound: bool) -> None:
+        """Flag 30-day PR counts as lower bounds whenever the closed list is truncated.
+
+        The list is not ordered by closing date: a creation-ordered list reaching 103 days back still missed PRs
+        created earlier and merged this month, while the old "oldest entry inside the window" test called it complete.
+        """
+        # Arrange
+        closed = [{"createdAt": iso(age + 1), "closedAt": iso(age), "mergedAt": iso(age)} for age in closed_ages]
+        records = ({"type": "open_prs", "data": []}, {"type": "closed_prs", "partial": partial, "data": closed})
+
+        # Act
+        prs = vx.axis4_issue_pr(data_view(*records))["prs"]
+
+        # Assert
+        assert prs["closed_30d_is_lower_bound"] is lower_bound
+
+    @pytest.mark.parametrize(
+        ("count", "partial", "lower_bound"),
+        [
+            pytest.param(1000, False, True, id="search-ceiling-reached-in-older-data"),
+            pytest.param(1000, True, True, id="search-ceiling-flagged-by-the-assembler"),
+            pytest.param(999, False, False, id="below-the-search-ceiling"),
+        ],
+    )
+    def test_closed_issues_at_the_search_ceiling_are_a_lower_bound(
+        self, count: int, partial: bool, lower_bound: bool
+    ) -> None:
+        """Read a closed-issue list of 1000 as truncated: GitHub search never returns more, whatever the fetch limit.
+
+        The fetch asked for 1001 to prove truncation, but ``gh issue list --search`` stops at 1000, so a month with more
+        closures read as complete and the close rate lost its lower-bound degrader.
+        """
+        # Arrange
+        closed = [{"createdAt": iso(40), "closedAt": iso(5)}] * count
+        records = ({"type": "open_issues", "data": []}, {"type": "closed_issues", "partial": partial, "data": closed})
+
+        # Act
+        issues = vx.axis4_issue_pr(data_view(*records))["issues"]
+
+        # Assert
+        assert (issues["closed_30d"], issues["closed_30d_is_lower_bound"]) == (count, lower_bound)
+
+    def test_pr_rates_exclude_bot_authors(self) -> None:
+        """Drop bot-authored PRs from the PR queue metrics when the lists carry authors.
+
+        One open PR by a bot, one merged PR by a human and one merged PR by a bot. Dependency bots would inflate the
+        merge rate and queue size, so only the human PR counts toward the open, opened and merged figures.
+        """
+        # Arrange
+        bot = {"login": "app/pre-commit-ci", "is_bot": True}
+        human = {"login": "alice", "is_bot": False}
+        records = (
+            {"type": "open_prs", "data": [{"author": bot, "createdAt": iso(2), "updatedAt": iso(2)}]},
+            {
+                "type": "closed_prs",
+                "data": [
+                    {"author": human, "createdAt": iso(9), "closedAt": iso(2), "mergedAt": iso(2)},
+                    {"author": bot, "createdAt": iso(3), "closedAt": iso(1), "mergedAt": iso(1)},
+                ],
+            },
+        )
+
+        # Act
+        prs = vx.axis4_issue_pr(data_view(*records))["prs"]
+
+        # Assert
+        assert (prs["bot_filter"], prs["bots_excluded"]) == ("applied", 2)
+        assert (prs["open_count"], prs["opened_30d"], prs["merged_30d"], prs["merge_rate"]) == (0, 1, 1, 1.0)
+
+    def test_review_coverage_ignores_bots_and_self_approval(self) -> None:
+        """Count only non-bot PRs approved by someone other than the author; flag samples under five as undefined.
+
+        Three PRs: one approved by another person, one approved only by its author and one authored by a bot. Bots
+        drop out, self-approval does not count, and a sample under five PRs is flagged undefined.
+        """
+        # Arrange
+        nodes = [
+            {"author": {"login": "a"}, "reviews": {"nodes": [{"author": {"login": "m"}}]}},
+            {"author": {"login": "b"}, "reviews": {"nodes": [{"author": {"login": "b"}}]}},
+            {"author": {"login": "dependabot[bot]"}, "reviews": {"nodes": [{"author": {"login": "m"}}]}},
+        ]
+        record = {"type": "review_coverage_gql", "data": {"data": {"repository": {"pullRequests": {"nodes": nodes}}}}}
+
+        # Act
+        coverage = vx.axis4_issue_pr(data_view(record))["review_coverage"]
+
+        # Assert
+        assert (coverage["non_bot"], coverage["approved_by_other"], coverage["coverage_pct"]) == (2, 1, 50.0)
+        assert coverage["undefined"] is True
+
+
+class TestAxis5Ci:
+    """Axis 5 — CI presence, test and lint steps, security scans and run history."""
+
+    def test_workflow_file_name_never_meets_a_content_checkpoint(self) -> None:
+        """Ignore the ``--- workflow: <name> ---`` header: ``codeql.yml`` running only ``make check`` is no scan.
+
+        A workflow named ``codeql.yml`` that only runs ``make check`` scans nothing. Checkpoint 4 must read the file
+        content, never the ``--- workflow: <name> ---`` header the scraper prepends to it.
+        """
         # Arrange
         content = {
             "type": "workflow_files",
@@ -218,7 +560,7 @@ class TestGroupA:
         }
 
         # Act
-        axis = vx.axis5_ci(_view({"type": "workflows_list", "data": ["codeql.yml"]}, content))
+        axis = vx.axis5_ci(data_view({"type": "workflows_list", "data": ["codeql.yml"]}, content))
 
         # Assert
         assert axis["checkpoints"]["4"]["state"] == "unmet"
@@ -267,51 +609,24 @@ class TestGroupA:
             ),
         ],
     )
-    def test_axis5_ci_present_trusts_the_listing_over_the_registry(self, records: list[dict], state: str) -> None:
-        """Decide checkpoint 1 from the default-branch listing when known; else count non-deleted registry files."""
+    def test_ci_present_trusts_the_listing_over_the_registry(self, records: list[dict], state: str) -> None:
+        """Decide checkpoint 1 from the default-branch listing when known; else count non-deleted registry files.
+
+        Cases pair a default-branch listing with the workflow registry. A known listing is authoritative; without one,
+        registry entries that are not deleted count as CI.
+        """
         # Act
-        checkpoint = vx.axis5_ci(_view(*records))["checkpoints"]["1"]
+        checkpoint = vx.axis5_ci(data_view(*records))["checkpoints"]["1"]
 
         # Assert
         assert checkpoint["state"] == state
 
-    def test_axis1_reports_unavailable_without_dataset(self) -> None:
-        """Mark responsiveness unavailable instead of reporting zero samples as measured."""
-        # Act
-        axis = vx.axis1_responsiveness(_view())
+    def test_complete_content_decides_every_checkpoint(self) -> None:
+        """Decide all five CI checkpoints when every workflow file was read; a missing step is a real miss.
 
-        # Assert
-        assert axis == {"available": False, "reason": "responsiveness_gql missing"}
-
-    def test_axis2_counts_windows_and_flags_truncated_lower_bound(self) -> None:
-        """Count 30/90-day commits and flag the counts as lower bounds when the 100-commit list is truncated."""
-        # Arrange
-        commits = {"type": "commits", "partial": True, "data": [_iso(2), _iso(20), _iso(60)]}
-        releases = {
-            "type": "releases",
-            "data": [
-                {"tag": "v0.9.0", "published": _iso(10)},
-                {"tag": "v0.8.0", "published": _iso(40)},
-                {"tag": "v0.7.0", "published": _iso(100)},
-            ],
-        }
-        readme = {"type": "readme_content", "data": "# Tool\nThis project is no longer maintained.\n"}
-
-        # Act
-        axis = vx.axis2_maintenance(_view(commits, releases, readme))
-
-        # Assert
-        assert (axis["commits_30d"], axis["commits_90d"]) == (2, 3)
-        assert axis["days_since_last_commit"] == 2.0
-        assert axis["commits_30d_is_lower_bound"] is False
-        assert axis["commits_90d_is_lower_bound"] is True
-        assert axis["release_cadence_days"] == 45.0
-        assert axis["latest_release_tag"] == "v0.9.0"
-        assert axis["pre_release_tag"] is True
-        assert axis["abandonment_keywords"] == ["this project is no longer maintained"]
-
-    def test_axis5_complete_content_decides_every_checkpoint(self) -> None:
-        """Decide all five CI checkpoints when every workflow file was read; a missing step is a real miss."""
+        The only workflow file was fully read and runs pytest and ruff, and four of five runs concluded. Everything is
+        decidable, so the missing security scan is a real miss and the 75% pass rate falls short of checkpoint 5.
+        """
         # Arrange
         workflows = {
             "type": "ci_workflows",
@@ -337,7 +652,7 @@ class TestGroupA:
         }
 
         # Act
-        axis = vx.axis5_ci(_view(workflows, content, runs))
+        axis = vx.axis5_ci(data_view(workflows, content, runs))
 
         # Assert
         assert _states(axis) == {"1": "met", "2": "met", "3": "met", "4": "unmet", "5": "unmet"}
@@ -345,8 +660,12 @@ class TestGroupA:
         assert axis["run_conclusions"] == {"failure": 1, "pending": 1, "success": 3}
         assert axis["ci_pass_rate_pct"] == 75.0
 
-    def test_axis5_unread_files_leave_misses_indeterminate_and_names_never_count(self) -> None:
-        """Keep a step not found in partially read content indeterminate; a workflow named CodeQL earns nothing."""
+    def test_unread_files_leave_misses_indeterminate_and_names_never_count(self) -> None:
+        """Keep a step not found in partially read content indeterminate; a workflow named CodeQL earns nothing.
+
+        Three workflows are listed but one was fetched. A step absent from partial content may sit in an unread file, so
+        checkpoints 3 and 4 stay indeterminate; workflow names such as CodeQL never earn credit.
+        """
         # Arrange
         workflows = {"type": "ci_workflows", "data": {"count": 3, "names": ["CodeQL", "Lint", "Tests"]}}
         content = {
@@ -359,30 +678,38 @@ class TestGroupA:
         runs = {"type": "ci_runs", "data": [{"conclusion": "success"}]}
 
         # Act
-        axis = vx.axis5_ci(_view(workflows, content, runs))
+        axis = vx.axis5_ci(data_view(workflows, content, runs))
 
         # Assert
         assert _states(axis) == {"1": "met", "2": "met", "3": "indeterminate", "4": "indeterminate", "5": "met"}
         assert (axis["score_strict"], axis["score_upper"]) == (6, 10)
         assert axis["checkpoints"]["4"]["why"] == "security scan: 1 of 3 workflow files read"
 
-    def test_axis5_code_scanning_default_setup_meets_sast(self) -> None:
-        """Credit the security-scan checkpoint for active code-scanning default setup, which has no workflow file."""
+    def test_code_scanning_default_setup_meets_sast(self) -> None:
+        """Credit the security-scan checkpoint for active code-scanning default setup, which has no workflow file.
+
+        The Actions API lists CodeQL as an active ``dynamic/github-code-scanning`` workflow with no YAML file to read.
+        That entry alone must meet the security-scan checkpoint.
+        """
         # Arrange
         entry = {"name": "CodeQL", "path": "dynamic/github-code-scanning/codeql", "state": "active"}
         workflows = {"type": "ci_workflows", "data": {"count": 1, "names": ["CodeQL"], "workflows": [entry]}}
         content = {"type": "workflow_files", "listed": 1, "fetched": 1, "data": "--- workflow: ci.yml ---\nrun: make\n"}
 
         # Act
-        axis = vx.axis5_ci(_view(workflows, content))
+        axis = vx.axis5_ci(data_view(workflows, content))
 
         # Assert
         assert axis["checkpoints"]["4"] == {"state": "met", "why": "code-scanning default setup active"}
 
-    def test_axis5_without_any_ci_data_is_indeterminate(self) -> None:
-        """Leave every CI checkpoint indeterminate, not failed, when nothing about workflows was fetched."""
+    def test_without_any_ci_data_is_indeterminate(self) -> None:
+        """Leave every CI checkpoint indeterminate, not failed, when nothing about workflows was fetched.
+
+        No workflow listing, registry or run record was fetched. Nothing is known, so the score range stays 0 to 10
+        instead of the strict score being pinned by failing every checkpoint.
+        """
         # Act
-        axis = vx.axis5_ci(_view())
+        axis = vx.axis5_ci(data_view())
 
         # Assert
         assert set(_states(axis).values()) == {"indeterminate"}
@@ -452,18 +779,15 @@ class TestGroupA:
             pytest.param("run: nox -s lint", "unmet", id="nox-lint-session-is-not-a-test"),
         ],
     )
-    def test_axis5_test_step_shapes(self, step: str, state: str) -> None:
+    def test_test_runner_step_shapes(self, step: str, state: str) -> None:
         """Credit tests run through tox, nox, hatch, unittest or make only in a test-shaped invocation.
 
         psf/black-style CI runs ``tox -e ci-py…`` and never names pytest in a workflow, which scored "no test step";
         crediting bare ``tox`` would instead count lint and fuzz envs. A Python factor beside a lint, docs or typing
         factor credited ``py311-lint`` as a test env, and a flag taking a value (``-c tox.ini``) hid ``-e py311``.
         """
-        # Arrange
-        content = {"type": "workflow_files", "listed": 1, "fetched": 1, "data": f"--- workflow: t.yml ---\n{step}\n"}
-
         # Act
-        axis = vx.axis5_ci(_view({"type": "workflows_list", "data": ["t.yml"]}, content))
+        axis = vx.axis5_ci(_step_view(step, "t.yml"))
 
         # Assert
         assert _states(axis)["2"] == state
@@ -481,13 +805,14 @@ class TestGroupA:
             pytest.param("run: make check", "unmet", id="no-scanner"),
         ],
     )
-    def test_axis5_security_scanners(self, step: str, state: str) -> None:
-        """Credit Actions-workflow, dependency and secret scanners as the security-scan checkpoint."""
-        # Arrange
-        content = {"type": "workflow_files", "listed": 1, "fetched": 1, "data": f"--- workflow: s.yml ---\n{step}\n"}
+    def test_security_scanners(self, step: str, state: str) -> None:
+        """Credit Actions-workflow, dependency and secret scanners as the security-scan checkpoint.
 
+        Each case is one workflow step in a fully read file: scanner actions and CLIs meet checkpoint 4, a plain
+        ``make check`` does not.
+        """
         # Act
-        axis = vx.axis5_ci(_view({"type": "workflows_list", "data": ["s.yml"]}, content))
+        axis = vx.axis5_ci(_step_view(step, "s.yml"))
 
         # Assert
         assert _states(axis)["4"] == state
@@ -525,9 +850,7 @@ class TestGroupA:
             pytest.param(["skipped", "neutral", "cancelled"], "indeterminate", 0, None, id="nothing-counted"),
         ],
     )
-    def test_axis5_run_sample(
-        self, conclusions: list[str | None], state: str, sampled: int, pass_rate: float | None
-    ) -> None:
+    def test_run_sample(self, conclusions: list[str | None], state: str, sampled: int, pass_rate: float | None) -> None:
         """Count the newest 20 runs that executed and concluded; skipped, neutral and cancelled runs stay out.
 
         Slicing before excluding left 17 of 20 slots when 3 runs were pending, and counting skipped conditional
@@ -538,7 +861,7 @@ class TestGroupA:
         runs = {"type": "ci_runs", "data": [{"conclusion": conclusion} for conclusion in conclusions]}
 
         # Act
-        axis = vx.axis5_ci(_view({"type": "workflows_list", "data": ["ci.yml"]}, runs))
+        axis = vx.axis5_ci(_ci_view(runs))
 
         # Assert
         printed = vx._display(axis)
@@ -590,48 +913,39 @@ class TestGroupA:
                 0,
                 id="dispatch-and-merge-queue-runs-count",
             ),
+            pytest.param(
+                [{"conclusion": "success", "event": "workflow_run"}] * 85
+                + [{"conclusion": "success", "event": "push"}] * 15,
+                "met",
+                15,
+                85,
+                id="fetched-page-size-sits-beside-the-sample",
+            ),
         ],
     )
-    def test_axis5_run_sample_counts_only_ci_events(
-        self, runs: list[dict], state: str, sampled: int, excluded: int
-    ) -> None:
+    def test_run_sample_counts_only_ci_events(self, runs: list[dict], state: str, sampled: int, excluded: int) -> None:
         """Sample only push, schedule, workflow_dispatch and merge_group runs — the default branch's own CI.
 
         ``branch=<default>`` matches a run's head branch, so a pull request opened from a fork's own ``main`` comes back
         in the default-branch fetch; counting its work-in-progress failures pushed a green project below 80%.
         psf/black's newest 20 held eight ``workflow_run`` PR-comment bot runs and two ``dynamic`` Dependabot runs, which
         almost always succeed and measured bots instead of the project.
-        """
-        # Arrange
-        record = {"type": "ci_runs", "branch": "main", "data": runs}
-        status = {"type": "default_branch_status", "branch": "main", "data": {"protected": True}}
-
-        # Act
-        axis = vx.axis5_ci(_view({"type": "workflows_list", "data": ["ci.yml"]}, record, status))
-
-        # Assert
-        assert (_states(axis)["5"], axis["runs_sampled"], axis["runs_event_excluded"]) == (state, sampled, excluded)
-        assert axis["runs_scope"] == "default branch main, push/schedule/workflow_dispatch/merge_group events only"
-
-    def test_axis5_reports_the_page_the_sample_came_from(self) -> None:
-        """Report the fetched run count beside the sample, so a short sample from a full page reaches the notes.
 
         One page of 100 default-branch runs holds the newest 20 counted runs only while at most 80 are excluded;
         psf/black's page already held 48 excluded runs. Past that, older counted runs sit on the next page while only a
-        sample below 10 degrades confidence, so the page size must be visible next to ``runs_sampled``.
+        sample below 10 degrades confidence, so the fetched page size stays visible next to ``runs_sampled``.
         """
         # Arrange
-        runs = [{"conclusion": "success", "event": "workflow_run"}] * 85 + [
-            {"conclusion": "success", "event": "push"}
-        ] * 15
         record = {"type": "ci_runs", "branch": "main", "data": runs}
         status = {"type": "default_branch_status", "branch": "main", "data": {"protected": True}}
 
         # Act
-        axis = vx.axis5_ci(_view({"type": "workflows_list", "data": ["ci.yml"]}, record, status))
+        axis = vx.axis5_ci(_ci_view(record, status))
 
         # Assert
-        assert (axis["runs_fetched"], axis["runs_event_excluded"], axis["runs_sampled"]) == (100, 85, 15)
+        counts = (_states(axis)["5"], axis["runs_sampled"], axis["runs_event_excluded"], axis["runs_fetched"])
+        assert counts == (state, sampled, excluded, len(runs))
+        assert axis["runs_scope"] == "default branch main, push/schedule/workflow_dispatch/merge_group events only"
 
     @pytest.mark.parametrize(
         ("records", "state"),
@@ -650,20 +964,28 @@ class TestGroupA:
             pytest.param([{"type": "ci_runs", "data": []}], "unmet", id="all-branch-record-without-runs"),
         ],
     )
-    def test_axis5_empty_run_list_needs_a_confirmed_branch(self, records: list[dict], state: str) -> None:
+    def test_empty_run_list_needs_a_confirmed_branch(self, records: list[dict], state: str) -> None:
         """Read "no run" as unmet only on a branch the data confirmed; a guessed branch leaves checkpoint 5 undecided.
 
         oss:gh-scraper falls back to ``main`` when ``repo_metadata`` is missing; on a ``master`` repository the branch-
         scoped fetch returns no run, and ``default_branch_status`` for that branch is missing too.
         """
         # Act
-        axis = vx.axis5_ci(_view({"type": "workflows_list", "data": ["ci.yml"]}, *records))
+        axis = vx.axis5_ci(_ci_view(*records))
 
         # Assert
         assert _states(axis)["5"] == state
 
-    def test_axis6_complete_data_decides_every_checkpoint(self) -> None:
-        """Decide the nine documentation checkpoints from README, listings, changelog headings and CONTRIBUTING."""
+
+class TestAxis6Docs:
+    """Axis 6 — README, changelog and CONTRIBUTING documentation checkpoints."""
+
+    def test_complete_data_decides_every_checkpoint(self) -> None:
+        """Decide the nine documentation checkpoints from README, listings, changelog headings and CONTRIBUTING.
+
+        A README with an Install section, a root listing with changelog, docs and .github, a recent dated changelog
+        heading and CONTRIBUTING text with setup and pull-request guidance. All nine checkpoints are decidable.
+        """
         # Arrange
         records = (
             {"type": "readme_content", "data": "## Install\npip install x\n" + "x" * 600},
@@ -672,7 +994,7 @@ class TestGroupA:
             {
                 "type": "changelog_headings",
                 "source": "CHANGELOG.md",
-                "data": {"head": [], "headings": [f"## [1.0] - {_iso(10)[:10]}"]},
+                "data": {"head": [], "headings": [f"## [1.0] - {iso(10)[:10]}"]},
             },
             {
                 "type": "contributing_text",
@@ -682,7 +1004,7 @@ class TestGroupA:
         )
 
         # Act
-        axis = vx.axis6_docs(_view(*records))
+        axis = vx.axis6_docs(data_view(*records))
 
         # Assert
         expected = {
@@ -773,10 +1095,7 @@ class TestGroupA:
                     },
                     {
                         "type": "releases",
-                        "data": [
-                            {"tag": "26.10.0", "published": _iso(4)},
-                            {"tag": "26.5.1", "published": _iso(143)},
-                        ],
+                        "data": [{"tag": "26.10.0", "published": iso(4)}, {"tag": "26.5.1", "published": iso(143)}],
                     },
                 ],
                 "met",
@@ -791,7 +1110,7 @@ class TestGroupA:
                         "truncated": True,
                         "data": {"head": ["# Change Log"], "headings": ["## Unreleased", "## Version 24.1.0"]},
                     },
-                    {"type": "releases", "data": [{"tag": "24.1.0", "published": _iso(400)}]},
+                    {"type": "releases", "data": [{"tag": "24.1.0", "published": iso(400)}]},
                 ],
                 "indeterminate",
                 "CHANGES.md: no dated heading found (heading list truncated)",
@@ -804,7 +1123,7 @@ class TestGroupA:
                         "source": "CHANGELOG.md",
                         "data": {"head": [], "headings": ["## [1.1.0]", "## [1.0.0] - 2020-01-02"]},
                     },
-                    {"type": "releases", "data": [{"tag": "v1.1.0", "published": _iso(30)}]},
+                    {"type": "releases", "data": [{"tag": "v1.1.0", "published": iso(30)}]},
                 ],
                 "met",
                 "CHANGELOG.md: version heading 1.1.0 matches a release published 30d ago",
@@ -817,7 +1136,7 @@ class TestGroupA:
                         "source": "CHANGES.md",
                         "data": {"head": [], "headings": ["## Unreleased", "## Version 26.10.0"]},
                     },
-                    {"type": "releases", "data": [{"tag": "26.9.0", "published": _iso(4)}]},
+                    {"type": "releases", "data": [{"tag": "26.9.0", "published": iso(4)}]},
                 ],
                 "indeterminate",
                 "CHANGES.md: no dated heading found",
@@ -825,14 +1144,14 @@ class TestGroupA:
             ),
         ],
     )
-    def test_axis6_changelog_checkpoint(self, records: list[dict], state: str, why: str) -> None:
+    def test_changelog_checkpoint(self, records: list[dict], state: str, why: str) -> None:
         """Date the changelog from its newest dated heading or a release its version heading names; else unknown.
 
         psf/black's ``CHANGES.md`` heads each entry ``## Version 26.10.0`` without a date, so checkpoint 4 stayed
         indeterminate while the release of that version was four days old.
         """
         # Act
-        checkpoint = vx.axis6_docs(_view(*records))["checkpoints"]["4"]
+        checkpoint = vx.axis6_docs(data_view(*records))["checkpoints"]["4"]
 
         # Assert
         assert checkpoint["state"] == state
@@ -854,10 +1173,14 @@ class TestGroupA:
             ),
         ],
     )
-    def test_axis6_contributing_checkpoints_without_text(self, records: list[dict], state: str) -> None:
-        """Mark CONTRIBUTING content checkpoints unmet only when both listings prove the file is absent."""
+    def test_contributing_checkpoints_without_text(self, records: list[dict], state: str) -> None:
+        """Mark CONTRIBUTING content checkpoints unmet only when both listings prove the file is absent.
+
+        CONTRIBUTING is listed but its text was never fetched (indeterminate), or both listings prove it absent (unmet).
+        Checkpoints 7 to 9 move together because they all read that text.
+        """
         # Act
-        axis = vx.axis6_docs(_view(*records))
+        axis = vx.axis6_docs(data_view(*records))
 
         # Assert
         assert {_states(axis)[n] for n in ("7", "8", "9")} == {state}
@@ -882,7 +1205,7 @@ class TestGroupA:
             {"type": "github_dir", "data": ["workflows"]},
         ]
         records += [] if docs_dir is None else [{"type": "docs_dir", "data": docs_dir}]
-        view = _view(*records)
+        view = data_view(*records)
 
         # Act
         states = (_states(vx.axis6_docs(view))["7"], _states(vx.axis7_governance(view))["4"])
@@ -899,9 +1222,12 @@ class TestAxis6ThresholdBoundaries:
         [pytest.param(500, "met", id="500-bytes-meets"), pytest.param(499, "unmet", id="499-bytes-misses")],
     )
     def test_readme_size(self, size: int, state: str) -> None:
-        """Meet checkpoint 1 with a README of exactly 500 bytes; the threshold belongs to the better outcome."""
+        """Meet checkpoint 1 with a README of exactly 500 bytes; the threshold belongs to the better outcome.
+
+        A README of 499 bytes sits one under the 500-byte line and misses; 500 bytes sits on the line and meets it.
+        """
         # Act
-        axis = vx.axis6_docs(_view({"type": "readme_content", "data": "x" * size}))
+        axis = vx.axis6_docs(data_view({"type": "readme_content", "data": "x" * size}))
 
         # Assert
         assert axis["checkpoints"]["1"]["state"] == state
@@ -923,7 +1249,7 @@ class TestAxis6ThresholdBoundaries:
         and stale at every instant real runs hit; the test used to pin only midnight.
         """
         # Arrange
-        now = datetime(2026, 1, 1, tzinfo=timezone.utc).timestamp() + age_days * _DAY + hour * 3600
+        now = datetime(2026, 1, 1, tzinfo=timezone.utc).timestamp() + age_days * DAY + hour * 3600
         record = {
             "source": "CHANGELOG.md",
             "truncated": False,
@@ -937,8 +1263,8 @@ class TestAxis6ThresholdBoundaries:
         assert checkpoint["state"] == state
 
 
-class TestGroupB:
-    """Axes 4, 7 and 8."""
+class TestAxis7Governance:
+    """Axis 7 — governance files, CODEOWNERS, branch protection and active maintainers."""
 
     @pytest.mark.parametrize(
         ("records", "state"),
@@ -964,131 +1290,24 @@ class TestGroupB:
             ),
         ],
     )
-    def test_axis7_codeowners_in_docs(self, records: list[dict], state: str) -> None:
-        """Read CODEOWNERS from ``docs/`` too; with ``docs/`` listed but unread, absence is undecided, never unmet."""
+    def test_codeowners_in_docs(self, records: list[dict], state: str) -> None:
+        """Read CODEOWNERS from ``docs/`` too; with ``docs/`` listed but unread, absence is undecided, never unmet.
+
+        GitHub honours CODEOWNERS in the root, ``.github/`` or ``docs/``. Cases vary what the listings reveal about
+        ``docs/``: file listed, directory present but unlisted, and no ``docs/`` at all.
+        """
         # Act
-        axis = vx.axis7_governance(_view(*records))
+        axis = vx.axis7_governance(data_view(*records))
 
         # Assert
         assert axis["checkpoints"]["5"]["state"] == state
 
-    def test_axis4_issue_and_pr_rates(self) -> None:
-        """Compute stale share, 30-day close rate, abandoned share and 30-day merge rate."""
-        # Arrange
-        records = (
-            {
-                "type": "open_issues",
-                "data": [
-                    {"createdAt": _iso(200), "updatedAt": _iso(100)},
-                    {"createdAt": _iso(5), "updatedAt": _iso(5)},
-                ],
-            },
-            {"type": "closed_issues", "data": [{"createdAt": _iso(10), "closedAt": _iso(3)}]},
-            {"type": "open_prs", "data": [{"createdAt": _iso(40), "updatedAt": _iso(35)}]},
-            {
-                "type": "closed_prs",
-                "data": [
-                    {"createdAt": _iso(9), "closedAt": _iso(2), "mergedAt": _iso(2)},
-                    {"createdAt": _iso(8), "closedAt": _iso(1), "mergedAt": None},
-                ],
-            },
-        )
+    def test_accepts_hyphenated_code_of_conduct_and_strips_codeowners_comments(self) -> None:
+        """Meet checkpoint 3 with ``CODE-OF-CONDUCT.md`` and never read an owner out of a trailing comment.
 
-        # Act
-        axis = vx.axis4_issue_pr(_view(*records))
-
-        # Assert
-        assert (axis["issues"]["stale_pct"], axis["issues"]["opened_30d"], axis["issues"]["close_rate"]) == (
-            50.0,
-            2,
-            0.5,
-        )
-        assert (axis["prs"]["abandoned_pct"], axis["prs"]["merged_30d"], axis["prs"]["merge_rate"]) == (100.0, 1, 0.5)
-        assert axis["prs"]["closed_without_merge_ratio"] == 0.5
-
-    @pytest.mark.parametrize(
-        ("records", "close_rate", "extra"),
-        [
-            pytest.param(
-                [{"type": "open_issues", "data": [{"createdAt": _iso(5), "updatedAt": _iso(5)}]}],
-                None,
-                {"closed_available": False, "closed_30d": None},
-                id="closed-list-missing",
-            ),
-            pytest.param(
-                [
-                    {"type": "open_issues", "data": [{"createdAt": _iso(50), "updatedAt": _iso(5)}]},
-                    {"type": "closed_issues", "data": []},
-                ],
-                None,
-                {"rate_null_reason": "no issues opened in 30d"},
-                id="empty-30d-window",
-            ),
-        ],
-    )
-    def test_axis4_close_rate_is_null_without_a_denominator(
-        self, records: list[dict], close_rate: float | None, extra: dict
-    ) -> None:
-        """Leave the close rate null when its list is missing or nothing opened in 30 days, never a 🔴-forcing 0."""
-        # Act
-        issues = vx.axis4_issue_pr(_view(*records))["issues"]
-
-        # Assert
-        assert issues["close_rate"] is close_rate
-        assert {key: issues[key] for key in extra} == extra
-
-    @pytest.mark.parametrize(
-        ("closed_ages", "partial", "lower_bound"),
-        [
-            pytest.param([1, 20], True, True, id="truncated-inside-window"),
-            pytest.param([1, 40], True, True, id="truncated-beyond-window-still-unordered"),
-            pytest.param([1, 20], False, False, id="complete-list"),
-        ],
-    )
-    def test_axis4_closed_list_lower_bound(self, closed_ages: list[int], partial: bool, lower_bound: bool) -> None:
-        """Flag 30-day PR counts as lower bounds whenever the closed list is truncated.
-
-        The list is not ordered by closing date: a creation-ordered list reaching 103 days back still missed PRs
-        created earlier and merged this month, while the old "oldest entry inside the window" test called it complete.
+        A repository with ``CODE-OF-CONDUCT.md`` and a CODEOWNERS rule ending in a ``# backup: @bob`` comment. The file
+        name variant must be recognised and the comment must not add a phantom owner.
         """
-        # Arrange
-        closed = [{"createdAt": _iso(age + 1), "closedAt": _iso(age), "mergedAt": _iso(age)} for age in closed_ages]
-        records = ({"type": "open_prs", "data": []}, {"type": "closed_prs", "partial": partial, "data": closed})
-
-        # Act
-        prs = vx.axis4_issue_pr(_view(*records))["prs"]
-
-        # Assert
-        assert prs["closed_30d_is_lower_bound"] is lower_bound
-
-    @pytest.mark.parametrize(
-        ("count", "partial", "lower_bound"),
-        [
-            pytest.param(1000, False, True, id="search-ceiling-reached-in-older-data"),
-            pytest.param(1000, True, True, id="search-ceiling-flagged-by-the-assembler"),
-            pytest.param(999, False, False, id="below-the-search-ceiling"),
-        ],
-    )
-    def test_axis4_closed_issues_at_the_search_ceiling_are_a_lower_bound(
-        self, count: int, partial: bool, lower_bound: bool
-    ) -> None:
-        """Read a closed-issue list of 1000 as truncated: GitHub search never returns more, whatever the fetch limit.
-
-        The fetch asked for 1001 to prove truncation, but ``gh issue list --search`` stops at 1000, so a month with more
-        closures read as complete and the close rate lost its lower-bound degrader.
-        """
-        # Arrange
-        closed = [{"createdAt": _iso(40), "closedAt": _iso(5)}] * count
-        records = ({"type": "open_issues", "data": []}, {"type": "closed_issues", "partial": partial, "data": closed})
-
-        # Act
-        issues = vx.axis4_issue_pr(_view(*records))["issues"]
-
-        # Assert
-        assert (issues["closed_30d"], issues["closed_30d_is_lower_bound"]) == (count, lower_bound)
-
-    def test_axis7_accepts_hyphenated_code_of_conduct_and_strips_codeowners_comments(self) -> None:
-        """Meet checkpoint 3 with ``CODE-OF-CONDUCT.md`` and never read an owner out of a trailing comment."""
         # Arrange
         records = (
             {"type": "root_contents", "data": ["CODE-OF-CONDUCT.md"]},
@@ -1097,66 +1316,18 @@ class TestGroupB:
         )
 
         # Act
-        axis = vx.axis7_governance(_view(*records))
+        axis = vx.axis7_governance(data_view(*records))
 
         # Assert
         assert axis["checkpoints"]["3"]["state"] == "met"
         assert axis["codeowners_users"] == ["alice"]
 
-    @pytest.mark.parametrize("name", ["dependabot.yml", "dependabot.yaml"])
-    def test_axis8_dependabot_config_either_extension(self, name: str) -> None:
-        """Credit a Dependabot config listed under either extension GitHub accepts."""
-        # Arrange
-        records = ({"type": "root_contents", "data": [".github"]}, {"type": "github_dir", "data": [name]})
+    def test_checkpoints_and_active_maintainers(self) -> None:
+        """Decide the seven governance checkpoints, including the active share of CODEOWNERS users.
 
-        # Act
-        checkpoint = vx.axis8_security(_view(*records))["secondary"]["dep_config"]
-
-        # Assert
-        assert checkpoint["state"] == "met"
-
-    def test_axis4_pr_rates_exclude_bot_authors(self) -> None:
-        """Drop bot-authored PRs from the PR queue metrics when the lists carry authors."""
-        # Arrange
-        bot = {"login": "app/pre-commit-ci", "is_bot": True}
-        human = {"login": "alice", "is_bot": False}
-        records = (
-            {"type": "open_prs", "data": [{"author": bot, "createdAt": _iso(2), "updatedAt": _iso(2)}]},
-            {
-                "type": "closed_prs",
-                "data": [
-                    {"author": human, "createdAt": _iso(9), "closedAt": _iso(2), "mergedAt": _iso(2)},
-                    {"author": bot, "createdAt": _iso(3), "closedAt": _iso(1), "mergedAt": _iso(1)},
-                ],
-            },
-        )
-
-        # Act
-        prs = vx.axis4_issue_pr(_view(*records))["prs"]
-
-        # Assert
-        assert (prs["bot_filter"], prs["bots_excluded"]) == ("applied", 2)
-        assert (prs["open_count"], prs["opened_30d"], prs["merged_30d"], prs["merge_rate"]) == (0, 1, 1, 1.0)
-
-    def test_axis4_review_coverage_ignores_bots_and_self_approval(self) -> None:
-        """Count only non-bot PRs approved by someone other than the author; flag samples under five as undefined."""
-        # Arrange
-        nodes = [
-            {"author": {"login": "a"}, "reviews": {"nodes": [{"author": {"login": "m"}}]}},
-            {"author": {"login": "b"}, "reviews": {"nodes": [{"author": {"login": "b"}}]}},
-            {"author": {"login": "dependabot[bot]"}, "reviews": {"nodes": [{"author": {"login": "m"}}]}},
-        ]
-        record = {"type": "review_coverage_gql", "data": {"data": {"repository": {"pullRequests": {"nodes": nodes}}}}}
-
-        # Act
-        coverage = vx.axis4_issue_pr(_view(record))["review_coverage"]
-
-        # Assert
-        assert (coverage["non_bot"], coverage["approved_by_other"], coverage["coverage_pct"]) == (2, 1, 50.0)
-        assert coverage["undefined"] is True
-
-    def test_axis7_governance_checkpoints_and_active_maintainers(self) -> None:
-        """Decide the seven governance checkpoints, including the active share of CODEOWNERS users."""
+        LICENSE, SECURITY and CONTRIBUTING exist, CODEOWNERS names two users and the branch is protected. One owner
+        committed in the last quarter and the other long ago, so half of the listed maintainers are active.
+        """
         # Arrange
         records = (
             {"type": "root_contents", "data": ["LICENSE", "SECURITY.md", ".github"]},
@@ -1173,7 +1344,7 @@ class TestGroupB:
         )
 
         # Act
-        axis = vx.axis7_governance(_view(*records))
+        axis = vx.axis7_governance(data_view(*records))
 
         # Assert
         assert _states(axis) == {"1": "met", "2": "met", "3": "unmet", "4": "met", "5": "met", "6": "met", "7": "met"}
@@ -1189,16 +1360,23 @@ class TestGroupB:
             pytest.param([], "indeterminate", id="flag-not-fetched"),
         ],
     )
-    def test_axis7_branch_protection_checkpoint(self, records: list[dict], state: str) -> None:
-        """Decide branch protection from the public protected flag, else the admin-only rules record."""
+    def test_branch_protection_checkpoint(self, records: list[dict], state: str) -> None:
+        """Decide branch protection from the public protected flag, else the admin-only rules record.
+
+        Cases cover the public ``protected`` flag set to false, an admin-only rules record, and neither fetched.
+        """
         # Act
-        checkpoint = vx.axis7_governance(_view(*records))["checkpoints"]["6"]
+        checkpoint = vx.axis7_governance(data_view(*records))["checkpoints"]["6"]
 
         # Assert
         assert checkpoint["state"] == state
 
-    def test_axis7_checkpoint7_not_applicable_while_stats_pending(self) -> None:
-        """Drop the active-maintainer checkpoint from the denominator while contributor stats are computing (202)."""
+    def test_active_maintainers_not_applicable_while_stats_pending(self) -> None:
+        """Drop the active-maintainer checkpoint from the denominator while contributor stats are computing (202).
+
+        GitHub answers 202 while it computes contributor stats. Judging activity from missing data would be unfair, so
+        the checkpoint leaves the denominator and the active ratio stays null.
+        """
         # Arrange
         records = (
             {"type": "codeowners_text", "data": "* @alice\n"},
@@ -1206,12 +1384,31 @@ class TestGroupB:
         )
 
         # Act
-        axis = vx.axis7_governance(_view(*records))
+        axis = vx.axis7_governance(data_view(*records))
 
         # Assert
         assert axis["checkpoints"]["7"] == {"state": "not_applicable", "why": "contributor stats 202_pending"}
         assert axis["applicable"] == 6
         assert axis["active_ratio"] is None
+
+
+class TestAxis8Security:
+    """Axis 8 — Dependabot alerts, dependency-update signals and SECURITY depth."""
+
+    @pytest.mark.parametrize("name", ["dependabot.yml", "dependabot.yaml"])
+    def test_dependabot_config_either_extension(self, name: str) -> None:
+        """Credit a Dependabot config listed under either extension GitHub accepts.
+
+        GitHub accepts both ``dependabot.yml`` and ``dependabot.yaml``; a repository using either has the config.
+        """
+        # Arrange
+        records = ({"type": "root_contents", "data": [".github"]}, {"type": "github_dir", "data": [name]})
+
+        # Act
+        checkpoint = vx.axis8_security(data_view(*records))["secondary"]["dep_config"]
+
+        # Assert
+        assert checkpoint["state"] == "met"
 
     @pytest.mark.parametrize(
         ("record", "expected"),
@@ -1231,10 +1428,13 @@ class TestGroupB:
             ),
         ],
     )
-    def test_axis8_dependabot_status(self, record: dict | None, expected: dict) -> None:
-        """Separate unavailable (403), absent and available alert data so partial scoring triggers correctly."""
+    def test_dependabot_status(self, record: dict | None, expected: dict) -> None:
+        """Separate unavailable (403), absent and available alert data so partial scoring triggers correctly.
+
+        Cases: no alert record, a 403 from a token without alert access, and a readable list holding two severities.
+        """
         # Arrange
-        view = _view(record) if record else _view()
+        view = data_view(record) if record else data_view()
 
         # Act
         axis = vx.axis8_security(view)
@@ -1242,24 +1442,28 @@ class TestGroupB:
         # Assert
         assert axis["dependabot"] == expected
 
-    def test_axis8_secondary_signals_and_partial_score(self) -> None:
-        """Decide config, dependency-commit and SECURITY depth signals and the 403 partial score from them."""
+    def test_secondary_signals_and_partial_score(self) -> None:
+        """Decide config, dependency-commit and SECURITY depth signals and the 403 partial score from them.
+
+        Renovate config, one recent dependency bump among three commits, and a SECURITY.md with contact and response
+        time. These signals feed the partial score used when the alert endpoint is not readable.
+        """
         # Arrange
         records = (
             {"type": "root_contents", "data": ["renovate.json"]},
             {
                 "type": "commits_50",
                 "data": [
-                    {"message": "chore(deps): bump x", "date": _iso(5)},
-                    {"message": "Bump y", "date": _iso(120)},
-                    {"message": "fix", "date": _iso(1)},
+                    {"message": "chore(deps): bump x", "date": iso(5)},
+                    {"message": "Bump y", "date": iso(120)},
+                    {"message": "fix", "date": iso(1)},
                 ],
             },
             {"type": "security_text", "data": "Email security@example.org; we reply within 48 hours.\n"},
         )
 
         # Act
-        axis = vx.axis8_security(_view(*records))
+        axis = vx.axis8_security(data_view(*records))
 
         # Assert
         assert {key: cp["state"] for key, cp in axis["secondary"].items()} == {
@@ -1271,13 +1475,17 @@ class TestGroupB:
         assert axis["security_md_depth"] == 3
         assert (axis["partial_score_strict"], axis["partial_score_upper"]) == (10, 10)
 
-    def test_axis8_unknown_listings_lower_only_the_strict_score(self) -> None:
-        """Score unconfirmable secondary signals as absent while the upper bound credits them."""
+    def test_unknown_listings_lower_only_the_strict_score(self) -> None:
+        """Score unconfirmable secondary signals as absent while the upper bound credits them.
+
+        Only an empty commit list was fetched, so the config and SECURITY listings are unknown. The strict score counts
+        unknown signals as missing while the upper bound credits them.
+        """
         # Arrange
         records = ({"type": "commits_50", "data": []},)
 
         # Act
-        axis = vx.axis8_security(_view(*records))
+        axis = vx.axis8_security(data_view(*records))
 
         # Assert
         assert axis["secondary"]["dep_config"]["state"] == "indeterminate"
@@ -1285,97 +1493,30 @@ class TestGroupB:
         assert (axis["partial_score_strict"], axis["partial_score_upper"]) == (0, 6)
 
 
-class TestGroupC:
-    """Axes 3 and 9."""
+class TestAxis9Trajectory:
+    """Axis 9 — pool drift, merge-time trend, queue depth and automation share."""
 
-    def test_axis3_bus_factor_retention_and_weeks_summary(self) -> None:
-        """Derive bus factor, top share and retention from the last 13 weeks, excluding bots."""
-        # Arrange
-        stats = [
-            {"author": "alice", "weeks": _weeks(*[0] * 40, 3, *[0] * 5, 3, *[0] * 6)},
-            {"author": "bob", "weeks": _weeks(*[0] * 40, 1, *[0] * 12)},
-            {"author": "renovate[bot]", "weeks": _weeks(*[0] * 52, 9)},
-        ]
-
-        # Act
-        axis = vx.axis3_contributors(_view({"type": "contributor_stats", "data": stats}))
-
-        # Assert
-        assert (axis["contributors"], axis["commits_90d_total"], axis["bus_factor"]) == (2, 7, 1)
-        assert (axis["top_contributor"], vx._display(axis)["top_contributor_pct"]) == ("alice", 85.7)
-        assert (axis["retention_active_q1"], axis["retention_active_both"], axis["retention_pct"]) == (2, 1, 50.0)
-        assert axis["axis3_weeks"] == {
-            "contributors": 2,
-            "pool_recent_26w": 2,
-            "pool_prior_26w": 0,
-            "q1_active": 2,
-            "q1q2_active": 1,
-        }
-
-    def test_axis3_pending_stats_return_fallback_only(self) -> None:
-        """Expose the commit-author fallback and a null weeks summary while stats are pending."""
-        # Arrange
-        records = (
-            {"type": "contributor_stats", "data": None, "partial": True, "202_pending": True},
-            {"type": "commits_50", "data": [{"author": "alice"}, {"author": "bob"}, {"author": "dependabot[bot]"}]},
-        )
-
-        # Act
-        axis = vx.axis3_contributors(_view(*records))
-
-        # Assert
-        assert axis["stats_status"] == "202_pending"
-        assert axis["axis3_weeks"] is None
-        assert axis["fallback"]["unique_non_bot_authors"] == 2
-        assert axis["fallback"]["approx_bus_factor"] == 2
-
-    def test_axis3_fallback_caps_at_three_and_skips_unresolved_authors(self) -> None:
-        """Approximate the bus factor as distinct non-bot authors capped at 3; ``unknown`` may be several people."""
-        # Arrange
-        authors = ["a", "b", "c", "d", "unknown", "unknown", "renovate[bot]"]
-        records = (
-            {"type": "contributor_stats", "data": None, "202_pending": True},
-            {"type": "commits_50", "data": [{"author": name} for name in authors]},
-        )
-
-        # Act
-        fallback = vx.axis3_contributors(_view(*records))["fallback"]
-
-        # Assert
-        assert fallback == {"commits_sampled": 7, "unique_non_bot_authors": 4, "approx_bus_factor": 3}
-
-    def test_axis3_skips_contributors_without_an_author(self) -> None:
-        """Skip null-author stats entries instead of merging every deleted account into one contributor."""
-        # Arrange
-        stats = [
-            {"author": None, "weeks": _weeks(*[0] * 40, 5, *[0] * 12)},
-            {"author": None, "weeks": _weeks(*[0] * 40, 5, *[0] * 12)},
-            {"author": "alice", "weeks": _weeks(*[0] * 40, 1, *[0] * 12)},
-        ]
-
-        # Act
-        axis = vx.axis3_contributors(_view({"type": "contributor_stats", "data": stats}))
-
-        # Assert
-        assert (axis["contributors"], axis["commits_90d_total"], axis["bus_factor"]) == (1, 1, 1)
-
-    def test_axis9_trend_ratio_from_unrounded_medians(self) -> None:
+    def test_trend_ratio_from_unrounded_medians(self) -> None:
         """Keep a merge-time trend for PRs merged within minutes, where rounded medians were both 0.00."""
         # Arrange
         merged = [
-            {"author": {"login": "a"}, "createdAt": _iso(days + 0.004), "mergedAt": _iso(days)} for days in (1, 2, 40)
+            {"author": {"login": "a"}, "createdAt": iso(days + 0.004), "mergedAt": iso(days)} for days in (1, 2, 40)
         ]
 
         # Act
-        trend = vx.axis9_trajectory(_view({"type": "merged_prs_90d", "data": merged}))["9B_merge_trend"]
+        trend = vx.axis9_trajectory(data_view({"type": "merged_prs_90d", "data": merged}))["9B_merge_trend"]
 
         # Assert
         printed = vx._display(trend)
         assert (printed["median_30d_days"], printed["median_90d_days"]) == (0.0, 0.0)
         assert trend["trend_ratio"] == 1.0
 
-    def test_axis9_sub_signals(self) -> None:
-        """Compute merge trend over non-bot PRs, P90 open-issue age and the automated-commit ratio."""
+    def test_sub_signals(self) -> None:
+        """Compute merge trend over non-bot PRs, P90 open-issue age and the automated-commit ratio.
+
+        Merge trend over three merged PRs (one by a bot), P90 age of ten open issues and the share of dependency-bot
+        commits, with contributor stats pending so the pool-drift sub-signal is unavailable.
+        """
         # Arrange
         records = (
             {"type": "contributor_stats", "data": None, "202_pending": True},
@@ -1383,16 +1524,16 @@ class TestGroupC:
                 "type": "merged_prs_90d",
                 "partial": True,
                 "data": [
-                    {"author": {"login": "a", "is_bot": False}, "createdAt": _iso(12), "mergedAt": _iso(10)},
-                    {"author": {"login": "b", "is_bot": False}, "createdAt": _iso(61), "mergedAt": _iso(60)},
+                    {"author": {"login": "a", "is_bot": False}, "createdAt": iso(12), "mergedAt": iso(10)},
+                    {"author": {"login": "b", "is_bot": False}, "createdAt": iso(61), "mergedAt": iso(60)},
                     {
                         "author": {"login": "app/pre-commit-ci", "is_bot": True},
-                        "createdAt": _iso(3),
-                        "mergedAt": _iso(2),
+                        "createdAt": iso(3),
+                        "mergedAt": iso(2),
                     },
                 ],
             },
-            {"type": "open_issues", "data": [{"createdAt": _iso(days)} for days in (1, 2, 3, 4, 5, 6, 7, 8, 9, 100)]},
+            {"type": "open_issues", "data": [{"createdAt": iso(days)} for days in (1, 2, 3, 4, 5, 6, 7, 8, 9, 100)]},
             {
                 "type": "commits_50",
                 "data": [{"message": "Bump x", "author": "dependabot[bot]"}, {"message": "Bump y", "author": "alice"}],
@@ -1400,7 +1541,7 @@ class TestGroupC:
         )
 
         # Act
-        axis = vx._display(vx.axis9_trajectory(_view(*records)))
+        axis = vx._display(vx.axis9_trajectory(data_view(*records)))
 
         # Assert
         assert axis["9A_pool_drift"] == {"available": False, "reason": "contributor stats 202_pending"}
@@ -1452,11 +1593,10 @@ class TestDatasetCoverage:
         fetched" and lower confidence, so only a listing-proven absence may move to ``not_present``.
         """
         # Act
-        datasets = vx.extract(records, vx.AxisGroup.B, analysis_now=_NOW)["datasets"]
+        result = _dataset_split(records, vx.AxisGroup.B, {"dependabot_config"})
 
         # Assert
-        assert [name for name in datasets["missing"] if name == "dependabot_config"] == missing
-        assert [name for name in datasets["not_present"] if name == "dependabot_config"] == not_present
+        assert result == (missing, not_present)
 
     def test_branch_protection_absent_without_admin_is_never_missing(self) -> None:
         """List an absent admin-only ``branch_protection`` as optional, never as a fetch gap a scorer degrades.
@@ -1468,7 +1608,7 @@ class TestDatasetCoverage:
         records = {"default_branch_status": {"type": "default_branch_status", "data": {"protected": True}}}
 
         # Act
-        datasets = vx.extract(records, vx.AxisGroup.B, analysis_now=_NOW)["datasets"]
+        datasets = vx.extract(records, vx.AxisGroup.B, analysis_now=NOW)["datasets"]
 
         # Assert
         assert "branch_protection" not in datasets["missing"]
@@ -1502,14 +1642,12 @@ class TestDatasetCoverage:
             "root_contents": {"type": "root_contents", "data": ["README.md", "docs", ".github"]},
             "github_dir": {"type": "github_dir", "data": ["workflows"]},
         }
-        wanted = {"contributing_text", "security_text", "docs_dir"}
 
         # Act
-        datasets = vx.extract(listings | records, vx.AxisGroup.B, analysis_now=_NOW)["datasets"]
+        result = _dataset_split(listings | records, vx.AxisGroup.B, {"contributing_text", "security_text", "docs_dir"})
 
         # Assert
-        assert sorted(wanted.intersection(datasets["missing"])) == missing
-        assert sorted(wanted.intersection(datasets["not_present"])) == not_present
+        assert result == (missing, not_present)
 
     @pytest.mark.parametrize(
         ("root", "missing", "not_present"),
@@ -1521,16 +1659,19 @@ class TestDatasetCoverage:
     def test_changelog_absence_agrees_with_the_checkpoint(
         self, root: list[str], missing: list[str], not_present: list[str]
     ) -> None:
-        """Never report a changelog proven absent while checkpoint 4 calls it unread; a bare name proves nothing."""
+        """Never report a changelog proven absent while checkpoint 4 calls it unread; a bare name proves nothing.
+
+        Group A lists the root: a bare name such as ``changes`` may be a directory, so it stays a fetch gap, while a
+        listing with no changelog-like entry proves absence.
+        """
         # Arrange
         records = {"root_contents": {"type": "root_contents", "data": root}}
 
         # Act
-        datasets = vx.extract(records, vx.AxisGroup.A, analysis_now=_NOW)["datasets"]
+        result = _dataset_split(records, vx.AxisGroup.A, {"changelog_headings"})
 
         # Assert
-        assert [name for name in datasets["missing"] if name == "changelog_headings"] == missing
-        assert [name for name in datasets["not_present"] if name == "changelog_headings"] == not_present
+        assert result == (missing, not_present)
 
 
 class TestCli:
@@ -1539,12 +1680,16 @@ class TestCli:
     def test_prints_compact_group_json_from_long_lines(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """Parse records far longer than a file viewer's line limit and print one compact JSON object."""
+        """Parse records far longer than a file viewer's line limit and print one compact JSON object.
+
+        One record holding 5000 commits makes a single very long line. The CLI must read it whole and print exactly one
+        line of JSON for the downstream parser.
+        """
         # Arrange
-        commits = [_iso(1)] * 5000
+        commits = [iso(1)] * 5000
         data_file = tmp_path / "raw.jsonl"
         data_file.write_text(
-            json.dumps({"type": "commits", "timestamp": _NOW, "data": commits}) + "\n", encoding="utf-8"
+            json.dumps({"type": "commits", "timestamp": NOW, "data": commits}) + "\n", encoding="utf-8"
         )
 
         # Act
@@ -1557,7 +1702,11 @@ class TestCli:
         assert json.loads(out)["axes"]["2"]["commits_30d"] == 5000
 
     def test_unreadable_data_file_exits_1(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """Exit 1 with an actionable message when DATA_FILE does not exist."""
+        """Exit 1 with an actionable message when DATA_FILE does not exist.
+
+        Pointing at a missing file is the common operator mistake; status 1 and a message naming DATA_FILE let the
+        calling skill report the cause.
+        """
         # Act
         rc = vx.main(["--data-file", str(tmp_path / "absent.jsonl"), "--group", "B"])
 
@@ -1566,7 +1715,10 @@ class TestCli:
         assert "cannot read DATA_FILE" in capsys.readouterr().err
 
     def test_unknown_group_is_rejected(self, tmp_path: Path) -> None:
-        """Reject a group outside A, B and C at argument parsing."""
+        """Reject a group outside A, B and C at argument parsing.
+
+        ``--group`` accepts A, B or C only; argparse rejects D with status 2 before any file is read.
+        """
         # Act
         with pytest.raises(SystemExit) as exc:
             vx.main(["--data-file", str(tmp_path / "raw.jsonl"), "--group", "D"])

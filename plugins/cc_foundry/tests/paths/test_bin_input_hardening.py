@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import os
 import subprocess
-import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
@@ -24,19 +23,7 @@ import resolve_agent_file as raf
 import resolve_plugin_root
 import resolve_shared_path
 import symlink_with_guard as swg
-
-
-def _symlinks_supported() -> bool:
-    """Probe whether the test user may create a symlink on this host."""
-    with tempfile.TemporaryDirectory() as raw:
-        base = Path(raw)
-        (base / "target").write_text("x", encoding="utf-8")
-        try:
-            (base / "link").symlink_to(base / "target")
-        except (OSError, NotImplementedError):
-            return False
-    return True
-
+from _hook_env import _symlinks_supported
 
 _skip_without_symlinks = pytest.mark.skipif(not _symlinks_supported(), reason="host cannot create symlinks")
 
@@ -57,7 +44,7 @@ class TestTokenValidatorsRejectTrailingNewline:
             ),
         ],
     )
-    def test_trailing_newline_is_rejected(self, validate: Callable[[str], None]) -> None:
+    def test_raises_value_error(self, validate: Callable[[str], None]) -> None:
         """A name carrying a trailing newline fails validation instead of reaching a path or command.
 
         Scenario: the value reads like a valid token to a human or a `$`-anchored regex but would put a newline
@@ -66,8 +53,12 @@ class TestTokenValidatorsRejectTrailingNewline:
         with pytest.raises(ValueError, match=r"disallowed|invalid"):
             validate("foundry\n")
 
-    def test_purge_marketplace_with_trailing_newline_is_argument_error(self, tmp_path: Path) -> None:
-        """The purge CLI refuses a marketplace token with a trailing newline before scanning anything."""
+    def test_purge_cli_exits_two_for_marketplace(self, tmp_path: Path) -> None:
+        """The purge CLI refuses a marketplace token with a trailing newline before scanning anything.
+
+        The cache directory is valid and empty; only the marketplace argument is hostile, so exit 2 proves the token
+        check runs ahead of any filesystem work.
+        """
         assert purge.main(["--cache-dir", str(tmp_path), "--marketplace", "market\n"]) == 2
 
 
@@ -94,7 +85,11 @@ class TestPurgeRegistryGuard:
     def test_unusable_registry_deletes_nothing(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str], content: str
     ) -> None:
-        """A registry that parses to the wrong shape aborts the run with exit 1 and leaves the cache intact."""
+        """A registry that parses to the wrong shape aborts the run with exit 1 and leaves the cache intact.
+
+        An orphaned version dir old enough to be purged exists; treating an unreadable registry as "nothing installed"
+        would delete it, so the run must stop with a registry error instead.
+        """
         version = self._orphan(tmp_path / "cache")
         registry = tmp_path / "installed_plugins.json"
         registry.write_text(content, encoding="utf-8")
@@ -102,7 +97,10 @@ class TestPurgeRegistryGuard:
         assert (code, version.is_dir(), "plugin registry" in capsys.readouterr().err) == (1, True, True)
 
     def test_missing_registry_deletes_nothing(self, tmp_path: Path) -> None:
-        """A registry file that does not exist aborts the run just like a corrupt one."""
+        """A registry file that does not exist aborts the run just like a corrupt one.
+
+        Same orphaned version dir as the corrupt-registry cases; it must survive an `--apply` run.
+        """
         version = self._orphan(tmp_path / "cache")
         code = purge.main(
             ["--cache-dir", str(tmp_path / "cache"), "--registry", str(tmp_path / "absent.json"), "--apply"]
@@ -131,7 +129,10 @@ class TestResolveAgentFileInput:
         name: str,
         timestamp: str,
     ) -> None:
-        """A traversal-shaped name or timestamp exits 2 and prints no resolved path."""
+        """A traversal-shaped name or timestamp exits 2 and prints no resolved path.
+
+        The name and timestamp are joined into report paths, so separators and dot segments must never get that far.
+        """
         monkeypatch.setattr("sys.argv", ["resolve_agent_file.py", "--name", name, "--timestamp", timestamp])
         assert (raf.main(), "agent-file=" in capsys.readouterr().out) == (2, False)
 
@@ -141,7 +142,10 @@ class TestCompactGateSessionId:
 
     @pytest.mark.parametrize("session_id", ["*", "../x", "a/b", "[a-z]", "abc\n"])
     def test_wildcard_session_id_is_rejected(self, tmp_path: Path, session_id: str) -> None:
-        """A session id with glob or separator characters yields the invalid-session decision, not a transcript scan."""
+        """A session id with glob or separator characters yields the invalid-session decision, not a transcript scan.
+
+        Each case would widen or escape the transcript glob if spliced in unchecked; the gate must refuse it first.
+        """
         assert gate._decide({"session_id": session_id}, tmp_path, b"contract") == "invalid session id"
 
 
@@ -164,7 +168,10 @@ class TestAppendLedgerLiteralName:
 
     @_skip_without_symlinks
     def test_symlinked_staged_file_is_not_appended(self, tmp_path: Path) -> None:
-        """A ``.rec`` that is a symlink is skipped, so it cannot copy another file's content into the ledger."""
+        """A ``.rec`` that is a symlink is skipped, so it cannot copy another file's content into the ledger.
+
+        The staged file points at a secret outside the ledger; the flush must neither append it nor create the ledger.
+        """
         secret = tmp_path / "secret.txt"
         secret.write_bytes(b"secret\n")
         ledger = tmp_path / "log.jsonl"
@@ -187,7 +194,10 @@ class TestExtractKeepFlagNames:
     def test_separator_in_name_returns_two_without_writing(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, slug: str, csid: str
     ) -> None:
-        """A slug or session id with a path separator exits 2 before any sentinel is written."""
+        """A slug or session id with a path separator exits 2 before any sentinel is written.
+
+        Both values are joined into sentinel file names under ``TMPDIR``; a separator or `..` would write outside it.
+        """
         monkeypatch.setenv("TMPDIR", str(tmp_path / "tmp"))
         monkeypatch.setenv("CSID", csid)
         monkeypatch.chdir(tmp_path)
@@ -208,12 +218,18 @@ class TestSymlinkGuardInputs:
         ],
     )
     def test_degenerate_marker_is_rejected(self, marker: str) -> None:
-        """A marker that substring-matches every absolute link target is refused instead of purging them all."""
+        """A marker that substring-matches every absolute link target is refused instead of purging them all.
+
+        Cleanup removes links whose target contains the marker; degenerate markers match everything.
+        """
         with pytest.raises(ValueError, match="marker"):
             swg._validate_marker(marker)
 
     def test_cleanup_cli_rejects_bare_separator_marker(self, tmp_path: Path) -> None:
-        """``cleanup --marker /`` exits 2 before touching ``~/.claude/skills`` or ``~/.claude/agents``."""
+        """``cleanup --marker /`` exits 2 before touching ``~/.claude/skills`` or ``~/.claude/agents``.
+
+        The CLI-level twin of the marker validator case: the refusal must hold through argument parsing too.
+        """
         argv = ["cleanup", "--plugin-root", str(tmp_path), "--home", str(tmp_path), "--marker", "/"]
         assert swg.main(argv) == 2
 
@@ -254,12 +270,18 @@ class TestVersionSyncBoundedGit:
         raise subprocess.TimeoutExpired(argv, kwargs["timeout"])  # type: ignore[arg-type]
 
     def test_timeout_reads_as_failed_call(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A Git call that exceeds its bound comes back as return code 124 rather than raising."""
+        """A Git call that exceeds its bound comes back as return code 124 rather than raising.
+
+        The stand-in ``subprocess.run`` times out, and fails if the caller passed no ``timeout=``.
+        """
         monkeypatch.setattr(cpvs.subprocess, "run", self._hang)
         assert cpvs._git(["status"]).returncode == 124
 
     def test_timeout_fails_checkout_lookup_closed(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """The host-manifest scan reports the checkout as unlocatable when Git times out."""
+        """The host-manifest scan reports the checkout as unlocatable when Git times out.
+
+        A hung Git must turn into a failed check, not an indefinitely blocked pre-commit run.
+        """
         monkeypatch.setattr(cpvs.subprocess, "run", self._hang)
         assert cpvs.find_removed_host_manifests(Path("plugins")) == [
             "cannot locate the Git checkout for tracked host manifests"

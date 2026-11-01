@@ -21,7 +21,7 @@ from pathlib import Path
 
 import _runtime_log as rl
 import pytest
-from codemap_py import telemetry
+from codemap_py import query, telemetry
 
 _HOOKS_DIR = Path(__file__).resolve().parents[2] / "hooks"
 _TOOL_HOOK = _HOOKS_DIR / "log-tool-use.py"
@@ -53,6 +53,15 @@ def _repo_with_subdir(tmp_path: Path) -> tuple[Path, Path]:
     # tmp_path is a symlink farm on macOS (/var -> /private/var); the resolvers collapse
     # it, so the expected path must be collapsed too or every comparison fails on the prefix.
     return root.resolve(), (root / "src" / "pkg").resolve()
+
+
+@pytest.fixture
+def logging_env(monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
+    """Enable telemetry and clear every variable that would pick a log directory or runtime other than the default."""
+    monkeypatch.setenv("CODEMAP_LOGGING", "true")
+    for name in ("CODEMAP_LOG_DIR", "CODEMAP_RUNTIME", "CODEX_THREAD_ID", "CLAUDE_CODE_SESSION_ID", "CSID"):
+        monkeypatch.delenv(name, raising=False)
+    return monkeypatch
 
 
 def _run_hook(hook: Path, payload: dict, cwd: Path) -> subprocess.CompletedProcess:
@@ -88,10 +97,10 @@ class TestHookLayerAnchoring:
             ),
         ],
     )
-    def test_hook_writes_at_the_repo_root(
+    def test_writes_at_the_repo_root(
         self, repo_with_subdir: tuple[Path, Path], hook: Path, payload: dict, shard_glob: str
     ) -> None:
-        """Anchor tool-use and skill-start logs at the repository root from a nested directory.
+        """Tool-use and skill-start hooks launched in a subdirectory write their shard under the repo-root log dir.
 
         The hook runs from a nested directory of a real git repo, so only repo-root anchoring can put the shard in the
         ``claude`` log directory; a shard under the subdirectory would split the join across two directories.
@@ -108,37 +117,37 @@ class TestHookLayerAnchoring:
 class TestCliLayerAnchoring:
     """The CLI telemetry layer resolves the same repo-root directory from a subdirectory."""
 
-    def test_log_cli_writes_at_the_repo_root(
-        self, repo_with_subdir: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+    def test_writes_at_the_repo_root(
+        self, repo_with_subdir: tuple[Path, Path], logging_env: pytest.MonkeyPatch
     ) -> None:
-        """Anchor command-line telemetry at the repository root from a nested directory."""
+        """Command-line telemetry called from a subdirectory lands under the repo-root ``direct`` log dir.
+
+        With no runtime or session variables set the CLI layer logs as ``direct``; it must still resolve the repository
+        root, not the process working directory.
+        """
         root, subdir = repo_with_subdir
-        monkeypatch.setenv("CODEMAP_LOGGING", "true")
-        monkeypatch.delenv("CODEMAP_LOG_DIR", raising=False)
-        monkeypatch.delenv("CODEMAP_RUNTIME", raising=False)
-        monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
-        monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
-        monkeypatch.delenv("CSID", raising=False)
-        monkeypatch.chdir(subdir)
+        logging_env.chdir(subdir)
 
         telemetry.log_cli("rdeps", ["rdeps", "m"], {"ok": True}, 0.0)
 
         assert sorted(p.name for p in (root / _LOGS_REL / "direct").glob("cli*.jsonl")) != []
         assert not (subdir / _LOGS_REL).exists()
 
-    def test_codex_cli_uses_thread_id_without_reading_the_claude_marker(
-        self, repo_with_subdir: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+    def test_codex_uses_thread_id_without_reading_the_claude_marker(
+        self, repo_with_subdir: tuple[Path, Path], logging_env: pytest.MonkeyPatch
     ) -> None:
-        """Codex uses CODEX_THREAD_ID in ``logs/codex``, never a Claude marker session."""
+        """Codex telemetry uses ``CODEX_THREAD_ID`` in ``logs/codex`` and never a Claude marker session.
+
+        A stale Claude session marker sits in the temp dir; the Codex shard must still be keyed by the thread id, or
+        Codex and Claude sessions would be joined under one id.
+        """
         root, subdir = repo_with_subdir
         marker_dir = root.parent / "markers"
         marker_dir.mkdir(parents=True)
         (marker_dir / f"codemap-{root.name}-session").write_text("claude-session")
-        monkeypatch.setenv("CODEMAP_LOGGING", "true")
-        monkeypatch.setenv("CODEX_THREAD_ID", "codex-thread")
-        monkeypatch.setenv("TMPDIR", str(marker_dir))
-        monkeypatch.delenv("CODEMAP_LOG_DIR", raising=False)
-        monkeypatch.chdir(subdir)
+        logging_env.setenv("CODEX_THREAD_ID", "codex-thread")
+        logging_env.setenv("TMPDIR", str(marker_dir))
+        logging_env.chdir(subdir)
 
         telemetry.log_cli("rdeps", ["rdeps", "pkg.auth"], {"ok": True}, 0.0)
 
@@ -148,44 +157,46 @@ class TestCliLayerAnchoring:
         assert record["session"] == "codex-thread"
 
     def test_query_engine_has_no_import_time_log_dir(self) -> None:
-        """Prevent query imports from freezing a working-directory-relative log path.
+        """The query engine binds no log directory at import time.
 
         The regression this pins is specifically the module *constant*: any value bound at import cannot follow a later
         ``chdir`` or a ``CODEMAP_LOG_DIR`` exported after the process started, which is exactly how the engine's shards
         ended up split from the hooks'.
         """
-        from codemap_py import query
-
         assert not hasattr(query, "_LOG_DIR")
 
 
 class TestLayersAgree:
     """The hook layer and the CLI layer resolve one identical directory (the join contract)."""
 
-    def test_hook_and_cli_shards_share_one_directory(
-        self, repo_with_subdir: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+    def test_hook_and_cli_shards_share_one_log_root(
+        self, repo_with_subdir: tuple[Path, Path], logging_env: pytest.MonkeyPatch
     ) -> None:
-        """Both layers, both launched from the subdirectory, write into the same dir."""
+        """A hook shard and a CLI shard written from the same subdirectory share one ``logs`` tree.
+
+        ``debrief-coding`` joins by reading a single directory, so exactly one shard per layer must appear under the
+        repo-root log directory and none anywhere else.
+        """
         root, subdir = repo_with_subdir
-        assert _run_hook(_TOOL_HOOK, {"tool_name": "Glob", "tool_input": {"pattern": "*"}}, subdir).returncode == 0
-        monkeypatch.setenv("CODEMAP_LOGGING", "true")
-        monkeypatch.delenv("CODEMAP_LOG_DIR", raising=False)
-        monkeypatch.delenv("CODEMAP_RUNTIME", raising=False)
-        monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
-        monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
-        monkeypatch.delenv("CSID", raising=False)
-        monkeypatch.chdir(subdir)
+        hook = _run_hook(_TOOL_HOOK, {"tool_name": "Glob", "tool_input": {"pattern": "*"}}, subdir)
+        logging_env.chdir(subdir)
 
         telemetry.log_cli("central", ["central"], {"ok": True}, 0.0)
+
+        assert hook.returncode == 0, hook.stderr
 
         shards = {p.parent for p in (root / _LOGS_REL).rglob("*.jsonl")}
         assert shards == {root / _LOGS_REL / "claude", root / _LOGS_REL / "direct"}
         assert len(list((root / _LOGS_REL).rglob("*.jsonl"))) == 2
 
-    def test_hookutil_and_runtime_log_agree_from_a_subdir(
+    def test_hookutil_and_runtime_log_resolve_the_same_path(
         self, repo_with_subdir: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The hook resolver and the package resolver return byte-identical paths."""
+        """The hook resolver and the package resolver return byte-identical paths from a subdirectory.
+
+        The hook layer cannot import the package, so it carries its own resolver; the two must agree or the layers write
+        to different directories.
+        """
         root, subdir = repo_with_subdir
         monkeypatch.delenv("CODEMAP_LOG_DIR", raising=False)
         monkeypatch.chdir(subdir)
@@ -194,12 +205,15 @@ class TestLayersAgree:
 
 
 class TestOverrideAnchoring:
-    """Keep its absolute meaning and gains an anchored relative one."""
+    """``CODEMAP_LOG_DIR`` keeps its absolute meaning and a relative value anchors to the repo root."""
 
-    def test_absolute_override_is_honoured_verbatim(
+    def test_absolute_override_is_used_verbatim(
         self, repo_with_subdir: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """An absolute override is already unambiguous, so it is used as given."""
+        """An absolute ``CODEMAP_LOG_DIR`` is used as given by both the package and the hook resolver.
+
+        An absolute path is already unambiguous, so no anchoring may rewrite it even when run from a subdirectory.
+        """
         _root, subdir = repo_with_subdir
         elsewhere = (tmp_path / "shared_logs").resolve()
         monkeypatch.setenv("CODEMAP_LOG_DIR", str(elsewhere))
@@ -211,7 +225,10 @@ class TestOverrideAnchoring:
     def test_relative_override_anchors_to_the_repo_root(
         self, repo_with_subdir: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A relative override splits per-CWD exactly like the old default did."""
+        """A relative ``CODEMAP_LOG_DIR`` resolves against the repo root, not the process working directory.
+
+        Resolving it against the working directory splits the hook and CLI shards exactly like the old default did.
+        """
         root, subdir = repo_with_subdir
         monkeypatch.setenv("CODEMAP_LOG_DIR", "build/logs")
         monkeypatch.chdir(subdir)
@@ -219,8 +236,11 @@ class TestOverrideAnchoring:
         assert rl.log_root() == root / "build" / "logs"
         assert _load_hookutil().log_dir() == root / "build" / "logs" / "claude"
 
-    def test_runtime_component_survives_the_anchoring(self, repo_with_subdir: tuple[Path, Path]) -> None:
-        """Append the runtime directory beneath the anchored log root."""
+    def test_runtime_directory_sits_beneath_the_anchored_root(self, repo_with_subdir: tuple[Path, Path]) -> None:
+        """The runtime name is appended beneath the anchored log root.
+
+        With no override, the Codex log dir is ``<repo>/.cache/codemap/logs/codex``.
+        """
         root, _subdir = repo_with_subdir
 
         assert rl.log_dir_for("codex", root=root, override="") == root / _LOGS_REL / "codex"

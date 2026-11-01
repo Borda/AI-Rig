@@ -1,19 +1,25 @@
-"""Acceptance checks for transactional shim application and rollback."""
+"""Acceptance checks for transactional shim application and rollback.
+
+A prepared transaction (create, update, or remove of one role shim plus manager state) is applied through descriptor
+handles. Failures are injected at each named forward boundary, and one scenario kills a real child process, to prove the
+journal reaches a terminal state and the exact before-image is recoverable without erasing foreign or untrusted bytes.
+"""
 
 from __future__ import annotations
 
-import hashlib
-import importlib.util
-import json
 import os
 import stat
 import subprocess
 import sys
 import tempfile  # noqa: F401
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
 
 import pytest
+from _modules import load_module_registered
+from _shim_support import canonical_json, sha256_hex, stat_root_identity, write_private
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = PLUGIN_ROOT / "scripts"
@@ -25,6 +31,12 @@ TRANSACTION_PATH = SCRIPTS / "_agent_shim_transaction.py"
 TRANSACTION_ID = "123e4567-e89b-42d3-a456-426614174000"
 INSTALL_ID = "123e4567-e89b-42d3-a456-426614174001"
 DIGEST = "a" * 64
+GENERATED_SHIM = b"generated challenger shim\n"
+PREVIOUS_SHIM = b"previous challenger shim\n"
+REPLACEMENT_SHIM = b"replacement challenger shim\n"
+PREVIOUS_STATE = b'{"transaction_status":"previous"}'
+CURRENT_STATE = b'{"transaction_status":"current"}'
+TARGET_NAME = "codex-rig-challenger.toml"
 
 
 def _load_module(path: Path, name: str) -> ModuleType:
@@ -41,56 +53,12 @@ def _load_module(path: Path, name: str) -> ModuleType:
         for dependency, module_name in dependencies:
             if module_name not in sys.modules:
                 _load_module(dependency, module_name)
-    specification = importlib.util.spec_from_file_location(name, path)
-    assert specification is not None
-    assert specification.loader is not None
-    module = importlib.util.module_from_spec(specification)
-    sys.modules[name] = module
-    specification.loader.exec_module(module)
-    return module
+    return load_module_registered(name, path)
 
 
-def _canonical(value: object) -> bytes:
-    """Encode one canonical JSON fixture.
-
-    Example:
-        >>> _canonical({"b": 2, "a": 1})
-        b'{"a":1,"b":2}'
-    """
-    return json.dumps(value, ensure_ascii=True, allow_nan=False, sort_keys=True, separators=(",", ":")).encode()
-
-
-def _write_private(path: Path, payload: bytes) -> None:
-    """Write one exact private transaction fixture.
-
-    Example:
-        >>> with tempfile.TemporaryDirectory() as directory:
-        ...     path = Path(directory) / "transaction.json"
-        ...     _write_private(path, b"prepared")
-        ...     path.read_bytes()
-        b'prepared'
-    """
-    path.write_bytes(payload)
-    path.chmod(0o600)
-
-
-def _root_identity(path: Path) -> dict[str, object]:
-    """Return journal identity fields for one fixture root.
-
-    Example:
-        >>> with tempfile.TemporaryDirectory() as directory:
-        ...     _root_identity(Path(directory))["canonical_path"] == directory
-        True
-    """
-    metadata = path.stat()
-    return {
-        "canonical_path": str(path),
-        "device": metadata.st_dev,
-        "inode": metadata.st_ino,
-        "owner": metadata.st_uid,
-        "group": metadata.st_gid,
-        "mode": f"{stat.S_IMODE(metadata.st_mode):04o}",
-    }
+def _read_or_none(path: Path) -> bytes | None:
+    """Return a file's bytes, or None when it does not exist."""
+    return path.read_bytes() if path.exists() else None
 
 
 def _create_journal(roots: dict[str, Path], after_payload: bytes, state_payload: bytes) -> dict[str, object]:
@@ -104,14 +72,14 @@ def _create_journal(roots: dict[str, Path], after_payload: bytes, state_payload:
         "approved_plan_digest": DIGEST,
         "package_hash": DIGEST,
         "roster_hash": DIGEST,
-        "codex_home_identity": _root_identity(roots["home"]),
-        "target_root_identity": _root_identity(roots["target"]),
-        "state_root_identity": _root_identity(roots["state"]),
+        "codex_home_identity": stat_root_identity(roots["home"]),
+        "target_root_identity": stat_root_identity(roots["target"]),
+        "state_root_identity": stat_root_identity(roots["state"]),
         "before_state": {"exists": False, "relative_path": None, "sha256": None, "mode": None},
         "after_state": {
             "exists": True,
             "relative_path": "state.after.json",
-            "sha256": hashlib.sha256(state_payload).hexdigest(),
+            "sha256": sha256_hex(state_payload),
             "mode": "0600",
         },
         "rollback_state_progress": "PENDING",
@@ -120,12 +88,12 @@ def _create_journal(roots: dict[str, Path], after_payload: bytes, state_payload:
             {
                 "role_id": "challenger",
                 "intent": "create",
-                "target_name": "codex-rig-challenger.toml",
+                "target_name": TARGET_NAME,
                 "before_exists": False,
                 "before_hash": None,
                 "before_mode": None,
                 "after_exists": True,
-                "after_hash": hashlib.sha256(after_payload).hexdigest(),
+                "after_hash": sha256_hex(after_payload),
                 "after_mode": "0600",
                 "before_image": None,
                 "after_image": "after/challenger.toml",
@@ -137,62 +105,102 @@ def _create_journal(roots: dict[str, Path], after_payload: bytes, state_payload:
     }
 
 
-def _prepare_owned_transaction(
-    roots: dict[str, Path],
-    *,
-    intent: str,
-    after_payload: bytes | None,
-) -> dict[str, object]:
-    """Replace the create fixture with one owned update or remove transaction."""
-    before_payload = b"previous challenger shim\n"
-    before_state = b'{"transaction_status":"previous"}'
-    after_state = b'{"transaction_status":"current"}'
-    value = _create_journal(roots, after_payload or b"unused", after_state)
-    operation = value["operations"][0]
-    operation.update(
+def _owned_journal_value(roots: dict[str, Path], after_payload: bytes) -> dict[str, object]:
+    """Build a journal for a role already owned on disk, with before-images and quarantine name set."""
+    value = _create_journal(roots, after_payload, CURRENT_STATE)
+    value["operations"][0].update(
         {
-            "intent": intent,
             "before_exists": True,
-            "before_hash": hashlib.sha256(before_payload).hexdigest(),
+            "before_hash": sha256_hex(PREVIOUS_SHIM),
             "before_mode": "0600",
             "before_image": "before/challenger.toml",
             "quarantine_name": "quarantine/challenger.toml",
         }
     )
-    if intent == "remove":
-        value["action"] = "remove"
-        operation.update(
-            {
-                "after_exists": False,
-                "after_hash": None,
-                "after_mode": None,
-                "after_image": None,
-            }
-        )
-        (roots["after"] / "challenger.toml").unlink()
-    else:
-        assert after_payload is not None
-        operation["after_hash"] = hashlib.sha256(after_payload).hexdigest()
-        _write_private(roots["after"] / "challenger.toml", after_payload)
     value["before_state"] = {
         "exists": True,
         "relative_path": "state.before.json",
-        "sha256": hashlib.sha256(before_state).hexdigest(),
+        "sha256": sha256_hex(PREVIOUS_STATE),
         "mode": "0600",
     }
-    value["after_state"]["sha256"] = hashlib.sha256(after_state).hexdigest()
-    _write_private(roots["target"] / "codex-rig-challenger.toml", before_payload)
-    _write_private(roots["before"] / "challenger.toml", before_payload)
-    _write_private(roots["state"] / "state.json", before_state)
-    _write_private(roots["transaction"] / "state.before.json", before_state)
-    _write_private(roots["transaction"] / "state.after.json", after_state)
-    _write_private(roots["transaction"] / "journal.json", _canonical(value))
     return value
 
 
-@pytest.fixture(name="transaction_fixture")
-def _transaction_fixture(tmp_path: Path) -> tuple[ModuleType, object, object, dict[str, Path]]:
-    """Create one prepared transaction with held exact directory descriptors."""
+def _write_owned_files(roots: dict[str, Path], value: dict[str, object]) -> None:
+    """Write the on-disk previous target, before-images, state files and journal for an owned transaction."""
+    write_private(roots["target"] / TARGET_NAME, PREVIOUS_SHIM)
+    write_private(roots["before"] / "challenger.toml", PREVIOUS_SHIM)
+    write_private(roots["state"] / "state.json", PREVIOUS_STATE)
+    write_private(roots["transaction"] / "state.before.json", PREVIOUS_STATE)
+    write_private(roots["transaction"] / "state.after.json", CURRENT_STATE)
+    write_private(roots["transaction"] / "journal.json", canonical_json(value))
+
+
+@dataclass(frozen=True)
+class Prepared:
+    """One prepared create transaction with its modules, held descriptors and directory layout."""
+
+    module: ModuleType
+    journal_module: ModuleType
+    journal: object
+    handles: object
+    roots: dict[str, Path]
+
+
+def _prepare_create(prepared: Prepared) -> object:
+    """Use the fixture's create journal unchanged."""
+    return prepared.journal
+
+
+def _prepare_update(prepared: Prepared) -> object:
+    """Replace the create fixture with an owned update to the replacement shim and return its journal."""
+    roots = prepared.roots
+    value = _owned_journal_value(roots, REPLACEMENT_SHIM)
+    value["operations"][0]["intent"] = "update"
+    write_private(roots["after"] / "challenger.toml", REPLACEMENT_SHIM)
+    _write_owned_files(roots, value)
+    return prepared.journal_module.validate_journal(value)
+
+
+def _prepare_remove(prepared: Prepared) -> object:
+    """Replace the create fixture with an owned removal (no after-image) and return its journal."""
+    roots = prepared.roots
+    value = _owned_journal_value(roots, b"unused")
+    value["action"] = "remove"
+    value["operations"][0].update(
+        {"intent": "remove", "after_exists": False, "after_hash": None, "after_mode": None, "after_image": None}
+    )
+    (roots["after"] / "challenger.toml").unlink()
+    _write_owned_files(roots, value)
+    return prepared.journal_module.validate_journal(value)
+
+
+#: Per intent: how to prepare the journal, the target bytes expected after rollback, and the state bytes expected.
+_INTENTS = {
+    "create": (_prepare_create, None, None),
+    "update": (_prepare_update, PREVIOUS_SHIM, PREVIOUS_STATE),
+    "remove": (_prepare_remove, PREVIOUS_SHIM, PREVIOUS_STATE),
+}
+_FORWARD_BOUNDARIES = {
+    "create": ("challenger:published", "challenger:verified", "state:published"),
+    "update": ("challenger:detached", "challenger:published", "challenger:verified", "state:published"),
+    "remove": ("challenger:detached", "challenger:verified", "state:published"),
+}
+_BOUNDARY_CASES = [
+    pytest.param(intent, boundary, id=f"{intent}-{boundary.replace(':', '-')}")
+    for intent, boundaries in _FORWARD_BOUNDARIES.items()
+    for boundary in boundaries
+]
+_OWNED_PREPARERS = [pytest.param(_prepare_update, id="update"), pytest.param(_prepare_remove, id="remove")]
+_OWNED_CASES = [
+    pytest.param(_prepare_update, REPLACEMENT_SHIM, id="update"),
+    pytest.param(_prepare_remove, None, id="remove"),
+]
+
+
+@pytest.fixture(name="prepared")
+def _prepared(tmp_path: Path) -> Iterator[Prepared]:
+    """Create one prepared create transaction with held exact directory descriptors."""
     module = _load_module(TRANSACTION_PATH, "codex_rig_transaction_fixture")
     roots = {
         "home": tmp_path / "home",
@@ -209,220 +217,203 @@ def _transaction_fixture(tmp_path: Path) -> tuple[ModuleType, object, object, di
         path.mkdir(mode=0o700)
         path.chmod(0o700)
         roots[child] = path
-    after_payload = b"generated challenger shim\n"
-    state_payload = b'{"transaction_status":"current"}'
-    journal_value = _create_journal(roots, after_payload, state_payload)
-    _write_private(roots["after"] / "challenger.toml", after_payload)
-    _write_private(roots["transaction"] / "state.after.json", state_payload)
-    _write_private(roots["transaction"] / "journal.json", _canonical(journal_value))
-    journal = sys.modules["_agent_shim_journal"].validate_journal(journal_value)
-    fds = {
-        name: os.open(path, os.O_RDONLY | os.O_DIRECTORY)
-        for name, path in roots.items()
-        if name in {"target", "state", "transaction", "before", "after", "quarantine"}
-    }
+    journal_value = _create_journal(roots, GENERATED_SHIM, CURRENT_STATE)
+    write_private(roots["after"] / "challenger.toml", GENERATED_SHIM)
+    write_private(roots["transaction"] / "state.after.json", CURRENT_STATE)
+    write_private(roots["transaction"] / "journal.json", canonical_json(journal_value))
+    journal_module = sys.modules["_agent_shim_journal"]
+    names = ("target", "state", "transaction", "before", "after", "quarantine")
+    fds = {name: os.open(roots[name], os.O_RDONLY | os.O_DIRECTORY) for name in names}
     handles = module.TransactionDirectories(
-        fds["transaction"],
-        fds["target"],
-        fds["state"],
-        fds["before"],
-        fds["after"],
-        fds["quarantine"],
+        fds["transaction"], fds["target"], fds["state"], fds["before"], fds["after"], fds["quarantine"]
     )
-    try:
-        yield module, journal, handles, roots
-    finally:
-        for descriptor in fds.values():
-            os.close(descriptor)
+    yield Prepared(module, journal_module, journal_module.validate_journal(journal_value), handles, roots)
+    for descriptor in fds.values():
+        os.close(descriptor)
 
 
-def test_create_commits_exact_target_state_and_bounded_cleanup(transaction_fixture: tuple[object, ...]) -> None:
-    """Publish exact create outputs and remove only terminal transaction residue."""
-    module, journal, handles, roots = transaction_fixture
+def _fail_at(boundary: str, error: str = "injected boundary failure") -> Callable[[str], None]:
+    """Return a checkpoint callback that raises once the named boundary completes."""
 
-    committed = module.apply_transaction(journal, handles)
-
-    assert committed.journal_state == "COMMITTED"
-    assert (roots["target"] / "codex-rig-challenger.toml").read_bytes() == b"generated challenger shim\n"
-    assert (roots["state"] / "state.json").read_bytes() == b'{"transaction_status":"current"}'
-    assert (roots["after"] / "challenger.toml").stat().st_nlink == 2
-    removed = module.cleanup_transaction(committed, handles)
-    assert "journal.json" in removed
-    assert list(roots["transaction"].iterdir()) == []
-    assert (roots["target"] / "codex-rig-challenger.toml").stat().st_nlink == 1
-    assert (roots["state"] / "state.json").stat().st_nlink == 1
-
-
-def test_create_failure_after_publication_rolls_back_exactly(transaction_fixture: tuple[object, ...]) -> None:
-    """Remove an unjournaled exact create and reach terminal rollback."""
-    module, journal, handles, roots = transaction_fixture
-
-    def _fail_after_publication(name: str) -> None:
-        """Inject a failure after the named publication boundary completes."""
-        if name == "challenger:published":
-            raise RuntimeError("injected crash")
-
-    with pytest.raises(module.TransactionError) as captured:
-        module.apply_transaction(journal, handles, checkpoint=_fail_after_publication)
-
-    assert captured.value.journal.journal_state == "ROLLED_BACK"
-    assert not (roots["target"] / "codex-rig-challenger.toml").exists()
-    assert not (roots["state"] / "state.json").exists()
-    assert module.rollback_transaction(captured.value.journal, handles) == captured.value.journal
-    os.link(roots["transaction"] / "state.after.json", roots["transaction"] / "state.publish.json")
-    module.cleanup_transaction(captured.value.journal, handles)
-    assert list(roots["transaction"].iterdir()) == []
-
-
-def test_concurrent_foreign_create_never_gets_deleted(transaction_fixture: tuple[object, ...]) -> None:
-    """Preserve a target that appears after approval and require recovery."""
-    module, journal, handles, roots = transaction_fixture
-    foreign = roots["target"] / "codex-rig-challenger.toml"
-    _write_private(foreign, b"foreign\n")
-
-    with pytest.raises(module.TransactionError) as captured:
-        module.apply_transaction(journal, handles)
-
-    assert captured.value.journal.journal_state == "RECOVERY_REQUIRED"
-    assert foreign.read_bytes() == b"foreign\n"
-    assert (roots["after"] / "challenger.toml").read_bytes() == b"generated challenger shim\n"
-
-
-def test_substituted_staged_artifact_is_preserved_as_blocking_evidence(
-    transaction_fixture: tuple[object, ...],
-) -> None:
-    """Reject changed staged bytes and never erase the untrusted artifact."""
-    module, journal, handles, roots = transaction_fixture
-    _write_private(roots["after"] / "challenger.toml", b"substituted\n")
-
-    with pytest.raises(module.TransactionError) as captured:
-        module.apply_transaction(journal, handles)
-
-    assert captured.value.journal.journal_state == "ROLLED_BACK"
-    assert not (roots["target"] / "codex-rig-challenger.toml").exists()
-    with pytest.raises(module.TransactionError, match="cleanup artifact hash mismatch"):
-        module.cleanup_transaction(captured.value.journal, handles)
-    assert (roots["after"] / "challenger.toml").read_bytes() == b"substituted\n"
-
-
-@pytest.mark.parametrize("intent", ["update", "remove"])
-def test_owned_mutation_commits_and_cleans_exact_artifacts(
-    transaction_fixture: tuple[object, ...], intent: str
-) -> None:
-    """Commit authenticated update/remove operations and bounded cleanup."""
-    module, _, handles, roots = transaction_fixture
-    after_payload = b"replacement challenger shim\n" if intent == "update" else None
-    value = _prepare_owned_transaction(roots, intent=intent, after_payload=after_payload)
-    journal = sys.modules["_agent_shim_journal"].validate_journal(value)
-
-    committed = module.apply_transaction(journal, handles)
-
-    target = roots["target"] / "codex-rig-challenger.toml"
-    if intent == "update":
-        assert target.read_bytes() == after_payload
-    else:
-        assert not target.exists()
-    assert (roots["quarantine"] / "challenger.toml").read_bytes() == b"previous challenger shim\n"
-    module.cleanup_transaction(committed, handles)
-    assert list(roots["transaction"].iterdir()) == []
-
-
-@pytest.mark.parametrize("intent", ["update", "remove"])
-def test_owned_mutation_failure_after_detach_restores_before_image(
-    transaction_fixture: tuple[object, ...], intent: str
-) -> None:
-    """Restore the exact owned target when failure follows atomic detach."""
-    module, _, handles, roots = transaction_fixture
-    after_payload = b"replacement challenger shim\n" if intent == "update" else None
-    value = _prepare_owned_transaction(roots, intent=intent, after_payload=after_payload)
-    journal = sys.modules["_agent_shim_journal"].validate_journal(value)
-
-    def _fail_after_detach(name: str) -> None:
-        """Inject a failure after detaching the prior target artifact."""
-        if name == "challenger:detached":
-            raise RuntimeError("injected crash")
-
-    with pytest.raises(module.TransactionError) as captured:
-        module.apply_transaction(journal, handles, checkpoint=_fail_after_detach)
-
-    assert captured.value.journal.journal_state == "ROLLED_BACK"
-    assert (roots["target"] / "codex-rig-challenger.toml").read_bytes() == b"previous challenger shim\n"
-    assert not (roots["quarantine"] / "challenger.toml").exists()
-    module.cleanup_transaction(captured.value.journal, handles)
-    assert list(roots["transaction"].iterdir()) == []
-
-
-@pytest.mark.parametrize(
-    ("intent", "boundary"),
-    [
-        pytest.param("create", "challenger:published", id="create-challenger-published"),
-        pytest.param("create", "challenger:verified", id="create-challenger-verified"),
-        pytest.param("create", "state:published", id="create-state-published"),
-        pytest.param("update", "challenger:detached", id="update-challenger-detached"),
-        pytest.param("update", "challenger:published", id="update-challenger-published"),
-        pytest.param("update", "challenger:verified", id="update-challenger-verified"),
-        pytest.param("update", "state:published", id="update-state-published"),
-        pytest.param("remove", "challenger:detached", id="remove-challenger-detached"),
-        pytest.param("remove", "challenger:verified", id="remove-challenger-verified"),
-        pytest.param("remove", "state:published", id="remove-state-published"),
-    ],
-)
-def test_each_forward_mutation_boundary_rolls_back_exactly(
-    transaction_fixture: tuple[object, ...], intent: str, boundary: str
-) -> None:
-    """Recover the exact before-image after every durable forward boundary."""
-    module, create, handles, roots = transaction_fixture
-    if intent == "create":
-        journal = create
-    else:
-        after_payload = b"replacement challenger shim\n" if intent == "update" else None
-        value = _prepare_owned_transaction(roots, intent=intent, after_payload=after_payload)
-        journal = sys.modules["_agent_shim_journal"].validate_journal(value)
-
-    def _fail_at_boundary(name: str) -> None:
-        """Inject a failure at the parameterized transaction checkpoint."""
+    def _checkpoint(name: str) -> None:
+        """Raise when the transaction reports the selected boundary."""
         if name == boundary:
-            raise RuntimeError("injected boundary failure")
+            raise RuntimeError(error)
 
-    with pytest.raises(module.TransactionError) as captured:
-        module.apply_transaction(journal, handles, checkpoint=_fail_at_boundary)
+    return _checkpoint
 
-    assert captured.value.journal.journal_state == "ROLLED_BACK"
-    target = roots["target"] / "codex-rig-challenger.toml"
-    state = roots["state"] / "state.json"
-    if intent == "create":
-        assert not target.exists()
-        assert not state.exists()
-    else:
-        assert target.read_bytes() == b"previous challenger shim\n"
-        assert state.read_bytes() == b'{"transaction_status":"previous"}'
+
+def _journal_after_failure(prepared: Prepared, journal: object, checkpoint: Callable[[str], None]) -> object:
+    """Apply a transaction expected to fail and return the terminal journal carried by the error."""
+    with pytest.raises(prepared.module.TransactionError) as captured:
+        prepared.module.apply_transaction(journal, prepared.handles, checkpoint=checkpoint)
+    return captured.value.journal
+
+
+def _assert_before_image(roots: dict[str, Path], expected_target: bytes | None, expected_state: bytes | None) -> None:
+    """Assert target and state hold the expected before-image and the shared target keeps mode 0755."""
+    assert _read_or_none(roots["target"] / TARGET_NAME) == expected_target
+    assert _read_or_none(roots["state"] / "state.json") == expected_state
     assert stat.S_IMODE(roots["target"].stat().st_mode) == 0o755
 
 
-@pytest.mark.parametrize(
-    ("intent", "boundary"),
-    [
-        pytest.param("create", "challenger:published", id="create-challenger-published"),
-        pytest.param("create", "challenger:verified", id="create-challenger-verified"),
-        pytest.param("create", "state:published", id="create-state-published"),
-        pytest.param("update", "challenger:detached", id="update-challenger-detached"),
-        pytest.param("update", "challenger:published", id="update-challenger-published"),
-        pytest.param("update", "challenger:verified", id="update-challenger-verified"),
-        pytest.param("update", "state:published", id="update-state-published"),
-        pytest.param("remove", "challenger:detached", id="remove-challenger-detached"),
-        pytest.param("remove", "challenger:verified", id="remove-challenger-verified"),
-        pytest.param("remove", "state:published", id="remove-state-published"),
-    ],
-)
-def test_process_death_at_each_forward_boundary_recovers_exactly(
-    transaction_fixture: tuple[object, ...], intent: str, boundary: str
-) -> None:
-    """Prove durable recovery after uncatchable process death at every forward boundary."""
-    module, _, handles, roots = transaction_fixture
-    if intent != "create":
-        after_payload = b"replacement challenger shim\n" if intent == "update" else None
-        _prepare_owned_transaction(roots, intent=intent, after_payload=after_payload)
-    child = f"""
+class TestApplyCreate:
+    """Applying and cleaning up a fresh create transaction."""
+
+    def test_commits_exact_target_and_state(self, prepared: Prepared):
+        """Publish the exact generated shim and state and reach COMMITTED.
+
+        Staged artifacts stay hardlinked to their published names (link count 2) until cleanup retires them.
+        """
+        committed = prepared.module.apply_transaction(prepared.journal, prepared.handles)
+
+        roots = prepared.roots
+        assert committed.journal_state == "COMMITTED"
+        assert (roots["target"] / TARGET_NAME).read_bytes() == GENERATED_SHIM
+        assert (roots["state"] / "state.json").read_bytes() == CURRENT_STATE
+        assert (roots["after"] / "challenger.toml").stat().st_nlink == 2
+
+    def test_cleanup_removes_only_terminal_residue(self, prepared: Prepared):
+        """Remove every staged transaction artifact after commit and leave single-link published files."""
+        committed = prepared.module.apply_transaction(prepared.journal, prepared.handles)
+
+        removed = prepared.module.cleanup_transaction(committed, prepared.handles)
+
+        roots = prepared.roots
+        assert "journal.json" in removed
+        assert list(roots["transaction"].iterdir()) == []
+        assert (roots["target"] / TARGET_NAME).stat().st_nlink == 1
+        assert (roots["state"] / "state.json").stat().st_nlink == 1
+
+    def test_foreign_target_is_preserved_and_requires_recovery(self, prepared: Prepared):
+        """Preserve a target that appears after approval and mark the journal RECOVERY_REQUIRED."""
+        foreign = prepared.roots["target"] / TARGET_NAME
+        write_private(foreign, b"foreign\n")
+
+        with pytest.raises(prepared.module.TransactionError) as captured:
+            prepared.module.apply_transaction(prepared.journal, prepared.handles)
+
+        assert captured.value.journal.journal_state == "RECOVERY_REQUIRED"
+        assert foreign.read_bytes() == b"foreign\n"
+        assert (prepared.roots["after"] / "challenger.toml").read_bytes() == GENERATED_SHIM
+
+    def test_substituted_staged_artifact_is_kept_as_blocking_evidence(self, prepared: Prepared):
+        """Reject changed staged bytes and never erase the untrusted artifact.
+
+        The staged after-image is overwritten before apply; the transaction rolls back and later cleanup refuses to
+        delete the mismatching file.
+        """
+        write_private(prepared.roots["after"] / "challenger.toml", b"substituted\n")
+
+        with pytest.raises(prepared.module.TransactionError) as captured:
+            prepared.module.apply_transaction(prepared.journal, prepared.handles)
+
+        assert captured.value.journal.journal_state == "ROLLED_BACK"
+        assert not (prepared.roots["target"] / TARGET_NAME).exists()
+        with pytest.raises(prepared.module.TransactionError, match="cleanup artifact hash mismatch"):
+            prepared.module.cleanup_transaction(captured.value.journal, prepared.handles)
+        assert (prepared.roots["after"] / "challenger.toml").read_bytes() == b"substituted\n"
+
+
+class TestRollback:
+    """Rollback and cleanup after a failed create."""
+
+    def test_repeat_returns_the_same_terminal_journal(self, prepared: Prepared):
+        """Rolling back an already rolled-back journal is a no-op returning the same journal."""
+        terminal = _journal_after_failure(prepared, prepared.journal, _fail_at("challenger:published"))
+
+        repeated = prepared.module.rollback_transaction(terminal, prepared.handles)
+
+        assert repeated == terminal
+
+    def test_cleanup_removes_residual_publish_link(self, prepared: Prepared):
+        """Clean up a rolled-back transaction even when a state publish link was left behind.
+
+        A crash can leave ``state.publish.json`` linked to ``state.after.json``; terminal cleanup removes it along with
+        every other named artifact.
+        """
+        terminal = _journal_after_failure(prepared, prepared.journal, _fail_at("challenger:published"))
+        transaction = prepared.roots["transaction"]
+        os.link(transaction / "state.after.json", transaction / "state.publish.json")
+
+        prepared.module.cleanup_transaction(terminal, prepared.handles)
+
+        assert list(transaction.iterdir()) == []
+
+
+class TestApplyOwnedMutation:
+    """Update and remove of a role the manager already owns."""
+
+    @pytest.mark.parametrize(("prepare", "expected_target"), _OWNED_CASES)
+    def test_commits_and_quarantines_previous_shim(
+        self, prepared: Prepared, prepare: Callable[[Prepared], object], expected_target: bytes | None
+    ):
+        """Commit an authenticated update/remove and keep the previous bytes in quarantine."""
+        journal = prepare(prepared)
+
+        prepared.module.apply_transaction(journal, prepared.handles)
+
+        roots = prepared.roots
+        assert _read_or_none(roots["target"] / TARGET_NAME) == expected_target
+        assert (roots["quarantine"] / "challenger.toml").read_bytes() == PREVIOUS_SHIM
+
+    @pytest.mark.parametrize("prepare", _OWNED_PREPARERS)
+    def test_cleanup_after_commit_empties_transaction(self, prepared: Prepared, prepare: Callable[[Prepared], object]):
+        """Remove every exact transaction artifact, including quarantine, after an owned mutation commits."""
+        committed = prepared.module.apply_transaction(prepare(prepared), prepared.handles)
+
+        prepared.module.cleanup_transaction(committed, prepared.handles)
+
+        assert list(prepared.roots["transaction"].iterdir()) == []
+
+    @pytest.mark.parametrize("prepare", _OWNED_PREPARERS)
+    def test_failure_after_detach_restores_before_image_and_cleans(
+        self, prepared: Prepared, prepare: Callable[[Prepared], object]
+    ):
+        """Restore the exact owned target when failure follows the atomic detach, then clean up fully.
+
+        The previous shim returns from quarantine to its target name; the quarantine slot is empty again and terminal
+        cleanup leaves no residue.
+        """
+        journal = _journal_after_failure(prepared, prepare(prepared), _fail_at("challenger:detached", "injected crash"))
+
+        prepared.module.cleanup_transaction(journal, prepared.handles)
+
+        roots = prepared.roots
+        assert journal.journal_state == "ROLLED_BACK"
+        assert (roots["target"] / TARGET_NAME).read_bytes() == PREVIOUS_SHIM
+        assert not (roots["quarantine"] / "challenger.toml").exists()
+        assert list(roots["transaction"].iterdir()) == []
+
+
+class TestForwardBoundaries:
+    """Failure or process death at every durable forward boundary recovers the exact before-image."""
+
+    @pytest.mark.parametrize(("intent", "boundary"), _BOUNDARY_CASES)
+    def test_injected_failure_rolls_back_exactly(self, prepared: Prepared, intent: str, boundary: str):
+        """Recover the exact before-image after a failure raised at each durable forward boundary.
+
+        Create must leave neither target nor state; update/remove must restore previous target and state bytes, and the
+        protected target directory keeps its 0755 mode throughout.
+        """
+        prepare, expected_target, expected_state = _INTENTS[intent]
+
+        terminal = _journal_after_failure(prepared, prepare(prepared), _fail_at(boundary))
+
+        assert terminal.journal_state == "ROLLED_BACK"
+        _assert_before_image(prepared.roots, expected_target, expected_state)
+
+    @pytest.mark.parametrize(("intent", "boundary"), _BOUNDARY_CASES)
+    def test_process_death_recovers_exactly(self, prepared: Prepared, intent: str, boundary: str):
+        """Recover the exact before-image after an uncatchable process death at each forward boundary.
+
+        A real child process applies the transaction and ``os._exit`` at the boundary, so no in-process cleanup runs;
+        rollback from the persisted journal alone must restore the before-image and allow full cleanup.
+        """
+        prepare, expected_target, expected_state = _INTENTS[intent]
+        prepare(prepared)
+        roots = prepared.roots
+        child = f"""
 import os
 import sys
 sys.path.insert(0, {str(TRANSACTION_PATH.parent)!r})
@@ -447,22 +438,13 @@ def kill(name):
         os._exit(99)
 transaction_module.apply_transaction(journal, handles, checkpoint=kill)
 """
+        killed = subprocess.run([sys.executable, "-c", child], check=False, timeout=30)
+        persisted = prepared.journal_module.parse_journal((roots["transaction"] / "journal.json").read_bytes())
 
-    killed = subprocess.run([sys.executable, "-c", child], check=False, timeout=30)
+        terminal = prepared.module.rollback_transaction(persisted, prepared.handles)
+        prepared.module.cleanup_transaction(terminal, prepared.handles)
 
-    assert killed.returncode == 99
-    journal_module = sys.modules["_agent_shim_journal"]
-    journal = journal_module.parse_journal((roots["transaction"] / "journal.json").read_bytes())
-    terminal = module.rollback_transaction(journal, handles)
-    assert terminal.journal_state == "ROLLED_BACK"
-    target = roots["target"] / "codex-rig-challenger.toml"
-    state = roots["state"] / "state.json"
-    if intent == "create":
-        assert not target.exists()
-        assert not state.exists()
-    else:
-        assert target.read_bytes() == b"previous challenger shim\n"
-        assert state.read_bytes() == b'{"transaction_status":"previous"}'
-    assert stat.S_IMODE(roots["target"].stat().st_mode) == 0o755
-    module.cleanup_transaction(terminal, handles)
-    assert list(roots["transaction"].iterdir()) == []
+        assert killed.returncode == 99
+        assert terminal.journal_state == "ROLLED_BACK"
+        _assert_before_image(roots, expected_target, expected_state)
+        assert list(roots["transaction"].iterdir()) == []

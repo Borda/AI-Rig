@@ -2,16 +2,25 @@
 
 from __future__ import annotations
 
+import doctest
 import json
+import os
 import tempfile
 from pathlib import Path
 
 import pytest
+import smoke_test_index as _smoke_module
 from smoke_test_index import SmokeResult, compute_age_hours, main, smoke_test_index
 
-# ---------------------------------------------------------------------------
-# compute_age_hours — pure function
-# ---------------------------------------------------------------------------
+
+@pytest.fixture(name="index_in_allowed_root")
+def _index_in_allowed_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Index file the CLI path validator accepts: ``tmp_path`` is made the OS temp dir, mtime pinned to the epoch."""
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    index = tmp_path / "idx.json"
+    index.write_text(json.dumps({"a": 1}))
+    os.utime(index, (0, 0))
+    return index
 
 
 class TestComputeAgeHours:
@@ -31,157 +40,162 @@ class TestComputeAgeHours:
         ],
     )
     def test_age_in_hours(self, mtime: float, now: float, expected_hours: float) -> None:
-        """The age is the mtime-to-now gap in hours: rounded to 2 dp and never negative."""
+        """The age is the mtime-to-now gap in hours: rounded to 2 dp and never negative.
+
+        Clock skew can put a file's mtime in the future; the reported age must clamp to zero instead of going negative.
+        """
         assert compute_age_hours(mtime, now) == expected_hours
-
-
-# ---------------------------------------------------------------------------
-# SmokeResult.to_json — pure serialisation
-# ---------------------------------------------------------------------------
 
 
 class TestSmokeResultToJson:
     """SmokeResult.to_json: field ordering and optional error field."""
 
-    def test_ok_result_no_error_field(self) -> None:
-        """Successful result must omit the error key entirely."""
-        r = SmokeResult(ok=True, stale=False, age_hours=1.5, path="/x.json")
-        d = json.loads(r.to_json())
+    def test_ok_result_omits_error_field(self) -> None:
+        """A successful result serializes without an ``error`` key.
+
+        Consumers test for the key's presence, so an ok result must not carry a null placeholder.
+        """
+        d = json.loads(SmokeResult(ok=True, stale=False, age_hours=1.5, path="/x.json").to_json())
+
         assert "error" not in d
         assert d["ok"] is True
         assert d["stale"] is False
         assert d["age_hours"] == 1.5
 
     def test_failed_result_includes_error(self) -> None:
-        """Failed result must include the error field."""
-        r = SmokeResult(ok=False, stale=False, age_hours=None, path="/x.json", error="missing")
-        d = json.loads(r.to_json())
+        """A failed result serializes the error message and a null age.
+
+        The caller needs the diagnostic to tell the user why the index was rejected.
+        """
+        d = json.loads(SmokeResult(ok=False, stale=False, age_hours=None, path="/x.json", error="missing").to_json())
+
         assert d["ok"] is False
         assert d["age_hours"] is None
         assert d["error"] == "missing"
 
     def test_output_is_single_line(self) -> None:
-        """to_json must produce a single JSON line with no embedded newlines."""
-        r = SmokeResult(ok=True, stale=False, age_hours=0.5, path="/p.json")
-        assert "\n" not in r.to_json()
+        """to_json produces a single JSON line with no embedded newlines.
 
-
-# ---------------------------------------------------------------------------
-# smoke_test_index — main logic unit
-# ---------------------------------------------------------------------------
+        The skill reads the result line-wise from stdout, so a pretty-printed payload would break the parse.
+        """
+        assert "\n" not in SmokeResult(ok=True, stale=False, age_hours=0.5, path="/p.json").to_json()
 
 
 class TestSmokeTestIndex:
     """smoke_test_index: all outcome branches."""
 
     def test_missing_file_returns_not_ok(self, tmp_path: Path) -> None:
-        """Non-existent path → ok=False with descriptive error."""
+        """A non-existent path yields ok=False with a descriptive error.
+
+        The first scan has not run yet; the caller must get a clear "not found" instead of an exception.
+        """
         result = smoke_test_index(tmp_path / "missing.json", max_age_hours=24)
+
         assert result.ok is False
         assert result.age_hours is None
         assert "not found" in (result.error or "")
 
-    def test_valid_fresh_index_is_ok(self, tmp_path: Path) -> None:
-        """Valid index written moments ago → ok=True, stale=False."""
-        p = tmp_path / "idx.json"
-        p.write_text(json.dumps({"modules": []}))
-        result = smoke_test_index(p, max_age_hours=24, now=p.stat().st_mtime + 10)
-        assert result.ok is True
-        assert result.stale is False
-        assert result.error is None
-
-    def test_stale_index_sets_stale_flag(self, tmp_path: Path) -> None:
-        """Index older than max_age_hours → ok=True, stale=True."""
-        p = tmp_path / "idx.json"
-        p.write_text(json.dumps({"modules": []}))
-        old_now = p.stat().st_mtime + 25 * 3600
-        result = smoke_test_index(p, max_age_hours=24, now=old_now)
-        assert result.ok is True
-        assert result.stale is True
-
     @pytest.mark.parametrize(
-        ("filename", "content", "error_fragment"),
+        ("age_seconds", "stale"),
         [
-            # Corrupted JSON → ok=False with error describing the problem.
-            pytest.param("bad.json", "not json {{{", "unreadable", id="invalid-json"),
-            # Empty JSON object → ok=False (payload must be non-empty).
-            pytest.param("empty.json", "{}", "empty", id="empty-dict"),
+            pytest.param(10, False, id="fresh-index"),
+            pytest.param(25 * 3600, True, id="older-than-max-age"),
         ],
     )
-    def test_unusable_payload_returns_not_ok(
-        self, tmp_path: Path, filename: str, content: str, error_fragment: str
-    ) -> None:
-        """A corrupted or empty index payload → ok=False with an error describing the problem."""
-        p = tmp_path / filename
+    def test_valid_index_reports_staleness(self, tmp_path: Path, age_seconds: int, stale: bool) -> None:
+        """A valid index is ok either way; ``stale`` is set only when older than ``max_age_hours``.
+
+        The clock is injected through ``now`` (10 s versus 25 h after the write, against a 24 h limit), so the check is
+        deterministic.
+        """
+        p = tmp_path / "idx.json"
+        p.write_text(json.dumps({"modules": []}))
+
+        result = smoke_test_index(p, max_age_hours=24, now=p.stat().st_mtime + age_seconds)
+
+        assert result.ok is True
+        assert result.stale is stale
+        assert result.error is None
+
+    @pytest.mark.parametrize(
+        ("content", "error_fragment"),
+        [
+            # Corrupted JSON → ok=False with error describing the problem.
+            pytest.param("not json {{{", "unreadable", id="invalid-json"),
+            # Empty JSON object → ok=False (payload must be non-empty).
+            pytest.param("{}", "empty", id="empty-dict"),
+            # A top-level array is valid JSON but not an index object.
+            pytest.param("[1, 2, 3]", "not a JSON object", id="non-dict-json"),
+        ],
+    )
+    def test_unusable_payload_returns_not_ok(self, tmp_path: Path, content: str, error_fragment: str) -> None:
+        """A corrupted, empty or non-object index payload gives ok=False with an error describing the problem.
+
+        An index that cannot be served must be reported as broken so the caller rebuilds it.
+        """
+        p = tmp_path / "idx.json"
         p.write_text(content)
+
         result = smoke_test_index(p, max_age_hours=24)
+
         assert result.ok is False
         assert error_fragment in (result.error or "")
 
-    def test_non_dict_json_returns_not_ok(self, tmp_path: Path) -> None:
-        """JSON array at top level → ok=False."""
-        p = tmp_path / "list.json"
-        p.write_text("[1, 2, 3]")
-        result = smoke_test_index(p, max_age_hours=24)
-        assert result.ok is False
+    def test_result_path_is_absolute(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """result.path is always an absolute path string, even for a relative input.
 
-    def test_path_in_result_is_absolute(self, tmp_path: Path) -> None:
-        """result.path is always an absolute path string."""
-        p = tmp_path / "idx.json"
-        p.write_text(json.dumps({"k": "v"}))
-        result = smoke_test_index(p, max_age_hours=24, now=p.stat().st_mtime + 1)
+        The index is given as a bare filename from the working directory; the report must carry the resolved path so the
+        user can find the file.
+        """
+        (tmp_path / "idx.json").write_text(json.dumps({"k": "v"}))
+        monkeypatch.chdir(tmp_path)
+
+        result = smoke_test_index(Path("idx.json"), max_age_hours=24)
+
         assert Path(result.path).is_absolute()
-
-
-# ---------------------------------------------------------------------------
-# main() — CLI entry point
-# ---------------------------------------------------------------------------
 
 
 class TestMain:
     """Verify command-line exit codes and JSON output."""
 
-    def test_ok_fresh_index_exits_zero(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    @pytest.mark.parametrize(
+        ("index_name", "max_age_hours", "exit_code", "ok", "stale"),
+        [
+            # Epoch mtime against a huge limit: still fresh.
+            pytest.param("idx.json", "1000000000", 0, True, False, id="fresh-index-exits-zero"),
+            # Epoch mtime against a one-hour limit: valid but stale.
+            pytest.param("idx.json", "1", 1, True, True, id="stale-index-exits-one"),
+            # The named index does not exist.
+            pytest.param("nope.json", "1", 1, False, False, id="missing-index-exits-one"),
+        ],
+    )
+    def test_exit_code_and_json_report(
+        self,
+        index_in_allowed_root: Path,
+        capsys: pytest.CaptureFixture[str],
+        index_name: str,
+        max_age_hours: str,
+        exit_code: int,
+        ok: bool,
+        stale: bool,
     ) -> None:
-        """Fresh valid index → exit code 0 and ok=true in stdout."""
-        monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
-        p = tmp_path / "idx.json"
-        p.write_text(json.dumps({"modules": []}))
-        rc = main(["--index-path", str(p), "--max-age-hours", "9999"])
-        out = capsys.readouterr().out
-        assert rc == 0
-        assert json.loads(out)["ok"] is True
+        """Exit 0 only for a valid, fresh index; stdout carries the matching ok/stale flags.
 
-    def test_missing_file_exits_one(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """Missing index → exit code 1 and ok=false in stdout."""
-        rc = main(["--index-path", str(tmp_path / "nope.json")])
-        out = capsys.readouterr().out
-        assert rc == 1
-        assert json.loads(out)["ok"] is False
+        The index mtime is pinned to the epoch and the age limit varied, so freshness never depends on the wall clock.
+        Asserting the JSON flags as well as the exit code keeps a path-validation rejection from passing as "stale".
+        """
+        rc = main(["--index-path", str(index_in_allowed_root.with_name(index_name)), "--max-age-hours", max_age_hours])
 
-    def test_stale_index_exits_one(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """Valid but stale index → exit code 1."""
-        p = tmp_path / "idx.json"
-        p.write_text(json.dumps({"a": 1}))
-        # Fabricate a very old mtime via utime
-        import os
-
-        os.utime(p, (0, 0))
-        rc = main(["--index-path", str(p), "--max-age-hours", "1"])
-        assert rc == 1
-
-
-# ---------------------------------------------------------------------------
-# Doctest hookup
-# ---------------------------------------------------------------------------
+        report = json.loads(capsys.readouterr().out)
+        assert rc == exit_code
+        assert (report["ok"], report["stale"]) == (ok, stale)
 
 
 def test_doctests_pass() -> None:
-    """Doctest examples embedded in smoke_test_index.py must not regress."""
-    import doctest
+    """Doctest examples embedded in smoke_test_index.py must not regress.
 
-    import smoke_test_index as _mod
+    The examples document the JSON shape and age rounding that consumers rely on.
+    """
+    results = doctest.testmod(_smoke_module, verbose=False)
 
-    results = doctest.testmod(_mod, verbose=False)
     assert results.failed == 0, f"{results.failed} doctest(s) failed"

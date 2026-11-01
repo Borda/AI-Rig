@@ -6,6 +6,7 @@ import hashlib
 import io
 import itertools
 import json
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 
 import consolidate_inventory as ci
@@ -79,6 +80,133 @@ def _id(inventory: dict[str, object], file: str, section: str) -> str:
 def _vet(inventory: dict[str, object], ids: list[str], floor: int = 0) -> dict[str, object]:
     """Validate one cluster over ``ids`` and return its record."""
     return ci.validate(inventory, [{"id": "c", "items": ids}], floor)["clusters"][0]  # type: ignore[index]
+
+
+def _write_many(root: Path, rels: Iterable[str], text: str) -> None:
+    """Write the same ``text`` to every path in ``rels`` under ``root``."""
+    for rel in rels:
+        _write(root, rel, text)
+
+
+def _make_always_loaded(items: list[dict[str, object]]) -> None:
+    """Rewrite inventory ``items`` in place so they claim to be always-loaded rules."""
+    for item in items:
+        item["group"] = "always:cc_a:"
+        item["load"]["hierarchy"] = "always"  # type: ignore[index]
+
+
+def _unguarded_citations(root: Path, titles: list[str], forms: list[str]) -> list[tuple[str, str]]:
+    """Return each ``(title, form)`` whose citation under ``root`` leaves the cited heading unguarded."""
+    missed = []
+    for title in titles:
+        _write(root, "plugins/cc_a/skills/t/tgt.md", f"## Wrap\n\n##### {title}\nbody\n")
+        for form in forms:
+            _write(root, "plugins/cc_a/skills/s/SKILL.md", f"## Steps\n\nsee tgt.md {form.format(t=title)}\n")
+            items = ci.build_inventory(root, ci.ALL_KINDS)["items"]
+            if not any(g["title"] == title for item in items for g in item["guarded"]):
+                missed.append((title, form))
+    return missed
+
+
+def _words(content: str) -> str:
+    """Collapse every run of white space in each line, as a renderer shows it."""
+    return "\n".join(" ".join(line.split()) for line in content.split("\n")).strip()
+
+
+def _heading_mismatches(parser: object, documents: Iterable[str]) -> list[str]:
+    """Return the documents whose headings differ between markdown-it and the block reader."""
+    mismatches = []
+    for text in documents:
+        tokens = parser.parse(text)  # type: ignore[attr-defined]
+        want = {
+            (tok.map[0], " ".join(tokens[pos + 1].content.split()))
+            for pos, tok in enumerate(tokens)
+            if tok.type == "heading_open" and tokens[pos + 1].content.strip()
+        }
+        got = {(idx, " ".join(title.split())) for idx, _, title, _ in ci._scan_blocks(ci._lines(text))}
+        if got != want:
+            mismatches.append(text)
+    return mismatches
+
+
+def _title_mismatches(parser: object, pools: Iterable[tuple[int, list[str]]]) -> list[str]:
+    """Return the headings whose markup does not reduce to the text markdown-it renders for them."""
+    mismatches = []
+    for count, pool in pools:
+        for combo in itertools.product(pool, repeat=count):
+            heading = " ".join(combo)
+            inline = parser.parse("# " + heading + "\n")[1]  # type: ignore[attr-defined]
+            plain = "".join(c.content for c in inline.children if c.type in ("text", "code_inline", "image"))
+            if ci._full_title(heading) != ci._full_title(plain):
+                mismatches.append(heading)
+    return mismatches
+
+
+def _paragraph_mismatches(parser: object, pool: list[str]) -> list[str]:
+    """Return the texts whose paragraphs differ between markdown-it and the block reader (setext headings aside)."""
+    wrong = []
+    for count in (1, 2, 3):
+        for combo in itertools.product(pool, repeat=count):
+            text = "\n".join(combo) + "\n"
+            tokens = parser.parse(text)  # type: ignore[attr-defined]
+            want = {
+                (t.map[0], _words(tokens[i + 1].content)) for i, t in enumerate(tokens) if t.type == "paragraph_open"
+            }
+            heads = {t.map[0] for t in tokens if t.type == "heading_open"}
+            found: list[list[tuple[int, str]]] = []
+            ci._scan_blocks(ci._lines(text), paragraphs=found)
+            got = {(para[0][0], _words("\n".join(row for _, row in para))) for para in found}
+            if want - got or {p for p in got - want if p[0] not in heads}:
+                wrong.append(text)
+    return wrong
+
+
+def _continuation_fronts(starts: list[str], pieces: list[str]) -> Iterator[str]:
+    """Yield every ``paths:`` frontmatter made of a start and one or two continuation lines from ``pieces``."""
+    for first in starts:
+        for count in (1, 2):
+            for combo in itertools.product(pieces, repeat=count):
+                yield "paths:" + first + "\n" + "\n".join("  " + piece for piece in combo)
+
+
+def _beside_paths_fronts(values: list[str], extras: list[str]) -> Iterator[str]:
+    """Yield every frontmatter holding a ``description`` entry and ``paths:`` in each order."""
+    for value in values:
+        for count in (0, 1, 2):
+            for combo in itertools.product(extras, repeat=count):
+                other = "\n".join(["description: " + value, *combo])
+                yield from (other + "\npaths: src/**", "paths: src/**\n" + other, "paths: [a, b]\n" + other)
+
+
+def _yaml_disagreements(yaml: object, fronts: Iterable[str]) -> list[str]:
+    """Return the frontmatters ``parse_paths`` reads as a list other than the one PyYAML reads."""
+    mismatches = []
+    for front in fronts:
+        got = ci.parse_paths(f"---\n{front}\n---\n")
+        if got in ([], [ci.UNPARSED_PATHS]):
+            continue
+        try:
+            data = yaml.safe_load(front)  # type: ignore[attr-defined]
+        except (yaml.YAMLError, ValueError, OverflowError):  # type: ignore[attr-defined]
+            continue
+        want = data.get("paths") if isinstance(data, dict) else None
+        want = [want] if isinstance(want, str) else want
+        if want != got:
+            mismatches.append(front)
+    return mismatches
+
+
+def _read_but_yaml_refuses(yaml: object, fronts: Iterable[str]) -> list[str]:
+    """Return the frontmatters ``parse_paths`` reads although PyYAML refuses to load them."""
+    accepted = []
+    for front in fronts:
+        if ci.parse_paths(f"---\n{front}\n---\n") in ([], [ci.UNPARSED_PATHS]):
+            continue
+        try:
+            yaml.safe_load(front)  # type: ignore[attr-defined]
+        except (yaml.YAMLError, ValueError, OverflowError):  # type: ignore[attr-defined]
+            accepted.append(front)
+    return accepted
 
 
 class TestParsePaths:
@@ -284,8 +412,8 @@ class TestInventory:
         skill loads, so they never reached clustering or the not-examined accounting.
         """
         monkeypatch.setattr(ci, "MANIFEST", [])
-        for rel in ("SKILL.md", "protocol.md", "guidelines/writing.md", "modes/m.md", "ARCH.md", "README.md"):
-            _write(tmp_path, f"plugins/cc_a/skills/s/{rel}", "## H\n\nbody\n")
+        names = ("SKILL.md", "protocol.md", "guidelines/writing.md", "modes/m.md", "ARCH.md", "README.md")
+        _write_many(tmp_path, [f"plugins/cc_a/skills/s/{rel}" for rel in names], "## H\n\nbody\n")
         inventory = ci.build_inventory(tmp_path, ci.ALL_KINDS)
         files = set(_by_file(inventory))
         assert {
@@ -1044,9 +1172,8 @@ class TestSettle:
         """
         vetted = json.loads(json.dumps(env["vetted"]))
         cluster = next(c for c in vetted["clusters"] if c["id"] == "ab")
-        for guard in cluster["guarded"]:
-            if guard["id"] == env["ids"]["alpha"]:  # type: ignore[index]
-                guard["title"] = "Alpha Rule: old"
+        guard = next(g for g in cluster["guarded"] if g["id"] == env["ids"]["alpha"])  # type: ignore[index]
+        guard["title"] = "Alpha Rule: old"
         (env["proposals"] / "ab.md").write_text("## Alpha Rule: new\n\nshort merged text\n", encoding="utf-8")  # type: ignore[operator]
         document, _ = ci.settle(vetted, [self._merge(env)], env["proposals"], [])  # type: ignore[arg-type]
         assert any("renamed" in d for d in document["clusters"][0]["downgrades"])  # type: ignore[index]
@@ -1197,22 +1324,18 @@ class TestSettle:
     @pytest.mark.parametrize(
         ("lines", "fragment"),
         [
-            pytest.param("40-50", "outside the cluster's sections", id="past-the-member"),
-            pytest.param("2-9", "outside the cluster's sections", id="straddles-the-member-end"),
-            pytest.param("x", "no parseable", id="not-a-range"),
-            pytest.param("5-2", "inverted", id="inverted-range"),
-            pytest.param(None, "no parseable", id="missing-lines"),
+            pytest.param({"lines": "40-50"}, "outside the cluster's sections", id="past-the-member"),
+            pytest.param({"lines": "2-9"}, "outside the cluster's sections", id="straddles-the-member-end"),
+            pytest.param({"lines": "x"}, "no parseable", id="not-a-range"),
+            pytest.param({"lines": "5-2"}, "inverted", id="inverted-range"),
+            pytest.param({}, "no parseable", id="missing-lines"),
         ],
     )
     def test_edit_must_lie_inside_a_member_section(
-        self, env: dict[str, object], lines: str | None, fragment: str
+        self, env: dict[str, object], lines: dict[str, str], fragment: str
     ) -> None:
         """An edit whose line range is missing, malformed or beyond the cluster's sections is rejected."""
-        edit = self._edit("add", self.SKILL)
-        if lines is None:
-            del edit["lines"]
-        else:
-            edit["lines"] = lines
+        edit = {key: value for key, value in self._edit("add", self.SKILL).items() if key != "lines"} | lines
         record = self._run(env, self._sharpen(env, [edit]))
         assert record["decision"] == "rejected"
         assert any(fragment in d for d in record["downgrades"])
@@ -1555,11 +1678,10 @@ class TestSettle:
 
     def test_two_different_edit_lists_have_different_digests(self, env: dict[str, object]) -> None:
         """'Must retain access checks' and 'may omit access checks' are different changes with different digests."""
-        digests = []
-        for after in ("must retain access checks", "may omit access checks"):
-            edit = {"action": "rewrite", "file": self.SKILL, "lines": "3", "before": "s" * 30, "after": after}
-            digests.append(self._run(env, self._sharpen(env, [edit]))["digest"])
-        assert digests[0] != digests[1]
+        edit = {"action": "rewrite", "file": self.SKILL, "lines": "3", "before": "s" * 30}
+        must = self._run(env, self._sharpen(env, [{**edit, "after": "must retain access checks"}]))
+        may = self._run(env, self._sharpen(env, [{**edit, "after": "may omit access checks"}]))
+        assert must["digest"] != may["digest"]
 
     @pytest.mark.parametrize(
         "original",
@@ -2041,6 +2163,13 @@ class TestArtifactBoundaries:
         assert victim.read_text(encoding="utf-8") == "keep me"
 
     @pytest.mark.parametrize(
+        "command",
+        [
+            pytest.param(["select", "--scope", "rules"], id="select"),
+            pytest.param(["settle", "--vetted", "x", "--judgments", "x", "--proposals-dir", "x"], id="settle"),
+        ],
+    )
+    @pytest.mark.parametrize(
         "mutate",
         [
             pytest.param(lambda d: d.update(items=None), id="items-null"),
@@ -2054,23 +2183,19 @@ class TestArtifactBoundaries:
         ],
     )
     def test_malformed_inventory_is_blocked_not_a_crash(
-        self, corpus: Path, tmp_path: Path, mutate: object, capsys: pytest.CaptureFixture[str]
+        self, corpus: Path, tmp_path: Path, mutate: object, command: list[str], capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """An inventory whose records lack the fields later steps read, or hold them in the wrong type, exits 1."""
+        """An inventory whose records lack the fields later steps read, or hold them in the wrong type, exits 1.
+
+        Both ``select`` and ``settle`` read the inventory first, so each is run against every hand-made defect.
+        """
         inv = self._inventory(corpus, tmp_path)
         document = json.loads(inv.read_text(encoding="utf-8"))
         mutate(document)  # type: ignore[operator]
         inv.write_text(json.dumps(document), encoding="utf-8")
-        for argv in (["select", "--inventory", str(inv), "--scope", "rules"], ["settle", "--inventory", str(inv)]):
-            with pytest.raises(SystemExit) as exc:
-                ci.main(
-                    [
-                        *argv,
-                        *(["--vetted", "x", "--judgments", "x", "--proposals-dir", "x"] if argv[0] == "settle" else []),
-                    ]
-                )
-            assert exc.value.code in (1, 2)
-        assert "BLOCKED" in capsys.readouterr().out
+        with pytest.raises(SystemExit) as exc:
+            ci.main([command[0], "--inventory", str(inv), *command[1:]])
+        assert (exc.value.code in (1, 2), "BLOCKED" in capsys.readouterr().out) == (True, True)
 
     @pytest.mark.parametrize("clusters", [pytest.param([None], id="null-entry"), pytest.param([{}], id="empty-entry")])
     def test_malformed_validate_report_is_blocked_not_a_crash(
@@ -2152,10 +2277,8 @@ class TestArtifactBoundaries:
         compared."""
         inv = self._inventory(corpus, tmp_path)
         document = json.loads(inv.read_text(encoding="utf-8"))
-        for item in document["items"]:
-            if item["file"].startswith("plugins/cc_a/skills/demo/"):
-                item["group"] = "always:cc_a:"
-                item["load"]["hierarchy"] = "always"
+        skill_items = [item for item in document["items"] if item["file"].startswith("plugins/cc_a/skills/demo/")]
+        _make_always_loaded(skill_items)
         inv.write_text(json.dumps(document), encoding="utf-8")
         with pytest.raises(SystemExit):
             ci.main(["validate", "--inventory", str(inv), "--clusters", str(tmp_path / "none.json")])
@@ -2823,20 +2946,8 @@ class TestBlockReader:
             "   1. num2\n    - ##### CI\n</pre>\n>### CI\n",
             "> Setext in quote\n    ##### CI\n> ---\n",
         ]
-        parser = markdown_it.MarkdownIt("commonmark")
         documents = ["\n".join(lines) + "\n" for lines in itertools.product(fragments, repeat=3)] + known
-        mismatches = []
-        for text in documents:
-            tokens = parser.parse(text)
-            want = {
-                (tok.map[0], " ".join(tokens[pos + 1].content.split()))
-                for pos, tok in enumerate(tokens)
-                if tok.type == "heading_open" and tokens[pos + 1].content.strip()
-            }
-            got = {(idx, " ".join(title.split())) for idx, _, title, _ in ci._scan_blocks(ci._lines(text))}
-            if got != want:
-                mismatches.append(text)
-        assert mismatches == []
+        assert _heading_mismatches(markdown_it.MarkdownIt("commonmark"), documents) == []
 
 
 class TestInlineMarkupTitles:
@@ -3044,32 +3155,47 @@ class TestRoundEighteenRoutes:
         """A spelling YAML reads as another type, or as one longer scalar, is never taken as a glob list."""
         assert ci.parse_paths(f"---\n{front}\n---\n") == [ci.UNPARSED_PATHS]
 
-    def test_agrees_with_a_yaml_parser(self) -> None:
+    @pytest.mark.parametrize(
+        ("starts", "pieces"),
+        [
+            pytest.param(
+                ["", " [", ' ["a', " 'x", " a", " [a, b]"],
+                ["]", ",", '"src/**"', "'it''s'", "# c", "#x", 'b"', "y'", "- x", "a #b", "a#b", "}", "&and", "~"],
+                id="quote-comment-bracket-and-plain-text",
+            ),
+            pytest.param(
+                ["", " [", ' ["a', " 'x", " a", " [a, b]"],
+                [
+                    "\u00a0",
+                    "a\u00a0",
+                    "\ta",
+                    "a\t",
+                    "\u2003",
+                    "'x\u00a0'",
+                    '"b\u00a0"',
+                    "\u00a0#c",
+                    "a:\t",
+                    "- \u00a0x",
+                    "]",
+                ],
+                id="tabs-and-no-break-spaces",
+            ),
+            pytest.param(
+                ["", " [", " a", " [a]"],
+                ["- a", "- - a", "? a", ": a", "-", "?", ":", "-a", "- 'x'", "a - b", "- ", "[- a]", "- ? a", "a: b"],
+                id="indicators-at-the-item-start",
+            ),
+        ],
+    )
+    def test_agrees_with_a_yaml_parser(self, starts: list[str], pieces: list[str]) -> None:
         """Whenever ``parse_paths`` reads a value, PyYAML reads the same list from the same frontmatter.
 
-        Every one to three line continuation built from quote, comment, bracket and plain-text pieces; skipped when
-        PyYAML is not installed.
+        Every one to two line continuation built from the pieces under a flow-list or block start; skipped when PyYAML
+        is not installed. The pieces mix quotes, comments and brackets, then tabs and no-break spaces, then YAML
+        indicators at an item start.
         """
         yaml = pytest.importorskip("yaml")
-        starts = ["", " [", ' ["a', " 'x", " a", " [a, b]"]
-        pieces = ["]", ",", '"src/**"', "'it''s'", "# c", "#x", 'b"', "y'", "- x", "a #b", "a#b", "}", "&and", "~"]
-        mismatches = []
-        for first in starts:
-            for count in (1, 2):
-                for combo in itertools.product(pieces, repeat=count):
-                    front = "paths:" + first + "\n" + "\n".join("  " + piece for piece in combo)
-                    got = ci.parse_paths(f"---\n{front}\n---\n")
-                    if got in ([], [ci.UNPARSED_PATHS]):
-                        continue
-                    try:
-                        data = yaml.safe_load(front)
-                    except (yaml.YAMLError, ValueError, OverflowError):
-                        continue
-                    want = data.get("paths") if isinstance(data, dict) else None
-                    want = [want] if isinstance(want, str) else want
-                    if want != got:
-                        mismatches.append(front)
-        assert mismatches == []
+        assert _yaml_disagreements(yaml, _continuation_fronts(starts, pieces)) == []
 
 
 class TestRoundNineteenRoutes:
@@ -3104,20 +3230,8 @@ class TestRoundNineteenRoutes:
             '"multi', 'line"', "[a]: /u\x01rl", "[a]: /u\u00a0rl", "[ ]: /x", "> [a]: /url", '> "title"', "- [a]: /url",
             "===", "---", "", "-", "Setext", "# H",
         ]  # fmt: skip
-        parser = markdown_it.MarkdownIt("commonmark")
-        mismatches = []
-        for lines in itertools.product(fragments, repeat=3):
-            text = "\n".join(lines) + "\n"
-            tokens = parser.parse(text)
-            want = {
-                (tok.map[0], " ".join(tokens[pos + 1].content.split()))
-                for pos, tok in enumerate(tokens)
-                if tok.type == "heading_open" and tokens[pos + 1].content.strip()
-            }
-            got = {(idx, " ".join(title.split())) for idx, _, title, _ in ci._scan_blocks(ci._lines(text))}
-            if got != want:
-                mismatches.append(text)
-        assert mismatches == []
+        documents = ["\n".join(lines) + "\n" for lines in itertools.product(fragments, repeat=3)]
+        assert _heading_mismatches(markdown_it.MarkdownIt("commonmark"), documents) == []
 
     @pytest.mark.parametrize(
         ("heading", "cited"),
@@ -3178,44 +3292,6 @@ class TestRoundNineteenRoutes:
         """A frontmatter holding a YAML line break other than ``\\n``, or a control character, is not read."""
         assert ci.parse_paths(f"---\npaths: [a{char}b]\n---\n") == [ci.UNPARSED_PATHS]
 
-    def test_agrees_with_a_yaml_parser_on_white_space(self) -> None:
-        """Whenever ``parse_paths`` reads a value, PyYAML reads the same list, with tabs and no-break spaces mixed in.
-
-        Skipped when PyYAML is not installed.
-        """
-        yaml = pytest.importorskip("yaml")
-        starts = ["", " [", ' ["a', " 'x", " a", " [a, b]"]
-        pieces = [
-            "\u00a0",
-            "a\u00a0",
-            "\ta",
-            "a\t",
-            "\u2003",
-            "'x\u00a0'",
-            '"b\u00a0"',
-            "\u00a0#c",
-            "a:\t",
-            "- \u00a0x",
-            "]",
-        ]
-        mismatches = []
-        for first in starts:
-            for count in (1, 2):
-                for combo in itertools.product(pieces, repeat=count):
-                    front = "paths:" + first + "\n" + "\n".join("  " + piece for piece in combo)
-                    got = ci.parse_paths(f"---\n{front}\n---\n")
-                    if got in ([], [ci.UNPARSED_PATHS]):
-                        continue
-                    try:
-                        data = yaml.safe_load(front)
-                    except (yaml.YAMLError, ValueError, OverflowError):
-                        continue
-                    want = data.get("paths") if isinstance(data, dict) else None
-                    want = [want] if isinstance(want, str) else want
-                    if want != got:
-                        mismatches.append(front)
-        assert mismatches == []
-
 
 class TestRoundTwentyRoutes:
     """Covers survivor headings in the whole file, escaped marks in titles, nested YAML items and registered skills."""
@@ -3272,16 +3348,8 @@ class TestRoundTwentyRoutes:
             '<code title="x > y">N</code>', "<span class='a>b'>O</span>", "<br/>", "<!-- c -->P", "[CI](u&#41;tail)",
             "[q](u&amp;v)", "&#42;R&#42;", "<i>", "a<b", '<a href="u">S</a>',
         ]  # fmt: skip
-        parser = markdown_it.MarkdownIt("commonmark")
-        mismatches = []
-        for count, pool in ((1, parts + links), (2, parts + links), (3, parts), (3, links)):
-            for combo in itertools.product(pool, repeat=count):
-                heading = " ".join(combo)
-                inline = parser.parse("# " + heading + "\n")[1]
-                plain = "".join(c.content for c in inline.children if c.type in ("text", "code_inline", "image"))
-                if ci._full_title(heading) != ci._full_title(plain):
-                    mismatches.append(heading)
-        assert mismatches == []
+        pools = ((1, parts + links), (2, parts + links), (3, parts), (3, links))
+        assert _title_mismatches(markdown_it.MarkdownIt("commonmark"), pools) == []
 
     @pytest.mark.parametrize(
         "front",
@@ -3314,32 +3382,6 @@ class TestRoundTwentyRoutes:
         nested = ci.parse_paths("---\npaths:\n  - - a\n---\n")
         quoted = ci.parse_paths('---\npaths: ["- a"]\n---\n')
         assert nested != quoted
-
-    def test_agrees_with_a_yaml_parser_on_indicators(self) -> None:
-        """Whenever ``parse_paths`` reads a value, PyYAML reads the same list, with indicators at the item start.
-
-        Skipped when PyYAML is not installed.
-        """
-        yaml = pytest.importorskip("yaml")
-        starts = ["", " [", " a", " [a]"]
-        pieces = ["- a", "- - a", "? a", ": a", "-", "?", ":", "-a", "- 'x'", "a - b", "- ", "[- a]", "- ? a", "a: b"]
-        mismatches = []
-        for first in starts:
-            for count in (1, 2):
-                for combo in itertools.product(pieces, repeat=count):
-                    front = "paths:" + first + "\n" + "\n".join("  " + piece for piece in combo)
-                    got = ci.parse_paths(f"---\n{front}\n---\n")
-                    if got in ([], [ci.UNPARSED_PATHS]):
-                        continue
-                    try:
-                        data = yaml.safe_load(front)
-                    except (yaml.YAMLError, ValueError, OverflowError):
-                        continue
-                    want = data.get("paths") if isinstance(data, dict) else None
-                    want = [want] if isinstance(want, str) else want
-                    if want != got:
-                        mismatches.append(front)
-        assert mismatches == []
 
     def test_registered_skills_of_another_plugin_are_inventoried(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -3435,21 +3477,9 @@ class TestRoundTwentyOneRoutes:
         """
         yaml = pytest.importorskip("yaml")
         alphabet = "0189abexX_.:-+~nulZ <="
-        mismatches = []
-        for length in (1, 2, 3):
-            for chars in itertools.product(alphabet, repeat=length):
-                text = "".join(chars)
-                front = f"paths: [{text}]"
-                got = ci.parse_paths(f"---\n{front}\n---\n")
-                if text != text.strip(" ") or "  " in text or got in ([], [ci.UNPARSED_PATHS]):
-                    continue
-                try:
-                    data = yaml.safe_load(front)
-                except (yaml.YAMLError, ValueError, OverflowError):
-                    continue
-                if (data.get("paths") if isinstance(data, dict) else None) != got:
-                    mismatches.append(front)
-        assert mismatches == []
+        scalars = ("".join(chars) for length in (1, 2, 3) for chars in itertools.product(alphabet, repeat=length))
+        fronts = (f"paths: [{text}]" for text in scalars if text == text.strip(" ") and "  " not in text)
+        assert _yaml_disagreements(yaml, fronts) == []
 
     @pytest.mark.parametrize(
         "registered",
@@ -3501,18 +3531,18 @@ class TestRoundTwentyOneRoutes:
         ]
 
     @pytest.mark.parametrize(
-        ("root_skill", "expected"),
+        ("root_skills", "expected"),
         [
             pytest.param(
-                True,
+                ["plugins/other/SKILL.md"],
                 ["plugins/other/SKILL.md", "plugins/other/b/SKILL.md", "plugins/other/modes/task.md"],
                 id="root-folder-holds-skill-md-so-it-is-one-skill-with-its-fragments",
             ),
-            pytest.param(False, ["plugins/other/b/SKILL.md"], id="root-folder-holds-skill-folders"),
+            pytest.param([], ["plugins/other/b/SKILL.md"], id="root-folder-holds-skill-folders"),
         ],
     )
     def test_a_plugin_root_registration_names_only_skill_files(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, root_skill: bool, expected: list[str]
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, root_skills: list[str], expected: list[str]
     ) -> None:
         """Registering ``.`` reads the root skill with its fragments, or the ``SKILL.md`` files one level down."""
         monkeypatch.setattr(ci, "MANIFEST", [])
@@ -3521,8 +3551,7 @@ class TestRoundTwentyOneRoutes:
         _write(tmp_path, "plugins/other/README.md", "## Readme\n\nnot a skill\n")
         _write(tmp_path, "plugins/other/docs/notes.md", "## Notes\n\nnot a skill\n")
         _write(tmp_path, "plugins/other/modes/task.md", "## Task\n\nfragment of the root skill\n")
-        if root_skill:
-            _write(tmp_path, "plugins/other/SKILL.md", "## Root\n\nrun\n")
+        _write_many(tmp_path, root_skills, "## Root\n\nrun\n")
         found = sorted(p.relative_to(tmp_path).as_posix() for p in ci.discover(tmp_path, ci.ALL_KINDS))
         assert found == expected
 
@@ -3724,15 +3753,7 @@ class TestRoundTwentyThreeRoutes:
             "§{t}", '§"{t}"', "§`{t}`", "§{t} and more", "§{t}.", "§{t}, then", "(§{t})",
             "§“{t}”", "§{t} (see above)",
         ]  # fmt: skip
-        missed = []
-        for title in titles:
-            _write(tmp_path, "plugins/cc_a/skills/t/tgt.md", f"## Wrap\n\n##### {title}\nbody\n")
-            for form in forms:
-                _write(tmp_path, "plugins/cc_a/skills/s/SKILL.md", f"## Steps\n\nsee tgt.md {form.format(t=title)}\n")
-                items = ci.build_inventory(tmp_path, ci.ALL_KINDS)["items"]
-                if not any(g["title"] == title for item in items for g in item["guarded"]):
-                    missed.append((title, form))
-        assert missed == []
+        assert _unguarded_citations(tmp_path, titles, forms) == []
 
     def test_an_unrelated_citation_guards_nothing(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """A citation of another heading does not guard this one."""
@@ -3780,8 +3801,8 @@ class TestRoundTwentyThreeRoutes:
         _write(tmp_path, "plugins/other/SKILL.md", "## Root\n\nrun\n")
         _write(tmp_path, "plugins/other/modes/task.md", "## Task\n\nfragment\n")
         _write(tmp_path, "plugins/other/reference.md", "## Reference\n\nfragment\n")
-        for ignored in ("README.md", "CLAUDE.md", "tests/t.md", "docs/d.md", ".hidden/h.md"):
-            _write(tmp_path, f"plugins/other/{ignored}", "## Not\n\nnot a skill\n")
+        ignored = ("README.md", "CLAUDE.md", "tests/t.md", "docs/d.md", ".hidden/h.md")
+        _write_many(tmp_path, [f"plugins/other/{name}" for name in ignored], "## Not\n\nnot a skill\n")
         items = ci.build_inventory(tmp_path, ci.ALL_KINDS)["items"]
         assert sorted((item["file"], item["group"]) for item in items) == [
             ("plugins/other/SKILL.md", "lazy:other:skills/other"),
@@ -3908,19 +3929,7 @@ class TestRoundTwentyFourRoutes:
             "[ a ]",
             "''",
         ]
-        accepted = []
-        for first in starts:
-            for count in (1, 2):
-                for combo in itertools.product(pieces, repeat=count):
-                    front = "paths:" + first + "\n" + "\n".join("  " + piece for piece in combo)
-                    got = ci.parse_paths(f"---\n{front}\n---\n")
-                    if got in ([], [ci.UNPARSED_PATHS]):
-                        continue
-                    try:
-                        yaml.safe_load(front)
-                    except (yaml.YAMLError, ValueError, OverflowError):
-                        accepted.append(front)
-        assert accepted == []
+        assert _read_but_yaml_refuses(yaml, _continuation_fronts(starts, pieces)) == []
 
     @pytest.mark.parametrize(
         ("heading", "citing"),
@@ -4105,19 +4114,7 @@ class TestRoundTwentyFiveRoutes:
             "a, b", "[a, 1]", "|2", '"a" b', "'a' 'b'", "a 'b'", "[a, b] c", "[a] # c", "a ] b", "a, [b]", "'a'#c",
         ]  # fmt: skip
         extras = ["", "  more", "  - i", "  k: v", "- i", " x: y", "  # c", "   deeper", "oops"]
-        accepted = []
-        for value in values:
-            for count in (0, 1, 2):
-                for combo in itertools.product(extras, repeat=count):
-                    other = "\n".join(["description: " + value, *combo])
-                    for front in (other + "\npaths: src/**", "paths: src/**\n" + other, "paths: [a, b]\n" + other):
-                        if ci.parse_paths(f"---\n{front}\n---\n") in ([], [ci.UNPARSED_PATHS]):
-                            continue
-                        try:
-                            yaml.safe_load(front)
-                        except (yaml.YAMLError, ValueError, OverflowError):
-                            accepted.append(front)
-        assert accepted == []
+        assert _read_but_yaml_refuses(yaml, _beside_paths_fronts(values, extras)) == []
 
     def test_a_registered_child_skill_is_found_whatever_the_folder_is_called(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -4204,8 +4201,7 @@ class TestRoundTwentySixRoutes:
         """A command is loaded when invoked, like a skill: it is covered, in one lazy group, and never merged."""
         monkeypatch.setattr(ci, "MANIFEST", [])
         _write(tmp_path, "plugins/other/.claude-plugin/plugin.json", json.dumps({"name": "other", **manifest}))
-        for name in files:
-            _write(tmp_path, f"plugins/other/{name}", "## Run\n\nbody\n")
+        _write_many(tmp_path, [f"plugins/other/{name}" for name in files], "## Run\n\nbody\n")
         items = ci.build_inventory(tmp_path, ("skills",))["items"]
         assert sorted(item["file"].removeprefix("plugins/other/") for item in items) == expected
         assert {item["group"] for item in items} <= {"lazy:other:skills/_commands"}
@@ -4290,30 +4286,11 @@ class TestRoundTwentySevenRoutes:
         markdown-it-py is not installed.
         """
         markdown_it = pytest.importorskip("markdown_it")
-        parser = markdown_it.MarkdownIt("commonmark")
         pool = [
             "text", "- item", "  more", "> quote", "> more", ">", "1. num", "   cont", "- > both", "  > cont", "", "---",
             "# Head", "```", "    code", "[a]: /u", "<div>", "   - nested", "> - li", ">   cont",
         ]  # fmt: skip
-
-        def words(content: str) -> str:
-            return "\n".join(" ".join(line.split()) for line in content.split("\n")).strip()
-
-        wrong = []
-        for count in (1, 2, 3):
-            for combo in itertools.product(pool, repeat=count):
-                text = "\n".join(combo) + "\n"
-                tokens = parser.parse(text)
-                want = {
-                    (t.map[0], words(tokens[i + 1].content)) for i, t in enumerate(tokens) if t.type == "paragraph_open"
-                }
-                heads = {t.map[0] for t in tokens if t.type == "heading_open"}
-                found: list[list[tuple[int, str]]] = []
-                ci._scan_blocks(ci._lines(text), paragraphs=found)
-                got = {(para[0][0], words("\n".join(row for _, row in para))) for para in found}
-                if want - got or {p for p in got - want if p[0] not in heads}:
-                    wrong.append(text)
-        assert wrong == []
+        assert _paragraph_mismatches(markdown_it.MarkdownIt("commonmark"), pool) == []
 
 
 class TestRoundTwentyEightRoutes:
@@ -4410,15 +4387,5 @@ class TestRoundTwentyEightRoutes:
         """
         yaml = pytest.importorskip("yaml")
         alphabet = "0123456789_.-+:eExXbBoO<=~ "
-        accepted = []
-        for count in (1, 2, 3):
-            for combo in itertools.product(alphabet, repeat=count):
-                value = "".join(combo)
-                front = f"paths: src/**\nother: {value}"
-                if ci.parse_paths(f"---\n{front}\n---\n") in ([], [ci.UNPARSED_PATHS]):
-                    continue
-                try:
-                    yaml.safe_load(front)
-                except (yaml.YAMLError, ValueError, OverflowError):
-                    accepted.append(front)
-        assert accepted == []
+        values = ("".join(combo) for count in (1, 2, 3) for combo in itertools.product(alphabet, repeat=count))
+        assert _read_but_yaml_refuses(yaml, (f"paths: src/**\nother: {value}" for value in values)) == []

@@ -18,6 +18,16 @@ Findings, one per offending line:
 ``bookkeeping-turn``
     A line puts ``TaskCreate`` / ``TaskUpdate`` / ``TaskList`` in a turn or response of its own. The one sanctioned
     exception — ``TaskUpdate(completed)`` immediately before a long output block — is not a finding.
+``standalone-in-progress``
+    A fenced ``text`` block holds nothing but task calls and one of them sets ``in_progress`` — the per-step
+    start-of-step update that costs a full-context turn of its own.
+``unexplained-task-block``
+    A fenced ``text`` block holding nothing but task calls neither rides with real work nor is the completion before
+    long output: none of the 400 characters before it, nor its body, says so (``riding``, ``rides with``,
+    ``same response``, ``standalone``, ``before the long output``…).
+``missing-ride-rule``
+    A skill directory drives tasks (``TaskCreate(`` / ``TaskUpdate(``) yet none of its Markdown states that task calls
+    ride with the next call (``bookkeeping-only``, ``bookkeeping alone``, ``rides with the next…``).
 ``silent-timeout``
     A skill directory spawns agents (``Agent(subagent_type=…)``) yet none of its Markdown ever surfaces a timed-out
     agent (``⏱`` / ``timed_out``). Replacing polling with notifications must not make a stalled agent invisible: the
@@ -74,6 +84,21 @@ _SCAN_GLOBS = ("**/skills/**/*.md", "**/agents/*.md")
 _SPAWN = re.compile(r"\bAgent\(subagent_type")
 #: Matches wording showing a timed-out agent is surfaced to the user (the clock symbol or ``timed_out``).
 _TIMEOUT_VISIBLE = re.compile(r"⏱|timed_out|timed out")
+
+#: Matches a task call as the first token of a line, including the ``for each … TaskUpdate(`` loop form.
+_TASK_CALL = re.compile(r"\s*(?:TaskUpdate|TaskCreate)\(|\s*for each .*TaskUpdate\(")
+#: Matches the statement that task calls ride with the next call instead of taking a bookkeeping-only turn.
+_RIDE_RULE = re.compile(r"(?i)bookkeeping-only|bookkeeping alone|rides? (?:in|with) the (?:response|next)")
+#: Matches wording that explains why a task-only block does not cost a turn of its own.
+_RIDES_OR_EXCEPTION = re.compile(
+    r"(?i)riding|rides (?:in|with)|same response|one response|standalone|before (?:the )?long output|before printing"
+)
+#: Matches a call that opens a task-driving skill: ``TaskCreate(`` or ``TaskUpdate(``.
+_USES_TASKS = re.compile(r"TaskCreate\(|TaskUpdate\(")
+#: Opening fence of a ``text`` block, the form skills use to show task calls.
+_TEXT_FENCE = "```text"
+#: How many characters before a task-only block may carry its explanation.
+_CONTEXT_CHARS = 400
 
 
 @dataclass(frozen=True)
@@ -135,6 +160,93 @@ def scan_file(path: Path) -> list[Finding]:
         Finding(kind, path.as_posix(), number, text.strip()[:160])
         for number, text in enumerate(lines, start=1)
         if (kind := classify(text))
+    ]
+
+
+def task_only_blocks(text: str) -> list[tuple[int, str, str]]:
+    """Return ``(line, preceding text, body)`` for every ``text`` fence that holds nothing but task calls.
+
+    The scan is line by line, so reflowing a paragraph never changes a verdict. The preceding text is the
+    whitespace-flattened ``_CONTEXT_CHARS`` characters before the opening fence.
+
+    Args:
+        text: Full Markdown text of one skill file.
+
+    Returns:
+        One tuple per task-only block: its 1-based fence line, the flattened text before it, and its body.
+
+    Examples:
+        >>> task_only_blocks("Rides with the next call.\\n```text\\nTaskUpdate(1, completed)\\n```\\n")[0][0]
+        2
+        >>> task_only_blocks("```text\\nsome output\\n```\\n")
+        []
+    """
+    lines = text.splitlines()
+    blocks = []
+    index = 0
+    while index < len(lines):
+        if lines[index].strip() != _TEXT_FENCE:
+            index += 1
+            continue
+        end = index + 1
+        while end < len(lines) and lines[end].strip() != "```":
+            end += 1
+        body = [line for line in lines[index + 1 : end] if line.strip()]
+        if body and all(_TASK_CALL.match(line) for line in body):
+            before = "\n".join(lines[:index])[-_CONTEXT_CHARS:]
+            blocks.append((index + 1, " ".join(before.split()), "\n".join(lines[index + 1 : end])))
+        index = end + 1
+    return blocks
+
+
+def task_block_findings(path: Path) -> list[Finding]:
+    """Flag task-only blocks that open a step with ``in_progress`` or never say how they avoid a turn of their own.
+
+    Args:
+        path: Skill, mode or template Markdown file.
+
+    Returns:
+        ``standalone-in-progress`` and ``unexplained-task-block`` findings; an unreadable file yields none.
+    """
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    findings = []
+    for line, before, body in task_only_blocks(text):
+        first = body.strip().splitlines()[0].strip()[:160]
+        if "in_progress" in body:
+            findings.append(Finding("standalone-in-progress", path.as_posix(), line, first))
+        elif not _RIDES_OR_EXCEPTION.search(" ".join((before + " " + body).split())):
+            findings.append(Finding("unexplained-task-block", path.as_posix(), line, first))
+    return findings
+
+
+def missing_ride_rules(paths: list[Path]) -> list[Finding]:
+    """Report each skill directory that drives tasks but never states that task calls ride with real work.
+
+    Args:
+        paths: Markdown files already collected for scanning.
+
+    Returns:
+        One ``missing-ride-rule`` finding per offending skill directory.
+    """
+    uses: dict[Path, bool] = {}
+    states: dict[Path, bool] = {}
+    for path in paths:
+        skill = _skill_dir(path)
+        if skill is None or skill.name == "_shared":
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        uses[skill] = uses.get(skill, False) or bool(_USES_TASKS.search(text))
+        states[skill] = states.get(skill, False) or bool(_RIDE_RULE.search(" ".join(text.split())))
+    return [
+        Finding("missing-ride-rule", skill.as_posix(), 0, "drives tasks but never says task calls ride with real work")
+        for skill in sorted(uses)
+        if uses[skill] and not states[skill]
     ]
 
 
@@ -217,7 +329,11 @@ def main(argv: list[str] | None = None) -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", newline="\n")  # type: ignore[union-attr]
     paths = collect(args.scan_dir, args.files)
-    findings = [finding for path in paths for finding in scan_file(path)] + silent_timeouts(paths)
+    findings = (
+        [finding for path in paths for finding in scan_file(path) + task_block_findings(path)]
+        + silent_timeouts(paths)
+        + missing_ride_rules(paths)
+    )
     for finding in findings:
         print(f"{finding.kind}: {finding.path}:{finding.line}: {finding.text}")
     if not findings:

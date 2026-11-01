@@ -35,61 +35,65 @@ SCOPE_AWARE = {
 _FENCE = "```"
 
 
+def _write(path: Path, text: str) -> None:
+    """Write ``text`` to ``path``, creating its parent directories."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
 def _seed_defective_plugin(root: Path) -> Path:
     """Create a plugins/ tree with one deliberately-defective plugin; return the plugins dir."""
     plugins = root / "plugins"
     plugin = plugins / "myplugin"
-    (plugin / ".claude-plugin").mkdir(parents=True)
-    (plugin / ".claude-plugin" / "plugin.json").write_text('{"name": "myplugin", "version": "1.0.0"}', encoding="utf-8")
+    _write(plugin / ".claude-plugin" / "plugin.json", '{"name": "myplugin", "version": "1.0.0"}')
 
     # readme-drift: marker (0.0.1) disagrees with plugin.json (1.0.0)
-    (plugin / "README.md").write_text("Current version: `0.0.1`.\n", encoding="utf-8")
+    _write(plugin / "README.md", "Current version: `0.0.1`.\n")
 
     # plugin-module-docs: a shipped module without its maintainer-facing overview.
-    (plugin / "bin").mkdir()
-    (plugin / "bin" / "missing_docs.py").write_text("print('missing docs')\n", encoding="utf-8")
+    _write(plugin / "bin" / "missing_docs.py", "print('missing docs')\n")
 
     # tag-symmetry: unbalanced <role> (open, never closed)
     # agent-plugin-root: an agent prompt never has the defaulted `${CLAUDE_PLUGIN_ROOT:-...}` form substituted
-    (plugin / "agents").mkdir()
-    (plugin / "agents" / "bad.md").write_text(
+    _write(
+        plugin / "agents" / "bad.md",
         '<role>\na role with no closing tag\ncat "${CLAUDE_PLUGIN_ROOT:-plugins/myplugin}/refs/a.md"\n',
-        encoding="utf-8",
     )
 
     # fence-symmetry: an opening bash fence with no closing fence
-    (plugin / "skills" / "fencebad").mkdir(parents=True)
-    (plugin / "skills" / "fencebad" / "SKILL.md").write_text(f"## Step\n\n{_FENCE}bash\necho hi\n", encoding="utf-8")
+    _write(plugin / "skills" / "fencebad" / "SKILL.md", f"## Step\n\n{_FENCE}bash\necho hi\n")
 
     # bash-persistence: $RUN_ID assigned in block 1, referenced in block 2 (fresh-shell loss)
     # mode-dispatch: `go to "Mode: Ghost"` with no `## Mode: Ghost` header
-    (plugin / "skills" / "persist").mkdir(parents=True)
-    (plugin / "skills" / "persist" / "SKILL.md").write_text(
+    _write(
+        plugin / "skills" / "persist" / "SKILL.md",
         f"## Step 1\n\n{_FENCE}bash\nRUN_ID=$(date)\n{_FENCE}\n\n"
         f'## Step 2\n\n{_FENCE}bash\necho "$RUN_ID"\n{_FENCE}\n\n'
         'If done, go to "Mode: Ghost" below.\n',
-        encoding="utf-8",
     )
 
     # bash-persistence on real block shapes: each later block carries something that once masked the lost variable
     # (the standard CSID preamble, a read-back of a different variable, a single-quoted jq program, an unassigned
     # `<placeholder>` token), so the plain case above does not prove recall for them.
-    (plugin / "skills" / "shapes").mkdir(parents=True)
-    (plugin / "skills" / "shapes" / "SKILL.md").write_text(
+    _write(
+        plugin / "skills" / "shapes" / "SKILL.md",
         f"## Step 1\n\n{_FENCE}bash\nPREAMBLE_LOST=$(date)\nREAD_LOST=$(date)\nJQ_LOST=$(date)\nANGLE_LOST=$(date)\n{_FENCE}\n\n"
         f'## Step 2\n\n{_FENCE}bash\nexport CSID="${{CLAUDE_CODE_SESSION_ID:-$PPID}}"\necho "$PREAMBLE_LOST"\n{_FENCE}\n\n'
         f'## Step 3\n\n{_FENCE}bash\nIFS= read -r OTHER < "$HOME/state" 2>/dev/null || OTHER=""\n'
         f'echo "$OTHER $READ_LOST"\n{_FENCE}\n\n'
         f"## Step 4\n\n{_FENCE}bash\njq '.[] | select(.name == $cmd)' file.json\necho \"$JQ_LOST\"\n{_FENCE}\n\n"
         f'## Step 5\n\n{_FENCE}bash\necho "<RUN_ID> $ANGLE_LOST"\n{_FENCE}\n',
-        encoding="utf-8",
     )
     return plugins
 
 
 @pytest.fixture(scope="module")
 def seeded_jsonl(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """Run all native checkers through the CLI once and retain their JSONL output."""
+    """Run every checker through the CLI once over the seeded tree and retain the JSONL output.
+
+    This is the one deliberate full-registry run: every checker, including the whole-repo ones, executes its real
+    subprocess here, so the per-case tests below can stay cheap.
+    """
     root = tmp_path_factory.mktemp("seeded-audit")
     plugins = _seed_defective_plugin(root)
     out = root / "static.jsonl"
@@ -99,7 +103,7 @@ def seeded_jsonl(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 @pytest.fixture(scope="module")
 def seeded_results(seeded_jsonl: Path) -> dict[str, dict]:
-    """Read the shared native-checker results for the seeded-defect assertions."""
+    """Read the shared native-checker results, keyed by check id, for the seeded-defect assertions."""
     results = [json.loads(line) for line in seeded_jsonl.read_text(encoding="utf-8").splitlines()]
     return {result["check"]: result for result in results}
 
@@ -136,13 +140,15 @@ def seeded_results(seeded_jsonl: Path) -> dict[str, dict]:
 def test_layer1_catches_seeded_defect(
     seeded_results: dict[str, dict], check: str, expected_file: str, expected_text: str
 ) -> None:
-    """Each scope-aware checker flags its own planted defect."""
+    """Each scope-aware checker flags its own planted defect, naming the file and the offending text.
+
+    The seeded tree plants one defect per checker (plus four lost-variable shapes that once masked a real loss); recall
+    must stay 100% on these mechanical classes.
+    """
     result = seeded_results[check]
     lines = "\n".join(result["lines"])
-    normalized_lines = lines.replace("\\", "/")
-    assert result["status"] == "fail", f"{check} missed its seeded defect: {result}"
-    assert result["findings"] >= 1
-    assert expected_file in normalized_lines
+    assert (result["status"], result["findings"] >= 1) == ("fail", True), f"{check} missed its seeded defect: {result}"
+    assert expected_file in lines.replace("\\", "/")
     assert expected_text in lines
 
 
@@ -154,19 +160,15 @@ def test_clean_scope_passes_scope_aware_checks(tmp_path: Path, monkeypatch: pyte
     ``seeded_jsonl`` still runs the full registry through the CLI, so every checker keeps a real subprocess run.
     """
     monkeypatch.setattr(aud, "CHECKS", [check for check in aud.CHECKS if check["id"] in SCOPE_AWARE])
-    plugins = tmp_path / "plugins"
-    plugin = plugins / "clean"
-    (plugin / ".claude-plugin").mkdir(parents=True)
-    (plugin / ".claude-plugin" / "plugin.json").write_text('{"name": "clean", "version": "1.0.0"}', encoding="utf-8")
-    (plugin / "README.md").write_text("Current version: `1.0.0`.\n", encoding="utf-8")
-    (plugin / "skills" / "ok").mkdir(parents=True)
-    (plugin / "skills" / "ok" / "SKILL.md").write_text(
-        f"## Step\n\n{_FENCE}bash\necho hi\n{_FENCE}\n", encoding="utf-8"
-    )
+    plugin = tmp_path / "plugins" / "clean"
+    _write(plugin / ".claude-plugin" / "plugin.json", '{"name": "clean", "version": "1.0.0"}')
+    _write(plugin / "README.md", "Current version: `1.0.0`.\n")
+    _write(plugin / "skills" / "ok" / "SKILL.md", f"## Step\n\n{_FENCE}bash\necho hi\n{_FENCE}\n")
 
-    results = {r["check"]: r for r in aud.run_checks(plugins)}
-    for check in SCOPE_AWARE:
-        assert results[check]["status"] in {"pass", "skipped"}, f"{check} false-positived: {results[check]}"
+    results = {r["check"]: r for r in aud.run_checks(tmp_path / "plugins")}
+
+    assert {check: r for check, r in results.items() if r["status"] not in {"pass", "skipped"}} == {}
+    assert SCOPE_AWARE <= results.keys()
 
 
 @pytest.mark.parametrize(
@@ -190,9 +192,11 @@ def test_single_plugin_scope_reports_real_findings(
 
     result = aud.run_checks(plugin)[0]
 
-    assert result["status"] == "fail"
-    assert result["findings"] >= 1
-    assert expected_text in "\n".join(result["lines"])
+    assert (result["status"], result["findings"] >= 1, expected_text in "\n".join(result["lines"])) == (
+        "fail",
+        True,
+        True,
+    )
 
 
 def test_checker_usage_error_is_reported_as_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -201,15 +205,13 @@ def test_checker_usage_error_is_reported_as_error(tmp_path: Path, monkeypatch: p
     A usage error (bad scope, missing argument) used to read as ``fail`` with 0 findings, so a summary of "0 finding(s)"
     hid a check that never ran.
     """
-    script = tmp_path / "usage_error.py"
-    script.write_text("import sys\nsys.stderr.write('usage: bad scope\\n')\nsys.exit(2)\n", encoding="utf-8")
+    _write(tmp_path / "usage_error.py", "import sys\nsys.stderr.write('usage: bad scope\\n')\nsys.exit(2)\n")
     monkeypatch.setattr(aud, "BIN", tmp_path)
     monkeypatch.setattr(aud, "CHECKS", [{"id": "usage", "kind": "whole", "script": "usage_error.py"}])
 
     result = aud.run_checks(tmp_path)[0]
 
-    assert result["status"] == "error"
-    assert result["lines"] == ["usage: bad scope"]
+    assert (result["status"], result["lines"]) == ("error", ["usage: bad scope"])
 
 
 def test_files_kind_argv_separates_option_shaped_names(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -218,7 +220,7 @@ def test_files_kind_argv_separates_option_shaped_names(tmp_path: Path, monkeypat
     With scope ``.`` the glob yields a bare ``-x.md`` for a top-level file of that name; passed unseparated, the
     checker's argparse would treat it as an option and scan the wrong thing or fail on an unknown flag.
     """
-    (tmp_path / "-x.md").write_text("text\n", encoding="utf-8")
+    _write(tmp_path / "-x.md", "text\n")
     monkeypatch.chdir(tmp_path)
     check = {"kind": "files", "script": "check_fence_symmetry.py", "globs": ["**/*.md"]}
 
@@ -228,13 +230,12 @@ def test_files_kind_argv_separates_option_shaped_names(tmp_path: Path, monkeypat
     assert argv[2:] == ["--", "-x.md"]
 
 
-def test_jsonl_output_written(seeded_jsonl: Path) -> None:
-    """Verify command-line option behavior.
+def test_jsonl_output_has_one_complete_object_per_check(seeded_jsonl: Path) -> None:
+    """``--jsonl`` writes one parseable JSON object per registered check, each with the four report fields.
 
-    --jsonl writes one parseable JSON object per check.
+    Downstream consolidation reads this file line by line, so a missing check row or a record without ``check``,
+    ``status``, ``findings`` or ``lines`` would drop a checker from the audit silently.
     """
-    lines = seeded_jsonl.read_text(encoding="utf-8").strip().splitlines()
-    assert len(lines) == len(aud.CHECKS)
-    for line in lines:
-        obj = json.loads(line)
-        assert {"check", "status", "findings", "lines"} <= obj.keys()
+    records = [json.loads(line) for line in seeded_jsonl.read_text(encoding="utf-8").strip().splitlines()]
+    assert len(records) == len(aud.CHECKS)
+    assert all({"check", "status", "findings", "lines"} <= record.keys() for record in records)

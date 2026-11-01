@@ -36,6 +36,8 @@ _APPROVAL_LIB = _HOOKS_DIR / "lib" / "approval-grants.js"
 #: Option labels of the single-use token questions (``git-push``, ``gh-write``).
 _TOKEN_OPTIONS = ("Approve", "Deny")
 
+from _hook_env import _hook_tmp_base, _session_transcript  # noqa: E402  (sys.path set above)
+
 
 def _load_bin_modules() -> None:
     """Load Foundry bin scripts into ``sys.modules`` for direct test imports."""
@@ -101,7 +103,6 @@ def _state_dir() -> Callable[[str], Path]:
     Base comes from :func:`_hook_tmp_base`, so the path tracks the hook's own ``getSentinelDir()`` on every platform
     instead of assuming ``/tmp``.
     """
-    from _hook_env import _hook_tmp_base  # local: _TESTS_DIR is on sys.path only after this module loads
 
     def _state_dir(sid: str) -> Path:
         """Return the hook state directory for one session id."""
@@ -127,16 +128,6 @@ def _git_line(repo: Path, *args: str) -> str:
         ["git", *args], cwd=repo, capture_output=True, encoding="utf-8", check=True, timeout=15, env=env
     )
     return proc.stdout.strip()
-
-
-def _session_transcript(repo: Path) -> Path:
-    """Return the session transcript beside ``repo`` that the token fixtures record the user's answers in.
-
-    Examples:
-        >>> _session_transcript(Path("/w/repo")).name
-        'repo-session.jsonl'
-    """
-    return repo.parent / f"{repo.name}-session.jsonl"
 
 
 def _answer_lines(

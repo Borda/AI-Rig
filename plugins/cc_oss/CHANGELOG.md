@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.56.1
+
+- The vitality extractor's abandonment-banner and changelog-date patterns are built from raw-string pieces instead of f-strings with doubled braces, so the `docformatter` pre-commit hook no longer corrupts them into invalid Python on CPython 3.12.3; the patterns match exactly what they did.
+- Three script docstrings (`fetch_pr_intel`, `gh_batch_query`, `extract_contributors`) point at their tests' current folders.
+
 ## 0.56.0
 
 - Require proportional planning and challenge before accepted execution, then consolidate actual results with independent review and verification; routine authorized work gains no user approval prompt. Validate bounded outcomes, decompose larger work, and complete branches depth-first with focused context and useful disjoint sibling delegation; parent consolidation retains valid-evidence and mandatory acceptance gates.

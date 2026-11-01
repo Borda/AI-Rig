@@ -11,9 +11,9 @@ must not leave the gate in a state that blocks a real writer or reader afterward
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 import pytest
@@ -24,7 +24,6 @@ if str(_SRC) not in sys.path:
 
 import codemap_py.rwgate as rwgate  # noqa: E402  (needs the sys.path insert above)
 
-_HOLD_SECONDS = 5.0
 _JOIN_TIMEOUT = 30.0
 
 
@@ -34,17 +33,17 @@ def _index_path(tmp_path: Path) -> Path:
     return tmp_path / "idx.json"
 
 
-def _holder_program(index_path: Path, hold_seconds: float) -> str:
-    """Build a program that takes the writer lease, announces it, and holds it briefly."""
+def _holder_program(index_path: Path) -> str:
+    """Build a program that takes the writer lease, announces it, and holds it until its stdin closes."""
     return "\n".join(
         [
-            "import sys, time",
+            "import sys",
             f"sys.path.insert(0, {str(_SRC)!r})",
             "from pathlib import Path",
             "from codemap_py import rwgate",
             "def build(target):",
             "    print('HELD', flush=True)",
-            f"    time.sleep({hold_seconds})",
+            "    sys.stdin.readline()",
             "    rwgate.atomic_publish(target, b'{\"schema\": 1}')",
             "    return None",
             f"rwgate.write_index(Path({str(index_path)!r}), build, timeout=30)",
@@ -52,14 +51,17 @@ def _holder_program(index_path: Path, hold_seconds: float) -> str:
     )
 
 
-def _spawn_holder(index_path: Path, hold_seconds: float = _HOLD_SECONDS) -> subprocess.Popen:
+def _spawn_holder(index_path: Path) -> subprocess.Popen:
     """Start a separate process holding the writer lease, returning once it has the lease.
+
+    The holder keeps the lease until the caller closes its stdin (see ``_release``), so no timing guess is involved.
 
     A separate process, not a thread: POSIX ``fcntl`` locks are per-process, so an in-process holder would make the
     probe report this process's own ownership instead of exercising the foreign-token path a real second writer takes.
     """
     proc = subprocess.Popen(
-        [sys.executable, "-c", _holder_program(index_path, hold_seconds)],
+        [sys.executable, "-c", _holder_program(index_path)],
+        stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -71,24 +73,44 @@ def _spawn_holder(index_path: Path, hold_seconds: float = _HOLD_SECONDS) -> subp
     return proc
 
 
+def _release(holder: subprocess.Popen) -> None:
+    """Let the holder finish its build and exit, waiting for the lease to be released, then close its pipes."""
+    assert holder.stdin is not None
+    holder.stdin.close()
+    holder.wait(timeout=_JOIN_TIMEOUT)
+    for stream in (holder.stdout, holder.stderr):
+        if stream is not None:
+            stream.close()
+
+
 def test_reports_false_when_no_writer_holds_intent(index_path: Path) -> None:
-    """An idle gate reports no active writer."""
+    """An idle gate reports no active writer.
+
+    Nothing has ever written to the index path, so the probe has no intent to find.
+    """
     assert rwgate.writer_active(index_path) is False
 
 
 def test_reports_true_while_a_foreign_writer_holds_intent(index_path: Path) -> None:
-    """A live writer in another process is visible to the probe."""
+    """A live writer in another process is visible to the probe.
+
+    The holder subprocess keeps the writer lease until released; the probe runs while it is held and must see the
+    foreign token. The holder is then released and awaited so no process outlives the test.
+    """
     holder = _spawn_holder(index_path)
     try:
         assert rwgate.writer_active(index_path) is True
     finally:
-        holder.wait(timeout=_JOIN_TIMEOUT)
+        _release(holder)
 
 
 def test_reports_false_again_once_the_writer_exits(index_path: Path) -> None:
-    """Intent is released on writer exit, so the probe stops reporting it."""
-    holder = _spawn_holder(index_path, hold_seconds=0.1)
-    holder.wait(timeout=_JOIN_TIMEOUT)
+    """Intent is released on writer exit, so the probe stops reporting it.
+
+    A short-lived holder takes and drops the lease; afterwards a stale token must not make the probe report a writer.
+    """
+    holder = _spawn_holder(index_path)
+    _release(holder)
 
     assert rwgate.writer_active(index_path) is False
 
@@ -96,18 +118,21 @@ def test_reports_false_again_once_the_writer_exits(index_path: Path) -> None:
 def test_probe_does_not_acquire_a_lease(index_path: Path) -> None:
     """Probing must not take a reader token that a later writer would have to drain.
 
-    If the probe leaked a lease, the writer below would block until its own deadline rather than proceeding immediately.
+    If the probe leaked a lease, the writer below would block until its deadline and raise ``IndexBusy`` instead of
+    publishing; the short timeout keeps that failure fast without any wall-clock assertion.
     """
     assert rwgate.writer_active(index_path) is False
 
-    started = time.monotonic()
-    rwgate.write_index(index_path, lambda target: rwgate.atomic_publish(target, b'{"schema": 1}'), timeout=5)
+    rwgate.write_index(index_path, lambda target: rwgate.atomic_publish(target, b'{"schema": 1}'), timeout=2)
 
-    assert time.monotonic() - started < 5
+    assert json.loads(index_path.read_text(encoding="utf-8")) == {"schema": 1}
 
 
 def test_probe_leaves_a_later_read_unblocked(index_path: Path) -> None:
-    """A read after probing still succeeds — the probe holds nothing across its return."""
+    """A read after probing still succeeds — the probe holds nothing across its return.
+
+    A published index is probed once, then read through the gate; a leaked lock from the probe would block the read.
+    """
     rwgate.write_index(index_path, lambda target: rwgate.atomic_publish(target, b'{"schema": 7}'), timeout=5)
     rwgate.writer_active(index_path)
 
@@ -115,7 +140,7 @@ def test_probe_leaves_a_later_read_unblocked(index_path: Path) -> None:
         assert data == {"schema": 7}
 
 
-def test_probe_reports_false_when_coordination_is_unavailable(tmp_path: Path, monkeypatch) -> None:
+def test_probe_reports_false_when_coordination_is_unavailable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """An unwritable coordination root means no writer can hold intent through it.
 
     Reporting True there would make every caller stand down permanently on a broken setup, which is worse than the
@@ -130,6 +155,9 @@ def test_probe_reports_false_when_coordination_is_unavailable(tmp_path: Path, mo
     assert rwgate.writer_active(tmp_path / "idx.json") is False
 
 
-def test_probe_is_exported(index_path: Path) -> None:
-    """The probe is public API; callers outside the package rely on it by name."""
+def test_probe_is_exported() -> None:
+    """The probe is public API; callers outside the package rely on it by name.
+
+    Wrappers import ``writer_active`` from ``rwgate``, so dropping it from ``__all__`` breaks them at import time.
+    """
     assert "writer_active" in rwgate.__all__
