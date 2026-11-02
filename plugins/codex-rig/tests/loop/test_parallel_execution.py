@@ -2284,7 +2284,6 @@ class TestRollbackContract:
     @pytest.mark.parametrize(
         "document",
         [
-            pytest.param(PLUGIN_ROOT / "ARCHITECTURE.md", id="architecture"),
             pytest.param(PLUGIN_ROOT / "README.md", id="readme"),
         ],
     )

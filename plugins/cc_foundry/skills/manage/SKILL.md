@@ -93,6 +93,8 @@ Colors in use are read from live Grep in Step 3 (authoritative) — no static us
 
 **Task tracking**: create tasks for each major phase; mark in_progress/completed throughout.
 
+<!-- ../../assets/images/manage-arch.svg diagrams the runs, gates and parallel fan-out. Documentation only, never loaded — update it in the same commit as any change to step order, gate placement, or agent fan-out. -->
+
 ## Step 1: Parse and validate
 
 Extract operation, type, name, optional arguments from `$ARGUMENTS`.

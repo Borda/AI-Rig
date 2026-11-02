@@ -52,7 +52,7 @@ AGENT_DEADLINE_S=1800  # per spawned agent, from its spawn; covers the former 90
 
 <!-- Agent resolution: see _OSS_SHARED/agent-resolution.md -->
 
-<!-- ARCH.md beside this file diagrams the runs, gates and parallel fan-out. Documentation only, never loaded — update it in the same commit as any change to step order, gate placement, or agent fan-out. -->
+<!-- ../../assets/images/analyse-arch.svg diagrams the runs, gates and parallel fan-out. Documentation only, never loaded — update it in the same commit as any change to step order, gate placement, or agent fan-out. -->
 
 ## Agent Resolution
 

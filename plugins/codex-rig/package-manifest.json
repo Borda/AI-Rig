@@ -32,11 +32,6 @@
     },
     {
       "mode": "0644",
-      "path": "ARCHITECTURE.md",
-      "sha256": "a5b2b977028d9a606db8cf3c053fed20e4f69ca6b0c36cb348e6ef4e71ea5ac9"
-    },
-    {
-      "mode": "0644",
       "path": "CHANGELOG.md",
       "sha256": "5641915e5640c6c85ac0eda595e9045b2d6bf9e5a6302922586d7431d3586e85"
     },
@@ -53,12 +48,17 @@
     {
       "mode": "0644",
       "path": "README.md",
-      "sha256": "3fdb3ffe4ab37cf933625f7e7f8bf76edded2f3a66561dabe344b686697f0a72"
+      "sha256": "fae2a0e11512a2dca4a4f3f30b0c96b435bc10adcbf3b3382647f0055a0b4ce7"
     },
     {
       "mode": "0644",
       "path": "assets/AGENTS.md",
       "sha256": "9e41692212e1aa7ddb8a4431bf2c04bd1bafdd9d39b99de893d741b820daea39"
+    },
+    {
+      "mode": "0644",
+      "path": "assets/images/parallel-execution-architecture.svg",
+      "sha256": "08f428ae4c3de9e55ca8cce634a1ae7211dbfbdfe33953d6fb3202e3ac25d746"
     },
     {
       "mode": "0755",
@@ -243,7 +243,7 @@
     {
       "mode": "0755",
       "path": "runtime/calibration/run.py",
-      "sha256": "1a74ebc0a35b0502da4ff416f683bffd1a1974163b7e18b0bcb7fb43ae77b66c"
+      "sha256": "ff90975a8e6b5afdb844b15d91c770378c7151e495cf8114988e17c28eddbfe8"
     },
     {
       "mode": "0755",
@@ -718,7 +718,7 @@
     {
       "mode": "0644",
       "path": "skills/code-review/references/historical-routes.md",
-      "sha256": "f9e65e5f598a88ec18c38e90dfcb82d8332c22a787d839fdde0476b15bbb3e67"
+      "sha256": "4d7e279e37251ebe746ebad0ffbdac39be65606d22da900f9ea887cc6eb6bfbb"
     },
     {
       "mode": "0644",
@@ -783,7 +783,7 @@
     {
       "mode": "0644",
       "path": "skills/implement/SKILL.md",
-      "sha256": "8962045c646315093bd7eeaedce7e1ddc396929e25204a852a164a4a414d01af"
+      "sha256": "99a73e6ab0ae71fe3389a2c74f9211a7665d9181843412b1eccd270d83b9bb0d"
     },
     {
       "mode": "0644",
@@ -853,7 +853,7 @@
     {
       "mode": "0644",
       "path": "skills/manage/SKILL.md",
-      "sha256": "63c1429a3599856bdfde508d13dc8edac3f0727f5776b1b230cc5a43dcc63ac3"
+      "sha256": "2417ef5fda27182118456a3a439f719bafd36ef925288ac132921c77aeb2219a"
     },
     {
       "mode": "0644",
@@ -1038,7 +1038,7 @@
     {
       "mode": "0644",
       "path": "tests/calibration/test_workflow_prevention.py",
-      "sha256": "7f8d1fbfd420d5d72e9467e224001e5c49367883a96b0a7ca05589a740427c34"
+      "sha256": "5657eede58307066a2e1d94877d973e509efde66c52660e03276f99127bc6582"
     },
     {
       "mode": "0644",
@@ -1223,7 +1223,7 @@
     {
       "mode": "0644",
       "path": "tests/loop/test_parallel_execution.py",
-      "sha256": "43dfd0b9691cb0f454281af2ea3f40a847fd02e6d2d8598881308e8c11ad1658"
+      "sha256": "6209c0bd951d586b02e4ed3ee9931c72effb005aaeb1eb8c2ce9f2903aa40dc5"
     },
     {
       "mode": "0644",
@@ -1313,7 +1313,7 @@
     {
       "mode": "0644",
       "path": "tests/packaging/release/test_plugin_only_release.py",
-      "sha256": "d8a33b830d936bc37846af76e8f5bf7940c7be355e09e3184e999da9e0e1a0e9"
+      "sha256": "537b03664631c7289a6df9ed3cefcb0c49e7ee9088366d2444558bc7e1a02746"
     },
     {
       "mode": "0644",

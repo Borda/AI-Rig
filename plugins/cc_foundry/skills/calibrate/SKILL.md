@@ -110,6 +110,8 @@ Domain tables per mode: see `modes/agents.md`, `modes/skills.md`, `modes/routing
 
 **Task marking discipline**: create ALL category tasks as `pending` at the start (before any pipeline spawns). Mark a task `in_progress` only immediately before spawning its pipeline. Mark it `completed` immediately after collecting its results. Never mark more than the two in-flight categories' tasks `in_progress` simultaneously (Step 2 pairing) — misrepresents execution state. On loop retry or scope change, create new task.
 
+<!-- ../../assets/images/calibrate-arch.svg diagrams the runs, gates and parallel fan-out. Documentation only, never loaded — update it in the same commit as any change to step order, gate placement, or agent fan-out. -->
+
 ## Step 1: Parse targets and create run directory
 
 From `$ARGUMENTS`, determine:

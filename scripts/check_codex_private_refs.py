@@ -87,7 +87,11 @@ def payload_files(root: Path) -> Iterator[Path]:
 def parallel_documents(root: Path) -> list[Path]:
     """List the published documents of the bounded parallel-execution flow that exist on disk."""
     base = root / PLUGIN
-    documents = [base / "ARCHITECTURE.md", base / "README.md", base / "shared" / "portable-parallel-read.md"]
+    documents = [
+        base / "assets/images/parallel-execution-architecture.svg",
+        base / "README.md",
+        base / "shared" / "portable-parallel-read.md",
+    ]
     for skill in DOCUMENT_SKILLS:
         skill_dir = base / "skills" / skill
         documents.extend([skill_dir / "SKILL.md", *sorted((skill_dir / "references").glob("*.md"))])

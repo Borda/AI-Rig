@@ -109,6 +109,8 @@ Bare tokens `eval`, `train`, `val` (without compound suffix) do NOT trigger `ml`
 
 <!-- Agent resolution: see _RESEARCH_SHARED/agent-resolution.md -->
 
+<!-- ../../assets/images/run-arch.svg diagrams the runs, gates and parallel fan-out. Documentation only, never loaded — update it in the same commit as any change to step order, gate placement, or agent fan-out. -->
+
 ## Agent Resolution
 
 **Agent resolution**: load and follow the protocol below. Contains: foundry check + fallback table. If foundry not installed: use table to substitute each `foundry:X` with `general-purpose`. Agents this skill uses: `foundry:sw-engineer`, `foundry:linting-expert`, `foundry:perf-optimizer`, `foundry:solution-architect`, `research:scientist`.

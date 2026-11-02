@@ -215,6 +215,10 @@ ______________________________________________________________________
 
 Full-sweep quality audit of the project's `.claude/` config by default, or of all `plugins/*/` agent and skill files with `--local` (plugin source checkout). Installed plugins in `~/.claude/plugins/cache/` are not audited; a default run that finds no `.claude/` agents or skills reports them as `⚠ UNSCANNED` instead of a clean sweep. Catches broken cross-references, inventory drift, model-tier mismatches, description overlap, doc staleness. Reports findings by severity; fix level chosen from always-fire follow-up gate after report. Adversarial mode challenges every claim via `foundry:challenger` + Codex.
 
+**Execution architecture** — animated diagram of fans, joins and gates.
+
+![/foundry:audit execution architecture: fans, joins and gates (animated)](assets/images/audit-arch.svg)
+
 ```text
 /foundry:audit                      # full sweep, report only — gate offers fix options
 /foundry:audit --upgrade            # fetch latest Claude Code docs, apply improvements with A/B testing
@@ -276,6 +280,10 @@ ______________________________________________________________________
 
 Benchmarks agents and skills against synthetic problems with defined ground truth. Primary signal = calibration bias — gap between self-reported confidence and actual recall. Well-calibrated agent reports 0.9 when finds ~90% of issues. With `--ab-test`, each target also runs against a `general-purpose` baseline and gets one verdict, first match wins: `significant`, `marginal`, `baseline-ahead`, `inconclusive` (both arms at ceiling), or `no-lift`. A mixed-sign result (one metric up, the other down) can still be `significant` or `marginal`; the report then describes the negative delta as a trade-off.
 
+**Execution architecture** — animated diagram of fans, joins and gates.
+
+![/foundry:calibrate execution architecture: fans, joins and gates (animated)](assets/images/calibrate-arch.svg)
+
 ```text
 /foundry:calibrate all --fast              # quick benchmark across all modes (3 problems each)
 /foundry:calibrate all --full              # thorough benchmark (10 problems each)
@@ -328,6 +336,10 @@ ______________________________________________________________________
 ### `/foundry:manage`
 
 Create, update, or delete agents, skills, and rules; update or delete hooks. Full cross-reference propagation. Keeps MEMORY.md, README, `settings.json` in sync automatically.
+
+**Execution architecture** — animated diagram of fans, joins and gates.
+
+![/foundry:manage execution architecture: fans, joins and gates (animated)](assets/images/manage-arch.svg)
 
 ```text
 /foundry:manage create agent security-auditor "Vulnerability scanning specialist for OWASP Top 10 and supply chain threats"
@@ -441,6 +453,10 @@ ______________________________________________________________________
 ### `/foundry:distill`
 
 Extracts patterns from work history + corrections, distills into durable improvements — new agent/skill suggestions, roster quality review, memory pruning, promoting lessons into rules, or analysing external plugins/agentic resources for adoption.
+
+**Execution architecture** — animated diagram of fans, joins and gates.
+
+![/foundry:distill execution architecture: fans, joins and gates (animated)](assets/images/distill-arch.svg)
 
 ```text
 /foundry:distill                                     # analyze project patterns, suggest new agents/skills

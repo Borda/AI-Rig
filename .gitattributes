@@ -14,6 +14,8 @@
 *.yaml text eol=lf
 *.yml  text eol=lf
 *.toml text eol=lf
+# Shipped diagrams are text; the Codex Rig package manifest hashes their exact bytes.
+*.svg  text eol=lf
 
 # Codemap launchers include extensionless Python, POSIX-shell, and Windows-batch
 # files whose exact bytes are part of generated benchmark manifest identities.

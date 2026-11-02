@@ -142,6 +142,13 @@ MCP is complementary to the bridge as a whole but mandatory for the Codex → Cl
 
 If you install only the Claude Code half to call Codex, MCP is not required. If you install only the Codex half or want the complete bidirectional bridge, the `.codex-mcp.json` declaration and `bin/bridge_mcp.py` are required transport components, not optional enhancements. The MCP boundary provides the three request tools plus read-only status and native workspace binding tools and prevents model-controlled workspace, background, or session selection.
 
+<details>
+<summary>Architecture — animated diagram of directions, MCP surface, setup lifecycle, permissions and workspace binding</summary>
+
+![Bridge architecture: Claude Code to Codex and Codex to Claude Code over one shared supervisor (animated)](assets/images/bridge-architecture.svg)
+
+</details>
+
 <a id="-install-for-claude-code"></a>
 
 ## 📦 Install for Claude Code
@@ -386,7 +393,7 @@ Run `action=verify-live ... live=required` only after explicitly accepting the s
 
 ## 📚 Maintainer documentation
 
-- [Architecture and transport](docs/architecture.md) explains both request directions, process boundaries, permissions, and exactly where MCP is required.
+- [Architecture and transport](assets/images/bridge-architecture.svg) diagrams both request directions, process boundaries, permissions, and exactly where MCP is required.
 - [Security and privacy](docs/security.md) defines authority, data flow, artifacts, result integrity, recovery, and cancellation boundaries.
 - [Operations and troubleshooting](docs/operations.md) covers prerequisites, diagnosis, foreground calls, detached jobs, common failures, and artifact inspection.
 - [Development and release verification](docs/development.md) records the package layout, local gates, installed-shape validation, and release responsibilities.

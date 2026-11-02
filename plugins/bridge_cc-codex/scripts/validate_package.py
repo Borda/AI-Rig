@@ -90,7 +90,7 @@ REQUIRED_FILES = {
     "LICENSE",
     "NOTICE",
     "README.md",
-    "docs/architecture.md",
+    "assets/images/bridge-architecture.svg",
     "docs/development.md",
     "docs/operations.md",
     "docs/security.md",

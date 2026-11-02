@@ -62,7 +62,7 @@ This route uses existing task authorization and observed tool capabilities, sepa
 
 This portable section permits only its promoted portable read-only route; its restrictions do not govern the separate Native Bounded Delegation route.
 
-Follow the [canonical G0–G8 execution flow](../../ARCHITECTURE.md#canonical-g0g8-execution-flow) for shared gate order and fork outcomes. This consumer's read-only evidence passes are bounded by G0–G5; parent owns deterministic G6 integration, G7 verification, and G8 verdict/promotion.
+Follow the [canonical G0–G8 execution flow](../../assets/images/parallel-execution-architecture.svg) for shared gate order and fork outcomes. This consumer's read-only evidence passes are bounded by G0–G5; parent owns deterministic G6 integration, G7 verification, and G8 verdict/promotion.
 
 ### Safe parallel work
 

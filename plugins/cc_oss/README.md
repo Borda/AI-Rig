@@ -185,6 +185,10 @@ ______________________________________________________________________
 
 Analyse GitHub threads + repo vitality. Accepts issue/PR number, keyword `vitality`, keyword `ecosystem`, or path to saved report file.
 
+**Execution architecture** — animated diagram of fans, joins and gates.
+
+![/oss:analyse execution architecture: fans, joins and gates (animated)](assets/images/analyse-arch.svg)
+
 **Purpose:** Structured actionable summary of any GitHub thread, or broad view of open work. No need to read every comment yourself.
 
 **Auto-invokes when:** user gives GitHub issue/PR number (`#N`) or `github.com` URL + asks analyze/summarize/triage; user asks "is this repo healthy" or vitality stats.
@@ -260,6 +264,10 @@ ______________________________________________________________________
 Review output preserves its aggregate prose summary, verdict, confidence and detailed findings. The header table adds `Reviewers: Software engineer [3], QA specialist [2], Documentation reviewer [1].` Each rating appears in square brackets after the role name (`Software engineer [3]`). Its legend appears immediately below: 1 = Approve · 2 = Minor changes · 3 = Changes required · 4 = Insufficient evidence · 5 = Block / Reject. Ratings describe actual reviewers' scoped judgments, never an averaged verdict. Reviewer names and finding authors show roles only, without execution-origin labels; skipped roles are omitted. The findings overview adds an `Author` column retaining all contributors to deduplicated findings. Terminal rejection keeps its existing gate behavior and reports `Not assessed` when no source review ran.
 
 Scope-aware parallel review of a GitHub PR. Input is a PR number or a saved review report for reply drafting.
+
+**Execution architecture** — animated diagram of fans, joins and gates.
+
+![/oss:review execution architecture: fans, joins and gates (animated)](assets/images/review-arch.svg)
 
 **Purpose:** Review architecture, tests, performance, docs, linting, and security in parallel. Produce a ranked findings report and, optionally, a welcoming contributor comment.
 
@@ -404,6 +412,10 @@ ______________________________________________________________________
 
 Apply review findings to codebase. Reads live PR comments, saved review report, or both — deduplicates, resolves conflicts, implements fixes. GitHub-side intelligence expands findings a bot collapsed into a `<details>` block and merges the same finding when it recurs across review rounds, before the report-side dedup below runs.
 
+**Execution architecture** — animated diagram of fans, joins and gates.
+
+![/oss:resolve execution architecture: fans, joins and gates (animated)](assets/images/resolve-arch.svg)
+
 **Purpose:** Close gap between "reviewer said X" and "X in code." One command: open findings → committed fixes.
 
 **Reject-gate interlock:** if the newest `/oss:review` report for this PR carries `Gate: REJECT_<GROUND>` (any of the 8 grounds under "/review" above), resolve refuses to start unless the PR's head commit has changed since that review — a rejected premise isn't something a code fix resolves. `Gate: BLOCK` (e.g. red CI) and everything else proceed normally — resolve is exactly the fix path for those.
@@ -523,6 +535,10 @@ ______________________________________________________________________
 ### /oss:release
 
 Release communication and readiness pipeline with four modes: notes, prepare, audit, and demo. Classification confidence drops when Truth check is skipped with any Removed or Breaking Changes item; verification limits that affect no classification remain listed as `(-0.00)` gaps.
+
+**Execution architecture** — animated diagram of fans, joins and gates.
+
+![/oss:release execution architecture: fans, joins and gates (animated)](assets/images/release-arch.svg)
 
 **Purpose:** Prepare release artifacts from a verified change range and audit readiness before a human tags or publishes the release.
 

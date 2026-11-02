@@ -156,6 +156,10 @@ All ten commands are Claude Code skills under the `research:` namespace. Their `
 
 Searches AI/ML literature, compares methods, recommends an approach for the current codebase, and can turn the recommendation into a phased plan. A broad survey uses the workflow; a named-paper deep dive belongs to `research:scientist`.
 
+**Execution architecture** — animated diagram of fans, joins and gates.
+
+![/research:topic execution architecture: fans, joins and gates (animated)](assets/images/topic-arch.svg)
+
 ```text
 /research:topic "efficient fine-tuning methods"
 /research:topic "efficient fine-tuning methods" --team
@@ -221,6 +225,10 @@ Required changes: (1) add `target:` under ## Metric  (2) replace metric_cmd
 Runs the core loop. Each iteration builds bounded context, proposes one scoped change, verifies that files changed, commits before measuring, runs the metric and guard, keeps a guarded improvement, or reverts the change. A campaign defaults to 20 iterations and is capped at 50. Five consecutive discards trigger strategy escalation and then stop rather than looping blindly.
 
 A text goal must specify a measurable improvement target. A dry-run or walkthrough of a campaign is also supported: it traces the requested steps without executing commands or iterations. Unrelated requests stop with a redirect.
+
+**Execution architecture** — animated diagram of fans, joins and gates.
+
+![/research:run execution architecture: fans, joins and gates (animated)](assets/images/run-arch.svg)
 
 ```text
 /research:run program.md
@@ -318,6 +326,10 @@ Fix: src/model.py:42 — reduction differs from the paper specification
 
 Runs one-component-at-a-time ablations after a completed run and an `APPROVED` judge report for the same program. It identifies candidates from the diff and diary, creates an isolated Git worktree for each variant, runs metric and guard commands locally, ranks importance, and can generate venue-specific reviewer Q&A.
 
+**Execution architecture** — animated diagram of fans, joins and gates.
+
+![/research:fortify execution architecture: fans, joins and gates (animated)](assets/images/fortify-arch.svg)
+
 ```text
 /research:fortify
 /research:fortify <run-id>
@@ -376,6 +388,10 @@ Next: /research:run program.md --hypothesis .experiments/retro-<ts>/hypotheses.j
 #### Grounded Jupytext notebook generation
 
 Generates a Kaggle competition notebook as a Jupytext `# %%` Python script. It grounds schema and submission format through the authenticated Kaggle CLI, then produces an EDA → baseline → training → inference pipeline where the selected mode requires it. It requires `foundry:sw-engineer` and stops when that required agent is unavailable.
+
+**Execution architecture** — animated diagram of fans, joins and gates.
+
+![/research:kaggle execution architecture: fans, joins and gates (animated)](assets/images/kaggle-arch.svg)
 
 ```text
 /research:kaggle competition-name

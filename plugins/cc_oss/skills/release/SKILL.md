@@ -30,7 +30,7 @@ Mode comes **first**; range or flags follow:
 | `/release notes --append` | no range (derived from last-processed marker); compose with `--changelog`/`--summary`/`--migration` | Runs the full pipeline scoped to the incremental range, integrating results into every existing artifact **in place** (`DRAFT.md` always; `CHANGELOG.md`/`SUMMARY.md`/`MIGRATION.md` when their flag is set) instead of regenerating from scratch |
 | `/release prepare <version>` | version to stamp, e.g. `v1.3.0` | All artifacts in `releases/<version>/`: `DRAFT.md` + `CHANGELOG.md` + `SUMMARY.md` + `MIGRATION.md` + `demo.py` + `waived-changes.md` |
 | `/release audit [version]` | optional target version | Terminal readiness report; emits `verdict: READY \| NEEDS_ATTENTION \| BLOCKED` as final line for orchestrator consumption |
-| `/release demo [range]` | optional range (default: last-tag..HEAD) | `releases/<version>/demo.py` or `.temp/release-demo-<branch>-<date>.py` |
+| `/release demo [range]` | optional range (default: last-tag..HEAD) | `releases/<version>/demo.py` or `.temp/release-demo-<branch>-<date>.py` (glob `.temp/release-demo-*.py`) |
 
 Range notation: `v1->v2` (e.g. `v1.2->v2.0`) — converted internally to git range. No mode → defaults to `notes`. `prepare` = full pipeline — runs audit first, then all artifacts; use when cutting release, not drafting.
 
@@ -80,7 +80,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/agent_watch.py" --state-dir "$
 
 **State checks — one call.** Ad-hoc repository state (branch, HEAD, upstream, status lists, remotes, worktrees, merge-base against a ref) is one `python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/git_state_snapshot.py"` call, never a run of separate `git status` / `branch` / `log -1` / `remote` calls; tag listing and range logs keep their own commands.
 
-<!-- ARCH.md beside this file diagrams the runs, gates and parallel fan-out. Documentation only, never loaded — update it in the same commit as any change to step order, gate placement, or agent fan-out. -->
+<!-- ../../assets/images/release-arch.svg diagrams the runs, gates and parallel fan-out. Documentation only, never loaded — update it in the same commit as any change to step order, gate placement, or agent fan-out. -->
 
 ## Delegation strategy
 

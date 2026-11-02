@@ -217,6 +217,8 @@ ______________________________________________________________________
 
 ### `/develop:feature`
 
+**Execution architecture** — same diagram: see `/develop:fix`.
+
 **Purpose**: TDD-first feature development. Crystallises API as failing demo test, drives implementation to pass, closes quality gaps via one independent challenge + docs update.
 
 **When to use**: adding new behavior.
@@ -273,6 +275,10 @@ ______________________________________________________________________
 ______________________________________________________________________
 
 ### `/develop:fix`
+
+**Execution architecture** — animated diagram of fans, joins and gates, shared with `/develop:feature` and `/develop:refactor`.
+
+![/develop:fix, /develop:feature and /develop:refactor execution architecture: solo spine, team branches and gates (animated)](assets/images/change-arch.svg)
 
 **Purpose**: Reproduce-first bug resolution. Captures bug in failing regression test before any fix.
 
@@ -332,6 +338,8 @@ ______________________________________________________________________
 ______________________________________________________________________
 
 ### `/develop:refactor`
+
+**Execution architecture** — same diagram: see `/develop:fix`.
 
 **Purpose**: Test-first refactoring. Audits test coverage, adds characterization tests for gaps, restructures code with safety net catching any behavior change.
 
@@ -445,6 +453,10 @@ ______________________________________________________________________
 ______________________________________________________________________
 
 ### `/develop:review`
+
+**Execution architecture** — animated diagram of fans, joins and gates.
+
+![/develop:review execution architecture: fans, joins and gates (animated)](assets/images/review-arch.svg)
 
 The saved header retains `develop-review` and includes `Title` so the report-delivery hook accepts the shipped template.
 

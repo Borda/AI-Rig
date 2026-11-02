@@ -78,6 +78,8 @@ CODEMAP_ENABLED=auto    # on by default if codemap installed + index found; --no
 
 <!-- Agent resolution: see _DEV_SHARED/agent-resolution.md (mounted by develop plugin init) -->
 
+<!-- ../../assets/images/review-arch.svg diagrams the runs, gates and parallel fan-out. Documentation only, never loaded — update it in the same commit as any change to step order, gate placement, or agent fan-out. -->
+
 ## Agent Resolution
 
 ```bash

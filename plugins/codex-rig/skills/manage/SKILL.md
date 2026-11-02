@@ -49,7 +49,7 @@ Record the choice and reason in the existing plan or concise outcome. Use portab
 
 This portable section permits only its promoted portable read-only route. Native disjoint read-only support may follow Proportional Execution; protected-target, approval, and propagation rules stay unchanged.
 
-Follow the [canonical G0–G8 execution flow](../../ARCHITECTURE.md#canonical-g0g8-execution-flow) for shared gate order and fork outcomes. This consumer's read-only inventory passes are bounded by G0–G5; parent owns deterministic G6 integration, G7 verification, and G8 verdict/promotion.
+Follow the [canonical G0–G8 execution flow](../../assets/images/parallel-execution-architecture.svg) for shared gate order and fork outcomes. This consumer's read-only inventory passes are bounded by G0–G5; parent owns deterministic G6 integration, G7 verification, and G8 verdict/promotion.
 
 ### Safe parallel work
 

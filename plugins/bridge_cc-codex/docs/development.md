@@ -26,7 +26,7 @@ python -m pytest -q plugins/bridge_cc-codex
 Format and lint changed Markdown through the pinned pre-commit hook:
 
 ```bash
-pre-commit run mdformat --files plugins/bridge_cc-codex/README.md plugins/bridge_cc-codex/docs/architecture.md plugins/bridge_cc-codex/docs/security.md plugins/bridge_cc-codex/docs/operations.md plugins/bridge_cc-codex/docs/development.md plugins/bridge_cc-codex/CHANGELOG.md
+pre-commit run mdformat --files plugins/bridge_cc-codex/README.md plugins/bridge_cc-codex/docs/security.md plugins/bridge_cc-codex/docs/operations.md plugins/bridge_cc-codex/docs/development.md plugins/bridge_cc-codex/CHANGELOG.md
 ```
 
 Check whitespace and build an install-shaped package outside the source tree on Linux or macOS:

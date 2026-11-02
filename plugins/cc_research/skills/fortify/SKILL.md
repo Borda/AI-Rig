@@ -61,6 +61,8 @@ The constants block defaults above are YAML-only — bash blocks read environmen
 
 <!-- Agent resolution: see _RESEARCH_SHARED/agent-resolution.md -->
 
+<!-- ../../assets/images/fortify-arch.svg diagrams the runs, gates and parallel fan-out. Documentation only, never loaded — update it in the same commit as any change to step order, gate placement, or agent fan-out. -->
+
 ## Agent Resolution
 
 **Agent resolution**: load and follow the protocol below. Agent this skill dispatches: `research:scientist` (same plugin — always present while this skill runs, so no fallback row).

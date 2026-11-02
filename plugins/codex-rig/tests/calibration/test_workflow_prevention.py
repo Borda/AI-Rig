@@ -646,7 +646,7 @@ class TestDegradedHelpersKeepResult:
 class TestComposedPreventionCheck:
     """`check_workflow_prevention` reads shipped summaries and source policy together."""
 
-    @pytest.mark.parametrize("document", ["README.md", "ARCHITECTURE.md"])
+    @pytest.mark.parametrize("document", ["README.md"])
     def test_summary_mutation_fails(self, runner, make_run, tmp_path, document: str) -> None:
         """A contradictory shipped summary document fails the composed calibration gate.
 

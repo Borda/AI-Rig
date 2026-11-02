@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 _SCRIPT = ROOT / "scripts" / "check_codex_private_refs.py"
 _PLUGIN = "plugins/codex-rig"
 _DOCUMENTS = (
-    "ARCHITECTURE.md",
+    "assets/images/parallel-execution-architecture.svg",
     "README.md",
     "shared/portable-parallel-read.md",
     "skills/code-review/SKILL.md",

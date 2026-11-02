@@ -34,6 +34,8 @@ NOT for:
 
 <!-- Agent resolution: see _DEV_SHARED/agent-resolution.md (mounted by develop plugin init) -->
 
+<!-- ../../assets/images/change-arch.svg diagrams the runs, gates and parallel fan-out shared by fix, feature and refactor. Documentation only, never loaded — update it in the same commit as any change to step order, gate placement, or agent fan-out. -->
+
 ## Agent Resolution
 
 ```bash

@@ -51,7 +51,7 @@ echo "ARGUMENTS_FINAL=$ARGUMENTS"
 
 > **Note**: `EAGER`, `PROJECT_FLAG` and stripped `ARGUMENTS` are set by this Bash block, but shell variable state does **not** persist across separate Bash() tool calls. After this block runs, read its stdout (`EAGER=true/false`, `PROJECT_FLAG=true/false`, `ARGUMENTS_FINAL=...`), carry those values as model-context references for all subsequent mode dispatch and threshold decisions. Do not rely on `$EAGER`/`$PROJECT_FLAG` as live shell variables in later steps — substitute the literal value read from stdout. `PROJECT_FLAG=true`: mode must run interactive picker before operating.
 
-<!-- ARCH.md beside this file diagrams the runs, gates and parallel fan-out. Documentation only, never loaded — update it in the same commit as any change to step order, gate placement, or agent fan-out. -->
+<!-- ../../assets/images/distill-arch.svg diagrams the runs, gates and parallel fan-out. Documentation only, never loaded — update it in the same commit as any change to step order, gate placement, or agent fan-out. -->
 
 ## Step 1: Inventory existing agents and skills
 

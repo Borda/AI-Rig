@@ -1144,11 +1144,7 @@ def check_workflow_prevention(run: CalibrationRun) -> None:
             run.fail_and_leak("workflow-prevention", f"workflow-policy:{finding}:{path}")
         if not findings:
             run.append_check(f"workflow-policy=ok:{path}")
-    summaries = {
-        directory / name
-        for directory in (run.paths.asset_root, run.paths.root)
-        for name in ("README.md", "ARCHITECTURE.md")
-    }
+    summaries = {directory / name for directory in (run.paths.asset_root, run.paths.root) for name in ("README.md",)}
     summaries.update(run.paths.skills_dir.glob("*/SKILL.md"))
     for path in sorted(summaries):
         if not path.exists():

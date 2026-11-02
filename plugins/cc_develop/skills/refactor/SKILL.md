@@ -42,6 +42,8 @@ Quality stack (Branch Safety Guard, Codex Pre-pass, Progressive Review) ships in
 
 <!-- Agent Resolution: resolved at runtime via $_DEV_SHARED; source at develop/skills/_shared/agent-resolution.md (installed path) -->
 
+<!-- ../../assets/images/change-arch.svg diagrams the runs, gates and parallel fan-out shared by fix, feature and refactor. Documentation only, never loaded — update it in the same commit as any change to step order, gate placement, or agent fan-out. -->
+
 ## Agent Resolution
 
 ```bash

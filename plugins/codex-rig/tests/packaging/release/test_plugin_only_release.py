@@ -3,18 +3,17 @@
 from __future__ import annotations
 
 import hashlib
-import itertools
 import json
 import os
 import re
 import shlex
 import shutil
 import subprocess
-from collections import Counter
 from collections.abc import Callable, Iterable
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any
+from xml.etree import ElementTree
 
 import pytest
 from _modules import load_module, load_module_scoped
@@ -332,21 +331,6 @@ def _dependency_defects(
     return defects
 
 
-def _text_fences(markdown: str) -> list[str]:
-    """Return the body of every fenced ``text`` block, found line by line so paragraph wrapping cannot matter."""
-    blocks: list[str] = []
-    current: list[str] | None = None
-    for line in markdown.splitlines():
-        if current is None:
-            current = [] if line == "```text" else None
-        elif line.startswith("```"):
-            blocks.append("\n".join(current))
-            current = None
-        else:
-            current.append(line)
-    return blocks
-
-
 def _skill_document(skill_id: str) -> tuple[Path, ...]:
     """Return one skill's SKILL.md followed by its trigger-loaded reference files, which publish together."""
     skill_dir = PLUGIN_ROOT / "skills" / skill_id
@@ -407,117 +391,6 @@ def _commit_recovered(
     return syntax, stored, count
 
 
-class _FlowCell(NamedTuple):
-    """One non-empty box cell of the text flow diagram."""
-
-    row: int
-    content: str
-    left_padding: int
-    right_padding: int
-    right_edge: int
-    has_right_neighbour: bool
-
-
-class _Fork(NamedTuple):
-    """One decision line of the flow diagram with the columns of the connectors under it."""
-
-    row: int
-    bottom_centers: list[int]
-    fork_centers: list[int]
-    labelled: bool
-
-
-class _ArrowRow(NamedTuple):
-    """One line of down arrows with the centers of the boxes directly beneath them."""
-
-    row: int
-    arrows: list[int]
-    boxes: list[int]
-    source_char: str | None
-
-
-def _columns(line: str, characters: str) -> list[int]:
-    """Return the column of every occurrence of the given characters in a line."""
-    return [index for index, character in enumerate(line) if character in characters]
-
-
-def _char_at(lines: list[str], row: int, column: int) -> str:
-    """Return the character at a diagram position, or a space when the position lies outside the diagram."""
-    in_range = 0 <= row < len(lines) and column < len(lines[row])
-    return lines[row][column] if in_range else " "
-
-
-def _flow_cells(flow_lines: list[str]) -> list[_FlowCell]:
-    """Split every diagram line at its box separators and describe each non-empty cell."""
-    cells = []
-    for row, line in enumerate(flow_lines):
-        separators = _columns(line, "│")
-        for left, right in itertools.pairwise(separators):
-            cell = line[left + 1 : right]
-            if not cell.strip():
-                continue
-            following = [index for index in separators if index > right]
-            neighbour = bool(following) and bool(line[right + 1 : following[0]].strip())
-            cells.append(
-                _FlowCell(
-                    row, cell.strip(), len(cell) - len(cell.lstrip()), len(cell) - len(cell.rstrip()), right, neighbour
-                )
-            )
-    return cells
-
-
-def _question_forks(flow_lines: list[str]) -> list[_Fork]:
-    """Describe the connectors under every decision line (a line holding a question mark)."""
-    return [
-        _Fork(
-            row,
-            _columns(flow_lines[row + 1], "┬"),
-            _columns(flow_lines[row + 2], "┴"),
-            any("✓ YES" in nearby and "✗ NO" in nearby for nearby in flow_lines[row + 1 : row + 5]),
-        )
-        for row, line in enumerate(flow_lines)
-        if "?" in line
-    ]
-
-
-def _arrow_rows(flow_lines: list[str]) -> list[_ArrowRow]:
-    """Describe every down-arrow line against the box tops beneath it."""
-    rows = []
-    for row, line in enumerate(flow_lines[:-1]):
-        arrows = _columns(line, "▼")
-        if arrows:
-            boxes = [
-                match.start() + (match.end() - match.start() - 1) // 2
-                for match in re.finditer(r"┌[─┬]+┐", flow_lines[row + 1])
-            ]
-            source = _char_at(flow_lines, row - 1, arrows[0]) if len(arrows) == 1 else None
-            rows.append(_ArrowRow(row, arrows, boxes, source))
-    return rows
-
-
-def _elbows(flow_lines: list[str]) -> list[tuple[int, str, str]]:
-    """Return (row, character above the start, character below the end) for every └──┐ elbow."""
-    return [
-        (row, _char_at(flow_lines, row - 1, line.index("└")), _char_at(flow_lines, row + 1, line.index("┐")))
-        for row, line in enumerate(flow_lines)
-        if re.fullmatch(r"\s*└─+┐", line)
-    ]
-
-
-def _merges(flow_lines: list[str]) -> list[tuple[int, list[int], list[int], str]]:
-    """Return (row, merge columns, source columns above, character below the junction) for every ┼ merge line."""
-    return [
-        (
-            row,
-            _columns(line, "└┼┘"),
-            _columns(flow_lines[row - 1], "┬"),
-            _char_at(flow_lines, row + 1, line.index("┼")),
-        )
-        for row, line in enumerate(flow_lines)
-        if "┼" in line
-    ]
-
-
 @pytest.fixture(name="manifest", scope="module")
 def _manifest() -> dict[str, Any]:
     """Load the package manifest once for the module."""
@@ -561,24 +434,20 @@ def _specialist_policy() -> str:
     return _normalized_text(PLUGIN_ROOT / "shared" / "specialist-orchestration.md")
 
 
-@pytest.fixture(name="architecture_text", scope="module")
-def _architecture_text() -> str:
-    """Read the architecture document that carries the canonical execution flow."""
-    return (PLUGIN_ROOT / "ARCHITECTURE.md").read_text(encoding="utf-8")
+@pytest.fixture(name="parallel_diagram", scope="module")
+def _parallel_diagram() -> ElementTree.Element:
+    """Parse the architecture diagram that carries the canonical execution flow."""
+    diagram = PLUGIN_ROOT / "assets" / "images" / "parallel-execution-architecture.svg"
+    return ElementTree.parse(diagram).getroot()  # noqa: S314 - shipped package file, not untrusted input
 
 
-@pytest.fixture(name="parallel_flow", scope="module")
-def _parallel_flow(architecture_text: str) -> str:
-    """Select the one released text flow that carries every canonical endpoint."""
-    matching_flows = [
-        flow
-        for flow in _text_fences(architecture_text)
-        if re.search(r"✓\s+YES\b", flow)
-        and re.search(r"✗\s+NO\b", flow)
-        and all(endpoint in flow for endpoint in ("STOP", "re-plan", "FAIL", "ACCEPT"))
+@pytest.fixture(name="parallel_diagram_lines", scope="module")
+def _parallel_diagram_lines(parallel_diagram: ElementTree.Element) -> list[str]:
+    """Collect the rendered text of the architecture diagram, one entry per text element."""
+    return [
+        " ".join("".join(element.itertext()).split())
+        for element in parallel_diagram.iter("{http://www.w3.org/2000/svg}text")
     ]
-    assert len(matching_flows) == 1
-    return matching_flows[0]
 
 
 @pytest.fixture(name="package_validator")
@@ -1552,11 +1421,25 @@ class TestSpecialistOrchestration:
 
 
 class TestParallelExecutionDocumentation:
-    """Protect the canonical bounded-execution documentation contract."""
+    """Protect the canonical bounded-execution diagram contract."""
 
-    def test_has_canonical_gate_definitions(self, architecture_text: str) -> None:
-        """Gate definitions G0 to G8 are self-contained, in order, in the architecture document."""
-        assert re.findall(r"^- \*\*G([0-8])\b", architecture_text, flags=re.MULTILINE) == [str(i) for i in range(9)]
+    def test_diagram_is_self_contained(self, parallel_diagram: ElementTree.Element) -> None:
+        """The diagram renders inside an image tag: no script, no external reference, no imported resource."""
+        tags = {element.tag.rsplit("}", 1)[-1] for element in parallel_diagram.iter()}
+        attributes = {name.rsplit("}", 1)[-1] for element in parallel_diagram.iter() for name in element.attrib}
+
+        assert "script" not in tags
+        assert "foreignObject" not in tags
+        assert "href" not in attributes
+        assert not [name for name in attributes if name.startswith("on")]
+
+    def test_has_canonical_gate_definitions(self, parallel_diagram_lines: list[str]) -> None:
+        """Gate definitions G0 to G8 are in order in the contract table and each has a flow card."""
+        table = [int(gate) for line in parallel_diagram_lines for gate in re.findall(r"^G([0-8]) [A-Za-z]", line)]
+        cards = {int(gate) for line in parallel_diagram_lines for gate in re.findall(r"^G([0-8])[A-C]? · ", line)}
+
+        assert table == list(range(9))
+        assert cards == set(range(9))
 
     @pytest.mark.parametrize(
         ("gate", "keyword"),
@@ -1566,11 +1449,11 @@ class TestParallelExecutionDocumentation:
             pytest.param("G5c", "derivation", id="derivation-step"),
         ],
     )
-    def test_defines_gate_five_substeps(self, architecture_text: str, gate: str, keyword: str) -> None:
-        """Gate five lists its nested terminal, join, and derivation sub-steps as indented definitions."""
-        pattern = rf"^  - \*\*{gate}\b.*{keyword}"
+    def test_defines_gate_five_substeps(self, parallel_diagram_lines: list[str], gate: str, keyword: str) -> None:
+        """Gate five lists its nested terminal, join, and derivation sub-steps as definitions."""
+        text = " ".join(parallel_diagram_lines)
 
-        assert re.findall(pattern, architecture_text, flags=re.IGNORECASE | re.MULTILINE)
+        assert re.search(rf"\b{gate}\b.{{0,80}}{keyword}", text, flags=re.IGNORECASE)
 
     @pytest.mark.parametrize(
         "documents",
@@ -1582,100 +1465,14 @@ class TestParallelExecutionDocumentation:
         ],
     )
     def test_consumer_links_the_canonical_flow(self, documents: tuple[Path, ...]) -> None:
-        """Each consumer of the bounded execution flow links the canonical G0 to G8 anchor."""
+        """Each consumer of the bounded execution flow links the canonical G0 to G8 diagram."""
         text = "".join(path.read_text(encoding="utf-8") for path in documents)
 
-        assert "#canonical-g0g8-execution-flow" in text, documents[0]
-
-    def test_flow_is_plain_text_within_width(self, parallel_flow: str) -> None:
-        """The flow uses plain box drawing: no markup tokens, labelled branches, 100 columns, closed box lines."""
-        flow_lines = parallel_flow.splitlines()
-        boxed_lines = [line.strip() for line in flow_lines if line.strip().startswith("│")]
-
-        assert [token for token in ("[", "]", "{", "}", "-->") if token in parallel_flow] == []
-        assert "✓ YES" in parallel_flow
-        assert "✗ NO" in parallel_flow
-        assert max(len(line) for line in flow_lines) <= 100
-        assert boxed_lines
-        assert [line for line in boxed_lines if not line.endswith("│")] == []
-
-    def test_cells_are_centered(self, parallel_flow: str) -> None:
-        """Every non-empty cell is centered, with left and right padding differing by at most one."""
-        cells = _flow_cells(parallel_flow.splitlines())
-
-        assert [cell for cell in cells if abs(cell.left_padding - cell.right_padding) > 1] == []
-
-    def test_gate_cells_appear_once_per_gate_box(self, parallel_flow: str) -> None:
-        """The diagram holds exactly the expected gate cells: G0 to G8, G4 three times, and G5a to G5c."""
-        expected = Counter([*(f"G{index}" for index in range(9)), "G4", "G4", *(f"G5{suffix}" for suffix in "abc")])
-        cells = _flow_cells(parallel_flow.splitlines())
-
-        assert Counter(cell.content for cell in cells if cell.content in expected) == expected
-
-    def test_gate_cells_sit_between_box_borders_beside_a_label(self, parallel_flow: str) -> None:
-        """Each gate cell closes with a top-border junction above, a bottom-border junction below, and a label cell."""
-        flow_lines = parallel_flow.splitlines()
-        gate_ids = {f"G{index}" for index in range(9)} | {f"G5{suffix}" for suffix in "abc"}
-        gate_cells = [cell for cell in _flow_cells(flow_lines) if cell.content in gate_ids]
-
-        defects = [
-            cell
-            for cell in gate_cells
-            if _char_at(flow_lines, cell.row - 1, cell.right_edge) != "┬"
-            or _char_at(flow_lines, cell.row + 1, cell.right_edge) != "┴"
-            or not cell.has_right_neighbour
-        ]
-
-        assert defects == []
+        assert "parallel-execution-architecture.svg" in text, documents[0]
 
     @pytest.mark.parametrize("endpoint", ["STOP", "re-plan", "FAIL", "ACCEPT"])
-    def test_endpoint_sits_inside_a_box_cell(self, parallel_flow: str, endpoint: str) -> None:
-        """Every canonical endpoint is drawn inside a single box cell."""
-        assert re.search(rf"│[^│]*{re.escape(endpoint)}[^│]*│", parallel_flow)
-
-    def test_decision_lines_are_boxed(self, parallel_flow: str) -> None:
-        """Every line holding a question is a closed box line."""
-        question_lines = [line.strip() for line in parallel_flow.splitlines() if "?" in line]
-
-        assert [line for line in question_lines if not (line.startswith("│") and line.endswith("│"))] == []
-
-    def test_forks_attach_to_their_source_center(self, parallel_flow: str) -> None:
-        """Each decision fork starts at the connector columns directly under its question."""
-        forks = _question_forks(parallel_flow.splitlines())
-
-        assert forks
-        assert [fork for fork in forks if fork.bottom_centers != fork.fork_centers] == []
-
-    def test_forks_label_both_branches_horizontally(self, parallel_flow: str) -> None:
-        """Each decision fork shows its YES and NO labels together on one line within four lines of the question."""
-        forks = _question_forks(parallel_flow.splitlines())
-
-        assert forks
-        assert [fork for fork in forks if not fork.labelled] == []
-
-    def test_arrows_land_on_box_tops(self, parallel_flow: str) -> None:
-        """Every down arrow lands within one column of a box top, with a connector above a lone arrow.
-
-        A line of arrows has one box top under each arrow, and a lone arrow hangs from a junction, elbow, or cross.
-        """
-        rows = _arrow_rows(parallel_flow.splitlines())
-
-        assert rows
-        assert [row for row in rows if len(row.arrows) != len(row.boxes)] == []
-        assert [row for row in rows if not all(abs(a - b) <= 1 for a, b in zip(row.arrows, row.boxes))] == []
-        assert [row for row in rows if row.source_char is not None and row.source_char not in {"┬", "┐", "┼"}] == []
-
-    def test_elbows_connect_source_to_target(self, parallel_flow: str) -> None:
-        """Each elbow starts under a junction and ends above a down arrow."""
-        elbows = _elbows(parallel_flow.splitlines())
-
-        assert elbows
-        assert [elbow for elbow in elbows if elbow[1:] != ("┬", "▼")] == []
-
-    def test_three_source_join_is_connected(self, parallel_flow: str) -> None:
-        """The three-source join aligns its merge columns with the sources above and drops one arrow below."""
-        merges = _merges(parallel_flow.splitlines())
-
-        assert merges
-        assert [merge for merge in merges if merge[1] != merge[2]] == []
-        assert [merge for merge in merges if merge[3] != "▼"] == []
+    def test_flow_draws_every_endpoint(self, parallel_diagram_lines: list[str], endpoint: str) -> None:
+        """Every canonical endpoint appears in the flow, and every decision labels both branches."""
+        assert any(endpoint in line for line in parallel_diagram_lines)
+        assert "✓ YES" in parallel_diagram_lines
+        assert "✗ NO" in parallel_diagram_lines
