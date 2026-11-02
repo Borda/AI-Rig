@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.42.2
+
+- Align review recommendations with demonstrated impact and remaining repair scope: localized correctness and test fixes can be Minor changes, while Major revision requires finding-linked material impact or substantial repair. Reconcile the final summary and rating after findings are resolved or rejected.
+- Weigh production impact above file type: documentation and test gaps normally remain Minor without evidence supporting a stronger judgment. These factors inform one combined judgment: high-impact findings can control the verdict and are never diluted by minor items. Use the strongest confirmed consequence as the baseline, account for proven joint effects, and keep severity, source disposition and verification separate. Missing tests no longer receive an automatic High rating; numeric topic discounts require independent calibration before they can determine verdicts.
+- Preserve complete ignored and untracked inventories during remediation checkout so large workspaces do not require user cleanup, while retaining overwrite detection and other command-output limits.
+- Bind nested uv gate commands to the explicitly selected project environment, preventing hooks from silently choosing an incompatible worktree interpreter; require an environment whose synchronization is authorized.
+- Allow progressing quality gates up to two hours by default while preserving explicit timeout overrides. Recover interrupted checks and missed review ordering in the retained run with Continue or Skip rather than proposing a fresh review; skipped evidence remains incomplete. Select an eligible native Codex question control before considering async or chat fallback.
+
 ## 0.42.1
 
 - Accept the collector's exact canonical Git diff receipt during PR remediation while retaining both historical formats and rejecting altered revisions, transforms or path selection.

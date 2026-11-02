@@ -1205,3 +1205,29 @@ class TestOrdinaryCompletion:
         metadata["review_validation"]["candidates"][0]["source_revision"] = "head:" + routing["head_oid"]
 
         validator._validate_candidate_source(assessed_run, metadata)
+
+
+def test_review_verdict_is_proportional_to_remaining_source_work() -> None:
+    """Prevent every correctness edge case from automatically requiring a major revision."""
+    path = PLUGIN_ROOT / "skills/code-review/references/findings-and-completion.md"
+    lines = path.read_text(encoding="utf-8").splitlines()
+    minor = next(line for line in lines if line.startswith("- `minor-changes`"))
+    major = next(line for line in lines if line.startswith("- `needs-more-work`"))
+    reconciliation = next(line for line in lines if line.startswith("Before finalization, reconcile"))
+    assert "localized correctness, compatibility, or test repairs" in minor
+    assert "material behavioral impact or substantial repair scope" in major
+    assert "finding IDs" in reconciliation
+    assert "no unresolved required source change" in reconciliation
+    assert "never inflate severity" in reconciliation
+    assert "finding count, CI status, or reviewer votes" in reconciliation
+    impact = next(line for line in lines if line.startswith("Weigh the affected surface"))
+    assert "Documentation-only corrections and additional or missing tests normally warrant Minor changes" in impact
+    assert "missing tests alone do not prove a runtime defect" in impact
+    assert "File type, test count and hypothetical harm alone never justify Major" in impact
+    aggregation = next(line for line in lines if line.startswith("Use the strongest confirmed consequence"))
+    assert "only unresolved confirmed required findings" in aggregation
+    assert "joint consequence" in aggregation
+    assert "numeric topic multipliers" in aggregation
+    severity_lines = (PLUGIN_ROOT / "shared/severity-map.md").read_text(encoding="utf-8").splitlines()
+    assert "- missing required test on changed core logic" not in severity_lines
+    assert any("Missing tests alone do not establish High" in line for line in severity_lines)

@@ -83,7 +83,7 @@ import collect_diff
 #: Verification gate identifiers, in the order the gates run and are reported.
 GATE_IDS = ("lint", "format", "types", "tests", "review")
 #: Per-gate timeout, in seconds, used when `GATE_TIMEOUT_SECONDS` is not set.
-DEFAULT_TIMEOUT_SECONDS = 900
+DEFAULT_TIMEOUT_SECONDS = 7200
 #: Name of the output subdirectory that holds per-check proof files.
 CHECKS_DIRNAME = "checks"
 #: Timeout, in seconds, for the quick git and source-inspection commands run alongside the gates.
@@ -222,7 +222,7 @@ def parse_args() -> argparse.Namespace:
         "--timeout-seconds",
         default=os.environ.get("GATE_TIMEOUT_SECONDS", str(DEFAULT_TIMEOUT_SECONDS)),
         type=positive_integer,
-        help="Per-gate timeout; defaults to 900 or GATE_TIMEOUT_SECONDS.",
+        help="Per-gate timeout; defaults to 7200 or GATE_TIMEOUT_SECONDS.",
     )
     parser.add_argument(
         "--expected-head",
@@ -1151,6 +1151,8 @@ def main() -> int:
         environment = os.environ.copy()
         environment["PATH"] = os.pathsep.join((str(scripts), environment.get("PATH", "")))
         environment["VIRTUAL_ENV"] = str(arguments.project_env)
+        # uv project commands ignore VIRTUAL_ENV; bind nested hooks to the explicitly selected environment too.
+        environment["UV_PROJECT_ENVIRONMENT"] = str(arguments.project_env)
 
     try:
         preserve_previous_attempt(output, skip_reasons)

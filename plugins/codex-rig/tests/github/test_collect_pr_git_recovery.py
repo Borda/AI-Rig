@@ -536,11 +536,11 @@ class TestReviewWorktree:
         monkeypatch: pytest.MonkeyPatch,
         mutate_after_checkout: bool,
     ) -> None:
-        """Continue past oversized main-tree context while still rejecting dirty isolated source.
+        """Retain oversized main-tree context while still rejecting dirty isolated source.
 
         The main tree holds a large ignored environment and Git output is capped at 8 KB, so the main-tree context
-        record becomes unavailable. Review must still isolate the exact head; when the isolated copy is modified right
-        after creation (race) it must still be rejected as review-worktree-dirty.
+        record remains complete and sampled. Review must still isolate the exact head; a copy modified immediately after
+        creation must still be rejected as review-worktree-dirty.
         """
         module = _load_collector()
         source, worktree, base, _old, head = _setup_repositories(tmp_path, repository_template)
@@ -556,13 +556,9 @@ class TestReviewWorktree:
 
         assert code == (2 if mutate_after_checkout else 0)
         context = json.loads((output / "source-worktree-context.json").read_text(encoding="utf-8"))
-        assert context == {
-            "phase": "source-worktree-context",
-            "status": "unavailable",
-            "current_head": main_head,
-            "expected_head": head,
-            "reason": "command-output-oversized:source-worktree-context-untracked-worktree-paths",
-        }
+        assert context["status"] == "safe-unrelated-dirty-paths"
+        assert context["dirty_path_counts"]["ignored"] == _IGNORED_TREE_FILES
+        assert module.dirty_path_record_is_consistent(context)
         assert any(call[:3] == ["git", "worktree", "add"] for call in calls)
         assert _git(worktree, "rev-parse", "HEAD") == main_head
         assert len(list((worktree / ".venv/lib/site-packages").iterdir())) == _IGNORED_TREE_FILES
@@ -1054,31 +1050,30 @@ class TestSourceWorktreeContext:
 class TestRemediation:
     """Remediation checkout onto the attached PR branch, with GitHub's checkout routed to a local fake."""
 
-    def test_oversized_context_blocks_checkout(
+    def test_large_inventory_preserves_files_and_allows_checkout(
         self, tmp_path: Path, repository_template: RepositoryTemplate, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Require complete invoking-tree preservation checks before attached remediation checkout.
-
-        The same oversized ignored tree makes the preservation check incomplete. Remediation moves the main tree, so it
-        must stop with command-output-oversized before any gh pr checkout rather than proceed on partial evidence.
-        """
+        """Complete preservation checks beyond the general output cap without dropping local files."""
         module = _load_collector()
         source, worktree, base, _old, head = _setup_repositories(tmp_path, repository_template)
         _write_ignored_tree(worktree, ".venv/\n")
         monkeypatch.setattr(module, "MAX_OUTPUT_BYTES", 8192)
         output = tmp_path / "collected"
 
-        code, calls = _remediate(module, source, worktree, output, base, head)
-
-        assert code == 2
-        assert (output / "pr-error.txt").read_text(encoding="utf-8") == (
-            "command-output-oversized:before-checkout-untracked-worktree-paths\n"
+        code, calls = _remediate(
+            module, source, worktree, output, base, head, cross_repository=False, gh_checkout_fails=False
         )
-        assert not any(call[:3] == ["gh", "pr", "checkout"] for call in calls)
-        assert not (output / "local-checkout.json").exists()
+
+        assert code == 0
+        assert any(call[:3] == ["gh", "pr", "checkout"] for call in calls)
+        assert (output / "local-checkout.json").exists()
+        assert len(list((worktree / ".venv/lib/site-packages").iterdir())) == _IGNORED_TREE_FILES
+        preflight = json.loads((output / "worktree-preflight.json").read_text(encoding="utf-8"))
+        assert preflight["dirty_path_counts"]["ignored"] == _IGNORED_TREE_FILES
+        assert module.dirty_path_record_is_consistent(preflight)
 
     def test_blocks_collision_inside_large_ignored_tree(
-        self, tmp_path: Path, repository_template: RepositoryTemplate
+        self, tmp_path: Path, repository_template: RepositoryTemplate, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Block an attached checkout over one ignored file even when it hides among hundreds of sampled-out paths.
 
@@ -1086,6 +1081,7 @@ class TestRemediation:
         always listed because it is the evidence for the block.
         """
         module = _load_collector()
+        monkeypatch.setattr(module, "MAX_OUTPUT_BYTES", 8192)
         source, worktree, base, _old, _head = _setup_repositories(tmp_path, repository_template)
         colliding = ".venv/lib/site-packages/module_0399.py"
         incoming = source / colliding

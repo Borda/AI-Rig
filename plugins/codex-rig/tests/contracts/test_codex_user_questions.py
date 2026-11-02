@@ -261,14 +261,19 @@ class TestSkillGuidance:
     """Every shipped Codex skill loads the local question guidance and avoids obsolete host assumptions."""
 
     def test_review_recovery_keeps_fresh_review_choice(self) -> None:
-        """Prevent a retained review run from reducing recovery to Resume and Stop."""
+        """Keep missing-evidence recovery choices alongside the interrupted-step exception."""
         skill = (PLUGIN_ROOT / "skills/code-review/SKILL.md").read_text(encoding="utf-8").splitlines()
         recovery = (
             (PLUGIN_ROOT / "skills/code-review/references/report-recovery.md").read_text(encoding="utf-8").splitlines()
         )
 
         assert any("offer exactly `New review`, `Resume last one`, and `Stop`" in line for line in skill)
-        assert [line.split("`", 2)[1] for line in recovery if line.startswith("- `")] == [
+        decision_start = recovery.index("## Incomplete review decision")
+        assert [line.split("`", 2)[1] for line in recovery[:decision_start] if line.startswith("- `")] == [
+            "Continue",
+            "Skip",
+        ]
+        assert [line.split("`", 2)[1] for line in recovery[decision_start:] if line.startswith("- `")] == [
             "New review",
             "Resume last one",
             "Stop",
@@ -403,3 +408,14 @@ class TestSkillGuidance:
         assert "explicit current-host tool contract" in details
         assert "does not establish that the particular call rendered" in details
         assert "Never emit the same plain-chat question in commentary and final" in details
+
+
+def test_interrupted_review_selects_native_control_before_asking() -> None:
+    """Require native Codex question discovery before the Continue/Skip branch or chat fallback."""
+    lines = (PLUGIN_ROOT / "skills/code-review/references/report-recovery.md").read_text(encoding="utf-8").splitlines()
+    native = next(index for index, line in enumerate(lines) if "For either decision branch, select the control" in line)
+    interrupted = next(index for index, line in enumerate(lines) if line == "## Interrupted checks and missed ordering")
+    assert native < interrupted
+    assert "permitted synchronous `request_user_input` first" in lines[native]
+    assert "discover and invoke the native `ask_user` form" in lines[native]
+    assert "async or plain chat only after native eligibility is exhausted" in lines[native]

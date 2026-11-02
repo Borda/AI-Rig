@@ -1,23 +1,23 @@
 # Severity Map
 
-Use across codex-native skills.
+Use across codex-native skills. Classify the demonstrated consequence and realistic trigger, not the file type or amount of missing evidence. Topic informs impact once; never discount an already impact-based severity again. Missing tests alone do not establish High: a localized coverage gap is normally Medium or Low unless evidence establishes a material violated contract. Keep unavailable verification separate from source-defect severity. These labels are not the five review recommendation ratings.
 
 ## Critical
 
 - security issue with exploit path
 - data loss or corruption risk
-- release-blocking regression
+- confirmed severe release regression
 
 ## High
 
-- incorrect behavior in core feature
-- missing required test on changed core logic
+- demonstrated material failure of a supported core workflow
+- a material acceptance-contract violation supported by concrete evidence, not test absence alone
 - unresolved migration compatibility break
 
 ## Medium
 
 - non-core behavior mismatch
-- weak assertion quality or edge-case gap
+- weak assertion quality, localized missing coverage or edge-case gap without established material failure
 - stale docs or partial config drift
 
 ## Low

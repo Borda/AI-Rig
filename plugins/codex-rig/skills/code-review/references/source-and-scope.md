@@ -20,7 +20,7 @@ Resolve the metadata reader's profile-or-approval route before the first read, a
 
 Resolve this entry before creating or promoting another run. An explicitly resumed incomplete run keeps its frozen source and valid evidence: recover the first unmet checkpoint, without another continuation question or fresh collection solely to repair bookkeeping. Revalidate source receipts and gates when their inputs changed; an unavailable required capability still stops that operation.
 
-When a requested existing report fails lookup, validation or its next consumer (an older result, an unpromoted candidate or a resumed remediation inventory), read and apply [Report compatibility and recovery](report-recovery.md) before treating it as missing; lookups that succeed do not load it. The reference preserves the version-reader assessment, the evidence-preserving repair rules, and the explicit New review, Resume last one and Stop recovery choices.
+When a requested existing report fails lookup, validation or its next consumer (an older result, an unpromoted candidate or a resumed remediation inventory), read and apply [Report compatibility and recovery](report-recovery.md) before treating it as missing; lookups that succeed do not load it. The reference preserves the version-reader assessment, the evidence-preserving repair rules, and the interrupted-check/ordering Continue or Skip exception before the other New review, Resume last one and Stop recovery choices.
 
 ### Previous completed review lookup
 

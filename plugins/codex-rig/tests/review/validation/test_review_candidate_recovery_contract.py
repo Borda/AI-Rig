@@ -945,3 +945,20 @@ def test_review_selects_execution_before_dispatch_and_preserves_task_identity() 
     assert any("Copy every generated argument unchanged" in line and "task_name" in line for line in lines)
     assert any("review-child-session-missing" in line and "zero" in line for line in recovery)
     assert any("Announcing a fallback is not executing it" in line for line in recovery)
+
+
+def test_interrupted_review_offers_continue_or_skip_without_restart() -> None:
+    """Keep a progressing gate and a missed ordering checkpoint in the retained review."""
+    lines = REVIEW_REPORT_RECOVERY.read_text(encoding="utf-8").splitlines()
+    section = flat(_after(_read(REVIEW_REPORT_RECOVERY), "## Interrupted checks and missed ordering"))
+    assert any("7200 seconds" in line and "progress" in line for line in lines)
+    assert "exactly `Continue` and `Skip`" in flat(section)
+    assert "Never offer a fresh review" in flat(section)
+    assert "cannot reconstruct a blind blueprint" in flat(section)
+    assert "never establishes completed-review proof" in flat(section)
+    completion = (
+        (CODE_REVIEW_SKILL.parent / "references/findings-and-completion.md").read_text(encoding="utf-8").splitlines()
+    )
+    standalone = next(line for line in completion if "For a genuinely blocked standalone handoff" in line)
+    assert "only when the blocker belongs to the three-option recovery branch" in standalone
+    assert "never for interrupted checks or missed ordering" in standalone

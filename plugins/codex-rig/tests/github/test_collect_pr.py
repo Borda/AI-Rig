@@ -1291,8 +1291,8 @@ def test_review_tolerates_output_limit_in_informational_main_context(
 ) -> None:
     """The real output cap is only a soft limit for the invoking tree's context scan.
 
-    An oversized untracked-file listing in the main checkout is recorded as unavailable context; review of the isolated
-    worktree still completes.
+    An oversized untracked-file listing in the main checkout retains complete context; review of the isolated worktree
+    still completes.
     """
     output = tmp_path / "pr"
 
@@ -1300,8 +1300,8 @@ def test_review_tolerates_output_limit_in_informational_main_context(
 
     assert result == 0
     context = json.loads((output / "source-worktree-context.json").read_text(encoding="utf-8"))
-    assert context["status"] == "unavailable"
-    assert context["reason"] == "command-output-oversized:source-worktree-context-untracked-worktree-paths"
+    assert context["status"] == "safe-unrelated-dirty-paths"
+    assert "cache/file" in context["dirty_paths"]
     checkout = json.loads((output / "local-checkout.json").read_text(encoding="utf-8"))
     assert checkout["local_head"] == HEAD_OID
     assert not (output / "pr-error.txt").exists()

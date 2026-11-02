@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.56.2
+
+- Review outcomes now distinguish bounded, low-impact correctness, test and compatibility repairs from material behavioral defects or substantial repair. Final verdicts cite the controlling findings and their impact, keeping required fixes actionable under Minor and verification readiness separate from source approval.
+- Weigh production impact above file type: documentation and test gaps normally remain Minor without evidence supporting a stronger judgment. These factors inform one combined judgment: high-impact findings can control the verdict and are never diluted by minor items. Use the strongest confirmed consequence as the baseline, account for proven joint effects, and keep severity, source disposition and verification separate. Missing tests no longer receive an automatic High rating; numeric topic discounts require independent calibration before they can determine verdicts.
+
 ## 0.56.1
 
 - The vitality extractor's abandonment-banner and changelog-date patterns are built from raw-string pieces instead of f-strings with doubled braces, so the `docformatter` pre-commit hook no longer corrupts them into invalid Python on CPython 3.12.3; the patterns match exactly what they did.

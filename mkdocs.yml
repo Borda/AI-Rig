@@ -92,10 +92,10 @@ nav:
       - Repository: repository/DEVELOPMENT.md
       - Claude config (.claude): repository/.claude/DEVELOPMENT.md
       - Codex config (.codex): repository/.codex/DEVELOPMENT.md
-      - Foundry: repository/plugins/cc_foundry/DEVELOPMENT.md
-      - OSS: repository/plugins/cc_oss/DEVELOPMENT.md
-      - Develop: repository/plugins/cc_develop/DEVELOPMENT.md
-      - Research: repository/plugins/cc_research/DEVELOPMENT.md
+      - Claude / Foundry: repository/plugins/cc_foundry/DEVELOPMENT.md
+      - Claude / OSS: repository/plugins/cc_oss/DEVELOPMENT.md
+      - Claude / Develop: repository/plugins/cc_develop/DEVELOPMENT.md
+      - Claude / Research: repository/plugins/cc_research/DEVELOPMENT.md
       - Codex Rig: repository/plugins/codex-rig/DEVELOPMENT.md
       - Codemap-py: repository/plugins/codemap-py/DEVELOPMENT.md
-      - bridge_CC-Codex: repository/plugins/bridge_cc-codex/docs/development.md
+      - bridge CC-Codex: repository/plugins/bridge_cc-codex/docs/development.md

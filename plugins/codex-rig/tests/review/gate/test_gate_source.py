@@ -1474,3 +1474,59 @@ def _mutate_sidecar_after_first_read(
     monkeypatch.setattr(Path, "read_text", read_text_and_change_proof)
     monkeypatch.setattr(Path, "read_bytes", read_and_change_proof)
     return reads
+
+
+def test_gate_timeout_default_and_overrides(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Give long gates two hours while preserving explicit timeout precedence."""
+    monkeypatch.syspath_prepend(str(RUN_GATES.parent))
+    runner = load_module("long_gate_runner", RUN_GATES)
+    monkeypatch.delenv("GATE_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.setattr(sys, "argv", [str(RUN_GATES), "--out", str(tmp_path)])
+    assert runner.parse_args().timeout_seconds == 7200
+    monkeypatch.setenv("GATE_TIMEOUT_SECONDS", "1800")
+    assert runner.parse_args().timeout_seconds == 1800
+    monkeypatch.setattr(sys, "argv", [str(RUN_GATES), "--out", str(tmp_path), "--timeout-seconds", "60"])
+    assert runner.parse_args().timeout_seconds == 60
+
+
+def test_project_environment_binds_nested_uv_run(tmp_path: Path) -> None:
+    """A nested uv hook must use the selected disposable environment instead of a worktree default."""
+    repository = tmp_path / "project"
+    repository.mkdir()
+    _initialize_repository(repository)
+    (repository / "pyproject.toml").write_text(
+        '[project]\nname = "gate-environment-probe"\nversion = "0.0.0"\nrequires-python = ">=3.10"\n',
+        encoding="utf-8",
+    )
+    _git(repository, "add", "pyproject.toml")
+    _git(repository, "commit", "-m", f"project fixture\n\n{CODEX_TRAILER}")
+    head = _git(repository, "rev-parse", "HEAD")
+    (repository / ".git/info/exclude").write_text(".venv/\n", encoding="utf-8")
+    environment = tmp_path / "selected-env"
+    created = _run([sys.executable, "-m", "venv", "--without-pip", str(environment)])
+    assert created.returncode == 0, created.stderr
+    check = f"import sys; from pathlib import Path; assert Path(sys.prefix) == Path({str(environment)!r})"
+    command = _python_command(
+        f"import subprocess; subprocess.run(['uv', '--cache-dir', {str(tmp_path / 'uv-cache')!r}, 'run', '--offline', '--no-sync', "
+        f"'--python', {sys.executable!r}, 'python', '-c', {check!r}], check=True)"
+    )
+    result = _run(
+        [
+            sys.executable,
+            str(RUN_GATES),
+            "--out",
+            str(tmp_path / "gates"),
+            "--worktree",
+            str(repository),
+            "--expected-head",
+            head,
+            "--project-env",
+            str(environment),
+            "--types",
+            command,
+            *_skip_gates("types"),
+        ],
+        cwd=repository,
+    )
+    assert result.returncode == 0, result.stderr
+    assert not (repository / ".venv").exists()

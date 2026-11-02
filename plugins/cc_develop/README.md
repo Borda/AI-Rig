@@ -501,7 +501,7 @@ ______________________________________________________________________
 
 - The saved header retains `develop-review` and includes `Title` so the report-delivery hook accepts the shipped template.
 - Review output preserves its aggregate prose summary, verdict, confidence and detailed findings.
-- The header table adds `Reviewers: Software engineer [3], QA specialist [2], Documentation reviewer [1].` Each rating appears in square brackets after the role name (`Software engineer [3]`). Its legend appears immediately below: 1 = Approve · 2 = Minor changes · 3 = Changes required · 4 = Insufficient evidence · 5 = Block / Reject.
+- The header table adds `Reviewers: Software engineer [3], QA specialist [2], Documentation reviewer [1].` Each rating appears in square brackets after the role name (`Software engineer [3]`). Its legend appears immediately below: 1 = Approve · 2 = Minor changes · 3 = Major revision · 4 = Insufficient, but a good initiative · 5 = Block.
 - Ratings describe actual reviewers' scoped judgments, never an averaged verdict. Reviewer names and finding authors show roles only, without execution-origin labels; skipped roles are omitted.
 - The findings overview adds an `Author` column retaining all contributors to deduplicated findings.
 - Missing coverage and unavailable checks stay factual review limits; a review beyond the invoked scope needs one explicit user decision, and a declined optional pass is not an action item.
@@ -548,6 +548,7 @@ ______________________________________________________________________
 **Validation**: `/develop:review` validates every candidate against allowed source evidence before publication and retains capped independent critical verification.
 
 - Version-one `review-validation.json` separates five source judgments, nullable completed assessments, missing reviewer coverage and verification readiness; unresolved concerns retain owner/next check/closure.
+- Minor changes include bounded, low-impact correctness, test and compatibility fixes with localized repair and verification. Major revision requires evidenced material behavioral impact or substantial repair, even if a serious defect needs only a small patch. The verdict cites final finding IDs, impact and repair scope; finding counts, CI status and reviewer votes do not set it automatically. Required fixes remain actionable under Minor, and no unresolved required source change normally means source approval with readiness reported separately. Documentation-only corrections and missing or additional tests normally remain Minor unless concrete material consequences or a substantially incomplete required deliverable justify more; missing tests alone do not establish a production bug. These factors inform one combined judgment: high-impact findings can control the verdict and are never diluted by minor items. Use the strongest confirmed consequence as the baseline, account for proven joint effects, and keep severity, source disposition and verification separate. Missing tests no longer receive an automatic High rating; numeric topic discounts require independent calibration before they can determine verdicts.
 - The workflow remains read-only: actual runtime authorization/capability boundaries are recorded, and feasible unfinished parent checks mean incomplete.
 
 **Report structure**:

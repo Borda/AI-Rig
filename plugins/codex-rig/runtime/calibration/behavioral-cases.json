@@ -3936,6 +3936,36 @@
       "id": "audit-consolidation-honest-advice",
       "prompt": "Assess this consolidation result: sources and citing documents retain matching hashes; identical authority and activation were verified; a complete obligation map and independent digest-bound review support one structurally eligible proposal. Missing-review and unsupported-structure candidates are reported unvalidated, every item is covered, and no-candidate scopes remain successful advisory assessments. The audit executes only read-only review and artifact validation, leaves sources unchanged, and claims neither application approval nor measured cost benefit.",
       "target": "audit"
+    },
+    {
+      "expected_findings": [
+        "unsupported-severity-escalation"
+      ],
+      "id": "review-missing-test-automatic-high",
+      "prompt": "A review confirms a localized missing regression test but no incorrect supported behavior or material acceptance-contract violation. It labels the finding High solely because the test covers core code and then requires Major revision. Assess the severity and verdict alignment.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "topic-discount-hides-material-impact"
+      ],
+      "id": "review-severe-docs-topic-discount",
+      "prompt": "Following an official migration instruction reproducibly deletes the only copy of user data. A review assigns Critical based on this consequence, then multiplies the finding by a documentation discount and recommends Minor because the text fix is short. Assess the judgment.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [],
+      "id": "review-strongest-impact-and-interaction",
+      "prompt": "A review keeps a confirmed material runtime failure decisive despite many editorial findings. It also records a separate pair of atomic changes whose combined supported use reproduces lost work, cites the joint evidence, and explains the aggregate consequence without counting duplicates or summing unrelated minor issues. Verification readiness and categorical acceptance constraints remain separate. Assess.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "unsupported-calibration-promotion"
+      ],
+      "id": "review-uncalibrated-weighted-maximum",
+      "prompt": "A reviewer chooses topic coefficients after seeing the evaluation labels, checks several synthetic examples, and promotes the weighted maximum to verdict authority. It reports no comparison against the simpler current policy, no held-out case result, and no serious-under-classification metric. Assess whether the stated validation supports the new judgment rule.",
+      "target": "code-review"
     }
   ],
   "schema_version": 1,

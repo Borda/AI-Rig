@@ -6,7 +6,7 @@ Codex Rig is OpenAI Codex product in [Borda's AI-Rig](https://github.com/Borda/A
 >
 > Finish and verify the active piece before dependent work. Delegate ready independent pieces with focused context; keep the overall map compact. This keeps far-ahead implementation details out of the active context and makes ownership and closure explicit. [Workflow rules](shared/native-skill-contract.md#proportional-execution).
 
-> Current source version: `0.42.1`. Codex Rig is peer product to foundry, oss, develop, research, and codemap-py—not copy of repository's `.codex/` configuration.
+> Current source version: `0.42.2`. Codex Rig is peer product to foundry, oss, develop, research, and codemap-py—not copy of repository's `.codex/` configuration.
 
 > Value at a glance: install one independently verifiable plugin to get evidence-backed workflows, bounded specialist role cards, portable fallbacks, and auditable artifacts without pretending Codex has native persistent-agent selection.
 
@@ -336,10 +336,11 @@ Completion requires requested output, explainable gate results, unresolved risks
   - `review_prepare.py` owns generated `specialists/<role>-context.md` files, and `review_batches.py` prepares batch inputs for the explicit `--paged`/`--batches` historical routes.
   - Instruction-bounded review does not prove enforced isolation.
 - **Parallelism:** at most four child slots are allocated at once; all roles join before assembly or a dependent wave.
-- **Verdicts:** source ratings are 1 = Approve · 2 = Minor changes · 3 = Major revision · 4 = Insufficient, but a good initiative · 5 = Block; ratings are never averaged into the final verdict.
+- **Verdicts:** source ratings are 1 = Approve · 2 = Minor changes · 3 = Major revision · 4 = Insufficient, but a good initiative · 5 = Block; ratings are never averaged into the final verdict. Minor changes includes bounded correctness and test fixes; Major revision requires finding-linked material impact or substantial repair scope. Reconcile the final recommendation with remaining findings rather than escalating every correctness issue. Documentation-only corrections and missing or additional tests normally remain Minor unless concrete material consequences or a substantially incomplete required deliverable justify more; missing tests alone do not establish a production bug. These factors inform one combined judgment: high-impact findings can control the verdict and are never diluted by minor items. Use the strongest confirmed consequence as the baseline, account for proven joint effects, and keep severity, source disposition and verification separate. Missing tests no longer receive an automatic High rating; numeric topic discounts require independent calibration before they can determine verdicts.
 - **Checks:** project checks run from the recorded review worktree. When declared packages are missing, Code Review can unpack matching wheels into a run-local overlay and run the selected tests over the existing project environment; non-default index, direct-reference and newly added dependencies are never fetched and become findings or explicit gaps. Collected CI results supplement but never replace the source-bound test gate.
 - **Coverage gaps:** review coverage and confidence gaps remain explicit limitations, not recursive findings or automatic remediation tasks. Additional review beyond authorized scope needs one decision naming the question, expected evidence and stop condition.
 - **Completion:** `shared/find-review-report.py --complete-run <run-directory>` reruns both artifact validators against a promoted schema-v3 result and emits only digest-bound final text. A notes-only run is `matching-review-incomplete`, not missing evidence; an older verdict is never silently selected. Schema-2 results remain readable as unverified archives.
+- **Long checks:** shared quality gates allow two hours per gate by default, with explicit timeout overrides preserved. Keep progressing tests running beyond 15 minutes. Interrupted checks and missed ordering use **Continue** or **Skip** in the retained review through an eligible native Codex question control first; skipped proof stays incomplete and a missed blind blueprint never becomes blind retroactively.
 - **Recovery:** when native reviewer controls are unavailable, Code Review has an explicitly approved experimental [isolated local reviewer wave](skills/code-review/local-reviewer-wave.md) that requires a compatible Codex CLI and separate paid-execution approval. Recovery from failed reviewers follows permitted fallback before any terminal handoff; see the [Code Review skill](skills/code-review/SKILL.md) for the full sequence.
 - **Stop hook:** the bundled Stop hook requests at most one diagnostic continuation when review or remediation started without its completion check. It is advisory, reads no review source, and runs no commands. After installing an update, review and trust the changed hook through Codex `/hooks`; see the [Codex hooks reference](https://learn.chatgpt.com/docs/hooks).
 
@@ -605,3 +606,5 @@ NO_MKDOCS_2_WARNING=1 python3 -m mkdocs build --strict
 ## 📄 License
 
 Codex Rig is licensed under Apache-2.0. See `LICENSE` and `NOTICE`.
+
+Remediation preserves complete local filename inventories even above the ordinary collector output cap; large ignored environments and report trees do not require cleanup. Gate `--project-env` also binds nested uv project commands to the selected environment. Use a disposable environment whenever synchronization must preserve the invoking environment.

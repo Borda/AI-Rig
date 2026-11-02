@@ -252,11 +252,12 @@ Scope-aware parallel review of a GitHub PR. Input is a PR number or a saved revi
 
 - Aggregate prose summary, verdict, confidence and detailed findings.
 - Header table adds `Reviewers: Software engineer [3], QA specialist [2], Documentation reviewer [1].` Each rating sits in square brackets after the role name; skipped roles are omitted.
-- Rating legend: 1 = Approve · 2 = Minor changes · 3 = Changes required · 4 = Insufficient evidence · 5 = Block / Reject. Ratings are the actual reviewers' scoped judgments, never an averaged verdict.
+- Rating legend: 1 = Approve · 2 = Minor changes · 3 = Major revision · 4 = Insufficient, but a good initiative · 5 = Block. Ratings are the actual reviewers' scoped judgments, never an averaged verdict.
 - The findings overview has an `Author` column listing all contributors to each deduplicated finding.
 - Reviewer names and finding authors show roles only, without execution-origin labels.
 - Terminal rejection reports `Not assessed` when no source review ran.
 - Every candidate is validated before publication; only confirmed findings become automatic `/oss:resolve` items. Open concerns are kept in `review-validation.json`.
+- Minor changes include bounded, low-impact correctness, test and compatibility fixes with localized repair and verification. Major revision requires evidenced material behavioral impact or substantial repair, even if a serious defect needs only a small patch. The verdict cites final finding IDs, impact and repair scope; finding counts, CI status and reviewer votes do not set it automatically. Required fixes remain actionable under Minor, and no unresolved required source change normally means source approval with readiness reported separately. Documentation-only corrections and missing or additional tests normally remain Minor unless concrete material consequences or a substantially incomplete required deliverable justify more; missing tests alone do not establish a production bug. These factors inform one combined judgment: high-impact findings can control the verdict and are never diluted by minor items. Use the strongest confirmed consequence as the baseline, account for proven joint effects, and keep severity, source disposition and verification separate. Missing tests no longer receive an automatic High rating; numeric topic discounts require independent calibration before they can determine verdicts.
 
 **How the pipeline works**
 

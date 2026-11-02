@@ -72,7 +72,7 @@ if str(SHARED_DIRECTORY) not in sys.path:
 from collect_diff import canonical_diff_arguments, canonical_diff_environment  # noqa: E402
 from github_read import GitHubReadError, read_with_fallback, run_gh_read  # noqa: E402
 
-#: Largest stdout or stderr, in bytes, accepted from a git or gh command run by the collector.
+#: Largest ordinary command stdout or stderr; complete local untracked inventories are exempt on stdout.
 MAX_OUTPUT_BYTES = 16 * 1024 * 1024
 #: Pull-request states GitHub can report that this collector accepts.
 VALID_PR_STATES = frozenset({"OPEN", "MERGED", "CLOSED"})
@@ -245,7 +245,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def _run(run: RunCommand, argv: list[str], timeout: int, label: str, *, input_bytes: bytes | None = None) -> bytes:
-    """Run one argv-only command and return bounded stdout bytes."""
+    """Run one argv-only command, retaining complete local inventories and bounding other output."""
     if argv and argv[0] == "gh":
         if input_bytes is not None:
             raise CollectionError(f"unsafe-gh-command:{label}")
@@ -268,7 +268,13 @@ def _run(run: RunCommand, argv: list[str], timeout: int, label: str, *, input_by
         raise CollectionError(f"command-timeout:{label}") from error
     except OSError as error:
         raise CollectionError(f"command-unavailable:{label}") from error
-    if len(completed.stdout) > MAX_OUTPUT_BYTES or len(completed.stderr) > MAX_OUTPUT_BYTES:
+    # These local inventories must be complete to protect ignored files during checkout. The runner already
+    # captures the full output; rejecting it afterward cannot bound memory and only blocks large workspaces.
+    inventory = argv in (
+        ["git", "ls-files", "--others", "-z"],
+        ["git", "ls-files", "--others", "--exclude-standard", "-z"],
+    )
+    if (not inventory and len(completed.stdout) > MAX_OUTPUT_BYTES) or len(completed.stderr) > MAX_OUTPUT_BYTES:
         raise CollectionError(f"command-output-oversized:{label}")
     if completed.returncode != 0:
         failure_class = "command-failed"

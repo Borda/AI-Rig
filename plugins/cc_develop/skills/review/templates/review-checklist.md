@@ -17,7 +17,7 @@
 
 ## MEDIUM Patterns (default anchor)
 
-- Documented-contract or docstring-promise violation (wrong returned value, ignored parameter, ordering or state not maintained as documented) with no CRITICAL/HIGH pattern above → MEDIUM. Raise to HIGH only with cited evidence of wider impact: `imported_by` tier moderate/high (≥5 importers), an unhandled exception on the main path, or a HIGH pattern match. Importer count unknown → stays MEDIUM.
+- Documented-contract or docstring-promise violation (wrong returned value, ignored parameter, ordering or state not maintained as documented) with no CRITICAL/HIGH pattern above → MEDIUM. Raise to HIGH with cited evidence of a material consequence for a supported workflow or compatibility contract, an unhandled exception on the main path, or a confirmed HIGH pattern match. Importer counts describe exposure, not consequence: many importers alone do not raise severity, and few or unknown importers do not cap an established material failure at MEDIUM.
 
 ## Consolidation Rules
 

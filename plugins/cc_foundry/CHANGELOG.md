@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.74.2
+
+- Review outcomes now distinguish bounded, low-impact correctness, test and compatibility repairs from material behavioral defects or substantial repair. Final verdicts cite the controlling findings and their impact, keeping required fixes actionable under Minor and verification readiness separate from source approval.
+- Weigh production impact above file type: documentation and test gaps normally remain Minor without evidence supporting a stronger judgment. These factors inform one combined judgment: high-impact findings can control the verdict and are never diluted by minor items. Use the strongest confirmed consequence as the baseline, account for proven joint effects, and keep severity, source disposition and verification separate. Missing tests no longer receive an automatic High rating; numeric topic discounts require independent calibration before they can determine verdicts.
+
 ## 0.74.1
 
 - Check local Codex activity before drafting commits, so contributions outside the Claude conversation are considered for co-author credit; ask once when only thread activity indicates possible involvement.
