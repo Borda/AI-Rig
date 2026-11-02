@@ -1,22 +1,17 @@
 # 🗂️ codemap-py — structural answers for Python codebases
 
-Codex debrief helper recipes use the quoted packaged Python launcher (`bin/python`, or `bin/python.cmd` on native Windows), so they do not depend on a bare `python` command on PATH.
-
-Codemap indexing and queries run through the CLI. `.codex-mcp.json` registers only the local terminal-question tool (`ask_user`); it provides no indexing or query tools.
-
-Codex asks only for a genuinely missing decision, material input or protected action. Authorized preparation, internal recovery and completion need no new consent; transport discovery follows that necessity check. Existing answers, scope/digest confirmation and runtime permission remain authoritative. When a decision is missing, Codex questions prefer permitted synchronous input, then this plugin's packaged native terminal form (`ask_user`). The local form waits for the answer, binds it to the decision ID and frozen scope digest, and does not emit a second assistant question message. Closed choices use a selectable list; open-ended indexes, ranges, severity combinations and exact-token confirmations use native text input with the complete grammar. It performs no commands, repository writes, credential reads, network access or permission changes. Async questions are used only where current host evidence establishes usable controls; tool acceptance alone is insufficient. Explicit Approve/Deny replies bind to one unchanged, unambiguous conversational decision without demanding its displayed key again. Ambiguity, supersession, exact-token/digest and runtime-permission rules remain enforced. No answer, cancellation or unsupported input grants consent. Each plugin ships its own provider; no sibling installation or user-settings change is required. Headless hosts retain an explicit unresolved-input fallback. Claude-specific question behavior is unchanged.
-
-Codex uses structured question controls first. When plain text is required, put all context, reports, confidence and limitations before the question; the question and complete options or accepted input syntax are the final terminal block, with no trailing summary or status.
-
-Rejected question calls resume at the pending decision without replaying delivered report context. A synchronous mode error does not establish async unavailability; explicit higher-priority host requirements for plain text remain binding and are reported as policy restrictions, not missing tools.
-
-A user-reported dismissed question leaves its decision pending. The root checks another suitable control, then asks once in its final plain-chat response if no control remains usable; the dismissed transport stays unsuitable for later required questions in that host until delivery is verified again.
-
 codemap-py builds a local, static index of a Python project so maintainers can answer "what imports this?", "what calls this function?", "which tests are likely affected?", and "where is the highest coupling?" before changing code. It is useful when a task has unresolved structural scope; a fully localized edit with no such question should skip it.
 
-The package ships the same six skills for Claude Code and Codex: scan the project, query the index, find affected tests, rename references, inspect integration, and debrief Claude telemetry. The runtime adapters share the capability contract but keep their host-specific invocation and path rules.
+The package ships the same six skills for Claude Code and Codex: scan the project, query the index, find affected tests, rename references, inspect integration, and debrief telemetry. The runtime adapters share the capability contract but keep their host-specific invocation and path rules.
 
-Consumer plugins ship synchronized copies of the shared context and gate guidance; they never load private files from another installed plugin. The reference context batch resolves its default index from the repository root, including when invoked from a subdirectory.
+Runtime notes:
+
+- Indexing and queries run through the CLI. `.codex-mcp.json` registers only the local terminal-question tool (`ask_user`); it provides no indexing or query tools.
+- Codex debrief helper recipes use the quoted packaged Python launcher (`bin/python`, or `bin/python.cmd` on native Windows), so they do not depend on a bare `python` command on PATH.
+- The native question provider requires Python 3.10 or newer available as `python` on the executable search path inherited by Codex, matching its direct MCP command. Codex Rig sync validates this prerequisite and does not install a global interpreter shim. If the host cannot start the provider, keep the required decision unresolved and use another permitted input route only when available.
+- Consumer plugins read the shared context and gate guidance live from the active `codemap-py` install; they never load private files from another plugin. The reference context batch resolves its default index from the repository root, including when invoked from a subdirectory.
+
+Contributing or want internals? See [DEVELOPMENT.md](DEVELOPMENT.md).
 
 <details markdown="1">
 <summary><strong>📋 Contents</strong></summary>
@@ -81,9 +76,8 @@ python plugins/codemap-py/scripts/codemap_py_entry.py query --compact rdeps mypa
 python plugins/codemap-py/scripts/codemap_py_entry.py doctor --json
 ```
 
-**Windows uses this Python entrypoint directly** — `bin/codemap-py` is a `#!/bin/sh` launcher and does not execute there; `bin/codemap-py.cmd` is the installed-package equivalent. macOS and Linux may use either form.
-
-Codex does not add the plugin's `bin/` directory to PATH; use the `$codemap-py:*` skills or resolve the installed plugin root as their runtime instructions describe.
+- **Windows uses this Python entrypoint directly** — `bin/codemap-py` is a `#!/bin/sh` launcher and does not execute there; `bin/codemap-py.cmd` is the installed-package equivalent. macOS and Linux may use either form.
+- Codex does not add the plugin's `bin/` directory to PATH; use the `$codemap-py:*` skills or resolve the installed plugin root as their runtime instructions describe.
 
 <a id="-what-it-solves"></a>
 
@@ -93,11 +87,25 @@ Without a structural index, a refactor often starts with repeated file searches 
 
 The index is not a replacement for reading source or running tests. It is a narrow, fast source of structural evidence that helps choose the next inspection or verification step.
 
-Coverage queries distinguish missing measurements from measured zero with `measurement.status` (`empty`, `unavailable`, `partial`, `available`). `selection` makes exact-module scope explicit: querying a package module does not include descendants. Enumerate and batch selected modules for package-wide work, or intentionally use `--all`. Static `uncovered` relationships are not measured line coverage.
+- Coverage queries distinguish missing measurements from measured zero with `measurement.status` (`empty`, `unavailable`, `partial`, `available`). Static `uncovered` relationships are not measured line coverage.
+- `selection` makes exact-module scope explicit: querying a package module does not include descendants. Enumerate and batch selected modules for package-wide work, or intentionally use `--all`.
 
-CLI telemetry records handled terminal success/failure once with `exit_code`, including parse, gate, and supported timeout failures. Logging remains best-effort and optional; abrupt process termination or an unwritable destination can leave gaps. Timeout alarms are cleaned up after embedded calls; the existing SIGALRM timeout capability is Unix-only. Refresh children retain an available host session from hook payloads, and Codex background refresh keeps its own trigger.
+### Telemetry in brief
 
-Debriefs isolate recent version/project/runtime cohorts. `join_avoidance.py` labels `avoidance_count` and `rate` as `module_overlap_proxy_v3`: verified successful complete answers followed by matching tool targets, including legitimate source reads. This is not confirmed misuse, a guard-failure rate, or measured token savings. New CLI/tool/skill records carry their originating project root; shared log destinations never replace it. Legacy records missing project identity or terminal outcome remain untouched and counted, but cannot support joins. Batch children are logical answers, not extra CLI invocations; failed and unjoinable children are counted separately in JSON and text. Changed eligibility makes earlier metric rates non-comparable. Each overlap also carries a `kind`: `source_read` for verified own-file inspection, `structural_search` for a directory search, or `unknown` when Grep/Glob scope is absent or indeterminate; a `file` scope is `source_read` whichever file it names (a single-file search is inspection), a `directory` scope is `structural_search`. New Grep/Glob records preserve `search_path` and producer-observed `search_scope`; legacy logs remain untouched and unknown cases do not count toward `structural_search_count`; `unknown_count` is reported beside it, overall and per runtime, so zero structural searches can be told from nothing classifiable. This remains a shape proxy, not proof of redundant work. Bash search records carry the same `search_path` and `search_scope` when the hook can parse a standalone `grep`/`rg` command from the full command line: literal operands are checked at hook time (relative ones against the event's working directory), operand-less `rg` uses that directory, and grep skips a directory operand unless recursive. Pipelines, command lists, shell expansions, other redirections and unknown options stay `unknown`. Unscoped Bash records fall back to the target, which is cut at 200 characters, so later flags or paths are unavailable; recursive-looking ones outside own-file inspection stay `unknown`, never presumed directory searches. Hook-triggered `changed_count` is the eligible working-tree path delta against the index commit, including unstaged and untracked sources and indexed documentation; it is not a measured reparse count. Scanner exclusions apply, and invalid or unreachable revisions leave it unknown. Explicit-root CLI telemetry and Claude marker lookup follow the resolved target project, not the caller directory.
+- CLI telemetry records handled terminal success/failure once with `exit_code`, including parse, gate, and supported timeout failures. Logging is best-effort and optional; abrupt termination or an unwritable destination can leave gaps. The SIGALRM timeout capability is Unix-only.
+- New CLI/tool/skill records carry their originating project root. Legacy records missing project identity or terminal outcome stay untouched and counted but cannot support joins.
+- Debriefs isolate recent version/project/runtime cohorts. `join_avoidance.py` labels `avoidance_count` and `rate` as `module_overlap_proxy_v3`: verified successful complete answers followed by matching tool targets, including legitimate source reads. This is not confirmed misuse, a guard-failure rate, or measured token savings, and a changed eligibility rule makes earlier rates non-comparable.
+- Each overlap carries a `kind`:
+
+| `kind`              | Meaning                                                                                           |
+| ------------------- | ------------------------------------------------------------------------------------------------- |
+| `source_read`       | Verified own-file inspection; a `file` scope is always this, even for a single-file search.       |
+| `structural_search` | A `directory` scope search.                                                                       |
+| `unknown`           | Grep/Glob scope is absent or indeterminate; reported as `unknown_count`, overall and per runtime. |
+
+- Bash `grep`/`rg` records carry `search_path` and `search_scope` only when the hook can parse a standalone command; pipelines, command lists, shell expansions, other redirections and unknown options stay `unknown`.
+- Hook-triggered `changed_count` is the eligible working-tree path delta against the index commit, including unstaged and untracked sources and indexed documentation. It is not a measured reparse count; scanner exclusions apply, and invalid or unreachable revisions leave it unknown.
+- Explicit-root CLI telemetry and Claude marker lookup follow the resolved target project, not the caller directory.
 
 <a id="-adaptive-use"></a>
 
@@ -117,13 +125,15 @@ Use the smallest route that answers the unresolved question:
 | Which tests are structurally affected?                      | `/codemap-py:test-impact` or `$codemap-py:test-impact`       |
 | Is the integration wiring and runtime evidence healthy?     | `/codemap-py:integration audit` or `$codemap-py:integration` |
 
-For an explicit request for structural context, query even when an edit looks small. A lifecycle boundary such as a callback, hook, cancellation path, cleanup path, or state transfer also needs source and the named test or oracle; a complete structural result does not prove runtime behavior.
-
-Resolve the installed launcher once and retain its literal for the workflow. Independent standalone read-only queries may run concurrently only against a prepared stable index with self-heal disabled (`SCAN_NO_AUTOBUILD=1`); dependent queries wait, and refresh/self-heal/index writes are serial. There is no arbitrary total-query cap for facts required to finish; only targeted correction retries are bounded and recurring correction failures stop with an explicit gap. A complete untruncated result settles its own fact, not sibling dimensions, and an independent AST/oracle read remains valid.
-
-`rdeps` and `deps` answer opposite directions. Query names and paths are relative to the project being queried, not the installed plugin. Explicit `--root <root>` selects that root's canonical index. After a custom-index scan, retain the emitted index path and query with `--index <emitted-index-path> --root <same-root>` so index selection and path resolution refer to the same source.
-
-`fn-rdeps` reports incoming call edges; it does not discover inheritance or same-name override relationships. Use `find-symbol '<ClassSuffix>\.<method>$' --exclude-tests --limit 0` to gather same-name override candidates, then verify ancestry and package boundaries in source.
+- For an explicit request for structural context, query even when an edit looks small.
+- A lifecycle boundary such as a callback, hook, cancellation path, cleanup path, or state transfer also needs source and the named test or oracle; a complete structural result does not prove runtime behavior.
+- Resolve the installed launcher once and retain its literal for the workflow.
+- Independent standalone read-only queries may run concurrently only against a prepared stable index with self-heal disabled (`SCAN_NO_AUTOBUILD=1`); dependent queries wait, and refresh/self-heal/index writes are serial.
+- There is no arbitrary total-query cap for facts required to finish; only targeted correction retries are bounded, and recurring correction failures stop with an explicit gap.
+- A complete untruncated result settles its own fact, not sibling dimensions, and an independent AST/oracle read remains valid.
+- `rdeps` and `deps` answer opposite directions. Query names and paths are relative to the project being queried, not the installed plugin.
+- Explicit `--root <root>` selects that root's canonical index. After a custom-index scan, retain the emitted index path and query with `--index <emitted-index-path> --root <same-root>` so index selection and path resolution refer to the same source.
+- `fn-rdeps` reports incoming call edges; it does not discover inheritance or same-name override relationships. Use `find-symbol '<ClassSuffix>\.<method>$' --exclude-tests --limit 0` to gather same-name override candidates, then verify ancestry and package boundaries in source.
 
 <a id="-prerequisites-and-supported-runtimes"></a>
 
@@ -134,7 +144,11 @@ Resolve the installed launcher once and retain its literal for the workflow. Ind
 - Git is recommended for branch-aware freshness checks and incremental rebuilds. Outside Git, content hashes provide a fallback.
 - The core scanner and query engine use the Python standard library. `coverage>=7.4` is optional and is needed only for `scan-index --with-coverage` and the `coverage`/`coverage-gap` queries.
 
-The scanner is intended for Python projects. It parses `.py` and `.pyi` files with `ast.parse`; a `.py` implementation takes precedence over a sibling `.pyi`, while a stub without an implementation contributes declarations and imports but no call edges. It also records selected Sphinx references from `.rst` files, `docs/**/*.md`, and supported root configuration files for cross-reference and freshness checks. It does not index TypeScript, Go, Rust, or other non-Python source as Python modules.
+The scanner is intended for Python projects:
+
+- It parses `.py` and `.pyi` files with `ast.parse`. A `.py` implementation takes precedence over a sibling `.pyi`; a stub without an implementation contributes declarations and imports but no call edges.
+- It also records selected Sphinx references from `.rst` files, `docs/**/*.md`, and supported root configuration files for cross-reference and freshness checks.
+- It does not index TypeScript, Go, Rust, or other non-Python source as Python modules.
 
 <a id="-build-and-query-the-index"></a>
 
@@ -149,7 +163,7 @@ codemap-py doctor [--json]
 codemap-py integrate {audit,plan,apply,sync,demo} ...
 ```
 
-`--incremental` requires an existing v3-or-newer index. `--with-coverage` reads a `.coverage` SQLite file when the optional dependency is available. Query help is authoritative for the complete subcommand and flag list; the current groups include module imports (`deps`, `rdeps`, `central`, `coupled`, `path`), symbol lookup (`symbol`, `symbols`, `find-symbol`), call graphs (`fn-deps`, `fn-rdeps`, `fn-central`, `fn-blast`), test/mock/fixture/subprocess relationships, documentation and coverage checks, dead-code checks, `diff-impact`, and `batch`.
+`--incremental` requires an existing v3-or-newer index. `--with-coverage` reads a `.coverage` SQLite file when the optional dependency is available. Query help is authoritative for the complete subcommand and flag list; the groups are in [Query-code subcommands](#query-code-subcommands-and-completeness-contract).
 
 Most query results include an `index` block. Read it before treating a list as final:
 
@@ -158,337 +172,161 @@ Most query results include an `index` block. Read it before treating a list as f
 - `confidence`, `truncated`, and `total_available` describe result completeness. The default display limit is bounded for several list commands; use `--limit 0` where that command supports it when the full set matters.
 - `not_covered` names static-analysis blind spots and should remain in the final reasoning.
 
-Ordinary queries automatically prepare a missing canonical index and check discovered working-tree source, documentation and consumed configuration bytes for bounded incremental self-heal, including unstaged edits, additions and deletions. Nested Git worktrees use their own index, never an ancestor checkout's. `SCAN_NO_AUTOBUILD=1` or `--no-heal` disables query-time preparation; explicit foreign/custom indexes are not implicitly created or rewritten. A self-heal also stands down when a writer takes the index while the query is reading it — most often another query's own heal — and answers from the index it already loaded. A refresh that was already running when the query started is waited out by the read lease instead, after which the index is fresh and no heal is needed. An explicit scan is the predictable choice after a clone, a large change, a branch switch, or when a query reports stale/degraded coverage.
+Index preparation and self-heal:
 
-The shared Claude context contract v5 runs its selected queries directly, allowing provider-owned automatic preparation, and reports partial pre-flight retrieval when any requested query fails, misses or lacks completeness metadata. Consumer gates persist successful preparation, stale continuation and explicit skips through each consumer's state owner; later queries carry `--no-heal` after a stale choice. Consumers retain per-child batch outcomes and reuse matching fresh answers without suppressing necessary source or test-quality inspection.
+- Ordinary queries automatically prepare a missing canonical index and check discovered working-tree source, documentation and consumed configuration bytes for bounded incremental self-heal, including unstaged edits, additions and deletions.
+- Nested Git worktrees use their own index, never an ancestor checkout's.
+- `SCAN_NO_AUTOBUILD=1` or `--no-heal` disables query-time preparation; explicit foreign/custom indexes are not implicitly created or rewritten.
+- A self-heal stands down when a writer takes the index while the query is reading it (most often another query's own heal) and answers from the index it already loaded. A refresh already running when the query started is waited out by the read lease, after which no heal is needed.
+- An explicit scan is the predictable choice after a clone, a large change, a branch switch, or when a query reports stale/degraded coverage.
+
+The shared Claude context contract runs its selected queries directly and reports partial pre-flight retrieval when any requested query fails, misses or lacks completeness metadata. Consumer gates persist successful preparation, stale continuation and explicit skips; later queries carry `--no-heal` after a stale choice. Consumers retain per-child batch outcomes and reuse matching fresh answers without suppressing necessary source or test-quality inspection.
 
 <a id="-honest-limits"></a>
 
 ## 🧭 Honest limits
 
-The graph is static AST evidence. It can miss dynamic dispatch, hook and callback registration, string-based dispatch, `getattr` lookups, `importlib.import_module`, `__import__`, and lazy-loading patterns. Import and call results therefore do not establish runtime behavior, external consumers, test pass status, or inheritance correctness. `rename-refs` calls out dynamic references, cross-repository callers, ABC/Protocol overrides, as manual review items. Both hosts preflight every known caller regardless of caller count; missing, ambiguous, or stale sites stop before source changes, and known callers are never silently skipped. Tracked module moves preserve uncommitted edits; non-git or untracked sources and conflicted or occupied destinations stop before edits.
+> The graph is static AST evidence. It can miss dynamic dispatch, hook and callback registration, string-based dispatch, `getattr` lookups, `importlib.import_module`, `__import__`, and lazy-loading patterns. Import and call results therefore do not establish runtime behavior, external consumers, test pass status, or inheritance correctness.
 
-Files that fail to parse are marked degraded rather than silently treated as complete. Untracked files, root mismatches, collisions, stale hashes, and list caps can all reduce confidence. Review the returned coverage metadata and inspect the relevant source and tests before making a behavior or deletion decision.
+- `rename-refs` calls out dynamic references, cross-repository callers, ABC/Protocol overrides, as manual review items. Both hosts preflight every known caller regardless of caller count; missing, ambiguous, or stale sites stop before source changes, and known callers are never silently skipped.
+- Tracked module moves preserve uncommitted edits; non-git or untracked sources and conflicted or occupied destinations stop before edits.
+- Files that fail to parse are marked degraded rather than silently treated as complete. Untracked files, root mismatches, collisions, stale hashes, and list caps can all reduce confidence. Review the returned coverage metadata and inspect the relevant source and tests before making a behavior or deletion decision.
+- Performance and token use vary with repository size, model, index freshness, query choice, and whether an agent continues exploring after a result. Benchmark runs are exploratory and repository/model-specific; they do not establish universal savings or quality guarantees. See the [benchmark record](../../benchmarks/README.md) for methods and caveats.
+- Possible future work (broader dynamic-behavior evidence, deeper cross-language support, richer freshness diagnostics) is opportunity, not promise; the current contract remains static Python analysis with explicit coverage metadata.
 
-Possible future work includes broader dynamic-behavior evidence, deeper cross-language support, and richer freshness diagnostics. Those are opportunities rather than promises; the current contract remains static Python analysis with explicit coverage metadata.
+### Hooks and launchers
 
-Claude's optional Python hooks provide ambient index status, session-sharded telemetry, skill-start records, and a narrow redundant-import-grep guard. Claude hook commands invoke the packaged Codemap launcher with `--run-hook` and a supported hook basename; the launcher verifies the supported CPython runtime before dispatch. Codex ships hooks for session seeding, ambient preamble/guard behavior, and runtime-scoped tool records, while its host does not provide a Codemap skill-start hook. The shared Claude/Codex prompt hook stays silent for a missing index when scanner exclusions leave no indexable `.py` or `.pyi` sources; an existing index still refreshes after the final source deletion. A missing-index automatic-query directive retains the bounded package/packaging marker condition (`__init__.py`, `pyproject.toml`, or `setup.py`), so marker-free scripts receive no ambient directive and no universal `__init__.py` requirement is implied; existing indexes with real source retain normal status and refresh behavior. The status preamble also tells agents to reuse an earlier answer to the same query rather than re-running it, and to keep `--top` small when the output enters context. Refresh suppression keys on HEAD and actual discovered source/documentation and consumed configuration bytes, so unstaged edits and eligible untracked files schedule a new refresh. A published fingerprint suppresses repeated scans only while those inputs stay unchanged. Frozen environments retain `SCAN_NO_AUTOBUILD=1`. Prompt status and missing-index sentinels are scoped per runtime and filename-safe session identity (falling back to `shared` when absent); after the first full stale preamble, unchanged index SHA and currency suppress reminders for 30 minutes, a changed state within that window emits one line and restarts it, an expired window re-emits the full preamble, and a current index clears the stale record. An incremental scan records current source fingerprints and HEAD as `git_sha`, including when no graph rebuild is needed. The hooks suppress expected parsing and filesystem failures and are not required for indexing or querying; this is not a guarantee against every malformed event. Skill/tool logging expects mapping-shaped `tool_input` when that field is truthy. The runtime difference is an evidence boundary, not a query-engine capability difference.
+Hooks are optional; they are not required for indexing or querying.
 
-The plugin's `bin/python` and native Windows `bin/python.cmd` preserve the shipped `python` command and probe candidate runtimes for Python 3.10+ before executing the workload once. Plugin `bin/` follows system directories on PATH, so an eligible system `python` takes precedence; missing eligible runtimes produce a clear diagnostic.
+| Hook                                                       | Runtime | Purpose                                                       |
+| ---------------------------------------------------------- | ------- | ------------------------------------------------------------- |
+| [`seed-session.py`](hooks/seed-session.py)                 | Claude  | Seeds session state at start.                                 |
+| [`inject-preamble.py`](hooks/inject-preamble.py)           | Both    | Ambient index-status preamble and bounded refresh scheduling. |
+| [`guard-redundant-scan.py`](hooks/guard-redundant-scan.py) | Both    | Narrow guard against redundant import greps.                  |
+| [`log-skill-start.py`](hooks/log-skill-start.py)           | Claude  | Skill-start telemetry records.                                |
+| [`log-tool-use.py`](hooks/log-tool-use.py)                 | Both    | Runtime-scoped tool records.                                  |
+| [`record-exhausted.py`](hooks/record-exhausted.py)         | Both    | Records exhausted-query state for the gate.                   |
 
-Codemap hook launchers select a verified Python 3.11–3.14 runtime and pass `--run-hook` only for supported hook basenames. Linux, macOS and native Windows use the same closed hook dispatch contract; versioned executable names are probed before running the hook.
+Registrations: [`claude-hooks.json`](hooks/claude-hooks.json), [`codex-hooks.json`](hooks/codex-hooks.json).
 
-Performance and token use vary with repository size, model, index freshness, query choice, and whether an agent continues exploring after a result. Historical benchmark runs are exploratory and repository/model-specific; they do not establish universal savings or quality guarantees. See the [benchmark record](../../benchmarks/README.md) for methods and caveats.
+- **Claude** hooks provide ambient index status, session-sharded telemetry, skill-start records, and a narrow redundant-import-grep guard. Hook commands invoke the packaged launcher with `--run-hook` and a supported hook basename; the launcher verifies a supported CPython runtime before dispatch.
+- **Codex** hooks cover ambient preamble/guard behavior and runtime-scoped tool records. The Codex host has no Codemap skill-start hook. The runtime difference is an evidence boundary, not a query-engine difference.
+- **Missing index:** the shared prompt hook stays silent when scanner exclusions leave no indexable `.py` or `.pyi` sources. Its automatic-query directive keeps the bounded package marker condition (`__init__.py`, `pyproject.toml`, or `setup.py`), so marker-free scripts receive no ambient directive and need a manual `codemap-py index`. An existing index still refreshes after the final source deletion.
+- **Preamble:** the status preamble tells agents to reuse an earlier answer to the same query rather than re-running it, and to keep `--top` small when output enters context.
+- **Refresh suppression:** keyed on HEAD and actual discovered source/documentation and consumed configuration bytes, so unstaged edits and eligible untracked files schedule a new refresh; a published fingerprint suppresses repeated scans only while those inputs stay unchanged. Frozen environments retain `SCAN_NO_AUTOBUILD=1`.
+- **Reminders:** prompt status and missing-index sentinels are scoped per runtime and session (falling back to `shared`). After the first full stale preamble, an unchanged index SHA and currency suppress reminders for 30 minutes; a changed state emits one line and restarts the window; an expired window re-emits the full preamble; a current index clears the stale record.
+- An incremental scan records current source fingerprints and HEAD as `git_sha`, including when no graph rebuild is needed.
+- Hooks suppress expected parsing and filesystem failures; this is not a guarantee against every malformed event. Skill/tool logging expects mapping-shaped `tool_input` when that field is truthy.
+
+Launchers:
+
+- Plugin `bin/python` and native Windows `bin/python.cmd` preserve the shipped `python` command and probe candidate runtimes for Python 3.10+ before executing the workload once. Plugin `bin/` follows system directories on PATH, so an eligible system `python` takes precedence; missing eligible runtimes produce a clear diagnostic.
+- Hook launchers select a verified Python 3.11–3.14 runtime and pass `--run-hook` only for supported hook basenames. Linux, macOS and native Windows use the same closed dispatch contract.
 
 <a id="-benchmark-evidence"></a>
 
 ## 📈 Benchmark evidence
 
-The benchmark record gives Codemap a measurable, bounded value proposition: on structural questions with unresolved dependency or caller scope, a required Codemap Skill reduced context and elapsed time in every model stratum measured so far, and improved the aggregate semantic answer score in five of the six. The sixth, the 2026-09-07 Codex `gpt-5.6-sol` stratum, is a quality tie against a control already at a median score of 1.000 — the cost reduction reproduced there and the quality gain did not. Those are historical scored-cell summaries, not an all-assigned pass rate; the record retains unfavorable and unobserved cells and explains when adaptive routing should skip Codemap.
+Headline claim, bounded: on structural questions with unresolved dependency or caller scope, a required Codemap Skill reduced context and elapsed time in every model stratum measured so far, and improved the aggregate semantic answer score in five of the six. The sixth, the 2026-09-07 Codex `gpt-5.6-sol` stratum, is a quality tie against a control already at a median score of 1.000 — the cost reduction reproduced there and the quality gain did not. These are historical scored-cell summaries, not an all-assigned pass rate; the record retains unfavorable and unobserved cells.
 
-The latest saved agentic reports use `reporting_version=agentic-graded-v2`. Their `quality` averages graded credit over all assigned cells and zeroes execution, formatting, contamination, treatment, and unobserved failures; `exact_pass` separately requires complete correctness and admission. The extended-suite snapshot below also exposes raw semantic credit so compliance failures do not masquerade as content errors. Legacy `component` means remain secondary diagnostics, not interchangeable with graded credit. Canonical efficiency compares only pairs where both cells pass exactly; improvements, regressions, both-fail outcomes, and unavailable usage remain separate. Historical snapshots retain their original contracts and are not pooled with the latest runs.
+Headline results, 45-task structural cohort shared by both providers, `C_strict` (required Skill) against the no-Codemap baseline, measured 2026-09-06:
 
-<!-- Related result tables — a figure here restates a run measured in the benchmark suite. Editing one means checking:
-  - plugins/codemap-py/README.md § All models on one cohort (both tables below)
-  - plugins/codemap-py/README.md § Structural navigation snapshot, § Agentic navigation snapshot, § Codex navigation snapshot, § Codex gpt-5.6-sol snapshot, § Codex gpt-5.6-terra snapshot, § Extended-suite agentic snapshot
-  - benchmarks/README.md § Results — structural and agentic lanes, per-provider views included
-  Figures are recomputed from immutable artifacts under benchmarks/results/; a corrected number means a new run. -->
+| Provider | Model  | Paired n | Baseline accuracy | Treatment accuracy |          Gain | Input tokens | Elapsed |
+| -------- | ------ | -------: | ----------------: | -----------------: | ------------: | -----------: | ------: |
+| Claude   | Haiku  |       39 |     71.8% (28/39) |      87.2% (34/39) | +15.4 pp (+6) |         −80% |    −74% |
+| Claude   | Sonnet |       42 |     83.3% (35/42) |      92.9% (39/42) |  +9.5 pp (+4) |         −57% |    −53% |
+| Claude   | Opus   |       43 |     88.4% (38/43) |      97.7% (42/43) |  +9.3 pp (+4) |         −19% |    −31% |
+| Codex    | Luna   |       43 |     88.4% (38/43) |      97.7% (42/43) |  +9.3 pp (+4) |         −29% |    −36% |
+| Codex    | Terra  |       40 |     87.5% (35/40) |      92.5% (37/40) |  +5.0 pp (+2) |         −42% |    −51% |
+| Codex    | Sol    |       45 |     93.3% (42/45) |      93.3% (42/45) |   0.0 pp (+0) |         −51% |    −49% |
 
-### All models on one cohort
+How to read it:
 
-Measured 2026-09-06. Both providers and every model stratum measured on one cohort, one metric, and one estimator: the shared task cohort, a cell counted correct or not, and per-task medians of treatment ÷ baseline restated as change against the baseline. The per-provider snapshots below keep their own canonical scoring and therefore differ.
+- Input tokens and elapsed are per-task medians of treatment ÷ baseline restated as change; Codex input tokens are gross, mostly cached, and the Codex runner records no per-cell cost.
+- Every stratum is one study at one repetition per cell, never a Codex or Claude average. Every row has some tasks where the Codemap arm cost more: reading less is a distributional result, never a per-task guarantee.
+- Optional use (`B_auto`) is not reliable. On Codex it regressed on agentic import-graph tasks under prompts that left the answer population implicit, and splitting by whether a cell actually queried Codemap changed nothing on the structural cohort. Required use of the Skill is what produced the effect.
+- A fully localized edit with no unresolved structural fact is not a Codemap workload: single- and multi-file Fix stages cost 15–45% more input at identical correctness.
+- Agentic blast-radius tasks (16 shared tasks): every required-Skill cell reports full recall and no baseline does; the Codex accuracy gains there were measured under prompts that did not state the answer population, and a re-run with explicit populations inverted the Luna accuracy half while the output-token and latency savings held.
+- Extended suite (20 graph-query tasks, six model studies, 2026-09-08–09): optional Codemap raised Claude Haiku semantic credit from 77.9% to 97.3% with whole-arm cost down 46.4%; Codex required use cut median output tokens (−15% to −41%) and elapsed time (−9% to −34%) on correct-answer pairs while gross input rose. One repetition on one graph-centric repository limits generalization.
+- Known open product issue: filtered centrality output can fall back to an unfiltered count for a module with only test importers.
 
-Structural, on the 45-task headline cohort both providers share:
+Full per-cohort narrative: [DEVELOPMENT.md](DEVELOPMENT.md#benchmark-narrative). Full cohorts, estimators, per-provider snapshots, distributions, and caveats: [benchmark results](../../benchmarks/README.md#results).
 
-| Treatment arm | Provider | Model  | Paired n | Baseline accuracy | Treatment accuracy |          Gain | Input tokens | Cost | Elapsed |
-| ------------- | -------- | ------ | -------: | ----------------: | -----------------: | ------------: | -----------: | ---: | ------: |
-| C_strict      | Claude   | Haiku  |       39 |     71.8% (28/39) |      87.2% (34/39) | +15.4 pp (+6) |         −80% | −75% |    −74% |
-| C_strict      | Claude   | Sonnet |       42 |     83.3% (35/42) |      92.9% (39/42) |  +9.5 pp (+4) |         −57% | −52% |    −53% |
-| C_strict      | Claude   | Opus   |       43 |     88.4% (38/43) |      97.7% (42/43) |  +9.3 pp (+4) |         −19% | −23% |    −31% |
-| C_strict      | Codex    | Luna   |       43 |     88.4% (38/43) |      97.7% (42/43) |  +9.3 pp (+4) |         −29% |    — |    −36% |
-| C_strict      | Codex    | Terra  |       40 |     87.5% (35/40) |      92.5% (37/40) |  +5.0 pp (+2) |         −42% |    — |    −51% |
-| C_strict      | Codex    | Sol    |       45 |     93.3% (42/45) |      93.3% (42/45) |   0.0 pp (+0) |         −51% |    — |    −49% |
-| B_auto        | Claude   | Haiku  |       42 |     73.8% (31/42) |      85.7% (36/42) | +11.9 pp (+5) |         −49% | −58% |    −56% |
-| B_auto        | Claude   | Sonnet |       42 |     83.3% (35/42) |      97.6% (41/42) | +14.3 pp (+6) |         −59% | −44% |    −50% |
-| B_auto        | Claude   | Opus   |       44 |     88.6% (39/44) |      95.5% (42/44) |  +6.8 pp (+3) |         −30% | −28% |    −31% |
-| B_auto        | Codex    | Luna   |       44 |     86.4% (38/44) |      93.2% (41/44) |  +6.8 pp (+3) |         −33% |    — |    −27% |
-| B_auto        | Codex    | Terra  |       41 |     87.8% (36/41) |      95.1% (39/41) |  +7.3 pp (+3) |          −5% |    — |    −20% |
-| B_auto        | Codex    | Sol    |       44 |     93.2% (41/44) |      97.7% (43/44) |  +4.5 pp (+2) |          +1% |    — |    −13% |
+<a id="-six-skills"></a>
 
-The six `C` rows are directly comparable — every one requires the installed Skill, and the three Codex rows carry byte-identical `A_plain` and `C_strict` arm contracts. Five of them improve accuracy while reading less. `Sol` `C_strict` is the exception: it answers exactly the same 42 of 45 cells as its own baseline for 51% fewer gross input tokens, a cost win and a quality tie against a baseline already at a median score of 1.000. `Terra` `C_strict` converts two cells and loses none.
+## 🔧 Six skills
 
-A median cannot say whether an arm saves reliably or saves because a few tasks saved enormously, so the same per-task token ratios are restated below as distributions over the same pairs.
+Both runtimes expose these names:
 
-| Arm      | Provider | Model  | Paired n | Median | Geo mean |     p10–p90 | sd(log) | Cheaper in |
-| -------- | -------- | ------ | -------: | -----: | -------: | ----------: | ------: | ---------: |
-| C_strict | Claude   | Haiku  |       39 | 0.204× |   0.215× | 0.031–1.384 |   1.461 |      32/39 |
-| C_strict | Claude   | Sonnet |       42 | 0.431× |   0.398× | 0.112–1.184 |   0.984 |      32/42 |
-| C_strict | Claude   | Opus   |       43 | 0.806× |   0.697× | 0.304–1.282 |   0.606 |      26/43 |
-| C_strict | Codex    | Luna   |       43 | 0.711× |   0.566× | 0.176–1.505 |   0.962 |      29/43 |
-| C_strict | Codex    | Terra  |       40 | 0.581× |   0.565× | 0.308–1.125 |   0.618 |      33/40 |
-| C_strict | Codex    | Sol    |       45 | 0.486× |   0.496× | 0.258–1.066 |   0.596 |      39/45 |
-| B_auto   | Claude   | Haiku  |       42 | 0.508× |   0.286× | 0.033–1.175 |   1.462 |      35/42 |
-| B_auto   | Claude   | Sonnet |       42 | 0.412× |   0.407× | 0.104–1.183 |   1.143 |      31/42 |
-| B_auto   | Claude   | Opus   |       44 | 0.700× |   0.697× | 0.322–1.256 |   0.603 |      27/44 |
-| B_auto   | Codex    | Luna   |       44 | 0.667× |   0.578× | 0.187–1.292 |   0.749 |      34/44 |
-| B_auto   | Codex    | Terra  |       41 | 0.947× |   0.888× | 0.434–1.439 |   0.482 |      23/41 |
-| B_auto   | Codex    | Sol    |       44 | 1.014× |   0.991× | 0.535–1.951 |   0.555 |      19/44 |
+| Skill                                                                                                     | Purpose                                                                                              |
+| --------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| [`scan-codebase`](claude-skills/scan-codebase/SKILL.md) · [Codex](codex-skills/scan-codebase/SKILL.md)    | Build or refresh the Python structural index. Explicit invocation; it does not answer a query.       |
+| [`query-code`](claude-skills/query-code/SKILL.md) · [Codex](codex-skills/query-code/SKILL.md)             | Select and render a structural query without rebuilding or editing source.                           |
+| [`test-impact`](claude-skills/test-impact/SKILL.md) · [Codex](codex-skills/test-impact/SKILL.md)          | Identify affected test files and emit a pytest command; it does not run tests.                       |
+| [`rename-refs`](claude-skills/rename-refs/SKILL.md) · [Codex](codex-skills/rename-refs/SKILL.md)          | Rename a Python symbol or module using static caller/import evidence, with confirmation and caveats. |
+| [`integration`](claude-skills/integration/SKILL.md) · [Codex](codex-skills/integration/SKILL.md)          | Audit, plan, apply, sync, or demo the supported consumer wiring and runtime evidence.                |
+| [`debrief-coding`](claude-skills/debrief-coding/SKILL.md) · [Codex](codex-skills/debrief-coding/SKILL.md) | Analyze local cross-runtime Codemap telemetry, optionally producing an anonymized report.            |
 
-- **Median**: middle per-task ratio of treatment ÷ baseline [below 1.0× = treatment spent less]
-- **Geo mean**: geometric mean of the same ratios [the average appropriate to ratios]
-- **p10–p90**: interior 80% of tasks [narrow = consistent]
-- **sd(log)**: standard deviation of the log ratio [scale-free spread]
-- **Cheaper in**: tasks where the treatment arm spent less, out of the paired total
+Claude uses `/codemap-py:<skill>`. Codex uses `$codemap-py:<skill>`. The shared contract is [`shared/capability-contract.md`](shared/capability-contract.md); it is the authority for exit codes, completeness metadata, and static-analysis caveats.
 
-Every one of the twelve rows has a p90 above 1.0×, so at least a tenth of tasks cost the Codemap arm more: reading less is a distributional result, never a per-task guarantee. Similar medians also do not mean equal reliability — Sonnet and Sol `C_strict` sit at 0.431× and 0.486× with sd(log) 0.984 against 0.596. And where an arm mixes tool users with non-users, the median describes neither: Haiku's `B_auto` cells that queried Codemap saved 66% at the median while the six that did not sit at parity.
+What each skill does not do:
 
-The `B` rows are not comparable across providers, and the Luna `B` row is not comparable to the other two Codex ones. Claude's `B_auto` makes Codemap optional and measures unprompted reach; the frozen Luna run's `B_auto` was executed under a prompt that required the direct CLI, so it answers a different question. The contract was then changed to optional-use, and `Sol` and `Terra` are the Codex runs under it — so only those two `B` rows ask the Claude question, and the Luna `B` row must not be blended with them. Cost is empty for Codex because that runner captures no per-cell price.
+| Skill            | It does not do                                                                             |
+| ---------------- | ------------------------------------------------------------------------------------------ |
+| `scan-codebase`  | Answer a query or validate runtime behavior.                                               |
+| `query-code`     | Rename symbols, rebuild explicitly requested indexes, or replace source/test verification. |
+| `test-impact`    | Prove tests pass or resolve dynamic dispatch invisible to the static graph.                |
+| `rename-refs`    | Guarantee dynamic, cross-repository, or inheritance references are covered.                |
+| `integration`    | Mutate remote services, global instructions, or an installed cache directly.               |
+| `debrief-coding` | Build/query the index or validate installation health.                                     |
 
-The optional arm's central negative now has two independent measurements. On both optional-contract strata, splitting the `B_auto` token ratio on whether the cell actually queried Codemap changes nothing — 0.974× against 1.016× on `Sol` at 26 of 44 uptake, 0.942× against 0.947× on `Terra` at 34 of 41 — so availability alone buys no saving, and low uptake is not the reason.
+Codex questions:
 
-Three things bound how the Codex rows may be stated. Each stratum is one study at one repetition per cell, never a Codex average. Input tokens are gross: roughly 91% of `Sol`'s and 85% of `Terra`'s gross input is cached, so `Sol`'s 71% whole-run gross reduction is a 42% fresh reduction and `Terra`'s 55% is 30% — any dollar claim must be made on fresh tokens or say that it is not. And `skill_delivery_observed` is false in all 219 cells of each, including every `C_strict` one, so the supported claim is that required Codemap *querying* produced the effect, not that the Skill file was read.
+- Codex asks only for a genuinely missing decision, material input or protected action. Authorized preparation, internal recovery and completion need no new consent.
+- Questions prefer permitted synchronous input, then this plugin's packaged native terminal form (`ask_user`). The form waits for the answer, binds it to the decision ID and frozen scope digest, and does not emit a second assistant question message. Closed choices use a selectable list; open-ended indexes, ranges, severity combinations and exact-token confirmations use native text input with the complete grammar.
+- The form performs no commands, repository writes, credential reads, network access or permission changes. No answer, cancellation or unsupported input grants consent. Explicit Approve/Deny replies bind to one unchanged, unambiguous conversational decision; ambiguity, supersession, exact-token/digest and runtime-permission rules remain enforced.
+- When plain text is required, all context, reports, confidence and limitations come before the question; the question and complete options or accepted input syntax are the final terminal block, with no trailing summary or status. The fallback is delivered once, in the final response.
+- A dismissed question stays pending; the root checks another suitable control, then asks once in plain chat if none remains usable.
+- Headless hosts retain an explicit unresolved-input fallback. Claude-specific question behavior is unchanged.
+- Each plugin ships its own provider; no sibling installation or user-settings change is required. Host restrictions still apply, and this does not override a plain-text-only host. Details: [short shared guide](shared/codex-user-questions.md).
 
-Agentic, on the 16 shared blast-radius tasks, where both providers use the same arm labels and the same scorer:
+<a id="-integration-with-other-plugins"></a>
 
-Three quality columns and three cost columns. Quality: `Accuracy` is the binary oracle verdict, `Score` the continuous semantic score with partial credit, `RREC` the expected-importer recall of the final report. Cost: input tokens, dollars, wall-clock. `Score` and `RREC` read `baseline → treatment` over the same paired cells as the accuracy columns.
+## 🔗 Integration with other plugins
 
-| Treatment arm | Provider | Model  | Paired n | Baseline accuracy | Treatment accuracy |          Gain |         Score |        RREC | Input tokens | Cost | Elapsed |
-| ------------- | -------- | ------ | -------: | ----------------: | -----------------: | ------------: | ------------: | ----------: | -----------: | ---: | ------: |
-| C_strict      | Claude   | Haiku  |       16 |      18.8% (3/16) |      68.8% (11/16) | +50.0 pp (+8) | 0.714 → 0.936 | 0.97 → 1.00 |         −60% | −45% |    −46% |
-| C_strict      | Claude   | Sonnet |       15 |      53.3% (8/15) |      73.3% (11/15) | +20.0 pp (+3) | 0.917 → 0.946 | 0.99 → 1.00 |         −77% | −65% |    −82% |
-| C_strict      | Claude   | Opus   |       16 |     62.5% (10/16) |      68.8% (11/16) |  +6.2 pp (+1) | 0.924 → 0.940 | 0.99 → 1.00 |         −50% | −41% |    −73% |
-| C_strict      | Codex    | Luna   |       16 |     81.2% (13/16) |      87.5% (14/16) |  +6.2 pp (+1) | 0.974 → 0.990 | 0.99 → 1.00 |         −45% |    — |    −44% |
-| C_strict      | Codex    | Terra  |       16 |     75.0% (12/16) |      87.5% (14/16) | +12.5 pp (+2) | 0.967 → 0.973 | 0.99 → 1.00 |         −29% |    — |    −29% |
-| C_strict      | Codex    | Sol    |       16 |      56.2% (9/16) |      87.5% (14/16) | +31.2 pp (+5) | 0.914 → 0.994 | 0.97 → 1.00 |         −57% |    — |    −57% |
-| B_auto        | Claude   | Haiku  |       16 |      18.8% (3/16) |      68.8% (11/16) | +50.0 pp (+8) | 0.714 → 0.892 | 0.97 → 1.00 |         −70% | −51% |    −53% |
-| B_auto        | Claude   | Sonnet |       15 |      53.3% (8/15) |      86.7% (13/15) | +33.3 pp (+5) | 0.917 → 0.968 | 0.99 → 1.00 |         −72% | −56% |    −76% |
-| B_auto        | Claude   | Opus   |       16 |     62.5% (10/16) |      87.5% (14/16) | +25.0 pp (+4) | 0.924 → 0.990 | 0.99 → 1.00 |         −43% | −51% |    −77% |
-| B_auto        | Codex    | Luna   |       16 |     81.2% (13/16) |       50.0% (8/16) | −31.2 pp (−5) | 0.974 → 0.881 | 0.99 → 0.99 |         −17% |    — |    −35% |
-| B_auto        | Codex    | Terra  |       16 |     75.0% (12/16) |       37.5% (6/16) | −37.5 pp (−6) | 0.967 → 0.842 | 0.99 → 1.00 |         +16% |    — |    −20% |
-| B_auto        | Codex    | Sol    |       16 |      56.2% (9/16) |       31.2% (5/16) | −25.0 pp (−4) | 0.914 → 0.830 | 0.97 → 0.99 |          +1% |    — |    −31% |
+The integration engine has an explicit closed consumer set:
 
-**Every required-Skill cell on every model of both providers reports full recall**, and no baseline does. The binary and continuous columns disagree in one place worth naming: Claude's optional arm scores above its required arm on Sonnet and Opus, while Codex's optional arm collapses on all three strata — the same provider split the accuracy columns show, now visible in partial credit as well as pass/fail. Two further evidence metrics are measured on every cell and left to the [benchmark results](../../benchmarks/README.md#results) rather than shown here: `EREC`, the same recall over the whole transcript instead of the final answer, which differs from `RREC` in one cell of the entire record, and `DEFF`, an exposure-hit count per command that compares within a model only. The recall absolutes are inflated by substring credit in the frozen scorer, so the arm-to-arm difference carries and the level does not.
+- Claude consumers: `foundry`, `oss`, `develop`, and `research`.
+- Codex consumer: `codex-rig`.
 
-One row per stratum, one execution per row. All three Codex rows come from a single 144-cell launch completed 2026-09-08 that ran the declared strata as sequential child studies. Six earlier Codex agentic executions of the same 16 tasks exist and are deliberately not listed — three Luna, one terra, one sol, plus the 2026-09-06 Luna run under the unrepaired prompt. They are separate studies, not repetitions, so they are neither averaged in nor shown as rivals; the [benchmark results](../../benchmarks/README.md#results) report every one of them in full.
+`/codemap-py:integration audit` or `$codemap-py:integration` reports observed installed versions, roots, protocol compatibility, managed blocks, runtime-scoped telemetry, and wiring state without guessing at unavailable runtime facts.
 
-**A later Codex run inverts the accuracy half of the Luna rows, and the efficiency half survives it.** On 2026-09-08 the same 16 tasks re-ran on the Luna stratum under prompts that state the answer population explicitly — how a module is named, which modules count as tests, that the module under analysis is excluded from its own importer list, what each dependency count counts, and how ties break in a ranking — instead of leaving those rules to be inferred. The baseline then answers all sixteen tasks and the required-Skill arm twelve, so the `+6.2 pp` in the Luna row below reads `−25.0 pp` under the disambiguated prompt. Three tasks that every baseline had failed in every stratum of every earlier run all pass, which is why this is read as prompt disambiguation rather than run-to-run noise: a large part of the Codex accuracy gain in this table was the treatment arm compensating for ambiguity the baseline had to guess at. The required arm's remaining misses are the agent mis-transcribing or mis-ordering answers the tool returned correctly, not wrong data from the tool. Every one of them was assembly work outside the query — counting a returned list by eye, subtracting one call from another, filtering a repository-wide ranking against a candidate set by hand — because ranking or counting *within a candidate set* had no query behind it. Version 0.35.0 adds it (`central --among`, plus `importer_count` and `excluded_test_importer_count` on `rdeps`); those additions do not change the historical figures in this paragraph. The extended-suite snapshot later in this README includes observed use of these query capabilities, but does not isolate their individual causal effect. The other two strata were then re-run on byte-identical prompts and both follow: every baseline answers all sixteen tasks, the required arm thirteen and fifteen, so the `+12.5 pp` and `+31.2 pp` in the rows below read `−18.8 pp` and `−6.2 pp`. Only part of the resource result carries across strata — output tokens fall 48–54% and wall-clock 23–42% in all three, while input tokens read −35%, +15%, and −8% and hold no direction. The table below stands as measured; treat every Codex accuracy figure in it as measured under prompts that did not state the answer population, and treat the token saving as an output-token and latency claim rather than an input-token one.
+Shared contracts are read live, not copied:
 
-**The Codex rows and the Claude rows are no longer the same experiment revision.** Three things changed on the Codex side and only there: arm order is now cyclically balanced rather than fixed lexical, the required-arm contract accepts a standalone query through the injected `CODEMAP_BIN` variable *or* the exact installed launcher (the detector previously credited only the variable form, which is what made six terra cells look non-adherent), and the frozen treatment is Codemap 0.34.0 rather than 0.33.1. Read a Claude row against a Codex row as spanning that boundary.
+- Claude consumers load `claude-skills/_shared/codemap-gates.md` (missing/stale-index gates, `LAZY_CODEMAP`) and `claude-skills/_shared/codemap-context.md` (query mechanics, evidence lines, batch pre-flight) from the active `codemap-py` install, resolved through each consumer's own `resolve_shared_path.py codemap-py claude-skills/_shared`.
+- The install record picks the version; the resolver's newest-cache tier is a degraded fallback used only when no usable install record exists or the recorded install lacks the subdir.
+- Upgrading `codemap-py` upgrades the contract everywhere at once.
+- Without the plugin installed, every consumer prints its own "contract absent — use fallback below" line and continues; a `codemap-py` CLI on `PATH` without the plugin install is treated the same way.
 
-`Sol` is the widest strict-arm gap the record holds — nine of sixteen cells correct in the baseline against fourteen with the Skill, at 57% fewer input tokens — and it is wide because that stratum's baseline did badly, not because its strict arm did unusually well. The strict arm lands on exactly 14 of 16 in all three strata while the baselines read 13, 12, and 9. Baseline performance is the volatile term: the same sol stratum answered 12 of 16 in its earlier execution and 9 here, on identical tasks.
+Consumer integrations treat Codemap as optional structural context:
 
-Binary correctness is harsher than the semantic score the snapshots below report, so the large Haiku gains are movement from partially-right to exactly-right rather than from nothing. Every Codex row now pairs 16 of 16, with no cell dropped for a missing envelope, an incomplete answer, or a skipped required query — the first sweep in this record where the admission rule removes nothing. Codex remains the only row set where the optional-use arm regresses, and it regresses in all eight of the executions run under the two revisions this table spans, converting one baseline failure across 48 optional-arm cells while losing sixteen baseline successes. That regression is a prompt effect rather than a property of the arm, and stating the answer population removes it in every stratum: one lost cell on the first re-run stratum, none at all on the second, and on the third a single cell whose answer was correct and which failed on a harness cleanup check rather than on its content. Its token penalty does not reproduce (−17%, +16%, +1% here against +45% on the earlier sol run), so the accuracy direction is the finding and the token direction is not. Scored field by field, the optional arm's loss sits entirely in the two ordered/counted answers: it matches both other arms on every enumeration field (`production_importers` 0.991 against the baseline's 0.988 and the Skill arm's 1.000) and collapses on `ranking` (0.625 against 0.911 and 0.944) and `rdep_counts` (0.395 against 0.758 and 0.994). It finds who imports what as well as anyone and then ranks them worse than the arm with no tool at all — because it ranks by whatever raw reverse-dependency counts its improvised loop returns, including tests and examples, while the question asks within the production importer set. The Skill arm reads its `Need → Query` routing table before its first query; the bare-CLI arm spends its first round-trips on `--help` and `doctor` and then improvises. Having the counts without the contract that says which counts is worse than having no counts. A command-level replay of the earlier runs found no measurement fault behind the token side either: the optional arm is additive, querying the index and then exploring by hand anyway, so it drags 19.0k tokens of command output into each cell against the baseline's 7.1k. The required arm does the opposite — more commands than the baseline, but each returning a median 140–184 tokens against a grep's ~1,100, so it ends up reading less overall. Agentic elapsed figures stay cache-exposed: the Codex arm order is now balanced, the Claude one is not, and neither resets the provider cache between cells. Full cohort, estimator, and caveat detail: [benchmark results](../../benchmarks/README.md#results).
+- Missing canonical index: normal queries prepare it automatically; explicit frozen mode retains a structured missing-index error.
+- Stale index: normal queries attempt bounded refresh; retain any remaining stale-data caveat and targeted source inspection. Explicit opt-outs remain controlling.
+- Unavailable launcher: use the host's normal source exploration rather than silently claiming that no callers or tests exist.
 
-<a id="codex-structural-2026-08-07"></a> <a id="claude-structural-2026-09-06"></a>
-
-### Extended-suite agentic snapshot
-
-**More accurate answers at lower cost are demonstrated—not just fewer tokens.** In the latest Claude Haiku study, optional Codemap raises semantic credit from **77.9% to 97.3%**, with exactly correct answers increasing from **6/20 to 18/20**, while whole-arm gross input falls **53.6%** and cost falls **46.4%** ($4.77 → $2.56). Opus gains **3.61 percentage points** of semantic credit with either treatment. These are observed within-model improvements, not guarantees for every model or task.
-
-Six separate model studies ran on 2026-09-08–09: 20 graph-query tasks × three arms × one repetition, 360 cells total. The extended tasks test deeper enumeration and ranking, not behavioral change-impact correctness. Different provider manifests and treatment delivery prevent pooling; earlier snapshots remain historical.
-
-Semantic credit below means raw graded answer credit summed over all 20 assigned tasks, with unavailable answers contributing zero, **before treatment-compliance gating**. Exact counts are separately shown for admitted results, which require correct answers, valid formatting, complete execution, no contamination, and treatment adherence.
-
-| Provider | Model  | Plain semantic credit | Optional semantic credit | Required semantic credit | Admitted exact A / B / C |
-| -------- | ------ | --------------------: | -----------------------: | -----------------------: | ------------------------ |
-| Claude   | Opus   |                 96.3% |                    99.9% |                    99.9% | 18 / 19 / 19             |
-| Claude   | Sonnet |                 99.2% |                    97.9% |                    97.6% | 18 / 18 / 14             |
-| Claude   | Haiku  |                 77.9% |                    97.3% |                    94.0% | 6 / 18 / 6               |
-| Codex    | Luna   |                100.0% |                    99.9% |                    94.9% | 20 / 18 / 18             |
-| Codex    | Terra  |                 95.0% |                   100.0% |                    99.9% | 19 / 20 / 19             |
-| Codex    | Sol    |                 85.0% |                   100.0% |                    99.9% | 17 / 20 / 18             |
-
-Exact counts are out of 20; A = plain, B = optional, C = required Skill. Claude semantic exact counts differ from admitted exact for Sonnet required (17 versus 14) and Haiku required (14 versus 6). Haiku plain has 19 scored answers; Codex Luna required has 19, Terra plain 19, and Sol plain 17; all other arms have 20. All scored Codex plain answers are semantically exact, so higher all-assigned treatment credit there reflects answer availability, not demonstrated semantic improvement among scored answers.
-
-**The efficiency benefit is real but model-dependent.** On canonical pairs where both answers pass exactly, including admission checks, required Codemap reduces median output tokens and elapsed time across all three Codex strata:
-
-| Codex model | Both-exact pairs | Output tokens | Elapsed time | Gross input |
-| ----------- | ---------------: | ------------: | -----------: | ----------: |
-| Luna        |               18 |        −15.2% |        −9.1% |       +3.8% |
-| Terra       |               18 |        −41.2% |       −33.5% |      +26.0% |
-| Sol         |               15 |        −19.8% |       −15.7% |       +4.5% |
-
-These are medians of paired percentage changes, not whole-arm savings. Gross input increases in each required Codex stratum. Claude optional also shortens correct-answer latency, but Opus total cost increases despite its modest accuracy gain. Claude's recorded “fresh” residue excludes cache creation and is not comparable with Codex fresh input.
-
-**The remaining opportunity is reliable delivery, not a need to invent an accuracy gain.** Sonnet's near-perfect plain arm retains a small semantic advantage. Lower Claude tiers sometimes omit required compact syntax or use command forms whose successful results are not recognized; eight of Haiku's fourteen strict violations still contain exactly correct answers. Thus its 94.0% raw semantic credit and 30.0% admitted quality describe different properties. They must not be collapsed into either “the answers were wrong” or “the strict integration works.”
-
-Regressions also include real missing facts, count/ranking mistakes, and Codex execution/formatting failures. Two product issues remain actionable: filtered centrality output can fall back to an unfiltered count for a module with only test importers, and the deep-ranking naming disagreement is closed on the oracle side: a real scan names a package outside a configured source root from its own package root, which is the only name that resolves at runtime, and the benchmark oracle now derives module names by the same rule instead of by repository-relative path. The large earlier optional Codex collapse is not reproduced, but Luna still loses two exactly correct tasks. Working-tree fixes require prospective validation; no historical score is rewritten.
-
-**Bottom line:** this run demonstrates a substantial semantic-accuracy and cost benefit for Haiku optional, a smaller semantic gain for Opus, and consistent correct-answer output/latency reductions for Codex required. One repetition on one graph-centric repository limits generalization; selective routing and dependable query delivery remain important.
-
-Full per-cell evidence, canonical paired medians, and regression distinctions: [benchmark results](../../benchmarks/README.md#results).
-
-### Structural navigation snapshot
-
-On 2026-09-06, three Claude tiers ran 55 structural tasks across all three arms, 495 cells in one repetition against a frozen repository revision and a prebuilt index. `A_plain` is the no-Codemap baseline, `B_auto` makes Codemap optional, and `C_strict` requires the installed Skill. Accuracy is paired: each percentage pair is computed only over the tasks where both arms of that pair produced a scored, parsed answer, so both figures share one denominator, shown in parentheses as cells answered correctly. Gain is treatment minus baseline in percentage points, with the cell delta beside it. Input tokens, cost, and elapsed are per-task medians of treatment ÷ baseline restated as change against the baseline: negative means Codemap needed less.
-
-| Tier   | Pair                | Paired n | Baseline accuracy | Treatment accuracy |          Gain | Input tokens | Cost | Elapsed |
-| ------ | ------------------- | -------: | ----------------: | -----------------: | ------------: | -----------: | ---: | ------: |
-| Haiku  | A_plain vs C_strict |       47 |     74.5% (35/47) |      87.2% (41/47) | +12.7 pp (+6) |         −65% | −71% |    −54% |
-| Haiku  | A_plain vs B_auto   |       48 |     75.0% (36/48) |      85.4% (41/48) | +10.4 pp (+5) |         −48% | −52% |    −40% |
-| Sonnet | A_plain vs C_strict |       50 |     84.0% (42/50) |      92.0% (46/50) |  +8.0 pp (+4) |         −52% | −40% |    −46% |
-| Sonnet | A_plain vs B_auto   |       49 |     83.7% (41/49) |      95.9% (47/49) | +12.2 pp (+6) |         −52% | −43% |    −48% |
-| Opus   | A_plain vs C_strict |       50 |     88.0% (44/50) |      96.0% (48/50) |  +8.0 pp (+4) |         −21% | −11% |    −24% |
-| Opus   | A_plain vs B_auto   |       51 |     88.2% (45/51) |      94.1% (48/51) |  +5.9 pp (+3) |         −23% | −23% |    −25% |
-
-The lift is largest where unaided navigation is weakest and narrows as the tier strengthens, while the efficiency gap persists at every tier. On the safety-grade view — caller-enumeration answers with recall at or above 0.90 — the weakest tier moves from 10/14 unaided to 14/14 under the required Skill; the two stronger tiers already reach 14/14 in every arm.
-
-This run is descriptive and non-poolable: one repetition, one repository revision, one prebuilt index, and it retains contaminated, incomplete, and extraction-failed cells rather than filtering them. Twelve cells failed answer extraction and two baseline cells were dropped as contaminated, which is why the paired denominators vary. Two task defects found after the first execution were corrected and their cells re-measured; a third finding is a real gap in the tool's uncovered-symbol counting and is still scored as a miss rather than explained away. See the [canonical structural result and limitations](../../benchmarks/results-archive/2026-09-06-claude-structural.md).
-
-<a id="codex-agentic-2026-08-07"></a>
-
-### Agentic navigation snapshot — 2026-09-06
-
-The same three tiers completed 144 cells across 16 shared import-graph tasks and the same three arms. Values are per-task median savings against `A_plain`; positive means the arm needed less.
-
-| Tier   | Arm      | Elapsed | Cost | Input tokens | Tool calls |
-| ------ | -------- | ------: | ---: | -----------: | ---------: |
-| Haiku  | C_strict |     46% |  45% |          60% |        62% |
-| Haiku  | B_auto   |     53% |  51% |          70% |        68% |
-| Sonnet | C_strict |     82% |  65% |          77% |        72% |
-| Sonnet | B_auto   |     76% |  56% |          72% |        62% |
-| Opus   | C_strict |     73% |  41% |          50% |        52% |
-| Opus   | B_auto   |     77% |  51% |          43% |        59% |
-
-Evidence recall holds at parity or better in every Codemap cell, while the baseline drops below it on four tasks — three in both fields (BA-03, BA-12, BA-15) and one, Sonnet's BA-07, in the final report alone, where the module was surfaced during the run and left out of the answer. Time spent inside tools moves the other way — an index call costs more than a single grep — so the saving comes from needing far fewer calls, not from faster ones. This study is exploratory and non-poolable for the same reasons as the structural one, plus fixed arm order and provider-cache exposure; one baseline cell hit its coordinate timeout and is excluded rather than scored as a loss. See the [canonical agentic result and measurement caveats](../../benchmarks/results-archive/2026-09-06-claude-agentic.md).
-
-<a id="codex-structural-2026-09-06"></a> <a id="codex-agentic-2026-09-06"></a>
-
-### Codex navigation snapshot — 2026-09-06
-
-This is the first of three Codex strata measured; `gpt-5.6-sol` and `gpt-5.6-terra` have their own snapshots below. One `gpt-5.6-luna` study ran the same shared task contracts through the Codex CLI: 219 structural-family cells across all three arms, plus 48 agentic cells. Structural accuracy below is paired over the 45-task headline cohort, on the same denominator rule as the Claude table. This run's `B_auto` arm was executed under a prompt that required a Codemap query; the contract has since changed to optional-use to match Claude's `B_auto`, so a future Codex `B_auto` run must not be blended with these numbers.
-
-| Model | Pair                | Paired n | Baseline accuracy | Treatment accuracy |    Gain | Cells correct | Input tokens | Elapsed |
-| ----- | ------------------- | -------: | ----------------: | -----------------: | ------: | ------------: | -----------: | ------: |
-| Luna  | A_plain vs C_strict |       43 |             93.0% |              98.9% | +6.0 pp |       38 → 42 |         −53% |    −51% |
-| Luna  | A_plain vs B_auto   |       44 |             91.3% |              97.4% | +6.1 pp |       38 → 41 |         −42% |    −42% |
-
-Codex accuracy is the mean semantic quality score over the paired cells rather than a pass count, so the percentage and the correct-cell count move independently. Its token and elapsed figures are cohort totals restated as change against the baseline, where the Claude table above uses per-task medians.
-
-The four executable and extraction stages stay separate and nonpoolable. ReadCrop matches the Claude result — equal correctness, 37% less input under the required Skill. Fix-Single and Fix-Multi are the counterexample: identical correctness at 45% and 29% more input than the control, so a fully localized edit with no unresolved structural fact is not a Codemap workload. Patch is 5/5 unaided and 4/5 under the strict arm, the single loss being a wrong fix rather than a tooling failure.
-
-Agentically, the strict arm scores 0.960 against the control's 0.929 at 48% less input, answering 13 of 16 cells correctly against the control's 9, while the optional-use canary regresses to 0.860 and 6 of 16. Two defects in the measurement harness, both costing the treatment arms, were found in this run and are fixed prospectively rather than rescored. See the [canonical Codex result and limitations](../../benchmarks/results-archive/2026-09-06-codex-structural.md).
-
-### Codex `gpt-5.6-sol` snapshot — 2026-09-07
-
-A second Codex stratum ran the same shared task contracts: 219 structural-family cells over 73 tasks in five stages, all three arms, one repetition per cell, Codex CLI 0.153.4 at high reasoning effort, against the same frozen repository revision and index as every other table here. Its `A_plain` and `C_strict` arm contracts are byte-identical to the `gpt-5.6-luna` run's; its `B_auto` contract is the newer optional-use one and is not the contract Luna's `B_auto` ran under. The observed CLI build is 0.153.4 against a reviewed 0.146.1, so this ran on a build the methodology had not reviewed.
-
-**Read this as one stratum, not as a Codex result.** The sibling `gpt-5.6-terra` stratum of the same launch ran no paid cell — its launcher refused on a paid-approval token before the first model call — so this launch is half complete. Terra was relaunched and completed on 2026-09-07; that is a separate study with its own snapshot below, never a second half of this one.
-
-Structural accuracy is in the cross-provider table above. On the run's own semantic-quality metric, over the 44 tasks where all three arms produced an admissible scored cell, mean quality is 0.9477 unaided, 0.9889 optional, and 0.9742 strict, with a median of exactly 1.000 in every arm and 36 of the 44 tasks scoring identically in all three. The strict arm is cheaper on 38 of those 44 tasks. Because the control is already saturated, this design can detect degradation and cannot detect improvement, and the quality effect is indistinguishable from zero at one repetition per cell with no significance testing.
-
-Per-task spread separates the two treatment arms where the medians do not. Against the unaided baseline, the input-token ratio for the strict arm runs 0.254–1.066 between the 10th and 90th percentiles and is cheaper on 38 of 44 tasks; the optional arm runs 0.535–1.951 and is cheaper on 19 of 44, with a worst task at 2.74× the baseline. The two distributions are about equally wide — the difference is that the strict arm's sits below parity while the optional arm's straddles it. Uptake does not explain the gap: 26 of the 44 optional cells did query Codemap, and their median ratio (0.974×) is barely below the cells that did not (1.016×), because the optional arm queries Codemap in addition to exploring the repository the ordinary way.
-
-The four executable and extraction stages stay separate and must not be averaged together — their token direction is not consistent:
-
-| Stage      | Cells | A_plain correct | B_auto correct | C_strict correct | B tokens | C tokens |
-| ---------- | ----: | --------------- | -------------- | ---------------- | -------: | -------: |
-| ReadCrop   |    18 | 5/6             | 5/6            | 5/6              |     +60% |     −34% |
-| Fix-Single |    12 | 4/4             | 4/4            | 4/4              |     +16% |     +15% |
-| Fix-Multi  |     9 | 3/3             | 3/3            | 3/3              |     −15% |     +34% |
-| Patch      |    15 | 5/5             | 5/5            | 4/5              |     −36% |     −67% |
-
-Token columns are cohort totals against `A_plain`. Requiring Codemap costs 15% more input on single-file edits and 34% more on multi-file edits for identical correctness, which is the same counterexample the Luna run produced and the reason production guidance skips Codemap for a fully localized edit with no unresolved structural fact. The single Patch loss is the strict arm failing a cell both other arms passed, at a quarter of their input — one task at one repetition supports no claim either way, but it is not evidence that requiring the tool is safer.
-
-The optional arm abandons the tool wherever code has to be modified: uptake is 5 of 6 ReadCrop cells and 35 of 55 structural cells, but 0 of 12 across Fix-Single, Fix-Multi, and Patch. An optional rollout should not be expected to reproduce the strict-arm result on editing work.
-
-Delivery is confounded with arm — the optional arm always used the direct CLI and the strict arm always the installed Skill — so no optional-versus-strict difference can be attributed to strictness alone. Full cohort, estimator, and caveat detail is in the benchmark record's `gpt-5.6-sol` Codex section.
-
-### Codex `gpt-5.6-terra` snapshot — 2026-09-07
-
-The third Codex stratum ran the same shared task contracts: 219 structural-family cells over 73 tasks in five stages, all three arms, one repetition per cell, Codex CLI 0.153.4 at high reasoning effort, against the same frozen repository revision and index as every other table here. All three arm contracts are byte-identical to the `gpt-5.6-sol` run's, so this is the second study under the optional-use `B_auto` contract. As on Sol, the observed CLI build is 0.153.4 against a reviewed 0.146.1. This is the stratum whose first launch was refused on a paid-approval token; the relaunch is a separate study, not the missing half of the Sol launch.
-
-Structural accuracy is in the cross-provider table above. On the run's own semantic-quality metric over the headline cohort, mean quality is 91.6% unaided against 97.2% strict over 40 pairs, and 91.8% against 98.4% optional over 41 pairs. **Neither treatment arm turns a correct answer wrong**: the strict arm converts DI-01 and DI-02, the optional arm those two plus DI-06, and the only quality regression anywhere is BR-07 at −0.056 in both arms.
-
-The paired counts are 40 and 41 rather than 45 because four control cells were lost — `CQ-01` left a command item open, `FT-05` and `DI-05` exited non-zero with zero tokens, and `FT-03` failed answer extraction — plus one strict cell dropped for non-adherence. Every lost control cell is one the unaided arm failed to complete, so removing them raises the baseline and makes the gains above conservative.
-
-| Stage      | Cells | A_plain correct | B_auto correct | C_strict correct | B tokens | C tokens |
-| ---------- | ----: | --------------- | -------------- | ---------------- | -------: | -------: |
-| ReadCrop   |    18 | 5/6             | 6/6            | 6/6              |    +101% |     +10% |
-| Fix-Single |    12 | 4/4             | 4/4            | 4/4              |     −12% |      +3% |
-| Fix-Multi  |     9 | 2/3             | 3/3            | 3/3              |      −5% |      −2% |
-| Patch      |    15 | 3/5             | 3/5            | 4/5              |     −20% |      −9% |
-
-Token columns are cohort totals against `A_plain`. ReadCrop inverts here — the strict arm reads 10% more where Luna and Sol read 37% and 34% less — while converting the one cell the control got wrong. Editing stages sit near parity in both directions and support no claim at 3 to 5 tasks each. The one Patch task solved only under the strict arm, and the one failed by all three arms, are single observations that run opposite to Sol's single Patch loss.
-
-Optional uptake repeats the Sol pattern exactly: 4 of 6 ReadCrop cells, 48 of 55 structural cells, and 0 of 12 across the three editing stages. Delivery is again confounded with arm, and `skill_delivery_observed` is false in all 165 structural cells. Full cohort, estimator, and caveat detail is in the benchmark record's `gpt-5.6-terra` Codex section.
-
-## Extended operational reference
-
-### 🔗 Integration protocol
-
-The integration engine is source-owned and authenticated. Its modes have distinct evidence and mutation boundaries:
+Integration modes:
 
 - `audit` is the bounded read-only route. It reports observed provider and consumer versions, managed blocks, index identity, runtime-scoped logs, usage, findings, bounded provider content identity, same-version content drift, and an explicit `session_catalog: unobservable` state when the native listing has no session provenance.
 - `plan` writes an inspectable candidate and SHA-256.
 - `apply` changes only an approved managed block in checked-in consumer source.
 - `sync` installs only an approved local candidate or immutable release through the native runtime CLI.
 - `demo` records audit evidence plus one representative structural smoke query; it does not claim a plain-vs-structural comparison, token savings, or current-session activation.
-
-These routes never edit installed caches directly, write global Codex instructions, publish a release, or push Git. For Codex, `shared/codemap-py-integration.md` is metadata-only; the active consumer contract owns launcher validation, query guidance, and one-artifact reuse. Audit reports provider identity and active-guidance reachability/content separately, with static-reference limits; it cannot claim live fresh-session activation or semantic currency from hashes alone. After a runtime sync, follow the host's fresh-session guidance.
-
-Consumer integrations should treat Codemap as optional structural context. For the two currency states, choose one explicit route:
-
-- Missing canonical index: normal queries prepare it automatically; explicit frozen mode retains a structured missing-index error.
-- Stale index: normal queries attempt bounded refresh; retain any remaining stale-data caveat and targeted source inspection. Explicit opt-outs remain controlling.
-- Unavailable launcher: use the host's normal source exploration rather than silently claiming that no callers or tests exist.
-
-### 🧭 Skill boundaries and shared truth claims
-
-Both runtime rosters expose the same six capabilities; only invocation syntax and host tool bindings differ. The shared contract is [`shared/capability-contract.md`](shared/capability-contract.md), and it is the authority for exit codes, completeness metadata, and static-analysis caveats.
-
-| Skill            | Use it for                                                                                               | It does not do                                                                             |
-| ---------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `scan-codebase`  | Build or refresh the whole Python index, optionally from a consistent `--root`.                          | Answer a query or validate runtime behavior.                                               |
-| `query-code`     | Read dependencies, callers, symbols, paths, quality flags, tests, or diff impact from an existing index. | Rename symbols, rebuild explicitly requested indexes, or replace source/test verification. |
-| `test-impact`    | Identify structurally affected tests and emit a pytest command; it does not execute that command.        | Prove tests pass or resolve dynamic dispatch invisible to the static graph.                |
-| `rename-refs`    | Apply or preview one Python symbol/module rename with a confirmation and re-scan verification pass.      | Guarantee dynamic, cross-repository, or inheritance references are covered.                |
-| `integration`    | Audit, plan, apply, sync, or demo the supported consumer wiring and active query guidance.               | Mutate remote services, global instructions, or an installed cache directly.               |
-| `debrief-coding` | Summarize local cross-runtime Codemap telemetry, timing, completeness, and repeated-search avoidance.    | Build/query the index or validate installation health.                                     |
-
-Direction and scope rules:
-
-- `rdeps` and `deps` point in opposite directions.
-- To order or threshold modules a previous query returned, pass them to `central --among <a,b,c>` rather than filtering a repository-wide `central` ranking by hand; `unmatched` names every requested module the ranking did not cover, and a scoped ranking returns every candidate unless `--top` is given.
-- `rdeps` reports `importer_count`, and `excluded_test_importer_count` alongside it under `--exclude-tests`, so both totals come from one call; never derive one by subtracting a second call from the first.
-- For direct production callers, use `fn-rdeps <module::symbol> --exclude-tests`; use `fn-blast` only for an explicitly transitive request.
-- For direct test-module importers, use `rdeps` and filter test modules; reserve `test-impact` for transitive affected-test selection.
-- A method-name match is only an override candidate; verify ancestry and package boundaries in source.
-
-### 🗂️ Index lifecycle and completeness
-
-Index location and refresh rules:
-
-- Default index: `.cache/codemap/<project>.json`.
-- `CODEMAP_INDEX_DIR` changes only the parent directory and keeps the project basename as the filename.
-- After a custom-index scan, query with `--index <emitted-index-path> --root <same-root>`; without an explicit index, `--root` selects that root's canonical index. With an explicit root, the guard admits only that exact default or `CODEMAP_INDEX_DIR`-override emitted path outside the caller project; arbitrary sibling files remain rejected.
-- Prompt freshness runs its indexed dirty-path check from the Git root, so a nested session detects root-level `.py`, `.pyi`, `.rst`, and nested documentation Markdown changes before starting its bounded refresh.
-- The shared Claude/Codex prompt hook remains silent and skips refresh when scanner exclusions leave no indexable `.py` or `.pyi` sources. Missing-index guidance keeps its bounded package/packaging marker check, so marker-free scripts require a manual `codemap-py index`; an existing index with real source follows the normal status and refresh path.
-- Normal queries may perform a bounded incremental self-heal, skipped when a writer takes the index while the query is reading it; `SCAN_NO_AUTOBUILD=1` makes a missing index a hard refusal and prevents implicit writes.
-
-Every query exposes an `index` block. Follow this sequence:
-
-1. Query first; do not spend a call on an unconditional pre-scan or freshness probe.
-2. Read `query_complete` as direction-scoped graph coverage, not as a promise that a bounded display list is untruncated.
-3. Inspect `confidence`, `truncated`, and `total_available`; use `--limit 0` where supported when the complete list matters.
-4. After a complete, untruncated result, do not re-query, read, or grep for the same structural fact; sibling queries for distinct dimensions still run when required. Source-body reads remain valid for distinct implementation or runtime details and explicit independent AST/oracle work.
-5. For an incomplete or degraded result, use only a targeted fallback for the named gap (`stale`, `degraded`, `not_covered`, or similar); use `test-impact` when the open question is test choice.
-
-`stale`, degraded modules, untracked files, root mismatches, and collisions lower confidence and require source/test review.
-
-### 🔍 Troubleshooting checklist
-
-Use this order when a route is inconclusive:
-
-1. Dispatcher `127`: inspect `CODEMAP_PYTHON` and the eligible CPython range before debugging imports.
-2. Missing or stale index: run `codemap-py index --root PATH`, then repeat the query from the same project root.
-3. Capped list: inspect its completeness metadata and rerun with a supported larger limit.
-4. Hooks, callbacks, dynamic imports, string dispatch, lazy loading, or inheritance: read the source and named test/oracle regardless of a complete static result.
-5. Integration drift: run `codemap-py integrate audit --json`, inspect observed findings, and create a fresh stage-specific plan before applying or syncing anything.
+- Both mutation modes require the plan SHA-256 and never push Git, publish a release, edit installed caches directly, or write global Codex instructions.
+- Audit reports provider identity and active-guidance reachability/content separately; it cannot claim live fresh-session activation or semantic currency from hashes alone. After a runtime sync, follow the host's fresh-session guidance. For Codex, `shared/codemap-py-integration.md` is metadata-only; the active consumer contract owns launcher validation and query guidance.
 
 ### Complete integration mode reference
 
-The integration skill is a thin, source-owned adapter over `codemap-py integrate`. It has a closed consumer set: Claude consumers `foundry`, `oss`, `develop`, and `research`, and Codex consumer `codex-rig`. It does not discover arbitrary plugins or invoke another runtime's model.
+The integration skill is a thin, source-owned adapter over `codemap-py integrate`. It has a closed consumer set (above); it does not discover arbitrary plugins or invoke another runtime's model.
 
 | Mode    | Supported arguments                                                                                         | Writes or mutates                                                                          |
 | ------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
@@ -500,7 +338,7 @@ The integration skill is a thin, source-owned adapter over `codemap-py integrate
 
 An unrecognized mode prints the supported modes (`audit`, `plan`, `apply`, `sync`, `demo`) and stops; it does not open a menu. Exit codes are read per mode: for `audit` and `demo`, `1` is a fail verdict; for `apply`, drift or a filesystem failure; for `sync`, a partial result or an incomplete journal.
 
-`audit` has this contract:
+`audit` contract:
 
 - Defaults to `both`; supports `--runtime claude|codex|both`, JSON schema 2 (`codemap-py.integration.v2`), and `--since YYYY-MM-DD`.
 - Reports `pass`, `warn`, or `fail`; exits `0`, `1`, or `2` for completed status/syntax semantics.
@@ -508,7 +346,7 @@ An unrecognized mode prints the supported modes (`audit`, `plan`, `apply`, `sync
 - Remediation values are advisory (`plan_apply`, `plan_sync`, `source_maintenance`, `provider_release_required`, `scan_codebase`, `observe_next_session`, `none`) and are never executable artifacts.
 - `--runtime claude` scopes to the four Claude consumers; `--runtime codex` scopes to `codex-rig`.
 - `--approve` is valid only with `apply` or `sync`, a saved plan, and the exact SHA-256 printed for that plan.
-- Active consumer guidance is checked separately from provider metadata. Missing, unreachable, or outdated guidance is reported as source maintenance or an approved `plan_sync` action; static references prove reachability only, not semantic loading or current-session activation. Installed-byte identity and session evidence remain separate.
+- Active consumer guidance is checked separately from provider metadata. Missing, unreachable, or outdated guidance is reported as source maintenance or an approved `plan_sync` action; static references prove reachability only, not semantic loading or current-session activation.
 
 Mutation boundaries:
 
@@ -527,7 +365,7 @@ Mutation boundaries:
 
 ### Scan-codebase flags, performance, and exclusions
 
-The scan skill dispatches `codemap-py index`; it does not answer a query. Its verified CLI surface is:
+The scan skill dispatches `codemap-py index`; it does not answer a query.
 
 | Flag                   | Contract                                                                                                   |
 | ---------------------- | ---------------------------------------------------------------------------------------------------------- |
@@ -536,12 +374,10 @@ The scan skill dispatches `codemap-py index`; it does not answer a query. Its ve
 | `--with-coverage PATH` | Attach per-symbol line coverage from a `.coverage` SQLite file when `coverage>=7.4` is installed.          |
 | `--timeout N`          | Set a hard Unix `SIGALRM` timeout in seconds; `0` means no limit and Windows does not provide this signal. |
 
-Scan behavior and routing:
-
 - The full scan walks Python files with `ast.parse`, records imports, symbols, calls, hashes, source-root metadata, and degraded-file reasons, then writes one JSON index.
 - Incremental mode compares stored Git blob hashes or non-Git content hashes.
 - `setup_scan_env.py` validates the arguments before any scan: an unknown flag or `--root` without a value stops with the message printed unchanged, while a quoted value such as `--root "a --b"` is accepted. A failure parsing the arguments stops the run instead of starting a default scan. The index path is derived from the scan root (`<root>/.cache/codemap`), or from the Git root when `--root` is absent or `.`.
-- Build duration varies with repository size and filesystem; the scanner reports indexed and degraded counts, so the README does not promise fixed timings.
+- Build duration varies with repository size and filesystem; the scanner reports indexed and degraded counts, so no fixed timings are promised.
 - Run a full scan after clone or a large structural change, and use incremental mode after smaller changes or when a currency gate requests it.
 
 ```text
@@ -565,8 +401,6 @@ vendor-copy
 generated/*.py
 ```
 
-Exclusion semantics:
-
 - A bare name prunes matching directories anywhere; a path or glob matches a project-relative file path.
 - Exclusions are recorded in `excluded_roots` and do not trigger incremental rebuilds.
 - `src_roots` is ordered: the first matching root determines module naming and collision priority.
@@ -574,19 +408,7 @@ Exclusion semantics:
 
 ### Query-code subcommands and completeness contract
 
-The query CLI reads an existing index and emits JSON. The complete subcommand surface is grouped below; feature-gated commands report that an older index must be rebuilt rather than silently returning an incomplete answer.
-
-Additional query contracts:
-
-- The module group also includes `import-types <module>`.
-- `deps` accepts `--stdlib`, `--third-party`, or `--internal`; `rdeps`, `central`, and `coupled` accept `--entity TYPE` for indexed project, test, docs, or example entities. `rdeps --limit N` previews static `imported_by` only; `dynamic_imported_by` and `config_refs` remain exhaustive. Default `rdeps` and `rdeps --limit 0` return every static importer.
-- The path query returns exit 0 with a null path and reason `no-import-path` when known modules are disconnected; unknown-module and filesystem failures remain errors.
-- Symbol responses expose `stale` and `stale_reason` when recorded line ranges no longer match source.
-- Function results carry call-edge resolution (`import`, `local`, `self`, `star`, or `unresolved`), while `fn-rdeps` reports distinct caller count rather than raw call-site multiplicity.
-- `fn-deps`, `fn-rdeps`, `fn-blast`, and function-level `test-impact` accept `module::symbol`, a dotted `module.symbol` (split at the longest indexed module prefix), or a bare function or `Class.method` name defined once in the index. A rewritten target reports the caller's spelling in `normalized_from`. A name matching several symbols, a bare method name with no class (`open` against `Box.open`), or a name that is also the last segment of an indexed module (`cli` beside `tools.cli`) exits with a `candidates` list instead of guessing. `test-impact` still treats an exact indexed module name as module-level impact.
-- Every target-resolution failure — a symbol or module that is not found or not indexed, a module passed where a function is required, or a name that resolves to candidates — adds `rejected_target` (the caller's target as supplied) to its JSON error, beside the unchanged exit code. Exit 1 also covers provider-side failures such as an invalid index or a disabled feature, so a consumer tells "this target does not resolve" from "this provider cannot answer" by that key, never by the message text.
-- The scanner records `Foo()` as a call to `Foo`, so a `Foo.__init__` target also counts every `Foo()` call site, in direct callers and at each step of `fn-blast` and `test-impact` walks; such payloads carry `constructor_callers_merged: true` and add `inherited-constructors` to `not_covered`, because the index records no class bases and no `super().__init__()` edge, so subclass constructors are not followed.
-- A method or constructor with zero static callers returns a `hint` from `fn-rdeps`, `fn-blast`, and function-level `test-impact`, explaining that instance calls (`obj.method()`), property reads, bound-method references, and dynamic dispatch are not resolved statically, with a reference search to run (`grep -rnE "\.method\b"`, or `"\bClass\b"` for a constructor). A protocol (dunder) method such as `__len__` or `__eq__` gets no search: Python calls it implicitly (`len(x)`, `x == y`), so zero references is expected and never means unused, and its hint opens with "Never delete". The action comes first in every hint, so a consumer that cuts long strings keeps it. A `test*` method in a test module (the default pytest and unittest collection pattern) gets no hint, since the test runner calls it. The hint is advisory and does not change `query_complete`; a complete answer that carries it no longer claims that grep verification is not needed.
+The query CLI reads an existing index and emits JSON. Feature-gated commands report that an older index must be rebuilt rather than silently returning an incomplete answer.
 
 | Group                          | Commands and purpose                                                                                                                                                                            |
 | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -606,29 +428,61 @@ Every query accepts these global flags before or after the subcommand:
 - `--no-heal` answers from the existing index without bounded query-time refresh.
 - `--verbose-coverage` keeps the full coverage block on every query.
 - `--compact` reduces repeated coverage metadata.
-- `--format tsv` writes a table result as a header line plus tab-separated rows, naming the columns once instead of repeating every key on every row; the metadata envelope moves to stderr. JSON remains the default. It is refused for any result that is not a single table of flat, uniform records, so a nested value is never flattened into an unparsable cell. The batch pre-flight in `claude-skills/_shared/codemap-context.md` requests it for `central`, `coupled`, `fn-rdeps` and `fn-blast`; `rdeps` and `test-impact` are refused as non-tabular, and `symbol` returns a single row whose `source` field would become one quoted multi-line cell, so all three stay on JSON.
+- `--format tsv` writes a table result as a header line plus tab-separated rows; the metadata envelope moves to stderr. JSON remains the default. It is refused for any result that is not a single table of flat, uniform records, so a nested value is never flattened into an unparsable cell. The batch pre-flight requests it for `central`, `coupled`, `fn-rdeps` and `fn-blast`; `rdeps`, `test-impact` and `symbol` stay on JSON.
 
-Choose direction deliberately:
+Query contracts:
+
+- The module group also includes `import-types <module>`.
+- `deps` accepts `--stdlib`, `--third-party`, or `--internal`; `rdeps`, `central`, and `coupled` accept `--entity TYPE` for indexed project, test, docs, or example entities.
+- `rdeps --limit N` previews static `imported_by` only; `dynamic_imported_by` and `config_refs` remain exhaustive. Default `rdeps` and `rdeps --limit 0` return every static importer.
+- `path` returns exit 0 with a null path and reason `no-import-path` when known modules are disconnected; unknown-module and filesystem failures remain errors.
+- Symbol responses expose `stale` and `stale_reason` when recorded line ranges no longer match source.
+- Function results carry call-edge resolution (`import`, `local`, `self`, `star`, or `unresolved`); `fn-rdeps` reports distinct caller count, not raw call-site multiplicity.
+- `fn-deps`, `fn-rdeps`, `fn-blast`, and function-level `test-impact` accept `module::symbol`, a dotted `module.symbol` (split at the longest indexed module prefix), or a bare function or `Class.method` name defined once in the index. A rewritten target reports the caller's spelling in `normalized_from`.
+  - A name matching several symbols, a bare method name with no class (`open` against `Box.open`), or a name that is also the last segment of an indexed module (`cli` beside `tools.cli`) exits with a `candidates` list instead of guessing.
+  - `test-impact` still treats an exact indexed module name as module-level impact.
+- Every target-resolution failure adds `rejected_target` (the caller's target as supplied) to its JSON error beside the unchanged exit code. Exit 1 also covers provider-side failures such as an invalid index or a disabled feature, so a consumer tells "this target does not resolve" from "this provider cannot answer" by that key, never by the message text.
+- The scanner records `Foo()` as a call to `Foo`, so a `Foo.__init__` target also counts every `Foo()` call site, in direct callers and at each step of `fn-blast` and `test-impact` walks. Such payloads carry `constructor_callers_merged: true` and add `inherited-constructors` to `not_covered`, because the index records no class bases and no `super().__init__()` edge.
+- A method or constructor with zero static callers returns a `hint` from `fn-rdeps`, `fn-blast`, and function-level `test-impact`: instance calls (`obj.method()`), property reads, bound-method references, and dynamic dispatch are not resolved statically, and a reference search is suggested (`grep -rnE "\.method\b"`, or `"\bClass\b"` for a constructor).
+  - A protocol (dunder) method such as `__len__` or `__eq__` gets no search: Python calls it implicitly, so zero references is expected and never means unused, and its hint opens with "Never delete".
+  - A `test*` method in a test module gets no hint, since the test runner calls it.
+  - The hint is advisory and does not change `query_complete`; a complete answer that carries it no longer claims grep verification is not needed.
+
+Direction and scope rules:
 
 - `rdeps` means importers; `deps` means imports.
-- `fn-rdeps` means direct callers; `fn-blast` means transitive callers.
+- `fn-rdeps` means direct callers; `fn-blast` means transitive callers — use it only for an explicitly transitive request.
 - `central` ranks reverse imports; `coupled` ranks internal import count.
-- Use `symbol --with-imports` for a source slice plus its module imports, `find-symbol` for a regex, and `path` for the shortest import chain.
-- `find-symbol` name matches are override candidates, not inheritance proof.
+- To order or threshold modules a previous query returned, pass them to `central --among <a,b,c>` rather than filtering a repository-wide ranking by hand. `unmatched` names every requested module the ranking did not cover, and a scoped ranking returns every candidate unless `--top` is given.
+- `rdeps` reports `importer_count`, and `excluded_test_importer_count` alongside it under `--exclude-tests`, so both totals come from one call; never derive one by subtracting a second call from the first.
+- For direct test-module importers, use `rdeps` and filter test modules; reserve `test-impact` for transitive affected-test selection.
+- Use `symbol --with-imports` for a source slice plus its module imports, `find-symbol` for a regex, and `path` for the shortest import chain. `find-symbol` name matches are override candidates, not inheritance proof.
 
 Batch and diff behavior:
 
 - Batch input is a JSON array of objects such as `[{"cmd":"rdeps","args":["mypackage.auth"]}]`, passed inline as the argument, as a path to a file holding one, or on stdin via `-` (the default).
-- Items execute in one process and share one index load/coverage process; nested `batch` and `diff-impact` items are rejected. Each item retains its own `result.index` completeness, truncation, total, and scope metadata, while per-item failures remain on that item; the top-level index is a conservative summary and cannot upgrade an item. Skills keep standalone queries as the default.
-- `diff-impact` derives changed modules, per-module reverse dependencies/coupling, function callers, and a union of affected tests from a Git ref or unified diff. A C-quoted path (git's default for a non-ASCII name, `"b/pkg/mod\303\251.py"`) is unquoted before it is mapped, and Git listings are read NUL-separated, so a non-ASCII module is neither dropped from the change set nor reported stale forever. A `--diff-file` maps only its added lines, never the context lines around them, so a reviewer's default three-context-line diff names the same changed symbols as the zero-context git path; its lines split on newline only, so a form feed inside a line never shifts the numbering. A changed method or constructor with zero static callers keeps the `fn-rdeps` `hint` on its `fn_rdeps` entry; the payload then adds a top-level `hint` stating how many there are and naming up to five, and lists the call graph's `not_covered` blind spots. A changed test method carries none of these, so a change touching only tests keeps the plain shape.
+- Items execute in one process and share one index load; nested `batch` and `diff-impact` items are rejected. Each item retains its own `result.index` completeness, truncation, total, and scope metadata, and per-item failures remain on that item; the top-level index is a conservative summary and cannot upgrade an item. Skills keep standalone queries as the default.
+- `diff-impact` derives changed modules, per-module reverse dependencies/coupling, function callers, and a union of affected tests from a Git ref or unified diff.
+  - A C-quoted path (git's default for a non-ASCII name) is unquoted before it is mapped, and Git listings are read NUL-separated, so a non-ASCII module is neither dropped nor reported stale forever.
+  - A `--diff-file` maps only its added lines, so a default three-context-line diff names the same changed symbols as the zero-context git path; lines split on newline only.
+  - A changed method or constructor with zero static callers keeps the `fn-rdeps` `hint` on its `fn_rdeps` entry; the payload then adds a top-level `hint` stating how many there are and naming up to five, and lists the call graph's `not_covered` blind spots. A changed test method carries none of these.
 
-Coverage metadata is intentionally dieted after the first query in a process. Keep these distinctions when interpreting results:
+Coverage metadata is intentionally dieted after the first query in a process:
 
 - Use `--verbose-coverage` when each result must carry the full block.
-- `query_complete` is direction-scoped graph coverage, not a guarantee that a list is untruncated.
-- Read `confidence`, `truncated`, and `total_available`.
+- `query_complete` is direction-scoped graph coverage, not a guarantee that a list is untruncated; read `confidence`, `truncated`, and `total_available`.
 - `symbol`, `find-symbol`, and list-like commands default to bounded output and accept `--limit 0` where documented.
 - A complete graph with a capped display is still only a displayed slice; a truncated `rdeps` preview never settles exhaustive callers.
+
+Interpretation sequence for the `index` block:
+
+1. Query first; do not spend a call on an unconditional pre-scan or freshness probe.
+2. Read `query_complete` as direction-scoped graph coverage.
+3. Inspect `confidence`, `truncated`, and `total_available`; use `--limit 0` where supported when the complete list matters.
+4. After a complete, untruncated result, do not re-query, read, or grep for the same structural fact; sibling queries for distinct dimensions still run when required. Source-body reads remain valid for distinct implementation or runtime details and explicit independent AST/oracle work.
+5. For an incomplete or degraded result, use only a targeted fallback for the named gap (`stale`, `degraded`, `not_covered`, or similar); use `test-impact` when the open question is test choice.
+
+`stale`, degraded modules, untracked files, root mismatches, and collisions lower confidence and require source/test review.
 
 ```text
 codemap-py query --compact rdeps mypackage.auth --exclude-tests
@@ -640,14 +494,13 @@ codemap-py query batch - < requests.json
 
 ### Test impact and rename-refs contracts
 
-The `test-impact` skill has a deliberately narrow contract:
+`test-impact`:
 
-- Accepts exactly one target, either a bare module or `module::symbol` (dotted `module.symbol` and bare names defined once are normalized to `module::symbol`; a module-name suffix or bare method name exits with candidates), plus `--no-mocks`.
-- Identifies structurally affected test files, preserves the index completeness and `not_covered` caveats, and emits a pytest command for the maintainer to review and run. `test-impact` and `diff-impact` quote paths for POSIX shells on POSIX hosts or PowerShell on native Windows; `test_files` remains the authoritative argv list for other shells or direct subprocess execution.
+- Accepts exactly one target, either a bare module or `module::symbol` (dotted `module.symbol` and bare names defined once are normalized to `module::symbol`; a module-name suffix or bare method name exits with candidates), plus `--no-mocks`. For more than one target, use separate invocations; the skill warns rather than silently combining them.
 - Tokenizes the arguments once: `--no-mocks` is an exact token in any position, the first non-flag token is the target, and an unknown or flag-shaped argument is rejected. With no target the skill asks for one.
-- A target that does not resolve prints the engine's candidates or suggestions without index-rebuild advice; rebuild advice is reserved for provider failures such as a missing, oversized or corrupt index. The report lists the test files, `via_call` and `via_mock` counts, the pytest command and the completeness signals exactly as the helper prints them, and index builds run with `--timeout 360`.
+- Identifies structurally affected test files, preserves the index completeness and `not_covered` caveats, and emits a pytest command for the maintainer to review and run. Paths are quoted for POSIX shells on POSIX hosts or PowerShell on native Windows; `test_files` remains the authoritative argv list for other shells or direct subprocess execution.
+- A target that does not resolve prints the engine's candidates or suggestions without index-rebuild advice; rebuild advice is reserved for provider failures such as a missing, oversized or corrupt index. The report lists the test files, `via_call` and `via_mock` counts, the pytest command and the completeness signals exactly as the helper prints them; index builds run with `--timeout 360`.
 - Does not execute tests, find every caller, or prove runtime behavior.
-- For more than one target, use separate invocations; the skill warns rather than silently combining them.
 
 ```text
 /codemap-py:test-impact mypackage.auth::validate --no-mocks
@@ -661,18 +514,16 @@ $codemap-py:test-impact mypackage.auth
 /codemap-py:rename-refs module <old-module> <new-module> [--dry-run]
 ```
 
-Rename behavior and safety gates:
-
-- Both hosts check for Python sources from the repository root, excluding Git metadata, virtual environments and `node_modules`. A stop before the first source write ends the invocation; a stop after a write halts further rename edits, finishes available verification, and reaches Step 7's `⚠ Rename incomplete` summary with changed files and remaining work. Neither host finishes a stopped rename by hand. A failed re-scan remains visible in the summary and unavailable verification prevents success.
-- The symbol route updates a one-to-one Python definition and statically visible references; the module route renames a file/module and its import lines, indented ones inside functions, `try` or `if TYPE_CHECKING:` blocks included, plus attribute uses such as `mypackage.old.func()` after `import mypackage`. The blast report also prints the index's advisory search for references outside the static AST, such as hook-registered callers.
+- **Scope:** both hosts check for Python sources from the repository root, excluding Git metadata, virtual environments and `node_modules`.
+- **Symbol route:** updates a one-to-one Python definition and statically visible references. Call edges alone miss most references to a class or callback, so it also edits non-call references — imports, base classes, `isinstance` targets, callback values, `__all__` strings and ancestor `__init__.py` re-exports — in every file that imports the symbol's module or an ancestor package (`rdeps`). A same-name symbol imported from another module is left alone. Callers reached through `module::Class.method` are resolved by exact qualified name.
+- **Module route:** renames a file/module and its import lines, indented ones inside functions, `try` or `if TYPE_CHECKING:` blocks included, plus attribute uses such as `mypackage.old.func()` after `import mypackage`. It derives its import root from the whole relative path, so `src/` layouts rename correctly; a path that does not match the indexed file stops. The blast report also prints the index's advisory search for references outside the static AST, such as hook-registered callers.
 - `--dry-run` previews without editing.
 - `--deprecate` is symbol-only and defaults to the project deprecation decorator; `--since` and `--removed-in` add the version window. Quote a decorator value with single quotes (`--deprecate='@deprecated_class(...)'`): the Claude skill pastes its arguments into a double-quoted shell word, so a double quote ends it. `--no-deprecate` declines the wrapper explicitly and does not conflict with `--remove-if-no-callers`.
-- Arguments are tokenized once and validated before any edit: unknown flags, flags missing a value, leftover tokens, references that are not dotted identifiers, and symbol-only flags on `module` are rejected, and `::` input to `module` gets its own message. A `fn-rdeps`, `rdeps` or `find-symbol` error stops the run before any edit; caller sets and the `--remove-if-no-callers` delete gate also require a whole-word search that finds no non-definition reference, in dry-run and apply alike.
-- Callers reached through `module::Class.method` are resolved by exact qualified name, and the module route derives its import root from the whole relative path, so `src/` layouts rename correctly and a path that does not match the indexed file stops.
-- `--remove-if-no-callers` is a hard safety gate: it is honored only when the caller graph is complete, zero callers are found, and the user confirms removal. A method or constructor whose zero-caller answer carries a `hint` is refused: instance calls, overrides, and subclass constructors are never resolved statically, so zero static callers is not evidence of none. Run the hint's search and delete manually if it finds no reference; a protocol (dunder) method's hint names no search, because Python calls it implicitly, and is never deleted on zero callers.
-- The workflow refuses ambiguous or one-to-many matches, stale or degraded coverage, path escapes, dynamic references, cross-repository callers, and caller sets above its edit cap; inspect source and tests for those cases.
-- Call edges alone miss most references to a class or callback, so the symbol route also edits non-call references — imports, base classes, `isinstance` targets, callback values, `__all__` strings and ancestor `__init__.py` re-exports — in every file that imports the symbol's module or an ancestor package (`rdeps`). A same-name symbol imported from another module is left alone.
-- A successful edit is followed by an explicit rescan and verification step. For a symbol, the verification counts every whole-word reference to the old name still in `*.py`/`*.pyi` files (a method: only the files that call, define or import it; a `--deprecate` alias stub is not counted). Any unedited reference reports `Rename incomplete` with its `file:line`; the success line always states the residual count, so a rename never reports success while leaving an `ImportError` behind.
+- **Validation before any edit:** arguments are tokenized once; unknown flags, flags missing a value, leftover tokens, references that are not dotted identifiers, and symbol-only flags on `module` are rejected, and `::` input to `module` gets its own message. A `fn-rdeps`, `rdeps` or `find-symbol` error stops the run before any edit. Caller sets and the `--remove-if-no-callers` delete gate also require a whole-word search that finds no non-definition reference, in dry-run and apply alike.
+- **`--remove-if-no-callers` is a hard safety gate:** honored only when the caller graph is complete, zero callers are found, and the user confirms removal. A method or constructor whose zero-caller answer carries a `hint` is refused: instance calls, overrides, and subclass constructors are never resolved statically. Run the hint's search and delete manually if it finds no reference; a protocol (dunder) method is never deleted on zero callers.
+- **Refusals:** ambiguous or one-to-many matches, stale or degraded coverage, path escapes, dynamic references, cross-repository callers, and caller sets above the edit cap; inspect source and tests for those cases.
+- **Stops:** a stop before the first source write ends the invocation. A stop after a write halts further rename edits, finishes available verification, and reaches the `⚠ Rename incomplete` summary with changed files and remaining work. Neither host finishes a stopped rename by hand. A failed re-scan stays visible in the summary and unavailable verification prevents success.
+- **Verification:** a successful edit is followed by an explicit rescan. For a symbol, it counts every whole-word reference to the old name still in `*.py`/`*.pyi` files (a method: only the files that call, define or import it; a `--deprecate` alias stub is not counted). Any unedited reference reports `Rename incomplete` with its `file:line`; the success line always states the residual count, so a rename never reports success while leaving an `ImportError` behind.
 
 ```text
 /codemap-py:rename-refs symbol mypackage.auth::validate mypackage.auth::verify --dry-run
@@ -682,21 +533,22 @@ Rename behavior and safety gates:
 
 ### Debrief-coding telemetry and anonymization
 
-`debrief-coding` reads local JSONL telemetry and writes a diagnostic report; it does not build or query the index. Its collection and report contract is:
+`debrief-coding` reads local JSONL telemetry and writes a diagnostic report; it does not build or query the index.
 
 - Flags: `--since YYYY-MM-DD`, `--session ID`, `--anonymize`, and `--output PATH` (default `.reports/codemap/debrief-<date>.md`; an existing report is never overwritten, a `-2`, `-3` counter is appended).
-- Claude records CLI, skill, and tool layers under `.cache/codemap/logs/`; Codex hooks record runtime-scoped CLI and tool shards but have no skill-start hook, so skill telemetry and some cross-layer joins can be unavailable.
-- `debrief_stats.py` streams every shard under the log root the hooks wrote (Git top level, `CODEMAP_LOG_DIR` honoured), so a run from a subdirectory reads the same tree, and the report is written from its single JSON object rather than from hand-read shards. `--since` and `--session` filter before anonymization; `bench` records, empty-command CLI records and records without a version are excluded and counted; the newest version is the primary cohort and older cohorts are never pooled. It exits `1` when no telemetry exists and `3` when `anonymize.py` or `join_avoidance.py` runs past its 50-second cap.
+- Claude records CLI, skill, and tool layers under `.cache/codemap/logs/`. Codex hooks record runtime-scoped CLI and tool shards but have no skill-start hook, so skill telemetry and some cross-layer joins can be unavailable.
+- `debrief_stats.py` streams every shard under the log root the hooks wrote (Git top level, `CODEMAP_LOG_DIR` honoured), so a run from a subdirectory reads the same tree; the report is written from its single JSON object, not from hand-read shards.
+- `--since` and `--session` filter before anonymization. `bench` records, empty-command CLI records and records without a version are excluded and counted; the newest version is the primary cohort and older cohorts are never pooled.
+- Exit `1` when no telemetry exists; exit `3` when `anonymize.py` or `join_avoidance.py` runs past its 50-second cap.
 - Flat legacy records remain unattributed.
-- Reports include overall, per-runtime, and unattributed usage summaries, refresh provenance, timing, completeness, and repeated-search avoidance.
+- Reports include overall, per-runtime, and unattributed usage summaries, refresh provenance, timing, completeness, and repeated-search avoidance. An avoidance event means a search/read names a module that a complete Codemap query already answered, not that the agent's runtime answer is incorrect; `join_avoidance.py` joins offline with a bounded time window.
 - `token_measurement` is unavailable because host hooks provide no token usage. Debrief does not measure token savings or verify live fresh-session activation.
 - Set `CODEMAP_LOGGING=false` to disable logging. Logs rotate at the implementation-defined size limit.
 
-The report summarizes command, skill, and search/read activity, timing, result counts, completeness reasons, per-runtime usage, and repeated-search avoidance. `join_avoidance.py` performs the offline join with a bounded time window; an avoidance event means a search/read names a module that a complete Codemap query already answered, not that the agent's runtime answer is incorrect.
+Anonymization:
 
-Anonymization behavior:
-
-- `--anonymize` pseudonymizes qualified names with a project-local salt at `.cache/codemap/logs/.salt`, scrubs qualified names inside error and stderr text, hashes `not_covered` values, and writes export JSONL separately into a run-scoped `.cache/codemap/export/<UTC stamp>/` directory, so earlier exports are never read. An existing salt must be a regular, owner-only file of exactly 32 hex bytes; a symlinked or loosely permissioned salt stops the export with exit 1.
+- `--anonymize` pseudonymizes qualified names with a project-local salt at `.cache/codemap/logs/.salt`, scrubs qualified names inside error and stderr text, hashes `not_covered` values, and writes export JSONL separately into a run-scoped `.cache/codemap/export/<UTC stamp>/` directory, so earlier exports are never read.
+- An existing salt must be a regular, owner-only file of exactly 32 hex bytes; a symlinked or loosely permissioned salt stops the export with exit 1.
 - Never share the salt with an anonymized export.
 - Anonymization protects names in the supported log fields; it is not a guarantee that arbitrary free text contains no identifying information.
 
@@ -708,28 +560,23 @@ Anonymization behavior:
 
 ### Scanner, query, and index architecture
 
-Scanner and query architecture:
-
 - The scanner is dependency-free Python: it walks the selected root, parses `.py` and `.pyi` files with the standard-library AST, resolves imports and selected call edges, computes module/function graph counts, captures supported documentation references, and writes an atomic versioned JSON index.
-- A `.py` implementation takes precedence over a sibling stub; an unpaired stub contributes declarations/imports but no implementation call edges.
 - Parse or encoding failures are retained as degraded module records instead of being silently dropped.
-- Incremental refreshes still track changed documentation for freshness and documentation references, but only `.py` and `.pyi` entries become module records, so documentation changes no longer contaminate module degradation counts and a subsequent refresh self-heals the index.
-
-The query engine loads the same JSON under a read lease, performs bounded freshness checks or self-heal, dispatches one subcommand, and returns a primary result plus an `index` coverage block. The block includes method, confidence, query completeness, truncation, totals, degraded count, stale/root-mismatch state, and `not_covered` blind spots. The index is a cache, not a daemon or runtime tracer; no static result proves dynamic dispatch, external consumers, inheritance, test pass status, or behavior.
-
-The default index contains modules, relative paths, symbols and line ranges, direct imports, calls and resolution tags, test/entity classification, source-root metadata, exclusions, collisions, scan version, and Git blob or non-Git content hashes. The JSON format is version-gated: call-graph, fixture, subprocess, documentation, dead-code, and coverage queries refuse unsupported index versions with an upgrade/rebuild instruction.
+- Incremental refreshes track changed documentation for freshness and documentation references, but only `.py` and `.pyi` entries become module records, so documentation changes do not contaminate module degradation counts.
+- The query engine loads the same JSON under a read lease, performs bounded freshness checks or self-heal, dispatches one subcommand, and returns a primary result plus an `index` coverage block (method, confidence, query completeness, truncation, totals, degraded count, stale/root-mismatch state, `not_covered`).
+- The index is a cache, not a daemon or runtime tracer; no static result proves dynamic dispatch, external consumers, inheritance, test pass status, or behavior.
+- The default index contains modules, relative paths, symbols and line ranges, direct imports, calls and resolution tags, test/entity classification, source-root metadata, exclusions, collisions, scan version, and Git blob or non-Git content hashes. The JSON format is version-gated: call-graph, fixture, subprocess, documentation, dead-code, and coverage queries refuse unsupported index versions with an upgrade/rebuild instruction.
 
 ### Index locations, non-Git roots, and currency
-
-Index location and currency:
 
 - By default the index is `.cache/codemap/<project>.json`, where `<project>` is the selected root basename.
 - `CODEMAP_INDEX_DIR` changes the base to `<override>/<project>.json`; use separate override directories when two projects share a basename.
 - `CODEMAP_COORDINATION_DIR` moves only the `.index-rw` read/write gate to the named directory and leaves the index where it resolved. Set it when the index directory cannot take writes — a read-only or shared mount, or a sandbox that grants write access to the gate alone. It names that directory itself, so give each index its own: two sharing one directory share a registry mutex and serialise against each other.
-- `--root PATH` selects that source root’s canonical index and resolves its paths; `--index PATH` explicitly selects another admitted query file, retaining provenance and mutation boundaries.
-- `SCAN_NO_AUTOBUILD=1` disables implicit query refresh and makes missing indexes a structured manual-build error.
-- Git repositories hash actual discovered working-tree bytes using compatible Git blob digests and retain the repository revision for provenance. Non-Git projects use content hashes, so incremental scans and stale detection still work without `git`.
-- A custom root is recorded as `scan_root`; subsequent scans and queries must use that same tree or explicitly select the matching index. Multiple configured `src_roots` are ordered and recorded to make module naming reproducible.
+- `--root PATH` selects that source root's canonical index and resolves its paths; `--index PATH` explicitly selects another admitted query file, retaining provenance and mutation boundaries. With an explicit root, the guard admits only that exact default or `CODEMAP_INDEX_DIR`-override emitted path outside the caller project; arbitrary sibling files remain rejected.
+- `SCAN_NO_AUTOBUILD=1` disables implicit query refresh and makes a missing index a structured manual-build error.
+- Git repositories hash actual discovered working-tree bytes using compatible Git blob digests and retain the repository revision. Non-Git projects use content hashes, so incremental scans and stale detection still work without `git`.
+- A custom root is recorded as `scan_root`; later scans and queries must use that same tree or explicitly select the matching index. Multiple configured `src_roots` are ordered and recorded.
+- Prompt freshness runs its indexed dirty-path check from the Git root, so a nested session detects root-level `.py`, `.pyi`, `.rst`, and nested documentation Markdown changes before starting its bounded refresh.
 - The integration and consumer currency gates prepare missing and stale indexes automatically by default. `LAZY_CODEMAP` preserves explicit confirm-first behavior; `SCAN_NO_AUTOBUILD=1` preserves frozen evidence. A failed preparation never becomes a fresh/available claim.
 - There is no post-commit hook requirement. Explicit scan remains available for CI and benchmarks where build cost should be controlled.
 
@@ -743,7 +590,7 @@ CODEMAP_INDEX_DIR=<absolute-cache-dir> codemap-py index --root <project-root>
 SCAN_NO_AUTOBUILD=1 codemap-py query --index <matching-index> rdeps mypackage.auth
 ```
 
-### Named troubleshooting cases
+### Troubleshooting
 
 | Symptom                                 | Evidence-led response                                                                                                                                                  |
 | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -757,54 +604,26 @@ SCAN_NO_AUTOBUILD=1 codemap-py query --index <matching-index> rdeps mypackage.au
 | `scan-query` not found                  | Use the skill, resolve the installed launcher path, or add the package `bin/` directory to PATH; Codex does not inject it automatically.                               |
 | integration missing/outdated            | Run `integration audit`, inspect observed evidence and the source-owned managed block, then create a fresh stage-specific plan rather than editing an installed cache. |
 | dynamic hook/callback/override behavior | Treat static results as candidates; inspect implementation and named tests/oracles because AST edges cannot prove runtime behavior.                                    |
-
-<a id="-six-skills"></a>
-
-## 🔧 Six skills
-
-> Codex questions use a [short shared guide](shared/codex-user-questions.md), shipped locally by this plugin. The root uses a permitted question route with meaningful presets and built-in custom input; children hand decisions back to the root. Detailed approval/recovery rules load only when needed. Host restrictions still apply; this does not override a plain-text-only host. Before fallback, discover deferred native question tools through the current catalog or tool search, including `functions.exec` `ALL_TOOLS` when exposed, and record route eligibility. An explicit current host contract establishing rendered controls, text input, and answer lifetime permits first use; tool acceptance alone does not prove delivery. Unknown async usability is unsuitable. Select the route before asking, and deliver a plain-chat fallback once in the final response, never in both commentary and final. A text-delivered async question stays pending without a second control or repeated menu.
-
-Both runtimes expose these names:
-
-| Skill            | Purpose                                                                                              |
-| ---------------- | ---------------------------------------------------------------------------------------------------- |
-| `scan-codebase`  | Build or refresh the Python structural index. Explicit invocation; it does not answer a query.       |
-| `query-code`     | Select and render a structural query without rebuilding or editing source.                           |
-| `test-impact`    | Identify affected test files and emit a pytest command; it does not run tests.                       |
-| `rename-refs`    | Rename a Python symbol or module using static caller/import evidence, with confirmation and caveats. |
-| `integration`    | Audit, plan, apply, sync, or demo the supported consumer wiring and runtime evidence.                |
-| `debrief-coding` | Analyze local cross-runtime Codemap telemetry, optionally producing an anonymized report.            |
-
-Claude uses `/codemap-py:<skill>`. Codex uses `$codemap-py:<skill>`. Both skill rosters use concise, instruction-first prose while retaining command syntax, routing, stop rules, safety gates, and runtime notes for installed-root resolution, PATH behavior, and each host's confirmation mechanism. Claude executable fences remain byte-identical so compression cannot change shell behavior.
-
-<a id="-integration-with-other-plugins"></a>
-
-## 🔗 Integration with other plugins
-
-The integration engine has an explicit closed consumer set:
-
-- Claude consumers: `foundry`, `oss`, `develop`, and `research`.
-- Codex consumer: `codex-rig`.
-
-`/codemap-py:integration audit` or `$codemap-py:integration` reports observed installed versions, roots, protocol compatibility, managed blocks, runtime-scoped telemetry, and wiring state without guessing at unavailable runtime facts.
-
-Shared contracts are read live, not copied. The Claude consumers load `claude-skills/_shared/codemap-gates.md` (missing/stale-index gates, `LAZY_CODEMAP`) and `claude-skills/_shared/codemap-context.md` (query mechanics, evidence lines, batch pre-flight) straight from the active `codemap-py` install, resolved through each consumer's own `resolve_shared_path.py codemap-py claude-skills/_shared` — the install record picks the version; the resolver's newest-cache tier is a degraded fallback used only when no usable install record exists or the recorded install lacks the subdir. No consumer ships a frozen copy, so the contract a skill follows always matches the CLI it is driving; upgrading `codemap-py` upgrades the contract everywhere at once. Without the plugin installed, every consumer prints its own "contract absent — use fallback below" line and continues; a `codemap-py` CLI on `PATH` without the plugin install is treated the same way.
-
-Mode boundaries:
-
-- `plan` writes an inspectable artifact.
-- `apply` updates only approved managed blocks in checked-in consumer source.
-- `sync` installs only the approved local candidate or immutable release through the native runtime CLI.
-- Both mutation modes require the plan SHA-256 and never push Git, publish a release, edit installed caches directly, or write Codex global instructions.
-- `demo` records disposable evidence.
+| integration drift                       | Run `codemap-py integrate audit --json`, inspect observed findings, and create a fresh stage-specific plan before applying or syncing anything.                        |
 
 <a id="-configuration"></a>
 
 ## ⚙️ Configuration
 
-The default index path is `.cache/codemap/<project>.json`, where `<project>` is the project-root basename. Set `CODEMAP_INDEX_DIR` to an absolute override directory to use `<override>/<project>.json`; separate colliding project names with separate override directories. `SCAN_NO_AUTOBUILD=1` keeps query and test-impact routes from creating or refreshing an index implicitly.
+- The default index path is `.cache/codemap/<project>.json`, where `<project>` is the project-root basename. Set `CODEMAP_INDEX_DIR` to an absolute override directory to use `<override>/<project>.json`; separate colliding project names with separate override directories.
+- `SCAN_NO_AUTOBUILD=1` keeps query and test-impact routes from creating or refreshing an index implicitly.
+- Use `--root PATH` when the Python tree is a subproject or monorepo component. The scan names the index from that root's basename, and later queries must use the same root or an explicit matching index. `--root` on query controls file-path resolution; it does not retarget an index built for a different tree, and a mismatch is reported rather than silently accepted.
 
-`.claude-plugin/permissions-allow.json` lists the tool calls the skills expect to be pre-approved. `.claude-plugin/permissions-deny.json` is its counterpart — the operations that must stay denied no matter how broad the allow list becomes: destructive shell and git commands (`rm -rf`, `sudo`, `ssh`, `chmod 777`, force-push, `claude --dangerously-skip-permissions`). It no longer denies GitHub writes made through `gh`: foundry's gh write guard (`gh-write-guard.js`) lets each one run only after the user approves that exact command, and Claude Code still applies a settings deny rule after a hook allows a call, so a merged deny entry would defeat that approval. Without Foundry a gh write reaches the normal permission prompt, except through the two GitHub API calls this plugin's own allow list pre-approves (`Bash(gh api repos/*)`, `Bash(gh api graphql:*)`): a field POST or a GraphQL mutation made through them runs unprompted, a known gap kept so a codemap-only install reads GitHub without prompts. Neither file is merged into `~/.claude/settings.json` automatically. The sibling `cc_*` plugins each merge their own pair from their `/<plugin>:setup` skill; this plugin ships no setup skill, so the merge is manual. On upgrade, the allow command below removes the obsolete `Bash(gh api repos/*:*)` entry and the broad `Bash(find:*)`, `Bash(node:*)`, `Bash(claude:*)`, `Bash(sed:*)`, and `Bash(eval:*)` entries, including identical user-added entries; other allow entries are preserved. Ad-hoc commands in those five families now prompt unless a narrower rule covers them. A broad `python` allow remains for plugin helpers, flag parsing, and `python -m` recipes; no shipped skill runs `eval`. The deny merge is additive; stale gh write and local branch/tag deletion denies from earlier installs remain until you run `/foundry:setup` (requires `foundry` plugin). The merges are idempotent — the `reduce` dedupe keeps the first occurrence of each rule, so existing entries neither duplicate nor get re-sorted:
+### Permissions (Claude)
+
+- `.claude-plugin/permissions-allow.json` lists the tool calls the skills expect to be pre-approved.
+- `.claude-plugin/permissions-deny.json` lists operations that must stay denied no matter how broad the allow list becomes: destructive shell and git commands (`rm -rf`, `sudo`, `ssh`, `chmod 777`, force-push, `claude --dangerously-skip-permissions`).
+- It no longer denies GitHub writes made through `gh`: foundry's gh write guard (`gh-write-guard.js`) lets each one run only after the user approves that exact command, and Claude Code still applies a settings deny rule after a hook allows a call, so a merged deny entry would defeat that approval.
+- Without Foundry a gh write reaches the normal permission prompt, except through the two GitHub API calls this plugin's own allow list pre-approves (`Bash(gh api repos/*)`, `Bash(gh api graphql:*)`): a field POST or a GraphQL mutation made through them runs unprompted, a known gap kept so a codemap-only install reads GitHub without prompts.
+- Neither file is merged into `~/.claude/settings.json` automatically. The sibling `cc_*` plugins each merge their own pair from their `/<plugin>:setup` skill; this plugin ships no setup skill, so the merge is manual.
+- On upgrade, the allow command below removes the obsolete `Bash(gh api repos/*:*)` entry and the broad `Bash(find:*)`, `Bash(node:*)`, `Bash(claude:*)`, `Bash(sed:*)`, and `Bash(eval:*)` entries, including identical user-added entries; other allow entries are preserved. Ad-hoc commands in those five families now prompt unless a narrower rule covers them. A broad `python` allow remains for plugin helpers, flag parsing, and `python -m` recipes; no shipped skill runs `eval`.
+- The deny merge is additive; stale gh write and local branch/tag deletion denies from earlier installs remain until you run `/foundry:setup` (requires `foundry` plugin).
+- The merges are idempotent — the `reduce` dedupe keeps the first occurrence of each rule, so existing entries neither duplicate nor get re-sorted:
 
 ```bash
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}"
@@ -819,8 +638,6 @@ jq --slurpfile deny "$PLUGIN_ROOT/.claude-plugin/permissions-deny.json" \
 ```
 
 The first two lines cover a first install, where `~/.claude/settings.json` may not exist yet, and leave a backup at `~/.claude/settings.json.bak`; run `jq empty ~/.claude/settings.json` afterwards and restore from that backup if it does not parse. Deny wins over allow in Claude Code, so the order of the two merges does not matter. Deny entries are prefix matches, so they stop the documented command forms rather than every possible flag ordering.
-
-Use `--root PATH` when the Python tree is a subproject or monorepo component. The scan names the index from that root's basename, and later queries must use the same root or an explicit matching index. `--root` on query controls file-path resolution; it does not retarget an index built for a different tree, and a mismatch is reported rather than silently accepted.
 
 <a id="-compatibility-and-exit-codes"></a>
 
@@ -850,16 +667,27 @@ Fix: test `path === null` or read `reason`. Genuine failures (unknown module) st
 
 ## ⬆️ Upgrade, uninstall, and migration
 
-Upgrade through the runtime's normal plugin manager and start a fresh session:
+Upgrade through the runtime's normal plugin manager and start a fresh session. Run only the command for the runtime you use:
 
 ```bash
 claude plugin install codemap-py@borda-ai-rig
 codex plugin add codemap-py@borda-ai-rig
 ```
 
-The second command applies to Codex; run only the command for the runtime you use. Consumer wiring is source-owned and managed through the integration contract; an upgrade does not inject files into an installed cache.
+Consumer wiring is source-owned and managed through the integration contract; an upgrade does not inject files into an installed cache.
 
-The direct successor to the old `codemap` plugin is `codemap-py`. Do not run both identities in one session — the legacy plugin does not implement the shared-index read/write gate and is rejected as a concurrent producer. Before switching, note the installed `codemap` version so a rollback has a known target. Then close old sessions, uninstall or disable the old plugin, install `codemap-py`, start a fresh session, and run the runtime's integration audit. The project cache is retained and revalidated; no migration step deletes it.
+### Upgrading from codemap
+
+The direct successor to the old `codemap` plugin is `codemap-py`.
+
+> Do not run both identities in one session — the legacy plugin does not implement the shared-index read/write gate and is rejected as a concurrent producer.
+
+1. Note the installed `codemap` version so a rollback has a known target.
+2. Close old sessions, then uninstall or disable the old plugin.
+3. Install `codemap-py`.
+4. Start a fresh session and run the runtime's integration audit.
+
+The project cache is retained and revalidated; no migration step deletes it.
 
 ### Rolling back
 
@@ -872,18 +700,16 @@ Rollback never deletes or rewrites the project cache; it is only ever read and r
 
 ### Uninstall
 
+Run only the command for the runtime you installed into:
+
 ```bash
 claude plugin uninstall codemap-py
 codex plugin remove codemap-py@borda-ai-rig
 ```
 
-Run only the command for the runtime you installed into.
-
 <a id="-maintainer-documentation"></a>
 
 ## 📚 Maintainer documentation
-
-Resolver doctests preserve the caller's `TMPDIR`, including empty and absent values, and Python's temporary-directory cache, so downstream plugin tests retain their original temporary-directory boundary.
 
 - [`bin/README.md`](bin/README.md) documents shipped launchers, helpers, and compatibility shims.
 - [`scripts/README.md`](scripts/README.md) documents deterministic package builds, validation, and install probes.
@@ -894,12 +720,10 @@ Resolver doctests preserve the caller's `TMPDIR`, including empty and absent val
 
 ## 🙏 Contributing and feedback
 
-Python hook module docstrings describe their event inputs, local side effects, output envelopes, and failure handling. Pure helper examples run as doctests in the repository pytest suite; hook lifecycle and filesystem behavior use pytest fixtures.
-
 Open an issue in [Borda/AI-Rig](https://github.com/Borda/AI-Rig) with the codemap-py version, CPython version, command, project layout, and the complete error or coverage block. Keep benchmark task IDs and repository-specific fixtures in benchmark evidence, not in shipped plugin docs. Changes to skills, hooks, manifests, or runtime contracts require synchronized README updates and the plugin checks described in the repository authoring guidance.
+
+Python hook module docstrings describe their event inputs, local side effects, output envelopes, and failure handling. Pure helper examples run as doctests in the repository pytest suite; hook lifecycle and filesystem behavior use pytest fixtures.
 
 <a id="claude-agentic-2026-08-04"></a> <a id="codex-structural-2026-08-03"></a> <a id="three-model-comparison"></a>
 
 > Historical benchmark anchors are retained for links from the benchmark record. Current values, methods, and limitations belong in [`benchmarks/README.md`](../../benchmarks/README.md); this plugin README intentionally does not duplicate run-specific tables.
-
-The native question provider requires Python 3.10 or newer available as `python` on the executable search path inherited by Codex, matching its direct MCP command. Bundled shell and hook launchers do not change that search path. Codex Rig sync validates this prerequisite and does not install a global interpreter shim. If the host cannot start the provider, keep the required decision unresolved and use another permitted input route only when available.

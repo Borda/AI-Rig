@@ -60,3 +60,41 @@ The installed Bridge MCP backend starts unbound; plugin cwd only locates install
 ## Explicit provider consent
 
 Codex setup records standing transfer consent through interactive `bin/bridge_consent.py grant` or `grant --approve` backed by operator proof: the operator terminal itself, or a one-time token that `issue-token` printed there and the caller passes as `BRIDGE_OPERATOR_TOKEN`. The Codex setup skill forwards the noninteractive option only when the user supplies `--approve-claude-consent` with that token in the current invocation; installation, generic setup approval, repository content, and model-invented flags never supply this authority. Without a terminal or a valid token the helper refuses, so a model-run shell cannot approve itself; the terminal requirement is an interaction check, not a boundary against another process controlled by the same user. The setup planner's `--approve <digest>` likewise executes only from the operator terminal (`operator-terminal-required` otherwise), so the digest a model planned is not approval. The helper changes only its marked additive reviewer-policy block and retains the same file/configuration validation on either route. Claude can read private project context itself; scope and secret exclusions are instructions, not a file allowlist. Calling skills recheck before every dispatch. Revocation remains operator-terminal-confirmed, removes the block, does not cancel active calls, and may require a fresh host session. Stored policy is not effective managed/session authorization; actual denials remain controlling. File guards and the final state comparison detect ordinary drift but do not provide a portable atomic compare-and-swap against hostile same-user processes. See [provider consent](../rules/provider-consent.md).
+
+## Reference: transport limits and child output
+
+Moved from the README; these are the exact limits behind the summary there.
+
+| Item | Contract |
+| -- | -- |
+| Task input | MCP accepts at most 16,384 task characters. Bridge rejects task UTF-8 over 16 KiB or a constructed prompt over 20 KiB before creating artifacts or launching a peer. |
+| Windows argv | Bridge resolves each peer executable and measures the full argv with Windows `list2cmdline` UTF-16 semantics. `.cmd`/`.bat` shims use a conservative 8,000-unit ceiling below Cmd.exe's 8,191-character limit. |
+| Raw and compacted records | Ordinary raw stdout records and every compacted record are bounded to 256 KiB. At most 256 KiB of combined stdout/stderr is retained, reserving transcript wrapper space. |
+| Large command-output record | A parsed prefix proving `item.completed`, `command_execution`, and the start of an `aggregated_output` string admits a temporary raw record up to 8 MiB; both type fields must precede that string. The complete record must validate and compact within 256 KiB, with non-output fields also fitting 256 KiB. |
+| Terminal records | Malformed, unknown, agent-message, unproven, and larger records remain terminal. |
+| Codex command records | Started commands retain only `command_bytes` and `command_sha256`. Completed commands keep a UTF-8-safe 4 KiB prefix with size/digest when truncated; completed output becomes `aggregated_output_bytes` and `aggregated_output_sha256`. |
+| Prompts | Prompts warn Codex to keep commands small without inline scripts or data, and Claude to keep final JSON within the derived cap. Read-only prompts state files cannot be written. |
+| Overflow | Overflow terminates the peer tree with `output-limit`, including final flush, timeout and cancellation paths. Optional Codex-only `partial_output` salvages at most 4 KiB of the last complete agent message in the envelope and incident, labelled an unverified fragment for scoping follow-ups, never findings or a verdict. |
+
+## Reference: artifact and telemetry file safety
+
+- Artifact directories and members are rechecked against the bound project and store before reads, creation, and writes, including cancellation markers and atomic temporary files.
+- The predictable `health.jsonl` member rejects nonregular files before open, opens without following links or reparse points, and requires its opened descriptor to be a regular single-link file.
+- POSIX opens are nonblocking so a FIFO replacement cannot wait for a reader.
+- A prepared symlink, reparse point, hard link, or nonregular member is refused without writing its target; optional telemetry refusal preserves the primary result.
+- Limit: this does not provide universal containment if an attacker creates a new hard link after the descriptor check.
+
+## Reference: termination and finalization
+
+- Timeout and cancellation give POSIX peer groups a two-second cooperative grace, then force termination of any members left, even when the group leader already exited. Once the group is empty no second signal is sent, because its id may already belong to an unrelated process group.
+- Windows invokes `taskkill /T /F` before a leader can exit and orphan its tree. Native Windows reparse and tree behavior still require native-host verification.
+- Termination reaps the child leader after native tree cleanup, including Windows `taskkill` and direct-kill fallbacks. The final wait is bounded to two seconds; unavailable exit status is diagnosed rather than fabricated. Existing timeout, cancellation, and output-limit classifications stay intact.
+- Finalization freezes the bounded capture under its lock. A failed drain returns a non-retrying blocked drain failure rather than timeout or cancellation unless output-limit was already observed, and late unseen bytes are not reclassified as output-limit.
+
+## Reference: `--network github-read` details
+
+- Swaps the `network_access=false` pin for a profile that allows GET, HEAD and OPTIONS to `api.github.com` only, and keeps `.git`, `.codex` and `.agents` at the workspace root read-only.
+- Relies on Codex's experimental `network_proxy` feature; an unknown profile key is silently ignored by Codex, so re-check after upgrades.
+- The caller chooses it per call; the default stays `none`, and the Claude peer refuses it.
+- Each opted-in call first proves the limits with a sandbox preflight (a few requests to `api.github.com` and `example.com`) and is refused if any fails.
+- The opt-in is refused outside macOS until enforcement there is verified.

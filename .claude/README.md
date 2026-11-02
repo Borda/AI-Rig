@@ -4,6 +4,8 @@
 
 AI-Rig gives Claude Code five independently installable plugins for Python, ML, and open-source maintenance. Each one packages a bounded set of skills and, where useful, agents, rules, and hooks. Install the smallest set that solves today's problem; add the others when their workflow earns its place. For OpenCode, use the [OpenCode Rig](../plugins/opencode-rig/README.md) npm package instead.
 
+Contributing or want internals? See [DEVELOPMENT.md](DEVELOPMENT.md).
+
 <details>
 <summary><strong>Contents</strong></summary>
 
@@ -17,16 +19,15 @@ AI-Rig gives Claude Code five independently installable plugins for Python, ML, 
 - [Skills](#-skills)
 - [Agents](#-agents)
 - [Rules and hooks](#-rules-and-hooks)
-- [Plugin composition](#-how-the-plugins-compose)
 - [Orchestration flows and examples](#orchestration-flow-by-skill)
 - [Native Claude Code skills](#-native-claude-code-skills)
 - [Dependency matrices](#-plugin-dependency-matrix)
-- [Rules](#-rules-and-hooks)
 - [Architecture and teams](#-architecture)
 - [Hooks and state](#-hooks)
 - [Status line](#-status-line)
 - [Codex integration](#-integration-with-codex)
 - [Artifacts](#-artifact-layout)
+- [Plugin composition](#-how-the-plugins-compose)
 - [Boundaries and future work](#-current-boundaries-and-possible-future-work)
 - [Update, remove, and source checkouts](#-update-remove-and-source-checkouts)
 - [Source of truth](#-source-of-truth)
@@ -41,7 +42,7 @@ AI-Rig gives Claude Code five independently installable plugins for Python, ML, 
 
 | Plugin                                          | Problem it solves                                                                              | Shipped surface                                                             |
 | ----------------------------------------------- | ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| [`foundry`](../plugins/cc_foundry/README.md)    | Configuration drift, unclear specialist ownership, and lessons that disappear between sessions | 11 skills, 10 agents, 17 rules, and 15 JavaScript hook modules              |
+| [`foundry`](../plugins/cc_foundry/README.md)    | Configuration drift, unclear specialist ownership, and lessons that disappear between sessions | 11 skills, 10 agents, 18 rules, and 25 JavaScript hook modules              |
 | [`oss`](../plugins/cc_oss/README.md)            | Repeated issue, PR, feedback-resolution, and release-readiness work                            | 5 skills, 4 agents, 1 rule, and 4 active hook modules plus 1 shared helper  |
 | [`develop`](../plugins/cc_develop/README.md)    | Implementation that starts before scope, reproduction, or acceptance is clear                  | 7 skills, 1 rule, and 3 active hook modules plus 1 shared helper            |
 | [`research`](../plugins/cc_research/README.md)  | ML experiments that lack literature grounding, a methodology gate, or reviewable state         | 10 skills, 2 agents, 1 rule, and 3 active hook modules plus 1 shared helper |
@@ -51,7 +52,12 @@ The counts above are source inventories, not marketing estimates. The complete n
 
 ## 📦 Install
 
-Prerequisites: a current Claude Code release with plugin support, `git`, and the runtime requirements documented by each plugin. Foundry's setup and hooks additionally use Python 3.10+, `jq`, and Node.js; codemap-py's dispatcher requires CPython `>=3.11,<3.15`.
+Prerequisites:
+
+- A current Claude Code release with plugin support, and `git`.
+- The runtime requirements documented by each plugin.
+- Foundry's setup and hooks additionally use Python 3.10+, `jq`, and Node.js.
+- Codemap-py's dispatcher requires CPython `>=3.11,<3.15`.
 
 Register the marketplace once, then install only the plugins you need:
 
@@ -73,7 +79,11 @@ Start a fresh Claude session or run `/reload-plugins`. Then run the setup skill 
 /research:setup
 ```
 
-Setup is per plugin, not a Foundry-only umbrella step. Foundry performs the broader documented settings merge, links its namespaced rules, and installs `TEAM_PROTOCOL.md`; OSS, Develop, and Research link only their own namespaced rules. Codemap-py has no setup skill.
+Setup is per plugin, not a Foundry-only umbrella step:
+
+- Foundry performs the broader documented settings merge, links its namespaced rules, and installs `TEAM_PROTOCOL.md`.
+- OSS, Develop, and Research link only their own namespaced rules.
+- Codemap-py has no setup skill.
 
 ## ⚡ First useful session
 
@@ -94,33 +104,21 @@ You do not need all five plugins. A bug fix can use Develop alone; a maintainer 
 
 The public install path restores plugin files through Claude Code. Setup is the separate step that delivers rules and selected project-wide settings; it is safe to rerun after an upgrade.
 
-**Step 1 — install the plugins you need:**
+1. **Install the plugins you need** with the commands in [Install](#-install).
+2. **Start a fresh Claude session or reload plugins**, then run `/foundry:setup`, `/oss:setup`, `/develop:setup`, and `/research:setup` for every installed plugin that ships rules.
 
-```bash
-claude plugin marketplace add Borda/AI-Rig
-claude plugin install foundry@borda-ai-rig
-claude plugin install oss@borda-ai-rig
-claude plugin install develop@borda-ai-rig
-claude plugin install research@borda-ai-rig
-claude plugin install codemap-py@borda-ai-rig
-```
+What setup writes:
 
-**Step 2 — start a fresh Claude session or reload plugins, then run setup for every installed plugin that ships rules:**
+- `/oss:setup`, `/develop:setup`, and `/research:setup` deliver only that plugin's namespaced quality-gates rule.
+- `/foundry:setup` also backs up and merges its documented statusLine, permissions.allow, permissions.deny, enabledPlugins, and project-pinned advisorModel values into ~/.claude/settings.json, links TEAM_PROTOCOL.md, and purges orphaned Foundry cache versions.
+- Rules share the flat ~/.claude/rules/ namespace, so setup prefixes source names (foundry-\*.md, oss-quality-gates.md, develop-quality-gates.md, research-quality-gates.md).
+- Setup replaces an existing destination only when ownership is provable; conflicts are reported and can be explicitly approved.
+- Agents, skills, hooks, and plugin CLAUDE.md content are exposed by Claude Code's plugin loader rather than copied into ~/.claude/skills/ or ~/.claude/agents/.
+- Codemap-py has no setup skill.
 
-```text
-/foundry:setup
-/oss:setup
-/develop:setup
-/research:setup
-```
+> A plugin upgrade can invalidate versioned rule links. Rerun the corresponding setup skill after upgrading. `make sync-claude` is the repository maintainer path that installs from the pushed remote and dispatches managed setup skills, not a preview of uncommitted local edits.
 
-/oss:setup, /develop:setup, and /research:setup deliver only that plugin's namespaced quality-gates rule. /foundry:setup also backs up and merges its documented statusLine, permissions.allow, permissions.deny, enabledPlugins, and project-pinned advisorModel values into ~/.claude/settings.json, links TEAM_PROTOCOL.md, and purges orphaned Foundry cache versions. Codemap-py has no setup skill.
-
-Rules share the flat ~/.claude/rules/ namespace, so setup prefixes source names (foundry-\*.md, oss-quality-gates.md, develop-quality-gates.md, research-quality-gates.md). Setup replaces an existing destination only when ownership is provable; conflicts are reported and can be explicitly approved. Agents, skills, hooks, and plugin CLAUDE.md content are exposed by Claude Code's plugin loader rather than copied into ~/.claude/skills/ or ~/.claude/agents/.
-
-A plugin upgrade can invalidate versioned rule links. Rerun the corresponding setup skill after upgrading; make sync-claude is the repository maintainer path that installs from the pushed remote and dispatches managed setup skills, not a preview of uncommitted local edits.
-
-**Uninstall leaves setup state behind.** Claude Code provides no plugin cleanup hook. After uninstall, review or remove that plugin's namespaced rule links; Foundry also leaves ~/.claude/TEAM_PROTOCOL.md and the settings keys it merged. Preserve unrelated user settings and delete only entries you can attribute to the plugin.
+> **Uninstall leaves setup state behind.** Claude Code provides no plugin cleanup hook. After uninstall, review or remove that plugin's namespaced rule links; Foundry also leaves ~/.claude/TEAM_PROTOCOL.md and the settings keys it merged. Preserve unrelated user settings and delete only entries you can attribute to the plugin.
 
 ## 🔄 Distribution
 
@@ -143,14 +141,14 @@ OSS, Develop, and Research follow the same plugin-loader pattern and link only t
 
 The six Claude plugins are peers with closed, documented responsibilities:
 
-| Plugin          | Owns                                                                                                                                             | Optional relationship                                                                                                              |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
-| Foundry         | 11 configuration, calibration, routing, session, profile, content, and maintenance skills; 10 specialist agents; 17 rules; 15 JavaScript modules | Supplies named specialists to sibling workflows when installed; absent specialists use the owning skill's fallback or stop rule    |
-| OSS             | 5 maintainer and release skills; 4 agents; one quality-gates rule; 4 active hook handlers plus a shared helper                                   | Uses Foundry reviewers, bridge_CC-Codex, and gh only when available and required by the selected mode                              |
-| Develop         | 7 validate-first Python workflow skills; one quality-gates rule; 3 active hook handlers plus a shared helper                                     | Can use Foundry agents, Codemap-py structural context, and bridge_CC-Codex                                                         |
-| Research        | 10 experiment and evidence skills; 2 agents; one quality-gates rule; 3 active hook handlers plus a shared helper                                 | Requires explicit compute, Colab, Docker, bridge_CC-Codex, and Kaggle prerequisites for those paths; Foundry is required by Kaggle |
-| Codemap-py      | 6 shared Claude/Codex structural skills; 6 registered Python hooks plus one helper                                                               | Supplies static structure to Foundry, OSS, Develop, Research, and Codex Rig; it does not prove runtime behavior                    |
-| bridge_CC-Codex | 7 Claude-side bridge skills for implement, advice, review, setup, and detached-job lifecycle; no hooks or loaded rules                           | Calls Codex directly with explicit model, effort, budget, compact-envelope, and recursion contracts                                |
+| Plugin          | Owns                                                                                                                                                                      | Optional relationship                                                                                                              |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Foundry         | 11 configuration, calibration, routing, session, profile, content, and maintenance skills; 10 specialist agents; 18 rules; 25 JavaScript modules (21 handlers, 4 helpers) | Supplies named specialists to sibling workflows when installed; absent specialists use the owning skill's fallback or stop rule    |
+| OSS             | 5 maintainer and release skills; 4 agents; one quality-gates rule; 4 active hook handlers plus a shared helper                                                            | Uses Foundry reviewers, bridge_CC-Codex, and gh only when available and required by the selected mode                              |
+| Develop         | 7 validate-first Python workflow skills; one quality-gates rule; 3 active hook handlers plus a shared helper                                                              | Can use Foundry agents, Codemap-py structural context, and bridge_CC-Codex                                                         |
+| Research        | 10 experiment and evidence skills; 2 agents; one quality-gates rule; 3 active hook handlers plus a shared helper                                                          | Requires explicit compute, Colab, Docker, bridge_CC-Codex, and Kaggle prerequisites for those paths; Foundry is required by Kaggle |
+| Codemap-py      | 6 shared Claude/Codex structural skills; 6 registered Python hooks plus one helper                                                                                        | Supplies static structure to Foundry, OSS, Develop, Research, and Codex Rig; it does not prove runtime behavior                    |
+| bridge_CC-Codex | 7 Claude-side bridge skills for implement, advice, review, setup, and detached-job lifecycle; no hooks or loaded rules                                                    | Calls Codex directly with explicit model, effort, budget, compact-envelope, and recursion contracts                                |
 
 Install independently. Foundry is a quality upgrade, not a prerequisite for the other plugins unless a specific skill says so. No plugin silently installs credentials, enables network access, publishes releases, or mutates remote GitHub state.
 
@@ -171,7 +169,14 @@ Start a fresh session or run `/reload-plugins`, then run `/bridge:setup`. Foundr
 
 ### Colab, Docker, Kaggle, and Codemap
 
-/research:run --colab requires the colab-mcp runtime tool and a connected runtime. /research:run --compute=docker requires a reachable Docker daemon. /research:kaggle requires the authenticated Kaggle CLI and the Foundry plugin's foundry:sw-engineer; it stops when those prerequisites are missing. Develop can use Codemap-py for structural context. These integrations remain user-managed; this repository does not provide credentials, GPU capacity, or hosted runtimes.
+| Integration                      | Requirement                                                                                             |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `/research:run --colab`          | The colab-mcp runtime tool and a connected runtime                                                      |
+| `/research:run --compute=docker` | A reachable Docker daemon                                                                               |
+| `/research:kaggle`               | The authenticated Kaggle CLI and the Foundry plugin's foundry:sw-engineer; stops when either is missing |
+| Develop structural context       | Codemap-py (optional)                                                                                   |
+
+These integrations remain user-managed; this repository does not provide credentials, GPU capacity, or hosted runtimes.
 
 ## ⚡ Skills
 
@@ -277,40 +282,37 @@ Agents provide narrow ownership; they are not a claim that every command always 
 
 ### Foundry agents
 
-| Agent                        | Primary ownership                                                                                                                                  |
-| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `foundry:sw-engineer`        | Maintainable Python/ML implementation, APIs, types, and reproducibility                                                                            |
-| `foundry:solution-architect` | System design, public contracts, coupling, and migration planning                                                                                  |
-| `foundry:qa-specialist`      | Regression evidence, suspicious tests, edge cases, and acceptance                                                                                  |
-| `foundry:linting-expert`     | Ruff, mypy, pre-commit, formatting, and suppression discipline                                                                                     |
-| `foundry:perf-optimizer`     | Profile-first performance and resource analysis                                                                                                    |
-| `foundry:doc-scribe`         | Public docs, docstrings, examples, README content, and migration guidance; changelogs and release notes belong to `oss:shepherd` or `/oss:release` |
-| `foundry:web-explorer`       | Current primary documentation, changelogs, and external evidence                                                                                   |
-| `foundry:curator`            | Agent, skill, rule, configuration, and cross-reference hygiene                                                                                     |
-| `foundry:challenger`         | Adversarial review of plans, risky changes, and unsupported conclusions                                                                            |
-| `foundry:creator`            | Structure and validation of new Claude artifacts                                                                                                   |
+| Agent                                                                              | Primary ownership                                                                                                                                  |
+| ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`foundry:sw-engineer`](../plugins/cc_foundry/agents/sw-engineer.md)               | Maintainable Python/ML implementation, APIs, types, and reproducibility                                                                            |
+| [`foundry:solution-architect`](../plugins/cc_foundry/agents/solution-architect.md) | System design, public contracts, coupling, and migration planning                                                                                  |
+| [`foundry:qa-specialist`](../plugins/cc_foundry/agents/qa-specialist.md)           | Regression evidence, suspicious tests, edge cases, and acceptance                                                                                  |
+| [`foundry:linting-expert`](../plugins/cc_foundry/agents/linting-expert.md)         | Ruff, mypy, pre-commit, formatting, and suppression discipline                                                                                     |
+| [`foundry:perf-optimizer`](../plugins/cc_foundry/agents/perf-optimizer.md)         | Profile-first performance and resource analysis                                                                                                    |
+| [`foundry:doc-scribe`](../plugins/cc_foundry/agents/doc-scribe.md)                 | Public docs, docstrings, examples, README content, and migration guidance; changelogs and release notes belong to `oss:shepherd` or `/oss:release` |
+| [`foundry:web-explorer`](../plugins/cc_foundry/agents/web-explorer.md)             | Current primary documentation, changelogs, and external evidence                                                                                   |
+| [`foundry:curator`](../plugins/cc_foundry/agents/curator.md)                       | Agent, skill, rule, configuration, and cross-reference hygiene                                                                                     |
+| [`foundry:challenger`](../plugins/cc_foundry/agents/challenger.md)                 | Adversarial review of plans, risky changes, and unsupported conclusions                                                                            |
+| [`foundry:creator`](../plugins/cc_foundry/agents/creator.md)                       | Structure and validation of new Claude artifacts; outward-facing artifacts from approved outlines                                                  |
 
 ### OSS and Research agents
 
-| Agent                   | Primary ownership                                                                |
-| ----------------------- | -------------------------------------------------------------------------------- |
-| `oss:shepherd`          | Contributor experience, SemVer, deprecations, changelogs, and release readiness  |
-| `oss:cicd-steward`      | CI/CD, matrices, caching, trusted publishing, and flaky-run diagnosis            |
-| `oss:gh-scraper`        | Internal bounded collection of GitHub issue, PR, review, and repository evidence |
-| `oss:repo-warden`       | Internal repository policy and health evidence used by maintainer workflows      |
-| `research:scientist`    | Papers, hypotheses, methodology, metrics, and ablation design                    |
-| `research:data-steward` | Dataset provenance, split integrity, leakage, imbalance, and loader behavior     |
+| Agent                                                                    | Primary ownership                                                                |
+| ------------------------------------------------------------------------ | -------------------------------------------------------------------------------- |
+| [`oss:shepherd`](../plugins/cc_oss/agents/shepherd.md)                   | Contributor experience, SemVer, deprecations, changelogs, and release readiness  |
+| [`oss:cicd-steward`](../plugins/cc_oss/agents/cicd-steward.md)           | CI/CD, matrices, caching, trusted publishing, and flaky-run diagnosis            |
+| [`oss:gh-scraper`](../plugins/cc_oss/agents/gh-scraper.md)               | Internal bounded collection of GitHub issue, PR, review, and repository evidence |
+| [`oss:repo-warden`](../plugins/cc_oss/agents/repo-warden.md)             | Internal repository policy and health evidence used by maintainer workflows      |
+| [`research:scientist`](../plugins/cc_research/agents/scientist.md)       | Papers, hypotheses, methodology, metrics, and ablation design                    |
+| [`research:data-steward`](../plugins/cc_research/agents/data-steward.md) | Dataset provenance, split integrity, leakage, imbalance, and loader behavior     |
 
-`gh-scraper` and `repo-warden` are workflow support agents, not standalone promises to mutate GitHub or repository policy.
+Routing notes:
 
-### Agent relationship map
-
-Skills choose only the roles relevant to the selected scope; the table is a routing map, not a promise that every run launches every agent.
-
-- foundry:sw-engineer owns Python and hook implementation; foundry:qa-specialist validates public behavior; foundry:linting-expert owns static-analysis rules; foundry:solution-architect produces design and migration artifacts; foundry:perf-optimizer measures bottlenecks before tuning; foundry:doc-scribe owns technical docs; foundry:creator owns outward-facing artifacts from approved outlines; foundry:web-explorer fetches current external evidence; foundry:curator audits configuration; and foundry:challenger attacks plans and unsupported conclusions.
-- oss:gh-scraper fetches raw GitHub vitality data for /oss:analyse; three oss:repo-warden instances score assigned axis groups; oss:shepherd owns contributor and release communication; oss:cicd-steward owns GitHub Actions reliability. These internal collection/scoring agents are not standalone user commands.
-- research:scientist handles named papers, hypotheses, and experiments. research:data-steward is manual-use data expertise and can delegate external collection to foundry:web-explorer when both are available.
+- Skills choose only the roles relevant to the selected scope; the tables are a routing map, not a promise that every run launches every agent.
+- `gh-scraper` and `repo-warden` are internal `/oss:analyse` vitality stages (one scraper, three repo-warden scorers, then shepherd assembly), not standalone commands and not promises to mutate GitHub or repository policy.
+- `research:data-steward` is manual-use data expertise and can delegate external collection to `foundry:web-explorer` when both are available.
 - Sibling plugins disclose fallback routing when Foundry agents are absent. A missing required integration or specialist stops only where that workflow says it must.
+- Use full names in prompts (foundry:qa-specialist, oss:shepherd, research:scientist). Short-name routing is an implementation convenience, not a second public API.
 
 </details>
 
@@ -320,153 +322,128 @@ Rules are delivered by setup and remain namespaced so plugins can install indepe
 
 ### Rule inventory
 
-Foundry ships 17 rules: `agent-spawn`, `artifact-lifecycle`, `claude-config`, `communication`, `compaction`, `debugging`, `external-data`, `foundry-config`, `git-commit`, `markdown`, `notebooks`, `public-github`, `python-code`, `python-testing`, `quality-gates`, `task-lifecycle`, and `untrusted-content`. Rules that matter only while touching one kind of file (`markdown`, `foundry-config`, the Python rules) load on first access of a matching file, and `agent-spawn` and `git-commit` are injected by `rule-inject.js` after the first `Agent()` or commit-creating git call, keeping the always-loaded set small.
+Foundry ships 18 rules, listed below. Rules that matter only while touching one kind of file (`markdown`, `foundry-config`, the Python rules) load on first access of a matching file, and `agent-spawn` and `git-commit` are injected by `rule-inject.js` after the first `Agent()` or commit-creating git call, keeping the always-loaded set small.
 
 OSS, Develop, and Research each ship their own namespaced `quality-gates` rule. Similar filenames are deliberate independent copies, not an undeclared installation dependency.
 
 <details>
 <summary><strong>Rule reference</strong></summary>
 
-| Rule file               | Applies to                                     | What it governs                                                                                                        |
-| ----------------------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `agent-spawn.md`        | Injected on first `Agent()`; skill/agent files | Spawn labels, end-the-turn deadlines, and parallel spawn ceilings by model tier                                        |
-| `artifact-lifecycle.md` | Global                                         | Dot-prefixed artifact layout, run-directory naming, and retention policy                                               |
-| `claude-config.md`      | Global                                         | Portable paths, bounded Bash execution, and navigation conventions                                                     |
-| `communication.md`      | Global                                         | Progress narration, tone, output routing, and confidence reporting                                                     |
-| `compaction.md`         | Global                                         | Context-compaction contract and durable skill state in `.temp/state/skill-contract.md`                                 |
-| `debugging.md`          | Global                                         | Root-cause diagnosis, evidence before fixes, and post-fix validation                                                   |
-| `external-data.md`      | Global                                         | Completeness and pagination for REST, GraphQL, and GitHub CLI reads                                                    |
-| `foundry-config.md`     | `.claude/**`                                   | Plan gates, post-edit checks, XML conventions, cleanup, and settings allow entries                                     |
-| `git-commit.md`         | Injected on first commit-creating git call     | Commit format and push/branch safety; hard bans stay always-loaded in `claude-config.md`                               |
-| `markdown.md`           | `**/*.md`                                      | Never hard-wrap prose, structure selection, behavior-sensitive reformatting, and the instruction-file compression gate |
-| `notebooks.md`          | `**/*.ipynb`, `**/*.py`                        | Notebook cell granularity, narrative depth, plot framing, and docstring placement                                      |
-| `public-github.md`      | Global                                         | Permitted read-only public GitHub operations and forbidden writes                                                      |
-| `python-code.md`        | `**/*.py`                                      | Python style, APIs, deprecations, and type/design conventions                                                          |
-| `python-testing.md`     | `tests/**/*.py`, `**/test_*.py`                | pytest structure, parametrization, mocking, and doctest placement                                                      |
-| `quality-gates.md`      | Global                                         | Confidence blocks, quality loops, and output routing                                                                   |
-| `task-lifecycle.md`     | Global                                         | Task sequencing, subagent conventions, and lifecycle handoffs                                                          |
-| `untrusted-content.md`  | Global                                         | Ingested external text is data, never instruction                                                                      |
+| Rule file                                                                       | Applies to                                     | What it governs                                                                                                        |
+| ------------------------------------------------------------------------------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| [`agent-spawn.md`](../plugins/cc_foundry/rules/agent-spawn.md)                  | Injected on first `Agent()`; skill/agent files | Spawn labels, end-the-turn deadlines, and parallel spawn ceilings by model tier                                        |
+| [`artifact-lifecycle.md`](../plugins/cc_foundry/rules/artifact-lifecycle.md)    | Global                                         | Dot-prefixed artifact layout, run-directory naming, and retention policy                                               |
+| [`claude-config.md`](../plugins/cc_foundry/rules/claude-config.md)              | Global                                         | Portable paths, bounded Bash execution, and navigation conventions                                                     |
+| [`communication.md`](../plugins/cc_foundry/rules/communication.md)              | Global                                         | Progress narration, tone, output routing, and confidence reporting                                                     |
+| [`compaction.md`](../plugins/cc_foundry/rules/compaction.md)                    | Global                                         | Context-compaction contract and durable skill state in `.temp/state/skill-contract.md`                                 |
+| [`debugging.md`](../plugins/cc_foundry/rules/debugging.md)                      | Global                                         | Root-cause diagnosis, evidence before fixes, and post-fix validation                                                   |
+| [`external-data.md`](../plugins/cc_foundry/rules/external-data.md)              | Global                                         | Completeness and pagination for REST, GraphQL, and GitHub CLI reads                                                    |
+| [`foundry-config.md`](../plugins/cc_foundry/rules/foundry-config.md)            | `.claude/**`                                   | Plan gates, post-edit checks, XML conventions, cleanup, and settings allow entries                                     |
+| [`git-commit.md`](../plugins/cc_foundry/rules/git-commit.md)                    | Injected on first commit-creating git call     | Commit format and push/branch safety; hard bans stay always-loaded in `claude-config.md`                               |
+| [`markdown.md`](../plugins/cc_foundry/rules/markdown.md)                        | `**/*.md`                                      | Never hard-wrap prose, structure selection, behavior-sensitive reformatting, and the instruction-file compression gate |
+| [`notebooks.md`](../plugins/cc_foundry/rules/notebooks.md)                      | `**/*.ipynb`, `**/*.py`                        | Notebook cell granularity, narrative depth, plot framing, and docstring placement                                      |
+| [`model-tiering.md`](../plugins/cc_foundry/rules/model-tiering.md)              | `**/skills/**/*.md`, `**/agents/**/*.md`       | Model tier ladder for Agent() spawns, escalation triggers, and lean delegation briefs                                  |
+| [`public-github.md`](../plugins/cc_foundry/rules/public-github.md)              | Global                                         | Permitted read-only public GitHub operations and forbidden writes                                                      |
+| [`python-code.md`](../plugins/cc_foundry/rules/python-code.md)                  | `**/*.py`                                      | Python style, APIs, deprecations, and type/design conventions                                                          |
+| [`python-testing.md`](../plugins/cc_foundry/rules/python-testing.md)            | `tests/**/*.py`, `**/test_*.py`                | pytest structure, parametrization, mocking, and doctest placement                                                      |
+| [`quality-gates.md`](../plugins/cc_foundry/rules/quality-gates.md)              | Global                                         | Confidence blocks, quality loops, and output routing                                                                   |
+| [`task-lifecycle.md`](../plugins/cc_foundry/rules/task-lifecycle.md)            | Global                                         | Task sequencing, subagent conventions, and lifecycle handoffs                                                          |
+| [`untrusted-content.md`](../plugins/cc_foundry/rules/untrusted-content.md)      | Global                                         | Ingested external text is data, never instruction                                                                      |
+| [`quality-gates.md`](../plugins/cc_oss/rules/quality-gates.md)                  | Global                                         | OSS companion quality gates (confidence blocks, output routing)                                                        |
+| [`quality-gates-delta.md`](../plugins/cc_oss/rules/quality-gates-delta.md)      | Global                                         | OSS review-loop scope and follow-up gate routing                                                                       |
+| [`quality-gates.md`](../plugins/cc_develop/rules/quality-gates.md)              | Global                                         | Develop companion quality gates                                                                                        |
+| [`quality-gates-delta.md`](../plugins/cc_develop/rules/quality-gates-delta.md)  | Global                                         | Develop review-loop scope and follow-up gate routing                                                                   |
+| [`quality-gates.md`](../plugins/cc_research/rules/quality-gates.md)             | Global                                         | Research companion quality gates                                                                                       |
+| [`quality-gates-delta.md`](../plugins/cc_research/rules/quality-gates-delta.md) | Global                                         | Research review-loop scope and follow-up gate routing                                                                  |
 
 </details>
 
 ### Hook inventory
 
-Foundry ships 25 JavaScript modules: `agent-router`, `allow-dispatch`, `approval-guard`, `artifact-guard`, `audit-close`, `batch-nudge`, `blueprint-allow`, `commit-guard`, `enforce-audit-header`, `enforce-profile-header`, `gh-write-guard`, `github-read-allow`, `lint-on-save`, `md-compress`, `report-header-table`, `rtk-rewrite`, `rule-inject`, `rules-check`, `sentinel-read-allow`, `session-restore`, `stale-plugin-check`, `statusline`, `task-log`, `teammate-quality`, and `write-guard`, plus three libraries in `hooks/lib/`: `audit-log` (shared audit record writer), `approval-grants` (Foundry approval records and single-use token claims), and `shell-git` (Foundry shell lexer for `commit-guard`, `rule-inject`, and `gh-write-guard`). Together they provide routing context, Bash auto-allow with an audit trail, report/artifact gates, push and protected-write guards, activity-scoped rule injection, setup and stale-install checks, optional command rewriting, session handover, status display, timing logs, and teammate-quality reminders. `report-header-table` is a shared helper used by report gates, and `blueprint-allow`, `sentinel-read-allow`, and Foundry's optional `github-read-allow` are decision modules called by `allow-dispatch`; none of the four is a separately registered event handler.
+Hooks validate known boundaries and provide context; they cannot guarantee that every model response follows every instruction. Each hook name links to its source file.
 
-OSS ships `agent-router`, `allow-dispatch`, `audit-close`, `blueprint-allow`, `enforce-analyse-header`, `enforce-resolve-table`, `enforce-review-header`, `report-header-table`, `sentinel-read-allow`, `stale-plugin-check`, and `write-guard`. Develop ships `agent-router`, `allow-dispatch`, `audit-close`, `blueprint-allow`, `enforce-review-header`, `report-header-table`, `sentinel-read-allow`, `stale-plugin-check`, and `write-guard`. Research ships `agent-router`, `allow-dispatch`, `audit-close`, `blueprint-allow`, `enforce-topic-header`, `report-header-table`, `sentinel-read-allow`, `stale-plugin-check`, and `write-guard`. Each of the three also ships `hooks/lib/audit-log`.
+**Foundry** ([hooks.json](../plugins/cc_foundry/hooks/hooks.json)): 25 JavaScript modules in `hooks/` — 21 event handlers (20 registered in the manifest plus `statusline.js`) and 4 shared helpers or decision modules.
 
-Codemap-py registers six optional hooks: `guard-redundant-scan.py`, `inject-preamble.py`, `log-skill-start.py`, `log-tool-use.py`, `record-exhausted.py`, and `seed-session.py`; `_hookutil.py` is their shared non-executable helper. The hooks add ambient index status and session-sharded telemetry and narrowly discourage redundant structural scans. They fail open and are not required for scanning or querying.
+| Hook                                                                                 | Event                                                   | Purpose                                                                                                        |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| [`agent-router.js`](../plugins/cc_foundry/hooks/agent-router.js)                     | PreToolUse (Agent)                                      | Routing context for agent spawns                                                                               |
+| [`allow-dispatch.js`](../plugins/cc_foundry/hooks/allow-dispatch.js)                 | PreToolUse (Bash)                                       | Bash auto-allow with an audit trail                                                                            |
+| [`approval-guard.js`](../plugins/cc_foundry/hooks/approval-guard.js)                 | PreToolUse (Bash, edits), PostToolUse (AskUserQuestion) | Foundry approval records and single-use grants                                                                 |
+| [`artifact-guard.js`](../plugins/cc_foundry/hooks/artifact-guard.js)                 | PostToolUse                                             | Artifact layout gate                                                                                           |
+| [`audit-close.js`](../plugins/cc_foundry/hooks/audit-close.js)                       | SessionStart/End, Bash results                          | Closes the hook audit log                                                                                      |
+| [`batch-nudge.js`](../plugins/cc_foundry/hooks/batch-nudge.js)                       | UserPromptSubmit, PostToolBatch, subagent events        | Reminders to batch independent calls                                                                           |
+| [`commit-guard.js`](../plugins/cc_foundry/hooks/commit-guard.js)                     | PreToolUse (Bash), SessionStart, UserPromptSubmit       | Commit and push guard                                                                                          |
+| [`enforce-audit-header.js`](../plugins/cc_foundry/hooks/enforce-audit-header.js)     | AskUserQuestion, Stop                                   | Audit report header gate                                                                                       |
+| [`enforce-profile-header.js`](../plugins/cc_foundry/hooks/enforce-profile-header.js) | AskUserQuestion, Stop                                   | Profile report header gate                                                                                     |
+| [`gh-write-guard.js`](../plugins/cc_foundry/hooks/gh-write-guard.js)                 | PreToolUse (Bash)                                       | Blocks GitHub writes without user approval                                                                     |
+| [`lint-on-save.js`](../plugins/cc_foundry/hooks/lint-on-save.js)                     | PostToolUse (Write, Edit)                               | Runs `pre-commit run --files <path>`; exit 2 on failure; no-op without `.pre-commit-config.yaml` or pre-commit |
+| [`md-compress.js`](../plugins/cc_foundry/hooks/md-compress.js)                       | PreToolUse (Edit, `.md`)                                | Normalizes table padding, blank lines, and trailing whitespace outside code fences; not run on Read            |
+| [`rtk-rewrite.js`](../plugins/cc_foundry/hooks/rtk-rewrite.js)                       | PreToolUse (Bash)                                       | Optional RTK proxy rewrite of supported CLI calls; no-op when RTK is not installed                             |
+| [`rule-inject.js`](../plugins/cc_foundry/hooks/rule-inject.js)                       | PostToolUse (Agent, Bash), PreCompact, SessionStart     | Activity-scoped rule injection                                                                                 |
+| [`rules-check.js`](../plugins/cc_foundry/hooks/rules-check.js)                       | SessionStart                                            | Setup and rule-link check                                                                                      |
+| [`session-restore.js`](../plugins/cc_foundry/hooks/session-restore.js)               | SessionStart (clear)                                    | Session handover restore                                                                                       |
+| [`stale-plugin-check.js`](../plugins/cc_foundry/hooks/stale-plugin-check.js)         | SessionStart                                            | Stale-install check                                                                                            |
+| [`statusline.js`](../plugins/cc_foundry/hooks/statusline.js)                         | statusLine                                              | Status bar                                                                                                     |
+| [`task-log.js`](../plugins/cc_foundry/hooks/task-log.js)                             | Lifecycle events                                        | Session state tracking, invocation and timing logs                                                             |
+| [`teammate-quality.js`](../plugins/cc_foundry/hooks/teammate-quality.js)             | TeammateIdle, TaskCompleted                             | Team quality reminders                                                                                         |
+| [`write-guard.js`](../plugins/cc_foundry/hooks/write-guard.js)                       | PreToolUse (Write, Edit, NotebookEdit)                  | Protected-write guard                                                                                          |
 
-Hooks can validate known boundaries and provide context; they cannot guarantee that every model response follows every instruction. The plugin READMEs document event bindings, sentinels, timeouts, logs, and recovery steps.
+Shared helpers and decision modules called by other hooks, not registered event handlers:
+
+- [`report-header-table.js`](../plugins/cc_foundry/hooks/report-header-table.js), [`blueprint-allow.js`](../plugins/cc_foundry/hooks/blueprint-allow.js), [`sentinel-read-allow.js`](../plugins/cc_foundry/hooks/sentinel-read-allow.js), and the optional [`github-read-allow.js`](../plugins/cc_foundry/hooks/github-read-allow.js).
+- `hooks/lib/`: [`audit-log.js`](../plugins/cc_foundry/hooks/lib/audit-log.js), [`approval-grants.js`](../plugins/cc_foundry/hooks/lib/approval-grants.js), [`shell-git.js`](../plugins/cc_foundry/hooks/lib/shell-git.js).
+
+**OSS, Develop, and Research** register the same core set, each from its own `hooks/` directory:
+
+| Hook                    | Event                                  | Purpose                             | OSS                                                     | Develop                                                     | Research                                                     |
+| ----------------------- | -------------------------------------- | ----------------------------------- | ------------------------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------ |
+| `agent-router.js`       | PreToolUse (Agent)                     | Routing context for agent spawns    | [source](../plugins/cc_oss/hooks/agent-router.js)       | [source](../plugins/cc_develop/hooks/agent-router.js)       | [source](../plugins/cc_research/hooks/agent-router.js)       |
+| `allow-dispatch.js`     | PreToolUse (Bash)                      | Bash auto-allow with an audit trail | [source](../plugins/cc_oss/hooks/allow-dispatch.js)     | [source](../plugins/cc_develop/hooks/allow-dispatch.js)     | [source](../plugins/cc_research/hooks/allow-dispatch.js)     |
+| `audit-close.js`        | SessionStart/End, Bash results         | Closes the hook audit log           | [source](../plugins/cc_oss/hooks/audit-close.js)        | [source](../plugins/cc_develop/hooks/audit-close.js)        | [source](../plugins/cc_research/hooks/audit-close.js)        |
+| `stale-plugin-check.js` | SessionStart                           | Stale-install check                 | [source](../plugins/cc_oss/hooks/stale-plugin-check.js) | [source](../plugins/cc_develop/hooks/stale-plugin-check.js) | [source](../plugins/cc_research/hooks/stale-plugin-check.js) |
+| `write-guard.js`        | PreToolUse (Write, Edit, NotebookEdit) | Protected-write guard               | [source](../plugins/cc_oss/hooks/write-guard.js)        | [source](../plugins/cc_develop/hooks/write-guard.js)        | [source](../plugins/cc_research/hooks/write-guard.js)        |
+
+Skill-specific report-header gates (AskUserQuestion and Stop events):
+
+- OSS: [`enforce-analyse-header.js`](../plugins/cc_oss/hooks/enforce-analyse-header.js), [`enforce-review-header.js`](../plugins/cc_oss/hooks/enforce-review-header.js), and [`enforce-resolve-table.js`](../plugins/cc_oss/hooks/enforce-resolve-table.js) (PreToolUse only).
+- Develop: [`enforce-review-header.js`](../plugins/cc_develop/hooks/enforce-review-header.js).
+- Research: [`enforce-topic-header.js`](../plugins/cc_research/hooks/enforce-topic-header.js).
+- Each of the three also ships shared helpers: `report-header-table.js`, `blueprint-allow.js`, `sentinel-read-allow.js`, and `hooks/lib/audit-log.js`.
+
+**Codemap-py** registers six optional Python hooks (they fail open and are not required for scanning or querying) plus the shared [`_hookutil.py`](../plugins/codemap-py/hooks/_hookutil.py) helper:
+
+| Hook                                                                             | Purpose                                         |
+| -------------------------------------------------------------------------------- | ----------------------------------------------- |
+| [`guard-redundant-scan.py`](../plugins/codemap-py/hooks/guard-redundant-scan.py) | Narrowly discourages redundant structural scans |
+| [`inject-preamble.py`](../plugins/codemap-py/hooks/inject-preamble.py)           | Ambient index status                            |
+| [`log-skill-start.py`](../plugins/codemap-py/hooks/log-skill-start.py)           | Session-sharded skill telemetry                 |
+| [`log-tool-use.py`](../plugins/codemap-py/hooks/log-tool-use.py)                 | Session-sharded tool telemetry                  |
+| [`record-exhausted.py`](../plugins/codemap-py/hooks/record-exhausted.py)         | Records exhausted query results                 |
+| [`seed-session.py`](../plugins/codemap-py/hooks/seed-session.py)                 | Seeds session state                             |
+
+The plugin READMEs document event bindings, sentinels, timeouts, logs, and recovery steps.
 
 ### How rules are auto-loaded
 
-A rule file may carry `paths:` frontmatter listing glob patterns. Claude Code loads matching rule files automatically when you open or edit a file matching it — no explicit invocation needed. Global rules (no frontmatter at all, no `paths:` restriction, or `paths: "*"`) load every session. Rules additive: multiple rules can apply to same file.
+A rule file may carry `paths:` frontmatter listing glob patterns. Claude Code loads matching rule files automatically when you open or edit a file matching it — no explicit invocation needed. Global rules (no frontmatter at all, no `paths:` restriction, or `paths: "*"`) load every session. Rules are additive: multiple rules can apply to the same file.
 
 Example: editing `tests/test_transforms.py` auto-loads `python-testing.md` (matches `tests/**/*.py`) and `python-code.md` (matches `**/*.py`). Editing `.claude/agents/sw-engineer.md` loads `foundry-config.md` (matches `.claude/**`).
 
 ### Orchestration flow by skill
 
-Each skill follows defined topology for how it composes agents:
+Each skill follows a defined topology for how it composes agents:
 
-<details>
-<summary><strong>`/oss:review`</strong> — parallel fan-out, then consolidation</summary>
+| Skill                 | Topology                                                                                                                                                                                          |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/oss:review`         | Mechanical diff gate, Codex pre-pass, scope-selected agents (default capped at four; `--full` runs every selected dimension), consolidation                                                       |
+| `/develop:feature`    | Sequential with inner loops: analysis, demo test (TDD contract), validation gate, implementation plus QA, review+fix loop (max 3), docs                                                           |
+| `/develop:fix`        | Reproduce-first: root cause, failing regression test, validation gate, minimal fix, review+fix loop (max 3)                                                                                       |
+| `/develop:refactor`   | Test-first: coverage audit, characterization tests, validation gate, refactor, review+fix loop (max 3)                                                                                            |
+| `/research:topic`     | `web-explorer` fetches papers/docs, `scientist` analyses, consolidator reads findings; `--team` runs competing method families                                                                    |
+| `/foundry:brainstorm` | `idea` mode: context scan, clarifying questions, tree loop, tree doc in `.plans/blueprint/`, curator audit, approval gate; `breakdown` mode turns a tree or draft spec into a spec or action plan |
+| `/foundry:audit`      | One `curator` per config file, consolidator ranks findings with upgrade proposals; `--upgrade` first fetches current Claude Code docs                                                             |
 
-```text
-Tier 0: git diff --stat (mechanical gate — skips trivial diffs)
-Tier 1: Codex pre-pass (independent diff review, ~60s)
-Tier 2: scope-selected agents (default capped at four; --full runs every selected dimension)
-→ consolidator reads all findings → final report
-→ shepherd writes --reply output (if flag present)
-```
-
-</details>
-
-<details>
-<summary><strong>`/develop:feature`</strong> — sequential with inner loops</summary>
-
-```text
-Step 1: sw-engineer (codebase analysis)
-Step 2: sw-engineer (demo test — TDD contract)
-Step 2 review: in-context validation gate
-Step 3: sw-engineer (implementation) + qa-specialist (parallel)
-Step 4: review+fix loop (max 3 cycles): sw-engineer → qa-specialist → linting-expert
-Step 5: doc-scribe (docs update)
-Quality stack: linting-expert → qa-specialist → Codex pre-pass
-```
-
-</details>
-
-<details>
-<summary><strong>`/develop:fix`</strong> — reproduce-first</summary>
-
-```text
-Step 1: sw-engineer (root cause analysis)
-Step 2: sw-engineer (regression test that fails)
-Step 2 review: in-context validation gate
-Step 3: sw-engineer (minimal fix)
-Step 4: review+fix loop (max 3 cycles)
-Quality stack: linting-expert → qa-specialist → Codex pre-pass
-```
-
-</details>
-
-<details>
-<summary><strong>`/develop:refactor`</strong> — test-first</summary>
-
-```text
-Step 1: sw-engineer + linting-expert (coverage audit, parallel)
-Step 2: qa-specialist (characterization tests)
-Step 2 review: in-context validation gate
-Step 3: sw-engineer (refactor)
-Step 5: review+fix loop (max 3 cycles)
-Quality stack: linting-expert → qa-specialist → Codex pre-pass
-```
-
-</details>
-
-<details>
-<summary><strong>`/research:topic`</strong> — research-first</summary>
-
-```text
-web-explorer (fetch current papers/docs) → scientist (deep analysis, writes to file)
-→ consolidator reads findings → implementation plan
-(--team: multiple scientist instances on competing method families)
-```
-
-</details>
-
-<details>
-<summary><strong>`/foundry:brainstorm`</strong> — conversational spec, then task breakdown</summary>
-
-```text
-idea mode:
-  Step 1: context scan (Read README, Grep keywords)
-  Step 2: AskUserQuestion (clarify, one at a time, max 10)
-  Step 3: build tree loop (seed 3–5 branches → deepen/close/merge/add, max 10 ops)
-  Step 4: Write tree doc → .plans/blueprint/YYYY-MM-DD-<slug>.md (Status: tree)
-  Step 5: curator (tree quality audit — coverage, closure quality, open threads)
-  Step 6: AskUserQuestion (approval gate) → suggest /foundry:brainstorm breakdown <tree>
-
-breakdown mode (triggered by "breakdown <tree-or-spec>"):
-  Auto-detects Status field:
-  Status: tree → D1 present summary → D2 distillation questions (max 5)
-           → D3 write spec section-by-section → D4 suggest next step
-  Status: draft → B1 blocking questions → B2 action plan table → B3 post-plan prompt
-```
-
-</details>
-
-<details>
-<summary><strong>`/foundry:audit`</strong> — curator per file, then consolidation</summary>
-
-```text
-per-config-file: curator (reads file, writes findings to /tmp/audit-<ts>/<file>.md)
-→ consolidator reads all finding files → ranked report with upgrade proposals
-(upgrade mode: web-explorer fetches latest Claude Code docs first)
-```
-
-</details>
+The develop skills end with the quality stack: linting-expert, then qa-specialist, then Codex pre-pass. Step-by-step flows are in [DEVELOPMENT.md](DEVELOPMENT.md#orchestration-flow-by-skill).
 
 ### Skill usage examples
 
@@ -556,7 +533,7 @@ per-config-file: curator (reads file, writes findings to /tmp/audit-<ts>/<file>.
 
 **`/develop:feature`, `/develop:fix`, `/develop:refactor`, `/develop:plan`, `/develop:debug` — Development workflows**
 
-Each mode enforces validation gate *before* writing implementation code:
+Each mode enforces a validation gate *before* writing implementation code:
 
 - `/develop:plan` — scope analysis; produces structured plan in `.plans/active/plan_<slug>.md`
 - `/develop:feature` — TDD demo validation before writing code
@@ -607,33 +584,27 @@ Each mode enforces validation gate *before* writing implementation code:
 
 ## 🧭 Native Claude Code skills
 
-Two capabilities below ship **natively with Claude Code** — not part of this repo's plugins (foundry / oss / develop / research / codemap-py). Work in any project, including this one, alongside plugin skills above.
+Two capabilities below ship **natively with Claude Code** — not part of this repo's plugins (foundry / oss / develop / research / codemap-py). They work in any project, including this one, alongside the plugin skills above.
 
 ### Skill auto-selection (the "skills advisor")
 
-Every skill — native or plugin — carries a `description` with `TRIGGER` / `SKIP` routing signals. Claude Code reads those descriptions and **auto-selects matching skill** when request lines up with one, so no need to remember exact slash command. `description` field is what does advising: routing signal deciding which skill (if any) fits task. Always overridable by invoking skill explicitly with `/<skill-name>`.
+Every skill — native or plugin — carries a `description` with `TRIGGER` / `SKIP` routing signals. Claude Code reads those descriptions and **auto-selects the matching skill** when a request lines up with one, so there is no need to remember the exact slash command. Auto-selection is always overridable by invoking a skill explicitly with `/<skill-name>`.
 
-**When to rely on it**
-
-- **Discovery / "which skill fits this?"** — describe task in plain language, let auto-selection surface the right skill (e.g. "review this PR" -> `/oss:review`, "why is CI failing but local passes" -> `/foundry:investigate`). Intended path when exact command unknown.
-- **Explicit control** — when you already know which skill you want, type slash command directly (`/develop:fix ...`); explicit invocation always wins over auto-selection.
-- **Caveat** — auto-selection only fires when description clearly matches; vague requests may match nothing (Claude answers inline) or wrong skill. Sharpen request, or invoke explicitly, if wrong thing triggers. Auto-selection never runs a skill silently — invocation is visible.
+- **Discovery / "which skill fits this?"** — describe the task in plain language and let auto-selection surface the right skill (e.g. "review this PR" -> `/oss:review`, "why is CI failing but local passes" -> `/foundry:investigate`).
+- **Explicit control** — when you already know which skill you want, type the slash command directly (`/develop:fix ...`); explicit invocation always wins over auto-selection.
+- **Caveat** — auto-selection only fires when a description clearly matches; vague requests may match nothing (Claude answers inline) or the wrong skill. Sharpen the request, or invoke explicitly, if the wrong thing triggers. Auto-selection never runs a skill silently — invocation is visible.
 
 ### `/deep-research` — multi-source, fact-checked research report
 
-Native research harness for questions needing real sourcing rather than single answer. **Fans out parallel web searches, fetches sources, adversarially verifies each claim, synthesizes cited report** — verification pass separates it from plain search: claims that can't be corroborated dropped or flagged rather than repeated.
-
-**Invocation**
+Native research harness for questions needing real sourcing rather than a single answer. It **fans out parallel web searches, fetches sources, adversarially verifies each claim, and synthesizes a cited report**; claims that can't be corroborated are dropped or flagged rather than repeated.
 
 ```text
 /deep-research <question>
 ```
 
-**When to use it**
-
-- **Use it** for deep, multi-source, fact-checked write-up on a topic — comparisons, state-of-the-art surveys, "what's actually true about X" where citations and cross-checking wanted, not quick recall.
-- **Don't use it** for single-fact lookup (normal web search or inline answer faster) or anything answerable from codebase (use `/codemap-py:query-code`, grep, or direct read).
-- **Scope first** — if question underspecified (e.g. "what car should I buy" with no budget / use-case / region), asks 2-3 clarifying questions before spending search budget. Giving constraints up front produces sharper report.
+- **Use it** for a deep, multi-source, fact-checked write-up — comparisons, state-of-the-art surveys, "what's actually true about X" where citations and cross-checking are wanted, not quick recall.
+- **Don't use it** for a single-fact lookup (normal web search or an inline answer is faster) or anything answerable from the codebase (use `/codemap-py:query-code`, grep, or a direct read).
+- **Scope first** — if the question is underspecified (e.g. "what car should I buy" with no budget, use case, or region), it asks 2-3 clarifying questions before spending search budget. Giving constraints up front produces a sharper report.
 
 ## 🗺️ Plugin dependency matrix
 
@@ -666,13 +637,6 @@ Native research harness for questions needing real sourcing rather than single a
 
 </details>
 
-<details>
-<summary><strong>Agent short names and dispatch boundaries</strong></summary>
-
-Use full names in prompts (foundry:qa-specialist, oss:shepherd, research:scientist). Short-name routing is an implementation convenience, not a second public API. gh-scraper and repo-warden are internal /oss:analyse vitality stages; research:data-steward is manual-use; foundry:creator is reached by /foundry:create after outline approval.
-
-</details>
-
 ## 🏗️ Architecture
 
 <details>
@@ -680,63 +644,17 @@ Use full names in prompts (foundry:qa-specialist, oss:shepherd, research:scienti
 
 ### File-based handoff protocol
 
-*When multiple analysis agents return findings inline, orchestrator's context window fills with intermediate output it never uses directly — file-based handoff keeps orchestrator clean for decision-making.*
-
-**When it applies:**
-
-- Any skill spawning **2+ agents in parallel** for analysis or review
-- Any **single agent** expected to produce >500 tokens of findings
-- Exception: implementation agents (writing code) return inline — output is the deliverable
-- Exception: single-agent single-question spawns where output inherently short (\<200 tokens)
-
-**Agent contract** — spawned agent must:
-
-1. Write full output to `<RUN_DIR>/<agent-name>.md` using Write tool
-2. Return to orchestrator **only** compact JSON envelope on final line:
-
-```json
-{
-  "status": "done",
-  "findings": 3,
-  "severity": {
-    "critical": 0,
-    "high": 1,
-    "medium": 2
-  },
-  "file": "<path>",
-  "confidence": 0.88,
-  "summary": "1 high (missing tool), 2 medium (unused tools)"
-}
-```
-
-**Orchestrator contract:**
-
-1. Do NOT read agent files back into main context — delegate to consolidator agent instead
-2. Collect compact envelopes (tiny — stay in context)
-3. Spawn consolidator to read all `<RUN_DIR>/*.md` files and write final report
-
-**Threshold:** 4+ agent files → mandatory consolidator; 2–3 files → orchestrator may read directly if total content \<2K tokens.
-
-**RUN_DIR convention:**
-
-- Ephemeral (per-run): `/tmp/<skill>-<timestamp>/` — created once before any spawns
-- Persistent (final reports): `.temp/`
-
-**Reference implementations:** `/foundry:calibrate` is canonical; `/foundry:audit` Step 3 (`curator` per file → consolidator); `/oss:review` Steps 3–6.
-
-______________________________________________________________________
+Analysis agents write full output to `<RUN_DIR>/<agent-name>.md` and return only a compact JSON envelope; a consolidator writes the final report. Protocol, thresholds, and the envelope format are in [DEVELOPMENT.md](DEVELOPMENT.md#file-based-handoff-protocol).
 
 ### Tiered review pipeline
 
-Every review skill gates cheap work before spawning expensive agents — cheaper tiers short-circuit pipeline when diff trivial or issues already clear:
+Every review skill gates cheap work before spawning expensive agents:
 
 | Tier                     | What it does                                                          | Cost |
 | ------------------------ | --------------------------------------------------------------------- | ---- |
 | **T0 — Mechanical gate** | `git diff --stat` — skips trivial or empty diffs before any AI work   | Zero |
 | **T1 — Codex pre-pass**  | Focused diff review (~60 s); flags bugs, edge cases, and logic errors | Low  |
 | **T2 — Claude agents**   | Specialized parallel agents selected by scope and role frontmatter    | High |
-
-Which tiers each skill uses:
 
 | Skill                                                   | T0  | T1  | T2  |
 | ------------------------------------------------------- | :-: | :-: | :-: |
@@ -746,15 +664,11 @@ Which tiers each skill uses:
 | `/foundry:audit` (fix via gate)                         |  ✓  |  ✓  |  ✓  |
 | `/oss:resolve`                                          |     |     |  ✓  |
 
-‡ For `/oss:review`, Codex runs as full **co-reviewer** alongside T2 agents — findings independently consolidated rather than seeding agent prompts (unbiased review).
-
-______________________________________________________________________
+‡ For `/oss:review`, Codex runs as a full **co-reviewer** alongside T2 agents — findings are independently consolidated rather than seeding agent prompts (unbiased review).
 
 ### Agent Teams
 
-Agent Teams is Claude Code's experimental multi-agent feature. Teams always **user-invoked** — nothing auto-spawns. Auto-spawning teams would multiply token costs 5-10x on routine tasks; explicit invocation lets you make cost/benefit call per run. Enabled via `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` in `settings.json`.
-
-**When to use teams vs subagents:**
+Agent Teams is Claude Code's experimental multi-agent feature, enabled via `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` in `settings.json`. Teams are always **user-invoked** — nothing auto-spawns, because auto-spawning would multiply token costs 5-10x on routine tasks.
 
 | Signal                                              | Team | Subagents |
 | --------------------------------------------------- | :--: | :-------: |
@@ -767,8 +681,6 @@ Agent Teams is Claude Code's experimental multi-agent feature. Teams always **us
 | Single file / single module scope                   |      |     ✓     |
 | Routine tasks (sync, distill, release)              |      |     ✓     |
 
-**Skills with team support:**
-
 | Skill                     | When to use                                                               |
 | ------------------------- | ------------------------------------------------------------------------- |
 | `/develop:fix --team`     | Bug spans modules; competing root-cause hypotheses                        |
@@ -778,91 +690,24 @@ Agent Teams is Claude Code's experimental multi-agent feature. Teams always **us
 | `/research:plan --team`   | Wizard + parallel exploration: teammates each own a different axis        |
 | `/develop:refactor`       | Directory or system-wide scope → Claude proposes team (heuristic)         |
 
-**Model and effort settings:** Agent frontmatter is the source of truth for each role's model and effort; these values can change with the shipped plugin. Teams are user-invoked and should stay small enough for the task and budget.
-
-**Communication protocol:** Inter-agent messages use AgentSpeak v2 (defined in `TEAM_PROTOCOL.md`) — ~60% token savings vs natural language. Status codes (`alpha`/`beta`/`gamma`/`delta`/`epsilon`/`omega`), action symbols (`+`/`-`/`~`/`!`), file locking (`+lock`/`-lock`), priority prefixes (`!!` urgent, `..` FYI). Lead-to-human communication uses normal English.
-
-**Security in teams:** No standalone security agent. `qa-specialist` automatically embeds OWASP Top 10 security checks when task touches auth, payment flows, or user data.
-
-**Quality hooks:** `hooks/teammate-quality.js` handles `TeammateIdle` (redirects to pending tasks) and `TaskCompleted` (reserved for future quality gates).
+- **Model and effort:** agent frontmatter is the source of truth for each role's model and effort; these values can change with the shipped plugin. Keep teams small enough for the task and budget.
+- **Communication:** inter-agent messages use AgentSpeak v2 (defined in `TEAM_PROTOCOL.md`), roughly 60% fewer tokens than natural language. Lead-to-human communication uses normal English.
+- **Security:** there is no standalone security agent; `qa-specialist` embeds OWASP Top 10 checks when a task touches auth, payment flows, or user data.
+- **Quality hooks:** `hooks/teammate-quality.js` handles `TeammateIdle` (redirects to pending tasks) and `TaskCompleted` (reserved for future quality gates).
 
 </details>
 
 ## 🪝 Hooks
 
 <details>
-<summary><strong>Hook inventory, state machine, and recovery behavior</strong></summary>
+<summary><strong>Hook behavior and recovery</strong></summary>
 
-### Hooks inventory
+Hook behavior is summarized in [Hook inventory](#hook-inventory). The event-to-action mapping, session state layout, age-out rules, and per-hook internals (`task-log.js`, `lint-on-save.js`, `md-compress.js`, `rtk-rewrite.js`) are in [DEVELOPMENT.md](DEVELOPMENT.md#hook-internals).
 
-Foundry has 15 JavaScript files; report-header-table.js is a shared helper and not a separately registered handler. OSS registers four active handlers plus the shared report helper; Develop and Research each register three active handlers plus the helper. Codemap-py registers six Python hooks plus \_hookutil.py, a shared helper.
-
-| Hook                | Event                       | Matcher     | Purpose                |
-| ------------------- | --------------------------- | ----------- | ---------------------- |
-| task-log.js         | lifecycle events            | all         | Session state tracking |
-| lint-on-save.js     | PostToolUse                 | Write, Edit | Lint on save           |
-| md-compress.js      | PreToolUse                  | Edit (.md)  | Token compression      |
-| rtk-rewrite.js      | PreToolUse                  | Bash        | CLI output compression |
-| teammate-quality.js | TeammateIdle, TaskCompleted | all         | Team quality gate      |
-| statusline.js       | (statusLine)                | n/a         | Status bar             |
-
-### task-log.js state machine
-
-`task-log.js` is the central event handler. It handles lifecycle events and maintains runtime state read by `statusline.js`:
-
-**Event → action mapping:**
-
-| Event                | Action                                                                                                                                                                                                                                       |
-| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PreToolUse`         | Logs Task/Agent and Skill invocations to `logs/invocations.jsonl`; opens codex plugin session file; increments per-tool-type state file                                                                                                      |
-| `PostToolUse`        | Closes Codex plugin session files when Skill(codex:\*) or Agent(codex:\*) completes; computes wall-clock timing delta from PreToolUse start marker and appends to `~/.claude/logs/timings.jsonl`                                             |
-| `PostToolUseFailure` | Records timing with error status to timings.jsonl (same timing path as PostToolUse)                                                                                                                                                          |
-| `UserPromptSubmit`   | Writes queue marker to `state/queue/` to light processing badge 💬 in statusline                                                                                                                                                             |
-| `SubagentStart`      | Creates `state/agents/<id>.json` with agent type, model, color, start timestamp — one file per agent (no race)                                                                                                                               |
-| `SubagentStop`       | Deletes per-agent file; appends completion entry to `invocations.jsonl`                                                                                                                                                                      |
-| `PreCompact`         | Appends to `logs/compactions.jsonl`; extracts modified file paths from transcript; writes `state/session-context.md`                                                                                                                         |
-| `Stop`               | Clears `state/tools/` — resets 🔧 row between turns (agents intentionally NOT cleared — may still be running); clears `state/queue/` processing markers (dismisses 💬 badge) and removes orphaned timing start markers from `state/timings/` |
-| `SessionEnd`         | Deletes entire `/tmp/claude-state-<session>/` directory (agents, tools, codex, queue, timings, dedup locks); runs `git worktree prune`; removes orphaned worktrees >2h                                                                       |
-
-**State files layout:**
-
-```markdown
-/tmp/claude-state-<session>/
-├── agents/<id>.json        # one per active subagent (created at start, deleted at stop)
-├── codex/<id>.json         # one per active codex plugin session
-├── skills/<id>.json        # one per in-flight Skill() call
-├── tools/<tool>.json       # one per tool type fired this turn (cleared at Stop)
-├── timings/<tool_use_id>.json   # in-flight timing start markers (PreToolUse → PostToolUse)
-├── queue/<timestamp>.json       # processing badge markers (UserPromptSubmit → Stop)
-└── pending/<tool_use_id>.json   # agent type cache for SubagentStart resolution
-
-.claude/state/
-└── session-context.md      # modified-file breadcrumb (survives compaction)
-
-.claude/logs/               # skill-specific logs (project-scoped)
-# Hook audit logs are global — written to ~/.claude/logs/:
-#   invocations.jsonl       append-only: agent launches, skill invocations, completions (includes project field)
-#   compactions.jsonl       append-only: compaction events (includes project field)
-#   timings.jsonl           append-only: per-tool wall-clock timing (includes project field)
-```
-
-**Age-out rules:**
-
-- Agents: 10-minute safety-net — files older than 10 min with no corresponding Stop event indicate crashed agent; statusline excludes them
-- Codex activity uses the same session-scoped state and active-agent safety filters; the renderer does not promise a separate Codex timeout row
-- Worktrees: 2-hour cutoff in SessionEnd cleanup
-
-**Inline `SessionStart` hook** (shell command, not a JavaScript file): `claude auth status > ~/.claude/state/subscription.json` snapshots billing plan data for the status line asynchronously. The plugin also registers `session-restore.js` for the `clear` matcher.
-
-### Supplementary hooks
-
-Registered by the Foundry hook manifest alongside `task-log.js`:
-
-**`lint-on-save.js`** (PostToolUse — Write, Edit) — closes gap between "Claude edits a file" and "a human runs pre-commit" by linting every file the moment it's written. Runs `pre-commit run --files <path>` on each Write/Edit, exits 2 on failure so Claude sees diagnostics and applies fix immediately. No-op when `.pre-commit-config.yaml` absent or pre-commit not installed.
-
-**`md-compress.js`** (PreToolUse — Edit only, `.md` files only) — normalizes token-wasteful whitespace in file being edited, in place, right before edit runs, and normalizes `old_string` same way so pre-normalization match still finds its target. Collapses table column padding (2+ spaces → 1), consecutive blank lines, trailing whitespace — all outside fenced code blocks; write is atomic (write-then-rename). Deliberately does *not* run on Read: earlier version did, to save Read-time tokens, but normalizing on every Read silently rewrote table alignment in any `.md` file Claude merely looked at, including files nobody asked to touch — dropped in favor of Edit-only scope, which only touches files someone is actually editing.
-
-**`rtk-rewrite.js`** (PreToolUse — Bash) — rewrites supported CLI calls through the optional RTK proxy (`git status` → `rtk git status`). RTK performs format-aware compression for Git, pytest, and build output; the savings depend on the command and output, and compressed output still requires normal verification. The hook is a no-op when RTK is not installed — see root [README → Optional integrations and add-ons](../README.md#optional-integrations-and-add-ons).
+- `task-log.js` keeps session-scoped runtime state in `/tmp/claude-state-<session>/` that `statusline.js` reads.
+- Global audit logs are appended to `~/.claude/logs/`: `invocations.jsonl`, `compactions.jsonl`, and `timings.jsonl`, each recording the project. Skill-specific logs are project-scoped.
+- `SessionEnd` removes the session state directory and orphaned worktrees older than 2 hours.
+- RTK savings depend on the command and output, and compressed output still requires normal verification. See root [README → Optional integrations and add-ons](../README.md#optional-integrations-and-add-ons).
 
 </details>
 
@@ -875,9 +720,10 @@ Line 1: model (effort) · project · billing · context bar · 💬 while proces
 Line 2: ⚡ active skill · 🤖 active agents (including codex:*) · 🛠️ recent tool counts
 ```
 
-The renderer reads agents/, skills/, and tools/ from /tmp/claude-state-<session>/, plus the queue marker. task-log.js writes those files; the renderer never mutates them. Agent activity uses a 10-minute safety filter for worktree agents and a longer backstop for non-worktree agents, while tool activity expires after 30 seconds. SessionEnd removes the session subtree and stale crash remnants.
-
-Billing is presentation only: API-key mode shows actual token-rate spend from the payload; OAuth/subscription mode shows the plan and a theoretical API-rate estimate, not a statement charge. The context bar, model, and effort come from Claude Code's statusline payload. The hook never guarantees correctness or replaces task-level verification.
+- The renderer reads agents/, skills/, and tools/ from /tmp/claude-state-<session>/, plus the queue marker. task-log.js writes those files; the renderer never mutates them.
+- Agent activity uses a 10-minute safety filter for worktree agents and a longer backstop for non-worktree agents, while tool activity expires after 30 seconds. SessionEnd removes the session subtree and stale crash remnants.
+- Billing is presentation only: API-key mode shows actual token-rate spend from the payload; OAuth/subscription mode shows the plan and a theoretical API-rate estimate, not a statement charge.
+- The context bar, model, and effort come from Claude Code's statusline payload. The hook never guarantees correctness or replaces task-level verification.
 
 ## 🤝 Integration with Codex
 
@@ -929,7 +775,10 @@ Runtime artifacts live at project root in dot-prefixed dirs — separate from ve
 .temp/                   ← long output from any skill (quality-gates rule)
 ```
 
-Artifact locations and filenames are skill-specific: plan artifacts use `.plans/...`, research artifacts use `.experiments/...`, development handoffs use `.developments/...`, and report-producing workflows use selected `.reports/<name>/...` directories. Do not assume every run creates a timestamped `.reports/<skill>/.../result.jsonl`; inspect the invoked skill's output contract for exact paths and files. Foundry's artifact-lifecycle rule describes age-based cleanup, so verify that rule before relying on automatic deletion. Incomplete runs (crashed/timed-out) are kept for debugging. All dot-prefixed dirs are gitignored — see `.claude/rules/artifact-lifecycle.md` for TTL policy and full details.
+- Artifact locations and filenames are skill-specific: plan artifacts use `.plans/...`, research artifacts use `.experiments/...`, development handoffs use `.developments/...`, and report-producing workflows use selected `.reports/<name>/...` directories.
+- Do not assume every run creates a timestamped `.reports/<skill>/.../result.jsonl`; inspect the invoked skill's output contract for exact paths and files.
+- Foundry's artifact-lifecycle rule describes age-based cleanup, so verify that rule before relying on automatic deletion. Incomplete runs (crashed/timed-out) are kept for debugging.
+- All dot-prefixed dirs are gitignored — see `.claude/rules/artifact-lifecycle.md` for TTL policy and full details.
 
 </details>
 
@@ -942,7 +791,11 @@ The packages are peers, not a hidden dependency chain:
 - OSS owns maintainer and release-readiness work; Develop owns implementation discipline; Research owns the experiment lifecycle. A handoff should preserve evidence rather than silently changing ownership.
 - Optional bridge_CC-Codex, Colab, Docker, and Kaggle routes require their own installed tools, credentials, runtime permissions, and task-specific preconditions.
 
-A practical feature path is `/develop:plan` → `/develop:feature` → `/develop:review`. A public contribution can continue with `/oss:review` → `/oss:resolve`. An ML path can start with `/research:topic` → `/research:plan` → `/research:judge` → `/research:run` → `/research:retro`. Use fewer steps when the evidence is already available.
+Typical paths (use fewer steps when the evidence is already available):
+
+- Feature: `/develop:plan` → `/develop:feature` → `/develop:review`
+- Public contribution: `/oss:review` → `/oss:resolve`
+- ML: `/research:topic` → `/research:plan` → `/research:judge` → `/research:run` → `/research:retro`
 
 ## 🧭 Current boundaries and possible future work
 

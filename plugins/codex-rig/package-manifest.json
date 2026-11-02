@@ -37,6 +37,11 @@
     },
     {
       "mode": "0644",
+      "path": "DEVELOPMENT.md",
+      "sha256": "c7b5fff0a50aa38768e4467a42d6f6456c7737268b3546b589f520d7296a77f0"
+    },
+    {
+      "mode": "0644",
       "path": "LICENSE",
       "sha256": "acd1e6ed0de415230fdc1b11de6ac0ffe9fbc982dfe4cc41b632c8961f059c06"
     },
@@ -48,7 +53,7 @@
     {
       "mode": "0644",
       "path": "README.md",
-      "sha256": "fae2a0e11512a2dca4a4f3f30b0c96b435bc10adcbf3b3382647f0055a0b4ce7"
+      "sha256": "27fabbebf15879052524ed1e2f08de263548dcf6d3b3afb74bd00e3acce1396b"
     },
     {
       "mode": "0644",

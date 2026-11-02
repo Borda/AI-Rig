@@ -1,24 +1,8 @@
 # 🔬 research — Claude Code Plugin
 
-Review gaps remain factual limitations. Any additional review beyond authorized scope requires one explicit, bounded user decision; declined requests do not return as findings or final action items.
-
-[Changelog](CHANGELOG.md) records version-by-version changes, including the plugin's earlier directory history.
-
-Review loops fix feasible authorized findings, investigate repeated signatures, and continue whenever the weighted score decreases; structural labels alone do not stop remediation. Completion prompts ask only for a missing decision or authorization, regardless of report length, and already-authorized next steps continue. Concrete gates for fresh scope, paid execution, sensitive or destructive actions, and remote changes remain in force.
-
-Independent challenge loops show the cumulative old/new table once after each newly validated challenge, before fixes or another review. Pending reviews and unrelated status updates do not repeat it; final handoffs retain their canonical Results table. Each open finding needs a recorded fix, escalation, or justified deferral; chat table timing has no machine-readable delivery receipt.
-
 `research` turns a vague ML improvement idea into a reviewable path: gather literature, write a measurable experiment contract, check the methodology, run bounded iterations, and inspect what changed. Experiment state and reports stay in the project so the next maintainer can see what was tried.
 
-Adversarial workflow reviews include unchanged downstream consumers and the next ordinary user action, checking whether local success establishes the promised outcome and recording untested handoffs.
-
-Each round challenges and collects findings, reports the cumulative old/new table, resolves feasible authorized findings, escalates unfixable `security`/`critical`/`high` findings, then repeats until clean or plateau/non-convergence, subject to authority, evidence, recurrence and stricter caller budgets. The table is `Iteration | Security | Critical | High | Medium | Low | Nits | Weighted score`; open and fixed-pending-verification signatures split into old and new, while verified-fixed and rejected findings stay excluded. Security and critical have separate columns; score weights remain `20/10/6/4/2/1`. Empty rounds print no progress table. A 1,500-output-token reviewer target is hard only when the runtime supports it; findings are never dropped to meet it. Before the baseline review of a diff the parent or its resolver wrote, the author records an attestation (invariant, sibling routes, consumer, failing-before/passing-after check) and fixes the gaps it exposes; the reviewer never sees it and it never counts toward scoring. Each round's cost lands in an advisory `loop-metrics.jsonl`.
-
-Optional Codemap index-gate guidance ships with research, so loading it does not depend on another plugin's private shared directory. The host-provided active installation takes precedence over other cached versions. Structural queries still require the `codemap-py` plugin; an unavailable CLI or local contract retains the file-read fallback. Enabled missing/stale-index preparation follows the active provider contract automatically by default; explicit `LAZY_CODEMAP` confirm-first and `SCAN_NO_AUTOBUILD=1` frozen preferences remain controlling. Later query blocks reload saved gate choices and preserve the stale-data freeze in their subprocesses.
-
-Research-topic and run reports and experiment journals use short descriptive fields, with writing rules kept outside the output shape. Completed artifacts replace those fields with observed values and omit template instructions.
-
-Codemap context distinguishes static test links from measured line coverage: missing measurements are unknown, not zero, and package queries select exact modules. Failed queries report unavailable context rather than successful empty results. Run, verify and scientist prompts reuse only matching fresh answers while preserving source, formula and test-quality verification.
+[Changelog](CHANGELOG.md) records version-by-version changes, including the plugin's earlier directory history.
 
 > Value at a glance: research connects literature, code, metrics, guards, commits, ablations, and retrospective evidence in one namespaced plugin while leaving datasets, compute, credentials, and scientific judgment with the project owner.
 
@@ -54,8 +38,6 @@ Codemap context distinguishes static test links from measured line coverage: mis
 
 <a id="-what-research-solves"></a>
 
-Small implementation uses a concise plan, brief parent self-challenge (not independent), acceptance within existing authority, useful bounded execution ownership or indivisible parent execution, and consolidation with independent result challenge and relevant verification. Medium/large work retains independent plan challenge before acceptance. Approval prompts only for actual missing authority or protected decisions; reuse accepted parent plans and establish core acceptance before optional expansion. Validate a coherent bounded outcome or split it into smaller outcomes, then complete the active branch depth-first using a compact task map and context limited to the active piece, dependencies, and interfaces. Complete required leaf challenge and verification before dependent work; dependency-ready siblings with agreed stable interfaces and disjoint owners may proceed. Unknown causes or design choices first become bounded investigation or decision prerequisites; parent consolidation retains required gates. This replaces broadly open workstreams and far-ahead detail to reduce context, coordination, and rework; that benefit is expected, not measured.
-
 ## 🎯 What research solves
 
 Without a contract, ML work often becomes intuition → experiment → unclear result → repeated effort. Baselines drift, proxy metrics go unquestioned, paper details are misimplemented, and GPU hours can be spent before a guard or split audit catches the design flaw.
@@ -76,7 +58,13 @@ Every step is explicit and reviewable. The chain is not a guarantee of scientifi
 
 ## 📦 Install
 
-Prerequisites are Claude Code with plugin support, `jq` on PATH (setup, `run` and `fortify` use it, and each stops with `! MISSING` when it is absent), and Python 3.10+ available as the bare `python` command, which is the only interpreter setup probes. `/research:run` also requires Git and starts only from a clean worktree. Datasets, project dependencies, compute, credentials, and optional companion plugins remain user-managed.
+Prerequisites:
+
+- Claude Code with plugin support.
+- `jq` on PATH. Setup, `run` and `fortify` use it, and each stops with `! MISSING` when it is absent.
+- Python 3.10+ available as the bare `python` command, which is the only interpreter setup probes.
+- Git for `/research:run`, which starts only from a clean worktree.
+- Datasets, project dependencies, compute, credentials, and optional companion plugins remain user-managed.
 
 ```bash
 claude plugin marketplace add Borda/AI-Rig
@@ -127,7 +115,9 @@ Start with a measurable optimization goal:
 /research:run program.md
 ```
 
-`/research:plan` scans the project, proposes metric and guard commands, and writes `program.md`. `/research:judge` checks completeness, methodology, scientific rigor, and (unless skipped) runs the commands once. `/research:run` asks a specialist agent for one scoped change per iteration, measures the configured metric, runs the guard, and keeps or reverts the change.
+- `/research:plan` scans the project, proposes metric and guard commands, and writes `program.md`.
+- `/research:judge` checks completeness, methodology, scientific rigor, and (unless skipped) runs the commands once.
+- `/research:run` asks a specialist agent for one scoped change per iteration, measures the configured metric, runs the guard, and keeps or reverts the change.
 
 The metric and guard commands are supplied by you. Research can check that a metric emits a number and a guard exits successfully, but it cannot prove that a proxy metric represents the real goal.
 
@@ -167,9 +157,11 @@ Searches AI/ML literature, compares methods, recommends an approach for the curr
 /research:topic plan path/to/topic-report.md
 ```
 
-`--team` runs competing method-family researchers in parallel and costs more context. `--keep "<items>"` preserves named context through compaction. `plan` consumes the most recent or supplied topic report and writes a plan report under `.reports/research/topic-<branch>-<date>.md`.
+- `--team` runs competing method-family researchers in parallel and costs more context.
+- `--keep "<items>"` preserves named context through compaction.
+- `plan` consumes the most recent or supplied topic report and writes a plan report under `.reports/research/topic-<branch>-<date>.md`.
 
-Blocks only the owning workflow follow-up until its report and matching current-turn header table are verified. Diagnostic/recovery questions remain available; unreadable delivery evidence is not success. Finish the producer, print the required current output, then retry the workflow follow-up. Existing sentinel expiry remains unchanged; it is not a completion receipt.
+> The workflow follow-up question is blocked only until the report exists and its matching header table is shown in the current turn. Diagnostic and recovery questions remain available. Finish the producer, print the required current output, then retry the follow-up.
 
 ### `/research:plan`
 
@@ -199,7 +191,20 @@ Reviews a contract before a campaign. It checks required fields, scope adequacy,
 /research:judge path/to/program.md --skip-validation
 ```
 
-The review covers hypothesis clarity, measurement validity, control adequacy, experimental scope, strategy fit, protocol consistency, stopping criteria, reproducibility, falsifiability, Goodhart risk, baseline quality, and missing variance evidence, in 16 checks. Check C13 flags a `scope_files` overlap with the metric or guard scripts as high severity. Check C9b validates `metric_repeats` and `min_delta_pct`, and adds a low advisory when a `perf` or `ml` strategy measures one sample per iteration; the advisory never becomes a Required Change, because repeated runs are a cost you opt into. A `{field}` token in the `## Config` block is flagged high, because `run` does not substitute it, and the dry run skips a command that contains one. A dry run checks that the metric emits a numeric value and the guard exits successfully; it is skipped with a medium finding on Colab compute.
+The review has 16 checks covering:
+
+- hypothesis clarity, measurement validity, and control adequacy;
+- experimental scope, strategy fit, and protocol consistency;
+- stopping criteria, reproducibility, and falsifiability;
+- Goodhart risk, baseline quality, and missing variance evidence.
+
+Notable checks:
+
+- C13 flags a `scope_files` overlap with the metric or guard scripts as high severity.
+- C9b validates `metric_repeats` and `min_delta_pct`, and adds a low advisory when a `perf` or `ml` strategy measures one sample per iteration. The advisory never becomes a Required Change, because repeated runs are a cost you opt into.
+- A `{field}` token in the `## Config` block is flagged high, because `run` does not substitute it, and the dry run skips a command that contains one.
+
+A dry run checks that the metric emits a numeric value and the guard exits successfully; it is skipped with a medium finding on Colab compute.
 
 | Verdict          | Meaning                                                       |
 | ---------------- | ------------------------------------------------------------- |
@@ -222,7 +227,16 @@ Required changes: (1) add `target:` under ## Metric  (2) replace metric_cmd
 
 #### Bounded metric-improvement loop, flags, and state
 
-Runs the core loop. Each iteration builds bounded context, proposes one scoped change, verifies that files changed, commits before measuring, runs the metric and guard, keeps a guarded improvement, or reverts the change. A campaign defaults to 20 iterations and is capped at 50. Five consecutive discards trigger strategy escalation and then stop rather than looping blindly.
+Runs the core loop. Each iteration:
+
+1. builds bounded context;
+2. proposes one scoped change;
+3. verifies that files changed;
+4. commits before measuring;
+5. runs the metric and guard;
+6. keeps a guarded improvement, or reverts the change.
+
+A campaign defaults to 20 iterations and is capped at 50. Five consecutive discards trigger strategy escalation and then stop rather than looping blindly.
 
 A text goal must specify a measurable improvement target. A dry-run or walkthrough of a campaign is also supported: it traces the requested steps without executing commands or iterations. Unrelated requests stop with a redirect.
 
@@ -256,26 +270,50 @@ Supported flags are `--resume`, `--team`, `--compute=local|colab|docker`, `--col
 | `arch`   | `foundry:solution-architect` | modularity, cohesion              |
 | `auto`   | inferred from keywords       | default when no explicit strategy |
 
-The default execution is local. `--compute=docker` requires a reachable Docker daemon and routes metric/guard verification through the sandbox. `--colab` requires the `colab-mcp` runtime tool and a connected runtime; an optional hardware value is checked against the requested GPU. `--codex` requires `bridge@borda-ai-rig` installed and enabled plus a working `claude` CLI. Explicit integrations stop when unavailable rather than silently degrading.
+#### Compute and integration flags
 
-`--researcher` generates hypotheses with `research:scientist`; `--architect` adds architectural hypotheses from `foundry:solution-architect`; both can run together, and every oracle annotates its own hypotheses' feasibility (no separate annotation pass). `--hypothesis <path>` consumes a pre-built JSONL queue without spawning an oracle: one entry is popped per iteration, progress is checkpointed, the file is never modified, and normal ideation resumes when the queue is exhausted. `--resume` continues only a run whose status is `running`, restores its saved flags, sandbox, Colab and clarification settings, reuses the existing hypothesis file, skips hypotheses already tried by id, and refuses a branch that no longer contains `best_commit`. Each iteration is checked by `bin/check_iteration_scope.py` after the agent returns: a change outside `scope_files` or to the metric or guard scripts is restored and recorded as `scope-violation`. `--journal` requires one of the hypothesis flags and records every outcome. `--team` uses the team mode for parallel hypothesis exploration; combined with `--hypothesis`, the supplied queue joins the team's axis hypotheses in the shared queue. `--keep "<items>"` preserves named context through compaction.
+- Default execution is local.
+- `--compute=docker` requires a reachable Docker daemon and routes metric/guard verification through the sandbox.
+- `--colab` requires the `colab-mcp` runtime tool and a connected runtime; an optional hardware value is checked against the requested GPU.
+- `--codex` requires `bridge@borda-ai-rig` installed and enabled plus a working `claude` CLI.
+- Explicit integrations stop when unavailable rather than silently degrading.
 
-Keep logic is metric-direction aware: an improved metric with a passing guard is kept, a regression is reverted, a guard failure may be reworked up to the configured limit, and a large low-value change can be discarded under the simplicity guard. Every revert is a `git revert`, preserving history rather than deleting evidence. The revert guard stops with `! BLOCKED` instead of skipping when `HEAD` is another iteration's experiment commit, so a mistyped iteration number in a commit subject can no longer keep a change the loop decided to revert.
+#### Hypothesis and resume flags
 
-By default each iteration's metric is measured once and any measured gain is kept, which is right for deterministic metrics such as coverage or line counts. For timing, throughput, or stochastic training metrics set `metric_repeats` (2–10) in `## Config`: the baseline and every iteration then run the metric that many times, each run under its own verify timeout, and a change is kept only when its mean gain beats `max(min_delta_pct, 2σ of the difference)` — the noise model `/research:fortify` uses for ablations. Metric cost scales with `metric_repeats`; the default stays 1, so existing campaigns behave as before.
+- `--researcher` generates hypotheses with `research:scientist`; `--architect` adds architectural hypotheses from `foundry:solution-architect`. Both can run together, and every oracle annotates its own hypotheses' feasibility (no separate annotation pass).
+- `--hypothesis <path>` consumes a pre-built JSONL queue without spawning an oracle. One entry is popped per iteration, progress is checkpointed, the file is never modified, and normal ideation resumes when the queue is exhausted.
+- `--resume` continues only a run whose status is `running`. It restores saved flags, sandbox, Colab and clarification settings, reuses the existing hypothesis file, skips hypotheses already tried by id, and refuses a branch that no longer contains `best_commit`.
+- `--journal` requires one of the hypothesis flags and records every outcome.
+- `--team` uses the team mode for parallel hypothesis exploration; combined with `--hypothesis`, the supplied queue joins the team's axis hypotheses in the shared queue.
+- `--keep "<items>"` preserves named context through compaction.
+- Each iteration is checked by `bin/check_iteration_scope.py` after the agent returns: a change outside `scope_files` or to the metric or guard scripts is restored and recorded as `scope-violation`.
 
-Run state lives under `.experiments/state/<run-id>/` with `state.json`, `experiments.jsonl`, diary, context, progress, scripts, and resume data. `state.json` records the parsed contract under `config` — metric and guard commands, `metric.direction`, scope, compute, strategy, iteration ceiling, `metric_repeats`, and `min_delta_pct` — which `/research:fortify` and `/research:retro` read; a text goal records its auto-detected commands and an inferred, printed direction. With `metric_repeats` > 1 the individual runs are kept in `metric-runs.jsonl`. Hypothesis queues, checkpoints, and optional journals live under `.experiments/<run-id>/`. The final report is `.reports/research/run-<branch>-<date>.md`.
+#### Keep and revert logic
 
-The run starts from a clean Git worktree and can create commits or reverts. Review scope files, commands, diffs, and the final report before accepting a campaign result.
+Keep logic is metric-direction aware:
 
-Illustrative terminal shape (values and agent names are examples, not a benchmark):
+- An improved metric with a passing guard is kept.
+- A regression is reverted.
+- A guard failure may be reworked up to the configured limit.
+- A large low-value change can be discarded under the simplicity guard.
 
-```text
-Baseline: f1_score = 0.820
-[-> Iter 1/20 — best so far: 0.820]
-[✓ Iter 1/20 — kept · metric=0.831 · guard=passed]
-[✓ Iter 2/20 — reverted · metric=0.818 · guard=passed]
-```
+Every revert is a `git revert`, preserving history rather than deleting evidence. The revert guard stops with `! BLOCKED` instead of skipping when `HEAD` is another iteration's experiment commit, so a mistyped iteration number in a commit subject can no longer keep a change the loop decided to revert.
+
+By default each iteration's metric is measured once and any measured gain is kept, which is right for deterministic metrics such as coverage or line counts. For timing, throughput, or stochastic training metrics set `metric_repeats` (2–10) in `## Config`:
+
+- The baseline and every iteration run the metric that many times, each run under its own verify timeout.
+- A change is kept only when its mean gain beats `max(min_delta_pct, 2σ of the difference)` — the noise model `/research:fortify` uses for ablations.
+- Metric cost scales with `metric_repeats`; the default stays 1, so existing campaigns behave as before.
+
+#### State and outputs
+
+- Run state lives under `.experiments/state/<run-id>/` with `state.json`, `experiments.jsonl`, diary, context, progress, scripts, and resume data.
+- `state.json` records the parsed contract under `config` — metric and guard commands, `metric.direction`, scope, compute, strategy, iteration ceiling, `metric_repeats`, and `min_delta_pct` — which `/research:fortify` and `/research:retro` read. A text goal records its auto-detected commands and an inferred, printed direction.
+- With `metric_repeats` > 1 the individual runs are kept in `metric-runs.jsonl`.
+- Hypothesis queues, checkpoints, and optional journals live under `.experiments/<run-id>/`.
+- The final report is `.reports/research/run-<branch>-<date>.md`.
+
+> The run starts from a clean Git worktree and can create commits or reverts. Review scope files, commands, diffs, and the final report before accepting a campaign result.
 
 ### `/research:sweep`
 
@@ -289,9 +327,13 @@ Runs the non-interactive plan → judge/refine → run pipeline from a goal. It 
 /research:sweep "improve recall" --researcher --journal
 ```
 
-Judge refinement runs at most three times, applying Required Changes between passes. `APPROVED` starts the run, `BLOCKED` stops with critical findings, and unresolved `NEEDS-REVISION` remains a user decision. Sweep-specific options are `--skip-validation`, `--out <path>`, and `--keep "<items>"`; use the `/research:run` section for forwarded run flags.
+Judge refinement runs at most three times, applying Required Changes between passes:
 
-Use separate `/research:plan` and `/research:judge` when you need to inspect or tune the contract before spending compute.
+- `APPROVED` starts the run.
+- `BLOCKED` stops with critical findings.
+- Unresolved `NEEDS-REVISION` remains a user decision.
+
+Sweep-specific options are `--skip-validation`, `--out <path>`, and `--keep "<items>"`; use the `/research:run` section for forwarded run flags. Use separate `/research:plan` and `/research:judge` when you need to inspect or tune the contract before spending compute.
 
 ### `/research:verify`
 
@@ -306,11 +348,16 @@ Audits whether code matches a named paper; it does not judge whether the paper's
 /research:verify paper.pdf --dim F,H --no-codemap
 ```
 
-The five dimensions are formula (`F`), hyperparameter (`H`), evaluation (`E`), notation (`N`), and citation chain (`C`). The paper text is written to `paper.md` inside an untrusted-content fence by `bin/fence_untrusted.py`, and the scientist is told to treat it as data only. Fidelity is `(MATCH + 0.5 * PARTIAL) / total_verified_claims`; unverifiable claims are excluded from the denominator and documented. A paper with no checkable claims reports `NO VERIFIABLE CLAIMS` with a null fidelity. `--strict` stops on HIGH-severity formula or evaluation mismatches. `--codemap` requires a usable index, while `--no-codemap` opts out; missing or stale structural context otherwise degrades the audit with an explicit gap.
+The five dimensions are formula (`F`), hyperparameter (`H`), evaluation (`E`), notation (`N`), and citation chain (`C`).
+
+- The paper text is written to `paper.md` inside an untrusted-content fence by `bin/fence_untrusted.py`, and the scientist is told to treat it as data only.
+- Fidelity is `(MATCH + 0.5 * PARTIAL) / total_verified_claims`; unverifiable claims are excluded from the denominator and documented.
+- A paper with no checkable claims reports `NO VERIFIABLE CLAIMS` with a null fidelity.
+- `--strict` stops on HIGH-severity formula or evaluation mismatches.
+- `--codemap` requires a usable index, while `--no-codemap` opts out; missing or stale structural context otherwise degrades the audit with an explicit gap.
+- Changed training budgets or schedule durations are HIGH protocol mismatches; a setting difference that preserves computation and training budget is MEDIUM. Numeric ratio alone does not set severity. MATCH rows leave Paper Reference, Severity and Detail as `-`.
 
 Reports are written to `.reports/research/verify-<branch>-<date>.md`, with the detailed scientist audit retained under `.experiments/verify-<timestamp>/`.
-
-Changed training budgets or schedule durations are HIGH protocol mismatches; a setting difference that preserves computation and training budget is MEDIUM. Numeric ratio alone does not set severity. MATCH rows leave Paper Reference, Severity and Detail as `-`.
 
 Illustrative finding shape:
 
@@ -337,9 +384,15 @@ Runs one-component-at-a-time ablations after a completed run and an `APPROVED` j
 /research:fortify <run-id> --venue NeurIPS
 ```
 
-Supported options are `--venue CVPR|NeurIPS|ICML|workshop`, `--max-ablations <N>`, `--runs <N>`, `--skip-run`, and `--keep "<items>"`. `--skip-run` identifies candidates without executing ablations. `--runs <N>` (default 3, range 1–10) measures every variant N times in its worktree, so metric-command cost scales with N; `--runs 1` has no sigma and classifies against the noise floor alone. `--compute` and `--colab` are not implemented for fortify; metric and guard commands run locally in each worktree.
+Supported options:
 
-Unrelated positional input is rejected before source-run lookup. Variant identifiers use ASCII lowercase letters, digits and hyphens so worktree selection and revert lookup agree; descriptive component labels may retain Unicode.
+- `--venue CVPR|NeurIPS|ICML|workshop`
+- `--max-ablations <N>`
+- `--runs <N>` (default 3, range 1–10) measures every variant N times in its worktree, so metric-command cost scales with N; `--runs 1` has no sigma and classifies against the noise floor alone.
+- `--skip-run` identifies candidates without executing ablations.
+- `--keep "<items>"`
+
+`--compute` and `--colab` are not implemented for fortify; metric and guard commands run locally in each worktree. Unrelated positional input is rejected before source-run lookup. Variant identifiers use ASCII lowercase letters, digits and hyphens; descriptive component labels may retain Unicode.
 
 | Class         | Metric loss after component removal |
 | ------------- | ----------------------------------- |
@@ -347,7 +400,12 @@ Unrelated positional input is rejected before source-run lookup. Variant identif
 | `SIGNIFICANT` | 10–50% of the full metric           |
 | `MARGINAL`    | Less than 10% of the full metric    |
 
-An ablation counts as an effect only beyond `max(noise floor, 2σ of the difference)` computed by `bin/fortify_metric_stats.py`; an effect inside that threshold is `BORDERLINE` (never `MARGINAL`) and is listed separately, with a prompt to add `--runs`. A removal that improves the metric by up to 5% is `NEUTRAL`, and beyond 5% is `Potentially Harmful`. The full variant runs first as a sanity check and must reproduce the source run's best metric within 2% (widened to 2σ of the full variant); otherwise fortify aborts as `diverged`, reported as possible nondeterminism or environment drift. `SANITY_DIVERGENCE_PCT` and `NOISE_FLOOR_PCT` (percent, defaults 2.0) override the two tolerances, and `FORTIFY_DIR_BASE` moves the artifact directory. The main worktree is never modified by ablation execution. Reports are written to `.reports/research/fortify-<branch>-<date>.md`.
+- An ablation counts as an effect only beyond `max(noise floor, 2σ of the difference)` computed by `bin/fortify_metric_stats.py`. An effect inside that threshold is `BORDERLINE` (never `MARGINAL`) and is listed separately, with a prompt to add `--runs`.
+- A removal that improves the metric by up to 5% is `NEUTRAL`, and beyond 5% is `Potentially Harmful`.
+- The full variant runs first as a sanity check and must reproduce the source run's best metric within 2% (widened to 2σ of the full variant); otherwise fortify aborts as `diverged`, reported as possible nondeterminism or environment drift.
+- `SANITY_DIVERGENCE_PCT` and `NOISE_FLOOR_PCT` (percent, defaults 2.0) override the two tolerances, and `FORTIFY_DIR_BASE` moves the artifact directory.
+- The main worktree is never modified by ablation execution.
+- Reports are written to `.reports/research/fortify-<branch>-<date>.md`.
 
 Illustrative report shape:
 
@@ -370,9 +428,13 @@ Reads a completed run's JSONL and diary without changing code or experiment stat
 /research:retro <run-id> --threshold 0.005 --alpha 0.01
 ```
 
-The report covers direction-aware significance, dead plateaus and churn, suspicious jumps above two standard deviations, strategy effectiveness, failure patterns, diminishing returns, and three to five next hypotheses compatible with `/research:run --hypothesis`. `--compare` requires matching program and metric and stops with `Cannot compare runs with different metrics` otherwise (a run started before `state.json` recorded its `config` has no metric command to compare, so retro only warns, and assumes `higher` when it has no recorded direction); both runs use the same truncation rule, and significance is computed over kept iterations only. Reports are written to `.reports/research/retro-<branch>-<date>.md`.
+The report covers direction-aware significance, dead plateaus and churn, suspicious jumps above two standard deviations, strategy effectiveness, failure patterns, diminishing returns, and three to five next hypotheses compatible with `/research:run --hypothesis`.
 
-A scale advisory automatically adjusts the default dead-iteration threshold and reports the applied value. An explicit `--threshold` stays unchanged; the advisory instead suggests a re-run with its proposed value. Timed-out measurements are classified as `unreliable-timeout` and excluded from valid improvement evidence.
+- `--compare` requires matching program and metric and stops with `Cannot compare runs with different metrics` otherwise. A run started before `state.json` recorded its `config` has no metric command to compare, so retro only warns, and assumes `higher` when it has no recorded direction.
+- Both compared runs use the same truncation rule, and significance is computed over kept iterations only.
+- A scale advisory automatically adjusts the default dead-iteration threshold and reports the applied value. An explicit `--threshold` stays unchanged; the advisory instead suggests a re-run with its proposed value.
+- Timed-out measurements are classified as `unreliable-timeout` and excluded from valid improvement evidence.
+- Reports are written to `.reports/research/retro-<branch>-<date>.md`.
 
 Illustrative report shape:
 
@@ -402,9 +464,16 @@ Generates a Kaggle competition notebook as a Jupytext `# %%` Python script. It g
 /research:kaggle competition-name --resume .experiments/kaggle/existing.py
 ```
 
-Supported options are `--type classification|regression|segmentation|detection|tabular`, `--eda-only`, `--inference-only`, `--offline-setup`, `--resume <path>`, and `--keep "<items>"`. `--eda-only` is always online and omits training; `--inference-only` is offline, uses the frozen-package pattern, and writes an `-inference.py` suffix; `--offline-setup` adds frozen package setup and is ignored for EDA-only mode.
+Supported options:
 
-Generated notebooks follow the repo-wide notebook standard (`skills/_shared/notebook-style.md`, propagated from `codex-rig/shared/notebook-style.md`) plus a small Kaggle-only delta in `skills/kaggle/modes/style-rules.md`: small single-purpose cells, a why for each meaningful cell, visual EDA, leakage-safe evaluation, PTL plus torchmetrics for DNN training, and separate checkpoint load/inference. Credentials are not written to the notebook. Output is `.experiments/kaggle/<competition-name>.py` or the inference suffix. An opt-in Step 4 gate can additionally distill notebook helpers into a tested `src/` package.
+- `--type classification|regression|segmentation|detection|tabular`
+- `--eda-only` is always online and omits training.
+- `--inference-only` is offline, uses the frozen-package pattern, and writes an `-inference.py` suffix.
+- `--offline-setup` adds frozen package setup and is ignored for EDA-only mode.
+- `--resume <path>`
+- `--keep "<items>"`
+
+Generated notebooks use small single-purpose cells, a why for each meaningful cell, visual EDA, leakage-safe evaluation, PTL plus torchmetrics for DNN training, and separate checkpoint load/inference. Credentials are not written to the notebook. Output is `.experiments/kaggle/<competition-name>.py` or the inference suffix. An opt-in Step 4 gate can additionally distill notebook helpers into a tested `src/` package.
 
 ### `/research:setup`
 
@@ -417,9 +486,12 @@ Delivers this plugin's `rules/*.md` into Claude's flat user-rule namespace with 
 /research:setup --approve
 ```
 
-The default mode previews changes and asks before replacing a conflicting destination. `--approve` is the non-interactive mode used by synchronization. Only links whose targets resolve under this plugin's current cache or install-cache lineage are replaced or removed; a real file, another marketplace, a source checkout, or a dotfiles tree remains a conflict unless explicitly approved.
-
-Each rule becomes `~/.claude/rules/research-<source-name>.md`. Claude Code does not run cleanup on uninstall, so dangling links must be removed manually after confirming ownership. An upgrade refreshes links from the new cache lineage and removes links for rules no longer shipped.
+- The default mode previews changes and asks before replacing a conflicting destination.
+- `--approve` is the non-interactive mode used by synchronization.
+- Only links whose targets resolve under this plugin's current cache or install-cache lineage are replaced or removed; a real file, another marketplace, a source checkout, or a dotfiles tree remains a conflict unless explicitly approved.
+- Each rule becomes `~/.claude/rules/research-<source-name>.md`.
+- Claude Code does not run cleanup on uninstall, so dangling links must be removed manually after confirming ownership.
+- An upgrade refreshes links from the new cache lineage and removes links for rules no longer shipped.
 
 <a id="-experiment-contract"></a>
 
@@ -472,19 +544,28 @@ The metric command must emit a numeric value, and the guard must exit successful
 
 ### Reports, state, and handoff files
 
-| Workflow  | Primary report                                 | Supporting state or output                                                                                                                                                           |
-| --------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `topic`   | `.reports/research/topic-<branch>-<date>.md`   | Optional topic plan report and gated follow-up context.                                                                                                                              |
-| `judge`   | `.reports/research/judge-<branch>-<date>.md`   | Methodology and scientific review evidence under `.experiments/judge-<timestamp>/`.                                                                                                  |
-| `run`     | `.reports/research/run-<branch>-<date>.md`     | `.experiments/state/<run-id>/` plus hypothesis artifacts under `.experiments/<run-id>/`.                                                                                             |
-| `sweep`   | Delegated `judge` and `run` reports            | Generated contract at the requested `--out` path or project root.                                                                                                                    |
-| `verify`  | `.reports/research/verify-<branch>-<date>.md`  | Scientist audit under `.experiments/verify-<timestamp>/`.                                                                                                                            |
-| `fortify` | `.reports/research/fortify-<branch>-<date>.md` | Candidate list, worktrees, results, and dropped variants under `.experiments/fortify-*/`.                                                                                            |
-| `retro`   | `.reports/research/retro-<branch>-<date>.md`   | Analysis state and compatible `hypotheses.jsonl` under `.experiments/retro-*/`.                                                                                                      |
-| `kaggle`  | N/A                                            | `.experiments/kaggle/<competition-name>.py` and downloaded data; opt-in Step 4 gate also writes `src/<package>/<module>.py`, `tests/test_<module>.py`, `notebooks/01_<name>_pkg.py`. |
-| `setup`   | Terminal summary                               | Namespaced links under `~/.claude/rules/`.                                                                                                                                           |
+| Workflow  | Primary report                                 | Supporting state or output                                                                |
+| --------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `topic`   | `.reports/research/topic-<branch>-<date>.md`   | Optional topic plan report and gated follow-up context.                                   |
+| `judge`   | `.reports/research/judge-<branch>-<date>.md`   | Review evidence under `.experiments/judge-<timestamp>/`.                                  |
+| `run`     | `.reports/research/run-<branch>-<date>.md`     | `.experiments/state/<run-id>/` plus hypothesis artifacts under `.experiments/<run-id>/`.  |
+| `sweep`   | Delegated `judge` and `run` reports            | Generated contract at the requested `--out` path or project root.                         |
+| `verify`  | `.reports/research/verify-<branch>-<date>.md`  | Scientist audit under `.experiments/verify-<timestamp>/`.                                 |
+| `fortify` | `.reports/research/fortify-<branch>-<date>.md` | Candidate list, worktrees, results, and dropped variants under `.experiments/fortify-*/`. |
+| `retro`   | `.reports/research/retro-<branch>-<date>.md`   | Analysis state and compatible `hypotheses.jsonl` under `.experiments/retro-*/`.           |
+| `kaggle`  | N/A                                            | `.experiments/kaggle/<competition-name>.py` and downloaded data.                          |
+| `setup`   | Terminal summary                               | Namespaced links under `~/.claude/rules/`.                                                |
 
-Reports should disclose the metric, baseline, commands, changed scope, gate results, confidence, unresolved limitations, and a concrete next action. Generated state is project-rooted and intended to be inspectable or cleaned according to the owning workflow's contract.
+Reports disclose the metric, baseline, commands, changed scope, gate results, confidence, unresolved limitations, and a concrete next action. Generated state is project-rooted:
+
+```text
+.experiments/state/<run-id>/              run state, JSONL log, diary, context, scripts
+.experiments/<run-id>/                    hypothesis queue, checkpoint, optional journal
+.experiments/{judge,verify,fortify,retro}-* intermediate analysis artifacts
+.experiments/kaggle/                       generated Jupytext scripts and downloaded data
+.reports/research/                         topic, judge, run, verify, fortify, retro reports
+.temp/state/                               short-lived cross-phase skill contracts
+```
 
 ### Colab MCP setup
 
@@ -555,106 +636,80 @@ The workflow is user-invoked and bounded. Chaining `/research:retro`, `/research
 
 The plugin ships exactly two manually invocable agents:
 
-| Agent                   | Purpose                                                                                         | Not for                                                                      |
-| ----------------------- | ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| `research:scientist`    | Named-paper analysis, falsifiable hypotheses, experiment design, and result interpretation.     | Broad SOTA survey, data acquisition, or general Python.                      |
-| `research:data-steward` | Dataset acquisition, provenance, split integrity, leakage checks, and data-pipeline validation. | ML hypothesis design, throughput optimization, or undocumented web scraping. |
+| Agent                                             | Purpose                                                                                         | Not for                                                                      |
+| ------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| [`research:scientist`](agents/scientist.md)       | Named-paper analysis, falsifiable hypotheses, experiment design, and result interpretation.     | Broad SOTA survey, data acquisition, or general Python.                      |
+| [`research:data-steward`](agents/data-steward.md) | Dataset acquisition, provenance, split integrity, leakage checks, and data-pipeline validation. | ML hypothesis design, throughput optimization, or undocumented web scraping. |
 
-`research:scientist` expects a named paper, author, or arXiv anchor for paper implementation. It enforces one hypothesis per experiment, seed averaging, baselines, ablations, and mean ± standard deviation rather than best-run reporting. `research:data-steward` audits pagination completeness, schema, boundaries, deduplication, split isolation, stateful transforms, augmentations, and DataLoader configuration; it delegates unknown URL discovery to `foundry:web-explorer` when Foundry is available.
+- `research:scientist` expects a named paper, author, or arXiv anchor for paper implementation. It enforces one hypothesis per experiment, seed averaging, baselines, ablations, and mean ± standard deviation rather than best-run reporting.
+- `research:data-steward` audits pagination completeness, schema, boundaries, deduplication, split isolation, stateful transforms, augmentations, and DataLoader configuration. It delegates unknown URL discovery to `foundry:web-explorer` when Foundry is available.
 
 Optional integrations are capability-gated:
 
 - `foundry` (requires `foundry` plugin) supplies software, performance, architecture, and web-research agents. Most skills fall back to `general-purpose` role prompts when it is absent; Kaggle stops.
-- `codemap-py` (requires `codemap-py` plugin) supplies structural context to `run` and `verify` when enabled and indexed. `--no-codemap` opts out; `--codemap` makes a usable index mandatory.
+- `codemap-py` (requires `codemap-py` plugin) supplies structural context to `run` and `verify` when enabled and indexed. `--no-codemap` opts out; `--codemap` makes a usable index mandatory. Missing or stale-index preparation follows the provider contract automatically by default; explicit `LAZY_CODEMAP` confirm-first and `SCAN_NO_AUTOBUILD=1` frozen preferences remain controlling.
 - `bridge@borda-ai-rig` enables `/research:run --codex`; it is never silently substituted when requested.
 - A connected `colab-mcp` runtime enables `--colab` for `run` and `sweep`.
 - `scipy` enables Wilcoxon significance in `retro`; without it, the report uses descriptive statistics.
 - The authenticated Kaggle CLI is required for online competition grounding.
 
-### Agent operating boundaries
-
-`research:scientist` is for a named paper, publication-backed method, falsifiable hypothesis, or experiment design. It separates paper claims from evidence, checks baselines and variance, identifies one central idea, audits attribution and contribution claims, plans one-variable-at-a-time experiments, estimates compute, and interprets results as confirmed, refuted, or partially supported. It should report mean ± standard deviation over at least three seeds when stochastic results are being compared and should flag cherry-picked results, missing confidence intervals, test-set reuse, and leakage concerns.
-
-`research:data-steward` is for acquisition, provenance, DVC or version tracking, split integrity, leakage detection, schema validation, and DataLoader configuration. Its checklist includes pagination count/schema/boundary/dedup verification; mutually exclusive or group-aware splits; train-only fitting for stateful transforms; train-only augmentation and oversampling; temporal window direction; NaN/Inf, shape, dtype, and range checks; and `shuffle=False` for validation/test loaders. It delegates unknown URL discovery or scraping to `foundry:web-explorer` and validates the returned data itself.
-
-Engineering hygiene is reported at Info severity; silent record loss or duplication is High even when snapshot consistency is involved. An unrelated request receives one or two scope/redirect lines plus the required Confidence block.
-
-Useful data-steward search patterns include `fit_transform(` for pre-split normalization, `Random*` transforms for validation contamination, `train_test_split(` without group awareness, `patient_id` or `subject_id` split gaps, `random_split(` shared-transform risks, and augmentation calls before the split. These are investigation prompts, not automatic findings; the agent must confirm the surrounding data flow.
-
-Scientist handoffs should state the paper or method, core idea, actual contribution, mechanics, evidence, limitations, relevance, falsifiable prediction, variables, controls, success criterion, ablations, compute estimate, and expected outcome. A paper summary is not a benchmark claim unless the source and protocol are retained.
-
 <a id="-hooks-rules-artifacts-and-bin-tools"></a>
 
 ## 📐 Hooks, rules, artifacts, and bin tools
 
-### Registered hooks and shared helper behavior
+### Hooks
 
-Hooks register from `hooks/hooks.json` when the plugin is enabled; no settings edit is needed for registration. Each hook runs `node` from PATH, then `/opt/homebrew/bin/node` or `/usr/local/bin/node`; when none exists, the hooks skip without blocking and one `SessionStart` check reports once per session that they are inactive. The plugin's `bin/python` and native Windows `bin/python.cmd` preserve the shipped `python` command and probe candidate runtimes for Python 3.10+ before executing the workload once. Plugin `bin/` follows system directories on PATH, so an eligible system `python` takes precedence; missing eligible runtimes produce a clear diagnostic.
+Hooks register from `hooks/hooks.json` when the plugin is enabled; no settings edit is needed.
 
-| Hook                      | Event                                                                         | Behavior                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| ------------------------- | ----------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `agent-router.js`         | `PreToolUse(Agent)`                                                           | Exact agent route, semantic fallback, then `general-purpose`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `sentinel-read-allow.js`  | (decision module, not registered)                                             | Allows only pre-canned read-only temporary-state idioms; other commands use normal permission checks. Whole-line `# …` comments inside a block are skipped rather than blocking it, and `..` is matched as a path component so ellipsis and version ranges are not mistaken for traversal.                                                                                                                                                                                                                                                                                                                     |
-| `blueprint-allow.js`      | (decision module, not registered)                                             | Exact-matches the normalized command against this plugin's committed `blueprint-manifest.json`; any deviation falls through to a normal prompt.                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `allow-dispatch.js`       | `PreToolUse(Bash)`                                                            | The only registered Bash auto-allow hook. Calls the two decision modules above in rank order, emits the first allow, and appends one audit record naming the effective verdict and both modules' own verdicts. Exits 0 on every path.                                                                                                                                                                                                                                                                                                                                                                          |
-| `audit-close.js`          | `PostToolUse(Bash)`, `PostToolUseFailure(Bash)`, `SessionStart`, `SessionEnd` | Appends one record observing that a Bash call completed, and one per session boundary. Writes nothing to stdout on any event.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `write-guard.js`          | `PreToolUse(Edit, Write, NotebookEdit)`                                       | Grants nothing; forces confirmation on writes to untracked files in the protected set (agent instructions, permission config, the pre-commit gate, package metadata); a tracked protected file never asks, since every write to it is diffable and revertible, and a protected file the session created asks once on creation, then passes for that session. Source, tests, CI files, changelogs and lockfiles stay unprotected.                                                                                                                                                                               |
-| `stale-plugin-check.js`   | `SessionStart`                                                                | Warns the user when this session still runs a replaced research version, naming the loaded and installed versions and the restart step; tells the model not to run research workflows on the stale copy until the user chooses, through `AskUserQuestion`, to restart or continue — once per session and version: after that ask, a compact/clear warning drops it (a first detection at compact/clear still asks). Silent when current; never blocks.                                                                                                                                                         |
-| `enforce-topic-header.js` | `PreToolUse(AskUserQuestion)`, `PostToolUse(AskUserQuestion)`, `Stop`         | Blocks only the owning workflow follow-up until its report exists and the follow-up call's first question text is a short plain summary (report path, `Title`, `Outcome`/`Verdict`; at most 1,500 characters, no table); option descriptions and previews never supply it, and a reply-text table before the call does not count. Diagnostic/recovery questions remain available; unreadable delivery evidence is not success. On Stop: keeps a turn going once per report when its final reply (the text after the turn's last tool call) lacks the full header table; a shown follow-up does not satisfy it. |
+- They run `node` from PATH, then `/opt/homebrew/bin/node` or `/usr/local/bin/node`. When none exists, hooks skip without blocking and one `SessionStart` check reports once per session that they are inactive.
+- The plugin's `bin/python` and native Windows `bin/python.cmd` probe candidate runtimes for Python 3.10+ before executing the workload once. An eligible system `python` takes precedence; missing eligible runtimes produce a clear diagnostic.
 
-`lib/audit-log.js` and `report-header-table.js` are shared hook modules rather than registered hooks. `lib/audit-log.js` is the append-only record writer behind the two audit hooks: it holds no lock, marker or state directory, has no code path that deletes or rewrites a file, and never throws, so a logging failure cannot change a permission decision. `RIG_AUDIT=0` disables writing only. `report-header-table.js` verifies current topic-report header delivery before the workflow follow-up in the call's first question only — its text or every single-select option's preview (a reply-text table before the call, an option description rendered as one line, some previews only, a later question, or multiSelect previews never count); an option preview over the preview cap (2000 chars or 12 lines, a line over 86 chars counting once per 86 it spans; Claude Code withholds or clips it) never delivers, and over-cap content passes as the report file named in the question text with a compact summary naming it in every option preview; a denial says reply text does not count, names over-cap previews or where a misplaced copy sits, and gives the fix (every option preview of the first question within the cap, or the named-file shape over it); the `Stop` check reads the turn's visible reply text instead, in one read with no wait; HTML-format previews (`previewFormat: "html"` hosts) are matched with their `<pre>`/`<div>` wrapper tags removed and pipe entities decoded (an entity pipe inside a cell bordered by bare pipes stays cell content), and a denial tells those hosts to wrap the table in `<pre>`. Recovery questions remain available.
+| Hook                                                       | Event                                                                         | Purpose                                                                                                                                |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| [`agent-router.js`](hooks/agent-router.js)                 | `PreToolUse(Agent)`                                                           | Exact agent route, semantic fallback, then `general-purpose`.                                                                          |
+| [`allow-dispatch.js`](hooks/allow-dispatch.js)             | `PreToolUse(Bash)`                                                            | Only registered Bash auto-allow hook; asks the two decision modules below and logs one audit record.                                   |
+| [`sentinel-read-allow.js`](hooks/sentinel-read-allow.js)   | decision module of `allow-dispatch.js`                                        | Allows only pre-canned read-only temporary-state idioms; other commands use normal permission checks.                                  |
+| [`blueprint-allow.js`](hooks/blueprint-allow.js)           | decision module of `allow-dispatch.js`                                        | Allows a command only when it exactly matches this plugin's committed `blueprint-manifest.json`.                                       |
+| [`audit-close.js`](hooks/audit-close.js)                   | `PostToolUse(Bash)`, `PostToolUseFailure(Bash)`, `SessionStart`, `SessionEnd` | Appends one audit record when a Bash call completes and at session boundaries; writes nothing to stdout.                               |
+| [`write-guard.js`](hooks/write-guard.js)                   | `PreToolUse(Edit, Write, NotebookEdit)`                                       | Forces confirmation on writes to untracked protected files (agent instructions, permission config, pre-commit gate, package metadata). |
+| [`stale-plugin-check.js`](hooks/stale-plugin-check.js)     | `SessionStart`                                                                | Warns once per session and version when a replaced research version is running, and asks whether to restart or continue.               |
+| [`enforce-topic-header.js`](hooks/enforce-topic-header.js) | `PreToolUse(AskUserQuestion)`, `PostToolUse(AskUserQuestion)`, `Stop`         | Blocks only the topic workflow follow-up until the report exists and its header table is shown (see `/research:topic`).                |
+| [`report-header-table.js`](hooks/report-header-table.js)   | shared module                                                                 | Verifies header-table delivery for `enforce-topic-header.js`.                                                                          |
+| [`lib/audit-log.js`](hooks/lib/audit-log.js)               | shared module                                                                 | Append-only audit record writer; never throws, never deletes. `RIG_AUDIT=0` disables writing only.                                     |
 
-#### Auto-allow audit log
+The audit log holds one JSON line per Bash call under `~/.claude/logs/audit/`; command text is never written.
 
-`allow-dispatch.js` and `audit-close.js` append one JSON line each per Bash call to `~/.claude/logs/audit/`: one file per session (`s-<key>.jsonl`, the key being a hash of the session id) plus a shared `_no-session.jsonl` for calls that arrive without one. A record names the deciding plugin and hook, the session and tool-call ids, the working directory, the effective decision with its lane and provenance, and both decision modules' own verdicts. Command text is never written — only a digest, and for a provenance allow the manifest `src` it matched. Note the limit honestly: `task-log.js` already writes the first 200 characters of every Bash command into `timings.jsonl` under the same `tool_use_id`, so the guarantee is about this file rather than about the log directory. That text is masked first (env assignments, credential-named values and flags, URL credentials, Bearer values, well-known token prefixes), and `task-log.js` tightens the log directory to `0700` and log files to `0600`.
+`python "${CLAUDE_PLUGIN_ROOT}/bin/verify_blueprint_audit.py" verify` checks audit-log record hashes, and `... prune --older-than 30 --dry-run` previews deletion of old log files. Nothing schedules `prune`, and the log is an observation record, not tamper-evidence.
 
-With several plugins installed each writes its own rows and nothing coordinates them, so one completed call yields one row per plugin at each end. That is corroboration, not duplication.
+### Rules
 
-```bash
-python "${CLAUDE_PLUGIN_ROOT}/bin/verify_blueprint_audit.py" verify
-python "${CLAUDE_PLUGIN_ROOT}/bin/verify_blueprint_audit.py" prune --older-than 30 --dry-run
-```
+| Rule                                                           | Purpose                                                                                        |
+| -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| [`rules/quality-gates.md`](rules/quality-gates.md)             | Complete quality gates: confidence blocks, report/header format, adversarial review/fix loops. |
+| [`rules/quality-gates-delta.md`](rules/quality-gates-delta.md) | Scope and output-routing delta used when foundry already delivers the shared gates.            |
 
-- `verify` exits 1 only when a record's own hash fails to verify; torn framing from concurrent appends and every classification are warnings.
-- `record_hash` detects a record that changed after it was written — it is not tamper-evidence, because the same user owns the log, the hooks and the checker.
-- Read the classifications as observations rather than proof: a call with a decision row and no completion row is reported as `completion-unobserved` when the session later ended and `in-flight-or-hard-kill` when it did not, and neither distinguishes a refusal at the prompt from a deny rule elsewhere or a closer that died. Equally, that a tool ran never establishes that a human approved it.
-- `prune` is the only component that deletes a log file, is never run by a hook, and never prunes `_no-session.jsonl` by age — a growing one means the host stopped sending a session id. Nothing schedules `prune`.
-- `RIG_AUDIT=0` disables audit writing without changing any permission decision.
+`rules/quality-gates.md` requires confidence blocks on analysis output, defines report-file and terminal-header formatting, and requires independent review/fix cycles to follow its local adversarial-loop procedure. Confidence describes the correctness of the delivered result and how it was checked; completion is reported separately, and a high score does not pass an unmet gate.
 
-Records follow the twelve mandatory fields of ["Agent Audit Trail: A Standard Logging Format for Autonomous AI Systems"](https://datatracker.ietf.org/doc/draft-sharif-agent-audit-trail/), an active individual-submission Internet-Draft that is not endorsed by the IETF and has no standing in its standards process. Deliberate deviations:
+`/research:setup` installs one variant at `research-quality-gates.md`:
 
-- `outcome` adds `pending`, because a decision that has not executed yet has no outcome in the draft's vocabulary.
-- `trust_level` is `plugin`/`unknown` rather than the draft's `L0`–`L4`, because what is observed is which component proposed an allow, not an authentication level.
-- `agent_id` is `<plugin>/<hook>` rather than a URI.
-- `session_id` is the host's id verbatim rather than a UUID.
-- `parent_record_id` and `prev_hash` are always null, because this log is not chained — lineage is derived on read instead.
+- When a foundry-owned `foundry-quality-gates.md` is already delivered, it links `rules/quality-gates-delta.md` — this plugin's scope and output-routing sections only.
+- Otherwise it links the complete `rules/quality-gates.md`, so a standalone install loses no rule.
 
-`rules/quality-gates.md` requires confidence blocks on analysis output, defines report-file and terminal-header formatting, and requires its local `_full/adversarial-loop.md` procedure for independent review/fix cycles, including first-pass coverage, invariant and sibling-route closure checks, and separate carried/new finding weight.
+### Permissions merge
 
-Confidence describes the correctness of the delivered result and how it was produced and checked within scope. Report completion separately; a high score does not pass an unmet gate.
+`/research:setup` merges the plugin's `permissions-allow.json` and `permissions-deny.json` into `~/.claude/settings.json`. The merge is additive and idempotent.
 
-`/research:setup` delivers it as a namespaced user rule instead of editing global configuration. It installs one variant at `research-quality-gates.md`: when a foundry-owned `foundry-quality-gates.md` is already delivered it links `rules/quality-gates-delta.md` — this plugin's scope and output-routing sections only, with every shared obligation read from foundry's copy — and otherwise it links the complete `rules/quality-gates.md`, so a standalone install loses no rule.
+- Allow rules shipped by earlier versions are listed in `permissions-allow-retired.json`; setup removes exactly those.
+- The deny list keeps destructive shell and git commands denied (`rm -rf`, `sudo`, `ssh`, `chmod 777`, force-push, `claude --dangerously-skip-permissions`). Deny entries are prefix matches, so they stop the documented command forms rather than every possible flag ordering.
+- Setup removes only the obsolete `Bash(gh api repos/*:*)` allow entry and the broad `Bash(claude:*)`, `Bash(find:*)`, `Bash(node:*)`, `Bash(sed:*)` and `Bash(eval:*)` entries; nothing replaces them. Every other existing allow and deny entry is preserved.
 
-`.claude-plugin/permissions-allow.json` lists the tool calls the skills expect to be pre-approved. `.claude-plugin/permissions-allow-retired.json` lists allow rules earlier versions shipped; `/research:setup` removes exactly those from `settings.json` through `--drop-allow-file`, keeping the rule text out of the command line. The setup summary counts removals from this complete retirement set. `.claude-plugin/permissions-deny.json` is its counterpart — the operations that must stay denied no matter how broad the allow list becomes: destructive shell and git commands (`rm -rf`, `sudo`, `ssh`, `chmod 777`, force-push, `claude --dangerously-skip-permissions`). Both files are merged into `~/.claude/settings.json` by `/research:setup` (Step 5). Setup removes only the obsolete `Bash(gh api repos/*:*)` allow entry and the broad `Bash(claude:*)`, `Bash(find:*)`, `Bash(node:*)`, `Bash(sed:*)` and `Bash(eval:*)` entries; nothing replaces them. Every other existing allow and deny entry is preserved; the merge is otherwise additive and idempotent. Deny entries are prefix matches, so they stop the documented command forms rather than every possible flag ordering.
+Research ships no git/gh guard; foundry provides it when installed. New installs omit `Bash(gh api repos/*)`, `Bash(gh api graphql:*)`, `Bash(git branch:*)`, and `Bash(git tag:*)`, so commands covered only by those entries, including API writes and branch/tag deletion, reach the normal permission prompt without foundry. Routine reads such as `git branch --show-current` may also prompt.
 
-Research ships no git/gh guard; foundry provides it when installed. New installs omit `Bash(gh api repos/*)`, `Bash(gh api graphql:*)`, `Bash(git branch:*)`, and `Bash(git tag:*)`, so commands covered only by those entries, including API writes and branch/tag deletion, reach the normal permission prompt without foundry. Routine reads such as `git branch --show-current` may also prompt. Existing settings keep these four allow entries after an upgrade: `/research:setup` does not remove them because foundry uses the same strings. Standalone users must remove them manually to get the new prompt behavior. For stale gh deny entries from older versions, run `/foundry:setup` (requires `foundry` plugin); research setup preserves those denies.
+Existing settings keep these four allow entries after an upgrade: `/research:setup` does not remove them because foundry uses the same strings. Standalone users must remove them manually to get the new prompt behavior. For stale gh deny entries from older versions, run `/foundry:setup` (requires `foundry` plugin); research setup preserves those denies.
 
-Generated files remain at the project root:
+### Bin tools
 
-```text
-.experiments/state/<run-id>/              run state, JSONL log, diary, context, scripts
-.experiments/<run-id>/                    hypothesis queue, checkpoint, optional journal
-.experiments/{judge,verify,fortify,retro}-* intermediate analysis artifacts
-.experiments/kaggle/                       generated Jupytext scripts and downloaded data
-.reports/research/                         topic, judge, run, verify, fortify, retro reports
-.temp/state/                               short-lived cross-phase skill contracts
-```
-
-`bin/verify_blueprint_audit.py` reads and prunes the auto-allow audit log described under Hooks. `bin/resolve_shared.py` resolves the plugin's `skills/_shared` and, with `--persist` / `--emit`, writes the per-session sentinel and prints the requested docs in one call. Without an installed research plugin, it and `bin/load-agent-reference.py` read the cwd-relative `plugins/cc_research` tree only inside the research source repository (its `plugins/cc_research/.claude-plugin/plugin.json` names `research`); in any other repository `resolve_shared.py` exits 1 and `load-agent-reference.py` falls back to the installed cache or blocks. `bin/compaction_boundary.py` prints a skill's compaction Boundary step and the foundry gate decision (`continue` when foundry is absent). `bin/check_iteration_scope.py` is the Phase 3 scope check, `bin/fortify_metric_stats.py` computes fortify's repeated-run mean, sigma and classification, and `bin/fence_untrusted.py` wraps untrusted paper text for `verify`, following the `skills/_shared/untrusted-content.md` protocol `verify` loads. `bin/run_metric_stats.py` is `run`'s repeated-measurement cursor and its noise-aware keep decision when `metric_repeats` > 1. `bin/revert_iteration_commit.py` is the double-revert guard `run` calls from Phase 5 and Phase 7, refusing another iteration's experiment commit at `HEAD`, and `bin/codex_state.py` reads and bumps the `--codex` co-pilot counters. `bin/merge_settings_permissions.py` merges the plugin's shipped `permissions-allow.json` / `permissions-deny.json` into `~/.claude/settings.json` in one atomic write for `/research:setup`, and `write_skill_contract.py --keep-sentinel <name>` appends the session's `--keep` items to a compaction contract's `preserve:` line. `bin/health_monitor_start.py` creates cross-platform health-monitor sentinel coordinates; current skills describe the monitoring sequence in workflow prose rather than exposing this helper as a standalone user command. That consolidation is possible future cleanup, not a current requirement.
-
-The packaged bin inventory is:
-
-`adversarial_loop.py`, `agent_watch.py`, `append_ledger.py`, `check_iteration_scope.py`, `check_output_within_root.py`, `codemap-flag.py`, `codemap_resolve.py`, `codex_state.py`, `compaction_boundary.py`, `compute_effect_size.py`, `detect-complexity.py`, `docker_sandbox_run.py`, `extract-keep-flag.py`, `fence_untrusted.py`, `find_judge_verdict.py`, `find_run_id.py`, `fortify_metric_stats.py`, `fortify_next_variant.py`, `gate-on-sentinel.py`, `get_plugin_install_path.py`, `heal_git_artifacts.py`, `health_monitor_start.py`, `load-agent-reference.py`, `make_run_dir.py`, `merge_settings_permissions.py`, `parse-skill-flags.py`, `parse_kaggle_args.py`, `read_state_field.py`, `require-vars.py`, `resolve-anti-overwrite-path.py`, `resolve_shared.py`, `resolve_shared_path.py`, `retro_analyze.py`, `revert_iteration_commit.py`, `run_metric_stats.py`, `sync_rules.py`, `verify_patient_split.py`, and `write_skill_contract.py`, plus the private module `_sentinel_io.py`, which the sentinel writers import to create each `${TMPDIR}` sentinel fresh with mode 0600 instead of writing through a planted symlink.
+Helper scripts live in `bin/` and are invoked by the skills; they are not user commands. User-visible ones referenced above: `bin/check_iteration_scope.py` (per-iteration scope check), `bin/fortify_metric_stats.py` (fortify noise model), `bin/fence_untrusted.py` (untrusted paper-text fence for `verify`), and `bin/verify_blueprint_audit.py` (audit-log verify and prune).
 
 <a id="-current-boundaries"></a>
 
@@ -669,8 +724,6 @@ These are current constraints, not promises about future releases:
 - A Codemap index still missing or stale after permitted automatic preparation reduces structural context, and an unavailable optional specialist falls back or stops according to the specific skill contract.
 - `--colab`, `--compute=docker`, `--codex`, `--researcher`, and `--architect` are explicit requirements when requested; the workflow reports missing capability instead of pretending it ran.
 - Rule links can outlive plugin uninstall because Claude Code has no uninstall cleanup hook; ownership must be checked before manual removal.
-
-Potential future work includes richer native agent selection, broader compute backends for fortify, and more shared health-monitor orchestration. None is required for the current plugin contract.
 
 <a id="-troubleshooting"></a>
 
@@ -708,13 +761,11 @@ Potential future work includes richer native agent selection, broader compute ba
 
 ## 🙏 Contributing and maintenance
 
-The canonical sources are the ten `skills/*/SKILL.md` files, the two `agents/*.md` files, `rules/*.md`, registered hooks, sidecar references, and `bin/*`. Keep this README synchronized when a public skill, flag, trigger, prerequisite, output path, hook, or boundary changes.
+Contributing or want internals? See [DEVELOPMENT.md](DEVELOPMENT.md).
 
-The current plugin version is recorded in `.claude-plugin/plugin.json`; use that manifest as the source of truth when preparing a release.
-
-When editing a skill, update its README entry, flags, NOT-for boundaries, output paths, fallback behavior, and relevant troubleshooting guidance. Verify that references loaded from `skills/_shared/`, `skills/*/modes/`, agent sidecars, or `bin/` remain installed-path safe and do not assume a source checkout.
-
-The plugin's tests cover path safety, Codemap resolution, effect size, Docker sandboxing, hook contracts, run directories, rule resolution, shared-file resolution, retro analysis, and patient split validation. Run focused tests while editing and the full `plugins/cc_research` suite before release.
+- Canonical sources are the ten `skills/*/SKILL.md` files, the two `agents/*.md` files, `rules/*.md`, registered hooks, sidecar references, and `bin/*`.
+- Keep this README synchronized when a public skill, flag, trigger, prerequisite, output path, hook, or boundary changes.
+- The current plugin version is recorded in `.claude-plugin/plugin.json`.
 
 <a id="-acknowledgments-and-license"></a>
 
@@ -723,5 +774,3 @@ The plugin's tests cover path safety, Codemap resolution, effect size, Docker sa
 Research automation design draws on [fcakyon/phd-skills](https://github.com/fcakyon/claude-skills) for hook-first guardrails and [karpathy/autoresearch](https://github.com/karpathy/autoresearch) for metric-driven, commit-preserving iteration contracts. Those influences inform the design; this plugin's current behavior is defined by its shipped skills, agents, hooks, rules, and tests.
 
 Research is licensed under Apache-2.0.
-
-Evidence and real-case acceptance: shipped `rules/quality-gates.md` requires cited proof for factual, causal and completion claims, a representative real case alongside TDD, and unchanged user-authorized behavior. Mocks are supplementary polishing after real behavior is validated; unavailable real acceptance stays explicit.

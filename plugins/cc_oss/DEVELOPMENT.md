@@ -1,0 +1,781 @@
+# oss — Development Reference
+
+Technical detail for contributors, maintainers and agents. The user-facing guide is [README.md](README.md); plugin authoring rules live in `plugins/CLAUDE.md`. Content below was moved out of the README with its facts intact, restructured into lists.
+
+## Contents
+
+- [Behaviour notes (plugin-wide)](#behaviour-notes-plugin-wide)
+- [Planning and delegation contract](#planning-and-delegation-contract)
+- [Report templates and contributor credits](#report-templates-and-contributor-credits)
+- [oss:analyse internals](#ossanalyse-internals)
+- [oss:review internals](#ossreview-internals)
+- [oss:resolve internals](#ossresolve-internals)
+- [oss:release internals](#ossrelease-internals)
+- [oss:setup internals](#osssetup-internals)
+- [Agent internals](#agent-internals)
+- [Hooks, permissions and configuration internals](#hooks-permissions-and-configuration-internals)
+- [Bin helper inventory](#bin-helper-inventory)
+- [Audit log](#audit-log)
+- [Evidence, validation and contribution notes](#evidence-validation-and-contribution-notes)
+- [Review gate and flag reference](#review-gate-and-flag-reference-full-wording)
+
+## Behaviour notes (plugin-wide)
+
+Code review reports include the full reviewed PR commit SHA and distinguish source judgment from verification readiness; historical abbreviated identities remain explicitly unavailable as full SHAs.
+
+- Review loops fix feasible authorized findings, investigate repeated signatures, and continue whenever the weighted score decreases; structural labels alone do not stop remediation.
+- Completion prompts ask only for a missing decision or authorization, regardless of report length, and already-authorized next steps continue.
+- Concrete gates for fresh scope, paid execution, sensitive or destructive actions, and remote changes remain in force.
+
+Independent challenge loops show the cumulative old/new table once after each newly validated challenge, before fixes or another review. Pending reviews and unrelated status updates do not repeat it; final handoffs retain their canonical Results table. Each open finding needs a recorded fix, escalation, or justified deferral; chat table timing has no machine-readable delivery receipt.
+
+Adversarial workflow reviews include unchanged downstream consumers and the next ordinary user action, checking whether local success establishes the promised outcome and recording untested handoffs.
+
+- Each round challenges and collects findings, reports the cumulative old/new table, resolves feasible authorized findings, escalates unfixable `security`/`critical`/`high` findings, then repeats until clean or plateau/non-convergence, subject to authority, evidence, recurrence and stricter caller budgets.
+- The table is `Iteration | Security | Critical | High | Medium | Low | Nits | Weighted score`; open and fixed-pending-verification signatures split into old and new, while verified-fixed and rejected findings stay excluded.
+- Security and critical have separate columns; score weights remain `20/10/6/4/2/1`.
+- Empty rounds print no progress table.
+- A 1,500-output-token reviewer target is hard only when the runtime supports it; findings are never dropped to meet it.
+- Before the baseline review of a diff the parent or its resolver wrote, the author records an attestation (invariant, sibling routes, consumer, failing-before/passing-after check) and fixes the gaps it exposes; the reviewer never sees it and it never counts toward scoring.
+- Each round's cost lands in an advisory `loop-metrics.jsonl`.
+- Optional Codemap index-gate guidance ships with oss, so loading it does not depend on another plugin's private shared directory.
+- Structural queries still require the `codemap-py` plugin; an unavailable CLI or local contract retains the file-read fallback.
+- Enabled missing/stale-index preparation follows the active provider contract automatically by default; explicit `LAZY_CODEMAP` confirm-first and `SCAN_NO_AUTOBUILD=1` frozen preferences remain controlling.
+- Later query blocks reload saved gate choices and pass a stale-data freeze to nested query helpers and retries.
+
+Review prompts require fresh, successful, matching answers before skipping duplicate structural retrieval, retain each batch child's metadata, and distinguish static test/mock links from measured coverage. Source and test-quality review remains required.
+
+Review and resolve test selection reload the owning invocation’s Codemap choice. Disabling structural lookup retains heuristic test plans and required verification; standalone helper calls retain ordinary provider defaults.
+
+Resolve's evidence recheck resolves Git Bash verifier paths before native Windows file checks, preserving the recorded pointer. Conversion failures block without rewriting the item ledger; missing evidence or a changed source head disables confirmation.
+
+Resolve's caller-context pre-loop groups selected items by canonical module: one live `rdeps` query per module, or none for a fresh cached answer, including an empty caller list.
+
+- Reuse requires non-empty string Git identity and affirmative child completeness; `query_complete` takes precedence over legacy `exhaustive`, and missing metadata triggers a live query.
+- Subsequent structural preparation reuses the file-to-module map only while index identity, file stamp, and requested files match.
+- Cache stamps include the canonical index path; old path-free stamps safely miss instead of reusing another project's answer.
+- Native Windows query output uses LF-safe scalar boundaries so CRLF cannot corrupt IDs, module names, or mapping reuse.
+- Codemap source inspection remains legitimate when implementation details—not the already-answered structural fact—are needed.
+
+## Planning and delegation contract
+
+- Small implementation uses a concise plan, brief parent self-challenge (not independent), acceptance within existing authority, useful bounded execution ownership or indivisible parent execution, and consolidation with independent result challenge and relevant verification.
+- Medium/large work retains independent plan challenge before acceptance.
+- Approval prompts only for actual missing authority or protected decisions; reuse accepted parent plans and establish core acceptance before optional expansion.
+- Validate a coherent bounded outcome or split it into smaller outcomes, then complete the active branch depth-first using a compact task map and context limited to the active piece, dependencies, and interfaces.
+- Complete required leaf challenge and verification before dependent work; dependency-ready siblings with agreed stable interfaces and disjoint owners may proceed.
+- Unknown causes or design choices first become bounded investigation or decision prerequisites; parent consolidation retains required gates.
+- This replaces broadly open workstreams and far-ahead detail to reduce context, coordination, and rework; that benefit is expected, not measured.
+
+## Report templates and contributor credits
+
+Release drafts, remediation, review, and vitality reports use short descriptive fields with writing guidance in separate notes; finished output replaces those fields and omits template instructions. Bound metadata variables, verdicts, and score formulas retain their existing formats.
+
+- Contributor credits combine Git authors/coauthors with verified in-range PR authors, including PR-only authors lost from squash metadata.
+- Paginated commit-associated PR discovery covers maintenance branches independently of the default-branch list; failed association reads remain coverage gaps.
+- Identity reconciliation uses verified login/email links, never name similarity; missing PR identity or range evidence remains a coverage warning.
+- Individual contribution/profile steps apply only to humans; bots share one automated-contributions line in both inline and delegated release flows.
+
+## oss:analyse internals
+
+- Thread number: fetches issue/PR, reads all comments, classifies thread type (bug report, feature request, question, duplicate, stale), produces structured summary: what asked, current state, action needed from you, and — with `--reply` — draft response.
+- With codemap index present, symbols/modules named in issue thread existence-checked against index; identifiers that no longer resolve flag issue as referencing stale code (with likely rename target when codemap suggests one).
+- PR mode reads both review bodies and inline code comments, expands findings a bot collapsed into a `<details>` block instead of posting them individually, and merges the same finding when it recurs across review rounds.
+- `vitality`: pulls open issues + PRs, scores repo across 9 axes (Axes 1–8 plus Axis 9 Trajectory), clusters duplicates, flags threads stale beyond project threshold, gives prioritised triage list with weighted Health Score %.
+- All raw API data saved to JSONL file alongside report for manual inspection.
+- With codemap index, report gains Open-PR Overlap note (pairwise changed-file overlap plus tightly-coupled-module conflict candidates) and Structural Constraints block (highest-blast-radius modules, collision/degraded/stale index signals).
+- Every codemap signal optional — no index or plugin absent → analyse degrades to GitHub-only behavior, flags gap inline, never blocks.
+
+## oss:review internals
+
+- Review output preserves its aggregate prose summary, verdict, confidence and detailed findings.
+- The header table adds `Reviewers: Software engineer [3], QA specialist [2], Documentation reviewer [1].` Each rating appears in square brackets after the role name (`Software engineer [3]`).
+- Its legend appears immediately below: 1 = Approve · 2 = Minor changes · 3 = Changes required · 4 = Insufficient evidence · 5 = Block / Reject.
+- Ratings describe actual reviewers' scoped judgments, never an averaged verdict.
+- Reviewer names and finding authors show roles only, without execution-origin labels; skipped roles are omitted.
+- The findings overview adds an `Author` column retaining all contributors to deduplicated findings.
+- Terminal rejection keeps its existing gate behavior and reports `Not assessed` when no source review ran.
+
+```text
+Tier 0  git diff --stat
+        Scope detection — exits only if no Python or doc files changed
+
+        Acceptance gate — Stage 1 (reject, terminal) then Stage 2 (block,
+        non-terminal); reads PR description + known CI status before any
+        agent spawns. Full criteria: "Review stages" below.
+
+Optional Codex co-review
+        Runs when `bridge@borda-ai-rig` is installed and enabled; otherwise skipped
+
+Tier 2  Parallel review dimensions
+        PR metadata/diff/checks fetched once at Step 0 (per-run snapshot) and reused by every stage
+        Scope selects spawn units — paired dimensions share one agent
+        (perf+architecture in one opus spawn, docs+lint in one sonnet spawn),
+        each writing its own per-dimension finding file + confidence block
+        Default ranks units under a cap of three; qa-specialist is pinned
+        outside the cap (security scan runs on every code PR)
+        `--full` runs every unit selected by scope
+        FEATURE/MIXED scope adds a blind-solve pass outside the cap: one
+        isolated agent sketches its own blueprint from PR title/body/linked issues
+        without seeing the diff; consolidator reports where the blueprint
+        diverges from the PR (`### Design Divergence`), flagging divergences
+        that may be explained by context the agent lacked as questions
+        Before the final follow-up gate the skill refreshes its compaction
+        contract and prints a `/compact` hint — a long wait can be spent
+        compacted; resolve later reads the report file, not the transcript.
+        If `/oss:resolve` for this same PR is already running in the session,
+        the gate is skipped (its own contract is left alone) and the
+        suggestion is printed as plain text instead
+        Without foundry, requested agents use general-purpose fallbacks
+
+        Scope examples:
+          docs-only PR → foundry:doc-scribe (+ challenge/Codex when enabled/available)
+          docs + CI PR → oss:cicd-steward + foundry:doc-scribe (+ challenge/Codex)
+          tests only   → foundry:qa-specialist + foundry:linting-expert
+          Actions only → oss:cicd-steward + foundry:sw-engineer (+ challenge/Codex)
+          notebook, manifest or config only → code lineup (qa-specialist kept)
+          code PR      → pinned qa-specialist + top-ranked units from code, perf+architecture, docs+lint, challenge
+
+        CI status: failing CI noted in report header — review always proceeds
+        codemap integration: rdep_count > 20 flags as high-risk change
+
+        Consolidation: the selected consolidator merges findings into a ranked report
+
+        --reply: oss:shepherd drafts contributor-facing comment from consolidated report (written to .temp/; user posts)
+```
+
+- **Review depth follows the code path, not the diff size.** A small change is not a low-risk change: a few lines in a private helper on the main feature path can break the main user story.
+  - With codemap available, the review traces every changed function's transitive callers and sets an `Impact:` tier in the report header.
+  - `FULL` means the change reaches a public function outside tests and leaf modules such as visualization, plotting, examples or docs.
+  - `LIGHT` means it stays off that path. Only a `LIGHT` fix may skip the performance and architecture dimensions.
+  - Without codemap, or when the impact cannot be traced, the tier is `FULL`.
+  - The challenger, Codex and the pinned qa-specialist run at either tier, and no code review is ever done by the orchestrator alone.
+- **A missing package is closed, not documented.** When a reviewer needs to run a claim and the PR's declared dependency (for example a raised `pyproject.toml` floor) is absent or at the wrong version in the local environment, the review unpacks the matching wheels into a run-local overlay directory and runs the targeted tests against it, instead of reporting "not installed" as a confidence gap.
+  - Only a package the base branch already declares qualifies, with the specifier the PR gives it; a name from the PR body or code never qualifies, and a package the PR newly adds is reported as a `new dependency` finding to verify, not installed.
+  - The PR's specifier must be a plain version range: a direct reference, URL or path becomes a `non-index dependency reference` finding and is never fetched.
+  - A name is never fetched, and keeps the gap `non-default index dependency <name>`, when either condition holds (a public package with the same name would otherwise be downloaded and run):
+    - the base branch or your own setup routes it to a private or other non-default index, through `[tool.uv.sources]` (including a uv workspace root's), a non-explicit `[[tool.uv.index]]`, a requirements index option in any requirements file or nested include, a `Pipfile` source, a lock-file registry, or your index environment variables or `uv`/pip configuration files, which are read even when the environment has no pip;
+    - its routing cannot be determined.
+  - Because routing also hides outside dependency files, the review searches the whole base branch for index settings first; a hit it has not parsed, such as `UV_INDEX_URL` set only in a CI workflow or a Dockerfile, counts as undetermined routing.
+  - Your index settings are never stripped to reach the public index instead, and any `UV_*` environment variable outside a short allowed set keeps the gap too.
+  - A wheel-only dry-run on the default index (`--only-binary :all: --no-config --default-index https://pypi.org/simple`) checks support first, nothing is built from source, and the project environment must be identical before and after.
+  - Downloading the wheels and running the tests are separate commands, each behind its own permission prompt, so approving a download never approves running PR code.
+  - The report's `Review Confidence` section records each overlay run (package, version, wheel, declaring `file:line`, fetch and run commands, result) or the concrete reason it could not run — no wheel for this platform, index unreachable, timeout.
+- **Existing-report guard:** right after the PR snapshot in Step 0 — before codemap gates, worktree entry, or CI checks — `/oss:review` checks whether a report for this PR is already on disk.
+  - If one exists it asks rather than re-reviewing: reuse it, re-run the full review, or draft a reply from it.
+  - Each run records its reviewed head commit beside the report (`head-sha.txt`), so the question states whether the existing report covers the current head or predates it.
+
+## oss:resolve internals
+
+Apply review findings to codebase. Reads live PR comments, saved review report, or both — deduplicates, resolves conflicts, implements fixes. GitHub-side intelligence expands findings a bot collapsed into a `<details>` block and merges the same finding when it recurs across review rounds, before the report-side dedup below runs.
+
+### Gates and report intake
+
+- **Reject-gate interlock:** if the newest `/oss:review` report for this PR carries `Gate: REJECT_<GROUND>` (any of the 8 grounds under "/review" above), resolve refuses to start unless the PR's head commit has changed since that review — a rejected premise isn't something a code fix resolves.
+- `Gate: BLOCK` (e.g. red CI) and everything else proceed normally — resolve is exactly the fix path for those.
+- **Report verdicts:** review writers keep `Outcome:` to `APPROVE`, `NEEDS_WORK` or `REQUEST_CHANGES`, optionally preceded by its verdict symbol; counts belong in `Summary:`.
+  - Report intake also accepts case and word-separator variations or trailing detail from existing reports.
+  - Missing verdicts, placeholders and glued suffixes keep the report incomplete.
+- **Report source is resolved once, PR-scoped.**
+  - The reject-gate check already locates the newest report *for this PR*; `report` and `pr + report` modes reuse that exact path instead of running a second newest-report-of-any-PR lookup, so a repo with two PRs under review cannot merge the wrong PR's findings.
+  - When no readable report exists for the PR, resolve **asks before producing one** — it never silently drops to GitHub comments only, and never starts a review fan-out on its own.
+  - Offered choices: continue without report findings, stop with the `/oss:review <PR#>` command printed to run first (then re-invoke resolve), or abort.
+- **Report discovery** (`report` / review-handoff) looks for the newest report across three locations:
+  - `.reports/review/pr-*/run-*/review-report.md`;
+  - the legacy pre-rename `.reports/review/*/review-report.md` (both are `/oss:review`'s own output);
+  - `.reports/codex/review/*/review-notes.md` (a Codex-native review run outside this plugin).
+- Only the first two schemas are parsed. A codex-lineage report is detected and refused with an explicit message (rather than silently skipped or mis-parsed) so a blocking finding never goes unactioned; pass the PR number explicitly instead.
+- **Review findings are reused, not re-derived.**
+  - When the report has a `findings.jsonl` beside it, resolve loads it directly instead of re-parsing the Markdown; older reports are parsed once into the same shape.
+  - Merging never renumbers: GitHub items keep ids `1..G`, unmatched review findings are appended from `G+1`.
+  - GitHub comments are often terse, so a comment at the same `file:line` as a review finding, or one you judge to be the same target at another line, inherits that finding's full text and evidence paths.
+  - Each pending GitHub item takes at most one finding; further findings become their own items.
+  - A GitHub item never inherits the verifier's verdict, because the verifier checked the review's claim, not the comment's.
+  - A short comment no finding covers is flagged for a fresh reassessment.
+  - Re-running the merge changes nothing.
+- **Target drift is re-checked, not assumed.** The target branch is merged once early in the run, but it can move during the hour that implementation and QA take.
+  - Before lint/QA, resolve fetches the target again and, if it advanced, re-merges it unattended (resolving any new conflicts) and QA-checks the result, up to 2 times.
+  - The push confirmation re-checks once more, shows how many target commits the branch is missing, and offers a re-sync before pushing.
+- **PR metadata:** resolved PR metadata persists through checkout, and a report without a PR uses the discovered default base through QA; unknown ancestry blocks the QA handoff.
+  - A local report writes an explicit `n/a (local report)` commit reference.
+  - Each commit route rejects a missing or stale reference before recording attribution.
+
+### How it works
+
+1. **Intelligence gathering** — `bin/fetch_pr_intel.py` fetches the full PR thread (conversation comments, reviews, inline comments with resolved-thread flags and commit context, the PR's commits, linked issues, each with the author's association) into one deduplicated file without a model, so orchestrator context stays small.
+   - A dedicated subagent on Haiku (calibrated against Opus) then only classifies each finding and writes structured output to files.
+   - The orchestrator reads a compact classified table.
+2. **Conflict resolution** — merge conflicts: read intent from both sides; apply semantically correct resolution (never mechanical "take ours"/"take theirs"). Two parts of this overlap work that would otherwise queue behind them:
+   - Branch checkout and the trial merge run in the same turn that dispatches the intelligence subagent, since they need only the PR number.
+   - The findings table and item-selection question then run as a single stream with no agent beside them (a conflict agent running there once made the required table fail to land).
+   - The conflict-resolution agent is dispatched right after you answer, in the same turn as the first challenge wave — their outcome does not depend on which items you pick, and the challenge only reads.
+   - While files conflict, challengers read from the pinned PR head, never the half-merged tree.
+   - The merge is committed and collected before the Codex route and implementation start.
+   - Resolution still waits for the intelligence subagent, because deciding whose intent wins a conflict uses the contribution motivation that subagent synthesizes from the review thread.
+3. **Action item implementation** — three-phase parallel dispatch:
+   - Medium- and high-effort items with a single file and a code, test, docs, style, config, or CI change use `bridge:implement` one at a time from a clean worktree, and Git-derived changed paths must match each reply before per-item records.
+   - An explicit `bridge:implement` override uses the same Skill route; other explicit agents use the specialist phases. Dirty or non-medium bridge items use the change-to-specialist table.
+   - Everything else splits into three phases:
+     - **Phase 1 challenge** — grouped by domain, all groups fire concurrently (read-only, safe to overlap).
+     - **Phase 2 implementation** — grouped by one of six specialists (`sw-engineer`, `qa-specialist`, `doc-scribe`, `linting-expert`, `perf-optimizer`, `solution-architect`), at most 5 items per agent, or 8 with per-specialist dispatch.
+       - Each group runs in its own isolated `git worktree`, pinned to the PR head before any edit, so concurrent specialists never race on the same working tree and never edit the default branch's copy of a file.
+       - A single file with more items than the cap runs as a chain of agents, each starting from the previous one's commits.
+       - `sw-engineer` groups whose highest effort is high or medium — no extra-high-effort item — run on the sonnet model; medium-only groups are included deliberately, since that work is smaller, never harder.
+     - **Phase 3 merge-back** — the orchestrator cherry-picks every item's commit onto the PR branch, sequentially, whole worktree groups ordered most-central-first, so a foundational contract change lands before the commits that depend on it.
+   - Phase 1 works like a gunner with a spotter: the review already did the wide assessment, so resolve never re-scans.
+     - Each challenger reads the reviewer's own evidence file before the code.
+     - A review-only finding the review's independent verifier already confirmed is not re-proven; the challenger only checks that the code still matches and whether the proposed fix is right.
+     - The confirmation is dropped first, and the full check runs, when the PR head differs from the head the review recorded or the verifier's file is gone.
+     - A terse GitHub comment that no review finding covers is located and reassessed from scratch.
+     - An item still uncertain after one retry is put to the agent type that raised it, once, before any default applies; that answer counts only when it cites the code.
+   - When the run consumed a review report, Step 11 appends each review finding's outcome (`fixed`, `self-resolved`, `rejected`, `skipped`, `pending`, with finding title, location, commit and reason) to `resolution.jsonl` beside that report.
+     - `fixed` needs an implementation record, not just an accepted challenge.
+     - A later `/oss:review` of the PR passes the ledger to its reviewers: confirm earlier fixes at the new head, re-check rejected findings there, and list any rejected finding left out of the new report.
+   - Before Phase 2 dispatch, two grouping tiebreaks reduce Phase 3 conflicts at the root:
+     - A **file-ownership** tiebreak (rank: `linting-expert < doc-scribe < qa-specialist < perf-optimizer < sw-engineer < solution-architect`) reassigns every item touching a contested file to its single highest-ranked owner, so two specialists never edit the same file concurrently.
+     - Then a soft **import-coupling** merge co-locates items in different files when one imports the other (caught via codemap forward `deps` — a module's own imports, so recall isn't truncated by the caller-list cap), so a rename and its callers land in one worktree instead of silently diverging.
+     - The codemap maps are built once, concurrently with the read-only challenge phase, so grouping adds ~0 wall-clock.
+   - Any conflict that still slips through Phase 3 routes through the same semantic conflict-resolution as Step 5.
+   - A branch mutex blocks a second concurrent resolve run from racing the same tree, and a HEAD fingerprint taken before Phase 2 flags any external write that lands mid-flight so cherry-picks never stack silently on a moved base.
+   - Per-item verdicts and `[resolve No.N]` attribution remain.
+   - Every selected item runs in one pass:
+     - Phase 1 splits each challenge domain into chunks of at most 12 items, one challenger per chunk;
+     - a single file with more than 12 items is itself cut into ordered chunks of at most 12, which run concurrently because the challenge only reads;
+     - so a large selection never needs a rerun.
+   - The Step 8 prelude rejects an omitted commit choice; a soft codemap blast-radius check flags callers of changed modules before Phase 2 dispatch.
+
+### Bridge implementation route
+
+- The bridge implementation route reads the bridge's structured response object and checks its reported files against Git-derived changes.
+- It accepts `DONE` only when `remaining` and `blockers` are empty.
+- For a Codex-direct `each` commit, the helper must succeed and add the Codex coauthor before the per-item record is written.
+- A selected item remains `in_progress` until its own applied work is proven; another item's bulk commit cannot close it.
+
+### Item selection
+
+- Between gathering and implementation, resolve lists every pending item as a plain `#<id> [<type>] <summary up to 50 chars>` line in the bulk question’s text, most severe first, within a 1,500-character whole-question budget.
+  - Past that budget it lists the top items that fit, pending counts by type and the run’s `action-items-table.md` path; closed items are named by count unless their lines fit.
+  - Options carry labels and one-line descriptions with no preview.
+  - The full headed table is written before the call and printed once as the last text of the reply message that issues the picker, before choosing. It is not printed again after the answer or on a denied retry.
+  - The two-call notice, closed-items hint, long-run notice and exact "Long wait? `/compact` now" hint remain in the question text.
+  - Bash/tool output does not satisfy delivery.
+- Type records origin and kind; `status` records pending, resolved, or addressed.
+  - Closed rows remain visible but cannot absorb new report findings or enter bulk selection.
+  - Deduplication keeps a repeated pending occurrence open and binds its status, location, and URL to the same occurrence.
+- Report mode uses this same selection and commit-mode gate before checkout or implementation.
+  - Resolved/addressed IDs can be explicitly typed in the bulk menu, even when every row is closed; that branch asks the normal commit, grouping, and dispatch decisions without closed-item checkboxes.
+  - Legacy `[done]` and `[info]` rows remain excluded.
+- Every item-selection call opens with the bulk-action page — `+All [req]`, `+All [suggest]`, `ALL (req + suggest)`, `Skip all` — including both calls of a two-call flow.
+  - Its question text lists pending items, so the items are on the first screen and a bulk choice is one click away.
+  - To pick items yourself, leave the bulk page unanswered and tick them; a bulk choice never discards a tick — `+All [req]`, `+All [suggest]` and `ALL` add every item you tick or type to their set, and `Skip all` applies only when you tick or type none.
+  - The bulk page's own text says so on every call with item checkboxes.
+  - In a two-call flow, a bulk choice on the first call ends selection there.
+- The tool allows four questions per call.
+  - Count-dependent layouts combine up to three item-checkbox questions with bulk, commit, grouping, and dispatch questions where slots allow.
+  - Items are split as evenly as possible so every checkbox question holds two or three items — four pending items become 2 + 2, seven become 3 + 2 + 2 — because the question tool rejects a question with a single option; closed-only and large lists have no item checkboxes.
+  - With no pending or resolved/addressed items, only PR push intent is asked, when applicable.
+- Commit mode and, when "By topic group" is chosen, the grouping strategy (by change domain, by file, by specialist, or type your own labels) ride in the same call wherever a slot is free, so the run costs one fewer confirmation pause than asking them in sequence.
+- Checkbox selection tops out at 18 items; beyond that, per-item checkboxes are replaced by a compact table, still one row per item, saved in the run’s table file and printed once before the picker, plus the bulk, commit, grouping, and dispatch questions; the bulk question text lists pending items or the top items and type counts past its text budget.
+- Choosing "type your own labels" means typing `<id>=<topic>` pairs right there; resolve no longer asks for labels after implementation.
+- Topic-group commits get a Conventional Commits subject:
+  - a single-item group keeps that item's own subject (`test(predict): …`);
+  - a multi-item group uses the items' shared type and scope, with `(+N more)` and an item list in the body;
+  - the topic label is used only when the items share no type, and it is never prepended to a typed subject.
+
+### Tests, turns and confirmations
+
+- **Tests run where they pay off.** Implementation and QA agents run only the tests that cover the files they changed (`resolve_test_plan.py`: codemap test-impact when available, name/import heuristics otherwise).
+  - The repository's own full-suite command runs in the background at the end of the lint/QA gate — once when it passes, again after each fix of a failure (within the gate's 3-iteration cap), so a green full suite is always the last test evidence before push.
+- **Fewer turns while it runs.** Resolve keeps its step-level progress tasks, but every task update rides in the same response as real work (no bookkeeping-only turns).
+  - It answers every "where am I" git question with one `git_state_snapshot.py` call.
+  - It never polls background agents: each spawn gets a deadline, checked by `agent_watch.py` whenever an agent finishes.
+  - An agent that stops without its deliverable is reported as timed out immediately instead of waiting for you to ask.
+- **Almost everything is asked up front.** The selection gate also asks whether you intend to push once the lint/QA gate passes and whether to open the PR in the browser afterwards.
+  - After you answer, conflict commit, implementation and lint/QA proceed without another question, so you can walk away.
+  - Before pushing, resolve asks you to confirm with the diff stat and commit count in front of you — unless you chose "don't push" at the gate.
+  - The ordinary count-based layout asks at most 3 times at the gate, plus that one confirmation. Typed grouping labels may need their own question.
+  - A push you did not authorize never happens; an authorized push that is rejected (non-fast-forward) or blocked by a push guard or permission prompt is not retried or forced.
+  - When the branch has no upstream tracking, resolve does not push to an explicit refspec itself — no approval covers that spelling — and hands you the exact command instead.
+  - Resolve still writes the final report, shows the push status there (`pushed`, `blocked-guard`, `blocked-permission`, `blocked-needs-manual-push`, `rejected-non-ff`, `skipped-by-user`), and when the push was blocked or handed to you ends the report with the exact lines to run.
+  - Resolve switches back to the branch you started on only after a successful push; when nothing was pushed (you declined, or the push was blocked or rejected), it stays on the PR branch holding the commits so you can review or push them yourself.
+
+### Dispatch granularity
+
+- The same selection gate also asks how Phase 2 should spread the work across specialist worktrees:
+  - `Auto` (recommended) keeps the pool-capped waves described above with at most 5 items per agent;
+  - `Sequential` runs one worktree at a time;
+  - `Per specialist` raises the limit to 8 items per agent so most specialists get a single worktree (fewer spawns; a specialist with more than 8 items is still split);
+  - `Custom` asks again at the Phase 1 → Phase 2 boundary, with the formed groups shown inside that question.
+- The answer changes wave width and sub-group size only — specialist routing and both grouping tiebreaks are unaffected by every answer.
+- No answer lets one agent take more items than its limit: a single file with more items than that runs as a chain of agents, one after another, each building on the previous one's commits.
+- It shares a call with the commit-mode question in every band, and only the preview choice adds a confirmation pause after the selection gate.
+
+### Reuse of review codemap answers
+
+Resolve after `/review` on the same PR: the blast-radius check reuses per-module codemap answers review already computed, with no re-query — review's persisted pre-flight batch is split into freshness-stamped per-module artifacts.
+
+- Freshness is fail-closed on three conditions, all of which must hold:
+  - `prefix.git_sha` matches the current index `git_sha`;
+  - `prefix.scanned_at` is not older than the index's (a rebuilt index invalidates every artifact);
+  - `prefix.index_stamp` still equals the index file's `<size>:<mtime_ns>`.
+- That stamp is what makes the rule hold without trusting index-declared metadata — an `--incremental` re-scan, a restored backup, or a manual edit can leave `git_sha` and `scanned_at` untouched, and the first two checks alone would not see it.
+- An artifact written before the stamp field existed carries none and is re-queried rather than trusted.
+- Verdict reasons from `codemap_cache.py read`: `fresh` · `git_sha_mismatch` · `index_rebuilt` · `index_stamp_mismatch` · `content_hash_mismatch`.
+- Reuse is measured as `reuse_ratio` (fraction of persisted answers actually reused).
+- No review artifact or codemap plugin absent → every module cache miss, scan queries live — no behaviour change.
+
+### Triage types and guard rails
+
+- `[req]` items apply by default on bulk-action; `[suggest]` items need explicit selection.
+- Security findings inherit severity from `/oss:review` (hardcoded secrets → CRITICAL, dep CVEs → HIGH) — no separate security category.
+- LOW findings are never clustered: each finding printed in the report keeps its own item, finding id and table row.
+- Root-cause-merged rows fold into the survivor’s item; unresolved merge targets retain their own items and produce warnings.
+- Past the AskUserQuestion checkbox ceiling (18 items) the saved table keeps one row per item and is printed once before the picker; the picker’s question text lists pending items or the top items, type counts and file path past its question-text budget.
+- Any number of selected items dispatches in one pass — no cap question, no rerun for a remainder.
+  - Challengers take at most 12 items each, all in parallel waves.
+  - Implementation agents take at most 5 items each (8 with per-specialist dispatch) in pool-capped waves; sequential dispatch runs one worktree at a time, and a single file with more items than the cap runs as a serial chain of agents.
+  - With more than 50 pending items, the bulk-action question's text warns that selecting more than 50 means one long run, so you see it while choosing; when more than 50 were selected, the final report repeats it in one line.
+  - No dispatch silently drops a selected item.
+
+> Fixed: `--no-challenge` and `--agent <name>` were previously dropped when combined with a PR number or `report` — the leftover token routed the whole invocation to comment-dispatch mode and discarded the PR number. Both now work in every mode.
+
+## oss:release internals
+
+Release communication and readiness pipeline with four modes: notes, prepare, audit, and demo. Classification confidence drops when Truth check is skipped with any Removed or Breaking Changes item; verification limits that affect no classification remain listed as `(-0.00)` gaps.
+
+### Version and breaking-change checks
+
+- The release flows check version consistency.
+- `notes` mode also classifies public breaking changes when codemap evidence is available; delegated `prepare` and `audit` use their gather classification without a codemap pass.
+- The skill does not choose or write a package version, create a git tag, or upload to PyPI/another registry; perform those project-specific release steps separately after reviewing the generated artifacts.
+- **Breaking-change classification in `notes` mode** (codemap-gated): after truth check, each diff-derived public symbol runs through `fn-rdeps --exclude-tests`.
+  - A caller outside the symbol's top-level package proposes a move to ⚠ Breaking Changes, with external call sites as evidence; the proposal gets a separate baseline check and item approval before the category or migration guide changes.
+  - Symbols with only same-package callers keep their human label.
+  - Requires a codemap v3 index — no index skips the phase and leaves human classification in place.
+  - Partial coverage (`query_complete:false`) is labeled possibly incomplete, never treated as exhaustive.
+
+### `--append`
+
+`--append` assumes an earlier `notes` run already produced `DRAFT.md` (and, when their flags were used, `CHANGELOG.md`/`SUMMARY.md`/`MIGRATION.md`) and reruns the full pipeline — unchanged, Gather changes through Draft executive summary — scoped to only the commits landed since then, tracked via a per-branch marker at `.temp/release-state-v2/<branch-key>/marker`.
+
+- Results integrate into candidate copies of every existing artifact via Read + Edit tool (no parsing script).
+  - DRAFT.md's Summary/Spotlights/Migration-guide/Notable-changes/Contributors sections all merge (not overwrite).
+  - Root-level `SUMMARY.md`/`MIGRATION.md` merge the same way when their flags are set, guarded by a mechanical byte-count collapse guard against an accidental whole-file wipe that fails closed (exit 1) when it is not armed.
+- Purely additive — *except* when this cycle detects a commit reverting or materially changing something a prior cycle already wrote (cross-cycle revert/pivot detection): that stale entry is struck or superseded, never left stale beside a contradicting new one.
+- A genuine `git revert` is resolved deterministically against a per-branch patch-id-keyed provenance store.
+  - The store is `.temp/release-state-v2/<branch-key>/provenance.jsonl`, recording which commit's diff-content wrote which exact bullet.
+  - It is keyed on `git patch-id --stable` rather than raw commit sha, so a reword, rebase, or cherry-pick of the original commit since it was recorded doesn't defeat the lookup.
+  - A pivot (no literal revert commit) still relies on grep-narrowed semantic judgment.
+- The provenance store is append-only: each cycle stages its schema-1 records in a `.rec` file and `bin/append_ledger.py` appends them, never rewriting earlier lines.
+  - A historical `provenance.json` array from earlier versions is still read by the revert lookup but never written or published.
+- **After merge**, a post-merge re-validation pass re-runs Truth check, Identify highlights re-ranking, Validate migration docs, and Validate docs against the final merged content (not just this cycle's incremental diff).
+  - It catches prior-cycle content gone stale from this cycle's changes without a clean detected revert/pivot, e.g. a spotlight built on a commit a later cycle reverts gets replaced, not left beside the new set.
+- With no marker and no legacy state, the default `$LAST_TAG..HEAD` range and full overwrite establish a new baseline.
+- An ambiguous legacy marker, provenance file, or journal stops plain `notes` and `--append` before writes; migration needs an explicit decision and preserves the legacy bytes.
+- Every successful `notes` publication sets the marker to its completed range endpoint; an explicit range may end before current `HEAD`.
+- All notes runs freeze the checked-out branch, HEAD, completed range endpoints, and local tag refs at Gather.
+  - Setup retains a portable scratch slug and derives a persistent key from the exact raw branch ref and its full SHA-256.
+  - Marker, provenance, and journal live under `.temp/release-state-v2/<branch-key>/`, so raw refs that once shared a slug have separate state.
+  - A source change before staging or publishing stops publication; a source change during promotion triggers rollback to exact original artifact bytes.
+  - An unknown live edit blocks rollback and keeps the journal for reconciliation.
+  - A tag change anywhere in the local repository requires a fresh gather.
+
+### Waived changes
+
+Every ⚠️ Breaking Changes / ❌ Removed / rename claim checked against `$LAST_TAG` (the last published tag) and found to never have shipped under the claimed name is dropped from the public artifacts and logged instead — never silently discarded.
+
+- Reclassified or removed Breaking claims require item-by-item approval before release artifacts are written; delegated total and Breaking counts must be present, nonnegative, integral, and agree with their ledger entries.
+- Codemap promotions from Added/Changed to Breaking get a separate baseline check and item approval before artifacts.
+- Python truth checks require the claim's exact module path and find module-level binding candidates, including alias imports and literal CLI flags; public export or entrypoint confirmation is separate, while unknown path, class method, unmatched, or unsupported forms remain inconclusive until source review.
+- A valid ❌ Removed claim stays when the old name existed at `$LAST_TAG` and is absent at `HEAD`, including after an append merge.
+- An append merge reloads the exact changelog path, independently checks claims in every existing DRAFT.md, changelog, SUMMARY.md, and MIGRATION.md even when its output flag was absent, and aborts on unresolved stale claims.
+- Each invocation gets a distinct `.temp/release-waived-<branch>-<date>-<suffix>` ledger, so same-day retries cannot inherit earlier entries.
+- `prepare` mode requires that ledger and checks its claim count against the gather result before producing `releases/<version>/waived-changes.md`; other modes leave the ledger in `.temp/`.
+
+### Notes publication
+
+Plain `notes` and `notes --append` freeze both range endpoints at Gather. A valid saved marker must lie within the completed plain range; append starts at that marker and ends at frozen HEAD.
+
+- The marker helper and publisher require the frozen range start, check it against the live saved marker or selected release tag, use the unique HEAD root when neither exists, and recheck that baseline before marker replacement; the skill checks whether the draft actually covers the interval. An ambiguous root history requires an explicit selected base.
+- Both modes edit candidate copies of DRAFT.md, the resolved changelog, provenance, and the completed-range marker; selected plain date-stamped summary/migration outputs or append SUMMARY.md/MIGRATION.md also enter the candidate.
+- After edits, the flow seals exact candidate bytes and repeats the full truth gate on that sealed set; a later candidate edit blocks publication.
+- A per-branch journal resumes an interrupted multi-file promotion; the stage retains exact original bytes, and every inventoried live path must still match its staged preimage or completed candidate, including paths with no planned edit. Unknown live edits block recovery instead of being overwritten, including an edit to an already promoted file before or after marker replacement.
+- Publication across files is not atomic: interruption can leave partial candidate files with a pending journal; source drift initiates exact-byte rollback when live files still match known original or candidate bytes. The marker publishes last, so a successful retry cannot repeat the same Summary increment.
+- Routine `--append` adds increment bullets to DRAFT.md's Summary (and a paragraph to internal SUMMARY.md), re-folds DRAFT.md's Summary to the top five wins with a one-line `New since last draft` pointer, and re-derives the release-wide upgrade-call line.
+- The final cross-artifact truth gate may correct a stale claim in DRAFT.md's Summary or standalone SUMMARY.md when source evidence supports it; Summary prose has no patch-id provenance anchor.
+- On POSIX, publication syncs staged candidates and originals before the journal, then syncs each live replacement before proceeding; the journal is removed only after all live bytes and directories are synced.
+  - A sync error stops further promotion; an error syncing the final journal removal may leave the journal absent in the live view or restored after a crash.
+  - Recovery recognizes a fully sealed live inventory and removes a restored journal without rolling back those completed notes, while unknown live edits still block recovery.
+- Native Windows has no portable directory sync, so this workflow cannot guarantee recovery from a host crash there; ordinary interruption recovery still applies.
+- Filesystem and hardware implementations may provide weaker persistence guarantees than these calls request.
+
+### Output location
+
+- `releases/<version>/` for `prepare` artifacts (the project `CHANGELOG.md` is updated at its discovered path and linked from the release directory).
+- `.temp/` for individual modes and demo on non-release branches.
+- Prepare checks the selected release paths before delegated changelog editing and rechecks them before publication; linked source artifacts and linked append markers stop before writes.
+
+## oss:setup internals
+
+Each rule installs as a symlink at `~/.claude/rules/oss-<source-name>.md`.
+
+- The `oss-` prefix keeps the flat rule namespace collision-free — four plugins ship a `rules/quality-gates.md`.
+- Because all four then load into every session, setup installs only one variant at `oss-quality-gates.md`: when a foundry-owned `foundry-quality-gates.md` is already delivered it links `rules/quality-gates-delta.md` — this plugin's review-loop scope and output-routing sections only, with every shared obligation read from foundry's copy — and otherwise it links the complete `rules/quality-gates.md`, so a standalone install loses no rule.
+- A filename prefix does not change how Claude loads a rule or how its `paths:` frontmatter matches.
+- The quality-gates rule requires the local `_full/adversarial-loop.md` procedure for independent review/fix cycles, including first-pass coverage, invariant and sibling-route closure checks, and separate carried/new finding weight.
+- Confidence describes the correctness of the delivered result and how it was produced and checked within scope. Report completion separately; a high score does not pass an unmet gate.
+- Missing reviewer coverage, provenance limits, unavailable checks, and confidence gaps remain evidence limits rather than source findings or automatic extra-review requests; an out-of-scope pass needs one explicit user decision with its gap, expected output and stop condition.
+
+Only links this plugin provably owns are replaced or removed: the existing target must resolve under the current plugin root or under the same install-cache lineage. A real file, a link into another marketplace, a source checkout, or a dotfiles tree is reported as a conflict and left alone unless you approve replacing it.
+
+**Uninstall leaves rule links behind**: Claude Code runs no cleanup hook on uninstall, so `~/.claude/rules/oss-*.md` survives both `claude plugin uninstall` and `make clear-all`. Delete those symlinks by hand — once the plugin cache version is gone they dangle.
+
+## Agent internals
+
+### gh-scraper
+
+**Role:** Raw GitHub data fetcher for `/oss:analyse vitality`. Fetches all GitHub API data (REST + GraphQL) across two parallel groups, writes raw JSONL consumed by oss:repo-warden axis scorers. Internal — spawned by oss:analyse vitality Step 1 only.
+
+**Model:** `haiku` (mechanical data collection — every fetch, the assembly and the coverage check are `bin/` scripts it runs verbatim; Haiku 5.5 on the Anthropic API)
+
+**What gh-scraper does:**
+
+- Runs all GitHub API fetch calls parallel (Group 1), then Group 2 on the repository's real default branch. Group 2 reads:
+  - README, CONTRIBUTING and SECURITY (root, `.github/` or `docs/`), any extension; `docs/` is read from its own listing under its real name, `Docs/` included, so a file kept only there is never mistaken for absent;
+  - the changelog's dated headings;
+  - every workflow file;
+  - CODEOWNERS (`.github/`, root or `docs/`);
+  - the branch's protection flag and its CI runs.
+- Scopes its lists to what scoring reads:
+  - closed issues and closed PRs since the 30-day cutoff (a truncated list then means more in-window items, flagged as lower bounds; GitHub search returns at most 1000 issues, so a full list of 1000 counts as truncated);
+  - one page of 100 completed CI runs of the default branch;
+  - the repository's `archived` flag beside its description.
+  - The CI pass rate counts the newest 20 push, schedule, manual-dispatch and merge-queue runs that executed, so pending, skipped, neutral and cancelled runs never shrink the sample; pull-request runs (a fork's work in progress), PR-comment bots and GitHub's own Dependabot or Copilot runs never enter it.
+- Assembles `raw-data-{owner}-{repo}-{date}.jsonl` with `assemble_vitality_data.py` for reproducibility + scorer consumption.
+  - One record per dataset, truncation flags, `"403"` for unreadable security alerts, `202_pending` for contributor stats GitHub is still computing; no retry.
+  - Dependabot config is read from `.github/dependabot.yml` or `.yaml`; the branch protection record is admin-only, so its absence is expected (`optional_absent`) and never lowers confidence.
+- Checks the file against the expected dataset list: a missing required dataset returns `status: "partial"` with `missing_required` and a confidence capped at 0.70 instead of reporting done.
+
+**What gh-scraper does NOT do:**
+
+- Off-shape requests: missing `GH_OWNER`, `GH_REPO` or `DATA_FILE`, or requests other than a GitHub fetch, stop before any command and return only the error envelope.
+- Axis scoring → oss:repo-warden owns all axis scoring.
+- Report generation, terminal output, adversarial review → oss:analyse vitality Steps 4–7 own those.
+- Direct user invocation — always spawned by vitality skill.
+
+### repo-warden
+
+**Role:** Axis scorer for `/oss:analyse vitality`. Reads pre-fetched raw JSONL from oss:gh-scraper, scores assigned group of vitality axes per vitality-scoring.md rubric; writes partial scores JSON for assembly. Spawned 3× parallel by oss:analyse vitality Step 2 — not for direct user invocation.
+
+**Model:** `haiku` (copies extractor-computed band, score and confidence, then writes the signal and notes; Haiku 5.5 on the Anthropic API)
+
+**What repo-warden does:**
+
+- Scores assigned axis group (A: Axes 1,2,5,6 / B: Axes 4,7,8 / C: Axes 3,9) from DATA_FILE.
+- Extracts its group's metrics with `vitality_extract.py` (counts, dates, presence flags, derived ratios, bot filtering, and a met / unmet / indeterminate state per checkpoint).
+  - The extractor also computes every axis's band (worst band wins when several hold), in-band score and confidence from listed degraders, which repo-warden copies — so two scorer models on the same data report the same numbers.
+  - It never opens the multi-megabyte JSONL directly, whose long lines a file viewer truncates.
+- Checkpoint axes score strictly: an unconfirmable checkpoint counts as unmet and its upper bound goes in the notes; a listed degrader for that cause replaces the −0.05 per indeterminate checkpoint, never both — never credit from a file name or a midpoint.
+- Band-only axes: a value on a shared boundary belongs to the better band (every 🟢 clause inclusive, every 🔴 condition strict, the Axis 2 backport's release age ≤180 days included), compared on unrounded metrics; 🟢 scores 10, 🔴/🟡 the band anchor plus one per 🟢 clause held.
+- Axis 9 (Trajectory) scores its sub-signal mean, capped at the band maximum in 🟡/🔴 (🟡 6, 🔴 3) like every other axis.
+- CI test steps count runners in a test shape only:
+  - tox test envs (`py311`, `ci-py311`, `py311-django42`, `py`, `ci`, `tests` — after any tox flags with or without a value such as `-c tox.ini`, or named by a `toxenv`/`TOXENV` assignment such as a matrix entry), a tox 4 factor filter (`tox -f py311`), tox `-m test`;
+  - nox test sessions or tags after any nox flags (`nox -p 3.11 -s tests`, `nox -t tests`), `hatch test` / `hatch run test`;
+  - `npm`/`yarn`/`pnpm [flags] [run] test` (`pnpm -r test`), `npm t`, `python -m unittest` and `make test`;
+  - never an env carrying a lint (linter, linters, linting), docs, typing, typecheck, mypy, type, fmt, format, style, build, publish, release, upload, fuzz, pre-commit or report factor (`py311-lint`, `lint-py311`, `py-lint`, `ci-lint`, `py3-pre-commit`, `py311-coverage-report`, `testpypi-upload`).
+- Security scans include zizmor, osv-scanner, gitleaks, trufflehog, pip-audit, `dependency-review-action` and `scorecard-action`.
+- The workflow registry is read as one page of 100 entries, flagged partial when GitHub reports more.
+- The CI pass rate samples the default branch's push, schedule, workflow_dispatch and merge_group runs only.
+- A changelog entry counts by calendar day (365 days old still meets the checkpoint), and an undated version heading (`## Version 26.10.0`) is dated by the release of that version.
+- The Axis 2 ⛔ abandonment override needs an archived repository or a statement that the repository itself is discontinued:
+  - "this project is no longer maintained" or "not actively maintained" (subjects project, repo, repository, library, fork), "we are no longer maintaining this project", or the repository's own name as the sentence subject ("Bleach is deprecated");
+  - a README banner line recognized by its content whatever its markup — the status alone or with a redirect to one replacement, such as `⚠️ Deprecated`, `# DEPRECATED`, `<h1>DEPRECATED</h1>` or `**DEPRECATED** use bar`, or the status beside the README title such as `# foo (DEPRECATED)`;
+  - a description such as "Deprecated in favor of bar" or "Unmaintained fork of foo".
+- It never fires on:
+  - a bare keyword;
+  - a statement about something else ("the 1.x branch is no longer maintained", "this module is deprecated", "**Deprecated:** Python 3.8 support was dropped");
+  - a redirect naming the deprecated feature ("Deprecated: use --new-flag instead of --old-flag", "see below for removed flags");
+  - a status followed by another sentence, a status qualifying a noun ("_Deprecated_ options"), a list bullet, a table row, a bare section heading such as `## Deprecated` or the line the 500-byte README cut ends.
+- Axis 8 without Dependabot alert access (non-admin token): partial score from config signals, labelled 🟡 at best and capped at the 🟡 maximum 6, confidence 0.4 — so the unverified path never out-scores a verified one.
+- Axis 3 fallback when contributor stats are unavailable: bus factor = distinct non-bot `commits_50` authors capped at 3, fixed confidence 0.5, computed by the extractor.
+- Writes `partial-{group}-{owner}-{repo}-{ts}.json` consumed by vitality Step 3 assembly.
+
+**What repo-warden does NOT do:**
+
+- Off-shape scoring requests: missing `AXIS_GROUP=A|B|C` or `DATA_FILE` naming an existing raw JSONL stop with only a `declined` envelope and the mismatch in `reason`; a Step 1 input failure also declines. Vitality surfaces the reason and stops before assembly, without reporting the absent partial file as a timeout.
+- Raw data fetching → oss:gh-scraper owns all GitHub API calls.
+- Report generation, terminal output, adversarial review → oss:analyse vitality Steps 4–7 own those.
+- Direct user invocation — always spawned by vitality skill.
+
+### oss:shepherd
+
+- **Role:** Public voice of project. Owns all external-facing communication — PR replies, issue responses, release notes, changelog entries, migration guides. Never writes implementation code. When severity tiers overlap, picks the lower tier and names the trigger that would raise it.
+- **Tools:** includes `Skill`, used to invoke the `humanizer` skill; drafts stay draft-only and any GitHub write needs the user's `gh-write` approval.
+
+### oss:cicd-steward
+
+- **Role:** GitHub Actions health specialist. Owns CI configuration quality: workflow topology, runner strategy, caching, branch protections, flaky test detection. Reports `ubuntu-latest` drift only when the prompt names runner reproducibility.
+- Missing logs or repository context that affect no primary finding stay listed as `(-0.00)` confidence gaps.
+
+## Hooks, permissions and configuration internals
+
+### Model, authentication and permissions
+
+- **Model and cost:** `analyse`, `review`, `resolve` and `release` carry no `model:` pin and run on the session model.
+- A pin on an inline skill swaps the model for one turn and back, which rewrites the whole cached prompt prefix twice — measured at about $1.4 to $1.5 per `/oss:resolve` run in an Opus session.
+- Start these sessions on Sonnet for the cheap path; an Opus session now saves about $0.4 per resolve run and keeps Opus quality.
+- Measure a skill with `/foundry:audit --efficiency` (it prints model-switch dollars, pre-gate cost and the change since the last run).
+
+**GitHub authentication:** Skills use `gh` CLI. Run `gh auth login` once if not already.
+
+**Permission manifests:** `.claude-plugin/permissions-allow.json` lists the tool calls the skills expect to be pre-approved.
+
+- `.claude-plugin/permissions-allow-retired.json` lists allow rules earlier versions shipped; `/oss:setup` removes exactly those from `settings.json` through `--drop-allow-file`, keeping the rule text out of the command line. The setup summary counts removals from this complete retirement set.
+- `.claude-plugin/permissions-deny.json` is its counterpart — the operations that must stay denied no matter how broad the allow list becomes: destructive shell and git commands (`rm -rf`, `sudo`, `ssh`, `chmod 777`, force-push, `claude --dangerously-skip-permissions`) and the `curl` write verbs the broad `Bash(curl:*)` allowance would otherwise reach.
+  - It holds no gh write or local branch/tag deletion entry.
+- Both files are merged into `~/.claude/settings.json` by `/oss:setup` (Step 5). Setup removes allow entries earlier oss versions shipped, `Bash(gh api repos/*:*)`, `Bash(uv pip install:*)` and the broad `Bash(claude:*)`, `Bash(find:*)`, `Bash(node:*)`, `Bash(sed:*)` and `Bash(eval:*)`, while preserving every other existing allow and deny entry; the merge is otherwise additive and idempotent.
+- No shipped allow entry matches `uv pip install`, `uv run --with`, `pip install` or `pip download`.
+  - The review's ephemeral dependency overlay relies on that: its support check and its wheel fetch each reach their own permission prompt, so approving one never pre-approves another download or an install into your project environment.
+  - A test checks every plugin's allow list against the overlay's commands.
+- Deny entries are prefix matches, so they stop the documented command forms rather than every possible flag ordering.
+- **Git/GitHub permissions:** oss ships no git/gh guard; the guard ships only in `foundry` (requires `foundry` plugin).
+- The OSS allow list omits `Bash(gh api repos/*)`, `Bash(gh api graphql:*)`, `Bash(git branch:*)` and `Bash(git tag:*)`, so a fresh standalone install leaves API writes and local branch/tag deletion to normal permission handling.
+- Existing settings keep these four allow entries after an upgrade: `/oss:setup` preserves them because foundry also ships them.
+- Without foundry, remove those entries from your settings to restore normal prompts for these operations.
+- Stale gh deny entries from older versions are scrubbed only by `/foundry:setup` (requires `foundry` plugin).
+
+### Optional integrations and hooks
+
+**Optional plugin integrations** detected automatically at runtime. Install any optional plugin from [Install](#oss-install) — skills use them next invocation, no config changes.
+
+- **Hooks** register automatically from `hooks/hooks.json` when the plugin is enabled — no `settings.json` edits needed.
+- Each hook runs `node` from PATH, then `/opt/homebrew/bin/node` or `/usr/local/bin/node`; when none exists, the hooks skip without blocking and one `SessionStart` check reports once per session that they are inactive.
+- The plugin's `bin/python` and native Windows `bin/python.cmd` preserve the shipped `python` command and probe candidate runtimes for Python 3.10+ before executing the workload once.
+- Plugin `bin/` follows system directories on PATH, so an eligible system `python` takes precedence; missing eligible runtimes produce a clear diagnostic.
+
+| Hook | Event | Behaviour |
+| -- | -- | -- |
+| `agent-router.js` | `PreToolUse` (`Agent`) | Reroutes `Agent()` calls when the requested agent is not installed: exact match → semantic match → `general-purpose`. |
+| `sentinel-read-allow.js` | (decision module, no longer registered as a hook of its own; called by `allow-dispatch.js` in rank order) | Auto-allows the pre-canned TMPDIR sentinel-read and `$(date +FMT)` idioms inside read-only commands, so skill bash blocks stop raising "Contains expansion" prompts. Everything else falls through to normal checks. Whole-line `# …` comments inside a block are skipped rather than blocking it, and `..` is matched as a path component so ellipsis and version ranges are not mistaken for traversal. |
+| `blueprint-allow.js` | (decision module, no longer registered as a hook of its own; called by `allow-dispatch.js` in rank order) | Byte-identical copy of the cc_foundry canonical (propagated via `propagate_shared.py`); normalizes the command, hashes it, and exact-matches it against this plugin's committed `blueprint-manifest.json`, so verbatim bash shipped in its own skills runs without a prompt. Any deviation from the blueprint text misses and falls through to a normal prompt. |
+| `allow-dispatch.js` | `PreToolUse` (`Bash`) | Byte-identical copy of the cc_foundry canonical (propagated via `propagate_shared.py`); the only registered Bash auto-allow hook. Calls `blueprint-allow.js` then `sentinel-read-allow.js` as libraries, emits the first allow, and appends one audit record naming the effective verdict and both modules' own verdicts. Exits 0 on every path: an allow-only hook that crashes grants nothing and the call falls back to normal permission handling. |
+| `audit-close.js` | `PostToolUse`, `PostToolUseFailure` (`Bash`), `SessionStart`, `SessionEnd` | Byte-identical copy of the cc_foundry canonical (propagated via `propagate_shared.py`); appends one record observing that a Bash call completed, and one per session boundary. Writes nothing to stdout on any event. Every installed plugin writes its own rows with nothing coordinating them. |
+| `lib/audit-log.js` | (shared module, not a hook) | Byte-identical copy of the cc_foundry canonical (propagated via `propagate_shared.py`); the shared record writer behind the two hooks above. Append-only — no lock, marker, state directory or deletion path — and never throws, so a logging failure cannot change a permission decision. `RIG_AUDIT=0` disables writing only. |
+| `write-guard.js` | `PreToolUse` (`Edit`, `Write`, `NotebookEdit`) | Byte-identical copy of the cc_foundry canonical (propagated via `propagate_shared.py`); grants nothing — forces a confirmation on writes to untracked files in the protected set (`CLAUDE.md`/`AGENTS.md`, `.claude/settings*.json`, `.pre-commit-config.yaml`, `pyproject.toml`); a tracked protected file never asks, since every write to it is diffable and revertible, and a protected file the session created asks once on creation, then passes for that session. Source, tests, `.github/**`, `CHANGELOG.md` and lockfiles are deliberately unprotected; everything else is silent passthrough. |
+| `stale-plugin-check.js` | `SessionStart` | Byte-identical copy of the cc_foundry canonical (propagated via `propagate_shared.py`); when this session still runs a replaced oss version (the loaded root carries `.orphaned_at` or is no longer the installed path), shows the user a warning naming oss with its loaded and installed versions and the restart step (`exit, then claude --resume <session_id>`), and tells the model not to run oss workflows on the stale copy until the user chooses, through `AskUserQuestion`, to restart or continue — once per session and version: after that ask, a compact/clear warning drops it (a first detection at compact/clear still asks). Silent when current or outside the plugin cache; never blocks. |
+| `enforce-review-header.js` | `PreToolUse` (`AskUserQuestion`), `PostToolUse` (`AskUserQuestion`), `Stop` | Blocks only the owning workflow follow-up until its report exists and the follow-up call's first question text is a short plain summary (report path, `Title`, `Outcome`/`Verdict`; at most 1,500 characters, no table); option descriptions and previews never supply it, and a reply-text table before the call does not count. Diagnostic/recovery questions remain available; unreadable delivery evidence is not success. On Stop: keeps a turn going once per report when its final reply (the text after the turn's last tool call) lacks the full header table; a shown follow-up does not satisfy it. |
+| `enforce-analyse-header.js` | `PreToolUse` (`AskUserQuestion`), `PostToolUse` (`AskUserQuestion`), `Stop` | Blocks only the owning workflow follow-up until its report exists and the follow-up call's first question text is a short plain summary (report path, `Title`, `Outcome`/`Verdict`; at most 1,500 characters, no table); option descriptions and previews never supply it, and a reply-text table before the call does not count. Diagnostic/recovery questions remain available; unreadable delivery evidence is not success. On Stop: keeps a turn going once per report when its final reply (the text after the turn's last tool call) lacks the full header table; a shown follow-up does not satisfy it. |
+| `enforce-resolve-table.js` | `PreToolUse` (`AskUserQuestion`) | Blocks the resolve bulk picker until Q1 lists every pending id as a plain item line, or top items, exact pending counts by type and the complete `action-items-table.md` file past the 1,500-character question budget. Closed items are named by count. Options carry labels and one-line descriptions with no preview by default; identical optional previews are denied and distinct plain comparisons stay within 2000 characters / 12 rendered lines (wrapping at 86 characters), with no table or HTML. The skill saves the full headed table before the call and prints it once as the last text of the reply message that issues the picker, without an answer-time or denied-retry reprint. Other questions pass; missing or malformed items files fail open; the hook never reads the transcript. |
+| `report-header-table.js` | Shared local module | Shared local module: matches workflow-specific questions and current report headers; at question time checks only the call's first question text for the report path and the `Title` and `Outcome`/`Verdict` values within 1,500 characters; at Stop only the final reply after the turn's last tool call counts for the full header table. |
+
+## Bin helper inventory
+
+### 67 shipped deterministic helpers
+
+These helpers are installed workflow support and maintainer surfaces, not additional slash-command skills. The skills own the orchestration; the helpers handle bounded parsing, evidence collection, path resolution, scoring, and artifact preparation.
+
+#### Analysis, signals, and structural context
+
+| Helper | Purpose |
+| -- | -- |
+| `assemble_vitality_data.py` | Merge the vitality fetch groups into one JSONL file and report missing datasets. |
+| `assemble_vitality_scores.py` | Merge three vitality-axis partials into one health score. |
+| `build_analyse_paths.py` | Derive the `/oss:analyse` report path or GitHub cache path for a thread. |
+| `build_triage_batch.py` | Build a codemap query batch from triaged identifiers. |
+| `build_vitality_paths.py` | Derive the vitality report path and the provenance metadata written into its header. |
+| `check_agent.py` | Probe whether a plugin agent is installed. |
+| `check_bridge.py` | Report whether the Claude-Codex bridge plugin is installed and enabled (`true`/`false`, or `--status` for `available`, `disabled`, `absent`). |
+| `check_oss_pr_signals.py` | Collect read-only OSS signals from a pull-request diff; secret matches print `path:line: kind` only, never the value, and a `--latest-tag` starting with `-` exits 1. |
+| `gh_batch_query.py` | Batch per-item GitHub lookups into a few GraphQL requests: `commit-prs` maps a Git range to its merged PRs (resumable with `--offset-file`), `pr-files` lists the changed files of several PRs. |
+| `fetch_pr_intel.py` | Fetch a PR's conversation comments, reviews, inline comments (with resolved-thread flag), commits and linked issues into one deduplicated `pr-intel-raw.jsonl`; `/oss:resolve` Step 3b reads it instead of running the fetch commands through a model. |
+| `classify_breaking.py` | Label changed public symbols as Breaking or internal. |
+| `classify_pr_scope.py` | Classify a pull request as CHORE, FIX, REFACTOR, FEATURE, or MIXED. |
+| `codemap_batch.py` | Batch the per-module codemap supplement queries of `/oss:review` into one `codemap-py` process; `render --fallback` reruns unanswered queries as single `--timeout 5` calls. |
+| `codemap_cache.py` | Materialize review-to-resolve codemap pre-flight cache artifacts. |
+| `detect_codemap.py` | Detect codemap availability, index presence, and currency. |
+| `detect_thread_type.py` | Detect GitHub thread type and report drift. |
+| `extract_changed_symbols.py` | Extract changed public Python symbols from a diff. |
+| `extract_diff_impact_qnames.py` | Extract qualified names from codemap diff-impact JSON. |
+| `extract_vitality_vars.py` | Emit shell assignments from vitality-score JSON; `--keep-state <prefix>` writes each value to a per-session sentinel instead, so the skill needs no `eval`. |
+| `fetch_gh_data_group1.py` | Fetch independent GitHub datasets for vitality scoring. |
+| `fetch_gh_data_group2.py` | Fetch dependent repository and workflow content for vitality scoring. |
+| `parse_analyse_args.py` | Classify the `/oss:analyse` argument and resolve the vitality repository. |
+| `resolve_centrality.py` | Convert codemap centrality output into a worktree resolver map. |
+| `search_downstream_consumers.py` | Find GitHub repositories importing changed symbols. |
+| `vitality_extract.py` | Extract the per-axis metrics one vitality scoring group needs from the JSONL file. |
+
+#### Review, resolve, and argument helpers
+
+| Helper | Purpose |
+| -- | -- |
+| `agent_watch.py` | Report each spawned resolve agent's deliverable and deadline in one call, so nothing polls. |
+| `build_merge_plan.py` | Assemble Phase 3's cherry-pick plan from Phase 2's per-group commit ledger. |
+| `check_base_fresh.py` | Re-fetch the target branch and report whether the PR branch still contains its newest commit, so resolve re-merges before QA and surfaces drift before the push. |
+| `next_run_dir.py` | Atomically allocate the next `pr-<N>/run-<NNN>` review report directory and print its path; exits 1 when contested on every retry. |
+| `review_impact_tier.py` | Read `codemap-py query diff-impact` JSON from stdin and print `FULL` or `LIGHT` with a reason; unknown impact always yields `FULL`. |
+| `commit_action_item.py` | Stage and commit one resolve action item or group with its built or supplied message. |
+| `commit_all_items.py` | Create a bulk commit summarizing resolved review items. |
+| `commit_lint_fixes.py` | Stage tracked lint changes and create the lint-fix commit. |
+| `derive_fork_remote.py` | Ensure the contributor's fork remote exists, then report the pending push scope. Remote and ref names are validated; `--fork-repo` names a fork whose repository name differs from origin's. |
+| `fetch_alert_context.py` | Write a review item and its linked CodeQL alert, fenced as untrusted data, into a no-network Codex brief. |
+| `fill_gaps_scope.py` | Check a `/oss:review --fill-gaps` selection (its carried records and rows must pass the publication gate, producer row rules included), plan the run, verify the carried records survived, and tell `/oss:resolve` triage which targeted rerun is admissible. |
+| `find_review_report.py` | Enforce the `/oss:review` reject gate before `/oss:resolve` starts fixing a PR; `/oss:review` also runs it on its own publication. Rejections name the broken rule; `--assess` grades every gap as critical or degraded and reports whether the PR head moved, for resolve's intake triage. |
+| `git_state_snapshot.py` | Print branch, HEAD, upstream, base merge-base, status lists, remotes and worktrees as one JSON. |
+| `heal_git_artifacts.py` | Reclaim stale resolve locks and leftover git worktrees; unregistered dirs only with `--include-orphans`, symlinks never followed, `*` prefix rejected. |
+| `append_resolution.py` | Report what resolve did with each review finding back to the review's `resolution.jsonl`. |
+| `merge_action_items.py` | Fold review findings into resolve's action items without renumbering; inherit review detail for duplicates. Root-cause-merged `merged_into` rows add no item: the survivor lists `merged_finding_ids`, appends each row's text and keeps the group's highest severity and strongest report routing. GitHub items at any group location match the survivor. Unresolved targets keep their own items with `⚠` stderr warnings relayed to the user; summary JSON includes `folded` and `fold_orphans`. `--accept-degraded` admits a report the user chose to proceed with at intake triage, only when it has no critical gap. `--report-file` + `--impl-dir` pick the findings file (beside the report, else the parsed copy with ids minted), `--persist-findings` records its path, `--intake-accepted` implies `--accept-degraded` for the accepted report. |
+| `filter_action_items.py` | Print the `action-items.jsonl` records named in a Write-tool id file as compact JSON (resolve's per-item detail blocks); replaces two `jq` pipelines. |
+| `merge_settings_permissions.py` | Merge the plugin's shipped allow and deny rules into `~/.claude/settings.json` in one atomic write (`/oss:setup`). |
+| `merge_specialist_batch.py` | Cherry-pick specialist worktree commits in priority order. |
+| `mint_finding_ids.py` | Give each review finding a stable id (section slug plus file and title hash) that survives line drift. |
+| `parse-resolve-args.py` | Parse `/oss:resolve` arguments into shell assignments. |
+| `parse-skill-flags.py` | Parse shared skill flags into shell assignments; `--keep-state <prefix>` also writes per-session sentinels and clears a stale contract, so skills read values without `eval`. |
+| `parse_audit_json.py` | Summarize `pip-audit` JSON as dependency and vulnerability counts, split new versus pre-existing with `--introduced`, limited to shipped packages with `--runtime-from`. |
+| `resolve_pr_refs.py` | Resolve the default branch and the PR's head/base/fork metadata before checkout; branch names that git would read as an option are rejected. `--local-base` is the no-PR path (report mode, comment dispatch) that publishes only the default branch as the QA diff base. |
+| `resolve_preflight.py` | Verify tools, authentication, remote state, and native temporary preflight output before resolve. |
+| `resolve_test_plan.py` | Pick targeted tests for a change (codemap test-impact, else path heuristics) and the repo's full-suite command. |
+| `resolve_shared_path.py` | Resolve a plugin's shared directory portably (own, or the active `codemap-py` install); the cwd source-tree fallback is used only inside that plugin's own source repository, elsewhere it exits 1. |
+
+#### Release, installation, and path helpers
+
+| Helper | Purpose |
+| -- | -- |
+| `extract_contributors.py` | List unique contributors in a Git range; `--include-bots` supports aggregated release credits. |
+| `get_plugin_install_path.py` | Resolve the active plugin path from Claude's registry. |
+| `parse_release_envelopes.py` | Validate the changelog-audit and contributors agent envelopes for `/oss:release`. |
+| `release_append_marker.py` | Persist and resolve the release `--append` baseline. |
+| `release_append_publish.py` | Stage, seal, publish, and recover checked plain and `--append` notes artifacts. |
+| `release_setup.py` | Resolve shared setup values for release modes; the sentinel directory is private (`0700`) and the helper exits 1 when it is a symlink or owned by another user. |
+| `resolve_changelog_file.py` | Resolve the repository changelog path for release notes, prepare and audit (root, `docs/`, first one-level `CHANGELOG*`, else `CHANGELOG.md`); `--write-sentinel` stores it for later steps. |
+| `run_audit_checks.py` | Gather raw readiness evidence for release audit. |
+| `setup_release_dir.py` | Create a release directory and protect existing artifacts. |
+| `symbol_exists_at_ref.py` | Check a name is bound at module level in a file at a git ref (release truth check). |
+| `sync_rules.py` | Install namespaced rule symlinks into `~/.claude/rules/`. |
+| `verify_blueprint_audit.py` | Verify and prune the auto-allow audit log. |
+| `append_ledger.py` | Append staged `.rec` records (or `--from` files) to a growing ledger without rewriting it. |
+| `adversarial_loop.py` | Record and validate review → fix loop rounds: append a round (and, with `--append-metrics`, its advisory cost record), print the progress table, require root cause on a repeated finding and stop at its third occurrence. |
+| `compaction_boundary.py` | Print the compaction Boundary step from the plugin's contract, then run the optional foundry compaction gate. |
+| `write_skill_contract.py` | Write the compaction-boundary contract the PreCompact hook appends verbatim; `--keep-sentinel <name>` appends the user's `--keep` text from the session sentinel. |
+| `_sentinel_io.py` | Private module, never run directly: the resolve, analyse, release and codemap helpers create their session sentinels through it — fresh, owner-only (`0600`), never through a planted file or symlink. |
+
+## Audit log
+
+- `allow-dispatch.js` and `audit-close.js` append one JSON line each per Bash call to `~/.claude/logs/audit/`: one file per session (`s-<key>.jsonl`, the key being a hash of the session id) plus a shared `_no-session.jsonl` for calls that arrive without one.
+- A record names the deciding plugin and hook, the session and tool-call ids, the working directory, the effective decision with its lane and provenance, and both decision modules' own verdicts.
+- Command text is never written — only a digest, and for a provenance allow the manifest `src` it matched.
+- Note the limit honestly: `task-log.js` already writes the first 200 characters of every Bash command into `timings.jsonl` under the same `tool_use_id`, so the guarantee is about this file rather than about the log directory.
+- That text is masked first (env assignments, credential-named values and flags, URL credentials, Bearer values, well-known token prefixes), and `task-log.js` tightens the log directory to `0700` and log files to `0600`.
+
+With several plugins installed each writes its own rows and nothing coordinates them, so one completed call yields one row per plugin at each end. That is corroboration, not duplication.
+
+```bash
+python "${CLAUDE_PLUGIN_ROOT}/bin/verify_blueprint_audit.py" verify
+python "${CLAUDE_PLUGIN_ROOT}/bin/verify_blueprint_audit.py" prune --older-than 30 --dry-run
+```
+
+`verify` exits 1 only when a record's own hash fails to verify; torn framing from concurrent appends and every classification are warnings.
+
+- `record_hash` detects a record that changed after it was written — it is not tamper-evidence, because the same user owns the log, the hooks and the checker.
+- Read the classifications as observations rather than proof: a call with a decision row and no completion row is reported as `completion-unobserved` when the session later ended and `in-flight-or-hard-kill` when it did not, and neither distinguishes a refusal at the prompt from a deny rule elsewhere or a closer that died.
+- Equally, that a tool ran never establishes that a human approved it.
+- `prune` is the only component that deletes a log file, is never run by a hook, and never prunes `_no-session.jsonl` by age — a growing one means the host stopped sending a session id.
+- Nothing schedules `prune`.
+- `RIG_AUDIT=0` disables audit writing without changing any permission decision.
+
+Records follow the twelve mandatory fields of ["Agent Audit Trail: A Standard Logging Format for Autonomous AI Systems"](https://datatracker.ietf.org/doc/draft-sharif-agent-audit-trail/), an active individual-submission Internet-Draft that is not endorsed by the IETF and has no standing in its standards process.
+
+Deliberate deviations from the draft's field vocabulary:
+
+- `outcome` adds `pending`, because a decision that has not executed yet has no outcome in the draft's vocabulary.
+- `trust_level` is `plugin`/`unknown` rather than the draft's `L0`–`L4`, because what is observed is which component proposed an allow, not an authentication level.
+- `agent_id` is `<plugin>/<hook>` rather than a URI.
+- `session_id` is the host's id verbatim rather than a UUID.
+- `parent_record_id` and `prev_hash` are always null, because this log is not chained — lineage is derived on read instead.
+
+## Evidence, validation and contribution notes
+
+Editing `oss` skills or agents → update this README before commit. Rule in `plugins/CLAUDE.md`: changed trigger, scope, NOT-for, or hook behaviour → update README description. Added/removed agent/skill → update table. Unsynced change = incomplete.
+
+- Evidence and real-case acceptance: cite inspected sources or recorded proof for factual, causal, and completion claims; label inference explicitly.
+- Keep a representative real case with actual inputs, components, and environment as the acceptance oracle before and after TDD, retaining command, source/environment identity, output, and before/after evidence.
+- If real execution is unavailable, leave that check unmet; mocks are supplementary polishing only.
+- Never weaken tests or change user-authorized behavior to get green.
+- `/oss:review` validates every candidate before publication and separates five source judgments (Approve, Minor changes, Major revision, Insufficient but a good initiative, Block) from verification readiness.
+- Version-one reports retain nullable completed assessments and durable open concerns in `review-validation.json`; only confirmed findings become automatic resolve items.
+- `/oss:resolve` preserves unavailable evidence as an open obligation and later fixes as already fixed.
+- New REVIEW_V1\_\* gates block older resolver versions safely; archived five-rating reports keep their historical interpretation.
+- Review intake requires the complete current contract whenever its header carries contract, scale or readiness markers; marker-free archives retain their original interpretation.
+- A report that fails intake is never repaired in place: resolve prints its graded gap table and asks whether to proceed with the valid parts, rerun review for selected gaps, rerun in full, or abort.
+  - Proceeding with the valid parts is offered only when no gap is critical and the report records no rejection.
+  - A critical gap is a lost, unbacked or unmergeable finding, stale evidence, an ambiguous verdict, or a blocked/missing QA review under a claimed-complete report.
+  - The targeted rerun is `/oss:review <N> --fill-gaps <report> --roles … --candidates …`.
+- Resolve carries the validated candidate and a derived evidence pointer through merging, reuses applicable parent checks after source/contract freshness checks, and keeps independent critical verification distinct.
+- Evidenced later fixes complete their selected tasks without a new implementation commit; unverified items remain durable pending obligations.
+- Late terminal conflicts use the existing evidenced rejection publisher and reviewed SHA.
+
+C1 bridge briefs retain the exact parent candidate and evidence pointer through the task-file boundary. A single pre-C1 batch freshness check and source/contract/environment applicability checks permit proof reuse; report-mode challenge instructions use the same proof rules and always assess the proposed repair.
+
+Phase 1 freshness follows the source each wave reads: early challengers use the pinned PR revision even after a clean merge, while late challengers use checkout HEAD after the merge and any C1 commits. Both routes reuse existing batch checks and retain stale evidence pointers for investigation.
+
+## Review gate and flag reference (full wording)
+
+### Gate overview
+
+**Review stages (acceptance gate):** `Gate:` header field is two states beyond `PASS` — reject is terminal (skips every tier, no agent spawned), block is not (full fanout still runs, the report just surfaces the fixable gap up front instead of burying it after N findings). Test: *could revising the code, not the goal, resolve this?* Yes → block. No → reject.
+
+### Stage 1 — Reject (terminal, 8 grounds)
+
+Aligned with close-without-merge practice in K8s/CPython/Rust/Django contributing docs. Every ground needs affirmative evidence, never suspicion alone.
+
+| Ground | Test |
+| -- | -- |
+| `REJECT_GOAL` | Stated goal factually/technically wrong regardless of diff quality — e.g. "raise this [0,1]-bounded metric above 1.0". Disagreeing with the approach is a normal review finding, not this. |
+| `REJECT_CONDUCT` | By-design adversarial/malicious contribution or Code of Conduct violation. Confirmed via a shared `foundry:challenger` check before rejecting — accidental (or confidence \<0.7) falls through as a normal finding. |
+| `REJECT_SCOPE` | Out of project scope / against roadmap, maintainers already decided against this direction. Evidence: a `wontfix`/`invalid`/`declined`/`out-of-scope` label already applied, or an explicit "out of scope" statement in `CONTRIBUTING.md`/an ADR the PR directly matches. |
+| `REJECT_LICENSE` | Incompatible license copied in, or plagiarized/copied source with no right to submit it. Not the same as a missing CLA/DCO signature (that's Stage 2, fixable). Confirmed via the same shared `foundry:challenger` check as conduct. |
+| `REJECT_DUPLICATE` | Another PR already merged solving this, or the linked issue already fixed upstream. Evidence: the linked issue is closed by a different, already-merged PR. |
+| `REJECT_REVERTED` | Reintroduces a previously reverted change without addressing why it was reverted. Evidence: a matching revert commit exists **and** the PR body doesn't reference or address it. |
+| `REJECT_SPAM` | Spam/low-effort/AI-slop — no real change, hacktoberfest-farming pattern. Evidence needs both a trivially low-value diff **and** a generic/templated description — either alone isn't enough (a genuine one-line fix looks low-value too). |
+| `REJECT_PHILOSOPHY` | Contradicts a documented design principle, not just a style preference — e.g. adding a GUI to a project whose docs state "CLI-only by design". Requires a citable doc line. |
+
+### Stage 2 — Block (non-terminal)
+
+Default `[blocking]` tag per finding category — judgment still required, not automatic:
+
+| Category | Default | Nuance |
+| -- | -- | -- |
+| CI red / failing check | blocking | Only a **major**/required-check failure. A single flaky-looking rerun blip is noted, not auto-blocking. |
+| Missing test coverage for new/changed logic | blocking | — |
+| Accidental security bug (careless, not by-design) | blocking | By-design version is Stage 1 `REJECT_CONDUCT`, not this. |
+| Breaking API change, no deprecation/migration path | blocking | — |
+| Missing docs for new/changed public behavior | blocking | Missing CHANGELOG entry alone is **not** blocking — can land in a follow-up (`/oss:release`). |
+| Perf regression | contextual | A regression vs recent releases with no offsetting reason is bad; not blocking when the prior speed only existed because of a correctness bug and the "regression" is the cost of fixing it right. |
+| Merge conflicts | **not** blocking | `/oss:resolve`'s job — review doesn't gate on it. |
+| Incomplete implementation (TODOs in changed paths, missing error handling) | blocking | — |
+| Missing CLA/DCO signature | blocking, **only if the project requires one** | Check first — CLA-assistant/DCO-check bot status, or a signing mandate in `CONTRIBUTING.md`. No such requirement → not applicable. |
+
+### Review flags (full wording)
+
+- `--fill-gaps <report>` with `--roles "<a,b>"` and/or `--candidates "<ids>"`: re-run only the named reviewer roles and candidate checks of a prior run whose PR head is unchanged.
+  - Every other assessment, candidate, open concern and finding row is carried unchanged into a new run, which must pass the publication gate.
+  - Unknown ids, a moved head, or a carried record the gate would reject stop with `! BLOCKED`.
+- `--worktree`: opt-in. Run the review in an isolated git worktree (base: HEAD) so no dimension agent can mutate main sources.
+  - The report is written to the **main tree**; you review and merge. PR-review mode only (not `--reply`/direct-report).
+  - It never asks about other worktrees up front.
+  - Only if creating its own worktree still fails after one retry does it report leaked worktrees it could reclaim (clean, 14 days or older, `agent-*`/`oss-*`, including ones git no longer has registered) and ask before deleting any.
+  - Trees with uncommitted work are kept at any age.
+
+### Resolve `--worktree` (full wording)
+
+- Opt-in. Wrap the whole run in an isolated git worktree (base: HEAD) entered before `gh pr checkout`, so the checkout, per-specialist worktrees, and cherry-picks never touch your main tree/branch.
+- Commits can push to the fork only after explicit confirmation; the local worktree is disposable.
+- Composes with resolve's existing per-specialist isolation.
+
+### Optional integration detail
+
+- `bridge@borda-ai-rig` also enables Codex action-item dispatch in `/oss:resolve`; a CodeQL alert a dispatched item links, from the PR's own repository and the item's file, is fetched by the calling session and sent to the Codex provider.
+- `codemap-py` adds the reverse-dependency count (`rdep_count`) in `/oss:review` risk assessment; stale-symbol detection in `/oss:analyse` issue triage; Open-PR Overlap + Structural Constraints in `/oss:analyse vitality`.
+
+### Report-gate troubleshooting detail
+
+- Existing sentinel expiry remains unchanged for the review and analyse report gates; it is not a completion receipt.

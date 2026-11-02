@@ -1,22 +1,38 @@
 # 🌉 bridge_CC-Codex — Claude Code ↔ Codex
 
-After installation, run `$bridge:setup` in Codex to configure [Claude provider consent](rules/provider-consent.md) once. To approve that consent without typing the confirmation in the setup flow, run `bin/bridge_consent.py issue-token` in your own terminal and pass the printed one-time token: `$bridge:setup --approve-claude-consent --consent-token <token>`. The token is valid 5 minutes and consumed by one grant; `grant --approve` run from a script without a terminal needs it as `BRIDGE_OPERATOR_TOKEN` and otherwise exits 2 without writing. Plain setup retains operator-terminal confirmation. The approval covers task-relevant private code Claude reads in confirmed projects and ordinary inference, with explicit exclusions; installation alone grants nothing. Later calls check and reuse the grant without per-file prompts. The operator can revoke it with `bridge_consent.py revoke`. Stored user policy does not prove the active host loaded it: a fresh session may be needed, and project/managed restrictions remain authoritative. Python 3.10 needs an existing `tomli` for this optional policy stage.
-
-Codex setup helper recipes use the quoted packaged Python launcher (`bin/python`, or `bin/python.cmd` on native Windows). Direct MCP startup retains its separate Python 3.10+ host-PATH prerequisite.
-
-Codex asks only for a genuinely missing decision, material input or protected action. Authorized preparation, internal recovery and completion need no new consent; transport discovery follows that necessity check. Existing answers, scope/digest confirmation and runtime permission remain authoritative. When a decision is missing, Codex questions prefer permitted synchronous input, then this plugin's packaged native terminal form (`ask_user`, served by `bin/user_questions_mcp.py`). The local form waits for the answer, binds it to the decision ID and frozen scope digest, and does not emit a second assistant question message. Closed choices use a selectable list; open-ended indexes, ranges, severity combinations and exact-token confirmations use native text input with the complete grammar. It performs no commands, repository writes, credential reads, network access or permission changes. Async questions are used only where current host evidence establishes usable controls; tool acceptance alone is insufficient. Explicit Approve/Deny replies bind to one unchanged, unambiguous conversational decision without demanding its displayed key again. Ambiguity, supersession, exact-token/digest and runtime-permission rules remain enforced. No answer, cancellation or unsupported input grants consent. Each plugin ships its own provider; no sibling installation or user-settings change is required. Headless hosts retain an explicit unresolved-input fallback. Claude-specific question behavior is unchanged.
-
-Codex uses structured question controls first. When plain text is required, put all context, reports, confidence and limitations before the question; the question and complete options or accepted input syntax are the final terminal block, with no trailing summary or status.
-
-Rejected question calls resume at the pending decision without replaying delivered report context. A synchronous mode error does not establish async unavailability; explicit higher-priority host requirements for plain text remain binding and are reported as policy restrictions, not missing tools.
-
-A user-reported dismissed question leaves its decision pending. The root checks another suitable control, then asks once in its final plain-chat response if no control remains usable; the dismissed transport stays unsuitable for later required questions in that host until delivery is verified again.
-
 `bridge_CC-Codex` lets Claude Code and OpenAI Codex hand one another bounded implementation, advice, and review requests. Its normalized plugin identifier is `bridge`. It is one repository with two independently installable host integrations: the Claude Code half calls the `codex` CLI, and the Codex half calls Claude through the bridge's host-launched MCP server.
 
 The bridge is useful with either host integration installed and has no dependency on another plugin from this repository. Existing-plugin replacement and consumer migration are deliberately outside this standalone package.
 
+> Contributing or want internals? See [Development and release verification](docs/development.md) and [Security and privacy](docs/security.md).
+
 > Release: `0.12.2`. Claude- and Codex-side setup skills provide an approval-bound lifecycle for safe configuration and repair while retaining full caller-input, workspace/session authority, recursion, asynchronous lifecycle, envelope/transcript, and approval boundaries.
+
+## 🚀 After installation
+
+1. Run `$bridge:setup` in Codex to configure [Claude provider consent](rules/provider-consent.md) once.
+2. To approve that consent without typing the confirmation in the setup flow, run `bin/bridge_consent.py issue-token` in your own terminal and pass the printed one-time token: `$bridge:setup --approve-claude-consent --consent-token <token>`.
+
+Consent details:
+
+- The token is valid 5 minutes and consumed by one grant. `grant --approve` run from a script without a terminal needs it as `BRIDGE_OPERATOR_TOKEN` and otherwise exits 2 without writing. Plain setup retains operator-terminal confirmation.
+- The approval covers task-relevant private code Claude reads in confirmed projects and ordinary inference, with explicit exclusions; installation alone grants nothing. Later calls check and reuse the grant without per-file prompts.
+- The operator can revoke it with `bridge_consent.py revoke`.
+- Stored user policy does not prove the active host loaded it: a fresh session may be needed, and project/managed restrictions remain authoritative.
+- Python 3.10 needs an existing `tomli` for this optional policy stage.
+- Codex setup helper recipes use the quoted packaged Python launcher (`bin/python`, or `bin/python.cmd` on native Windows). Direct MCP startup retains its separate Python 3.10+ host-PATH prerequisite.
+
+### How Codex asks questions
+
+Codex asks only for a genuinely missing decision, material input or protected action. Authorized preparation, internal recovery and completion need no new consent. Existing answers, scope/digest confirmation and runtime permission remain authoritative.
+
+- **Order of controls:** Codex prefers permitted synchronous input, then this plugin's packaged native terminal form (`ask_user`, served by `bin/user_questions_mcp.py`). Each plugin ships its own provider; no sibling installation or user-settings change is required.
+- **The local form** waits for the answer and binds it to the decision ID and frozen scope digest. Closed choices use a selectable list; open-ended indexes, ranges, severity combinations and exact-token confirmations use native text input with the complete grammar. It performs no commands, repository writes, credential reads, network access or permission changes.
+- **Approve/Deny replies** bind to one unchanged, unambiguous conversational decision without demanding its displayed key again. Ambiguity, supersession, exact-token/digest and runtime-permission rules remain enforced.
+- **No consent by default:** no answer, cancellation or unsupported input grants consent.
+- **Plain text:** when required, all context, reports, confidence and limitations come before the question; the question and complete options or accepted input syntax are the final terminal block, with no trailing summary or status. Headless hosts retain an explicit unresolved-input fallback.
+- **Dismissed question:** a user-reported dismissed question leaves its decision pending. The root checks another suitable control, then asks once in its final plain-chat response if no control remains usable; the dismissed transport stays unsuitable for later required questions in that host until delivery is verified again. Rejected question calls resume at the pending decision without replaying delivered report context.
+- Claude-specific question behavior is unchanged.
 
 ______________________________________________________________________
 
@@ -77,6 +93,36 @@ Results are compact envelopes rather than transcripts:
 
 > The model-authored core is validated separately from harness metadata; model output cannot claim observed cost, timing, process, or correlation fields.
 
+### Skills and contract rules
+
+Every skill and shipped rule is listed here; each links to its own file.
+
+| Skill                                           | Host        | Purpose                                                         |
+| ----------------------------------------------- | ----------- | --------------------------------------------------------------- |
+| [`/bridge:implement`](claude-skills/implement/) | Claude Code | Bounded write-capable change by Codex; supports `--background`. |
+| [`/bridge:advise`](claude-skills/advise/)       | Claude Code | Read-only answer from Codex.                                    |
+| [`/bridge:review`](claude-skills/review/)       | Claude Code | Read-only adversarial review by Codex.                          |
+| [`/bridge:setup`](claude-skills/setup/)         | Claude Code | Approval-bound check, configure, repair, authenticate, verify.  |
+| [`/bridge:status`](claude-skills/status/)       | Claude Code | Inspect a detached `implement` job.                             |
+| [`/bridge:result`](claude-skills/result/)       | Claude Code | Read a detached job's result.                                   |
+| [`/bridge:cancel`](claude-skills/cancel/)       | Claude Code | Cancel a detached job.                                          |
+| [`$bridge:implement`](codex-skills/implement/)  | Codex       | Bounded write-capable change by Claude Code.                    |
+| [`$bridge:advise`](codex-skills/advise/)        | Codex       | Read-only answer from Claude Code.                              |
+| [`$bridge:review`](codex-skills/review/)        | Codex       | Read-only adversarial review by Claude Code.                    |
+| [`$bridge:setup`](codex-skills/setup/)          | Codex       | Approval-bound setup lifecycle for the peer.                    |
+
+| Rule                                                             | Covers                                                                                                         |
+| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| [`envelope.md`](rules/envelope.md)                               | Result envelope: model-authored core and harness metadata.                                                     |
+| [`escalation-policy.md`](rules/escalation-policy.md)             | Effort and timeout policy.                                                                                     |
+| [`prompting.md`](rules/prompting.md)                             | Neutral task prompting and budget preamble.                                                                    |
+| [`recursion-guard.md`](rules/recursion-guard.md)                 | Depth and `run_id` propagation.                                                                                |
+| [`self-healing.md`](rules/self-healing.md)                       | Bounded self-healing; no write-timeout retries.                                                                |
+| [`provider-consent.md`](rules/provider-consent.md)               | Claude provider consent.                                                                                       |
+| [`claude-transfer-policy.txt`](rules/claude-transfer-policy.txt) | Exact approved consent block.                                                                                  |
+| [`codex-user-questions.md`](rules/codex-user-questions.md)       | Codex question routing; details in [`codex-user-questions-details.md`](rules/codex-user-questions-details.md). |
+| [`cli-baseline.json`](rules/cli-baseline.json)                   | Verified host CLI surface baseline.                                                                            |
+
 <a id="-requirements"></a>
 
 ## ✅ Requirements
@@ -84,7 +130,9 @@ Results are compact envelopes rather than transcripts:
 - Claude Code with plugin support for the Claude half.
 - OpenAI Codex CLI for Claude → Codex calls, available as `codex` on `PATH` and authenticated for the requested model.
 - Claude Code CLI for Codex → Claude calls, available as `claude` on `PATH` and authenticated for the requested model.
-- A `python` executable on `PATH` that reports Python 3.10 or newer for the bridge's Python entry points; the same launcher is used on POSIX and Windows. The plugin's `bin/python` and native Windows `bin/python.cmd` probe candidates for Python 3.10+ before running Claude Code shell workloads once, preserving an eligible system `python`. The direct MCP command still requires Python 3.10+ available as `python` on the host search path; Codex Rig sync validates this prerequisite without installing a global interpreter shim, and a missing eligible runtime keeps the affected interaction unresolved.
+- A `python` executable on `PATH` that reports Python 3.10 or newer for the bridge's Python entry points; the same launcher is used on POSIX and Windows.
+  - The plugin's `bin/python` and native Windows `bin/python.cmd` probe candidates for Python 3.10+ before running Claude Code shell workloads once, preserving an eligible system `python`.
+  - The direct MCP command still requires Python 3.10+ available as `python` on the host search path. Codex Rig sync validates this prerequisite without installing a global interpreter shim, and a missing eligible runtime keeps the affected interaction unresolved.
 - A writable project-local `.temp/bridge/` directory for bridge state and transcripts.
 - A writable platform user-state directory for the host-held approval-integrity key, one-use approval receipts, per-target mutation locks, and sanitized setup records; setup never stores provider credentials or raw login output there.
 
@@ -138,7 +186,10 @@ The setup result is defined by `schemas/setup-result.schema.json`, separate from
 
 ## 🔌 Is MCP required?
 
-MCP is complementary to the bridge as a whole but mandatory for the Codex → Claude Code direction. Claude Code → Codex calls launch `codex exec` directly and do not need MCP. Codex → Claude Code calls must use the packaged MCP server because a `claude --print` process started from a sandboxed Codex model turn cannot rely on the normal Claude authentication context, while the Codex host launches the MCP server outside that model sandbox.
+MCP is complementary to the bridge as a whole but mandatory for the Codex → Claude Code direction.
+
+- **Claude Code → Codex** launches `codex exec` directly and does not need MCP.
+- **Codex → Claude Code** must use the packaged MCP server: a `claude --print` process started from a sandboxed Codex model turn cannot rely on the normal Claude authentication context, while the Codex host launches the MCP server outside that model sandbox.
 
 If you install only the Claude Code half to call Codex, MCP is not required. If you install only the Codex half or want the complete bidirectional bridge, the `.codex-mcp.json` declaration and `bin/bridge_mcp.py` are required transport components, not optional enhancements. The MCP boundary provides the three request tools plus read-only status and native workspace binding tools and prevents model-controlled workspace, background, or session selection.
 
@@ -203,7 +254,14 @@ The verb skills accept the bridge's task text and these caller-selected fields:
 | `advise`, `review`, `implement` | `--network none\|github-read` (default `none`; caller opt-in, Codex peer only).                                                                                                                                                |
 | `advise` and `review`           | May receive one bounded retry at the next lower supported effort tier, so the retry can finish within the same budget.                                                                                                         |
 
-Pass task text with `--task`, or with `--task-file <path>` when it contains a backtick, `$`, double quote, backslash or a flag-shaped token; the two are mutually exclusive, and the file must be a regular file of at most 16 KiB. Worst-case wall time of one call is `--timeout-seconds` × 2.4: the hard cutoff is × 1.2, and a timed-out `advise` or `review` retries once at the next lower effort with the same budget. Foreground calls set their Bash `timeout` above that figure; when it can reach the ~10 min foreground cap, run the call in the background. A `status=error` object (exit 2) is a refused invocation, such as passing both `--task` and `--task-file`: fix the invocation rather than retrying it unchanged.
+### Task text and timing
+
+- Pass task text with `--task`, or with `--task-file <path>` when it contains a backtick, `$`, double quote, backslash or a flag-shaped token. The two are mutually exclusive, and the file must be a regular file of at most 16 KiB.
+- Worst-case wall time of one call is `--timeout-seconds` × 2.4: the hard cutoff is × 1.2, and a timed-out `advise` or `review` retries once at the next lower effort with the same budget.
+- Foreground calls set their Bash `timeout` above that figure; when it can reach the ~10 min foreground cap, run the call in the background.
+- A `status=error` object (exit 2) is a refused invocation, such as passing both `--task` and `--task-file`: fix the invocation rather than retrying it unchanged.
+
+### Detached jobs
 
 Long-running implementation work may be detached. Use the job identifier printed by the bridge to inspect or stop it — one check when you have a reason to look, never a polling loop; any state other than `queued` or `running` is final:
 
@@ -225,7 +283,11 @@ Pass the same `--workspace` the originating call used; when it omitted the optio
 | `stalled`           | The supervisor is gone, or the job is still queued after 120 seconds. Route to `/bridge:result`.        |
 | `missing`           | No such job in this workspace: a wrong workspace, a job that never existed, or one already pruned.      |
 
-> Background execution and lifecycle controls are available only for Claude Code → Codex `implement`. `advise` and `review` are ephemeral calls without job records; the Claude skills run them as background Bash calls (`run_in_background: true`) when the budget can reach the ~10 min foreground cap or the caller has independent work, so the host shows a task row and a completion notification at no extra model cost. Every Claude skill reply ends with one usage line copied from the envelope (`codex <model>/<effort> · in … (cached …) · out … · N s`). The Codex → Claude MCP transport does not expose reverse background requests or separate status/result/cancel skills.
+> Background execution and lifecycle controls are available only for Claude Code → Codex `implement`.
+>
+> - `advise` and `review` are ephemeral calls without job records; the Claude skills run them as background Bash calls (`run_in_background: true`) when the budget can reach the ~10 min foreground cap or the caller has independent work, so the host shows a task row and a completion notification at no extra model cost.
+> - Every Claude skill reply ends with one usage line copied from the envelope (`codex <model>/<effort> · in … (cached …) · out … · N s`).
+> - The Codex → Claude MCP transport does not expose reverse background requests or separate status/result/cancel skills.
 
 After an implementation returns:
 
@@ -244,8 +306,6 @@ Session continuation is also limited to Claude Code → Codex `implement`:
 
 ## 📦 Install for Codex
 
-> Codex questions use a [short shared guide](rules/codex-user-questions.md), shipped locally by this plugin. The root uses a permitted question route with meaningful presets and built-in custom input; children hand decisions back to the root. Detailed approval/recovery rules load only when needed. Host restrictions still apply; this does not override a plain-text-only host. Before fallback, discover deferred native question tools through the current catalog or tool search, including `functions.exec` `ALL_TOOLS` when exposed, and record route eligibility. An explicit current host contract establishing rendered controls, text input, and answer lifetime permits first use; tool acceptance alone does not prove delivery. Unknown async usability is unsuitable. Select the route before asking, and deliver a plain-chat fallback once in the final response, never in both commentary and final. A text-delivered async question stays pending without a second control or repeated menu.
-
 Register the repository marketplace and add the Codex plugin:
 
 ```bash
@@ -253,9 +313,28 @@ codex plugin marketplace add Borda/AI-Rig
 codex plugin add bridge@borda-ai-rig
 ```
 
-The Codex manifest declares the bridge MCP server via `.codex-mcp.json`, which starts `bin/bridge_mcp.py` using native `cwd: "."` and relative script arguments. Claude Code ships no `.mcp.json` at all: the Claude-to-Codex direction is CLI-only (`bin/bridge_call.py`), and Claude Code auto-discovers any file literally named `.mcp.json` at a plugin's root regardless of manifest intent, so the plugin deliberately never ships one to avoid registering a server Claude Code has no use for.
+The Codex manifest declares the bridge MCP server via `.codex-mcp.json`, which starts `bin/bridge_mcp.py`. Claude Code ships no `.mcp.json`: the Claude-to-Codex direction is CLI-only (`bin/bridge_call.py`), and the plugin deliberately never ships that file because Claude Code would auto-discover it and register a server it has no use for.
 
-> The server starts unbound; its launch directory locates installed code and never grants project authority. Call `bridge_bind_workspace` with the known absolute project folder as untrusted `proposed_workspace`, then confirm its exact canonical target in one native form, which states that Codex proposed the folder. Empty arguments retain manual selection followed by confirmation. Rebinding clears old authority immediately, including cancellation. Every advise/review/implement call requires the current `binding_id` returned by binding/status; missing or stale IDs fail before provider work. Folder resolution and directory identity are rechecked before each executable call. Filesystem root, home itself and every directory above it, installed payload/cache folders, agent configuration homes with everything inside them (`~/.claude`, `~/.codex`, and the directories `CLAUDE_CONFIG_DIR` and `CODEX_HOME` name), user credential directories with everything inside them (`~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.kube`, `~/.docker`), and, outside Windows, `/etc` with everything inside it are refused; project subdirectories of home are allowed. `bridge_implement` additionally needs project evidence in the bound folder or an ancestor below the home: `.git` (directory or worktree file), `.hg`, `.svn`, `pyproject.toml`, `setup.py`, `setup.cfg`, `package.json`, `Cargo.toml`, `go.mod`, `pom.xml`, `build.gradle`, `build.gradle.kts`, `CMakeLists.txt` or `Makefile`; advise and review need none. `bridge_setup.py --workspace` refuses the same denied folders (no marker rule) for every action except the read-only `check`. Binding is process-local project identity, not editing approval, runtime permission, authentication, or paid-call consent. If Codex asks you to trust or enable the installed MCP content, review the displayed command and approve it according to your local policy.
+If Codex asks you to trust or enable the installed MCP content, review the displayed command and approve it according to your local policy.
+
+### Workspace binding
+
+The server starts unbound; its launch directory locates installed code and never grants project authority.
+
+1. Call `bridge_bind_workspace` with the known absolute project folder as untrusted `proposed_workspace`. Empty arguments retain manual selection followed by confirmation.
+2. Confirm its exact canonical target in one native form, which states that Codex proposed the folder.
+3. Every advise/review/implement call then requires the current `binding_id` returned by binding/status; missing or stale IDs fail before provider work. Rebinding clears old authority immediately, including cancellation. Folder resolution and directory identity are rechecked before each executable call.
+
+Binding is process-local project identity, not editing approval, runtime permission, authentication, or paid-call consent.
+
+Refused folders (`bridge_setup.py --workspace` refuses the same ones, with no marker rule, for every action except the read-only `check`):
+
+- Filesystem root, home itself and every directory above it, and installed payload/cache folders.
+- Agent configuration homes with everything inside them (`~/.claude`, `~/.codex`, and the directories `CLAUDE_CONFIG_DIR` and `CODEX_HOME` name).
+- User credential directories with everything inside them (`~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.kube`, `~/.docker`).
+- Outside Windows, `/etc` with everything inside it.
+
+Project subdirectories of home are allowed. `bridge_implement` additionally needs project evidence in the bound folder or an ancestor below the home: `.git` (directory or worktree file), `.hg`, `.svn`, `pyproject.toml`, `setup.py`, `setup.cfg`, `package.json`, `Cargo.toml`, `go.mod`, `pom.xml`, `build.gradle`, `build.gradle.kts`, `CMakeLists.txt` or `Makefile`; advise and review need none.
 
 Start a fresh Codex session after installation, then run the Codex-side setup skill:
 
@@ -266,6 +345,8 @@ $bridge:setup
 The Codex half degrades cleanly when `claude` is absent or unauthenticated: setup reports the prerequisite and bridge calls return a structured blocked result.
 
 > The static planner does not establish that the current MCP session is loaded or workspace-bound; use `bridge_status` from a fresh Codex session for that evidence. The bridge does not install Claude, read credentials from files, or fall back to a shell call inside the Codex sandbox.
+
+Codex questions use a [short shared guide](rules/codex-user-questions.md) shipped locally by this plugin. The root uses a permitted question route with meaningful presets and built-in custom input; children hand decisions back to the root. Host restrictions still apply; this does not override a plain-text-only host.
 
 <a id="-use-from-codex"></a>
 
@@ -306,16 +387,22 @@ Model and effort selection:
 
 Budget and result states:
 
-| Item            | Contract                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Soft budget     | Two minutes for `advise`, five minutes for `review`, and ten minutes for `implement`. A callee receives the budget in-band and is expected to scope its work to fit.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| Hard cutoff     | 1.2× the soft budget.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| Transport input | MCP accepts at most 16,384 task characters and Bridge rejects task UTF-8 over 16 KiB or a constructed prompt over 20 KiB before creating artifacts or launching a peer. Bridge resolves each peer executable and measures the full argv with Windows `list2cmdline` UTF-16 semantics; `.cmd`/`.bat` shims use a conservative 8,000-unit ceiling below Cmd.exe's 8,191-character limit.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| Child output    | Bridge bounds ordinary raw stdout records and every compacted record to 256 KiB, and retains at most 256 KiB combined stdout/stderr, reserving transcript wrapper space. A parsed prefix proving `item.completed`, `command_execution`, and the start of an `aggregated_output` string admits a temporary raw record up to 8 MiB; both type fields must precede that string. The complete record must validate and compact within 256 KiB, with non-output fields also fitting 256 KiB; malformed, unknown, agent-message, unproven, and larger records remain terminal. Codex started commands retain only `command_bytes` and `command_sha256`; completed commands keep a UTF-8-safe 4 KiB prefix with size/digest when truncated, and completed output becomes `aggregated_output_bytes` and `aggregated_output_sha256`. Prompts warn Codex to keep commands small without inline scripts or data and Claude to keep final JSON within the derived cap; read-only prompts state files cannot be written. Overflow still terminates the peer tree with `output-limit`, including final flush, timeout and cancellation paths; optional Codex-only `partial_output` salvages at most 4 KiB of the last complete agent message in the envelope and incident, labelled an unverified fragment for scoping follow-ups, never findings or a verdict. |
-| `partial`       | Valid work with explicit `remaining`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| `blocked`       | Names the permission, authentication, or input blocker.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `timeout`       | Identifies a cutoff.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `refused`       | Identifies recursion protection or another deliberate refusal.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Item            | Contract                                                                                                                                                             |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Soft budget     | Two minutes for `advise`, five minutes for `review`, and ten minutes for `implement`. A callee receives the budget in-band and is expected to scope its work to fit. |
+| Hard cutoff     | 1.2× the soft budget.                                                                                                                                                |
+| Transport input | MCP accepts at most 16,384 task characters; Bridge rejects task UTF-8 over 16 KiB or a constructed prompt over 20 KiB before creating artifacts or launching a peer. |
+| Child output    | Raw stdout records and every compacted record are bounded to 256 KiB, as is retained combined stdout/stderr. Overflow terminates the peer tree with `output-limit`.  |
+| `partial`       | Valid work with explicit `remaining`.                                                                                                                                |
+| `blocked`       | Names the permission, authentication, or input blocker.                                                                                                              |
+| `timeout`       | Identifies a cutoff.                                                                                                                                                 |
+| `refused`       | Identifies recursion protection or another deliberate refusal.                                                                                                       |
+
+Child output details:
+
+- Codex commands keep only a UTF-8-safe 4 KiB prefix of completed output plus byte count and SHA-256 digest; prompts warn Codex to keep commands small without inline scripts or data and Claude to keep final JSON within the derived cap.
+- Overflow still terminates the peer tree with `output-limit`, including final flush, timeout and cancellation paths. Optional Codex-only `partial_output` salvages at most 4 KiB of the last complete agent message in the envelope and incident, labelled an unverified fragment for scoping follow-ups, never findings or a verdict.
+- On Windows the full argv is measured with `list2cmdline` UTF-16 semantics; `.cmd`/`.bat` shims use a conservative 8,000-unit ceiling below Cmd.exe's 8,191-character limit. The exact record-admission rules are in `docs/security.md`.
 
 Depth and correlation:
 
@@ -344,10 +431,9 @@ Bridge state is project-local:
 
 Artifact handling:
 
-- Artifact directories and members are rechecked against the bound project and store before reads, creation, and writes, including cancellation markers and atomic temporary files. Escaping parents and linked file leaves are rejected; directory aliases contained within the store remain usable. These checks do not promise immunity to concurrent path replacement during an OS operation.
+- Artifact directories and members are rechecked against the bound project and store before reads, creation, and writes. Escaping parents and linked file leaves are rejected; directory aliases contained within the store remain usable. These checks do not promise immunity to concurrent path replacement during an OS operation.
 - Incident records do not persist child command arguments or environment data. They preserve the classified fault, reason, model, effort, verb, budget, transcript path, and—when a write-capable process is killed—the observed worktree delta. That delta is advisory: unchanged dirty status or unavailable Git can produce an empty delta despite edits, so inspect the actual worktree independently.
-- The optional health log records direction, verb, model, effort, cost/tokens when reported by the host, duration, status, depth, and `run_id`. A write failure appends a sanitized nonblocking telemetry warning to public `findings`, preserving the original status, verdict, decision fields and incident without rerunning the child.
-- The predictable `health.jsonl` member rejects nonregular files before open, opens without following links or reparse points, and requires its opened descriptor to be a regular single-link file. POSIX opens are nonblocking so a FIFO replacement cannot wait for a reader. A prepared symlink, reparse point, hard link, or nonregular member is refused without writing its target; optional telemetry refusal preserves the primary result. This does not provide universal containment if an attacker creates a new hard link after the descriptor check.
+- The optional health log records direction, verb, model, effort, cost/tokens when reported by the host, duration, status, depth, and `run_id`. A write failure appends a sanitized nonblocking telemetry warning to public `findings`, preserving the original status, verdict, decision fields and incident without rerunning the child. A symlink, reparse point, hard link, or nonregular `health.jsonl` is refused without writing its target.
 - Setup summarizes blocked/timeout/refused counts, their latest timestamps, and reported cost by direction, verb, and model; static CLI findings are reported separately.
 
 > Artifacts are evidence, not authority. Read the envelope, source changes, tests, permissions, and remaining limits before accepting consequential work. Delete `.temp/bridge/` only under your project's normal retention policy and only after preserving any incident or review evidence you still need.
@@ -367,15 +453,21 @@ Safety boundaries:
 - `implement` can modify the current worktree under the host's normal permission policy.
 - Setup configuration and repair are state-changing operations bound to an exact approval digest.
 - Authentication failures, permission denials, unsupported models, and unknown faults are surfaced as structured results or incidents.
-- Timeout and cancellation give POSIX peer groups a two-second cooperative grace, then force termination of any members left, even when the group leader already exited; once the group is empty no second signal is sent, because its id may already belong to an unrelated process group. Windows invokes `taskkill /T /F` before a leader can exit and orphan its tree; native Windows reparse and tree behavior still require native-host verification.
 - Provider login output is never captured, and rollback never touches credentials.
 - The peer child receives an allowlisted environment, not the caller's: base process keys, provider authentication keys, and on Windows the interpreter start-up keys. Unrelated API keys, cloud credentials, and the session's inter-agent messaging variables are dropped. A host whose proxy or enterprise provider path needs more names them in `BRIDGE_CHILD_ENV_EXTRA` (comma-separated).
-- ! BREAKING — unless the caller opts in with `--network github-read`, every Codex invocation pins `sandbox_workspace_write.network_access=false`, so an `implement` task that installed a dependency, refreshed a lockfile, or ran a network-touching hook now fails inside the sandbox. The control is Codex-side only; the Claude child is constrained by permission mode instead.
-- Opt-in egress: `--network github-read` swaps that pin for a profile that allows GET, HEAD and OPTIONS to `api.github.com` only, keeps `.git`, `.codex` and `.agents` at the workspace root read-only, and relies on Codex's experimental `network_proxy` feature (an unknown profile key is silently ignored by Codex, so re-check after upgrades). The caller chooses it per call; the default stays `none`, and the Claude peer refuses it. A GET can still carry workspace content in its URL, so prefer fetching GitHub data yourself and passing it in the task file. Each opted-in call first proves the limits with a sandbox preflight (a few requests to `api.github.com` and `example.com`) and is refused if any fails; the opt-in is refused outside macOS until enforcement there is verified. See `docs/security.md`.
+- Timeout and cancellation give POSIX peer groups a two-second cooperative grace, then force termination of any members left; Windows invokes `taskkill /T /F`. Native Windows reparse and tree behavior still require native-host verification. A failed output drain returns a non-retrying blocked result rather than timeout or cancellation unless output-limit was already observed.
 
-Termination reaps the child leader after native tree cleanup, including Windows `taskkill` and direct-kill fallbacks. The final wait is bounded to two seconds; unavailable exit status is diagnosed rather than fabricated. Existing timeout, cancellation, and output-limit classifications stay intact.
+Network access:
 
-Finalization freezes the bounded capture under its lock; a failed drain returns a non-retrying blocked drain failure rather than timeout or cancellation unless output-limit was already observed, and late unseen bytes are not reclassified as output-limit.
+> ! BREAKING — unless the caller opts in with `--network github-read`, every Codex invocation pins `sandbox_workspace_write.network_access=false`, so an `implement` task that installed a dependency, refreshed a lockfile, or ran a network-touching hook now fails inside the sandbox. The control is Codex-side only; the Claude child is constrained by permission mode instead.
+
+`--network github-read` is an opt-in per call; the default stays `none`, and the Claude peer refuses it:
+
+- It swaps that pin for a profile that allows GET, HEAD and OPTIONS to `api.github.com` only, and keeps `.git`, `.codex` and `.agents` at the workspace root read-only.
+- It relies on Codex's experimental `network_proxy` feature (an unknown profile key is silently ignored by Codex, so re-check after upgrades).
+- A GET can still carry workspace content in its URL, so prefer fetching GitHub data yourself and passing it in the task file.
+- Each opted-in call first proves the limits with a sandbox preflight (a few requests to `api.github.com` and `example.com`) and is refused if any fails.
+- The opt-in is refused outside macOS until enforcement there is verified. See `docs/security.md`.
 
 > The bridge never bypasses host permission prompts, invents a credential, retries a write-capable timeout, or silently replaces a requested effort tier.
 
@@ -383,9 +475,12 @@ Finalization freezes the bounded capture under its lock; a failed drain returns 
 
 ## ⬆️ Updating, uninstalling, and human-owned gates
 
-Update the marketplace snapshot through the host's normal plugin manager, then restart the host session. Uninstalling one half does not remove the other half or alter host credentials. Remote publication, marketplace refresh, provider login, MCP trust approval, and any permission escalation remain human-owned operations.
-
-The bridge's checked-in manifests and host baseline describe the CLI surface it was verified against. If setup reports missing or changed flags, upgrade the host or use a bridge release that supports the installed host; do not patch the baseline at runtime. Ordinary `make sync-*` runs invoke only the direct static doctor with explicit read-only semantics; they never invoke a setup skill, model, approval token, authentication, repair, restart, or provider call. After source changes, run the local verification commands in [Development and release verification](docs/development.md#local-checks): the focused plugin test suite, the whitespace check, and the disposable install-shaped package build and validation, with both Linux/macOS and native Windows PowerShell variants.
+- Update the marketplace snapshot through the host's normal plugin manager, then restart the host session.
+- Uninstalling one half does not remove the other half or alter host credentials.
+- Remote publication, marketplace refresh, provider login, MCP trust approval, and any permission escalation remain human-owned operations.
+- The bridge's checked-in manifests and host baseline describe the CLI surface it was verified against. If setup reports missing or changed flags, upgrade the host or use a bridge release that supports the installed host; do not patch the baseline at runtime.
+- Ordinary `make sync-*` runs invoke only the direct static doctor with explicit read-only semantics; they never invoke a setup skill, model, approval token, authentication, repair, restart, or provider call.
+- After source changes, run the local verification commands in [Development and release verification](docs/development.md#local-checks): the focused plugin test suite, the whitespace check, and the disposable install-shaped package build and validation, with both Linux/macOS and native Windows PowerShell variants.
 
 Run `action=verify-live ... live=required` only after explicitly accepting the separate provider call and its cost. A live setup probe verifies one selected path at that moment; it is diagnostic evidence, not proof that a future task will succeed. This documentation does not claim that either host is currently authenticated or live-verified.
 
