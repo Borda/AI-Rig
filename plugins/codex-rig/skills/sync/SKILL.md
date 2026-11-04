@@ -67,7 +67,7 @@ After approval, use only commands confirmed by authoritative help:
 Apply full networked CLI approval/denial contract in [Networked CLI Approval](../../shared/native-skill-contract.md#networked-cli-approval) and [Approval Brief](../../shared/native-skill-contract.md#approval-brief) to the complete owning command for each Git marketplace add/upgrade or `sync_codex.py` wrapper that owns one. Operation-specific brief: `Action and purpose`: refresh approved marketplace and reconcile selected Codex Rig plugin; `External capability`: marketplace download and lifecycle refresh; `Credential behavior`: use configured Codex marketplace access without reading or changing credentials; `Filesystem and worktree effects`: change local plugin cache and Codex-home plugin state, never source worktree; `Retry policy and safe denial outcome`: stop turn on denial, leave checked state unchanged. Runtime approval is separate from lifecycle approval, never expands marketplace, plugin, ref, or mutation scope; never request a broad `codex` approval prefix. Local marketplace/plugin listing stays sandboxed. `codex plugin add` from configured snapshot needs no separate network escalation; an approved wrapper already owns its nested marketplace add/upgrade.
 
 ```bash
-codex plugin marketplace add Borda/AI-Rig
+codex plugin marketplace add Borda/AI-Rig --sparse .agents/plugins --sparse plugins/codex-rig --sparse plugins/codemap-py --sparse plugins/bridge_cc-codex
 codex plugin marketplace upgrade borda-ai-rig
 codex plugin add codex-rig@borda-ai-rig
 ```
@@ -78,7 +78,7 @@ For release pin, supply `--ref` with published revision whose Codex Rig package 
 
 Omitting `--ref` follows remote default branch. An explicit ref pins it. Never silently change existing marketplace between pinned and unpinned modes: report mismatch, require legacy shim cleanup before deliberate marketplace removal and re-addition (on native Windows, the documented `agent-shims doctor` residue replaces the blocked `remove`). Never use `git clone`, edit marketplace configuration, delete old cache directories, or force update. A failed refresh must preserve and report prior installation state; never claim rollback unless CLI evidence proves it.
 
-The native sync wrapper verifies selected source package hashes/closure and required profile helper before managed-plugin removal. An already configured explicit pin is checked before marketplace mutation; default-branch refresh and new marketplace registration may precede source verification.
+The native sync wrapper registers the catalog and all three managed plugin trees with a filtered sparse Git checkout, migrating older full or incomplete sparse registrations through native marketplace remove/add. If re-registration fails after removal, cache files and enabled settings remain, but plugins are undiscoverable until successful registration. The native sync wrapper verifies selected source package hashes/closure and required profile helper before managed-plugin removal. An already configured explicit pin is checked before marketplace mutation; default-branch refresh and new marketplace registration may precede source verification.
 
 After successful managed-plugin installation, resolve active installed Codex Rig cache root and invoke the packaged profile helper:
 

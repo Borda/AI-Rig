@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.43.0
+
+- Preserve a defensible source review judgment when an unverified concern remains solely because a required runtime check is unavailable. Keep verification blocked, retain the concern and follow-up, and reserve no source judgment for genuinely undecidable source assessment.
+- Integrate the fetched target before PR remediation even when the merge is conflict-free; skip only when the target is already included. Pre-edit checks verify actual target inclusion and merge completion before finding fixes begin.
+- Sync Codex through a filtered sparse Git marketplace clone containing the catalog and all three managed plugins, avoiding the full repository blob download that repeatedly exceeded Codex’s 30-second clone limit. Existing full or incomplete sparse registrations migrate automatically before plugin removal; subsequent refreshes retain bounded retries.
+- Replace the generic remediation outcome label with a one-line account of the PR or local scope, initial concern, and verified final state. Partial results lead with completed implementation and checks before naming unfinished verification, keeping failed, timed-out, not-run and no-code-change states explicit.
+- Recognize successful review completion with optional context arguments, preventing a false unfinished-review diagnostic after the completion check has already passed.
+- Ship the four delivery design principles in the always-loaded global template: simplest design that meets the contract, proven root cause before any behaviour change, automatic recovery that reuses still-valid evidence, and no routine incomplete handover treated as success. Every Codex session now starts with them, not only the sessions that invoke a workflow.
+- Retry a failed marketplace refresh up to three times, pausing 5 s then 15 s, so one timed-out clone no longer aborts the whole Codex sync. After the last failure the sync stops before any plugin is removed or added, and the error names the attempt count and Codex's fixed 30 s clone limit; the install guide now documents that limit and the rerun remedy.
+
 ## 0.42.2
 
 - Align review recommendations with demonstrated impact and remaining repair scope: localized correctness and test fixes can be Minor changes, while Major revision requires finding-linked material impact or substantial repair. Reconcile the final summary and rating after findings are resolved or rejected.

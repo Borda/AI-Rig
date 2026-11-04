@@ -80,7 +80,6 @@ NARROWED_SHELL_RULES = {
         "Bash(sed 's/-\\+/-/g; s/^-//; s/-$//')",
         "Bash(sed 's/\\.[^.]*$//')",
         "Bash(sed 's|refs/remotes/origin/||')",
-        "Bash(sed -nE 's/^(PR:[[:space:]]*|## Code Review: (PR )?)#?([1-9][0-9]*)([[:space:]].*)?$/\\3/p' \"$REVIEW_FILE\")",
     ],
     "cc_research": [
         "Bash(find .cache*)",

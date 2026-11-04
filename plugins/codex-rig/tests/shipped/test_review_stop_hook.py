@@ -274,7 +274,21 @@ def test_claimed_controlling_stop_is_preserved(review_state, message: str) -> No
 
 
 @pytest.mark.parametrize("same_run", [True, False])
-def test_completion_must_name_the_active_review(review_state, same_run: bool) -> None:
+@pytest.mark.parametrize("exit_code", [0, 1])
+@pytest.mark.parametrize(
+    ("prefix", "suffix"),
+    [
+        pytest.param("", "", id="bare"),
+        pytest.param("", " --codex-home /codex", id="codex-home"),
+        pytest.param("", " --parent-thread-id parent", id="parent-thread"),
+        pytest.param("", " --codex-home /codex --parent-thread-id parent", id="both-context-options"),
+        pytest.param("--parent-thread-id parent --codex-home /codex ", "", id="context-before-completion"),
+        pytest.param("", " --parent-thread-id=parent --codex-home=/codex", id="equals-context-options"),
+    ],
+)
+def test_completion_must_name_the_active_review(
+    review_state, same_run: bool, exit_code: int, prefix: str, suffix: str
+) -> None:
     """Another review's successful completion cannot close this turn's review.
 
     The completion command validates one run directory; it releases the stop only when it names the run this turn
@@ -284,13 +298,69 @@ def test_completion_must_name_the_active_review(review_state, same_run: bool) ->
     run = "run-a" if same_run else "run-b"
     records.append(
         command_record(
-            '"/plugin/bin/python" "/plugin/shared/find-review-report.py" --complete-run '
-            f'"/workspace/.reports/codex/code-review/{run}"',
+            f'"/plugin/bin/python" "/plugin/shared/find-review-report.py" {prefix}--complete-run '
+            f'"/workspace/.reports/codex/code-review/{run}"{suffix}',
             "Validated final bytes",
+            exit_code,
         )
     )
 
-    assert ("decision" in HOOK.evaluate(payload, records, "/plugin")) is not same_run
+    assert ("decision" not in HOOK.evaluate(payload, records, "/plugin")) is (same_run and exit_code == 0)
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        "--help",
+        "--unknown value",
+        "--codex-home",
+        "--codex-home=",
+        "--parent-thread-id --help",
+        "--codex-home /first --codex-home /second",
+        "--complete-run /workspace/.reports/codex/code-review/run-b",
+    ],
+)
+def test_invalid_completion_arguments_leave_review_active(review_state, options: str) -> None:
+    """A help-only or unrecognized invocation cannot stand in for report validation."""
+    payload, records = review_state
+    records.append(
+        command_record(
+            '"/plugin/bin/python" "/plugin/shared/find-review-report.py" '
+            f"--complete-run /workspace/.reports/codex/code-review/run-a {options}"
+        )
+    )
+
+    assert HOOK.evaluate(payload, records, "/plugin")["decision"] == "block"
+
+
+@pytest.mark.parametrize("separator", [" ", "="])
+@pytest.mark.parametrize("quote", ['"', "'"])
+def test_windows_completion_accepts_context_options(review_state, separator: str, quote: str) -> None:
+    """Native PowerShell context options retain the completed review's Windows identity."""
+    payload, records = review_state
+    payload["cwd"] = "C:\\workspace"
+    records[-1]["payload"]["item"].update(
+        cwd="file:///C:/workspace",
+        command=[
+            "pwsh.exe",
+            "-Command",
+            '& "C:\\plugin\\bin\\python.cmd" "C:\\plugin\\shared\\create_run.py" --skill code-review',
+        ],
+    )
+    completed = command_record("")
+    completed["payload"]["item"].update(
+        cwd="file:///C:/workspace",
+        command=[
+            "pwsh.exe",
+            "-Command",
+            '& "C:\\plugin\\bin\\python.cmd" "C:\\plugin\\shared\\find-review-report.py" '
+            '--parent-thread-id parent --complete-run "C:\\workspace\\.reports\\codex\\code-review\\run-a" '
+            f"--codex-home{separator}{quote}C:\\codex home{quote}",
+        ],
+    )
+    records.append(completed)
+
+    assert HOOK.evaluate(payload, records, "C:\\plugin") == {}
 
 
 def test_promoted_run_completion_closes_original_identity(review_state) -> None:

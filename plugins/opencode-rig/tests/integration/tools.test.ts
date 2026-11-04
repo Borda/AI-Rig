@@ -561,6 +561,132 @@ describe("rig_dispatch", () => {
     )
     expect(harness.removedSessions).toEqual(["child-1"])
   })
+
+  it("accepts a reported change inside the recorded scope", async () => {
+    const harness = await createHarness(changedProject())
+    await harness.call("rig_evidence", { action: "start", skill: "rig-plan", paths: ["src"] })
+    harness.childReply = "Edited the module.\nchanged: src/b.ts"
+    const result = await harness.call("rig_dispatch", {
+      role: "rig-implementer",
+      task: "implement",
+      read_only: false,
+      paths: ["src"],
+    })
+    expect(result.content).toContain("changed: src/b.ts")
+    expect(harness.childPrompts.at(-1)?.text).toContain("changed: <path>")
+    expect(harness.removedSessions).toEqual(["child-1"])
+  })
+
+  it("rejects a reported change outside the recorded scope and names it", async () => {
+    const harness = await createHarness(changedProject())
+    await harness.call("rig_evidence", { action: "start", skill: "rig-plan", paths: ["src"] })
+    harness.childReply = "Edited an unrelated test.\nchanged: tests/b.test.ts"
+    await expect(
+      harness.call("rig_dispatch", {
+        role: "rig-implementer",
+        task: "implement",
+        read_only: false,
+        paths: ["src"],
+      }),
+    ).rejects.toThrow(/outside the recorded run scope: tests\/b\.test\.ts; recorded scope: src/)
+    expect(harness.removedSessions).toEqual(["child-1"])
+  })
+
+  it("rejects a sibling path that only shares the scope prefix", async () => {
+    const harness = await createHarness(changedProject())
+    await harness.call("rig_evidence", { action: "start", skill: "rig-plan", paths: ["src"] })
+    harness.childReply = "changed: srcs/b.ts"
+    await expect(
+      harness.call("rig_dispatch", {
+        role: "rig-implementer",
+        task: "implement",
+        read_only: false,
+        paths: ["src"],
+      }),
+    ).rejects.toThrow(/outside the recorded run scope: srcs\/b\.ts/)
+  })
+
+  it("behaves as today without an active run", async () => {
+    const harness = await createHarness(changedProject())
+    harness.childReply = "changed: lib/b.ts"
+    const result = await harness.call("rig_dispatch", {
+      role: "rig-implementer",
+      task: "implement",
+      read_only: false,
+      paths: ["src"],
+    })
+    expect(result.content).toContain("changed: lib/b.ts")
+  })
+
+  it("rejects nothing when the run recorded every changed path", async () => {
+    const harness = await createHarness(changedProject())
+    await harness.call("rig_evidence", { action: "start", skill: "rig-plan" })
+    harness.childReply = "changed: lib/b.ts"
+    const result = await harness.call("rig_dispatch", {
+      role: "rig-implementer",
+      task: "implement",
+      read_only: false,
+      paths: ["src"],
+    })
+    expect(result.content).toContain("changed: lib/b.ts")
+  })
+
+  it.each([
+    "Done. Changed: 2 files (src/a.ts, tests/b.test.ts)",
+    "changed: (src/a.ts)",
+    "changed: src/a.ts and src/b.ts",
+  ])("does not read prose as an accounting path list: %s", async (reply) => {
+    const harness = await createHarness(changedProject())
+    await harness.call("rig_evidence", { action: "start", skill: "rig-plan", paths: ["src"] })
+    harness.childReply = reply
+    const result = await harness.call("rig_dispatch", {
+      role: "rig-implementer",
+      task: "implement",
+      read_only: false,
+      paths: ["src"],
+    })
+    expect(result.content).toContain(reply)
+  })
+
+  it("passes a child that reports no changed paths", async () => {
+    const harness = await createHarness(changedProject())
+    await harness.call("rig_evidence", { action: "start", skill: "rig-plan", paths: ["src"] })
+    harness.childReply = "Nothing to change; the code already matches the plan."
+    const result = await harness.call("rig_dispatch", {
+      role: "rig-implementer",
+      task: "implement",
+      read_only: false,
+      paths: ["src"],
+    })
+    expect(result.content).toContain("Nothing to change")
+  })
+
+  it("checks only the calling session's recorded scope", async () => {
+    const project = changedProject()
+    const first = await createHarness(project, {}, "session-a")
+    await first.call("rig_evidence", { action: "start", skill: "rig-plan", paths: ["src"] })
+    const second = await createHarness(project, {}, "session-b")
+    await second.call("rig_evidence", { action: "start", skill: "rig-plan", paths: ["tests"] })
+
+    second.childReply = "Edited a source file.\nchanged: src/b.ts"
+    await expect(
+      second.call("rig_dispatch", {
+        role: "rig-implementer",
+        task: "implement",
+        read_only: false,
+        paths: ["tests"],
+      }),
+    ).rejects.toThrow(/outside the recorded run scope: src\/b\.ts/)
+
+    first.childReply = "Edited a source file.\nchanged: src/b.ts"
+    const accepted = await first.call("rig_dispatch", {
+      role: "rig-implementer",
+      task: "implement",
+      read_only: false,
+      paths: ["src"],
+    })
+    expect(accepted.content).toContain("changed: src/b.ts")
+  })
 })
 
 describe("rig_doctor", () => {

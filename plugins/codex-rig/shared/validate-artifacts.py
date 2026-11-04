@@ -3407,11 +3407,62 @@ def _validate_code_remediate_pr_source(
         raise SystemExit("code-remediate-pr-source-worktree-preflight-invalid")
 
 
+def _validate_code_remediate_target_integration(
+    pr_dir: Path, resolution: dict[str, Any], *, current_checkout: bool
+) -> None:
+    """Prove target inclusion and merge identity from the collected repository's Git objects."""
+    checkout = _load_json(pr_dir / "local-checkout.json")
+    worktree = checkout.get("worktree")
+    if not isinstance(worktree, str) or not Path(worktree).is_absolute():
+        raise SystemExit("code-remediate-target-integration-worktree-invalid")
+    target, pre, post = (resolution.get(key) for key in ("target_oid", "pre_merge_head", "post_merge_head"))
+    if any(not isinstance(oid, str) or re.fullmatch(r"[0-9a-f]{40}", oid) is None for oid in (target, pre, post)):
+        raise SystemExit("code-remediate-merge-resolution-execution-head-invalid")
+    # Use retained source coordinates, never the caller's unrelated current directory.
+    commands = [("merge-base", "--is-ancestor", target, post), ("merge-base", "--is-ancestor", pre, post)]
+    if resolution["status"] == "completed":
+        commands.append(("show", "-s", "--format=%P", post))
+    if current_checkout:
+        commands.extend([("merge-base", "--is-ancestor", post, "HEAD"), ("ls-files", "--unmerged")])
+        commands.extend(
+            ("rev-parse", "--git-path", marker)
+            for marker in ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply")
+        )
+    for args in commands:
+        try:
+            result = subprocess.run(  # noqa: S603 - fixed Git operations and validated object IDs, no shell
+                ["git", "-C", worktree, *args],  # noqa: S607 - Git is the declared project prerequisite
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=30,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise SystemExit("code-remediate-target-integration-git-unavailable") from exc
+        if args[0] == "merge-base" and result.returncode == 1:
+            code = "target-integration-checkout-head-mismatch" if args[-1] == "HEAD" else "target-not-integrated"
+            raise SystemExit("code-remediate-" + code)
+        if result.returncode != 0:
+            raise SystemExit("code-remediate-target-integration-git-unavailable")
+        if args[0] == "show" and result.stdout.split() != [pre, target]:
+            raise SystemExit("code-remediate-target-merge-parents-invalid")
+        if args[0] == "ls-files" and result.stdout.strip():
+            raise SystemExit("code-remediate-target-integration-unmerged-paths")
+        if args[0] == "rev-parse":
+            marker = Path(result.stdout.strip())
+            if not marker.is_absolute():
+                marker = Path(worktree) / marker
+            if marker.exists():
+                raise SystemExit("code-remediate-target-integration-operation-in-progress")
+
+
 def _validate_code_remediate_merge_resolution(
     metadata: dict[str, Any],
     pr_dir: Path,
     target_branch: dict[str, Any],
     expected_pre_merge_head: str | None = None,
+    *,
+    require_integrated: bool = False,
 ) -> None:
     """Require target-merge completion and optionally bind it to a verified PR head."""
     path = pr_dir / "merge-resolution.json"
@@ -3433,7 +3484,7 @@ def _validate_code_remediate_merge_resolution(
     missing = sorted(required - resolution.keys())
     if missing:
         raise SystemExit("code-remediate-merge-resolution-missing:" + ",".join(missing))
-    if resolution.get("schema_version") != 1:
+    if resolution.get("schema_version") not in {1, 2}:
         raise SystemExit("code-remediate-merge-resolution-schema-invalid")
     if resolution.get("target_oid") != target_branch.get("local_head"):
         raise SystemExit("code-remediate-merge-resolution-target-oid-mismatch")
@@ -3452,14 +3503,17 @@ def _validate_code_remediate_merge_resolution(
             raise SystemExit("code-remediate-merge-resolution-pre-merge-head-mismatch")
         if any(not isinstance(oid, str) or re.fullmatch(r"[0-9a-f]{40}", oid) is None for oid in (pre_head, post_head)):
             raise SystemExit("code-remediate-merge-resolution-execution-head-invalid")
-    if conflicts is False:
-        if status != "not-needed" or authorization != "not-required":
+    strict = require_integrated or resolution["schema_version"] == 2
+    if type(conflicts) is not bool:
+        raise SystemExit("code-remediate-merge-conflict-decision-invalid")
+    if conflicts is False and status == "not-needed":
+        if authorization != "not-required":
             raise SystemExit("code-remediate-conflict-free-merge-resolution-invalid")
         if pre_head != post_head or resolution.get("merge_commit") not in (None, ""):
             raise SystemExit("code-remediate-unneeded-target-merge-recorded")
         if resolution.get("resolved_paths") != []:
             raise SystemExit("code-remediate-conflict-free-resolved-paths-invalid")
-    elif conflicts is True:
+    elif conflicts is True or (strict and status == "completed"):
         if status != "completed":
             raise SystemExit("code-remediate-target-merge-not-completed")
         if authorization not in {"explicit-input", "user-confirmed"}:
@@ -3468,10 +3522,13 @@ def _validate_code_remediate_merge_resolution(
             raise SystemExit("code-remediate-target-merge-head-evidence-invalid")
         if resolution.get("merge_commit") != post_head:
             raise SystemExit("code-remediate-target-merge-commit-missing")
-        if not isinstance(resolution.get("resolved_paths"), list) or not resolution["resolved_paths"]:
+        if not isinstance(resolution.get("resolved_paths"), list) or (conflicts and not resolution["resolved_paths"]):
             raise SystemExit("code-remediate-target-merge-resolved-paths-missing")
     else:
         raise SystemExit("code-remediate-merge-conflict-decision-invalid")
+
+    if strict:
+        _validate_code_remediate_target_integration(pr_dir, resolution, current_checkout=require_integrated)
 
     summary = metadata.get("merge_resolution")
     if not isinstance(summary, dict):

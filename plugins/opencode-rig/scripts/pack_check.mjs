@@ -26,6 +26,8 @@ const REQUIRED = [
   "src/index.ts",
   "src/version.ts",
   "src/resources/agents.json",
+  "src/resources/permissions.json",
+  "src/resources/permissions-guide.md",
   "src/resources/references/commit-handoff.md",
   "src/resources/references/convergence.md",
   "src/resources/references/evidence.md",

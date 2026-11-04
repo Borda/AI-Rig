@@ -136,7 +136,7 @@ def test_local_merge_approval_reaches_remediation_without_waiving_checks() -> No
                 "A merge in progress is task-owned only when this remediation run's own `merge-resolution.json`",
                 "a merge the user started toward the same target",
                 "automatically finish the task-owned merge",
-                "Do not merge target merely to refresh conflict-free PR",
+                "Merge the fetched target before finding edits even when conflict-free",
                 "No-commit authorization never implies commit permission",
                 "required `Co-authored-by: Codex <codex@openai.com>` trailer",
             ),

@@ -85,3 +85,32 @@ def test_homepage_metadata_is_preserved() -> None:
     output = hooks["on_post_page"]("<head></head>", SimpleNamespace(url=""), None)
 
     assert output.count('type="application/ld+json"') == 1
+
+
+@pytest.mark.integration
+def test_colon_headings_get_hyphenated_ids_and_keep_legacy_anchor(tmp_path: Path) -> None:
+    """Headings with a colon get hyphenated ids, and the old colon-less id keeps resolving.
+
+    READMEs add ``<a id="oss-release">`` above ``### /oss:release`` so GitHub offers a readable anchor. MkDocs must
+    generate the same hyphenated id for the heading, permalink and sidebar, without a duplicate id, and still serve the
+    colon-less id older links used.
+    """
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "index.md").write_text(
+        '[Jump](#oss-release)\n\n<a id="oss-release"></a>\n\n### /oss:release\n\nBody.\n', encoding="utf-8"
+    )
+    config_path = tmp_path / "mkdocs.yml"
+    config_path.write_text(
+        "site_name: Test\nsite_url: https://example.com/project/\n"
+        "repo_url: https://github.com/Borda/AI-Rig\n"
+        f"hooks: [{HOOKS.as_posix()}]\nplugins: []\nmarkdown_extensions:\n  - toc:\n      permalink: true\n",
+        encoding="utf-8",
+    )
+
+    build(load_config(str(config_path), strict=True))
+
+    html = (tmp_path / "site" / "index.html").read_text(encoding="utf-8")
+    assert html.count('id="oss-release"') == 1
+    assert 'href="#oss-release"' in html
+    assert 'id="ossrelease"' in html

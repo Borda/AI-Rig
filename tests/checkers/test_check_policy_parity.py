@@ -1,8 +1,9 @@
 """Contract: the ``check-policy-parity`` hook flags hand-synced policy text that drifted between its copies.
 
 The hook holds restated paragraphs and rule sets identical across the files that carry them: reviewer attribution, the
-rating legend, the four quality-gates rule sets, the local Git grant paragraph, the overlay routing scan and the
-vitality scoring rules. It runs on the repository and, here, on a synthetic tree where each group is broken in turn.
+rating legend, the four quality-gates rule sets, the local Git grant paragraph, the overlay routing scan, the vitality
+scoring rules and the delivery principles block. It runs on the repository and, here, on a synthetic tree where each
+group is broken in turn.
 """
 
 from __future__ import annotations
@@ -30,6 +31,19 @@ _VITALITY_RULES = (
 )
 _RULE_PATH = "plugins/{}/rules/quality-gates.md"
 _DELTA_PATH = "plugins/{}/rules/quality-gates-delta.md"
+#: The delivery-principles block every host surface states, holding both anchors the group's extractor needs.
+_PRINCIPLES = (
+    f"{_NS['DELIVERY_PRINCIPLES_START']} Make everyday work consistent and reliable.\n"
+    "- **Root cause, not symptom.** Fix the proven root cause of a failure.\n"
+    "- **Automatic correction and recovery.** Correct and recover on your own.\n"
+    f"- **Honest stops, real handoffs.** Stop honestly; {_NS['DELIVERY_PRINCIPLES_END']}\n"
+)
+#: The three shipped surfaces the delivery-principles group compares.
+_PRINCIPLE_FILES = (
+    "plugins/codex-rig/assets/AGENTS.md",
+    "plugins/cc_foundry/CLAUDE.src.md",
+    "plugins/opencode-rig/src/resources/references/delivery-principles.md",
+)
 
 
 def _rule_text(plugin: str, sections: tuple[str, ...], routing: str) -> str:
@@ -63,6 +77,8 @@ def _files(sections: tuple[str, ...], routing: str) -> dict[str, str]:
         )
     for relative in _NS["VITALITY_FILES"]:
         files[relative] = "intro\n- " + "\n".join(_VITALITY_RULES) + "\n"
+    for relative in _PRINCIPLE_FILES:
+        files[relative] = f"intro\n{_PRINCIPLES}"
     for plugin in _PLUGINS:
         files[_RULE_PATH.format(plugin)] = _rule_text(plugin, sections, routing)
     for plugin in _SATELLITES:
@@ -205,6 +221,13 @@ class TestFlagsDrift:
                 id="vitality-rule-stated-twice",
             ),
             pytest.param(
+                "plugins/cc_foundry/CLAUDE.src.md",
+                "Make everyday work consistent and reliable.",
+                "Make everyday work fast.",
+                "[delivery principles block]",
+                id="delivery-principles-reworded",
+            ),
+            pytest.param(
                 _RULE_PATH.format("cc_oss"),
                 "- **Alpha two**: text",
                 "- **Alpha two**: text\n- **Alpha extra**: text",
@@ -269,6 +292,7 @@ class TestFlagsMissingInput:
             pytest.param(_RULE_PATH.format("cc_develop"), id="quality-rule"),
             pytest.param(_DELTA_PATH.format("cc_oss"), id="quality-delta"),
             pytest.param("plugins/cc_oss/agents/repo-warden.md", id="vitality-file"),
+            pytest.param("plugins/cc_foundry/CLAUDE.src.md", id="delivery-principles-copy"),
         ],
     )
     def test_flags_missing_file(self, tree: Path, relative: str) -> None:

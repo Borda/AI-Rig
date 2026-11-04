@@ -20,13 +20,13 @@ ______________________________________________________________________
 - [Install](#-install)
 - [Quick start](#-quick-start)
 - [Skills reference](#-skills-reference)
-  - [`/develop:plan`](#developplan)
-  - [`/develop:feature`](#developfeature)
-  - [`/develop:fix`](#developfix)
-  - [`/develop:refactor`](#developrefactor)
-  - [`/develop:debug`](#developdebug)
-  - [`/develop:review`](#developreview)
-  - [`/develop:setup`](#developsetup)
+  - [`/develop:plan`](#develop-plan)
+  - [`/develop:feature`](#develop-feature)
+  - [`/develop:fix`](#develop-fix)
+  - [`/develop:refactor`](#develop-refactor)
+  - [`/develop:debug`](#develop-debug)
+  - [`/develop:review`](#develop-review)
+  - [`/develop:setup`](#develop-setup)
 - [Workflow overview](#-workflow-overview)
 - [Configuration](#-configuration)
 - [Bin helper inventory](#bin-helper-inventory)
@@ -176,6 +176,8 @@ All skills invoked with `develop:` prefix.
 
 ______________________________________________________________________
 
+<a id="develop-plan"></a>
+
 ### `/develop:plan`
 
 **Purpose**: Scope task before committing. Produces structured plan: classification, complexity estimate, affected files, risks, suggested approach. No code written.
@@ -234,6 +236,8 @@ Agent review   : challenge and optional feasibility review status, including ski
 **What plan does NOT do**: write code or tests. Analysis-only.
 
 ______________________________________________________________________
+
+<a id="develop-feature"></a>
 
 ### `/develop:feature`
 
@@ -296,6 +300,8 @@ ______________________________________________________________________
 - Wave 2: `foundry:qa-specialist` (edge-case and regression tests) and `foundry:doc-scribe` (docs) run in parallel against the actual implementation from Wave 1, so neither tests guessed APIs nor documents placeholder structure.
 
 ______________________________________________________________________
+
+<a id="develop-fix"></a>
 
 ### `/develop:fix`
 
@@ -360,6 +366,8 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
+<a id="develop-refactor"></a>
+
 ### `/develop:refactor`
 
 **Execution architecture** — same diagram: see `/develop:fix`.
@@ -423,6 +431,8 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
+<a id="develop-debug"></a>
+
 ### `/develop:debug`
 
 **Purpose**: Investigation-first debugging. Gathers all signals, traces failure path, forms single confirmed root-cause hypothesis, writes diagnosis file, hands off to `/develop:fix`.
@@ -474,6 +484,8 @@ ______________________________________________________________________
 **Team mode**: teammates independently investigate competing hypotheses, lead facilitates cross-challenge, synthesises consensus before handing off to fix.
 
 ______________________________________________________________________
+
+<a id="develop-review"></a>
 
 ### `/develop:review`
 
@@ -582,6 +594,8 @@ git add src/mypackage/trainer.py tests/test_trainer.py
 - GitHub PR review for contributor → `/oss:review <PR#>` (requires `oss` plugin) instead
 
 ______________________________________________________________________
+
+<a id="develop-setup"></a>
 
 ### `/develop:setup`
 

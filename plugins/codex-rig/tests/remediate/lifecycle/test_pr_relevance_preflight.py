@@ -1,6 +1,7 @@
 """Protect PR relevance requirements before remediation edits begin."""
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -32,6 +33,49 @@ def _write_pr_selection(run: Path, **inventory_update: object) -> dict[str, obje
     inventory.update(inventory_update)
     (run / "selection.json").write_text(json.dumps(inventory), encoding="utf-8", newline="\n")
     (run / "action-items.md").write_text(_DIRECT_DIFF_SUMMARY, encoding="utf-8", newline="\n")
+    # Valid PR preflight now also requires source evidence that the fetched target is included.
+    subprocess.run(["git", "init", str(run)], check=True, capture_output=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(run),
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "Initial target",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    head = subprocess.check_output(["git", "-C", str(run), "rev-parse", "HEAD"], text=True).strip()
+    receipts = {
+        "local-checkout.json": {"worktree": str(run.resolve())},
+        "target-branch.json": {"local_head": head},
+        "pr-routing.json": {"head_oid": head},
+        "merge-resolution.json": {
+            "schema_version": 2,
+            "conflicts_detected": False,
+            "status": "not-needed",
+            "authorization": "not-required",
+            "base_remote_ref": head,
+            "target_oid": head,
+            "pre_merge_head": head,
+            "post_merge_head": head,
+            "merge_commit": None,
+            "resolved_paths": [],
+            "unmerged_paths": [],
+            "evidence": ["Target equals PR head"],
+        },
+    }
+    for name, payload in receipts.items():
+        (run / "pr" / name).write_text(json.dumps(payload), encoding="utf-8")
     return inventory
 
 

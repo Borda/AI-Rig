@@ -32,6 +32,8 @@ _ALL_INSTALLED = [
     {"pluginId": _PLUGIN_IDS[1], "enabled": True, "version": "0.28.8"},
     {"pluginId": _PLUGIN_IDS[2], "enabled": True, "version": "0.1.0"},
 ]
+_SPARSE_PATHS = (".agents/plugins", "plugins/codex-rig", "plugins/codemap-py", "plugins/bridge_cc-codex")
+_SPARSE_ARGS = tuple(argument for path in _SPARSE_PATHS for argument in ("--sparse", path))
 Calls = list[tuple[str, ...]]
 Runner = Callable[..., subprocess.CompletedProcess[str]]
 
@@ -109,6 +111,7 @@ def _fake_runner(
     *,
     configured_ref: str = "",
     source_type: str = "git",
+    sparse_paths: tuple[str, ...] = _SPARSE_PATHS,
     installed: list[dict[str, object]] | None = None,
     python_probe: tuple[str, str] = ("Python 3.12.0\n", ""),
     first_listing_empty: bool = False,
@@ -140,6 +143,8 @@ def _fake_runner(
         if rendered[1:5] == ("plugin", "list", "--marketplace", "borda-ai-rig"):
             payload = {"installed": _ALL_INSTALLED if installed is None else installed}
             return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+        if rendered == ("git", "-C", str(marketplace_root), "sparse-checkout", "list"):
+            return subprocess.CompletedProcess(command, 0, "\n".join(sparse_paths), "")
         if rendered[:3] == ("git", "-C", str(marketplace_root)):
             return subprocess.CompletedProcess(command, 0, "0123456789abcdef\n", "")
         if rendered == ("python", "--version"):
@@ -211,13 +216,18 @@ def _run_sync(
     *,
     environ: dict[str, str] | None = None,
     stdout: io.StringIO | None = None,
+    sleeps: list[float] | None = None,
 ) -> int:
-    """Run `sync_codex` with parsed `arguments`, an empty environment unless given, and discarded output."""
+    """Run `sync_codex` with parsed `arguments`, an empty environment unless given, and discarded output.
+
+    Retry pauses are recorded in `sleeps` instead of waited out, so a test never spends real time on a backoff.
+    """
     return sync.sync_codex(
         sync.parse_args(arguments),
         run=run,
         environ={} if environ is None else environ,
         stdout=io.StringIO() if stdout is None else stdout,
+        sleep=(sleeps if sleeps is not None else []).append,
     )
 
 
@@ -464,6 +474,60 @@ class TestRefreshAndInstall:
         assert "Codemap 0.28.8 installed" in output.getvalue()
         assert "Claude Code and Codex Bridge 0.1.0 installed" in output.getvalue()
 
+    def test_retries_failed_marketplace_refresh_until_it_succeeds(self, sync: ModuleType, tmp_path: Path) -> None:
+        """A refresh that times out twice and then completes still finishes the sync.
+
+        Codex clones the marketplace with a fixed 30 s limit, so a slow link can lose an attempt that the next one wins.
+        The sync must pause between attempts and carry on into the plugin reinstall.
+        """
+        root = _marketplace_fixture(tmp_path)
+        calls: Calls = []
+        sleeps: list[float] = []
+        output = io.StringIO()
+        refreshes = iter([(1, "clone timed out after 30s"), (1, "early EOF"), (0, "")])
+
+        def respond(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            """Fail the first two refreshes, then succeed."""
+            returncode, stderr = next(refreshes)
+            return subprocess.CompletedProcess(command, returncode, "", stderr)
+
+        run = _intercept(
+            _fake_runner(root, calls),
+            calls,
+            lambda command: command[1:4] == ["plugin", "marketplace", "upgrade"],
+            respond,
+        )
+
+        result = _run_sync(sync, ["--no-codex-global-agents"], run, stdout=output, sleeps=sleeps)
+
+        assert result == 0
+        assert calls.count(("codex", "plugin", "marketplace", "upgrade", "borda-ai-rig")) == 3
+        assert sleeps == [5.0, 15.0]
+        assert "retrying in 5s (attempt 2 of 3)" in output.getvalue()
+        assert _plugin_calls("add") <= set(calls)
+
+    def test_stops_after_last_failed_refresh_without_touching_plugins(self, sync: ModuleType, tmp_path: Path) -> None:
+        """Three failed refreshes abort the sync before any plugin is removed or added.
+
+        With the marketplace stale, reinstalling would silently put old plugin versions back. The error must name the
+        attempt count and the fixed Codex clone limit without removing installed plugins.
+        """
+        root = _marketplace_fixture(tmp_path)
+        calls: Calls = []
+        sleeps: list[float] = []
+        run = _intercept(
+            _fake_runner(root, calls),
+            calls,
+            lambda command: command[1:4] == ["plugin", "marketplace", "upgrade"],
+            _fixed(1, stderr="git clone marketplace source timed out after 30s"),
+        )
+
+        with pytest.raises(sync.SyncError, match=r"after 3 attempts.*fixed 30 s limit"):
+            _run_sync(sync, ["--no-codex-global-agents"], run, sleeps=sleeps)
+
+        assert sleeps == [5.0, 15.0]
+        assert not any(call[1:3] in {("plugin", "remove"), ("plugin", "add")} for call in calls)
+
     def test_installs_global_instructions_and_rules(self, sync: ModuleType, tmp_path: Path) -> None:
         """Install the global instruction block and the GitHub-read rules from the selected payload.
 
@@ -502,7 +566,7 @@ class TestRefreshAndInstall:
 
         assert result == 0
         assert ("codex", "plugin", "marketplace", "upgrade", "borda-ai-rig") not in calls
-        assert ("codex", "plugin", "marketplace", "add", "Borda/AI-Rig") in calls
+        assert ("codex", "plugin", "marketplace", "add", "Borda/AI-Rig", *_SPARSE_ARGS) in calls
         assert all(
             calls.index(removal) < calls.index(("codex", "plugin", "remove", plugin_id))
             for _display_name, plugin_id in sync.MANAGED_PLUGINS
@@ -510,6 +574,41 @@ class TestRefreshAndInstall:
         assert _plugin_calls("add") <= set(calls)
         assert "marketplace re-registered from Git source" in output.getvalue()
         assert "[skip] marketplace refresh" not in output.getvalue()
+
+    @pytest.mark.parametrize(
+        "sparse_paths",
+        [pytest.param((), id="full-clone"), pytest.param(("plugins/codex-rig",), id="incomplete-sparse")],
+    )
+    def test_migrates_existing_checkout_to_filtered_clone(
+        self, sync: ModuleType, tmp_path: Path, sparse_paths: tuple[str, ...]
+    ) -> None:
+        """Replace full or incomplete checkouts with every managed plugin before reinstalling."""
+        root = _marketplace_fixture(tmp_path)
+        calls: Calls = []
+        run = _fake_runner(root, calls, sparse_paths=sparse_paths)
+        addition = ("codex", "plugin", "marketplace", "add", "Borda/AI-Rig", *_SPARSE_ARGS)
+
+        assert _run_sync(sync, ["--no-codex-global-agents"], run) == 0
+
+        assert calls.index(("codex", "plugin", "marketplace", "remove", "borda-ai-rig")) < calls.index(addition)
+        assert calls.index(addition) < calls.index(("codex", "plugin", "remove", _PLUGIN_IDS[0]))
+        assert ("codex", "plugin", "marketplace", "upgrade", "borda-ai-rig") not in calls
+
+    def test_failed_sparse_registration_skips_plugin_reinstall(self, sync: ModuleType, tmp_path: Path) -> None:
+        """Skip plugin reinstall on registration failure; cached plugins await successful registration."""
+        root = _marketplace_fixture(tmp_path)
+        calls: Calls = []
+        run = _intercept(
+            _fake_runner(root, calls, sparse_paths=()),
+            calls,
+            lambda command: command[1:4] == ["plugin", "marketplace", "add"],
+            _fixed(1, stderr="clone failed"),
+        )
+
+        with pytest.raises(sync.SyncError, match="clone failed"):
+            _run_sync(sync, ["--no-codex-global-agents"], run)
+
+        assert not any(call[1:3] in {("plugin", "remove"), ("plugin", "add")} for call in calls)
 
     def test_no_clean_keeps_plugins_but_still_refreshes_marketplace(self, sync: ModuleType, tmp_path: Path) -> None:
         """Keep no-clean limited to plugin removal rather than marketplace freshness.
@@ -527,7 +626,7 @@ class TestRefreshAndInstall:
         assert result == 0
         assert not any(call[1:3] == ("plugin", "remove") for call in calls)
         assert ("codex", "plugin", "marketplace", "remove", "borda-ai-rig") in calls
-        assert ("codex", "plugin", "marketplace", "add", "Borda/AI-Rig") in calls
+        assert ("codex", "plugin", "marketplace", "add", "Borda/AI-Rig", *_SPARSE_ARGS) in calls
         assert ("codex", "plugin", "add", "codex-rig@borda-ai-rig") in calls
 
     def test_requires_every_managed_plugin_after_install(self, sync: ModuleType, tmp_path: Path) -> None:
@@ -562,7 +661,16 @@ class TestPinnedRef:
         )
 
         assert result == 0
-        assert ("codex", "plugin", "marketplace", "add", "Borda/AI-Rig", "--ref", "codex-rig-v0.3.0") in calls
+        assert (
+            "codex",
+            "plugin",
+            "marketplace",
+            "add",
+            "Borda/AI-Rig",
+            "--ref",
+            "codex-rig-v0.3.0",
+            *_SPARSE_ARGS,
+        ) in calls
         assert not any("install_global_agents.py" in item for call in calls for item in call)
 
     def test_rejects_ref_mismatch_without_changes(self, sync: ModuleType, tmp_path: Path) -> None:
@@ -596,7 +704,16 @@ class TestPinnedRef:
         with pytest.raises(sync.SyncError, match="selected Codex Rig package failed verification"):
             _run_sync(sync, ["--codex-ref", "codex-rig-v0.2.4", "--no-codex-global-agents"], run)
 
-        assert ("codex", "plugin", "marketplace", "add", "Borda/AI-Rig", "--ref", "codex-rig-v0.2.4") in calls
+        assert (
+            "codex",
+            "plugin",
+            "marketplace",
+            "add",
+            "Borda/AI-Rig",
+            "--ref",
+            "codex-rig-v0.2.4",
+            *_SPARSE_ARGS,
+        ) in calls
         assert not any(call[1:3] in {("plugin", "remove"), ("plugin", "add")} for call in calls)
 
     @pytest.mark.parametrize(

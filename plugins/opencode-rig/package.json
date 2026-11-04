@@ -1,6 +1,6 @@
 {
   "name": "opencode-rig",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Evidence-first workflows, independent review, quality gates, and Git guardrails for OpenCode.",
   "type": "module",
   "license": "Apache-2.0",
@@ -51,7 +51,8 @@
     "check": "npm run typecheck && npm run format:check && npm run test && npm run version:check && npm run pack:check"
   },
   "dependencies": {
-    "@opencode/plugin": "^2.1.4"
+    "@opencode/plugin": "^2.1.4",
+    "jsonc-parser": "^3.3.1"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

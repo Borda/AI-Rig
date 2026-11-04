@@ -907,7 +907,7 @@ def _validate_review_validation(metadata: dict[str, Any], result: dict[str, Any]
         raise SystemExit(f"review-{readiness}-cannot-pass")
     if verdict is None and readiness == "complete":
         raise SystemExit("review-undecidable-requires-open-verification")
-    if verdict == "accept-as-is" and open_dispositions:
+    if verdict == "accept-as-is" and None in open_dispositions:
         raise SystemExit("review-unconditional-approval-with-open-concerns")
 
 

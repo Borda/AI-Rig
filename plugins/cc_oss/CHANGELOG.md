@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.56.3
+
+- Resolve finds the PR behind an auto-selected review report through the new `extract_review_pr.py` helper instead of a `sed` command, and `/oss:setup` removes the old `sed` allow entry. That entry's regex `*` characters were read as wildcards, so it silently approved other `sed` commands and made Claude print a permission warning on every run.
+
 ## 0.56.2
 
 - Review outcomes now distinguish bounded, low-impact correctness, test and compatibility repairs from material behavioral defects or substantial repair. Final verdicts cite the controlling findings and their impact, keeping required fixes actionable under Minor and verification readiness separate from source approval.

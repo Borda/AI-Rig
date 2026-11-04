@@ -215,7 +215,7 @@ Read `$REVIEW_FILE`. Extract PR number — path first, header second, never the 
 
 - Path: `.reports/review/pr-<N>/run-<NNN>/review-report.md` → `<N>`
 - Header: the YAML `PR: #<N>` line, else a `## Code Review: PR #<N>` heading
-- Grep: `sed -nE 's/^(PR:[[:space:]]*|## Code Review: (PR )?)#?([1-9][0-9]*)([[:space:]].*)?$/\3/p' "$REVIEW_FILE" | head -1`
+- Helper: `python "${CLAUDE_PLUGIN_ROOT}/bin/extract_review_pr.py" "$REVIEW_FILE"` prints `<N>` by that order, exit 1 and no output when none
 
 PR found → set `$ARGUMENTS = <N>`, proceed PR mode. Print: `→ Resolved PR #<N> from review output.`
 

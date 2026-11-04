@@ -27,6 +27,7 @@ from xml.etree.ElementTree import Element
 
 from markdown import Markdown
 from markdown.extensions import Extension
+from markdown.extensions.toc import slugify
 from markdown.treeprocessors import Treeprocessor
 from mkdocs.config.defaults import MkDocsConfig
 from mkdocs.structure.files import File, Files, InclusionLevel
@@ -36,6 +37,20 @@ from mkdocs.structure.pages import Page
 _README_INCLUDE = re.compile(r'^--8<-- "(plugins/[^"\n]+/README\.md)"\s*$', re.MULTILINE)
 _sources: dict[str, Path] = {}
 _published: dict[Path, File] = {}
+#: Matches an explicit anchor line directly above an ATX heading and captures the anchor id and heading text.
+_HEADING_ANCHOR = re.compile(r'^<a id="([^"]+)"></a>\n\n#{1,6} (.+)$', re.MULTILINE)
+
+
+def _slugify(value: str, separator: str) -> str:
+    """Slugify a heading, turning ``:`` into the separator so ``oss:release`` becomes ``oss-release``.
+
+    Examples:
+        >>> _slugify("/oss:release", "-")
+        'oss-release'
+        >>> _slugify("Example: rig-review findings", "-")
+        'example-rig-review-findings'
+    """
+    return slugify(value.replace(":", separator), separator)
 
 
 class _LocalLinks(Treeprocessor):
@@ -98,6 +113,27 @@ def _rewrite_link(url: str, *, source: Path, page: File, files: Files, config: M
     return urlunsplit(("", "", quote(relative, safe="/"), parts.query, parts.fragment))
 
 
+def on_config(config: MkDocsConfig) -> MkDocsConfig:
+    """Make generated heading ids and permalinks use ``-`` where the heading has a colon."""
+    config.mdx_configs.setdefault("toc", {})["slugify"] = _slugify
+    return config
+
+
+def _legacy_anchor(match: re.Match[str]) -> str:
+    """Keep the old colon-less id when a GitHub-style anchor now duplicates the generated heading id.
+
+    The READMEs carry ``<a id="oss-release">`` so GitHub offers a readable anchor. MkDocs generates the same id from the
+    heading, so the explicit anchor would be a duplicate; it is repointed to the old colon-less id so earlier links keep
+    working, or dropped when both ids are equal.
+    """
+    anchor, heading = match[1], match[2].replace("`", "")
+    if _slugify(heading, "-") != anchor:
+        return match[0]
+    legacy = slugify(heading, "-")
+    head = match[0].split("\n\n", 1)[1]
+    return head if legacy == anchor else f'<a id="{legacy}"></a>\n\n{head}'
+
+
 def on_files(files: Files, config: MkDocsConfig) -> Files:
     """Expand product wrappers and collect the linked repository files before rendering."""
     _sources.clear()
@@ -141,7 +177,7 @@ def on_page_markdown(markdown: str, page: Page, config: MkDocsConfig, files: Fil
     rewrite = partial(_rewrite_link, source=_sources[page.file.src_uri], page=page.file, files=files, config=config)
     config.markdown_extensions = [ext for ext in config.markdown_extensions if not isinstance(ext, _LinkExtension)]
     config.markdown_extensions.append(_LinkExtension(rewrite))
-    return markdown
+    return _HEADING_ANCHOR.sub(_legacy_anchor, markdown)
 
 
 #: JSON-LD structured data block inserted before the closing head tag of generated pages.

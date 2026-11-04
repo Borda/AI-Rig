@@ -15,16 +15,16 @@
 - [Install](#-install)
 - [Quick start](#-quick-start)
 - [Workflow index](#-workflow-index)
-  - [`/research:topic`](#researchtopic)
-  - [`/research:plan`](#researchplan)
-  - [`/research:judge`](#researchjudge)
-  - [`/research:run`](#researchrun)
-  - [`/research:sweep`](#researchsweep)
-  - [`/research:verify`](#researchverify)
-  - [`/research:fortify`](#researchfortify)
-  - [`/research:retro`](#researchretro)
-  - [`/research:kaggle`](#researchkaggle)
-  - [`/research:setup`](#researchsetup)
+  - [`/research:topic`](#research-topic)
+  - [`/research:plan`](#research-plan)
+  - [`/research:judge`](#research-judge)
+  - [`/research:run`](#research-run)
+  - [`/research:sweep`](#research-sweep)
+  - [`/research:verify`](#research-verify)
+  - [`/research:fortify`](#research-fortify)
+  - [`/research:retro`](#research-retro)
+  - [`/research:kaggle`](#research-kaggle)
+  - [`/research:setup`](#research-setup)
 - [Experiment contract](#-experiment-contract)
 - [Workflow overview](#-workflow-overview)
 - [Agents and optional integrations](#-agents-and-optional-integrations)
@@ -140,6 +140,8 @@ The metric and guard commands are supplied by you. Research can check that a met
 
 All ten commands are Claude Code skills under the `research:` namespace. Their `SKILL.md` files are the source of truth for validation rules, output schemas, flags, and edge cases.
 
+<a id="research-topic"></a>
+
 ### `/research:topic`
 
 #### Literature search, report gating, and plan follow-up
@@ -163,6 +165,8 @@ Searches AI/ML literature, compares methods, recommends an approach for the curr
 
 > The workflow follow-up question is blocked only until the report exists and its matching header table is shown in the current turn. Diagnostic and recovery questions remain available. Finish the producer, print the required current output, then retry the follow-up.
 
+<a id="research-plan"></a>
+
 ### `/research:plan`
 
 #### Experiment wizard and profile-first mode
@@ -178,6 +182,8 @@ Builds a `program.md` contract from a measurable goal. A runnable Python file ca
 The wizard scans the codebase, proposes metric and guard commands, chooses a strategy, and asks before overwriting an existing output. It uses `foundry:solution-architect`, `foundry:perf-optimizer`, and `research:scientist` when available, with documented fallbacks.
 
 The output records `Goal`, `Metric`, `Guard`, `Config`, and optional `Notes`. `scope_files` constrain ideation, `max_iterations` is capped at 50, and `agent_strategy` accepts `auto`, `perf`, `code`, `ml`, or `arch`.
+
+<a id="research-judge"></a>
 
 ### `/research:judge`
 
@@ -222,6 +228,8 @@ Required changes: (1) add `target:` under ## Metric  (2) replace metric_cmd
 ```
 
 `--skip-validation` is for cross-machine planning. It leaves metric and guard executability unverified and therefore prevents an `APPROVED` verdict. Checks that could not be verified appear separately from severity counts on an `Unverified checks:` line in both the report and terminal summary. Reports are written to `.reports/research/judge-<branch>-<date>.md`.
+
+<a id="research-run"></a>
 
 ### `/research:run`
 
@@ -315,6 +323,8 @@ By default each iteration's metric is measured once and any measured gain is kep
 
 > The run starts from a clean Git worktree and can create commits or reverts. Review scope files, commands, diffs, and the final report before accepting a campaign result.
 
+<a id="research-sweep"></a>
+
 ### `/research:sweep`
 
 #### Plan → judge/refine → run pipeline
@@ -334,6 +344,8 @@ Judge refinement runs at most three times, applying Required Changes between pas
 - Unresolved `NEEDS-REVISION` remains a user decision.
 
 Sweep-specific options are `--skip-validation`, `--out <path>`, and `--keep "<items>"`; use the `/research:run` section for forwarded run flags. Use separate `/research:plan` and `/research:judge` when you need to inspect or tune the contract before spending compute.
+
+<a id="research-verify"></a>
 
 ### `/research:verify`
 
@@ -366,6 +378,8 @@ Fidelity: MODERATE (0.74)
 BREAKING — HIGH severity mismatch in F (formula)
 Fix: src/model.py:42 — reduction differs from the paper specification
 ```
+
+<a id="research-fortify"></a>
 
 ### `/research:fortify`
 
@@ -415,6 +429,8 @@ Top: learning-rate-warmup (importance: 62.3%, CRITICAL)
 Reviewer Q&A: generated only when --venue was supplied
 ```
 
+<a id="research-retro"></a>
+
 ### `/research:retro`
 
 #### Retrospective statistics and next-hypothesis queue
@@ -445,6 +461,8 @@ Suspicious jumps: 1 (investigate)
 Next: /research:run program.md --hypothesis .experiments/retro-<ts>/hypotheses.jsonl
 ```
 
+<a id="research-kaggle"></a>
+
 ### `/research:kaggle`
 
 #### Grounded Jupytext notebook generation
@@ -474,6 +492,8 @@ Supported options:
 - `--keep "<items>"`
 
 Generated notebooks use small single-purpose cells, a why for each meaningful cell, visual EDA, leakage-safe evaluation, PTL plus torchmetrics for DNN training, and separate checkpoint load/inference. Credentials are not written to the notebook. Output is `.experiments/kaggle/<competition-name>.py` or the inference suffix. An opt-in Step 4 gate can additionally distill notebook helpers into a tested `src/` package.
+
+<a id="research-setup"></a>
 
 ### `/research:setup`
 

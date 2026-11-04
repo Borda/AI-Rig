@@ -20,6 +20,8 @@ Model recall is never evidence. "Obvious" and "well-known" are not evidence.
 ## Run evidence
 
 - `rig_evidence` binds inputs, outputs, gates, and the scope digest.
+- The plan artifact bound to a run carries the scope verdict table and its `revision`; the owned paths and the `in-scope` rows reconcile both ways.
+- A run whose changed paths leave that table's `in-scope` rows is `stale`: stop and report, and refresh only after the user approves a plan revision.
 - Finalization fails on source drift, a failed gate, or missing independent review.
 - Report failed gates and skipped coverage in the final answer, even when everything else passed.
 

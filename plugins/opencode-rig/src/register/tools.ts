@@ -929,7 +929,7 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
         "Run one bounded role in a child session when native rig-* subagents are unavailable. The child never runs gates, commits, or declares completion.",
       input: DISPATCH_INPUT,
       options: { codemode: true },
-      execute: async (raw: unknown) => {
+      execute: async (raw: unknown, context: any) => {
         const input = raw as DispatchInputTool
         if (input.role !== "rig-implementer" && input.read_only === false) {
           throw new Error(`role ${input.role} is read-only; only rig-implementer may receive write scope`)
@@ -946,6 +946,7 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
               ...(input.paths ? { paths: input.paths } : {}),
               ...(input.read_only === undefined ? {} : { read_only: input.read_only }),
               ...(input.keep_session === undefined ? {} : { keep_session: input.keep_session }),
+              sessionID: context.sessionID,
             },
             resourcesDir,
           ),

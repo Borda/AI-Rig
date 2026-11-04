@@ -450,7 +450,7 @@ class TestParallelWorkBuckets:
                     "never run concurrent source or Git mutations",
                     "The online-review arm must not read the worktree while integration may change it",
                     "Join the preparation before writing `action-items.md` or `resolution-scope.md`",
-                    "present or likely conflicts require the authorization and completed merge gates below",
+                    "1 requires the authorized target merge below even when conflict-free",
                     "A conflicted checkout or dirty path that overlaps required checkout, merge, or selected-edit paths is a stop"
                     " condition",
                 ),

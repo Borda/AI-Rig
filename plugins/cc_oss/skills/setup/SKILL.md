@@ -100,6 +100,7 @@ The merge removes exactly the retired allow entries listed in `permissions-allow
 - `Bash(gh api repos/*:*)` — nothing replaces it; the broad repository API allow entry is no longer shipped.
 - `Bash(uv pip install:*)` — nothing replaces it. It auto-approved every `uv pip install`, including the review overlay's support check and wheel fetch, which must each reach their own permission prompt, and project-environment installs or source builds the overlay forbids.
 - The broad `Bash(claude:*)`, `Bash(find:*)`, `Bash(node:*)`, `Bash(sed:*)` and `Bash(eval:*)` shell grants — nothing replaces them.
+- The `Bash(sed -nE '…' "$REVIEW_FILE")` PR-number grep — its regex `*` characters read as wildcards, so it approved other `sed` commands; `bin/extract_review_pr.py` replaces it.
 
 Preserve every other user allow entry, all deny entries, and unrelated settings.
 

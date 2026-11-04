@@ -163,7 +163,7 @@ class TestSyncRtkPreflight:
         "migrate-marketplace uninstall-claude-plugins refresh-ext-marketplace update-ext-plugins "
         "register-marketplace install-claude-plugins verify-claude-plugins prune-claude-cache "
         "warn-stale-claude-sessions install-codex-plugins sync-codex-home-policy sync-codex-bridge-consent "
-        "register-opencode-rig install-opencode-agents"
+        "register-opencode-rig install-opencode-agents setup-opencode"
     )
 
     def _run_sync(self, tmp_path: Path, target: str, keep_going: bool, rtk_available: bool):
@@ -242,6 +242,7 @@ class TestSyncRtkPreflight:
         assert result.returncode == 0, result.stdout + result.stderr
         assert ("register-opencode-rig" in stage_log) == runs_opencode
         assert ("install-opencode-agents" in stage_log) == runs_opencode
+        assert ("setup-opencode" in stage_log) == runs_opencode
 
 
 @_requires_gnu_make

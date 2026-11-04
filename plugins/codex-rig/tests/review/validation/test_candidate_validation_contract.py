@@ -286,6 +286,60 @@ class TestReviewDecision:
 
         assert (result["status"], result["checks_failed"]) == ("fail", ["types"])
 
+    def test_qualified_approval_retains_unverified_candidate_obligation(
+        self, validator: ModuleType, shared_validator: Any
+    ):
+        """A bounded source judgment preserves an unavailable behavioral check as an evidence obligation.
+
+        Source inspection supports no required changes while a native-backend concern remains unverified. Publishing the
+        source judgment must neither remove that concern nor clear blocked readiness and the failed result.
+        """
+        metadata, result = self._approval_with("blocked")
+        candidate = _candidate("unverified")
+        candidate.update(
+            claim="A native backend may change output dimensions for minimal input.",
+            contract="Output dimensions match the supplied input.",
+            trigger="Process minimal input with the native backend.",
+            confirmation_evidence="The native backend handles minimal input through a separate runtime branch.",
+            falsification_evidence="Native output dimensions match minimal input dimensions.",
+            counterevidence=["Ordinary-input source paths preserve dimensions."],
+            check="Inspected dimension propagation and attempted the unavailable native check.",
+            missing_prerequisite="Native backend unavailable.",
+            result="Source inspection completed; native output dimensions could not be observed.",
+            environment="Source inspection without a supported native runtime.",
+            limits=["Native output dimensions remain unobserved."],
+            reason="Available checks found no required source change; native execution remains unavailable.",
+            next_check="Run minimal input with the native backend and inspect output dimensions.",
+            closure_condition="Observe whether native output dimensions match the input.",
+        )
+        metadata["review_validation"]["candidates"] = [candidate]
+        metadata["review_decision"]["rationale"] = (
+            "Completed source inspection supports no required source changes. The minimal-input concern is retained "
+            "as unverified native behavior, rather than established breakage; it limits verification readiness."
+        )
+        retained = copy.deepcopy(candidate)
+
+        validator._validate_review_decision(metadata, result)
+        obligations = shared_validator.report_obligation_sources({"metadata": metadata}, "review/result.json")
+
+        assert metadata["review_validation"]["candidates"] == [retained]
+        assert metadata["review_validation"]["verification_readiness"] == "blocked"
+        assert (result["status"], result["checks_failed"]) == ("fail", ["types"])
+        assert len(obligations) == 1
+        assert _resolve_pointer({"metadata": metadata}, obligations[0]["source_id"]) == retained
+        assert candidate["missing_prerequisite"] in obligations[0]["body"]
+        assert OBLIGATION_NOTICE in obligations[0]["body"]
+
+    def test_pending_candidate_cannot_use_qualified_source_approval(self, validator: ModuleType):
+        """An available but unperformed candidate check remains incomplete and prevents source approval."""
+        metadata, result = self._approval_with("incomplete")
+        candidate = _candidate(None)
+        candidate["feasible_checks_complete"] = False
+        metadata["review_validation"]["candidates"] = [candidate]
+
+        with pytest.raises(SystemExit, match="review-unconditional-approval-with-open-concerns"):
+            validator._validate_review_decision(metadata, result)
+
     def test_incomplete_inspection_rejects_approval_with_failed_gates(self, validator: ModuleType):
         """A source approval with incomplete inspection and failed gates is refused.
 
@@ -806,6 +860,42 @@ class TestRemediationIntake:
 
         fields = ("id", "missing_prerequisite", "owner", "next_check", "closure_condition")
         assert all(concern[field] in rendered for field in fields)
+
+    def test_qualified_source_approval_keeps_blocked_candidate_in_handoff(
+        self,
+        validator: ModuleType,
+        shared_validator: Any,
+        finalizer: Any,
+        finder: ModuleType,
+        open_concern_handoff: OpenConcernHandoff,
+    ):
+        """Rendering and discovery preserve qualified approval alongside blocked readiness and the open concern."""
+        run, result, handoff, concern = open_concern_handoff
+        metadata = result["metadata"]
+        metadata["review_validation"]["source_verdict"] = "accept-as-is"
+        metadata["review_decision"].update(
+            recommendation="accept-as-is",
+            summary="No required source changes identified; native verification remains blocked.",
+            rationale="Completed inspection supports the source judgment; the retained concern limits verification.",
+        )
+        metadata["reviewer_assessments"][0]["rating"] = 1
+        handoff["outcome"]["summary"] = "Recommendation: accept-as-is."
+        snapshot = handoff["tables"][0]
+        snapshot["summary"] = metadata["review_decision"]["summary"]
+        snapshot["rows"][-1]["cells"][1] = "approve"
+        result_path = run / "result.json"
+        result_path.write_text(json.dumps(result), encoding="utf-8")
+
+        validator._validate_review_decision(metadata, result)
+        shared_validator._validate_code_review_final_handoff(result, handoff, out_dir=run)
+        rendered = finalizer.render_handoff(handoff, report_root=run)
+
+        assert finder.review_result_kind(result_path) == "assessed"
+        assert "| Suggestion | approve |" in rendered
+        assert "Verification readiness: blocked." in rendered
+        fields = ("id", "missing_prerequisite", "owner", "next_check", "closure_condition")
+        assert all(concern[field] in rendered for field in fields)
+        assert result["status"] == "fail"
 
     def test_handoff_dropping_open_concern_is_rejected(
         self, shared_validator: Any, open_concern_handoff: OpenConcernHandoff

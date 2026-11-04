@@ -160,7 +160,7 @@
     {
       "expected_findings": [],
       "id": "code-review-five-stages-and-open-hardware-evidence",
-      "prompt": "A current versioned review validates every candidate. Its five source stages are approve, minor changes for required lint or minor docs, major revision for fixable substantive defects, insufficient but a good initiative for promising substantially incomplete work, and block for a cited binding project-direction or constraint conflict. One reviewer completes inspection but cannot judge a hardware-dependent property after feasible static and simulation checks. Its source rating is null, readiness blocked, and a durable open concern names missing hardware, owner, next check, and closure. Only confirmed findings enter remediation. It distinguishes this completed assessment from missing output and does not use stage 4 for a tooling gap or claim unconditional approval.",
+      "prompt": "A current versioned review validates every candidate. Its five source stages are approve, minor changes for required lint or minor docs, major revision for fixable substantive defects, insufficient but a good initiative for promising substantially incomplete work, and block for a cited binding project-direction or constraint conflict. One reviewer completes inspection but cannot judge a hardware-dependent property after feasible static and simulation checks. Its source rating is null, readiness blocked, and a durable open concern names missing hardware, owner, next check, and closure. Only confirmed findings enter remediation. It distinguishes this completed assessment from missing output and does not use stage 4 for a tooling gap or claim unconditional approval. A second fully inspected review can judge the source despite a retained unverified edge concern: its parent explains the realistic impact and why the missing runtime observation does not prevent a qualified Approve. It preserves blocked readiness, failed result, the candidate and its next check; it neither declares the concern refuted nor derives approval from reviewer votes.",
       "target": "code-review"
     },
     {
@@ -1837,7 +1837,7 @@
         "merge-conflicts-unresolved-before-review-remediation"
       ],
       "id": "code-remediate-pr-merge-prestage",
-      "prompt": "Assess a PR code-remediation workflow that starts from a conflicted merge state and applies report findings before fetching the latest target branch, reading the clean PR implementation, recording a merge conflict resolution strategy, completing the authorized target merge, and proving that no unmerged paths remain.",
+      "prompt": "Assess a PR code-remediation workflow that fetches the latest target but skips merging it because merge-tree is conflict-free, then edits findings while the PR lacks target commits. Require target ancestry before findings: merge and commit the fetched target even when clean; only an already-included target permits not-needed. Preserve explicit no-commit instructions and unrelated dirty work. Verify actual merge parents, current checkout inclusion, no unmerged paths and no operation in progress. Historical conflict-only receipts cannot bypass current pre-edit preflight.",
       "target": "code-remediate"
     },
     {

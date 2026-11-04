@@ -12,6 +12,10 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[3]
 TEMPLATE = PLUGIN_ROOT / "assets" / "AGENTS.md"
 DETAILS = PLUGIN_ROOT / "shared" / "global-baseline-details.md"
 NATIVE_CONTRACT = PLUGIN_ROOT / "shared" / "native-skill-contract.md"
+CANONICAL_PRINCIPLES = PLUGIN_ROOT / "shared" / "delivery-principles.md"
+#: First and last line of the four-principles block the canonical text states and every host surface copies.
+PRINCIPLES_START = "- **Consistent, simple delivery.**"
+PRINCIPLES_END = "preserve safety, provenance, and required verification."
 
 
 def _text(path: Path) -> str:
@@ -92,3 +96,20 @@ def test_code_quality_label_references_resolve_to_one_item() -> None:
     assert not duplicates, f"duplicate item labels: {duplicates}"
     assert referenced, "no label references found; the reference shape changed"
     assert referenced <= set(labels), f"label references without a matching item: {sorted(referenced - set(labels))}"
+
+
+@pytest.mark.packaging
+@pytest.mark.installed_plugin
+def test_template_carries_the_canonical_delivery_principles() -> None:
+    """The always-loaded template states the four delivery principles verbatim from the canonical text.
+
+    A session that loads no workflow skill still reads the template, so the principles must be present there, and they
+    must be the canonical wording every other host surface ships rather than a hand-written variant.
+    """
+    canonical = _text(CANONICAL_PRINCIPLES)
+    assert PRINCIPLES_START in canonical, "the canonical text no longer states the first delivery principle"
+    end = canonical.find(PRINCIPLES_END, canonical.find(PRINCIPLES_START))
+    assert end >= 0, "the canonical text no longer states the last delivery principle"
+    block = canonical[canonical.find(PRINCIPLES_START) : end + len(PRINCIPLES_END)]
+
+    assert block in _text(TEMPLATE), "the template does not carry the canonical delivery-principles block"

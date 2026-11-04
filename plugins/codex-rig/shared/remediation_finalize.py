@@ -1518,6 +1518,16 @@ def _preflight_action(arguments: argparse.Namespace) -> dict[str, Any]:
             relation in action_text for relation in ("direct-diff", "pr-intent", "adjacent", "unknown")
         ):
             raise DeriveError("preflight-pr-relevance-relation-missing")
+    if (run / "pr").exists():
+        merge_metadata: dict[str, Any] = {}
+        derive_merge(run, merge_metadata)
+        validator._validate_code_remediate_merge_resolution(
+            merge_metadata,
+            run / "pr",
+            _load(run / "pr" / "target-branch.json"),
+            _load(run / "pr" / "pr-routing.json").get("head_oid"),
+            require_integrated=True,
+        )
     if arguments.stage == "selection":
         if arguments.report:
             context_sources = validator.report_obligation_sources(

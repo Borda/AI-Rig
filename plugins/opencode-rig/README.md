@@ -1,6 +1,6 @@
 # opencode-rig
 
-Current version: `0.2.0`
+Current version: `0.3.0`
 
 Evidence-first delivery workflows for [OpenCode](https://opencode.ai): frozen plans, recorded gates, independent review, adversarial convergence, and Git guardrails that keep publication human-owned.
 
@@ -17,7 +17,7 @@ Evidence-first delivery workflows for [OpenCode](https://opencode.ai): frozen pl
 
 ## Requirements
 
-- OpenCode `2.1.0` or newer (tested with `2.1.4`).
+- OpenCode `2.1.0` or newer. The plugin is developed and checked against the `2.2.0` host. The `2.1.4` recorded in `rig.json` is the `@opencode/plugin` SDK peer range, not a host version.
 - Node.js `20` or newer.
 - Git for scope evidence and the optional local commit grant.
 
@@ -26,8 +26,8 @@ Evidence-first delivery workflows for [OpenCode](https://opencode.ai): frozen pl
 Published package, when available:
 
 ```bash
-opencode plugin add opencode-rig@0.2.0
-npx opencode-rig@0.2.0 init
+opencode plugin add opencode-rig@0.3.0
+npx opencode-rig@0.3.0 init
 ```
 
 Before the first npm release, install straight from this repository:
@@ -39,9 +39,11 @@ node plugins/opencode-rig/bin/opencode-rig.mjs init   # or the path inside your 
 
 A branch specifier follows `main`; replace it with a full commit hash when the install must stay pinned. `opencode plugin add` is idempotent and writes the package specifier into `~/.config/opencode/opencode.json`. It caches the package for loading but does not link this package's CLI on `PATH`, so run `init` through `npx` for a published version or the checked-out script otherwise.
 
-`init` writes the seven `rig-*` role agents that OpenCode cannot register from a plugin package; they land in `~/.config/opencode/agents/`, or in `.opencode/agents/` with `--project`. Add `--upgrade` to replace stamped agents after a package upgrade; without it, `init` and `check` stop on a locally edited file.
+`init` writes the seven `rig-*` role agents that OpenCode cannot register from a plugin package; they land in `~/.config/opencode/agents/`, or in `.opencode/agents/` with `--project`. It also merges the shipped permission rules into your OpenCode configuration: `~/.config/opencode/opencode.jsonc` when that file exists, otherwise an existing `opencode.json` beside it, otherwise a new `opencode.jsonc` — and with `--project` the `opencode.jsonc` or `opencode.json` in the current directory. A card the package itself revised is reported `STALE` and refreshed automatically, because the stamp records the digest it was installed with. Add `--upgrade` to replace a stamped agent you edited locally; without it, `init` and `check` stop on a locally edited file and never overwrite it.
 
-The recommended registration is already checked in at the repository root as [`opencode.jsonc`](../../opencode.jsonc), and `make sync-opencode` performs the global registration plus `init` from pushed state.
+`opencode-rig setup` is the recommended command, and `init` is its alias. Besides the agents and rules above, it writes the shipped delivery principles into `~/.config/opencode/AGENTS.md` as a digest-stamped managed block. OpenCode reads that file instead of `~/.claude/CLAUDE.md`, so setup refuses to create it while your Claude global instructions exist; pass `--adopt-claude-instructions` to copy them in. The block is created owner-only, and `remove` strips it while restoring the surrounding bytes. `setup --agents-only` installs or verifies just the role agents. `OPENCODE_RIG_HOME` is a test-only seam that relocates the home directory and fails closed when it points at a directory that does not exist.
+
+The recommended registration is already checked in at the repository root as [`opencode.jsonc`](../../opencode.jsonc), and `make sync-opencode` performs the global registration, the agent-only install, and the full `setup` from pushed state. Set `OPENCODE_ADOPT_CLAUDE_INSTRUCTIONS=1` on that command when a global Claude instructions file should be copied in rather than refused.
 
 Add the plugin options to `opencode.jsonc` if you want anything other than the defaults:
 
@@ -51,7 +53,7 @@ Add the plugin options to `opencode.jsonc` if you want anything other than the d
 }
 ```
 
-Add the recommended permission rules with `opencode-rig print-config`. They keep push, hard reset, clean, and rebase behind an explicit answer. Plain commits are governed by the guardrail hook instead of a blanket rule, so a recorded grant can take effect.
+`init` merges the shipped permission rules into your configuration, so push, hard reset, clean, and rebase stop for an explicit answer while routine inspection keeps running. The rules and the reasoning behind them ship with the package as [`src/resources/permissions-guide.md`](src/resources/permissions-guide.md), so you can read them before anything is written; `opencode-rig print-config` prints the same rules for a configuration you would rather edit by hand. Plain commits are governed by the guardrail hook instead of a blanket rule, so a recorded grant can take effect.
 
 Ignore the artifact directory in projects that use the plugin:
 
@@ -176,18 +178,21 @@ Nothing in this plugin pushes, tags, or publishes. Release and publication remai
 
 ## CLI
 
-| Command                        | Effect                                                                    |
-| ------------------------------ | ------------------------------------------------------------------------- |
-| `opencode-rig init`            | Install or refresh the role agents. Stops on an edited or unstamped file. |
-| `opencode-rig check`           | Verify installed agents against this package without writing.             |
-| `opencode-rig init --upgrade`  | Replace stale or locally edited stamped agents.                           |
-| `opencode-rig remove`          | Remove only files that carry the opencode-rig stamp.                      |
-| `opencode-rig doctor`          | Report install and environment health.                                    |
-| `opencode-rig doctor --assets` | Also curate shipped skill and role cards for roster drift and dead links. |
-| `opencode-rig print-config`    | Print the recommended permission rules.                                   |
-| `opencode-rig version`         | Print the package version.                                                |
+| Command                                          | Effect                                                                                                                              |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `opencode-rig setup`                             | Install the role agents, merge the shipped rules, and write the global delivery-principles block.                                   |
+| `opencode-rig setup --adopt-claude-instructions` | Also copy `~/.claude/CLAUDE.md` into the global instructions file.                                                                  |
+| `opencode-rig setup --agents-only`               | Install or verify only the role agents; skip the rule merge and the instructions block.                                             |
+| `opencode-rig init`                              | Alias for `setup`. Install or refresh the role agents and merge the shipped permission rules. Stops on an edited or unstamped file. |
+| `opencode-rig check`                             | Verify installed agents against this package and report the permission rules, without writing.                                      |
+| `opencode-rig init --upgrade`                    | Replace stale or locally edited stamped agents.                                                                                     |
+| `opencode-rig remove`                            | Remove only files that carry the opencode-rig stamp, plus the global block setup wrote.                                             |
+| `opencode-rig doctor`                            | Report install and environment health.                                                                                              |
+| `opencode-rig doctor --assets`                   | Also curate shipped skill and role cards for roster drift and dead links.                                                           |
+| `opencode-rig print-config`                      | Print the shipped permission rules for a hand-edited configuration.                                                                 |
+| `opencode-rig version`                           | Print the package version.                                                                                                          |
 
-Use `--project` to target `.opencode/agents` in the current directory instead of the global configuration directory.
+Use `--project` to target `.opencode/agents` and the project's `opencode.jsonc` or `opencode.json` in the current directory instead of the global configuration directory. It redirects the rule merge as well as the agents.
 
 ## Upgrading and removal
 
@@ -203,11 +208,12 @@ opencode-rig remove
 opencode plugin remove opencode-rig
 ```
 
-`remove` keeps any agent file you wrote yourself; only stamped files are deleted.
+`remove` keeps any agent file you wrote yourself; only stamped files are deleted. It does not undo the permission rules `init` merged into your configuration: those survive the removal and have to be removed by hand from `opencode.json` or `opencode.jsonc`. Re-running `init --upgrade` restores the agent files after a package upgrade. `init` rewrites the configuration file in place and keeps no backup of the previous content, so to roll the rules back delete the shipped entries from your configuration by hand — and keep your own copy before the first merge, because a file you already keep under version control already has one.
 
 ## Design boundaries
 
 - No DAG or wave scheduler, approval allowlist parser, native question provider, or agent-shim lifecycle. Workflows are bounded by skill contracts instead.
+- The permission rules are merged at install time only. `init` writes them once and every role agent carries the shared allowlist in its frontmatter; `src/guardrails.ts` never reads the ruleset, so no session-time rule evaluation happens.
 - No remote mutation, ever. `rig_release` assesses readiness and stops there.
 - No invented checks. If no gate is configured, a run needs an explicit exemption and the manual check that replaces it.
 - Prompt rules are not a sandbox. The permission hook is host-enforced; workflow discipline is skill-enforced.
@@ -233,6 +239,7 @@ node scripts/pack_check.mjs
 - [Evidence rules](src/resources/references/evidence.md)
 - [Commit handoff](src/resources/references/commit-handoff.md)
 - [Convergence](src/resources/references/convergence.md)
+- [Permission reference](src/resources/permissions-guide.md)
 - [Changelog](CHANGELOG.md)
 
 ## License

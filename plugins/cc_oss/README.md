@@ -23,16 +23,16 @@ ______________________________________________________________________
 - [Install](#oss-install)
 - [Quick start](#-quick-start)
 - [Skills reference](#-skills-reference)
-  - [/oss:analyse](#ossanalyse)
-  - [/oss:review](#ossreview)
-  - [/oss:resolve](#ossresolve)
-  - [/oss:release](#ossrelease)
-  - [/oss:setup](#osssetup)
+  - [/oss:analyse](#oss-analyse)
+  - [/oss:review](#oss-review)
+  - [/oss:resolve](#oss-resolve)
+  - [/oss:release](#oss-release)
+  - [/oss:setup](#oss-setup)
 - [Agents reference](#-agents-reference)
   - [oss:gh-scraper](#gh-scraper)
   - [oss:repo-warden](#repo-warden)
-  - [oss:shepherd](#ossshepherd)
-  - [oss:cicd-steward](#osscicd-steward)
+  - [oss:shepherd](#oss-shepherd)
+  - [oss:cicd-steward](#oss-cicd-steward)
 - [Configuration](#-configuration)
 - [Bin helper inventory](#bin-helper-inventory)
 - [Troubleshooting](#troubleshooting)
@@ -120,7 +120,7 @@ claude plugin install oss@borda-ai-rig
 claude plugin uninstall oss
 ```
 
-> Uninstall leaves the `~/.claude/rules/oss-*.md` symlinks behind (see [/oss:setup](#osssetup)); delete them by hand.
+> Uninstall leaves the `~/.claude/rules/oss-*.md` symlinks behind (see [/oss:setup](#oss-setup)); delete them by hand.
 
 ______________________________________________________________________
 
@@ -147,6 +147,8 @@ ______________________________________________________________________
 <a id="-skills-reference"></a>
 
 ## 🔧 Skills reference
+
+<a id="oss-analyse"></a>
 
 ### /oss:analyse
 
@@ -228,6 +230,8 @@ Bus factor of 2 is the primary risk. Dependency update config absent.
 GitHub API responses are cached in `.cache/gh/` by number and date (30-day TTL) — repeated calls on the same thread are fast.
 
 ______________________________________________________________________
+
+<a id="oss-review"></a>
 
 ### /oss:review
 
@@ -363,6 +367,8 @@ Fix: drop `--semble` from saved invocations; codemap structural context (`--code
 
 ______________________________________________________________________
 
+<a id="oss-resolve"></a>
+
 ### /oss:resolve
 
 Apply review findings to codebase. Reads live PR comments, a saved review report, or both — deduplicates, resolves conflicts, implements fixes.
@@ -492,6 +498,8 @@ The answer changes wave width and sub-group size only — specialist routing and
 
 ______________________________________________________________________
 
+<a id="oss-release"></a>
+
 ### /oss:release
 
 Release communication and readiness pipeline with four modes: notes, prepare, audit, and demo.
@@ -607,6 +615,8 @@ Added → Breaking Changes → Changed → Deprecated → Removed → Fixed → 
 
 ______________________________________________________________________
 
+<a id="oss-setup"></a>
+
 ### /oss:setup
 
 **Purpose**: Deliver this plugin's `rules/*.md` into Claude's user-level rule namespace. Maintenance command, not part of any OSS workflow.
@@ -686,6 +696,8 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
+<a id="oss-shepherd"></a>
+
 ### oss:shepherd
 
 **Role:** Public voice of the project. Owns all external-facing communication — PR replies, issue responses, release notes, changelog entries, migration guides. Never writes implementation code. When severity tiers overlap, picks the lower tier and names the trigger that would raise it.
@@ -722,6 +734,8 @@ use shepherd to write a migration guide for the v3.0 breaking changes
 **Voice principles:** lead with what's good; treat contributors as partners, never supplicants; cite specific conventions (contributing guide, coding style) when asking for changes; never adversarial or dismissive of effort.
 
 ______________________________________________________________________
+
+<a id="oss-cicd-steward"></a>
 
 ### oss:cicd-steward
 
@@ -787,7 +801,7 @@ ______________________________________________________________________
 **Permission manifests:** `.claude-plugin/permissions-allow.json` lists the tool calls the skills expect to be pre-approved; `.claude-plugin/permissions-deny.json` lists operations that stay denied no matter how broad the allow list becomes.
 
 - Deny covers destructive shell and git commands (`rm -rf`, `sudo`, `ssh`, `chmod 777`, force-push, `claude --dangerously-skip-permissions`) and the `curl` write verbs the broad `Bash(curl:*)` allowance would otherwise reach. Deny entries are prefix matches, so they stop the documented command forms rather than every possible flag ordering.
-- `/oss:setup` (Step 5) merges both files into `~/.claude/settings.json` additively and idempotently. It also removes allow entries earlier oss versions shipped (listed in `.claude-plugin/permissions-allow-retired.json`, applied through `--drop-allow-file`): `Bash(gh api repos/*:*)`, `Bash(uv pip install:*)` and the broad `Bash(claude:*)`, `Bash(find:*)`, `Bash(node:*)`, `Bash(sed:*)` and `Bash(eval:*)`. Every other existing allow and deny entry is preserved.
+- `/oss:setup` (Step 5) merges both files into `~/.claude/settings.json` additively and idempotently. It also removes allow entries earlier oss versions shipped (listed in `.claude-plugin/permissions-allow-retired.json`, applied through `--drop-allow-file`): `Bash(gh api repos/*:*)`, `Bash(uv pip install:*)` and the broad `Bash(claude:*)`, `Bash(find:*)`, `Bash(node:*)`, `Bash(sed:*)` and `Bash(eval:*)`, plus the former PR-number `sed -nE` grant whose regex `*` read as wildcards (`bin/extract_review_pr.py` replaces it). Every other existing allow and deny entry is preserved.
 - No shipped allow entry matches `uv pip install`, `uv run --with`, `pip install` or `pip download`, so the review's dependency overlay downloads each reach their own permission prompt.
 
 **Git/GitHub permissions**

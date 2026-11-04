@@ -4,8 +4,9 @@
 Several policy paragraphs and rule sets are restated by hand in more than one shipped file, with no propagation entry
 because the surrounding files differ wholly: the reviewer-attribution block in the two review plugins, the rating-legend
 sentence, the four ``quality-gates.md`` rule sets, the local Git grant-scope paragraph across the Codex copies, the
-routing content-scan patterns of the two overlay hosts, and the shared vitality scoring rules. A change to one copy
-leaves the others stating the old policy with nothing to notice.
+routing content-scan patterns of the two overlay hosts, the shared vitality scoring rules, and the five delivery
+principles every host surface states. A change to one copy leaves the others stating the old policy with nothing to
+notice.
 
 This is a hook and not a test because a failure only means a copy drifted: no behaviour a user or hook depends on is at
 risk, so a pytest failure would block fix rounds without protecting anything. Phrase pins that guard what an instruction
@@ -41,6 +42,12 @@ _SKIPPED_DIRS = frozenset({"node_modules", "__pycache__"})
 
 GRANT_START = "Task-scoped local Git work other than a plain commit runs without an authorization question"
 GRANT_END = "it does not require inventing Git work or committing unrelated changes."
+
+#: Anchors of the five delivery principles every shipped host surface states verbatim. Both occur exactly once in
+#: each of the three surfaces, because ``span()`` resolves the first occurrence and a duplicated anchor would
+#: silently extract the wrong region. The canonical text is ``plugins/codex-rig/shared/delivery-principles.md``.
+DELIVERY_PRINCIPLES_START = "- **Consistent, simple delivery.**"
+DELIVERY_PRINCIPLES_END = "Unowned dirty working-tree changes belong to someone else."
 
 QUALITY_PLUGINS = ("cc_foundry", "cc_develop", "cc_oss", "cc_research")
 QUALITY_RULE = "quality-gates.md"
@@ -197,6 +204,16 @@ IDENTICAL = (
         ),
         routing_patterns(),
         "give both hosts the same `git grep` -e patterns",
+    ),
+    Identical(
+        "delivery principles block",
+        (
+            "plugins/codex-rig/assets/AGENTS.md",
+            "plugins/cc_foundry/CLAUDE.src.md",
+            "plugins/opencode-rig/src/resources/references/delivery-principles.md",
+        ),
+        span(DELIVERY_PRINCIPLES_START, DELIVERY_PRINCIPLES_END),
+        "copy the principles block byte-for-byte from plugins/codex-rig/shared/delivery-principles.md",
     ),
     *(
         Identical(

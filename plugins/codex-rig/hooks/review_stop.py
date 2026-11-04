@@ -89,6 +89,14 @@ def _argv(item: dict, plugin_root: str) -> list[str]:
     # Only a literal direct call is understood; shell evaluation is never attempted.
     if any(character in source for character in ";&|<>`$\n\r"):
         return []
+    if windows:
+        # Keep a quoted PowerShell option value attached to its equals-form key
+        # when shlex applies its deliberately narrow non-POSIX tokenization.
+        source = re.sub(
+            r"(?<!\S)(--(?:complete-run|codex-home|parent-thread-id))=([\"'])(.*?)\2(?=\s|$)",
+            r"\2\1=\3\2",
+            source,
+        )
     try:
         args = shlex.split(source, posix=not windows)
     except ValueError:
@@ -253,10 +261,24 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
                 del runs[previous]
             runs[run] = skill
         elif helper == _coordinate("shared/find-review-report.py", plugin_root):
-            if len(args) == 4 and args[2] == "--complete-run":
-                run = _coordinate(args[3], cwd)
-                if runs.get(run) == "code-review":
-                    del runs[run]
+            # Context options do not change which run completed. Parse only known
+            # valued options so an exit-zero --help call cannot clear active work.
+            completion: dict[str, str] = {}
+            arguments = iter(args[2:])
+            for argument in arguments:
+                option, separator, value = argument.partition("=")
+                if option not in {"--complete-run", "--codex-home", "--parent-thread-id"} or option in completion:
+                    break
+                if not separator:
+                    value = next(arguments, "")
+                if not value or value.startswith("-"):
+                    break
+                completion[option] = value
+            else:
+                if "--complete-run" in completion:
+                    run = _coordinate(completion["--complete-run"], cwd)
+                    if runs.get(run) == "code-review":
+                        del runs[run]
         elif helper == _coordinate("shared/remediation_finalize.py", plugin_root):
             if args[2:3] != ["finalize"] or "--promote" not in args or args.count("--run") != 1:
                 continue

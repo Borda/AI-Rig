@@ -4,9 +4,13 @@
  * The permission `evaluate` hook runs after configured rules. This module only
  * decides when to escalate an `allow` to `ask`; it never auto-allows a command
  * the user configured as `ask`, and a configured `deny` stays final before the
- * hook is consulted.
+ * hook is consulted. Escalation messages may name the working-tree paths a
+ * destructive command would discard; that lookup is bounded and optional, and
+ * a failure there leaves the configured effect and the plain message intact.
  */
 
+import { spawnSync } from "node:child_process"
+import { devNull } from "node:os"
 import type { GrantState } from "./git-grant.ts"
 import type { GuardrailMode } from "./options.ts"
 
@@ -23,6 +27,16 @@ export interface Decision {
   readonly effect: "ask"
   readonly message: string
   readonly kind: GuardrailClass
+}
+
+/** Evidence for naming what a destructive command would discard. */
+export interface DiscardContext {
+  /** Working-tree paths with uncommitted changes. */
+  readonly dirtyPaths: readonly string[]
+  /** Paths recorded by the active run; absent when no run is active. */
+  readonly scopePaths?: readonly string[]
+  /** Set when the active run scope could not be read, so no path claim is made. */
+  readonly scopeUnknown?: boolean
 }
 
 const SEVERITY: Record<GuardrailClass, number> = {
@@ -128,11 +142,161 @@ function classifySegment(segment: string, original: string, mode: GuardrailMode)
   return { kind: "other", command: original, reason: "no guarded pattern matched" }
 }
 
+// Mirrors the denylist in `paths.ts`: a planted override must not redirect the
+// working-tree lookup away from the repository the hook is guarding.
+const GIT_OVERRIDE_ENV = [
+  "GIT_DIR",
+  "GIT_WORK_TREE",
+  "GIT_COMMON_DIR",
+  "GIT_INDEX_FILE",
+  "GIT_OBJECT_DIRECTORY",
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+  "GIT_NAMESPACE",
+  "GIT_PREFIX",
+  "GIT_CONFIG_GLOBAL",
+  "GIT_CONFIG_SYSTEM",
+  "GIT_CONFIG_COUNT",
+  "GIT_CONFIG_PARAMETERS",
+] as const
+
+// `GIT_CONFIG_KEY_<n>` / `GIT_CONFIG_VALUE_<n>` inject arbitrary config, including
+// `core.fsmonitor`, whose path Git executes. They are stripped by prefix.
+const GIT_CONFIG_ENV_PREFIXES = ["GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"] as const
+
+// Repository-controlled settings that can execute a program during `git status`.
+// `-c` wins over the repository, the user, and system config.
+const STATUS_CONFIG_OVERRIDES = [
+  "-c",
+  "core.fsmonitor=false",
+  "-c",
+  "core.untrackedCache=false",
+  "-c",
+  `core.excludesFile=${devNull}`,
+]
+
+const STATUS_TIMEOUT_MS = 1_000
+const STATUS_MAX_BYTES = 4_000_000
+const MAX_NAMED_PATHS = 10
+const MAX_NAMED_PATH_CHARS = 120
+const MAX_NAMED_TOTAL_CHARS = 600
+
+/** Strip environment overrides that let a planted value redirect or execute code. */
+function cleanGitEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env }
+  for (const key of GIT_OVERRIDE_ENV) delete env[key]
+  for (const key of Object.keys(env)) {
+    if (GIT_CONFIG_ENV_PREFIXES.some((prefix) => key.startsWith(prefix))) delete env[key]
+  }
+  return env
+}
+
+/**
+ * List working-tree paths with uncommitted changes. Bounded and failure-safe:
+ * `undefined` means the escalation message stays unchanged instead of the
+ * permission decision waiting on or failing with a broken repository lookup.
+ * `ignored` holds plugin-owned relative paths, which are never someone else's
+ * work.
+ */
+export function dirtyPaths(cwd: string, ignored: readonly string[] = []): string[] | undefined {
+  const result = spawnSync(
+    "git",
+    [...STATUS_CONFIG_OVERRIDES, "status", "--porcelain=v1", "-z", "--untracked-files=all"],
+    {
+      cwd,
+      env: cleanGitEnv(),
+      encoding: "utf8",
+      timeout: STATUS_TIMEOUT_MS,
+      maxBuffer: STATUS_MAX_BYTES,
+    },
+  )
+  if (result.error || result.status !== 0) return undefined
+  const paths = parseStatusPaths(result.stdout)
+  return ignored.length > 0 ? paths.filter((path) => !underAny(path, ignored)) : paths
+}
+
+function parseStatusPaths(output: string): string[] {
+  const records = output.split("\0")
+  const paths: string[] = []
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index]
+    if (!record || record.length < 4) continue
+    const path = record.slice(3)
+    if (!path) continue
+    paths.push(path)
+    // A rename or copy report carries the source path in the next NUL record.
+    const code = record.slice(0, 2)
+    if (code.startsWith("R") || code.startsWith("C")) {
+      const source = records[index + 1]
+      if (source) {
+        paths.push(source)
+        index += 1
+      }
+    }
+  }
+  return paths
+}
+
+function underAny(path: string, prefixes: readonly string[]): boolean {
+  return prefixes.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))
+}
+
+function foreignDirtyPaths(dirty: readonly string[], scope: readonly string[] | undefined): string[] {
+  if (scope === undefined) return [...dirty]
+  // An empty recorded filter means the run covers every changed path.
+  if (scope.length === 0) return []
+  return dirty.filter((path) => !underAny(path, scope))
+}
+
+/**
+ * Render one untrusted filename for the approval prompt.
+ *
+ * Git reports whatever bytes the filesystem holds, including newlines, ANSI
+ * escapes, and text shaped like the prompt's own delimiters. Flattening control
+ * characters and whitespace keeps a filename from forging extra lines, and the
+ * length caps keep a single path from crowding out the rest of the message.
+ */
+function sanitizePath(path: string): string {
+  const cleaned = path
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+  if (cleaned === "") return "<unprintable path>"
+  return cleaned.length > MAX_NAMED_PATH_CHARS ? `${cleaned.slice(0, MAX_NAMED_PATH_CHARS - 1)}…` : cleaned
+}
+
+function formatPaths(paths: readonly string[]): string {
+  const shown: string[] = []
+  let total = 0
+  for (const raw of paths) {
+    if (shown.length >= MAX_NAMED_PATHS) break
+    const path = sanitizePath(raw)
+    if (shown.length > 0 && total + path.length + 2 > MAX_NAMED_TOTAL_CHARS) break
+    shown.push(path)
+    total += path.length + 2
+  }
+  const remaining = paths.length - shown.length
+  return remaining > 0 ? `${shown.join(", ")}, and ${remaining} more` : shown.join(", ")
+}
+
+function discardWarning(context: DiscardContext | undefined): string {
+  if (!context || context.scopeUnknown || context.dirtyPaths.length === 0) return ""
+  const foreign = foreignDirtyPaths(context.dirtyPaths, context.scopePaths)
+  if (foreign.length === 0) return ""
+  const named = formatPaths(foreign)
+  if (context.scopePaths === undefined) return ` This would discard uncommitted changes: ${named}.`
+  return ` This would discard changes that are not part of this run: ${named}.`
+}
+
 /**
  * Decide whether to escalate a permission decision. `undefined` means the
  * caller must leave the configured effect untouched.
  */
-export function decide(classification: Classification, mode: GuardrailMode, grant: GrantState): Decision | undefined {
+export function decide(
+  classification: Classification,
+  mode: GuardrailMode,
+  grant: GrantState,
+  discard?: DiscardContext,
+): Decision | undefined {
   if (mode === "off") return undefined
   if (classification.kind === "remote-mutation") {
     return {
@@ -142,10 +306,11 @@ export function decide(classification: Classification, mode: GuardrailMode, gran
     }
   }
   if (classification.kind === "destructive-local" || classification.kind === "history-rewrite") {
+    const warning = discardWarning(discard)
     return {
       effect: "ask",
       kind: classification.kind,
-      message: `opencode-rig: ${classification.reason} requires confirmation (${classification.command}). No approval grant covers it.`,
+      message: `opencode-rig: ${classification.reason} requires confirmation (${classification.command}). No approval grant covers it.${warning}`,
     }
   }
   if (classification.kind === "plain-commit") {

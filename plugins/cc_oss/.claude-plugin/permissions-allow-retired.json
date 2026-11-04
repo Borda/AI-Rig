@@ -5,5 +5,6 @@
   "Bash(find:*)",
   "Bash(node:*)",
   "Bash(sed:*)",
-  "Bash(eval:*)"
+  "Bash(eval:*)",
+  "Bash(sed -nE 's/^(PR:[[:space:]]*|## Code Review: (PR )?)#?([1-9][0-9]*)([[:space:]].*)?$/\\3/p' \"$REVIEW_FILE\")"
 ]

@@ -19,7 +19,13 @@ const GIT_OVERRIDE_ENV = [
   "GIT_ALTERNATE_OBJECT_DIRECTORIES",
   "GIT_NAMESPACE",
   "GIT_PREFIX",
+  "GIT_CONFIG_GLOBAL",
+  "GIT_CONFIG_SYSTEM",
+  "GIT_CONFIG_COUNT",
+  "GIT_CONFIG_PARAMETERS",
 ] as const
+
+const GIT_CONFIG_ENV_PREFIXES = ["GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"] as const
 
 export interface RigPaths {
   readonly projectRoot: string
@@ -31,6 +37,9 @@ export interface RigPaths {
 function cleanGitEnv(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env }
   for (const key of GIT_OVERRIDE_ENV) delete env[key]
+  for (const key of Object.keys(env)) {
+    if (GIT_CONFIG_ENV_PREFIXES.some((prefix) => key.startsWith(prefix))) delete env[key]
+  }
   return env
 }
 

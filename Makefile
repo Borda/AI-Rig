@@ -1,6 +1,7 @@
 # Install AI-Rig plugins for Claude Code, Codex, and/or OpenCode from the GitHub remote.
 # Codex sync also mirrors this checkout's model defaults, workflow approval policy, and personal policy into $CODEX_HOME.
-# OpenCode sync registers the npm package from its repository subdirectory and installs its role agents.
+# OpenCode sync registers the npm package from its repository subdirectory, installs its role agents,
+# and writes the global delivery-principles instructions block through `setup`.
 # Remote installs use pushed state — commit and push before running.
 #
 # Run from the project root:
@@ -9,6 +10,7 @@
 #   make sync-claude         # Claude scope only
 #   make sync-codex          # Codex scope only
 #   make sync-opencode       # OpenCode scope only
+#   make sync-opencode OPENCODE_ADOPT_CLAUDE_INSTRUCTIONS=1  # also copy ~/.claude/CLAUDE.md into the global block
 #   make preflight-sync     # check RTK availability without changing installations
 #   make sync-codex APPROVE_CLAUDE_CONSENT=1  # explicitly record standing Claude transfer consent
 #   make clear-all           # teardown both scopes
@@ -41,6 +43,9 @@ OPENCODE_RIG_SPEC := github:Borda/AI-Rig\#main::path:plugins/opencode-rig
 OPENCODE_RIG_MANIFEST := https://raw.githubusercontent.com/Borda/AI-Rig/main/plugins/opencode-rig/package.json
 # `init` never overwrites an edited role agent; set this to 1 to replace stamped files.
 OPENCODE_RIG_UPGRADE_AGENTS ?= 0
+# `setup` refuses to shadow an existing ~/.claude/CLAUDE.md; set this to 1 to copy it into the
+# global OpenCode instructions block instead.
+OPENCODE_ADOPT_CLAUDE_INSTRUCTIONS ?= 0
 MARKETPLACE := $(shell jq -r '.name' .claude-plugin/marketplace.json)
 SETTINGS := $(HOME)/.claude/settings.json
 KNOWN_MARKETPLACES := $(HOME)/.claude/plugins/known_marketplaces.json
@@ -101,7 +106,7 @@ endef
         update-ext-plugins register-marketplace install-claude-plugins prune-claude-cache \
         verify-claude-plugins warn-stale-claude-sessions \
         install-codex-plugins sync-codex-home-policy sync-codex-bridge-consent \
-        register-opencode-rig install-opencode-agents \
+        register-opencode-rig install-opencode-agents setup-opencode \
         banner-claude banner-codex banner-opencode preflight-sync \
         rig-install rig-typecheck rig-test rig-format rig-pack rig-check \
         prune-benchmarks prune-benchmarks-apply
@@ -163,6 +168,7 @@ sync-codex: preflight-sync banner-codex
 sync-opencode: preflight-sync banner-opencode
 	@$(MAKE) register-opencode-rig && \
 	$(MAKE) install-opencode-agents && \
+	$(MAKE) setup-opencode && \
 	echo "✓ OpenCode sync complete"
 
 register-opencode-rig:
@@ -189,9 +195,21 @@ install-opencode-agents:
 		echo "Node.js 20 or newer is required to install the role agents: https://nodejs.org" >&2; \
 		exit 1; \
 	}; \
-	args=""; \
-	if [ "$(OPENCODE_RIG_UPGRADE_AGENTS)" = "1" ]; then args="--upgrade"; fi; \
+	args="--agents-only"; \
+	if [ "$(OPENCODE_RIG_UPGRADE_AGENTS)" = "1" ]; then args="--agents-only --upgrade"; fi; \
 	node "$(OPENCODE_RIG_DIR)/bin/opencode-rig.mjs" init $$args
+
+# `setup` is the full installation: role agents, the permission-rule merge, and the global
+# delivery-principles instructions block. It is idempotent, so sync runs it after the agents.
+setup-opencode:
+	@command -v node >/dev/null 2>&1 || { \
+		echo "Node.js 20 or newer is required to set up opencode-rig: https://nodejs.org" >&2; \
+		exit 1; \
+	}; \
+	args=""; \
+	if [ "$(OPENCODE_ADOPT_CLAUDE_INSTRUCTIONS)" = "1" ]; then args="--adopt-claude-instructions"; fi; \
+	$(call stage,Write global OpenCode instructions); \
+	node "$(OPENCODE_RIG_DIR)/bin/opencode-rig.mjs" setup $$args
 
 clear-all:
 	@$(call workflow,Full teardown - Claude + Codex scopes); \
@@ -459,6 +477,7 @@ clear-codex:
 # always tracks the default branch, always cleans before reinstalling, always
 # installs the global-instructions block.
 install-codex-plugins:
+	@# sync_codex.py uses a filtered sparse clone and migrates older full marketplace checkouts.
 	@$(call stage,Install Codex plugins from default branch); \
 	python3 "$(CODEX_SYNC_SCRIPT)" install
 

@@ -131,7 +131,16 @@ BUDGETS = (
     # Raised by 570 bytes for the user-required universal lifecycle: ordinary sessions without a skill must plan and
     # challenge, accept within existing authority, assign execution, and consolidate verified delivery without creating
     # an automatic user approval gate. These pre-skill obligations must remain always-loaded.
-    Budget("plugins/codex-rig/assets/AGENTS.md", 40951),
+    # Raised by a further 474 bytes for two loop/first-class clauses: split-and-conquer delegation inside the Delegate
+    # step, and never reverting another owner's work as the fifth principle. Both are shipped so a session that loads no
+    # workflow skill still inherits them; the same words are pinned across the sibling hosts by check_policy_parity.
+    # Raised by 1310 bytes for the four delivery principles stated next to the Root cause rule: consistent simple
+    # delivery, root cause not symptom, automatic correction and recovery, and honest stops with real handoffs. They
+    # govern every change, including the ordinary session that loads no workflow skill and reads no lazily loaded
+    # rule, so a lazy home ships symptom patches, stale-format repair demands and self-created process blockers as
+    # successful outcomes. The delivered principles are the shipped block in `plugins/codex-rig/shared/`, and the
+    # sibling hosts carry the same words.
+    Budget("plugins/codex-rig/assets/AGENTS.md", 42735),
 )
 
 

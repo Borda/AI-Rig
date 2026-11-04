@@ -4,7 +4,7 @@
 ## Purpose
 
 Provide portable local Codex plugin synchronization while preserving explicit action selection and bounded command
-output. It refreshes the canonical Git marketplace registration and clean-installs the managed plugin set so local Codex
+output. It refreshes a sparse canonical Git marketplace registration and clean-installs the managed plugin set so Codex
 state can be restored predictably. Setup also installs the workspace-derived GitHub-read profile; teardown removes that
 profile before removing the plugin providing its lifecycle helper.
 
@@ -50,6 +50,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from collections.abc import Callable, Mapping
 from enum import Enum
 from pathlib import Path
@@ -73,12 +74,16 @@ class SyncAction(str, Enum):
 MARKETPLACE = "borda-ai-rig"
 #: GitHub repository (owner/name) the marketplace is added from.
 MARKETPLACE_SOURCE = "Borda/AI-Rig"
+#: Catalog and complete plugin payloads needed by the native filtered marketplace clone.
+MARKETPLACE_SPARSE_PATHS = (".agents/plugins", "plugins/codex-rig", "plugins/codemap-py", "plugins/bridge_cc-codex")
 #: Display name and plugin id of every plugin this script installs and verifies.
 MANAGED_PLUGINS = (
     ("Codex Rig", f"codex-rig@{MARKETPLACE}"),
     ("Codemap", f"codemap-py@{MARKETPLACE}"),
     ("Claude Code and Codex Bridge", f"bridge@{MARKETPLACE}"),
 )
+#: Seconds to wait before each retry of a failed marketplace refresh; the length sets the retry count.
+_UPGRADE_RETRY_DELAYS = (5.0, 15.0)
 #: Largest JSON payload or config file, in bytes (1 MiB), that this script will read or write.
 MAX_JSON_BYTES = 1_048_576
 #: Oldest Python (major, minor) version accepted for the fixed python command that launches MCP servers.
@@ -298,6 +303,33 @@ def _run_bridge_static_diagnosis(root: Path, run: RunCommand, stdout: TextIO) ->
     print("  [ok] Bridge static diagnosis passed; no provider call made", file=stdout)
 
 
+def _upgrade_marketplace(run: RunCommand, stdout: TextIO, sleep: Callable[[float], None]) -> None:
+    """Refresh the Git marketplace, retrying a failed clone before giving up.
+
+    Codex refreshes the sparse repository with a fixed 30 s clone limit and no setting to raise it. A transient failure
+    can clear on another attempt, so a failure is retried with a growing pause. No installed plugin is removed or
+    reinstalled before this succeeds, so a final failure leaves the installed plugins untouched.
+    """
+    command = ["codex", "plugin", "marketplace", "upgrade", MARKETPLACE]
+    attempts = len(_UPGRADE_RETRY_DELAYS) + 1
+    result = _run(run, command, required=False)
+    for attempt, delay in enumerate(_UPGRADE_RETRY_DELAYS, start=2):
+        if result.returncode == 0:
+            return
+        print(
+            f"  [warn] marketplace refresh failed; retrying in {delay:g}s (attempt {attempt} of {attempts})",
+            file=stdout,
+        )
+        sleep(delay)
+        result = _run(run, command, required=False)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "command failed").strip()[:512]
+        raise SyncError(
+            f"marketplace refresh failed after {attempts} attempts ({result.returncode}): {' '.join(command)}: "
+            f"{detail}. Codex clones the marketplace with a fixed 30 s limit; rerun the sync on a faster connection"
+        )
+
+
 def _remove_managed_plugins(run: RunCommand, stdout: TextIO) -> None:
     """Remove managed plugins while tolerating entries that are already absent."""
     for _display_name, plugin_id in MANAGED_PLUGINS:
@@ -327,6 +359,7 @@ def sync_codex(
     run: RunCommand = _system_run,
     environ: Mapping[str, str] = os.environ,
     stdout: TextIO = sys.stdout,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> int:
     """Execute one Codex-only restore or teardown with argv-safe subprocesses."""
     if sys.version_info < (3, 10):  # noqa: UP036 - runtime guard for an interpreter older than the declared floor
@@ -344,6 +377,8 @@ def sync_codex(
     marketplace_add = ["codex", "plugin", "marketplace", "add", MARKETPLACE_SOURCE]
     if requested_ref:
         marketplace_add.extend(("--ref", requested_ref))
+    for path in MARKETPLACE_SPARSE_PATHS:
+        marketplace_add.extend(("--sparse", path))
 
     if root is not None:
         configured_ref = _configured_ref(root)
@@ -357,13 +392,20 @@ def sync_codex(
             _validate_selected_payload(root)
 
     if root is not None:
+        sparse_paths: set[str] = set()
         if source_type == "git":
-            _run(run, ["codex", "plugin", "marketplace", "upgrade", MARKETPLACE])
+            # Native marketplace listings omit sparse paths. Inspect the actual checkout before choosing upgrade,
+            # which preserves the registered clone strategy and would repeat the full-clone timeout for older installs.
+            sparse = _run(run, ["git", "-C", str(root), "sparse-checkout", "list"], required=False)
+            if sparse.returncode == 0:
+                sparse_paths = set(sparse.stdout.splitlines())
+        if source_type == "git" and sparse_paths == set(MARKETPLACE_SPARSE_PATHS):
+            _upgrade_marketplace(run, stdout, sleep)
             print("  [ok] marketplace refreshed", file=stdout)
         else:
             _run(run, ["codex", "plugin", "marketplace", "remove", MARKETPLACE])
             _run(run, marketplace_add)
-            print("  [ok] marketplace re-registered from Git source", file=stdout)
+            print("  [ok] marketplace re-registered from Git source with filtered sparse checkout", file=stdout)
     else:
         _run(run, marketplace_add)
         print("  [ok] marketplace registered", file=stdout)

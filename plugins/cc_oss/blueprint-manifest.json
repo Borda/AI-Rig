@@ -542,7 +542,7 @@
     },
     "161eff89777a23e6ca02991389570101c46e957d9b30c1af2d2a116fe1a543f0": {
       "kind": "command",
-      "src": "skills/setup/SKILL.md:110"
+      "src": "skills/setup/SKILL.md:111"
     },
     "1657667c317532927394e32cacaa0bdf2f687496426422e0499164a5300c53ba": {
       "kind": "command",
@@ -886,7 +886,7 @@
     },
     "20e807178fac1048cc6f13418bff228820a7c9ab6af635fdc458cbee9048f3bb": {
       "kind": "command",
-      "src": "skills/setup/SKILL.md:110"
+      "src": "skills/setup/SKILL.md:111"
     },
     "21338275d48cef600b672d523568145e8fd5a6dfed1c2c83f8f98fa733790e87": {
       "kind": "command",
@@ -2830,7 +2830,7 @@
     },
     "6883b244c3b8e87d16edf04fb7c010d805c9b2c9b1d08ad9dadf716ce25256be": {
       "kind": "command",
-      "src": "skills/setup/SKILL.md:110"
+      "src": "skills/setup/SKILL.md:111"
     },
     "68a424c5501aeff13eafcf23d0b500db15ecece06540938389aaa556c13d8085": {
       "kind": "command",
@@ -3254,7 +3254,7 @@
     },
     "7588772c9f69f1a3ded583e3826e89b4ab335e200af9f7a8da0fdcb943586993": {
       "kind": "block",
-      "src": "skills/setup/SKILL.md:110"
+      "src": "skills/setup/SKILL.md:111"
     },
     "7589cae078692f1fb5824365afa8c416311dc97a946929689e3c7fb23f46a07c": {
       "kind": "command",
@@ -4066,7 +4066,7 @@
     },
     "911e7a2b2f2c81d06464d5df0051007e82a01ad1167c6219d14f172e515a489d": {
       "kind": "command",
-      "src": "skills/setup/SKILL.md:110"
+      "src": "skills/setup/SKILL.md:111"
     },
     "915843f636f8bccb3a32b23699cbbd0e36293d5554c4d1000c34bf289ffdb23f": {
       "kind": "command",
@@ -5542,7 +5542,7 @@
     },
     "c2694cddf6b5bb814690359f802769549843e04cefc8d11405ea57ee1532f5bb": {
       "kind": "command",
-      "src": "skills/setup/SKILL.md:110"
+      "src": "skills/setup/SKILL.md:111"
     },
     "c27e0a88b85c768c7016df1368ab71f608e458ffebdb9465c7223488b4957e27": {
       "kind": "command",
@@ -5642,7 +5642,7 @@
     },
     "c56225e4cf55b6bfc01a5bda46abc06238143d0452986698f1bbd6dbb540550e": {
       "kind": "command",
-      "src": "skills/setup/SKILL.md:110"
+      "src": "skills/setup/SKILL.md:111"
     },
     "c57381ac5821810c7e0facbaac939c748e167a5f3aef8f7d3945deb1cf142872": {
       "kind": "command",
@@ -7285,6 +7285,6 @@
       "src": "skills/resolve/SKILL.md:148"
     }
   },
-  "plugin": "cc_oss@0.56.2",
+  "plugin": "cc_oss@0.56.3",
   "schema": 1
 }

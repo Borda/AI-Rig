@@ -30,6 +30,44 @@ describe("permission evaluate hook", () => {
     expect((await evaluate(harness, shellEvent(["git commit --amend"]))).effect).toBe("ask")
   })
 
+  it("escalates a destructive command arriving as the v2 execute action", async () => {
+    const harness = await createHarness(Project.withCommit())
+    const event = await evaluate(harness, {
+      action: "execute",
+      resources: ["git checkout -- src/a.ts"],
+      effect: "allow",
+    })
+    expect(event.effect).toBe("ask")
+    expect(event.message).toMatch(/destructive local operation requires confirmation/)
+  })
+
+  it("names dirty paths outside the active run scope", async () => {
+    const project = Project.withCommit({ "src/a.ts": "export const a = 1\n", Makefile: "all:\n" })
+    project.write("src/a.ts", "export const a = 2\n")
+    project.write("Makefile", "all:\n\ntest:\n")
+    const harness = await createHarness(project)
+    await harness.call("rig_evidence", { action: "start", skill: "rig-investigate", paths: ["src"] })
+
+    const event = await evaluate(harness, {
+      action: "shell",
+      resources: ["git checkout -- Makefile"],
+      effect: "allow",
+      sessionID: "session-1",
+    })
+    expect(event.effect).toBe("ask")
+    expect(event.message).toMatch(/not part of this run: Makefile\./)
+    expect(event.message).not.toContain("src/a.ts")
+  })
+
+  it("keeps the original message when the working-tree lookup fails", async () => {
+    const harness = await createHarness(new Project())
+    const event = await evaluate(harness, shellEvent(["git checkout -- Makefile"]))
+    expect(event.effect).toBe("ask")
+    expect(event.message).toBe(
+      "opencode-rig: destructive local operation requires confirmation (git checkout -- Makefile). No approval grant covers it.",
+    )
+  })
+
   it("escalates a plain commit without a grant", async () => {
     const harness = await createHarness(Project.withCommit())
     const event = await evaluate(harness, shellEvent(["git commit -m 'feat: x'"]))

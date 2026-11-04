@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.75.0
+
+- The global `~/.claude/CLAUDE.md` written at setup now states the four delivery principles — consistent simple delivery, root cause not symptom, automatic correction and recovery, and honest stops with real handoffs — so every change follows them, including work done in a session that runs no foundry skill.
+
 ## 0.74.2
 
 - Review outcomes now distinguish bounded, low-impact correctness, test and compatibility repairs from material behavioral defects or substantial repair. Final verdicts cite the controlling findings and their impact, keeping required fixes actionable under Minor and verification readiness separate from source approval.
