@@ -28,17 +28,17 @@
     {
       "mode": "0644",
       "path": ".codex-plugin/plugin.json",
-      "sha256": "95f1e370abab4de91b3fba6c90b703abd2a11af8ca0b4d079ead12c1bc445b34"
+      "sha256": "087176383b8808c5cde21dc8e786185187ca49ede29525142ab86014bedb822e"
     },
     {
       "mode": "0644",
       "path": "CHANGELOG.md",
-      "sha256": "dbf2deb445cb5d4f1bb96f5340436e5627f230745a6735e6d766c2a3bb0bfea0"
+      "sha256": "5aa027b19f011c3e52e8baf9c118b9910506430941d845c156ecbc84e2cf68d6"
     },
     {
       "mode": "0644",
       "path": "DEVELOPMENT.md",
-      "sha256": "93d97475e16a71b768b9ad9c0f9b632829fd208b119bd715d096d74fe55120fb"
+      "sha256": "4f614269ee18d8d45f2ba8ae8b688f66b84804c40d359f540ebdd2e724a4d760"
     },
     {
       "mode": "0644",
@@ -53,7 +53,7 @@
     {
       "mode": "0644",
       "path": "README.md",
-      "sha256": "c666c248b96a4955459ebb05074bdf8d156ba81a6873b8d61d407115df95a705"
+      "sha256": "05159758ea39a28333f1603ab26a0dd1ea7cc53e050e4396980685f4b848240a"
     },
     {
       "mode": "0644",
@@ -418,7 +418,7 @@
     {
       "mode": "0755",
       "path": "shared/create_run.py",
-      "sha256": "9dde06ceff00a648b37f4fbf9b7a79493f6127806c8e25ee98327b92b14203b4"
+      "sha256": "54b8746dfedbe846a7304ff08bcb34e4b7a2e9597597286fd2728469efc35c10"
     },
     {
       "mode": "0644",
@@ -438,17 +438,17 @@
     {
       "mode": "0644",
       "path": "shared/final-handoff-code-remediate.md",
-      "sha256": "a4e8bd416bf78f0ce82f8ef2ba915b6fbab5d883155855f1a4f39aa455957bd7"
+      "sha256": "996f53a00ba1995cbceae70e12ffc767a42879d462c84b7f1a14f59b363ab9d3"
     },
     {
       "mode": "0644",
       "path": "shared/final-handoff-code-review.md",
-      "sha256": "3d82f54592f402fb14b5914d8864ca088b8830c345df4413e1e0b8c22b8073e9"
+      "sha256": "359481379694defc3911a5be292b31c0a94c19e03a4afbac0e6bd73b7fe9d278"
     },
     {
       "mode": "0644",
       "path": "shared/final-handoff-contract.md",
-      "sha256": "b48cae872bb97189c10bd6c16a663b0beee5df5fb1f7730b004ffcdd411f6631"
+      "sha256": "27558119546fc04bca45f303db3cf3ea66f1e8480604ece5118a9d410ca14121"
     },
     {
       "mode": "0644",
@@ -458,7 +458,7 @@
     {
       "mode": "0755",
       "path": "shared/final_handoff.py",
-      "sha256": "c2b13e2caae62b74f03f48f792b2631d86bb5274a7857b2ec8a5c3c369fbfc81"
+      "sha256": "86093a79dbfef4a1c46bdf63bcba5339c727f2e5cf6ee6e4949238f2e4bdc3f8"
     },
     {
       "mode": "0755",
@@ -478,7 +478,7 @@
     {
       "mode": "0644",
       "path": "shared/helper-cli-contract.md",
-      "sha256": "55c47e6e933e80168943cec3a4650ea7fa834876e4029d9a52742781cadae925"
+      "sha256": "1b4a2b210e8601325976f8ffdd7e7e71f96b7dbc71b71c81eba4f569efe387c2"
     },
     {
       "mode": "0644",
@@ -518,7 +518,7 @@
     {
       "mode": "0644",
       "path": "shared/quality-gates.md",
-      "sha256": "4df37a2214dc233f817390c5de03bc95e73f36b6acba57771db8efa07825b7ce"
+      "sha256": "e84e56e74aa802aea2bdf02a69b14c9c13249056ffab375d182a88938bc223cc"
     },
     {
       "mode": "0755",
@@ -533,7 +533,7 @@
     {
       "mode": "0755",
       "path": "shared/remediation_finalize.py",
-      "sha256": "ef2af16b591a47be6a74254f5b061f9dc2891487515af23b2afb736f52272dd5"
+      "sha256": "45bb694d8d3ff37803f9f6555a239239867036f796f0381097324a60ecedde6c"
     },
     {
       "mode": "0755",
@@ -568,7 +568,7 @@
     {
       "mode": "0755",
       "path": "shared/validate-artifacts.py",
-      "sha256": "3a4eadfa8094aaabab66a2821b2f555151cd962862c89464b1c6ee2db70d244f"
+      "sha256": "deb8b2fe03046091561ad777c59400537d05b5a4ba2b2ca2dacd45aeaccca8bb"
     },
     {
       "mode": "0755",
@@ -623,7 +623,7 @@
     {
       "mode": "0644",
       "path": "skills/challenge-resolve/SKILL.md",
-      "sha256": "a6b132a684499848767906a88a3d88e5c3ca2223221b640f2aae1ca34eccaae3"
+      "sha256": "112d5d8cb4d7d02af88a22ea2ffc47c5fe6aa9af3daff7cca8322c1435e84d9c"
     },
     {
       "mode": "0755",
@@ -658,7 +658,7 @@
     {
       "mode": "0644",
       "path": "skills/code-remediate/references/completion.md",
-      "sha256": "6c3cc77aa59fbb46462ef841e4e3631b6b4cb79d08cf9a4f2044d5f15644a066"
+      "sha256": "482864a3690f7d657595cbfef873936fc5f025fd713e324a7a94a99fcb21cf5b"
     },
     {
       "mode": "0644",
@@ -673,7 +673,7 @@
     {
       "mode": "0644",
       "path": "skills/code-remediate/references/intake.md",
-      "sha256": "2cb8f94795381d462e92e6f7bd409393f974ff63df91a636c84075230442bd31"
+      "sha256": "e0f636af750ae44ecc05e47d0779ae1d640e96883cbc7bd73e2800bcb3aa46e1"
     },
     {
       "mode": "0644",
@@ -688,7 +688,7 @@
     {
       "mode": "0644",
       "path": "skills/code-remediate/references/selection.md",
-      "sha256": "69537de2314e47b4af866f877fd2e560827148bf8db2a66746f53cc59d12fd21"
+      "sha256": "3790cfd304a6e3a7ffeeed78d72d080e555b15283c62fbf78381f050cb339a97"
     },
     {
       "mode": "0644",
@@ -723,7 +723,7 @@
     {
       "mode": "0644",
       "path": "skills/code-review/references/findings-and-completion.md",
-      "sha256": "c5b64074346b7cdf9a1b2d1ca7aa2ac8ede7e5ef5638b21da05cdcd52f92c40a"
+      "sha256": "9ebd03235e37e5aca1a231f91baf63fefa2a83b99369b7de213be7d5a8a49876"
     },
     {
       "mode": "0644",
@@ -788,7 +788,7 @@
     {
       "mode": "0755",
       "path": "skills/code-review/validate_artifacts.py",
-      "sha256": "8c10ad252e64cb3e143e5647d5bb73f27511962ee90a14163fd7f2042c723819"
+      "sha256": "a6b45cbebe194f8546a8b62a5734b349c954d8d2fb5e20b3be9f7be33bb2f74b"
     },
     {
       "mode": "0644",
@@ -1413,7 +1413,7 @@
     {
       "mode": "0644",
       "path": "tests/remediate/lifecycle/test_remediation_finalize.py",
-      "sha256": "b9a3e6c36efdf7fc5de4e0788310461ba404ad02be3b78af2555ef8c413c9afe"
+      "sha256": "fad0a2cb4d1a01f655ca28abf5e758d6e719b771ce60da00222496294c3539fa"
     },
     {
       "mode": "0644",
@@ -1508,7 +1508,7 @@
     {
       "mode": "0644",
       "path": "tests/review/handoff/test_final_handoff.py",
-      "sha256": "b5f961b3996f7232b702e02cace8a748e6272caee7483d8f4fa9c15d96561039"
+      "sha256": "a60da545a3c517911868adbb7fdbdda1af421c68e281ef64d86ed035424ce651"
     },
     {
       "mode": "0644",
@@ -1523,7 +1523,7 @@
     {
       "mode": "0644",
       "path": "tests/review/handoff/test_handoff_action_order.py",
-      "sha256": "c9e5b20b099a33485eac1d7d7650136edccf3b227f0253aeab784d2a9efe8f32"
+      "sha256": "ebfd03523bcd312f6d8fcad76df0649fcb31d77c1e30c4e50aeed3e0240cf590"
     },
     {
       "mode": "0644",
@@ -1758,7 +1758,7 @@
     {
       "mode": "0644",
       "path": "tests/shipped/test_create_run.py",
-      "sha256": "fa961f5f2ad7166a240e9559e27e9e1e6d8f5008b1fb520d789a82e1b6a6cc2e"
+      "sha256": "34e2007c0e445cd65990cb41db7e5e8291f03c9aa1a073f027ebb73123459bb4"
     },
     {
       "mode": "0644",
@@ -2032,5 +2032,5 @@
       "path": "skills/sync/SKILL.md"
     }
   ],
-  "version": "0.43.0"
+  "version": "0.43.1"
 }

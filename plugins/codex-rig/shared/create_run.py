@@ -27,15 +27,16 @@ on its stdout path rather than recomputing timestamps or assuming a shell-specif
 
 ## Outputs
 
-Creation prints a UTC timestamp path beneath ``.reports/codex/<skill>/`` unless an explicit root is supplied. Promotion
-prints ``<root>/<skill>/pr-<number>/run-<NNN>`` using the next positive numeric index with at least three digits. The
-directory is moved as one filesystem entry, retaining every collected artifact.
+Creation prints a UTC timestamp with a randomized suffix beneath ``.reports/codex/<skill>/`` unless an explicit root is
+supplied. Promotion prints ``<root>/<skill>/pr-<number>/run-<NNN>`` using the next positive numeric index with at least
+three digits. The directory is moved as one filesystem entry, retaining every collected artifact.
 
 ## Failure
 
 Invalid skill IDs and unwritable paths exit non-zero. Promotion also fails closed for an unsupported skill, an unsafe or
 misplaced source, missing or invalid PR identity, or malformed sequence siblings. Atomic destination collisions are
-rescanned and retried without overwriting an accepted run.
+rescanned and retried without overwriting an accepted run. Hidden claim directories coordinate concurrent promoters; an
+interrupted claim reserves its index permanently rather than risking another invocation's ownership.
 """
 
 from __future__ import annotations
@@ -46,15 +47,18 @@ import json
 import os
 import re
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
 #: Pattern for a valid skill id: lowercase words joined by single hyphens.
 SKILL_ID = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 #: Pattern for a timestamp-named run directory, which is the only kind eligible for promotion.
-TIMESTAMP_RUN_ID = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{6}Z\Z")
+TIMESTAMP_RUN_ID = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{6}Z(?:-[a-z0-9_]+)?\Z")
 #: Pattern for a promoted `run-NNN` directory name; the capture group is its sequence number.
 PROMOTED_RUN_ID = re.compile(r"run-(\d{3,})\Z")
+#: Hidden exclusive claims reserve sequence numbers until an atomic promotion completes.
+PROMOTION_CLAIM_ID = re.compile(r"\.run-(\d{3,})\.claim\Z")
 #: Number of attempts to claim the next `run-NNN` name before promotion gives up.
 PROMOTION_RETRIES = 100
 
@@ -99,12 +103,16 @@ def _next_run_index(pr_directory: Path) -> int:
     """Validate existing promoted runs and return their numeric maximum plus one."""
     indexes: list[int] = []
     for sibling in pr_directory.iterdir():
-        if not sibling.name.startswith("run-"):
+        claim_match = PROMOTION_CLAIM_ID.fullmatch(sibling.name)
+        if not sibling.name.startswith("run-") and claim_match is None:
             continue
-        match = PROMOTED_RUN_ID.fullmatch(sibling.name)
+        match = claim_match or PROMOTED_RUN_ID.fullmatch(sibling.name)
         if match is None or int(match.group(1)) < 1:
             raise RunPromotionError(f"malformed promoted run sibling: {sibling.name}")
         if sibling.is_symlink() or not sibling.is_dir():
+            # Another promoter can release a claim after this directory listing was captured.
+            if claim_match is not None and not sibling.exists():
+                continue
             raise RunPromotionError(f"promoted run sibling is not a directory: {sibling.name}")
         indexes.append(int(match.group(1)))
     return max(indexes, default=0) + 1
@@ -134,13 +142,25 @@ def promote_pr_run(root: Path, skill: str, source: Path) -> Path:
     for _ in range(PROMOTION_RETRIES):
         index = _next_run_index(pr_directory)
         destination = pr_directory / f"run-{index:03d}"
+        claim = pr_directory / f".run-{index:03d}.claim"
         try:
-            source.rename(destination)
-        except OSError as error:
-            if isinstance(error, FileExistsError) or error.errno in {errno.EEXIST, errno.ENOTEMPTY}:
+            claim.mkdir()
+        except FileExistsError:
+            continue
+        try:
+            # Reserve beside the destination: Windows cannot rename over even an empty directory.
+            # A stale claim keeps its index occupied; never remove another invocation's claim.
+            if destination.exists() or destination.is_symlink():
                 continue
-            raise
-        return destination
+            try:
+                source.rename(destination)
+            except OSError as error:
+                if isinstance(error, FileExistsError) or error.errno in {errno.EEXIST, errno.ENOTEMPTY}:
+                    continue
+                raise
+            return destination
+        finally:
+            claim.rmdir()
     raise RunPromotionError("PR run destination remained contested")
 
 
@@ -157,8 +177,9 @@ def main() -> int:
         return 0
 
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S-%fZ")
-    run_directory = arguments.root / arguments.skill / timestamp
-    run_directory.mkdir(parents=True, exist_ok=False)
+    skill_directory = arguments.root / arguments.skill
+    skill_directory.mkdir(parents=True, exist_ok=True)
+    run_directory = Path(tempfile.mkdtemp(prefix=f"{timestamp}-", dir=skill_directory))
     print(run_directory)
     return 0
 

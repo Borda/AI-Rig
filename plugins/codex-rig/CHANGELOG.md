@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.43.1
+
+- Render next steps and verification as compact tables across current workflow handoffs, retaining complete actions, evidence links, historical rendering and exact caller output.
+- Allocate unique workflow run directories even when clocks repeat, and coordinate concurrent PR promotions without replacing existing runs; readable workflow and PR scopes remain in their paths.
+
 ## 0.43.0
 
 - Preserve a defensible source review judgment when an unverified concern remains solely because a required runtime check is unavailable. Keep verification blocked, retain the concern and follow-up, and reserve no source judgment for genuinely undecidable source assessment.

@@ -1,7 +1,7 @@
 """Acceptance checks for portable workflow run-directory creation.
 
 ``shared/create_run.py`` is a shipped command-line helper, so nearly every check runs it through a real subprocess; only
-the destination-collision retry swaps the filesystem rename at its boundary.
+the frozen-clock and destination-collision checks replace their clock or filesystem boundary.
 """
 
 from __future__ import annotations
@@ -9,7 +9,11 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
+from functools import partial
+from itertools import repeat
 from pathlib import Path
 from types import ModuleType
 from unittest import mock
@@ -19,7 +23,7 @@ from _modules import load_module
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 CREATE_RUN = PLUGIN_ROOT / "shared" / "create_run.py"
-_REAL_RENAME = Path.rename
+_REAL_ITERDIR = Path.iterdir
 _PR41_IDENTITY = b'{"number": 41}\n'
 _FINDINGS = b"retained report\r\n"
 
@@ -104,8 +108,32 @@ class TestCreateRun:
         created = Path(completed.stdout.strip())
         assert created.is_dir()
         assert created.parent == tmp_path / "code-review"
-        assert created.name.endswith("Z")
+        assert _load_create_run().TIMESTAMP_RUN_ID.fullmatch(created.name)
         assert completed.stderr == ""
+
+    def test_repeated_clock_allocates_isolated_runs(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Keep frozen-clock invocations isolated while preserving an earlier run's evidence."""
+        module = _load_create_run()
+        clock = mock.Mock(wraps=datetime)
+        clock.now.return_value = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+        monkeypatch.setattr(module, "datetime", clock)
+        monkeypatch.setattr(sys, "argv", [str(CREATE_RUN), "--skill", "audit", "--root", str(tmp_path)])
+
+        assert module.main() == 0
+        first = Path(capsys.readouterr().out.strip())
+        sentinel = first / "evidence.txt"
+        sentinel.write_bytes(b"first run")
+        assert module.main() == 0
+        second = Path(capsys.readouterr().out.strip())
+
+        assert first != second
+        assert first.parent == second.parent == tmp_path / "audit"
+        assert first.name.startswith("2026-01-02T03-04-05-000000Z-")
+        assert second.is_dir()
+        assert not (second / sentinel.name).exists()
+        assert sentinel.read_bytes() == b"first run"
 
     def test_rejects_path_like_skill_id(self, tmp_path: Path) -> None:
         """Prevent a skill argument from escaping the artifact root.
@@ -290,28 +318,97 @@ class TestPromotePrRun:
         assert message in completed.stderr
         assert source.is_dir()
 
-    @mock.patch.object(Path, "rename", autospec=True)
-    def test_retries_after_destination_collision(self, rename: mock.Mock, tmp_path: Path) -> None:
-        """Rescan after another promoter claims the selected run index.
-
-        The first rename finds its destination already created by a concurrent promoter and fails; the retry rescans,
-        sees that run, and lands in the next index.
-        """
-
-        def collide_once(path: Path, target: Path) -> Path:
-            """Create the colliding destination on the first call, then delegate to the real rename."""
-            if rename.call_count == 1:
-                target.mkdir()
-                raise FileExistsError(target)
-            return _REAL_RENAME(path, target)
-
+    @pytest.mark.parametrize("contender_has_evidence", [False, True])
+    @mock.patch.object(Path, "iterdir", autospec=True)
+    def test_retries_after_destination_collision(
+        self, iterdir: mock.Mock, tmp_path: Path, contender_has_evidence: bool
+    ) -> None:
+        """Preserve an empty or populated contender that appears after the sequence scan."""
         module = _load_create_run()
         source = _new_review_run(tmp_path, number=41)
-        rename.side_effect = collide_once
+        pr_directory = tmp_path / "code-review" / "pr-41"
+        contender = pr_directory / "run-001"
 
+        def collide_once(path: Path) -> Iterator[Path]:
+            """Create a competing run after capturing the first directory listing."""
+            siblings = list(_REAL_ITERDIR(path))
+            if iterdir.call_count == 1:
+                contender.mkdir()
+                if contender_has_evidence:
+                    (contender / "other.txt").write_bytes(b"other owner")
+            return iter(siblings)
+
+        iterdir.side_effect = collide_once
         promoted = module.promote_pr_run(tmp_path, "code-review", source)
 
-        expected = tmp_path / "code-review" / "pr-41" / "run-002"
-        assert rename.call_count == 2
+        expected = pr_directory / "run-002"
         assert promoted == expected
         assert (expected / "pr.json").is_file()
+        assert contender.is_dir()
+        assert not (contender / "pr.json").exists()
+        assert list(_REAL_ITERDIR(contender)) == ([contender / "other.txt"] if contender_has_evidence else [])
+
+    def test_promotes_legacy_timestamp_run(self, tmp_path: Path) -> None:
+        """Retain promotion of directories allocated before randomized suffixes were introduced."""
+        source = tmp_path / "code-review" / "2026-01-02T03-04-05-000000Z"
+        source.mkdir(parents=True)
+        (source / "pr.json").write_bytes(_PR41_IDENTITY)
+
+        completed = _promote(tmp_path, "code-review", source)
+
+        assert completed.returncode == 0, completed.stderr
+        promoted = Path(completed.stdout.strip())
+        assert promoted == tmp_path / "code-review" / "pr-41" / "run-001"
+        assert (promoted / "pr.json").read_bytes() == _PR41_IDENTITY
+
+    def test_stale_claim_preserves_its_sequence_gap(self, tmp_path: Path) -> None:
+        """Keep an interrupted promoter's claim rather than stealing its index or deleting its state."""
+        source = _new_review_run(tmp_path, number=41)
+        claim = tmp_path / "code-review" / "pr-41" / ".run-001.claim"
+        claim.mkdir(parents=True)
+
+        completed = _promote(tmp_path, "code-review", source)
+
+        assert completed.returncode == 0, completed.stderr
+        assert Path(completed.stdout.strip()) == claim.parent / "run-002"
+        assert claim.is_dir()
+        assert not (claim.parent / ".run-002.claim").exists()
+
+    def test_parallel_cli_runs_promote_without_shared_evidence(self, tmp_path: Path) -> None:
+        """Exercise real concurrent creators and promoters against one PR namespace."""
+        with ThreadPoolExecutor(max_workers=6) as executor:
+            sources = list(executor.map(_new_review_run, repeat(tmp_path, 12)))
+            completed = list(executor.map(partial(_promote, tmp_path, "code-review"), sources))
+
+        destinations = [Path(result.stdout.strip()) for result in completed]
+        assert [result.returncode for result in completed] == [0] * 12
+        assert len(set(sources)) == len(set(destinations)) == 12
+        assert all(not source.exists() for source in sources)
+        assert all(
+            (destination / "pr.json").read_text(encoding="utf-8") == '{"number": 17}' for destination in destinations
+        )
+        assert sorted(path.name for path in destinations) == [f"run-{index:03d}" for index in range(1, 13)]
+        assert sorted(path.name for path in destinations[0].parent.iterdir()) == [
+            f"run-{index:03d}" for index in range(1, 13)
+        ]
+
+    @mock.patch.object(Path, "iterdir", autospec=True)
+    def test_claim_removed_during_scan_does_not_abort_promotion(self, iterdir: mock.Mock, tmp_path: Path) -> None:
+        """Tolerate a concurrent promoter releasing its claim after the directory listing."""
+        module = _load_create_run()
+        source = _new_review_run(tmp_path, number=41)
+        claim = tmp_path / "code-review" / "pr-41" / ".run-001.claim"
+        claim.mkdir(parents=True)
+
+        def released_claim(path: Path) -> Iterator[Path]:
+            """Yield a listing whose first claim was released before inspection."""
+            siblings = list(_REAL_ITERDIR(path))
+            if claim.exists():
+                claim.rmdir()
+            return iter(siblings)
+
+        iterdir.side_effect = released_claim
+        promoted = module.promote_pr_run(tmp_path, "code-review", source)
+
+        assert (promoted / "pr.json").read_bytes() == b'{"number": 41}'
+        assert not claim.exists()

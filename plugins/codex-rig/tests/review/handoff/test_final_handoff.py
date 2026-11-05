@@ -341,6 +341,7 @@ class TestRender:
             pytest.param({"presentation_version": 10}, id="v10"),
             pytest.param({"presentation_version": 11}, id="v11"),
             pytest.param({"presentation_version": 12}, id="v12"),
+            pytest.param({"presentation_version": 13}, id="v13"),
         ],
     )
     def test_caller_contract_is_emitted_byte_for_byte(self, finalizer: Any, extra: dict[str, int]) -> None:

@@ -191,7 +191,7 @@ class TestHandoffDerivation:
 
     @pytest.mark.parametrize(
         ("selection_version", "handoff_version"),
-        [pytest.param(4, 12, id="historical-selection-new-handoff"), pytest.param(5, 12, id="current")],
+        [pytest.param(4, 13, id="historical-selection-new-handoff"), pytest.param(5, 13, id="current")],
     )
     def test_marks_selection_independently_of_outcome(
         self, valid_run: tuple[Path, dict[str, object]], selection_version: int, handoff_version: int
@@ -401,8 +401,7 @@ def _assert_promoted_for_owner(run: Path, exit_code: int, summary: dict[str, obj
     VALIDATOR.validate("code-remediate", run, run / "result.json")
     final_text = (run / "final.md").read_text(encoding="utf-8")
     assert final_text.index("**Artifact**") < final_text.index("**Next steps**")
-    assert final_text.endswith("   Action: Run the required check.\n")
-    assert f"**Owner: {owner}**" in final_text
+    assert final_text.endswith(f"| {owner} | A verification step remains. | Run the required check. |\n")
 
 
 class TestAllErrors:
@@ -672,7 +671,7 @@ class TestReviewFinalize:
             "validate",
         ]
         assert finished.returncode == 0, finished.stderr.decode()
-        assert json.loads((run / "final-handoff.json").read_text())["presentation_version"] == 12
+        assert json.loads((run / "final-handoff.json").read_text())["presentation_version"] == 13
         assert (run / "review-notes.md").read_bytes().startswith(full_report)
         reviewed_head = json.loads((run / "pr-routing.json").read_text())["head_oid"]
         assert f"Reviewed commit: {reviewed_head}" in (run / "review-notes.md").read_text()
@@ -980,7 +979,7 @@ class TestFinalizePromotion:
 
         _assert_promoted_for_owner(run, exit_code, summary, owner)
         handoff = json.loads((run / "final-handoff.json").read_text(encoding="utf-8"))
-        assert handoff["presentation_version"] == 12
+        assert handoff["presentation_version"] == 13
         assert ": src/package/parser.py" in (run / "resolution-scope.md").read_text(encoding="utf-8")
         handoff["presentation_version"] = 6
         promoted = json.loads((run / "result.json").read_text(encoding="utf-8"))
@@ -1055,5 +1054,4 @@ class TestFinalizePromotion:
         VALIDATOR.validate("code-remediate", run, run / "result.json")
         final = (run / "final.md").read_text()
         assert final.index("**Artifact**") < final.index("**Next steps**")
-        assert f"**Owner: {owner}**" in final
-        assert final.endswith("   Action: Fix the regression.\n")
+        assert final.endswith(f"| {owner} | Boundary guard | Fix the regression. |\n")

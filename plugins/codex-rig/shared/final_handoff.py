@@ -13,7 +13,7 @@ does not decide workflow findings, execute project gates, inspect chat transcrip
 
 ## Usage
 
-New handoffs set ``presentation_version=12`` for remediation resolution explanations, readable actions, confidence
+New handoffs set ``presentation_version=13`` for remediation resolution explanations, readable actions, confidence
 bullets, linked artifacts, terminal status tables and paths outside terminal tables.
 Historical versions retain their exact presentation.
 Run ``render`` after gates and handoff creation, then run ``check``
@@ -128,7 +128,7 @@ HANDOFF_FIELDS = {
     "caller_contract",
 }
 #: Current presentation layout revision for rendered handoffs, written into new handoff documents.
-PRESENTATION_VERSION = 12
+PRESENTATION_VERSION = 13
 #: One-sentence plain-English summary shown for each code-review recommendation.
 REVIEW_PLAIN_SUMMARIES = {
     "accept-as-is": "This review found no blocking change requests.",
@@ -683,14 +683,14 @@ def _validate_handoff(payload: object, *, allow_empty_remediation: bool = False)
     """Validate a handoff while preserving the original presentation's empty-result rule."""
     handoff = _require_object(payload, "handoff")
     presentation_version = handoff.get("presentation_version")
-    if type(presentation_version) is int and presentation_version in {8, 9, 10, 11, 12}:
+    if type(presentation_version) is int and presentation_version in {8, 9, 10, 11, 12, 13}:
         # Only terminal layout changes; use the existing branch's complete factual contract.
         previous = 7 if handoff.get("skill") == "code-review" and handoff.get("branch") == "assessed" else 3
         if handoff.get("skill") == "code-remediate":
             previous = 6
         _validate_handoff(
             {**handoff, "presentation_version": previous},
-            allow_empty_remediation=handoff.get("skill") == "code-remediate" and presentation_version in {11, 12},
+            allow_empty_remediation=handoff.get("skill") == "code-remediate" and presentation_version in {11, 12, 13},
         )
         return handoff
     expected_fields = HANDOFF_FIELDS if presentation_version is None else HANDOFF_FIELDS | {"presentation_version"}
@@ -1199,7 +1199,7 @@ def render_selection(payload: object) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _externalize_table_paths(markdown: str) -> str:
+def _externalize_table_paths(markdown: str, *, readable_breaks: bool = False) -> str:
     """Move table destinations into item-labelled lists, retaining surrounding action text.
 
     Input is our deterministic table renderer, not an arbitrary Markdown parser. Historical renderings never enter this
@@ -1296,6 +1296,8 @@ def _externalize_table_paths(markdown: str) -> str:
             for column, value in enumerate(row):
                 # Visible link labels need the same path checks as prose; destinations alone cannot preserve them.
                 plain = link.sub(lambda match: match[1], value)
+                if readable_breaks:
+                    plain = plain.replace("<br>", " ")
                 ambiguous_quote = "``" in plain or any(
                     not is_path(match[1], quoted=True) for match in re.finditer(r"`([^`]+)`", plain)
                 )
@@ -1316,7 +1318,11 @@ def _externalize_table_paths(markdown: str) -> str:
                     )
                 ):
                     details.append((table[0][column], value))
-                    cells.append(f"Item {row_number}" if column == 0 else "See detail")
+                    cells.append(
+                        f"Item {row_number}"
+                        if column == 0 or (readable_breaks and table[0] == ["Owner", "Issue", "Action"] and column == 1)
+                        else "See detail"
+                    )
                     continue
                 if (
                     table[0][column].casefold() in {"surface", "artifact", "path", "evidence"}
@@ -1335,7 +1341,7 @@ def _externalize_table_paths(markdown: str) -> str:
                     cursor = match.end()
                 parts.append(shorten_plain(value[cursor:]))
                 cells.append("".join(parts))
-            item = cells[0]
+            item = cells[1] if readable_breaks and table[0] == ["Owner", "Issue", "Action"] else cells[0]
             for destination in destinations:
                 pair = (item, destination)
                 if pair not in resources:
@@ -1368,7 +1374,7 @@ def render_handoff(payload: object, *, report_root: Path | None = None) -> str:
     if handoff["branch"] == "caller-contract":
         return handoff["caller_contract"]["output"]
 
-    if handoff.get("presentation_version") in {8, 9, 10, 11, 12}:
+    if handoff.get("presentation_version") in {8, 9, 10, 11, 12, 13}:
         previous = 7 if handoff["skill"] == "code-review" and handoff["branch"] == "assessed" else 3
         if handoff["skill"] == "code-remediate":
             previous = 6
@@ -1376,12 +1382,14 @@ def render_handoff(payload: object, *, report_root: Path | None = None) -> str:
             _render_v2_handoff(
                 {**handoff, "presentation_version": previous},
                 report_root=report_root,
-                readable=handoff["presentation_version"] in {9, 10, 11, 12},
-                show_resolution=handoff["presentation_version"] in {10, 11, 12},
-                status_table=handoff["presentation_version"] in {11, 12},
-                actions_last=handoff["presentation_version"] == 12,
-                current_review_summary=handoff["presentation_version"] == 12,
-            )
+                readable=handoff["presentation_version"] in {9, 10, 11, 12, 13},
+                show_resolution=handoff["presentation_version"] in {10, 11, 12, 13},
+                status_table=handoff["presentation_version"] in {11, 12, 13},
+                actions_last=handoff["presentation_version"] in {12, 13},
+                current_review_summary=handoff["presentation_version"] in {12, 13},
+                field_tables=handoff["presentation_version"] == 13,
+            ),
+            readable_breaks=handoff["presentation_version"] == 13,
         )
 
     if handoff.get("presentation_version") in {2, 3, 4, 5, 6, 7}:
@@ -1442,6 +1450,7 @@ def _render_v2_handoff(
     status_table: bool = False,
     actions_last: bool = False,
     current_review_summary: bool = False,
+    field_tables: bool = False,
 ) -> str:
     """Render a plain-English-first report while retaining the validated machine fields."""
     outcome = handoff["outcome"]
@@ -1512,6 +1521,8 @@ def _render_v2_handoff(
     visible_checks = [entry for entry in handoff["verification"] if entry["status"] != "not-applicable"]
     lines.extend(("", "**Verification**", ""))
     if visible_checks:
+        if field_tables:
+            lines.extend(("| Check | Status | Evidence |", "| -- | -- | -- |"))
         for entry in visible_checks:
             evidence = entry["evidence"]
             if readable and report_root is not None:
@@ -1522,8 +1533,16 @@ def _render_v2_handoff(
                 except (OSError, ValueError):
                     existing_file = False
                 if existing_file:
-                    evidence = f"[{evidence}](<{destination.resolve().as_posix()}>)"
-            lines.append(f"- {entry['check']}: {entry['status']} — {evidence}")
+                    label = "Log" if field_tables else evidence
+                    evidence = f"[{label}](<{destination.resolve().as_posix()}>)"
+            if field_tables:
+                lines.append(
+                    "| "
+                    + " | ".join(_table_cell(value) for value in (entry["check"], entry["status"], evidence))
+                    + " |"
+                )
+            else:
+                lines.append(f"- {entry['check']}: {entry['status']} — {evidence}")
     else:
         lines.append("- Checks were not run; no executable verification applies to this branch.")
     if disposition := handoff.get("commit_disposition"):
@@ -1535,7 +1554,13 @@ def _render_v2_handoff(
     action_lines = [] if actions_last else lines
     if remaining_by_id and (not actions_last or handoff["branch"] != "closed"):
         action_lines.extend(("", "**Next steps**", ""))
-        if readable:
+        if field_tables:
+            action_lines.extend(("| Owner | Issue | Action |", "| -- | -- | -- |"))
+            action_lines.extend(
+                "| " + " | ".join(_table_cell(item[field]) for field in ("owner", "item", "next_action")) + " |"
+                for item in remaining_by_id.values()
+            )
+        elif readable:
             for number, item in enumerate(remaining_by_id.values(), start=1):
                 if number > 1:
                     action_lines.append("")

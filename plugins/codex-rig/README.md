@@ -6,7 +6,7 @@ Codex Rig is OpenAI Codex product in [Borda's AI-Rig](https://github.com/Borda/A
 >
 > Finish and verify the active piece before dependent work. Delegate ready independent pieces with focused context; keep the overall map compact. This keeps far-ahead implementation details out of the active context and makes ownership and closure explicit. [Workflow rules](shared/native-skill-contract.md#proportional-execution).
 
-> Current source version: `0.42.3`. Codex Rig is peer product to foundry, oss, develop, research, and codemap-py—not copy of repository's `.codex/` configuration.
+> Current source version: `0.43.1`. Codex Rig is peer product to foundry, oss, develop, research, and codemap-py—not copy of repository's `.codex/` configuration.
 
 > Value at a glance: install one independently verifiable plugin to get evidence-backed workflows, bounded specialist role cards, portable fallbacks, and auditable artifacts without pretending Codex has native persistent-agent selection.
 
@@ -43,6 +43,7 @@ Contributing or want internals? See [DEVELOPMENT.md](DEVELOPMENT.md).
 - **Bounded context:** each specialist receives narrow context pack instead of whole parent thread.
 - **Evidence-backed completion:** workflows write reports under `.reports/codex/<skill>/<canonical-safe-identity>/run-<NNN>/` for bounded validated non-sensitive identity and otherwise under `.reports/codex/<skill>/<timestamp>/`; raw arguments are never serialized into paths. PR reviews and PR-targeted remediation use identity `pr-<number>`. Every workflow validates digest-bound final response after gates and discloses failed gates and confidence limits.
 - **Auditable commit handoffs:** every proposed or created commit records all meaningful changes, concrete impacts, executed verification, and residual limits in commit body.
+- **Readable reports:** Next steps use Owner, Issue and Action columns; verification uses Check, Status and Evidence columns. Paths remain below tables, and historical reports keep their original rendering. Run directories use atomic unique allocation; collected PR runs retain their readable PR identity and numbered run sequence.
 - **Cold PR review and remediation:** `$code-review #123` and `$code-remediate #123 +review` preserve current PR evidence and local merge context.
 - **No stale dismissal:** remediation reassesses review concerns against current code after conflict-resolution line changes; `stale` is not a triage or resolution status. Other evidence-backed dispositions are unchanged.
 - **Scoped network access:** shell networking stays blocked by default outside an active profile; see [Network access and GitHub reads](#network-access-and-github-reads).
@@ -327,7 +328,7 @@ Completion requires requested output, explainable gate results, unresolved risks
 
 ### Code Review
 
-- **Intake:** `$codex-rig:code-review #123` collects contributor intent from PR title/body, comments/reviews, target-branch evidence, exact local PR head, and locally derived diff before producing a structured review artifact. Collection starts in a temporary timestamped run; after authoritative `pr.json` succeeds it is promoted to `.reports/codex/code-review/pr-<number>/run-<NNN>/`, and that printed path owns every later artifact.
+- **Intake:** `$codex-rig:code-review #123` collects contributor intent from PR title/body, comments/reviews, target-branch evidence, exact local PR head, and locally derived diff before producing a structured review artifact. Collection starts in an atomically allocated timestamp-plus-random-suffix run under its workflow scope; after authoritative `pr.json` succeeds it is promoted to `.reports/codex/code-review/pr-<number>/run-<NNN>/`, and that printed path owns every later artifact.
 - **Close advice:** after collection it may emit an evidence-backed terminal `close` decision for one of `FALSE_GOAL`, `BREAKING_CONDUCT`, `WRONG_SCOPE`, `WRONG_PROVENANCE`, `DUPLICATE`, `UNADDRESSED_REVERT`, `SPAM`, or `ARCHITECTURE_VIOLATION`. Ambiguous evidence always continues to detailed review, and the decision never closes, comments on, merges, or otherwise mutates GitHub.
 - **Checkout:** review creates a detached worktree at the exact PR head and leaves the invoking branch, index, and tracked files untouched. Local working-tree/path reviews use an isolated mirror of changed source. Worktrees separate caller edits but do not enforce immutability.
 - **Routing:** it prefers independent QA/challenge passes for broad or high-risk diffs and conditionally triggers architecture, security, CI, docs, data, performance, research, or web evidence. Assessed reviews of changed production Python require `sw-engineer` as primary source reviewer.
