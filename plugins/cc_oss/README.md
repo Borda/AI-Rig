@@ -525,7 +525,7 @@ Release communication and readiness pipeline with four modes: notes, prepare, au
 /oss:release demo v1.2->v2.0                        # demo scoped to explicit range
 ```
 
-Range notation: `v1->v2` (e.g. `v1.2->v2.0`). Omit range → defaults to `last-tag..HEAD`. Pre-release tags (`rcN`, `devN`, `alphaN`, `betaN`) are excluded from tag detection automatically.
+Range notation: `v1->v2` (e.g. `v1.2->v2.0`). Omit range → defaults to `last-tag..HEAD`. When newer stable tags exist off the branch's ancestry (patch releases cut from a maintenance branch such as `release/latest`), commits they already shipped are detected by patch equivalence and left out of notes, counts, contributors and breaking-change checks; commits matched only by PR number are kept and flagged for verification. Pre-release tags (`rcN`, `devN`, `alphaN`, `betaN`) are excluded from tag detection automatically.
 
 **Modes and flags:**
 

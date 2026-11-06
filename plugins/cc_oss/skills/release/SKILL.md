@@ -184,7 +184,7 @@ printf '%s\n' "$RELEASE_MODE" > "${TMPDIR:-/tmp}/release-mode-${CSID}"
 
 ## Shared setup
 
-Run this first. Extracted to `bin/release_setup.py` — resolves `SKILL_DIR`, `REPO_ROOT`, portable scratch `BRANCH`, raw `BRANCH_REF`, persistent `BRANCH_KEY`, `DATE`, `LAST_TAG`, `CHERRY_PICK_SUBJECTS`, `SOURCE_TAG_REF`. It refuses detached HEAD before publishing branch state. Writes each var under `${TMPDIR:-/tmp}/release-setup-${CSID}/`; stable-branch banner and "no stable tag" warnings go to stderr. One block first runs the cold-start fallback (sets `$_OSS_SHARED`) and loads `agent-resolution.md`, then the setup script:
+Run this first. Extracted to `bin/release_setup.py` — resolves `SKILL_DIR`, `REPO_ROOT`, portable scratch `BRANCH`, raw `BRANCH_REF`, persistent `BRANCH_KEY`, `DATE`, `LAST_TAG`, `CHERRY_PICK_SUBJECTS`, `SOURCE_TAG_REF`, `SHIPPED_ELSEWHERE_TAGS`. It refuses detached HEAD before publishing branch state. Writes each var under `${TMPDIR:-/tmp}/release-setup-${CSID}/`; stable-branch banner and "no stable tag" warnings go to stderr. One block first runs the cold-start fallback (sets `$_OSS_SHARED`) and loads `agent-resolution.md`, then the setup script:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -316,6 +316,20 @@ printf '%s\n' "$PRS"
 
 Cross-reference commit bodies against PR descriptions — canonical source of truth for *why* change made. `BREAKING CHANGE:` footer = breaking change regardless of PR label.
 
+**Subtract work already shipped off-branch.** `SHIPPED_ELSEWHERE_TAGS` (Shared setup) lists stable tags newer than `$LAST_TAG` that descend from it but are not reachable from HEAD — a maintenance branch's 1.11.1 and 1.11.2 next to HEAD's 1.11.0. `$LAST_TAG..HEAD` still contains what those tags backported, so it would be announced as new. Empty list → nothing to do, `$SHIPPED_FILE` stays empty.
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r RANGE < "${TMPDIR:-/tmp}/release-range-${CSID}" 2>/dev/null || RANGE=""
+IFS= read -r SHIPPED_TAGS < "${TMPDIR:-/tmp}/release-setup-${CSID}/SHIPPED_ELSEWHERE_TAGS" 2>/dev/null || SHIPPED_TAGS=""
+SHIPPED_FILE="${TMPDIR:-/tmp}/release-shipped-${CSID}"
+: > "$SHIPPED_FILE"
+[ -z "$SHIPPED_TAGS" ] || python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/release_shipped_elsewhere.py" --range "$RANGE" --tags "$SHIPPED_TAGS" --out "$SHIPPED_FILE" || { echo "! BLOCKED — shipped-elsewhere subtraction failed; do not claim the range holds only new work" >&2; exit 1; }  # timeout: 90000
+git log "$RANGE" --no-merges --format='%H%x09%s' | awk -F'\t' 'NR==FNR{if($2=="shipped")x[$1]=1;next}!($1 in x)' "$SHIPPED_FILE" -  # timeout: 5000
+```
+
+The last command prints the commits that are new to this release; use it, not the unfiltered `git log` above, as the candidate set for classification, contributors, counts and breaking-change checks. `$SHIPPED_FILE` rows (`sha`, category, tag, evidence): `shipped` = patch-equivalent in the older tag (`git cherry`) with no revert on the release side — dropped; record them as "already shipped in `<tag>`" in the gather evidence and never credit their authors. `review` = same `(#N)` PR number in the tag, or a revert on the release side — kept as new until verified: confirm the change exists in the released tree (`git show <tag>:<file>` against the commit's diff); present → treat as shipped, absent → keep. Subject, title or PR-number matches alone never subtract. Report the counts (`candidates`, `shipped`, `review`) in the report's scope line; unresolved `review` rows are a stated limit.
+
 The default-branch list is discovery context, not the contributor inventory. Query every candidate commit independently of the default branch so maintenance-branch and squash-only PR authors cannot disappear:
 
 ```bash
@@ -323,7 +337,7 @@ The default-branch list is discovery context, not the contributor inventory. Que
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 [ -n "$RANGE" ] || IFS= read -r RANGE < "${TMPDIR:-/tmp}/release-range-${CSID}" 2>/dev/null || RANGE=""
 [ -n "$RANGE" ] || { echo "Error: release range unresolved; cannot enumerate candidate commits" >&2; exit 1; }
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/gh_batch_query.py" commit-prs --range "$RANGE" --offset-file "${TMPDIR:-/tmp}/release-assoc-offset-${CSID}" || { echo "Error: PR association coverage unavailable; retain gap, do not claim complete credits" >&2; exit 1; }  # timeout: 180000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/gh_batch_query.py" commit-prs --range "$RANGE" --exclude-file "${TMPDIR:-/tmp}/release-shipped-${CSID}" --offset-file "${TMPDIR:-/tmp}/release-assoc-offset-${CSID}" || { echo "Error: PR association coverage unavailable; retain gap, do not claim complete credits" >&2; exit 1; }  # timeout: 180000
 ```
 
 One batched GraphQL request covers 25 commits (500 per run, about 20 requests). stderr printing `NEXT_OFFSET=<n>` → re-run this exact block until it stops printing it; association coverage is incomplete until then. Each output line is one commit's record `{commit, pull_requests: [{number, title, author, base, merge_commit_sha}]}`, merged PRs only; a `coverage_gap` field (commit unknown to GitHub, or more than 100 associated PRs) is an explicit coverage gap, never an empty association.
@@ -548,7 +562,7 @@ Read `$CONTRIBUTORS_FILE` for formatted contributors list. If file missing (dele
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # reload $RANGE (Check 41)
 IFS= read -r RANGE < "${TMPDIR:-/tmp}/release-range-${CSID}" 2>/dev/null || RANGE=""
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/extract_contributors.py" --range "$RANGE" --include-bots  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/extract_contributors.py" --range "$RANGE" --exclude-file "${TMPDIR:-/tmp}/release-shipped-${CSID}" --include-bots  # timeout: 5000
 ```
 
 `extract_contributors.py --include-bots` emits one `Name <email>` line per contributor, already deduplicated by email. Keep GitHub privacy-email humans; separate bot identities into the single automated-contributions line required by `guidelines/writing-rules.md`. Every commit counts, including docs and typo fixes.

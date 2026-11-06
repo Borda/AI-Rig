@@ -17,6 +17,8 @@ if [ -z "$RANGE" ]; then
     RANGE="$LAST_TAG..HEAD"
 fi
 echo "audit scope: target=${TARGET:-none} range=$RANGE"
+IFS= read -r SHIPPED_TAGS < "${TMPDIR:-/tmp}/release-setup-${CSID}/SHIPPED_ELSEWHERE_TAGS" 2>/dev/null || SHIPPED_TAGS=""
+[ -z "$SHIPPED_TAGS" ] || echo "! off-branch tags already shipped: $SHIPPED_TAGS - unreleased-commit and changed-file sections below include their backports; read them against release-shipped-${CSID}"
 AUDIT_OUT=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/run_audit_checks.py" \
     --repo "$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null)" \
     ${TARGET:+--tag "$TARGET"} \

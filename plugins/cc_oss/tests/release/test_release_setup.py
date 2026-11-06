@@ -28,7 +28,7 @@ _PLUGIN = Path(__file__).resolve().parents[2]
 _SKILL = _PLUGIN / "skills/release/SKILL.md"
 _SETUP_ANCHOR = "Extracted to `bin/release_setup.py`"
 _STABLE_KEYS = ("SKILL_DIR", "REPO_ROOT", "BRANCH", "BRANCH_REF", "BRANCH_KEY", "DATE", "LAST_TAG")
-_ALL_KEYS = (*_STABLE_KEYS, "CHERRY_PICK_SUBJECTS", "SOURCE_TAG_REF")
+_ALL_KEYS = (*_STABLE_KEYS, "CHERRY_PICK_SUBJECTS", "SOURCE_TAG_REF", "SHIPPED_ELSEWHERE_TAGS")
 #: Git answers for the fallback path: no first-parent tag, so the last tag comes from the merge-base ancestor.
 _FALLBACK_GIT = (
     (0, "/repo"),  # rev-parse --show-toplevel
@@ -179,6 +179,62 @@ class TestStableBranch:
         out_dir = run_stable(tag="v2.3.1")
 
         assert (out_dir / key).read_text(encoding="utf-8") == expected
+
+
+class TestShippedElsewhereTags:
+    """Stable tags cut off HEAD's ancestry are published so Gather can subtract what they already shipped."""
+
+    @pytest.mark.parametrize(
+        ("all_tags", "unmerged", "ancestor_codes", "expected"),
+        [
+            pytest.param(
+                "1.11.2\n1.11.1\n1.11.0\n1.10.0",
+                "1.11.2\n1.11.1",
+                (0, 0),
+                "1.11.2 1.11.1\n",
+                id="maintenance-branch-tags-newest-first",
+            ),
+            pytest.param("1.11.1\n1.11.0", "1.11.1", (1,), "\n", id="tag-not-descending-from-baseline-skipped"),
+            pytest.param("1.12.0rc1\n1.11.0", "1.12.0rc1", (), "\n", id="prerelease-tag-skipped"),
+            pytest.param("1.11.1\n1.11.0", "", (), "\n", id="tag-reachable-from-head-skipped"),
+            pytest.param("2.0.0\n1.10.0", "2.0.0", (), "\n", id="baseline-not-a-tag-yields-nothing"),
+        ],
+    )
+    def test_key_file_lists_qualifying_tags(
+        self,
+        git_sequence: Callable[..., list[list[str]]],
+        out_dir: Path,
+        all_tags: str,
+        unmerged: str,
+        ancestor_codes: tuple[int, ...],
+        expected: str,
+    ) -> None:
+        """Only unmerged, stable, baseline-descending tags newer than the first-parent tag are listed.
+
+        The first-parent tag is 1.11.0 here; 1.11.1 and 1.11.2 live on a release branch HEAD never merged.
+        """
+        git_sequence(
+            (0, "/repo"),
+            (0, "main"),
+            (0, "1.11.0"),
+            (0, all_tags),
+            (0, unmerged),
+            *((code, "") for code in ancestor_codes),
+        )
+
+        assert rs.main([]) == 0
+
+        assert (out_dir / "SHIPPED_ELSEWHERE_TAGS").read_text(encoding="utf-8") == expected
+
+    def test_stable_branch_fallback_leaves_key_empty(
+        self, git_sequence: Callable[..., list[list[str]]], out_dir: Path
+    ) -> None:
+        """Without a first-parent tag the cherry-pick path owns the baseline and this key stays empty."""
+        git_sequence(*_FALLBACK_GIT)
+
+        assert rs.main([]) == 0
+
+        assert (out_dir / "SHIPPED_ELSEWHERE_TAGS").read_text(encoding="utf-8") == "\n"
 
 
 class TestBranchIdentity:

@@ -586,7 +586,7 @@ These helpers are installed workflow support and maintainer surfaces, not additi
 | `check_agent.py` | Probe whether a plugin agent is installed. |
 | `check_bridge.py` | Report whether the Claude-Codex bridge plugin is installed and enabled (`true`/`false`, or `--status` for `available`, `disabled`, `absent`). |
 | `check_oss_pr_signals.py` | Collect read-only OSS signals from a pull-request diff; secret matches print `path:line: kind` only, never the value, and a `--latest-tag` starting with `-` exits 1. |
-| `gh_batch_query.py` | Batch per-item GitHub lookups into a few GraphQL requests: `commit-prs` maps a Git range to its merged PRs (resumable with `--offset-file`), `pr-files` lists the changed files of several PRs. |
+| `gh_batch_query.py` | Batch per-item GitHub lookups into a few GraphQL requests: `commit-prs` maps a Git range to its merged PRs (resumable with `--offset-file`; `--exclude-file` drops commits already shipped off-branch), `pr-files` lists the changed files of several PRs. |
 | `fetch_pr_intel.py` | Fetch a PR's conversation comments, reviews, inline comments (with resolved-thread flag), commits and linked issues into one deduplicated `pr-intel-raw.jsonl`; `/oss:resolve` Step 3b reads it instead of running the fetch commands through a model. |
 | `classify_breaking.py` | Label changed public symbols as Breaking or internal. |
 | `classify_pr_scope.py` | Classify a pull request as CHORE, FIX, REFACTOR, FEATURE, or MIXED. |
@@ -640,12 +640,13 @@ These helpers are installed workflow support and maintainer surfaces, not additi
 
 | Helper | Purpose |
 | -- | -- |
-| `extract_contributors.py` | List unique contributors in a Git range; `--include-bots` supports aggregated release credits. |
+| `extract_contributors.py` | List unique contributors in a Git range; `--include-bots` supports aggregated release credits; `--exclude-file` leaves out commits already shipped off-branch. |
 | `get_plugin_install_path.py` | Resolve the active plugin path from Claude's registry. |
 | `parse_release_envelopes.py` | Validate the changelog-audit and contributors agent envelopes for `/oss:release`. |
 | `release_append_marker.py` | Persist and resolve the release `--append` baseline. |
 | `release_append_publish.py` | Stage, seal, publish, and recover checked plain and `--append` notes artifacts. |
-| `release_setup.py` | Resolve shared setup values for release modes; the sentinel directory is private (`0700`) and the helper exits 1 when it is a symlink or owned by another user. |
+| `release_setup.py` | Resolve shared setup values for release modes, including `SHIPPED_ELSEWHERE_TAGS` (newer stable tags cut off HEAD's ancestry); the sentinel directory is private (`0700`) and the helper exits 1 when it is a symlink or owned by another user. |
+| `release_shipped_elsewhere.py` | Find release-range commits an off-branch release tag (a maintenance branch's newer patch release) already shipped: `shipped` = patch-equivalent via `git cherry` with no release-side revert, `review` = same PR number or release-side revert only. Writes a TSV for `--exclude-file`; exit 2 on any git failure. |
 | `resolve_changelog_file.py` | Resolve the repository changelog path for release notes, prepare and audit (root, `docs/`, first one-level `CHANGELOG*`, else `CHANGELOG.md`); `--write-sentinel` stores it for later steps. |
 | `run_audit_checks.py` | Gather raw readiness evidence for release audit. |
 | `setup_release_dir.py` | Create a release directory and protect existing artifacts. |

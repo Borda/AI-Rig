@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import subprocess
 from collections.abc import Iterator
+from pathlib import Path
 from unittest import mock
 
 import extract_contributors as ec
@@ -197,6 +198,42 @@ class TestGitLog:
         """
         ec.main(["--repo", "/repo/x", "--range", "v1..v2"])
         assert git.call_args.args[0][1:3] == ["-C", "/repo/x"]
+
+    def test_exclude_file_drops_only_shipped_commits(self, git: mock.Mock, tmp_path: Path) -> None:
+        """Commits the exclusion TSV marks ``shipped`` are not logged; ``review`` rows stay credited.
+
+        The release range still holds work an older off-branch tag shipped, and its authors were credited then.
+        """
+        tsv = tmp_path / "shipped.tsv"
+        tsv.write_text("aaa\tshipped\t1.11.1\tcherry\nbbb\treview\t1.11.1\tsame PR\n", encoding="utf-8")
+        git.side_effect = [_completed(stdout="aaa\nbbb\nccc\n"), _completed(stdout="Al <al@example.com>\n")]
+
+        assert ec.main(["--range", "v1..v2", "--exclude-file", str(tsv)]) == 0
+
+        listing, log = git.call_args_list
+        assert listing.args[0][1:] == ["rev-list", "v1..v2", "--no-merges"]
+        assert "--stdin" in log.args[0]
+        assert log.kwargs["input"] == "bbb\nccc\n"
+
+    def test_exclude_file_covering_every_commit_lists_nobody(
+        self, git: mock.Mock, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """When every commit already shipped, no ``git log`` runs and nothing is printed.
+
+        An empty ``--stdin`` would make git fall back to HEAD and credit an unrelated author.
+        """
+        tsv = tmp_path / "shipped.tsv"
+        tsv.write_text("aaa\tshipped\t1.11.1\tcherry\n", encoding="utf-8")
+        git.return_value = _completed(stdout="aaa\n")
+
+        assert ec.main(["--range", "v1..v2", "--exclude-file", str(tsv)]) == 0
+
+        assert git.call_count == 1
+        assert capsys.readouterr().out == ""
+
+    def test_unreadable_exclude_file_exits_2(self, git: mock.Mock, tmp_path: Path) -> None:
+        """A missing exclusion file stops the run instead of crediting the whole range."""
+        assert ec.main(["--range", "v1..v2", "--exclude-file", str(tmp_path / "absent.tsv")]) == 2
 
     def test_timeout_exits_2(self, git: mock.Mock, capsys: pytest.CaptureFixture[str]) -> None:
         """A ``git log`` slower than the bound exits 2 with a message, the same code as a failed log.

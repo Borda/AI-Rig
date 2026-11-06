@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.56.4
+
+- `/oss:release` no longer announces work that an off-branch patch release already shipped. When a maintenance branch carries newer stable tags than the tag on HEAD's own history (HEAD at 1.11.0, patch tags 1.11.1 and 1.11.2 on `release/latest`), setup lists them and the new `release_shipped_elsewhere.py` helper subtracts the range commits those tags contain. Patch-equivalent commits (`git cherry`) with no release-side revert are dropped from notes, counts and PR associations.
+- Authors of backported commits are no longer credited a second time: `gh_batch_query.py commit-prs` and `extract_contributors.py` gain `--exclude-file`, which leaves out the commits the subtraction marked as already shipped.
+- Commits matched only by PR number, or reverted on the release side, are kept and flagged for verification against the released tree instead of being dropped. A failing git call during subtraction stops the run instead of reading as nothing shipped.
+- Breaking-change symbol detection diffs against the newest shipped tag, so symbols that a patch release already delivered are not reported as new API changes. The readiness audit prints a warning that its unreleased-commit and changed-file sections include those backports.
+
 ## 0.56.3
 
 - Resolve finds the PR behind an auto-selected review report through the new `extract_review_pr.py` helper instead of a `sed` command, and `/oss:setup` removes the old `sed` allow entry. That entry's regex `*` characters were read as wildcards, so it silently approved other `sed` commands and made Claude print a permission warning on every run.

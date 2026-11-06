@@ -217,7 +217,7 @@ class TestTruthCheckInstructions:
             template.count("<OSS_BIN>/"),
             "`<OSS_BIN>`" in delegation,
             "OSS_BIN=$OSS_BIN" in delegation,
-        ) == (True, 2, True, True)
+        ) == (True, 3, True, True)  # gh_batch_query, release_shipped_elsewhere, symbol_exists_at_ref
 
     @pytest.mark.parametrize("relative_path", [_CLASSIFY, _GATHER])
     def test_truth_probe_is_bin_script_not_inline_heredoc(self, relative_path: str) -> None:

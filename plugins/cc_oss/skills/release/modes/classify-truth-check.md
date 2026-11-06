@@ -117,6 +117,8 @@ When `CODEMAP_OK` non-zero:
    export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
    IFS= read -r RANGE < "${TMPDIR:-/tmp}/release-range-${CSID}" 2>/dev/null || RANGE=""
    [ -n "$RANGE" ] || { echo "! BLOCKED — release-range sentinel missing; Breaking classification not run (human Classify labels stand, report as unverified)"; exit 1; }
+   IFS= read -r SHIPPED_TAGS < "${TMPDIR:-/tmp}/release-setup-${CSID}/SHIPPED_ELSEWHERE_TAGS" 2>/dev/null || SHIPPED_TAGS=""
+   [ -z "$SHIPPED_TAGS" ] || RANGE="${SHIPPED_TAGS%% *}..${RANGE##*..}"  # API baseline = newest tag users already hold; LAST_TAG..HEAD would flag backported symbols
    CHANGED_SYMBOLS=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/extract_changed_symbols.py" "$RANGE")  # timeout: 15000
    [ -n "$CHANGED_SYMBOLS" ] || { echo "No changed public symbols — skipping Breaking classification"; exit 0; }
    printf '%s\n' "$CHANGED_SYMBOLS"

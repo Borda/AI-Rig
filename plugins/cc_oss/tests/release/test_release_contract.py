@@ -13,7 +13,15 @@ _RECORD = {
     "pull_requests": [{"number": 17, "author": {"login": "squash-author"}, "base": "stable/1.x"}],
 }
 #: Helper arguments the gather block must pass, then the name of the resumable offset file it hands over.
-_EXPECTED_ARGV = ["plug/bin/gh_batch_query.py", "commit-prs", "--range", "candidate-range", "--offset-file"]
+_EXPECTED_ARGV = [
+    "plug/bin/gh_batch_query.py",
+    "commit-prs",
+    "--range",
+    "candidate-range",
+    "--exclude-file",
+    "release-shipped-contract",
+    "--offset-file",
+]
 _EXPECTED_OFFSET_NAME = "release-assoc-offset-contract"
 
 _skip_shell_unavailable = pytest.mark.skipif(
@@ -76,8 +84,13 @@ RANGE=candidate-range
 
 
 def _recorded_call(calls: Path) -> tuple[list[str], str]:
-    """Split the recorded helper invocation into its leading arguments and the offset file name."""
+    """Split the recorded helper invocation into its leading arguments and the offset file name.
+
+    The exclusion file is reduced to its name like the offset file: both live below the per-test temporary directory.
+    """
     argv = calls.read_text(encoding="utf-8").split()
+    flag_at = argv.index("--exclude-file")
+    argv[flag_at + 1] = Path(argv[flag_at + 1]).name
     return argv[:-1], Path(argv[-1]).name
 
 

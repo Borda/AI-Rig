@@ -168,6 +168,24 @@ class TestMainCommitPrs:
         assert [json.loads(line)["commit"] for line in out.out.splitlines()] == [SHA_A, SHA_B, SHA_C]
         assert "NEXT_OFFSET" not in out.err
 
+    def test_exclude_file_removes_shipped_commits_before_slicing(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Commits the TSV marks ``shipped`` are never queried; ``review`` rows stay in the range.
+
+        Counting them would credit authors and PRs of work an older off-branch tag already released.
+        """
+        _fake_run(monkeypatch, [SHA_A, SHA_B, SHA_C])
+        tsv = tmp_path / "shipped.tsv"
+        tsv.write_text(f"{SHA_A}\tshipped\t1.11.1\tcherry\n{SHA_B}\treview\t1.11.1\tsame PR\n", encoding="utf-8")
+
+        code = ghq.main([*RANGE_ARGS, "--exclude-file", str(tsv)])
+        out = capsys.readouterr()
+
+        assert code == 0
+        assert [json.loads(line)["commit"] for line in out.out.splitlines()] == [SHA_B, SHA_C]
+        assert "of 2" in out.err
+
     def test_hints_next_offset(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         """A limit below the range length processes the slice and prints the continuation offset on stderr.
 

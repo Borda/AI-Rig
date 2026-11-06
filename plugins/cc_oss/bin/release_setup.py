@@ -9,12 +9,17 @@ consumption. Informational notes go to stderr only.
 
 Output files (written to ``${TMPDIR:-/tmp}/release-setup-${CSID}/``):
     SKILL_DIR, REPO_ROOT, BRANCH, BRANCH_REF, BRANCH_KEY, DATE, LAST_TAG,
-    CHERRY_PICK_SUBJECTS (may be empty), SOURCE_TAG_REF (may be empty)
+    CHERRY_PICK_SUBJECTS (may be empty), SOURCE_TAG_REF (may be empty),
+    SHIPPED_ELSEWHERE_TAGS (may be empty; space-separated, newest first)
 
 Stable-branch detection: when current branch has its own stable tag in
 first-parent history, baseline is that tag; otherwise baseline is the
 most recent stable tag reachable from the common ancestor between HEAD
 and the source-tag commit.
+
+Off-ancestry tags: with a first-parent baseline, stable tags newer than it that descend from it but are not reachable
+from HEAD (a maintenance branch's 1.11.1 and 1.11.2 next to HEAD's 1.11.0) are listed in SHIPPED_ELSEWHERE_TAGS.
+Gather subtracts the range commits those tags already shipped (``release_shipped_elsewhere.py``).
 
 Usage:
     release_setup.py
@@ -94,6 +99,77 @@ def _git(git_path: str, *args: str) -> str:
         timeout=5,
     )
     return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def _git_ok(git_path: str, *args: str) -> bool:
+    """Return whether a git subcommand exits zero (for yes/no queries such as ``merge-base --is-ancestor``).
+
+    Args:
+        git_path: Absolute path to the git binary.
+        *args: Arguments to pass after ``git``.
+
+    Returns:
+        ``True`` on exit-0, ``False`` on any other exit.
+
+    Examples:
+        No doctest — subprocess-dependent; covered by pytest.
+    """
+    result = subprocess.run(  # noqa: S603
+        [git_path, *args],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=5,
+    )
+    return result.returncode == 0
+
+
+def _is_prerelease_tag(tag: str) -> bool:
+    """Return whether ``tag`` matches one of the ``_EXCLUDE_FLAGS`` pre-release globs.
+
+    Args:
+        tag: Tag name.
+
+    Returns:
+        ``True`` when the name contains ``rc``, ``dev``, ``alpha`` or ``beta``.
+
+    Examples:
+        >>> _is_prerelease_tag("v1.2.0rc1"), _is_prerelease_tag("1.11.2")
+        (True, False)
+    """
+    return any(marker in tag for marker in ("rc", "dev", "alpha", "beta"))
+
+
+def _shipped_elsewhere_tags(git: str, last_tag: str) -> list[str]:
+    """List stable tags newer than ``last_tag`` that were cut off HEAD's ancestry.
+
+    A maintenance branch such as ``release/latest`` can carry 1.11.1 and 1.11.2 while HEAD's own newest tag is
+    1.11.0. ``git describe --first-parent`` never sees them, so work backported into those tags would look new in a
+    ``last_tag..HEAD`` range. A tag qualifies when it sorts after ``last_tag``, is not reachable from HEAD, and descends
+    from ``last_tag`` (a tag of an unrelated line does not describe what users of this line already received).
+
+    Args:
+        git: Absolute path to the git binary.
+        last_tag: Baseline tag resolved from HEAD's first-parent history.
+
+    Returns:
+        Qualifying tags, newest version first; empty when none, or when ``last_tag`` is not itself a tag.
+
+    Examples:
+        No doctest — subprocess-dependent; covered by pytest.
+    """
+    by_version = _git(git, "tag", "--list", "--sort=-v:refname").splitlines()
+    if last_tag not in by_version:
+        return []
+    unmerged = set(_git(git, "tag", "--list", "--no-merged", "HEAD").split())
+    newer = by_version[: by_version.index(last_tag)]
+    return [
+        tag
+        for tag in newer
+        if tag in unmerged
+        and not _is_prerelease_tag(tag)
+        and _git_ok(git, "merge-base", "--is-ancestor", last_tag, tag)
+    ]
 
 
 def _native_temp_dir() -> Path:
@@ -275,9 +351,17 @@ def main(argv: list[str] | None = None) -> int:
 
     cherry_pick_subjects = ""
     source_tag_ref = ""
+    shipped_elsewhere: list[str] = []
 
     if branch_tag:
         last_tag = branch_tag
+        shipped_elsewhere = _shipped_elsewhere_tags(git, last_tag)
+        if shipped_elsewhere:
+            print(
+                f"ℹ Newer stable tags off this branch's ancestry: {' '.join(shipped_elsewhere)} - "
+                "range commits they already shipped are excluded at Gather",
+                file=sys.stderr,
+            )
     else:
         last_tag, cherry_pick_subjects, source_tag_ref = _resolve_stable_baseline(git)
 
@@ -300,6 +384,7 @@ def main(argv: list[str] | None = None) -> int:
         "LAST_TAG": last_tag,
         "CHERRY_PICK_SUBJECTS": cherry_pick_subjects,
         "SOURCE_TAG_REF": source_tag_ref,
+        "SHIPPED_ELSEWHERE_TAGS": " ".join(shipped_elsewhere),
     }
     _write_setup_outputs(out_dir, values)
 

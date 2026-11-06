@@ -12,6 +12,7 @@ Usage:
     extract_contributors.py --range <git-range>
     extract_contributors.py --from <ref> --to <ref>
     extract_contributors.py --range <git-range> --include-bots
+    extract_contributors.py --range <git-range> --exclude-file <tsv>
 
 Outputs: One sorted ``Name <email>`` line per deduplicated contributor is
 written to stdout. The normal exit code is zero, including an empty range.
@@ -31,6 +32,8 @@ Arguments:
     --to:     Range upper bound (defaults to ``HEAD`` when ``--from`` given).
     --repo:   Optional repo root passed to ``git -C`` (default: cwd).
     --include-bots: Preserve bot identities for caller-side credit grouping.
+    --exclude-file: ``release_shipped_elsewhere.py`` TSV; commits it lists as ``shipped`` (already released by an
+                    off-branch tag) are left out, so their authors are not credited for this release.
 """
 
 from __future__ import annotations
@@ -148,19 +151,19 @@ def _build_range(range_arg: str, from_ref: str, to_ref: str) -> str:
     return ""
 
 
-def _parse_args(args: list[str]) -> tuple[str, str, str, str, bool, str | None]:
+def _parse_args(args: list[str]) -> tuple[str, str, str, str, bool, str, str | None]:
     """Parse the hand-rolled flag loop into its five values.
 
-    Handles ``--range``/``--from``/``--to``/``--repo``/``--include-bots``.
+    Handles ``--range``/``--from``/``--to``/``--repo``/``--include-bots``/``--exclude-file``.
 
     Args:
         args: Raw argv tokens (``-h``/``--help`` already handled by the caller).
 
     Returns:
-        ``(range_arg, from_ref, to_ref, repo, include_bots, error)`` — ``error`` is ``None`` on
+        ``(range_arg, from_ref, to_ref, repo, include_bots, exclude_file, error)`` — ``error`` is ``None`` on
         success, or a message naming the unrecognized flag.
     """
-    range_arg = from_ref = to_ref = repo = ""
+    range_arg = from_ref = to_ref = repo = exclude_file = ""
     include_bots = False
     i = 0
     while i < len(args):
@@ -178,10 +181,55 @@ def _parse_args(args: list[str]) -> tuple[str, str, str, str, bool, str | None]:
             to_ref = value
         elif flag == "--repo":
             repo = value
+        elif flag == "--exclude-file":
+            exclude_file = value
         else:
-            return range_arg, from_ref, to_ref, repo, include_bots, f"extract_contributors: unknown arg '{flag}'"
+            return (
+                range_arg,
+                from_ref,
+                to_ref,
+                repo,
+                include_bots,
+                exclude_file,
+                f"extract_contributors: unknown arg '{flag}'",
+            )
         i += 2
-    return range_arg, from_ref, to_ref, repo, include_bots, None
+    return range_arg, from_ref, to_ref, repo, include_bots, exclude_file, None
+
+
+def _kept_commits(base: list[str], git_range: str, exclude_file: str) -> list[str] | int:
+    """Return the range's non-merge commits minus those the exclusion TSV lists as ``shipped``.
+
+    Args:
+        base: ``git`` argv prefix (binary plus optional ``-C <repo>``).
+        git_range: Validated git range.
+        exclude_file: Path of the ``release_shipped_elsewhere.py`` TSV.
+
+    Returns:
+        The kept shas, or the process exit code (2) after printing the failure.
+    """
+    try:
+        with open(exclude_file, encoding="utf-8") as handle:
+            rows = [line.rstrip("\n").split("\t") for line in handle]
+    except OSError as exc:
+        print(f"extract_contributors: cannot read --exclude-file: {exc}", file=sys.stderr)
+        return 2
+    shipped = {row[0] for row in rows if len(row) > 1 and row[1] == "shipped"}
+    try:
+        proc = subprocess.run(  # noqa: S603
+            [*base, "rev-list", git_range, "--no-merges"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=_GIT_LOG_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        print(f"extract_contributors: git rev-list timed out after {_GIT_LOG_TIMEOUT} s", file=sys.stderr)
+        return 2
+    if proc.returncode != 0:
+        print(f"extract_contributors: git rev-list failed: {proc.stderr.strip()}", file=sys.stderr)
+        return 2
+    return [sha for sha in proc.stdout.split() if sha not in shipped]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -208,7 +256,7 @@ def main(argv: list[str] | None = None) -> int:
 
     sys.stdout.reconfigure(encoding="utf-8", newline="\n")  # type: ignore[union-attr]
 
-    range_arg, from_ref, to_ref, repo, include_bots, error = _parse_args(args)
+    range_arg, from_ref, to_ref, repo, include_bots, exclude_file, error = _parse_args(args)
     if error is not None:
         print(error, file=sys.stderr)
         return 1
@@ -231,13 +279,21 @@ def main(argv: list[str] | None = None) -> int:
     if git is None:
         raise FileNotFoundError("executable not found on PATH: git")
 
-    cmd = [git]
-    if repo:
-        cmd += ["-C", repo]
-    cmd += ["log", git_range, "--no-merges", f"--format={_GIT_FORMAT}"]
+    base = [git, *(["-C", repo] if repo else [])]
+    cmd = [*base, "log", git_range, "--no-merges", f"--format={_GIT_FORMAT}"]
+    extra: dict[str, str] = {}
+    if exclude_file:
+        # a shipped commit is dropped alone: ``^sha`` would also drop its ancestors
+        kept = _kept_commits(base, git_range, exclude_file)
+        if isinstance(kept, int):
+            return kept
+        if not kept:
+            return 0  # empty --stdin makes git log fall back to HEAD
+        cmd = [*base, "log", "--no-walk=unsorted", "--stdin", f"--format={_GIT_FORMAT}"]
+        extra["input"] = "".join(f"{sha}\n" for sha in kept)
 
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=_GIT_LOG_TIMEOUT)  # noqa: S603
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=_GIT_LOG_TIMEOUT, **extra)  # noqa: S603
     except subprocess.TimeoutExpired:
         print(f"extract_contributors: git log timed out after {_GIT_LOG_TIMEOUT} s", file=sys.stderr)
         return 2

@@ -9,7 +9,7 @@ GitHub, the repository, or any file.
 
 Usage:
     gh_batch_query.py commit-prs --range <git-range> [--repo OWNER/NAME] [--repo-root DIR]
-                                 [--offset N | --offset-file F] [--limit N]
+                                 [--offset N | --offset-file F] [--limit N] [--exclude-file F]
     gh_batch_query.py pr-files <number> [<number> ...] [--repo OWNER/NAME] [--repo-root DIR]
 
 Outputs: One JSON object per line on stdout.
@@ -37,6 +37,8 @@ Arguments:
     --offset:     Commits to skip from the start of the range (default 0).
     --offset-file: File holding the resume offset between runs; replaces ``--offset``.
     --limit:      Commits to process in this run (default 500).
+    --exclude-file: ``release_shipped_elsewhere.py`` TSV; commits it lists as ``shipped`` leave the range before
+                  slicing, so offsets and counts cover only the commits new to the release.
     --batch-size: Aliases per GraphQL request (default 25, max 50).
 """
 
@@ -227,6 +229,21 @@ def _load_offset(path: Path, range_spec: str) -> int:
         return 0
 
 
+def _load_excluded(path: Path) -> set[str]:
+    """Return the commit shas to skip from a ``release_shipped_elsewhere.py`` TSV; only ``shipped`` rows count.
+
+    A missing file means nothing is excluded; an unreadable one stops the run instead of silently widening the range.
+    """
+    if not path.exists():
+        return set()
+    excluded: set[str] = set()
+    for line in path.read_text(encoding="utf-8").splitlines():
+        sha, _, rest = line.partition("\t")
+        if rest.split("\t", 1)[0] == "shipped":
+            excluded.add(sha)
+    return excluded
+
+
 def commit_prs(args: argparse.Namespace) -> int:
     """Print one association record per commit of the range slice; return the process exit code."""
     root = Path(args.repo_root)
@@ -236,6 +253,8 @@ def commit_prs(args: argparse.Namespace) -> int:
     offset = _load_offset(Path(args.offset_file), args.range) if args.offset_file else args.offset
     owner, name = resolve_repo(args.repo, root)
     everything = _run(["git", "rev-list", args.range], root).split()
+    if args.exclude_file:
+        everything = [sha for sha in everything if sha not in _load_excluded(Path(args.exclude_file))]
     window = everything[offset : offset + args.limit]
     print(f"PR associations: commits {offset + 1}-{offset + len(window)} of {len(everything)}", file=sys.stderr)
     for batch in _batches(window, args.batch_size):
@@ -281,6 +300,10 @@ def build_parser() -> argparse.ArgumentParser:
     resume.add_argument("--offset", type=int, default=0, help="commits to skip (default 0)")
     resume.add_argument("--offset-file", help="file holding the resume offset between runs (replaces --offset)")
     commits.add_argument("--limit", type=int, default=DEFAULT_LIMIT, help=f"commits per run (default {DEFAULT_LIMIT})")
+    commits.add_argument(
+        "--exclude-file",
+        help="release_shipped_elsewhere.py TSV; commits it lists as 'shipped' are left out of the range",
+    )
     commits.set_defaults(func=commit_prs)
     files = sub.add_parser("pr-files", parents=[common], help="changed file paths of pull requests")
     files.add_argument("numbers", nargs="+", type=int, help="pull request numbers")

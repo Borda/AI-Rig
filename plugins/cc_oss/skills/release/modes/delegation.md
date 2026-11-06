@@ -25,18 +25,20 @@ In `prepare` and `audit` modes, delegate gather/explore/validate to subagent via
    IFS= read -r BRANCH < "${TMPDIR:-/tmp}/release-setup-${CSID}/BRANCH" 2>/dev/null || BRANCH=""
    IFS= read -r DATE < "${TMPDIR:-/tmp}/release-setup-${CSID}/DATE" 2>/dev/null || DATE=""
    IFS= read -r RANGE < "${TMPDIR:-/tmp}/release-range-${CSID}" 2>/dev/null || RANGE=""
+   IFS= read -r SHIPPED_TAGS < "${TMPDIR:-/tmp}/release-setup-${CSID}/SHIPPED_ELSEWHERE_TAGS" 2>/dev/null || SHIPPED_TAGS=""
+   SHIPPED_FILE="${TMPDIR:-/tmp}/release-shipped-${CSID}"
    IFS= read -r WAIVED_FILE < "${TMPDIR:-/tmp}/release-waived-${CSID}" 2>/dev/null || WAIVED_FILE=""
    GATHER_FILE=".temp/release-gather-$BRANCH-$DATE.md"
    [ -n "$GATHER_FILE" ] && [ -n "$WAIVED_FILE" ] && [ -n "$REPO_ROOT" ] && [ -n "$RANGE" ] || { echo "Error: GATHER_FILE, WAIVED_FILE, REPO_ROOT, or RANGE is empty — verify Shared setup and Gather changes completed"; exit 1; }  # timeout: 5000
    # LAST_TAG empty is valid (first-ever release, no prior tag) — gather-prompt.md's baseline check handles it, never asserted here
    OSS_BIN="${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin"  # resolved here, passed absolute: the gather subagent's shell has no CLAUDE_PLUGIN_ROOT
-   echo "REPO_ROOT=$REPO_ROOT RANGE=$RANGE GATHER_FILE=$GATHER_FILE WAIVED_FILE=$WAIVED_FILE LAST_TAG=$LAST_TAG OSS_BIN=$OSS_BIN"  # literal values for the template substitution below
+   echo "REPO_ROOT=$REPO_ROOT RANGE=$RANGE GATHER_FILE=$GATHER_FILE WAIVED_FILE=$WAIVED_FILE LAST_TAG=$LAST_TAG OSS_BIN=$OSS_BIN SHIPPED_TAGS=$SHIPPED_TAGS SHIPPED_FILE=$SHIPPED_FILE"  # literal values for the template substitution below
    cat "$SKILL_DIR/templates/gather-prompt.md"  # timeout: 5000
    ```
 
 > **Agent budget** — spawn thresholds per `claude-config.md` §Agent/Skill Spawn Discipline. Every spawn prompt must require an envelope even on exhaustion — `partial: true` plus what was finished.
 
-Template (loaded above). Substitute `<REPO_ROOT>`, `<RANGE>`, `<GATHER_FILE>`, `<WAIVED_FILE>`, `<LAST_TAG>`, `<OSS_BIN>` with literal values (`<LAST_TAG>` may substitute to an empty string — the template's own fallback covers that). Spawn:
+Template (loaded above). Substitute `<REPO_ROOT>`, `<RANGE>`, `<GATHER_FILE>`, `<WAIVED_FILE>`, `<LAST_TAG>`, `<OSS_BIN>`, `<SHIPPED_TAGS>`, `<SHIPPED_FILE>` with literal values (`<LAST_TAG>` and `<SHIPPED_TAGS>` may substitute to an empty string — the template's own fallback covers that). Spawn:
 
 > loads: gather-prompt.md `Agent(subagent_type="foundry:sw-engineer", name="gather-changes", description="Gather release range evidence", prompt=<substituted gather-prompt.md content>)`
 
