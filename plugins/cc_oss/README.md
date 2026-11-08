@@ -940,6 +940,11 @@ Run `claude plugin install oss@borda-ai-rig` again, then `/reload-plugins` in Cl
 
 ______________________________________________________________________
 
+## 📝 Related articles
+
+- [How I Streamlined OSS Maintenance With AI — Guardrails, Speed, and a Shepherd's Touch](https://medium.com/codex/how-i-streamlined-oss-maintenance-with-ai-guardrails-speed-and-a-shepherds-touch-55a955160abc) (CodeX, Jun 2026): specialist agents for triage, review, and release, with every output human-gated.
+- [The Open-Source Shepherd: Why Your Best Work Is Building a Project That Doesn't Need You](https://medium.com/codex/the-open-source-shepherd-why-your-best-work-is-building-a-project-that-doesnt-need-you-bfd0641f5aca) (CodeX, Jun 2026): growing contributors and shared ownership in open-source projects.
+
 <a id="contributing--feedback"></a>
 
 ## 🙏 Contributing / feedback

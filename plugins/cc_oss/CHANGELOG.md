@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.56.5
+
+- Restyle the animated execution diagrams of the `/oss:analyse`, `review`, `resolve` and `release` skills: card text is short fragments instead of sentences, key names are bold and conditions or bounds are italic, and each diagram's legend explains the emphasis; stop and skip conditions and gates are unchanged.
+
 ## 0.56.4
 
 - `/oss:release` no longer announces work that an off-branch patch release already shipped. When a maintenance branch carries newer stable tags than the tag on HEAD's own history (HEAD at 1.11.0, patch tags 1.11.1 and 1.11.2 on `release/latest`), setup lists them and the new `release_shipped_elsewhere.py` helper subtracts the range commits those tags contain. Patch-equivalent commits (`git cherry`) with no release-side revert are dropped from notes, counts and PR associations.

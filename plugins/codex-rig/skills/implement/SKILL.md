@@ -3,6 +3,8 @@ name: implement
 description: Implement changes with a linear plan-build-verify workflow and measurable quality gates.
 ---
 
+<!-- ../../assets/images/implement-arch.svg diagrams the lightweight and detailed paths, owner fan-out, joins and gates. Documentation only, never loaded — update it in the same commit as any change to step order, gate placement, or agent fan-out. -->
+
 > Before asking, read [User Questions](../../shared/codex-user-questions.md).
 
 # Implement

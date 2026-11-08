@@ -3393,6 +3393,6 @@
       "src": "skills/debug/SKILL.md:331"
     }
   },
-  "plugin": "cc_develop@0.46.2",
+  "plugin": "cc_develop@0.46.3",
   "schema": 1
 }

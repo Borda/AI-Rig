@@ -3,6 +3,8 @@ name: implement
 description: Ask Claude Code to implement one bounded write-capable change through the sandbox-external bridge.
 ---
 
+<!-- Diagram: ../../assets/images/bridge-request-arch.svg (request lifecycle; documentation only, SKILL.md wins) -->
+
 > Before asking, read [User Questions](../../rules/codex-user-questions.md).
 
 # Implement with Claude Code

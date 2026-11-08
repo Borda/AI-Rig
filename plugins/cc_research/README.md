@@ -777,6 +777,10 @@ These are current constraints, not promises about future releases:
 
 **Rule setup reports a conflict**: inspect the destination target. `/research:setup` replaces only links proven to belong to this plugin or its cache lineage; use `--approve` only after reviewing a real conflicting target.
 
+## 📝 Related articles
+
+- [From Two Days of EDA to "Solve This Competition": A Kaggle Workflow, Compressed](https://pub.towardsai.net/from-two-days-of-eda-to-solve-this-competition-a-kaggle-workflow-compressed-aa5cea49c416) (Towards AI, Sep 2026): the agent-assisted Kaggle workflow behind the Research plugin's competition skill.
+
 <a id="-contributing-and-maintenance"></a>
 
 ## 🙏 Contributing and maintenance

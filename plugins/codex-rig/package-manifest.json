@@ -28,12 +28,12 @@
     {
       "mode": "0644",
       "path": ".codex-plugin/plugin.json",
-      "sha256": "087176383b8808c5cde21dc8e786185187ca49ede29525142ab86014bedb822e"
+      "sha256": "a48b4fa8760ee3becb8820b001c6ce47dced5303534dd11462815d099b3e866a"
     },
     {
       "mode": "0644",
       "path": "CHANGELOG.md",
-      "sha256": "5aa027b19f011c3e52e8baf9c118b9910506430941d845c156ecbc84e2cf68d6"
+      "sha256": "db15175ca216514a9a3c1745273c4b3ac5512d646bfc034e7cebcf5e0f6a61ba"
     },
     {
       "mode": "0644",
@@ -53,7 +53,7 @@
     {
       "mode": "0644",
       "path": "README.md",
-      "sha256": "05159758ea39a28333f1603ab26a0dd1ea7cc53e050e4396980685f4b848240a"
+      "sha256": "5ef71c6c49aa918c05838d4346a540623862e19ff8e723383c97e23a4aa9a1d2"
     },
     {
       "mode": "0644",
@@ -62,8 +62,23 @@
     },
     {
       "mode": "0644",
+      "path": "assets/images/code-remediate-arch.svg",
+      "sha256": "e235509db8fe40f57e907cafa2b6fb10aee4897979185b430f4f436f26bef6d1"
+    },
+    {
+      "mode": "0644",
+      "path": "assets/images/code-review-arch.svg",
+      "sha256": "b63a481bb8a909230a96b444b4ae9c8c4e63199194bce3ebd9d4c32795ed6583"
+    },
+    {
+      "mode": "0644",
+      "path": "assets/images/implement-arch.svg",
+      "sha256": "9f836af9800730fbfe90c32fe10bb856f0b9fb04ad1463728d0eff16c2538cbf"
+    },
+    {
+      "mode": "0644",
       "path": "assets/images/parallel-execution-architecture.svg",
-      "sha256": "08f428ae4c3de9e55ca8cce634a1ae7211dbfbdfe33953d6fb3202e3ac25d746"
+      "sha256": "08f9482e1308e00d9ba8dc7fb9e8212cca7dfc2ebc63bb410ef231b0c62ab050"
     },
     {
       "mode": "0755",
@@ -653,7 +668,7 @@
     {
       "mode": "0644",
       "path": "skills/code-remediate/SKILL.md",
-      "sha256": "3889faeec82cc74f098b6c1a4755e520f30cefd285e3940c34230c3a687c5559"
+      "sha256": "99f2509b8fcef1faec9ea7f977f1afe3735142ab487e06a9d2e9ed1f39800848"
     },
     {
       "mode": "0644",
@@ -703,7 +718,7 @@
     {
       "mode": "0644",
       "path": "skills/code-review/SKILL.md",
-      "sha256": "87301f4ad7c4b96278e6c9d1b9e54dc0d008f8c8ce2cf8bca888e4e3ad171f97"
+      "sha256": "4c0c478984533c81f4711627ddf33078f369a1387ab64fd5cc243401bcab3415"
     },
     {
       "mode": "0644",
@@ -793,7 +808,7 @@
     {
       "mode": "0644",
       "path": "skills/implement/SKILL.md",
-      "sha256": "99a73e6ab0ae71fe3389a2c74f9211a7665d9181843412b1eccd270d83b9bb0d"
+      "sha256": "10b00ede5a3b7b7394337aab7dce4a56bb40b3842e6d0a19e7706b198cb5fa21"
     },
     {
       "mode": "0644",
@@ -2032,5 +2047,5 @@
       "path": "skills/sync/SKILL.md"
     }
   ],
-  "version": "0.43.1"
+  "version": "0.43.3"
 }

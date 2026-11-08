@@ -3,6 +3,8 @@ name: review
 description: Request a read-only adversarial review from Claude Code through the sandbox-external bridge.
 ---
 
+<!-- Diagram: ../../assets/images/bridge-request-arch.svg (request lifecycle; documentation only, SKILL.md wins) -->
+
 > Before asking, read [User Questions](../../rules/codex-user-questions.md).
 
 # Ask Claude Code to Review

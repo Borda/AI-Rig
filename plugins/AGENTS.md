@@ -81,6 +81,24 @@ Root `AGENTS.md` and the shipped Codex Rig global template (`plugins/codex-rig/a
 - Synchronize tables, descriptions, triggers, scope, NOT-for boundaries, hook behavior, user-facing arguments, invocation syntax, cross-plugin references, model-tier lines, relationship tiering, and relevant curator antipatterns.
 - Propagate changed interfaces to every cross-plugin README that mentions them.
 
+## Diagram Sync — animated SVG architecture diagrams
+
+<!-- policy-sibling: plugins/CLAUDE.md §Skill Diagram Sync -->
+
+A plugin may ship animated SVG diagrams of its runs, blocking gates, agent fan-out and any work that overlaps: one per multi-agent or multi-gate skill at `<plugin>/assets/images/<skill>-arch.svg`, and one plugin-level overview of how the plugin's parts connect at `<plugin>/assets/images/<plugin-topic>-architecture.svg`. Each is embedded in the matching README section. A diagram is **documentation, never a contract**: no skill loads it, and it carries no authority.
+
+- `SKILL.md`, `modes/*.md`, `shared/` contracts, and source win on any disagreement. A diagram that contradicts them is a defect in the diagram, never a licence to change behavior to match the picture.
+- Update the diagram in the same change as any edit to step order, gate placement, agent fan-out, spawn width, what runs beside what, a route or mode topology, or a process boundary, permission or transport a plugin-level diagram shows. Review every diagram that names the touched skill or component; record "no diagram change needed" when none applies. A stale diagram is worse than none.
+- Edit the SVG text directly, keep every fact in `<text>` so it stays greppable, and render it once to confirm nothing overlaps. No script, external font or link inside the SVG: it must render inside an `<img>` on GitHub.
+- Every diagram closes with a footer stating its non-normative status, the update obligation and its normative source.
+- Each `SKILL.md` with a skill diagram carries one HTML comment after the frontmatter and before its first heading naming the SVG, so an editor meets the obligation at the point of edit.
+- Claim an overlap only where the skill genuinely dispatches work in one wave. Never document aspirational parallelism.
+- Format is a block schema, not a step list: named blocks flow top to bottom, `FAN n` marks concurrent lanes dispatched together and `JOIN` where they are collected; a split into mutually exclusive paths is a branch, never a `FAN`. Every arrow beyond plain "block finished, next block starts" carries a short pill naming its condition, bound or reason. A stage drawn more than once is a dashed `↺` reuse ghost of one solid home card. Keep fonts at 10.5px or larger.
+- Cards stay short and structured: at most 4 fragment lines of about 45 characters (`label: value`, `A · B · C`), never sentences; longer detail goes into a compact table row or stays in the normative source. Mark the key noun, gate or artifact with a bold `<tspan>` (at most 2 per line) and qualifiers, conditions and bounds with an italic `<tspan>`; never bold a whole line. Emphasis stays inside the same `<text>` so every fact remains greppable.
+- Optional per skill: add one where runs, gates and fan-out are hard to hold in the head, and skip it for a linear single-agent skill. A plugin without multi-agent skills ships the single plugin-level overview instead.
+- Shipped Codex Rig files are digest-listed: after editing a diagram or the `SKILL.md` comment, regenerate its manifest with `build_package.py --update` and run `scripts/check_codex_private_refs.py`; write SVG path commands as `M 56,518`, never `M56,518`, since its work-item pattern `M\d{2}` flags the latter.
+- Claude counterpart: `plugins/CLAUDE.md` §Skill Diagram Sync (same obligations; `SKILL.md` and `modes/*.md` are its normative sources, and there is no manifest regeneration).
+
 ## Python and `bin/` Policy
 
 - Python is the default `bin/` language and requires Python 3.10+, type hints, a module docstring, an `if __name__ == "__main__"` guard, and ruff-format at 120 columns.

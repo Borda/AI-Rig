@@ -3,6 +3,8 @@ name: code-review
 description: Review local diffs and PRs with specialists and JSON artifacts, or screen an open PR at an evidence gate and advise whether to close it; read-only, never writes to GitHub.
 ---
 
+<!-- ../../assets/images/code-review-arch.svg diagrams the runs, gates and parallel fan-out. Documentation only, never loaded — update it in the same commit as any change to step order, gate placement, or agent fan-out. -->
+
 # Code Review
 
 Report evidenced findings, coverage, checks, source judgment, and verification readiness. Review is read-only except run artifacts and isolated review worktrees; never write to GitHub, edit source, install into the project, or claim an instruction-bounded reviewer has an enforced sandbox. Use `code-remediate` for authorized fixes. A review alone does not authorize Challenge Resolve or a review-and-fix loop. Ask before adding an unapproved loop; reuse existing explicit approval for the same scope. If authorized, apply `../../shared/adversarial-loop.md`. Before asking, read [User Questions](../../shared/codex-user-questions.md).

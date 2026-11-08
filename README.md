@@ -36,6 +36,7 @@ Design principles:
 - [Repository checkout and synchronization](#-repository-checkout-and-synchronization)
 - [Upgrade and remove](#-upgrade-and-remove)
 - [Troubleshooting](#-troubleshooting)
+- [Articles](#-articles)
 - [Documentation map](#-documentation-map)
 - [Contributing](#-contributing)
 
@@ -549,6 +550,22 @@ opencode plugin remove opencode-rig
 - OpenCode Rig tools or skills are missing: rerun `opencode-rig check` to compare installed role agents with the package, then `opencode-rig doctor` for version, grant, ignore, and gate state.
 
 </details>
+
+## 📝 Articles
+
+Background writing on the ideas behind AI-Rig, by its author. More posts: [Medium profile](https://medium.com/@jborovec).
+
+- [Executed, Not Retyped: What 27 Runs Taught Me About Bash Inside Agent Skills](https://levelup.gitconnected.com/executed-not-retyped-what-27-runs-taught-me-about-bash-inside-agent-skills-72f273fdb341) (Level Up Coding, Sep 2026): a model never types a skill's bash block back verbatim, so a shell-specific block can fail silently. Measured on AI-Rig's own Claude Code skills. See [Foundry](plugins/cc_foundry/README.md).
+- [From Two Days of EDA to "Solve This Competition": A Kaggle Workflow, Compressed](https://pub.towardsai.net/from-two-days-of-eda-to-solve-this-competition-a-kaggle-workflow-compressed-aa5cea49c416) (Towards AI, Sep 2026): the agent-assisted Kaggle workflow behind the Research plugin's competition skill. See [Research](plugins/cc_research/README.md).
+- [One Tool, Two Agents: What It Actually Costs to Support Both](https://medium.com/codex/one-tool-two-agents-what-it-actually-costs-to-support-both-91b5d9be8130) (CodeX, Sep 2026): the structural engine ported to a second agent platform without a fight; the code built around it did not, and that gap is where assumptions broke. See [Codemap-py](plugins/codemap-py/README.md).
+- [Reviewed Plugin Code Shouldn't Ask Permission](https://levelup.gitconnected.com/reviewed-plugin-code-shouldnt-ask-permission-aad049906e14) (Level Up Coding, Sep 2026): what building a blueprint-manifest auto-allow taught, the wall that reviewed code keeps hitting, and the provenance fix that clears it. See [Foundry](plugins/cc_foundry/README.md).
+- [Peers, Not Rivals: A Two-Way Street Between Claude Code and Codex](https://levelup.gitconnected.com/peers-not-rivals-a-two-way-street-between-claude-code-and-codex-9efcd04e13e4) (Level Up Coding, Sep 2026): a bridge between the two biggest coding harnesses on a local machine, covering transport layers, authentication, and bidirectional workflow sharing. See [Bridge_CC-Codex](plugins/bridge_cc-codex/README.md).
+- [A Structural Index Pays Off Most Where the Model Is Weakest](https://medium.com/codex/a-structural-index-pays-off-most-where-the-model-is-weakest-4b4bb3349921) (CodeX, Aug 2026): controlled results from a Codex run on a real refactoring benchmark; token savings were large and the quality gain leaned toward weaker models. See [Codemap-py](plugins/codemap-py/README.md).
+- [Your Coding Agent Is Flying Blind — And IDEs Fixed This Twenty Years Ago](https://medium.com/codex/your-coding-agent-is-flying-blind-and-ides-fixed-this-twenty-years-ago-4cf3bfaf1999) (CodeX, Aug 2026): terminal agents regressed to grep; what they lost, what it costs per session, and how to give it back with a stdlib-only plugin. See [Codemap-py](plugins/codemap-py/README.md).
+- [My Benchmark Lied to Me Twelve Times Before It Told the Truth](https://medium.com/codex/my-benchmark-lied-to-me-twelve-times-before-it-told-the-truth-12a59948b7ef) (CodeX, Aug 2026): what comparing two coding agents fairly taught about the ways an evaluation harness deceives the person who built it. See [Codemap-py](plugins/codemap-py/README.md).
+- [Role Cards, Not Agents: A Three-Tier Fallback for Native Codex Plugins](https://medium.com/codex/role-cards-not-agents-a-three-tier-fallback-for-native-codex-plugins-8f647344cefc) (CodeX, Jul 2026): what building Codex Rig taught about native plugin platforms, the assumption that broke on contact and the three-tier design that survived. See [Codex Rig](plugins/codex-rig/README.md).
+- [How I Streamlined OSS Maintenance With AI — Guardrails, Speed, and a Shepherd's Touch](https://medium.com/codex/how-i-streamlined-oss-maintenance-with-ai-guardrails-speed-and-a-shepherds-touch-55a955160abc) (CodeX, Jun 2026): specialist agents run triage, review, and release workflows, built on years of Python OSS practice with every output human-gated. See [OSS](plugins/cc_oss/README.md).
+- [The Open-Source Shepherd: Why Your Best Work Is Building a Project That Doesn't Need You](https://medium.com/codex/the-open-source-shepherd-why-your-best-work-is-building-a-project-that-doesnt-need-you-bfd0641f5aca) (CodeX, Jun 2026): beyond maintaining an open-source project, grow contributors, share ownership, and build a self-sustaining community. See [OSS](plugins/cc_oss/README.md).
 
 ## 📚 Documentation map
 

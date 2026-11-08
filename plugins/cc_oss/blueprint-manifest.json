@@ -7313,6 +7313,6 @@
       "src": "skills/resolve/SKILL.md:148"
     }
   },
-  "plugin": "cc_oss@0.56.4",
+  "plugin": "cc_oss@0.56.5",
   "schema": 1
 }

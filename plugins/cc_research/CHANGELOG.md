@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.33.2
+
+- Restyle the animated execution diagrams of the `/research:topic`, `run`, `fortify` and `kaggle` skills: card text is short fragments instead of sentences, key names are bold and conditions or bounds are italic, and each diagram's legend explains the emphasis; stop and skip conditions and gates are unchanged.
+
 ## 0.33.1
 
 - `retro_analyze.py` returns p-value 1.0 and statistic 0.0 directly when every paired difference is zero, so the Wilcoxon comparison no longer emits a scipy RuntimeWarning from a zero standard error; the result keeps its success shape.

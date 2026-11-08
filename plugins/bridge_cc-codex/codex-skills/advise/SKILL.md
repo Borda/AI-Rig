@@ -3,6 +3,8 @@ name: advise
 description: Ask Claude Code a read-only question from Codex through the sandbox-external bridge.
 ---
 
+<!-- Diagram: ../../assets/images/bridge-request-arch.svg (request lifecycle; documentation only, SKILL.md wins) -->
+
 > Before asking, read [User Questions](../../rules/codex-user-questions.md).
 
 # Ask Claude Code for Advice

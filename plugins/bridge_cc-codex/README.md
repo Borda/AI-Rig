@@ -6,7 +6,7 @@ The bridge is useful with either host integration installed and has no dependenc
 
 > Contributing or want internals? See [Development and release verification](docs/development.md) and [Security and privacy](docs/security.md).
 
-> Release: `0.12.2`. Claude- and Codex-side setup skills provide an approval-bound lifecycle for safe configuration and repair while retaining full caller-input, workspace/session authority, recursion, asynchronous lifecycle, envelope/transcript, and approval boundaries.
+> Release: `0.12.4`. Claude- and Codex-side setup skills provide an approval-bound lifecycle for safe configuration and repair while retaining full caller-input, workspace/session authority, recursion, asynchronous lifecycle, envelope/transcript, and approval boundaries.
 
 ## 🚀 After installation
 
@@ -193,12 +193,13 @@ MCP is complementary to the bridge as a whole but mandatory for the Codex → Cl
 
 If you install only the Claude Code half to call Codex, MCP is not required. If you install only the Codex half or want the complete bidirectional bridge, the `.codex-mcp.json` declaration and `bin/bridge_mcp.py` are required transport components, not optional enhancements. The MCP boundary provides the three request tools plus read-only status and native workspace binding tools and prevents model-controlled workspace, background, or session selection.
 
-<details>
-<summary>Architecture — animated diagram of directions, MCP surface, setup lifecycle, permissions and workspace binding</summary>
+**Architecture — animated diagrams of both hosts and their own engines, MCP surface, setup lifecycle, permissions, workspace binding and the request lifecycle**
 
 ![Bridge architecture: Claude Code to Codex and Codex to Claude Code over one shared supervisor (animated)](assets/images/bridge-architecture.svg)
 
-</details>
+The request lifecycle diagram follows one advise, review or implement call from entry through model, effort and budget selection, authority gates and peer launch to the result envelope, then covers the detached-job status, result and cancel controls and their terminal states.
+
+![Bridge request lifecycle: entry, selection, gates, peer launch, result envelope and detached job states (animated)](assets/images/bridge-request-arch.svg)
 
 <a id="-install-for-claude-code"></a>
 
@@ -484,11 +485,15 @@ Network access:
 
 Run `action=verify-live ... live=required` only after explicitly accepting the separate provider call and its cost. A live setup probe verifies one selected path at that moment; it is diagnostic evidence, not proof that a future task will succeed. This documentation does not claim that either host is currently authenticated or live-verified.
 
+## 📝 Related articles
+
+- [Peers, Not Rivals: A Two-Way Street Between Claude Code and Codex](https://levelup.gitconnected.com/peers-not-rivals-a-two-way-street-between-claude-code-and-codex-9efcd04e13e4) (Level Up Coding, Sep 2026): a bridge between the two biggest coding harnesses on a local machine, covering transport layers, authentication, and bidirectional workflow sharing.
+
 <a id="-maintainer-documentation"></a>
 
 ## 📚 Maintainer documentation
 
-- [Architecture and transport](assets/images/bridge-architecture.svg) diagrams both request directions, process boundaries, permissions, and exactly where MCP is required.
+- [Architecture and transport](assets/images/bridge-architecture.svg) shows the Claude Code and Codex hosts as mirrored planes, with the user's skills on top and each host's own engine at the bottom, plus process boundaries, permissions, and exactly where MCP is required; the [request lifecycle](assets/images/bridge-request-arch.svg) diagrams one call's gates, retries, result envelope and detached-job states.
 - [Security and privacy](docs/security.md) defines authority, data flow, artifacts, result integrity, recovery, and cancellation boundaries.
 - [Operations and troubleshooting](docs/operations.md) covers prerequisites, diagnosis, foreground calls, detached jobs, common failures, and artifact inspection.
 - [Development and release verification](docs/development.md) records the package layout, local gates, installed-shape validation, and release responsibilities.

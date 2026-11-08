@@ -1,0 +1,377 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 2916" width="960" height="2916" role="img" aria-labelledby="t d"><title id="t">code-review</title><desc id="d">Codex Rig code-review — execution architecture: routes, gates, reviewer fan-out and join</desc><style>
+text{font-family:Inter, "SF Pro Text", -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;}
+.fi{animation:fi .7s ease-out both;animation-delay:var(--d,0s)}
+@keyframes fi{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.dash{animation:dash 1.1s linear infinite}
+@keyframes dash{to{stroke-dashoffset:-26}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important}.fi{opacity:1}}
+</style>
+<defs><filter id="sh" x="-10%" y="-10%" width="120%" height="130%"><feDropShadow dx="0" dy="2.5" stdDeviation="3.2" flood-color="#5b66b3" flood-opacity=".14"/></filter><pattern id="grid" width="26" height="26" patternUnits="userSpaceOnUse"><circle cx="2" cy="2" r="1.1" fill="#dde0f4"/></pattern><marker id="ar-bypass" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M1,1 L9,5 L1,9 z" fill="#d6284a"/></marker><marker id="ar-flow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M1,1 L9,5 L1,9 z" fill="#5b66b3"/></marker><marker id="ar-loop" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M1,1 L9,5 L1,9 z" fill="#7a5ae0"/></marker><marker id="ar-ok" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M1,1 L9,5 L1,9 z" fill="#2f9e73"/></marker></defs>
+<rect width="960" height="2916" fill="#f8f9ff"/><rect width="960" height="2916" fill="url(#grid)"/>
+<text x="40" y="56" font-size="28" fill="#1c2150" font-weight="700" text-anchor="start">code-review</text>
+<text x="40" y="82" font-size="13.5" fill="#6b72a8" font-weight="400" text-anchor="start">Codex Rig · execution architecture — routes, gates, reviewer fan-out and join</text>
+<g><polygon points="36.0,112.0 42.0,108.8 48.0,112.0 42.0,115.2" fill="#ece6fd" stroke="#7a5ae0" stroke-width="1.2" stroke-linejoin="round"/><polygon points="36.0,112.0 42.0,115.2 42.0,118.9 36.0,115.7" fill="#dcd2fa" stroke="#7a5ae0" stroke-width="1.2" stroke-linejoin="round"/><polygon points="42.0,115.2 48.0,112.0 48.0,115.7 42.0,118.9" fill="#c8baf3" stroke="#7a5ae0" stroke-width="1.2" stroke-linejoin="round"/></g>
+<text x="56" y="116" font-size="10.5" fill="#454d87" font-weight="400" text-anchor="start">agent spawn</text>
+<g><path d="M128.0,105.0 L134.0,114.4 L146.0,114.4 L152.0,105.0 L152.0,109.6 L146.0,118.9 L134.0,118.9 L128.0,109.6 Z" fill="#f2cb75" stroke="#e0a010" stroke-width="1.2" stroke-linejoin="round"/><polygon points="152.0,105.0 146.0,113.1 134.0,113.1 128.0,105.0 134.0,96.9 146.0,96.9" fill="#fff0c9" stroke="#e0a010" stroke-width="1.2" stroke-linejoin="round"/><path d="M136.2,105.0 l2.6,2.4 l5.0,-4.8" fill="none" stroke="#e0a010" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></g>
+<text x="160" y="116" font-size="10.5" fill="#454d87" font-weight="400" text-anchor="start">user gate / check</text>
+<circle cx="262" cy="113" r="9" fill="#dcf5e9" stroke="#2f9e73" stroke-width="1.4"/><path d="M257.5,113 l3.2,3.2 l6,-6.4" fill="none" stroke="#2f9e73" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="278" y="116" font-size="10.5" fill="#454d87" font-weight="400" text-anchor="start">join</text>
+<line x1="318" y1="113" x2="342" y2="113" stroke="#5b66b3" stroke-width="2.2"/>
+<text x="350" y="116" font-size="10.5" fill="#454d87" font-weight="400" text-anchor="start">flow</text>
+<line x1="392" y1="113" x2="416" y2="113" stroke="#7a5ae0" stroke-width="2.2" stroke-dasharray="5 4"/>
+<text x="424" y="116" font-size="10.5" fill="#454d87" font-weight="400" text-anchor="start">loop / retry</text>
+<line x1="508" y1="113" x2="532" y2="113" stroke="#d6284a" stroke-width="2.2"/>
+<text x="540" y="116" font-size="10.5" fill="#454d87" font-weight="400" text-anchor="start">skip / bypass</text>
+<circle cx="626" cy="113" r="9" fill="#fee6e2" stroke="#e0503f" stroke-width="1.4"/><path d="M622,109 l8,8 M630,109 l-8,8" stroke="#e0503f" stroke-width="1.8" stroke-linecap="round"/>
+<text x="642" y="116" font-size="10.5" fill="#454d87" font-weight="400" text-anchor="start">stop</text>
+<text x="688" y="116" font-size="10.5" fill="#6b72a8" font-weight="400" text-anchor="start">‖ same turn</text>
+<rect x="772" y="102" width="34" height="22" rx="6" fill="#fff" stroke="#c8ccf2" stroke-dasharray="4 3"/>
+<text x="814" y="116" font-size="10.5" fill="#454d87" font-weight="400" text-anchor="start">↺ reuse (matrix)</text>
+<rect x="40" y="150" width="5" height="15" rx="2.5" fill="#6670b8"/>
+<text x="52" y="162" font-size="11" fill="#6670b8" font-weight="700" text-anchor="start" letter-spacing="1.1">BLOCKS — TOP TO BOTTOM</text>
+<line x1="232" y1="158" x2="920" y2="158" stroke="#c8ccf2" stroke-width="1"/>
+<g class="fi" style="--d:0.26s"><rect x="40" y="180" width="880" height="112" rx="12" fill="#fff" stroke="#c8ccf2" stroke-width="1.3" filter="url(#sh)"/><rect x="40" y="181" width="5.5" height="110" rx="2.75" fill="#6670b8"/>
+<text x="56" y="199" font-size="10.5" fill="#4b559f" font-weight="700" text-anchor="start" letter-spacing="0.6">ENTRY · PREFLIGHT</text>
+<text x="56" y="217" font-size="14.5" fill="#1c2150" font-weight="700" text-anchor="start">Scope, PR state and prior-report lookup</text>
+<g><path d="M878.0,216.0 L884.0,225.4 L896.0,225.4 L902.0,216.0 L902.0,220.6 L896.0,229.9 L884.0,229.9 L878.0,220.6 Z" fill="#f2cb75" stroke="#e0a010" stroke-width="1.2" stroke-linejoin="round"/><polygon points="902.0,216.0 896.0,224.1 884.0,224.1 878.0,216.0 884.0,207.9 896.0,207.9" fill="#fff0c9" stroke="#e0a010" stroke-width="1.2" stroke-linejoin="round"/><path d="M886.2,216.0 l2.6,2.4 l5.0,-4.8" fill="none" stroke="#e0a010" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></g>
+<text x="56" y="237" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">Scope</tspan>: working-tree · path · commit · pr</text>
+<text x="56" y="253.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">bare number / #N / URL → <tspan font-style="italic">pr</tspan></text>
+<text x="56" y="270.0" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">reject</tspan> unsupported flags</text>
+<text x="56" y="286.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">resume</tspan> at first unmet checkpoint</text>
+<text x="490" y="237" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">PR State Preflight</tspan> <tspan font-style="italic">(PR only)</tspan></text>
+<text x="490" y="253.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">Prior report</tspan>: reuse or fresh?</text>
+<text x="490" y="270.0" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">ask once · no eligible report → fresh</tspan></text>
+</g>
+<path d="M480,292 L480,332" fill="none" stroke="#5b66b3" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar-flow)"/>
+<g class="fi" style="--d:0.32s"><rect x="278.5" y="302" width="185.5" height="19.5" rx="9.8" fill="#fee6e2" stroke="#e0503f" stroke-width="1.1"/><text x="287.5" y="315.6" font-size="10.5" fill="#b8321f" font-weight="700" text-anchor="start">closed / merged PR · stop</text></g>
+<g class="fi" style="--d:0.38s"><rect x="496.0" y="302" width="292.7" height="19.5" rx="9.8" fill="#dcf5e9" stroke="#2f9e73" stroke-width="1.1"/><text x="505.0" y="315.6" font-size="10.5" fill="#1b7f59" font-weight="700" text-anchor="start">reuse chosen · validated bytes → COMPLETE</text></g>
+<g class="fi" style="--d:0.44s"><rect x="40" y="332" width="880" height="28" rx="14" fill="#e6e9fa" stroke="#6670b8" stroke-width="1.3"/>
+<path d="M 56,346 h6 M 62,346 l8,-6 h4 M 62,346 h12 M 62,346 l8,6 h4" fill="none" stroke="#6670b8" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="88" y="350.2" font-size="11.5" fill="#4b559f" font-weight="700" text-anchor="start">BRANCH · exactly one source route per run — local scope or PR (not a fan)</text>
+</g>
+<path d="M235,360 L235,382" fill="none" stroke="#5b66b3" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar-flow)"/>
+<path d="M725,360 L725,382" fill="none" stroke="#5b66b3" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar-flow)"/>
+<g class="fi" style="--d:0.50s"><rect x="40" y="382" width="390" height="112" rx="12" fill="#fff" stroke="#c8ccf2" stroke-width="1.3" filter="url(#sh)"/><rect x="40" y="383" width="5.5" height="110" rx="2.75" fill="#6670b8"/>
+<text x="56" y="401" font-size="10.5" fill="#4b559f" font-weight="700" text-anchor="start" letter-spacing="0.6">COLLECT · LOCAL</text>
+<text x="56" y="419" font-size="14.5" fill="#1c2150" font-weight="700" text-anchor="start">working-tree · path · commit</text>
+<text x="56" y="439" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">create_run.py</tspan> --skill code-review</text>
+<text x="56" y="455.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">collect_diff.py</tspan> · frozen mirror</text>
+<text x="56" y="472.0" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">commit: <tspan font-style="italic">freeze range + tip first</tspan></text>
+<text x="56" y="488.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">keeps receipts · untracked · deletions</text>
+</g>
+<g class="fi" style="--d:0.56s"><rect x="530" y="382" width="390" height="112" rx="12" fill="#fff" stroke="#c8ccf2" stroke-width="1.3" filter="url(#sh)"/><rect x="530" y="383" width="5.5" height="110" rx="2.75" fill="#6670b8"/>
+<text x="546" y="401" font-size="10.5" fill="#4b559f" font-weight="700" text-anchor="start" letter-spacing="0.6">COLLECT · PR</text>
+<text x="546" y="419" font-size="14.5" fill="#1c2150" font-weight="700" text-anchor="start">pull request source</text>
+<text x="546" y="439" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">collect_pr.py</tspan> --checkout (review mode)</text>
+<text x="546" y="455.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">verify exact <tspan font-style="italic">head + target</tspan></text>
+<text x="546" y="472.0" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">--promote-pr-run</tspan> → printed path</text>
+<text x="546" y="488.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">failure = unavailable evidence</tspan></text>
+</g>
+<path d="M235,494 L235,534" fill="none" stroke="#5b66b3" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar-flow)"/>
+<path d="M725,494 L725,534" fill="none" stroke="#5b66b3" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar-flow)"/>
+<g class="fi" style="--d:0.62s"><rect x="40" y="534" width="390" height="112" rx="12" fill="#fff" stroke="#c8ccf2" stroke-width="1.3" filter="url(#sh)"/><rect x="40" y="535" width="5.5" height="110" rx="2.75" fill="#6670b8"/>
+<text x="56" y="553" font-size="10.5" fill="#4b559f" font-weight="700" text-anchor="start" letter-spacing="0.6">SCOPE CONTEXT</text>
+<text x="56" y="571" font-size="14.5" fill="#1c2150" font-weight="700" text-anchor="start">Classify scope and read the diff</text>
+<text x="56" y="591" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">classify scope</tspan> · Python context</text>
+<text x="56" y="607.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">primary diff review</tspan></text>
+<text x="56" y="624.0" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">PR: <tspan font-style="italic">triage online concerns</tspan></text>
+<text x="56" y="640.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">isolated worktree only</tspan></text>
+</g>
+<g class="fi" style="--d:0.68s"><rect x="530" y="534" width="390" height="112" rx="12" fill="#fff" stroke="#c8ccf2" stroke-width="1.3" filter="url(#sh)"/><rect x="530" y="535" width="5.5" height="110" rx="2.75" fill="#e0a010"/>
+<text x="546" y="553" font-size="10.5" fill="#a86f00" font-weight="700" text-anchor="start" letter-spacing="0.6">CLOSE SCREEN · OPEN PR ONLY</text>
+<text x="546" y="571" font-size="14.5" fill="#1c2150" font-weight="700" text-anchor="start">Proposal-level close gate</text>
+<g><path d="M878.0,570.0 L884.0,579.4 L896.0,579.4 L902.0,570.0 L902.0,574.6 L896.0,583.9 L884.0,583.9 L878.0,574.6 Z" fill="#f2cb75" stroke="#e0a010" stroke-width="1.2" stroke-linejoin="round"/><polygon points="902.0,570.0 896.0,578.1 884.0,578.1 878.0,570.0 884.0,561.9 896.0,561.9" fill="#fff0c9" stroke="#e0a010" stroke-width="1.2" stroke-linejoin="round"/><path d="M886.2,570.0 l2.6,2.4 l5.0,-4.8" fill="none" stroke="#e0a010" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></g>
+<text x="546" y="591" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">8 close codes</tspan> · <tspan font-style="italic">advisory only</tspan></text>
+<text x="546" y="607.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">needs <tspan font-weight="700" fill="#1c2150">conf ≥ 0.90</tspan> + 2 sources</text>
+<text x="546" y="624.0" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">counterevidence · bound to head</tspan></text>
+<text x="546" y="640.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">public-HTTPS evidence cannot close</tspan></text>
+</g>
+<path d="M530,604 L430,604" fill="none" stroke="#5b66b3" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar-flow)"/>
+<g class="fi" style="--d:0.74s"><rect x="444.2" y="574" width="71.6" height="19.5" rx="9.8" fill="#e6e9fa" stroke="#6670b8" stroke-width="1.1"/><text x="453.2" y="587.6" font-size="10.5" fill="#4b559f" font-weight="700" text-anchor="start">no close</text></g>
+<path d="M235,646 L235,686" fill="none" stroke="#5b66b3" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar-flow)"/>
+<path d="M725,646 L725,686" fill="none" stroke="#d6284a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar-bypass)"/>
+<g class="fi" style="--d:0.80s"><rect x="735.0" y="656" width="125.2" height="19.5" rx="9.8" fill="#fee6e2" stroke="#e0503f" stroke-width="1.1"/><text x="744.0" y="669.6" font-size="10.5" fill="#b8321f" font-weight="700" text-anchor="start">conclusive close</text></g>
+<g class="fi" style="--d:0.86s"><rect x="40" y="686" width="390" height="112" rx="12" fill="#fff" stroke="#c8ccf2" stroke-width="1.3" filter="url(#sh)"/><rect x="40" y="687" width="5.5" height="110" rx="2.75" fill="#6670b8"/>
+<text x="56" y="705" font-size="10.5" fill="#4b559f" font-weight="700" text-anchor="start" letter-spacing="0.6">ROUTE</text>
+<text x="56" y="723" font-size="14.5" fill="#1c2150" font-weight="700" text-anchor="start">Risk tier, roles and briefs</text>
+<text x="56" y="743" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">review-routing.json</tspan> · <tspan font-weight="700" fill="#1c2150">review-briefs.json</tspan></text>
+<text x="56" y="759.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">review_routing.py</tspan> sets mechanical tier</text>
+<text x="56" y="776.0" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">production .py → <tspan font-weight="700" fill="#1c2150">sw-engineer</tspan></text>
+<text x="56" y="792.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">architect / security: explicit pick only</tspan></text>
+</g>
+<g class="fi" style="--d:0.92s"><rect x="530" y="686" width="390" height="112" rx="12" fill="#fff" stroke="#c8ccf2" stroke-width="1.3" filter="url(#sh)"/><rect x="530" y="687" width="5.5" height="110" rx="2.75" fill="#e0503f"/>
+<text x="546" y="705" font-size="10.5" fill="#b8321f" font-weight="700" text-anchor="start" letter-spacing="0.6">CLOSE ADVICE</text>
+<text x="546" y="723" font-size="14.5" fill="#1c2150" font-weight="700" text-anchor="start">Terminal result, no detailed review</text>
+<text x="546" y="743" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">Review Decision: close</tspan></text>
+<text x="546" y="759.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">status=pass · <tspan font-style="italic">review_status=closed</tspan></text>
+<text x="546" y="776.0" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">no specialists · no findings</tspan></text>
+<text x="546" y="792.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">GitHub mutation: not performed</tspan></text>
+</g>
+<path d="M235,798 L235,834" fill="none" stroke="#5b66b3" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar-flow)"/>
+<g class="fi" style="--d:0.98s"><rect x="40" y="834" width="880" height="28" rx="14" fill="#e6e9fa" stroke="#6670b8" stroke-width="1.3"/>
+<path d="M 56,848 h6 M 62,848 l8,-6 h4 M 62,848 h12 M 62,848 l8,6 h4" fill="none" stroke="#6670b8" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="88" y="852.2" font-size="11.5" fill="#4b559f" font-weight="700" text-anchor="start">BRANCH · one execution route (choose before preparing or dispatching) — not a fan</text>
+</g>
+<path d="M180,862 L180,884" fill="none" stroke="#5b66b3" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar-flow)"/>
+<path d="M480,862 L480,884" fill="none" stroke="#5b66b3" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar-flow)"/>
+<path d="M780,862 L780,884" fill="none" stroke="#5b66b3" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar-flow)"/>
+<g class="fi" style="--d:1.04s"><rect x="40" y="884" width="280" height="112" rx="12" fill="#fff" stroke="#c8ccf2" stroke-width="1.3" filter="url(#sh)"/><rect x="40" y="885" width="5.5" height="110" rx="2.75" fill="#6670b8"/>
+<text x="56" y="903" font-size="10.5" fill="#4b559f" font-weight="700" text-anchor="start" letter-spacing="0.6">PARENT-ONLY</text>
+<text x="56" y="921" font-size="14.5" fill="#1c2150" font-weight="700" text-anchor="start">Current parent fallback</text>
+<text x="56" y="941" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">TRIVIAL / LOCAL</tspan> risk only</text>
+<text x="56" y="957.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">no explicit independence need</tspan></text>
+<text x="56" y="974.0" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">parent covers <tspan font-weight="700" fill="#1c2150">every triggered role</tspan></text>
+<text x="56" y="990.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">discloses</tspan> no independent reviewers</text>
+</g>
+<g class="fi" style="--d:1.10s"><rect x="340" y="884" width="280" height="112" rx="12" fill="#fff" stroke="#c8ccf2" stroke-width="1.3" filter="url(#sh)"/><rect x="340" y="885" width="5.5" height="110" rx="2.75" fill="#7a5ae0"/>
+<text x="356" y="903" font-size="10.5" fill="#6240cf" font-weight="700" text-anchor="start" letter-spacing="0.6">NATIVE WAVE</text>
+<text x="356" y="921" font-size="14.5" fill="#1c2150" font-weight="700" text-anchor="start">Independent reviewers</text>
+<g><polygon points="584.0,917.0 593.0,912.2 602.0,917.0 593.0,921.8" fill="#ece6fd" stroke="#7a5ae0" stroke-width="1.2" stroke-linejoin="round"/><polygon points="584.0,917.0 593.0,921.8 593.0,927.4 584.0,922.5" fill="#dcd2fa" stroke="#7a5ae0" stroke-width="1.2" stroke-linejoin="round"/><polygon points="593.0,921.8 602.0,917.0 602.0,922.5 593.0,927.4" fill="#c8baf3" stroke="#7a5ae0" stroke-width="1.2" stroke-linejoin="round"/></g>
+<text x="356" y="941" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">independent review route</text>
+<text x="356" y="957.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">one child</tspan> per triggered role</text>
+<text x="356" y="974.0" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">read-only, instruction-bounded</tspan></text>
+<text x="356" y="990.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">source = <tspan font-style="italic">untrusted evidence</tspan></text>
+</g>
+<g class="fi" style="--d:1.16s"><rect x="640" y="884" width="280" height="112" rx="12" fill="#fff" stroke="#c8ccf2" stroke-width="1.3" filter="url(#sh)"/><rect x="640" y="885" width="5.5" height="110" rx="2.75" fill="#e0a010"/>
+<text x="656" y="903" font-size="10.5" fill="#a86f00" font-weight="700" text-anchor="start" letter-spacing="0.6">LOCAL WAVE · APPROVED ONLY</text>
+<text x="656" y="921" font-size="14.5" fill="#1c2150" font-weight="700" text-anchor="start">Separate local sessions</text>
+<g><path d="M878.0,920.0 L884.0,929.4 L896.0,929.4 L902.0,920.0 L902.0,924.6 L896.0,933.9 L884.0,933.9 L878.0,924.6 Z" fill="#f2cb75" stroke="#e0a010" stroke-width="1.2" stroke-linejoin="round"/><polygon points="902.0,920.0 896.0,928.1 884.0,928.1 878.0,920.0 884.0,911.9 896.0,911.9" fill="#fff0c9" stroke="#e0a010" stroke-width="1.2" stroke-linejoin="round"/><path d="M886.2,920.0 l2.6,2.4 l5.0,-4.8" fill="none" stroke="#e0a010" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></g>
+<text x="656" y="941" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">needs <tspan font-weight="700" fill="#1c2150">explicit approval</tspan> <tspan font-style="italic">(paid)</tspan></text>
+<text x="656" y="957.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">1-4 roles</tspan></text>
+<text x="656" y="974.0" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">native launcher lacks controls</tspan></text>
+<text x="656" y="990.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">no automatic second wave</tspan></text>
+</g>
+<path d="M480,996 L480,1036" fill="none" stroke="#5b66b3" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar-flow)"/>
+<path d="M780,996 L780,1036" fill="none" stroke="#5b66b3" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar-flow)"/>
+<g class="fi" style="--d:1.22s"><rect x="102.0" y="1006" width="219.0" height="19.5" rx="9.8" fill="#fde3e8" stroke="#d6284a" stroke-width="1.1"/><text x="111.0" y="1019.6" font-size="10.5" fill="#b81c3c" font-weight="700" text-anchor="start">parent-only · no spawn, no fan</text></g>
+<g class="fi" style="--d:1.28s"><rect x="340" y="1036" width="280" height="112" rx="12" fill="#fff" stroke="#c8ccf2" stroke-width="1.3" filter="url(#sh)"/><rect x="340" y="1037" width="5.5" height="110" rx="2.75" fill="#e0a010"/>
+<text x="356" y="1055" font-size="10.5" fill="#a86f00" font-weight="700" text-anchor="start" letter-spacing="0.6">WAVE ADMISSION · NATIVE</text>
+<text x="356" y="1073" font-size="14.5" fill="#1c2150" font-weight="700" text-anchor="start">review_prepare.py prepare</text>
+<g><path d="M578.0,1072.0 L584.0,1081.4 L596.0,1081.4 L602.0,1072.0 L602.0,1076.6 L596.0,1085.9 L584.0,1085.9 L578.0,1076.6 Z" fill="#f2cb75" stroke="#e0a010" stroke-width="1.2" stroke-linejoin="round"/><polygon points="602.0,1072.0 596.0,1080.1 584.0,1080.1 578.0,1072.0 584.0,1063.9 596.0,1063.9" fill="#fff0c9" stroke="#e0a010" stroke-width="1.2" stroke-linejoin="round"/><path d="M586.2,1072.0 l2.6,2.4 l5.0,-4.8" fill="none" stroke="#e0a010" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></g>
+<text x="356" y="1093" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">validates <tspan font-style="italic">source hashes + routing</tspan></text>
+<text x="356" y="1109.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">rejects sensitive material</tspan></text>
+<text x="356" y="1126.0" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">plan: <tspan font-weight="700" fill="#1c2150">direct-plan.json</tspan></text>
+<text x="356" y="1142.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">calls: <tspan font-weight="700" fill="#1c2150">dispatch.json</tspan> <tspan font-style="italic">unchanged</tspan></text>
+</g>
+<g class="fi" style="--d:1.34s"><rect x="640" y="1036" width="280" height="112" rx="12" fill="#fff" stroke="#c8ccf2" stroke-width="1.3" filter="url(#sh)"/><rect x="640" y="1037" width="5.5" height="110" rx="2.75" fill="#e0a010"/>
+<text x="656" y="1055" font-size="10.5" fill="#a86f00" font-weight="700" text-anchor="start" letter-spacing="0.6">WAVE ADMISSION · LOCAL</text>
+<text x="656" y="1073" font-size="14.5" fill="#1c2150" font-weight="700" text-anchor="start">frozen plan + host check</text>
+<g><path d="M878.0,1072.0 L884.0,1081.4 L896.0,1081.4 L902.0,1072.0 L902.0,1076.6 L896.0,1085.9 L884.0,1085.9 L878.0,1076.6 Z" fill="#f2cb75" stroke="#e0a010" stroke-width="1.2" stroke-linejoin="round"/><polygon points="902.0,1072.0 896.0,1080.1 884.0,1080.1 878.0,1072.0 884.0,1063.9 896.0,1063.9" fill="#fff0c9" stroke="#e0a010" stroke-width="1.2" stroke-linejoin="round"/><path d="M886.2,1072.0 l2.6,2.4 l5.0,-4.8" fill="none" stroke="#e0a010" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></g>
+<text x="656" y="1093" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">frozen plan</tspan> · role-card bytes</text>
+<text x="656" y="1109.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">capacity receipt</tspan> per node</text>
+<text x="656" y="1126.0" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">--check-host</tspan> <tspan font-style="italic">before any turn</tspan></text>
+<text x="656" y="1142.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">unsupported controls fail closed</tspan></text>
+</g>
+<path d="M480,1148 L480,1170" fill="none" stroke="#5b66b3" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar-flow)"/>
+<path d="M780,1148 L780,1170" fill="none" stroke="#5b66b3" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar-flow)"/>
+<g class="fi" style="--d:1.40s"><rect x="340" y="1170" width="580" height="28" rx="14" fill="#ece6fd" stroke="#7a5ae0" stroke-width="1.3"/>
+<path d="M356,1184 h8 M364,1184 l8,-6 h6 M364,1184 l8,6 h6" fill="none" stroke="#7a5ae0" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="356" cy="1184" r="2.4" fill="#7a5ae0"/>
+<text x="388" y="1188.2" font-size="11.5" fill="#6240cf" font-weight="700" text-anchor="start">FAN n  ·  one read-only reviewer per triggered role  ·  ‖ same turn</text>
+</g>
+<g class="fi" style="--d:1.46s"><rect x="340" y="1204" width="288" height="38" rx="9" fill="#fff" stroke="#c8baf3" stroke-width="1.2" filter="url(#sh)"/>
+<g><polygon points="352.0,1221.0 358.6,1217.5 365.2,1221.0 358.6,1224.5" fill="#ece6fd" stroke="#7a5ae0" stroke-width="1.2" stroke-linejoin="round"/><polygon points="352.0,1221.0 358.6,1224.5 358.6,1228.6 352.0,1225.1" fill="#dcd2fa" stroke="#7a5ae0" stroke-width="1.2" stroke-linejoin="round"/><polygon points="358.6,1224.5 365.2,1221.0 365.2,1225.1 358.6,1228.6" fill="#c8baf3" stroke="#7a5ae0" stroke-width="1.2" stroke-linejoin="round"/></g>
+<text x="374" y="1220" font-size="12" fill="#1c2150" font-weight="700" text-anchor="start">sw-engineer</text>
+<text x="374" y="1235" font-size="10.5" fill="#6b72a8" font-weight="400" text-anchor="start"><tspan font-style="italic">production .py / .pyi</tspan></text>
+</g>
+<g class="fi" style="--d:1.52s"><rect x="632" y="1204" width="288" height="38" rx="9" fill="#fff" stroke="#c8baf3" stroke-width="1.2" filter="url(#sh)"/>
+<g><polygon points="644.0,1221.0 650.6,1217.5 657.2,1221.0 650.6,1224.5" fill="#ece6fd" stroke="#7a5ae0" stroke-width="1.2" stroke-linejoin="round"/><polygon points="644.0,1221.0 650.6,1224.5 650.6,1228.6 644.0,1225.1" fill="#dcd2fa" stroke="#7a5ae0" stroke-width="1.2" stroke-linejoin="round"/><polygon points="650.6,1224.5 657.2,1221.0 657.2,1225.1 650.6,1228.6" fill="#c8baf3" stroke="#7a5ae0" stroke-width="1.2" stroke-linejoin="round"/></g>
+<text x="666" y="1220" font-size="12" fill="#1c2150" font-weight="700" text-anchor="start">qa-specialist</text>
+<text x="666" y="1235" font-size="10.5" fill="#6b72a8" font-weight="400" text-anchor="start"><tspan font-style="italic">behaviour, bug-fix, error-path risk</tspan></text>
+</g>
+<g class="fi" style="--d:1.58s"><rect x="340" y="1248" width="288" height="38" rx="9" fill="#fff" stroke="#c8baf3" stroke-width="1.2" filter="url(#sh)"/>
+<g><polygon points="352.0,1265.0 358.6,1261.5 365.2,1265.0 358.6,1268.5" fill="#ece6fd" stroke="#7a5ae0" stroke-width="1.2" stroke-linejoin="round"/><polygon points="352.0,1265.0 358.6,1268.5 358.6,1272.6 352.0,1269.1" fill="#dcd2fa" stroke="#7a5ae0" stroke-width="1.2" stroke-linejoin="round"/><polygon points="358.6,1268.5 365.2,1265.0 365.2,1269.1 358.6,1272.6" fill="#c8baf3" stroke="#7a5ae0" stroke-width="1.2" stroke-linejoin="round"/></g>
+<text x="374" y="1264" font-size="12" fill="#1c2150" font-weight="700" text-anchor="start">challenger</text>
+<text x="374" y="1279" font-size="10.5" fill="#6b72a8" font-weight="400" text-anchor="start"><tspan font-style="italic">high / unresolved / adversarial</tspan></text>
+</g>
+<g class="fi" style="--d:1.64s"><rect x="632" y="1248" width="288" height="38" rx="9" fill="#fff" stroke="#c8baf3" stroke-width="1.2" filter="url(#sh)"/>
+<g><polygon points="644.0,1265.0 650.6,1261.5 657.2,1265.0 650.6,1268.5" fill="#ece6fd" stroke="#7a5ae0" stroke-width="1.2" stroke-linejoin="round"/><polygon points="644.0,1265.0 650.6,1268.5 650.6,1272.6 644.0,1269.1" fill="#dcd2fa" stroke="#7a5ae0" stroke-width="1.2" stroke-linejoin="round"/><polygon points="650.6,1268.5 657.2,1265.0 657.2,1269.1 650.6,1272.6" fill="#c8baf3" stroke="#7a5ae0" stroke-width="1.2" stroke-linejoin="round"/></g>
+<text x="666" y="1264" font-size="12" fill="#1c2150" font-weight="700" text-anchor="start">axis roles</text>
+<text x="666" y="1279" font-size="10.5" fill="#6b72a8" font-weight="400" text-anchor="start"><tspan font-style="italic">data · CI/CD · lint · docs · …</tspan></text>
+</g>
+<text x="344" y="1306" font-size="10.5" fill="#6b72a8" font-weight="400" text-anchor="start"><tspan font-style="italic">width = triggered roles · host capacity</tspan></text>
+<path d="M630,1318 L630,1334" fill="none" stroke="#5b66b3" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar-flow)"/>
+<g class="fi" style="--d:1.70s"><rect x="340" y="1334" width="580" height="28" rx="14" fill="#dcf5e9" stroke="#2f9e73" stroke-width="1.3"/>
+<path d="M356,1342 h6 l8,6 M356,1354 h6 l8,-6 M370,1348 h8" fill="none" stroke="#2f9e73" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="388" y="1352.2" font-size="11.5" fill="#1b7f59" font-weight="700" text-anchor="start">JOIN  ·  every actual child joined</text>
+</g>
+<path d="M340,1348 L328,1348 Q320,1348 320,1340 L320,1192 Q320,1184 328,1184 L340,1184" class="dash" stroke-dasharray="5 4" fill="none" stroke="#7a5ae0" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar-loop)"/>
+<g class="fi" style="--d:1.76s"><rect x="160.0" y="1258.0" width="152.0" height="19.5" rx="9.8" fill="#ece6fd" stroke="#7a5ae0" stroke-width="1.1"/><text x="169.0" y="1271.6" font-size="10.5" fill="#6240cf" font-weight="700" text-anchor="start">missing role · retry</text></g>
+<path d="M630,1362 L630,1396" fill="none" stroke="#5b66b3" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar-flow)"/>
+<g class="fi" style="--d:1.82s"><rect x="40" y="1396" width="880" height="102" rx="12" fill="#fff" stroke="#c8ccf2" stroke-width="1.3" filter="url(#sh)"/><rect x="40" y="1397" width="5.5" height="100" rx="2.75" fill="#6670b8"/>
+<text x="56" y="1415" font-size="10.5" fill="#4b559f" font-weight="700" text-anchor="start" letter-spacing="0.6">RECONCILE</text>
+<text x="56" y="1433" font-size="14.5" fill="#1c2150" font-weight="700" text-anchor="start">Assessments, candidates, online triage</text>
+<text x="56" y="1453" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">specialist-assessments.json</tspan></text>
+<text x="56" y="1469.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">assemble</tspan>: hashes · child provenance</text>
+<text x="56" y="1486.0" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">parent-only: labelled parent assessments</tspan></text>
+<text x="490" y="1453" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">validate every candidate</tspan> vs source</text>
+<text x="490" y="1469.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">keep <tspan font-style="italic">confirmed · refuted · unresolved</tspan></text>
+<text x="490" y="1486.0" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">ratings are <tspan font-style="italic">source judgments</tspan></text>
+</g>
+<path d="M 90,996 L90,1396" fill="none" stroke="#d6284a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar-bypass)"/>
+<path d="M480,1498 L480,1532" fill="none" stroke="#5b66b3" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar-flow)"/>
+<g class="fi" style="--d:1.88s"><rect x="40" y="1532" width="880" height="102" rx="12" fill="#fff" stroke="#c8ccf2" stroke-width="1.3" filter="url(#sh)"/><rect x="40" y="1533" width="5.5" height="100" rx="2.75" fill="#e0a010"/>
+<text x="56" y="1551" font-size="10.5" fill="#a86f00" font-weight="700" text-anchor="start" letter-spacing="0.6">CHECKS · FINAL GATE</text>
+<text x="56" y="1569" font-size="14.5" fill="#1c2150" font-weight="700" text-anchor="start">run_gates.py in the verified isolated source</text>
+<g><path d="M878.0,1568.0 L884.0,1577.4 L896.0,1577.4 L902.0,1568.0 L902.0,1572.6 L896.0,1581.9 L884.0,1581.9 L878.0,1572.6 Z" fill="#f2cb75" stroke="#e0a010" stroke-width="1.2" stroke-linejoin="round"/><polygon points="902.0,1568.0 896.0,1576.1 884.0,1576.1 878.0,1568.0 884.0,1559.9 896.0,1559.9" fill="#fff0c9" stroke="#e0a010" stroke-width="1.2" stroke-linejoin="round"/><path d="M886.2,1568.0 l2.6,2.4 l5.0,-4.8" fill="none" stroke="#e0a010" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></g>
+<text x="56" y="1589" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">run_gates.py</tspan> in verified source</text>
+<text x="56" y="1605.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">PR: <tspan font-style="italic">git diff --check base...head</tspan></text>
+<text x="56" y="1622.0" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">close advice: detailed checks N/A</tspan></text>
+<text x="490" y="1589" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">last gate</tspan>: full test selection</text>
+<text x="490" y="1605.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">import-bound pytest</tspan> proves source</text>
+<text x="490" y="1622.0" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">failed check does not cancel closure</tspan></text>
+</g>
+<path d="M920,749 L940,749 L940,1592 L920,1592" fill="none" stroke="#d6284a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar-bypass)"/>
+<g class="fi" style="--d:1.94s"><rect x="585.8" y="804" width="326.2" height="19.5" rx="9.8" fill="#fde3e8" stroke="#d6284a" stroke-width="1.1"/><text x="594.8" y="817.6" font-size="10.5" fill="#b81c3c" font-weight="700" text-anchor="start">close advice · skips route, fan-out, reconcile</text></g>
+<path d="M480,1634 L480,1668" fill="none" stroke="#5b66b3" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar-flow)"/>
+<g class="fi" style="--d:2.00s"><rect x="40" y="1668" width="880" height="102" rx="12" fill="#fff" stroke="#c8ccf2" stroke-width="1.3" filter="url(#sh)"/><rect x="40" y="1669" width="5.5" height="100" rx="2.75" fill="#6670b8"/>
+<text x="56" y="1687" font-size="10.5" fill="#4b559f" font-weight="700" text-anchor="start" letter-spacing="0.6">FINALIZE</text>
+<text x="56" y="1705" font-size="14.5" fill="#1c2150" font-weight="700" text-anchor="start">Notes, metadata, validated promotion</text>
+<g><polygon points="56.0,1718.0 60.8,1715.4 65.6,1718.0 60.8,1720.6" fill="#ece6fd" stroke="#7a5ae0" stroke-width="1.2" stroke-linejoin="round"/><polygon points="56.0,1718.0 60.8,1720.6 60.8,1723.5 56.0,1721.0" fill="#dcd2fa" stroke="#7a5ae0" stroke-width="1.2" stroke-linejoin="round"/><polygon points="60.8,1720.6 65.6,1718.0 65.6,1721.0 60.8,1723.5" fill="#c8baf3" stroke="#7a5ae0" stroke-width="1.2" stroke-linejoin="round"/></g>
+<text x="73" y="1725" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">nested only</tspan>: ≤1 <tspan font-weight="700" fill="#1c2150">drafting subagent</tspan></text>
+<text x="56" y="1741.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">review-notes.md</tspan> + metadata</text>
+<text x="56" y="1758.0" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">manifest preflight</tspan></text>
+<text x="490" y="1725" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">remediation_finalize.py</tspan> --promote</text>
+<text x="490" y="1741.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">both validators</tspan> must pass</text>
+<text x="490" y="1758.0" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">failed gates recorded in result</tspan></text>
+</g>
+<path d="M480,1770 L480,1804" fill="none" stroke="#5b66b3" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar-flow)"/>
+<g class="fi" style="--d:2.06s"><rect x="40" y="1804" width="880" height="86" rx="12" fill="#fff" stroke="#c8ccf2" stroke-width="1.3" filter="url(#sh)"/><rect x="40" y="1805" width="5.5" height="84" rx="2.75" fill="#2f9e73"/>
+<text x="56" y="1823" font-size="10.5" fill="#1b7f59" font-weight="700" text-anchor="start" letter-spacing="0.6">COMPLETE</text>
+<text x="56" y="1841" font-size="14.5" fill="#1c2150" font-weight="700" text-anchor="start">Report lookup, then deliver</text>
+<g><path d="M878.0,1840.0 L884.0,1849.4 L896.0,1849.4 L902.0,1840.0 L902.0,1844.6 L896.0,1853.9 L884.0,1853.9 L878.0,1844.6 Z" fill="#f2cb75" stroke="#e0a010" stroke-width="1.2" stroke-linejoin="round"/><polygon points="902.0,1840.0 896.0,1848.1 884.0,1848.1 878.0,1840.0 884.0,1831.9 896.0,1831.9" fill="#fff0c9" stroke="#e0a010" stroke-width="1.2" stroke-linejoin="round"/><path d="M886.2,1840.0 l2.6,2.4 l5.0,-4.8" fill="none" stroke="#e0a010" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></g>
+<text x="56" y="1861" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">find-review-report.py</tspan> --complete-run</text>
+<text x="56" y="1877.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">standalone: <tspan font-style="italic">emit final output verbatim</tspan></text>
+<text x="490" y="1861" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">nested: return <tspan font-weight="700" fill="#1c2150">result.json</tspan> path</text>
+<text x="490" y="1877.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">read-only: no GitHub write</tspan></text>
+</g>
+<path d="M480,1890 L480,1928" fill="none" stroke="#d6284a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar-bypass)"/>
+<g class="fi" style="--d:2.12s"><rect x="496.0" y="1899" width="332.9" height="19.5" rx="9.8" fill="#fee6e2" stroke="#e0503f" stroke-width="1.1"/><text x="505.0" y="1912.6" font-size="10.5" fill="#b8321f" font-weight="700" text-anchor="start">checkpoint fails · permitted recovery exhausted</text></g>
+<g class="fi" style="--d:2.18s"><rect x="40" y="1928" width="880" height="86" rx="12" fill="#fff" stroke="#c8ccf2" stroke-width="1.3" filter="url(#sh)"/><rect x="40" y="1929" width="5.5" height="84" rx="2.75" fill="#e0503f"/>
+<text x="56" y="1947" font-size="10.5" fill="#b8321f" font-weight="700" text-anchor="start" letter-spacing="0.6">RECOVERY · ANY FAILED CHECKPOINT</text>
+<text x="56" y="1965" font-size="14.5" fill="#1c2150" font-weight="700" text-anchor="start">Incomplete review decision (native question tool)</text>
+<g><path d="M878.0,1964.0 L884.0,1973.4 L896.0,1973.4 L902.0,1964.0 L902.0,1968.6 L896.0,1977.9 L884.0,1977.9 L878.0,1968.6 Z" fill="#f2cb75" stroke="#e0a010" stroke-width="1.2" stroke-linejoin="round"/><polygon points="902.0,1964.0 896.0,1972.1 884.0,1972.1 878.0,1964.0 884.0,1955.9 896.0,1955.9" fill="#fff0c9" stroke="#e0a010" stroke-width="1.2" stroke-linejoin="round"/><path d="M886.2,1964.0 l2.6,2.4 l5.0,-4.8" fill="none" stroke="#e0a010" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></g>
+<text x="56" y="1985" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">Continue</tspan> / <tspan font-weight="700" fill="#1c2150">Skip</tspan> <tspan font-style="italic">interrupted check</tspan></text>
+<text x="56" y="2001.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">other: New review · Resume last one · Stop</tspan></text>
+<text x="490" y="1985" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">findings preliminary until answered</tspan></text>
+</g>
+<rect x="40" y="2042" width="5" height="15" rx="2.5" fill="#6670b8"/>
+<text x="52" y="2054" font-size="11" fill="#6670b8" font-weight="700" text-anchor="start" letter-spacing="1.1">ROUTES — STAGE × PATH</text>
+<line x1="224" y1="2050" x2="920" y2="2050" stroke="#c8ccf2" stroke-width="1"/>
+<g class="fi" style="--d:2.24s"><rect x="40" y="2068" width="880" height="220" rx="12" fill="#fff" stroke="#c8ccf2" stroke-width="1.3" filter="url(#sh)"/><rect x="40" y="2069" width="5.5" height="218" rx="2.75" fill="#6670b8"/>
+<text x="56" y="2089" font-size="10.5" fill="#6b72a8" font-weight="700" text-anchor="start" letter-spacing="0.5">STAGE</text>
+<text x="300" y="2089" font-size="10.5" fill="#6b72a8" font-weight="700" text-anchor="start" letter-spacing="0.5">LOCAL DIFF</text>
+<text x="500" y="2089" font-size="10.5" fill="#6b72a8" font-weight="700" text-anchor="start" letter-spacing="0.5">PR REVIEW</text>
+<text x="720" y="2089" font-size="10.5" fill="#6b72a8" font-weight="700" text-anchor="start" letter-spacing="0.5">CLOSE ADVICE</text>
+<line x1="52" y1="2096" x2="908" y2="2096" stroke="#c8ccf2"/>
+<text x="56" y="2116" font-size="12" fill="#1c2150" font-weight="700" text-anchor="start">ENTRY · PREFLIGHT</text>
+<text x="300" y="2116" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">● own (no PR gates)</text>
+<text x="500" y="2116" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">● own</text>
+<text x="720" y="2116" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">↺ same as PR</text>
+<line x1="52" y1="2124" x2="908" y2="2124" stroke="#dde0f4"/>
+<text x="56" y="2142" font-size="12" fill="#1c2150" font-weight="700" text-anchor="start">COLLECT</text>
+<text x="300" y="2142" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">● local</text>
+<text x="500" y="2142" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">● PR</text>
+<text x="720" y="2142" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">↺ PR collect</text>
+<line x1="52" y1="2150" x2="908" y2="2150" stroke="#dde0f4"/>
+<text x="56" y="2168" font-size="12" fill="#1c2150" font-weight="700" text-anchor="start">CLOSE SCREEN</text>
+<text x="300" y="2168" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">—</text>
+<text x="500" y="2168" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">● own</text>
+<text x="720" y="2168" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">● own</text>
+<line x1="52" y1="2176" x2="908" y2="2176" stroke="#dde0f4"/>
+<text x="56" y="2194" font-size="12" fill="#1c2150" font-weight="700" text-anchor="start">SCOPE · ROUTE · BRANCH</text>
+<text x="300" y="2194" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">● own</text>
+<text x="500" y="2194" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">↺ same as local</text>
+<text x="720" y="2194" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">—</text>
+<line x1="52" y1="2202" x2="908" y2="2202" stroke="#dde0f4"/>
+<text x="56" y="2220" font-size="12" fill="#1c2150" font-weight="700" text-anchor="start">FAN · JOIN · RECONCILE</text>
+<text x="300" y="2220" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">● own</text>
+<text x="500" y="2220" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">↺ same as local</text>
+<text x="720" y="2220" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">—</text>
+<line x1="52" y1="2228" x2="908" y2="2228" stroke="#dde0f4"/>
+<text x="56" y="2246" font-size="12" fill="#1c2150" font-weight="700" text-anchor="start">CHECKS</text>
+<text x="300" y="2246" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">● own</text>
+<text x="500" y="2246" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">↺ same as local</text>
+<text x="720" y="2246" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">↺ detailed N/A</text>
+<line x1="52" y1="2254" x2="908" y2="2254" stroke="#dde0f4"/>
+<text x="56" y="2272" font-size="12" fill="#1c2150" font-weight="700" text-anchor="start">FINALIZE · COMPLETE</text>
+<text x="300" y="2272" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">● own</text>
+<text x="500" y="2272" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">↺ same as local</text>
+<text x="720" y="2272" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">↺ same as local</text>
+<line x1="52" y1="2280" x2="908" y2="2280" stroke="#dde0f4"/>
+</g>
+<rect x="40" y="2312" width="5" height="15" rx="2.5" fill="#7a5ae0"/>
+<text x="52" y="2324" font-size="11" fill="#7a5ae0" font-weight="700" text-anchor="start" letter-spacing="1.1">FAN / JOIN</text>
+<line x1="134" y1="2320" x2="920" y2="2320" stroke="#c8ccf2" stroke-width="1"/>
+<g class="fi" style="--d:2.30s"><rect x="40" y="2338" width="880" height="90" rx="12" fill="#fff" stroke="#c8ccf2" stroke-width="1.3" filter="url(#sh)"/><rect x="40" y="2339" width="5.5" height="88" rx="2.75" fill="#7a5ae0"/>
+<text x="56" y="2359" font-size="10.5" fill="#6b72a8" font-weight="700" text-anchor="start" letter-spacing="0.5">FAN</text>
+<text x="170" y="2359" font-size="10.5" fill="#6b72a8" font-weight="700" text-anchor="start" letter-spacing="0.5">LANES</text>
+<text x="510" y="2359" font-size="10.5" fill="#6b72a8" font-weight="700" text-anchor="start" letter-spacing="0.5">WIDTH BOUND</text>
+<text x="770" y="2359" font-size="10.5" fill="#6b72a8" font-weight="700" text-anchor="start" letter-spacing="0.5">JOIN</text>
+<line x1="52" y1="2366" x2="908" y2="2366" stroke="#c8ccf2"/>
+<text x="56" y="2386" font-size="12" fill="#1c2150" font-weight="700" text-anchor="start">reviewers</text>
+<text x="170" y="2386" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">1 per triggered role</text>
+<text x="510" y="2386" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">routing + host capacity</text>
+<text x="770" y="2386" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">all children</text>
+<line x1="52" y1="2394" x2="908" y2="2394" stroke="#dde0f4"/>
+<text x="56" y="2412" font-size="12" fill="#1c2150" font-weight="700" text-anchor="start">local wave</text>
+<text x="170" y="2412" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">1 session per role (1-4)</text>
+<text x="510" y="2412" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">approved plan</text>
+<text x="770" y="2412" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">adapter join</text>
+<line x1="52" y1="2420" x2="908" y2="2420" stroke="#dde0f4"/>
+</g>
+<rect x="40" y="2452" width="5" height="15" rx="2.5" fill="#e0a010"/>
+<text x="52" y="2464" font-size="11" fill="#e0a010" font-weight="700" text-anchor="start" letter-spacing="1.1">GATES</text>
+<line x1="93" y1="2460" x2="920" y2="2460" stroke="#c8ccf2" stroke-width="1"/>
+<g class="fi" style="--d:2.36s"><rect x="40" y="2478" width="880" height="220" rx="12" fill="#fff" stroke="#c8ccf2" stroke-width="1.3" filter="url(#sh)"/><rect x="40" y="2479" width="5.5" height="218" rx="2.75" fill="#e0a010"/>
+<text x="56" y="2499" font-size="10.5" fill="#6b72a8" font-weight="700" text-anchor="start" letter-spacing="0.5">GATE</text>
+<text x="230" y="2499" font-size="10.5" fill="#6b72a8" font-weight="700" text-anchor="start" letter-spacing="0.5">WHEN</text>
+<text x="600" y="2499" font-size="10.5" fill="#6b72a8" font-weight="700" text-anchor="start" letter-spacing="0.5">BLOCKS</text>
+<line x1="52" y1="2506" x2="908" y2="2506" stroke="#c8ccf2"/>
+<text x="56" y="2526" font-size="12" fill="#1c2150" font-weight="700" text-anchor="start">PR state preflight</text>
+<text x="230" y="2526" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">scope=pr, before run</text>
+<text x="600" y="2526" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">closed / merged stops</text>
+<line x1="52" y1="2534" x2="908" y2="2534" stroke="#dde0f4"/>
+<text x="56" y="2552" font-size="12" fill="#1c2150" font-weight="700" text-anchor="start">prior report</text>
+<text x="230" y="2552" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">new PR run</text>
+<text x="600" y="2552" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">reuse or fresh</text>
+<line x1="52" y1="2560" x2="908" y2="2560" stroke="#dde0f4"/>
+<text x="56" y="2578" font-size="12" fill="#1c2150" font-weight="700" text-anchor="start">close screen</text>
+<text x="230" y="2578" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">open PR</text>
+<text x="600" y="2578" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">inconclusive → continue</text>
+<line x1="52" y1="2586" x2="908" y2="2586" stroke="#dde0f4"/>
+<text x="56" y="2604" font-size="12" fill="#1c2150" font-weight="700" text-anchor="start">wave admission</text>
+<text x="230" y="2604" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">prepare / freeze</text>
+<text x="600" y="2604" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">stale source · bad routing · missing role</text>
+<line x1="52" y1="2612" x2="908" y2="2612" stroke="#dde0f4"/>
+<text x="56" y="2630" font-size="12" fill="#1c2150" font-weight="700" text-anchor="start">final test gate</text>
+<text x="230" y="2630" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">after reconcile</text>
+<text x="600" y="2630" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">valid gates.json required</text>
+<line x1="52" y1="2638" x2="908" y2="2638" stroke="#dde0f4"/>
+<text x="56" y="2656" font-size="12" fill="#1c2150" font-weight="700" text-anchor="start">validators</text>
+<text x="230" y="2656" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">finalize --promote</text>
+<text x="600" y="2656" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">both pass before promote</text>
+<line x1="52" y1="2664" x2="908" y2="2664" stroke="#dde0f4"/>
+<text x="56" y="2682" font-size="12" fill="#1c2150" font-weight="700" text-anchor="start">recovery</text>
+<text x="230" y="2682" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">genuine blocker</text>
+<text x="600" y="2682" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">native question</text>
+<line x1="52" y1="2690" x2="908" y2="2690" stroke="#dde0f4"/>
+</g>
+<rect x="40" y="2722" width="5" height="15" rx="2.5" fill="#2f9e73"/>
+<text x="52" y="2734" font-size="11" fill="#2f9e73" font-weight="700" text-anchor="start" letter-spacing="1.1">DEGENERATE CASES</text>
+<line x1="183" y1="2730" x2="920" y2="2730" stroke="#c8ccf2" stroke-width="1"/>
+<g class="fi" style="--d:2.42s"><rect x="40" y="2748" width="880" height="116" rx="12" fill="#fff" stroke="#c8ccf2" stroke-width="1.3" filter="url(#sh)"/><rect x="40" y="2749" width="5.5" height="114" rx="2.75" fill="#2f9e73"/>
+<text x="56" y="2769" font-size="10.5" fill="#6b72a8" font-weight="700" text-anchor="start" letter-spacing="0.5">CASE</text>
+<text x="230" y="2769" font-size="10.5" fill="#6b72a8" font-weight="700" text-anchor="start" letter-spacing="0.5">EFFECT</text>
+<line x1="52" y1="2776" x2="908" y2="2776" stroke="#c8ccf2"/>
+<text x="56" y="2796" font-size="12" fill="#1c2150" font-weight="700" text-anchor="start">no triggered role</text>
+<text x="230" y="2796" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">FAN skipped · empty passes</text>
+<line x1="52" y1="2804" x2="908" y2="2804" stroke="#dde0f4"/>
+<text x="56" y="2822" font-size="12" fill="#1c2150" font-weight="700" text-anchor="start">parent-only route</text>
+<text x="230" y="2822" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">no spawn · parent-labelled assessments</text>
+<line x1="52" y1="2830" x2="908" y2="2830" stroke="#dde0f4"/>
+<text x="56" y="2848" font-size="12" fill="#1c2150" font-weight="700" text-anchor="start">reuse chosen</text>
+<text x="230" y="2848" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">validated bytes · not a freshness claim</text>
+<line x1="52" y1="2856" x2="908" y2="2856" stroke="#dde0f4"/>
+</g>
+<text x="40" y="2890" font-size="11" fill="#6b72a8" font-weight="400" text-anchor="start">Diagram only, non-normative — plugins/codex-rig/skills/code-review/SKILL.md is normative; update both with any step, gate or fan-out change.</text>
+</svg>

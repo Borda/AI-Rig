@@ -6,6 +6,8 @@ allowed-tools: Bash
 effort: high
 ---
 
+<!-- Diagram: ../../assets/images/bridge-request-arch.svg (request lifecycle; documentation only, SKILL.md wins) -->
+
 # Implement with Codex
 
 Implement one bounded change in selected workspace. Parse `$ARGUMENTS`: required task; optional `model`, `effort`, `timeout-seconds`, `background`, `session-id`, `depth`, `run-id`, `workspace`, `network`. Reject empty task. Session ID only continues the same task in the same workspace — the `remaining` work of that session's own result, never a new or broadened goal; anything else is a fresh call without `--session-id`. Effort omitted: classify complete task, pass level explicitly. Preserve caller-supplied level. Tiers: `minimal` = trivial lookup or one-line mechanical confirmation; `low` = narrow mechanical change or settled fact; `medium` = bounded implementation, diagnosis, or review; `high` = cross-file, adversarial, architectural, or security judgment; `xhigh` = unusually broad and consequential; `max` = explicit caller request only.

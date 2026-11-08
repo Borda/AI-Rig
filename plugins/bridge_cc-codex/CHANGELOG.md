@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.12.4
+
+- The architecture and request lifecycle diagrams now render as images on the documentation site; they were hidden inside a collapsed block that the site build does not parse.
+
+## 0.12.3
+
+- Add an animated request-lifecycle diagram covering advise, review and implement plus the detached status, result and cancel controls, and bring the architecture diagram under the same documented update rule; each bridge `SKILL.md` carries a comment naming its diagram.
+
 ## 0.12.2
 
 - Close the child's capture pipes after each supervised call once both output readers have finished, and reap the detached background supervisor on a daemon thread, so a long-lived host such as the MCP server no longer accumulates open pipe objects, `subprocess N is still running` ResourceWarnings or unreaped children.

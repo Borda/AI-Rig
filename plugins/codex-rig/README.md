@@ -6,7 +6,7 @@ Codex Rig is OpenAI Codex product in [Borda's AI-Rig](https://github.com/Borda/A
 >
 > Finish and verify the active piece before dependent work. Delegate ready independent pieces with focused context; keep the overall map compact. This keeps far-ahead implementation details out of the active context and makes ownership and closure explicit. [Workflow rules](shared/native-skill-contract.md#proportional-execution).
 
-> Current source version: `0.43.1`. Codex Rig is peer product to foundry, oss, develop, research, and codemap-py—not copy of repository's `.codex/` configuration.
+> Current source version: `0.43.3`. Codex Rig is peer product to foundry, oss, develop, research, and codemap-py—not copy of repository's `.codex/` configuration.
 
 > Value at a glance: install one independently verifiable plugin to get evidence-backed workflows, bounded specialist role cards, portable fallbacks, and auditable artifacts without pretending Codex has native persistent-agent selection.
 
@@ -182,6 +182,10 @@ Codex Rig installs 16 skills: 15 workflows plus legacy shim manager.
 - **Independence gaps:** if independent coverage is unavailable, permitted work continues and the gap is disclosed without claiming an independent clean review.
 - **Final handoff:** every workflow ends with a compact outcome-coupled frame — Outcome, Results, Verification, Remaining, Confidence, Artifact, Recommendations / next steps — defined by `shared/quality-gates.md` and validated by `shared/final-handoff-contract.md`. Replies name the topic or question they answer before giving the outcome. `agent-shims` is the explicit exception: it has no canonical run/result artifact.
 
+**Implement execution architecture** — animated diagram of the lightweight and detailed paths, plan challenges, owner dispatch and gates.
+
+![$codex-rig:implement execution architecture: paths, owners and gates (animated)](assets/images/implement-arch.svg)
+
 ### Skill notes
 
 - **`challenge-resolve`:** use `$codex-rig:challenge-resolve` with a bounded task, selected source, and acceptance criteria.
@@ -261,12 +265,9 @@ The package covers capabilities Codex can currently install and verify. It inclu
 
 The split schema, approval allowlist, synchronization gates, runtime evidence, telemetry, fallback, and promotion lifecycle are defined in the [parallel execution diagram](assets/images/parallel-execution-architecture.svg). See the [canonical G0–G8 execution flow](assets/images/parallel-execution-architecture.svg) for forked dispatch and synchronization chart.
 
-<details>
-<summary>Parallel execution architecture — animated G0–G8 flow with approvals, tiers and failure modes</summary>
+**Parallel execution architecture — animated G0–G8 flow with approvals, tiers and failure modes**
 
 ![Codex Rig parallel execution: G0–G8 gate flow, capability tiers, approval allowlist and failure responses (animated)](assets/images/parallel-execution-architecture.svg)
-
-</details>
 
 Operator rollback is deliberately procedural:
 
@@ -328,6 +329,10 @@ Completion requires requested output, explainable gate results, unresolved risks
 
 ### Code Review
 
+**Execution architecture** — animated diagram of fans, joins and gates.
+
+![$codex-rig:code-review execution architecture: fans, joins and gates (animated)](assets/images/code-review-arch.svg)
+
 - **Intake:** `$codex-rig:code-review #123` collects contributor intent from PR title/body, comments/reviews, target-branch evidence, exact local PR head, and locally derived diff before producing a structured review artifact. Collection starts in an atomically allocated timestamp-plus-random-suffix run under its workflow scope; after authoritative `pr.json` succeeds it is promoted to `.reports/codex/code-review/pr-<number>/run-<NNN>/`, and that printed path owns every later artifact.
 - **Close advice:** after collection it may emit an evidence-backed terminal `close` decision for one of `FALSE_GOAL`, `BREAKING_CONDUCT`, `WRONG_SCOPE`, `WRONG_PROVENANCE`, `DUPLICATE`, `UNADDRESSED_REVERT`, `SPAM`, or `ARCHITECTURE_VIOLATION`. Ambiguous evidence always continues to detailed review, and the decision never closes, comments on, merges, or otherwise mutates GitHub.
 - **Checkout:** review creates a detached worktree at the exact PR head and leaves the invoking branch, index, and tracked files untouched. Local working-tree/path reviews use an isolated mirror of changed source. Worktrees separate caller edits but do not enforce immutability.
@@ -348,6 +353,10 @@ Completion requires requested output, explainable gate results, unresolved risks
 - **Stop hook:** the bundled Stop hook requests at most one diagnostic continuation when review or remediation started without its completion check. It recognizes successful review completion with optional `--codex-home` and `--parent-thread-id` context arguments. It is advisory, reads no review source, and runs no commands. After installing an update, review and trust the changed hook through Codex `/hooks`; see the [Codex hooks reference](https://learn.chatgpt.com/docs/hooks).
 
 ### Code Remediate
+
+**Execution architecture** — animated diagram of fans, joins and gates.
+
+![$codex-rig:code-remediate execution architecture: fans, joins and gates (animated)](assets/images/code-remediate-arch.svg)
 
 - **Entry:** `$codex-rig:code-remediate #123` collects current online PR items and verified local checkout directly; `#123 +review` additionally finds the newest matching assessed review, refreshes PR/body/checkout/diff evidence, integrates the fetched target even when conflict-free (an already-included target is a no-op), and presents a resolution table before editing; `review` uses the latest assessed review recorded in this session.
 - **Missing report:** when `+report`, report aliases or an explicit path request existing evidence and no eligible completed report exists, Codex first recovers what it can, then asks **New review**, **Resume last one**, or **Stop**. A fresh review invokes the normal Code Review skill end-to-end and returns its exact completed report to the same remediation run. Continuing without a completed review requires explicit user confirmation with the requested report limitation disclosed.
@@ -605,6 +614,10 @@ NO_MKDOCS_2_WARNING=1 python3 -m mkdocs build --strict
 - The package is accepted only when the generated manifest is current, every recorded file hash matches, plugin-only copied-tree tests pass, lifecycle safety tests pass, Windows collection and path behavior pass, the offline calibration harness passes, and public documentation builds without warnings.
 - The installed-package-safe gate (`python3 -m pytest -q plugins/codex-rig/tests/packaging/package/test_installed_package_gate.py`) copies only manifest-declared payload into a disposable cache and runs package-safe tests without checkout context.
 - The repository CI matrix runs the complete plugin suite on Linux, macOS, and Windows with Python 3.10, 3.11, 3.12, and 3.13. A live local reviewer wave probe is separately authorized and manual; it never runs in CI.
+
+## 📝 Related articles
+
+- [Role Cards, Not Agents: A Three-Tier Fallback for Native Codex Plugins](https://medium.com/codex/role-cards-not-agents-a-three-tier-fallback-for-native-codex-plugins-8f647344cefc) (CodeX, Jul 2026): what building Codex Rig taught about native plugin platforms, and the three-tier design that survived.
 
 ## 📄 License
 

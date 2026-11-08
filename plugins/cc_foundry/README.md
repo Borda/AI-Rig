@@ -1121,6 +1121,11 @@ pytest plugins/cc_foundry/tests/ -v -k "js"
 
 CI runs full test suite on every push to `main` and on PRs touching `plugins/` (see `.github/workflows/ci-tests.yml`).
 
+## 📝 Related articles
+
+- [Executed, Not Retyped: What 27 Runs Taught Me About Bash Inside Agent Skills](https://levelup.gitconnected.com/executed-not-retyped-what-27-runs-taught-me-about-bash-inside-agent-skills-72f273fdb341) (Level Up Coding, Sep 2026): why a model's retyped bash block can differ from the skill's original, measured on AI-Rig's own skills.
+- [Reviewed Plugin Code Shouldn't Ask Permission](https://levelup.gitconnected.com/reviewed-plugin-code-shouldnt-ask-permission-aad049906e14) (Level Up Coding, Sep 2026): the blueprint-manifest auto-allow and the provenance fix for reviewed plugin code.
+
 <a id="-contributing--feedback"></a>
 
 ## 🙏 Contributing / feedback

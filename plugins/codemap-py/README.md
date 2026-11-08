@@ -560,6 +560,10 @@ Anonymization:
 
 ### Scanner, query, and index architecture
 
+**Plugin architecture** — animated diagram of the scanner, the index cache, the query surface and the skill adapters.
+
+![codemap-py architecture: scanner, index cache, query surface and skill adapters (animated)](assets/images/codemap-architecture.svg)
+
 - The scanner is dependency-free Python: it walks the selected root, parses `.py` and `.pyi` files with the standard-library AST, resolves imports and selected call edges, computes module/function graph counts, captures supported documentation references, and writes an atomic versioned JSON index.
 - Parse or encoding failures are retained as degraded module records instead of being silently dropped.
 - Incremental refreshes track changed documentation for freshness and documentation references, but only `.py` and `.pyi` entries become module records, so documentation changes do not contaminate module degradation counts.
@@ -715,6 +719,13 @@ codex plugin remove codemap-py@borda-ai-rig
 - [`scripts/README.md`](scripts/README.md) documents deterministic package builds, validation, and install probes.
 - [The rendered Codemap-py page](https://borda.github.io/AI-Rig/codemap-py/) projects this README into the documentation site.
 - [`CHANGELOG.md`](CHANGELOG.md) records versioned runtime and documentation changes.
+
+## 📝 Related articles
+
+- [One Tool, Two Agents: What It Actually Costs to Support Both](https://medium.com/codex/one-tool-two-agents-what-it-actually-costs-to-support-both-91b5d9be8130) (CodeX, Sep 2026): the structural engine ported to a second agent platform, and where assumptions broke.
+- [A Structural Index Pays Off Most Where the Model Is Weakest](https://medium.com/codex/a-structural-index-pays-off-most-where-the-model-is-weakest-4b4bb3349921) (CodeX, Aug 2026): controlled refactoring-benchmark results on token savings and quality.
+- [Your Coding Agent Is Flying Blind — And IDEs Fixed This Twenty Years Ago](https://medium.com/codex/your-coding-agent-is-flying-blind-and-ides-fixed-this-twenty-years-ago-4cf3bfaf1999) (CodeX, Aug 2026): terminal agents regressed to grep, and a stdlib-only plugin that restores structural lookup.
+- [My Benchmark Lied to Me Twelve Times Before It Told the Truth](https://medium.com/codex/my-benchmark-lied-to-me-twelve-times-before-it-told-the-truth-12a59948b7ef) (CodeX, Aug 2026): how an evaluation harness deceives its builder when comparing two coding agents.
 
 <a id="-contributing-and-feedback"></a>
 

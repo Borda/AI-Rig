@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.46.3
+
+- Restyle the animated execution diagrams of the `/develop:fix`, `feature`, `refactor` and `review` skills: card text is short fragments instead of sentences, key names are bold and conditions or bounds are italic, and each diagram's legend explains the emphasis; stop and skip conditions and gates are unchanged.
+
 ## 0.46.2
 
 - Review outcomes now distinguish bounded, low-impact correctness, test and compatibility repairs from material behavioral defects or substantial repair. Final verdicts cite the controlling findings and their impact, keeping required fixes actionable under Minor and verification readiness separate from source approval.

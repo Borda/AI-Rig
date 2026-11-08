@@ -3,6 +3,8 @@ name: code-remediate
 description: Collect and resolve selected findings in one pass, then verify; bare PR targets use online items, while PR +review authorizes matching review evidence and any needed review step.
 ---
 
+<!-- ../../assets/images/code-remediate-arch.svg diagrams the routes, gates and parallel write lifecycle. Documentation only, never loaded — update it in the same commit as any change to step order, gate placement, route choice, or child fan-out. -->
+
 > Before asking, read [User Questions](../../shared/codex-user-questions.md).
 
 # Code Remediate

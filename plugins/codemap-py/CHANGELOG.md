@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.43.4
+
+- Add an animated plugin architecture diagram to the README showing the source text to AST to index pipeline, the index build-and-refresh cycle, which index fields each request type reads, the hooks and telemetry flow, and the gates that can stop or skip a step.
+
 ## 0.43.3
 
 - The doctest examples of `rwgate.read_index`, `rwgate.publish_stream`, `rwgate.atomic_publish` and `parse_scan_args.main` close the files they open, so collecting the package with `--doctest-modules` no longer raises ResourceWarnings.

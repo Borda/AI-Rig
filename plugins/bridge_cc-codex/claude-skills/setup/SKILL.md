@@ -6,6 +6,8 @@ allowed-tools: Bash, Write, AskUserQuestion
 effort: medium
 ---
 
+<!-- Diagram: ../../assets/images/bridge-architecture.svg (setup lifecycle; documentation only, SKILL.md wins) -->
+
 # Set Up the Bridge
 
 ## Bootstrap and plan

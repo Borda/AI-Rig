@@ -3,6 +3,8 @@ name: setup
 description: Configure, authenticate, repair, and verify the Codex to Claude Code Bridge; safe stages run by default and sensitive stages require separate approval.
 ---
 
+<!-- Diagram: ../../assets/images/bridge-architecture.svg (setup lifecycle; documentation only, SKILL.md wins) -->
+
 > Before asking, read [User Questions](../../rules/codex-user-questions.md).
 
 # Set Up the Bridge

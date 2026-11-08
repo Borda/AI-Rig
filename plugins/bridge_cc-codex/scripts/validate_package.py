@@ -91,6 +91,7 @@ REQUIRED_FILES = {
     "NOTICE",
     "README.md",
     "assets/images/bridge-architecture.svg",
+    "assets/images/bridge-request-arch.svg",
     "docs/development.md",
     "docs/operations.md",
     "docs/security.md",

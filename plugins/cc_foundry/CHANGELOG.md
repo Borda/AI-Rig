@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.75.1
+
+- Restyle the animated execution diagrams of the `/foundry:audit`, `calibrate`, `manage` and `distill` skills: card text is short fragments instead of sentences, key names are bold and conditions or bounds are italic, and each diagram's legend explains the emphasis; stop and skip conditions and gates are unchanged.
+
 ## 0.75.0
 
 - The global `~/.claude/CLAUDE.md` written at setup now states the four delivery principles — consistent simple delivery, root cause not symptom, automatic correction and recovery, and honest stops with real handoffs — so every change follows them, including work done in a session that runs no foundry skill.

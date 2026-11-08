@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.43.3
+
+- The parallel execution diagram now renders as an image on the documentation site; it was hidden inside a collapsed block that the site build does not parse.
+
+## 0.43.2
+
+- Add animated execution diagrams for `code-review`, `code-remediate` and `implement` to the README, each showing the skill's routes, gates and owner or reviewer fan-out; each `SKILL.md` carries a comment that names its diagram so an editor updates both together. The parallel execution diagram uses the same short-card layout with bold key names and italic conditions.
+
 ## 0.43.1
 
 - Render next steps and verification as compact tables across current workflow handoffs, retaining complete actions, evidence links, historical rendering and exact caller output.
