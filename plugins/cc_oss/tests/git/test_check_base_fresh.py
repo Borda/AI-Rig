@@ -154,7 +154,7 @@ class TestCheckBaseFresh:
     "path",
     [
         pytest.param("skills/resolve/modes/lint-qa-gate.md", id="step9-gate"),
-        pytest.param("skills/resolve/SKILL.md", id="step10-scope"),
+        pytest.param("skills/resolve/modes/push.md", id="step10-scope"),
     ],
 )
 def test_resolve_invokes_drift_check(path: str) -> None:

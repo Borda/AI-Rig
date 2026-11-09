@@ -8,6 +8,7 @@ import re
 from pathlib import Path
 
 import pytest
+from _resolve_source import read_resolve_source
 from _text_io import dispatch_text
 
 _SKILL = Path(__file__).resolve().parents[3] / "skills/resolve/SKILL.md"
@@ -101,7 +102,7 @@ class TestActionItemsPrintContract:
         Each route (PR intelligence, report intelligence, merged table, context-budget mode) must save the table to its
         file, print it as the last reply text before the picker, and keep previews out of the options.
         """
-        route = _route(source.read_text(encoding="utf-8"), start, end)
+        route = _route(read_resolve_source(source), start, end)
         assert "action-items-table.md" in route
         assert "as the last text of the reply message that issues" in route
         assert "before the call" in route or "before that call" in route
@@ -332,7 +333,7 @@ class TestNoReplyTextBeforeAQuestion:
         Every row names a gate, the stretch of its instruction file that describes it, and the sentence that places its
         hint, notice or item list in the question text.
         """
-        section = _route((_RESOLVE_DIR / relative).read_text(encoding="utf-8"), start, end)
+        section = _route(read_resolve_source(_RESOLVE_DIR / relative), start, end)
         assert marker in section
 
 

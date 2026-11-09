@@ -93,7 +93,7 @@ def _argv(item: dict, plugin_root: str) -> list[str]:
         # Keep a quoted PowerShell option value attached to its equals-form key
         # when shlex applies its deliberately narrow non-POSIX tokenization.
         source = re.sub(
-            r"(?<!\S)(--(?:complete-run|codex-home|parent-thread-id))=([\"'])(.*?)\2(?=\s|$)",
+            r"(?<!\S)(--(?:complete-run|codex-home|parent-thread-id|pr-number|branch|skill|promote-pr-run))=([\"'])(.*?)\2(?=\s|$)",
             r"\2\1=\3\2",
             source,
         )
@@ -241,21 +241,40 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
             continue
         helper = _coordinate(args[1], plugin_root)
         if helper == _coordinate("shared/create_run.py", plugin_root):
-            if len(args) < 4 or args[2] != "--skill" or args[3] not in {"code-review", "code-remediate"}:
-                continue
-            if len(args) not in {4, 6} or (len(args) == 6 and args[4] != "--promote-pr-run"):
+            creation: dict[str, str] = {}
+            arguments = iter(args[2:])
+            valid_creation = False
+            for argument in arguments:
+                option, separator, value = argument.partition("=")
+                if option not in {"--skill", "--pr-number", "--branch", "--promote-pr-run"} or option in creation:
+                    break
+                if not separator:
+                    value = next(arguments, "")
+                if not value.strip() or value.startswith("-"):
+                    break
+                creation[option] = value
+            else:
+                skill = creation.get("--skill", "")
+                identity_options = set(creation) - {"--skill"}
+                if skill not in {"code-review", "code-remediate"} or len(identity_options) > 1:
+                    continue
+                number = creation.get("--pr-number")
+                if number is not None and (not number.isascii() or not number.isdecimal() or int(number) <= 0):
+                    continue
+                # Promotion and creation are separate calls; duplicate or mixed-mode options cannot bind a run.
+                valid_creation = True
+            if not valid_creation:
                 continue
             # Some host CommandExecution records retain escaped terminal newlines.
             report = output.strip().removesuffix("\\n")
             if not report or "\n" in report or "\r" in report:
                 return {}
             run = _coordinate(report, cwd)
-            skill = args[3]
             root = _coordinate(f".reports/codex/{skill}", cwd) + "/"
             if not run.startswith(root):
                 return {}
-            if len(args) == 6:
-                previous = _coordinate(args[5], cwd)
+            if "--promote-pr-run" in creation:
+                previous = _coordinate(creation["--promote-pr-run"], cwd)
                 if runs.get(previous) != skill:
                     return {}
                 del runs[previous]

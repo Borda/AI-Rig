@@ -28,12 +28,12 @@
     {
       "mode": "0644",
       "path": ".codex-plugin/plugin.json",
-      "sha256": "a48b4fa8760ee3becb8820b001c6ce47dced5303534dd11462815d099b3e866a"
+      "sha256": "8001446061b9f3d41adf766fa156d136ac517313f604224b0b58719bc2461cbf"
     },
     {
       "mode": "0644",
       "path": "CHANGELOG.md",
-      "sha256": "db15175ca216514a9a3c1745273c4b3ac5512d646bfc034e7cebcf5e0f6a61ba"
+      "sha256": "f03a75f731c08d702d293eab16cc921aae50ce07d02f4ebcc9c1c5cffca32666"
     },
     {
       "mode": "0644",
@@ -53,7 +53,7 @@
     {
       "mode": "0644",
       "path": "README.md",
-      "sha256": "5ef71c6c49aa918c05838d4346a540623862e19ff8e723383c97e23a4aa9a1d2"
+      "sha256": "d9a077eb2591ba0be7c7194a3071ee68723d23b464bb7468a875f9fa0432d4cb"
     },
     {
       "mode": "0644",
@@ -103,7 +103,7 @@
     {
       "mode": "0644",
       "path": "hooks/review_stop.py",
-      "sha256": "09cc188f1c2b7c79e633991f751b909b4f45318338a376606b194565a68816a9"
+      "sha256": "97d57f54ef2699fb7863b8ef535e8ae846582528832cc2f73aea18fb9f8b2664"
     },
     {
       "mode": "0755",
@@ -423,7 +423,7 @@
     {
       "mode": "0755",
       "path": "shared/collect_pr.py",
-      "sha256": "3957e9452303d995336b166942addb5f9bd101a0c2e54084fd2740be6df963d0"
+      "sha256": "f8abd6895559f573cd220066a5265fc1001885ceac3b5d808346f5335d66f810"
     },
     {
       "mode": "0644",
@@ -433,7 +433,7 @@
     {
       "mode": "0755",
       "path": "shared/create_run.py",
-      "sha256": "54b8746dfedbe846a7304ff08bcb34e4b7a2e9597597286fd2728469efc35c10"
+      "sha256": "85cf0780f45c8ce2f6212e3e4e0035cdd9c14599e46d2591c9b295a975b4384b"
     },
     {
       "mode": "0644",
@@ -493,7 +493,7 @@
     {
       "mode": "0644",
       "path": "shared/helper-cli-contract.md",
-      "sha256": "1b4a2b210e8601325976f8ffdd7e7e71f96b7dbc71b71c81eba4f569efe387c2"
+      "sha256": "2bc95304a3876d6d786d6958a0df602a11d1322846f8737a4496ee8c68775348"
     },
     {
       "mode": "0644",
@@ -688,7 +688,7 @@
     {
       "mode": "0644",
       "path": "skills/code-remediate/references/intake.md",
-      "sha256": "e0f636af750ae44ecc05e47d0779ae1d640e96883cbc7bd73e2800bcb3aa46e1"
+      "sha256": "f43b3a79e5cc50a54ca4bd24668e8a65989e815edb3995a7f01e8949dd16b5c7"
     },
     {
       "mode": "0644",
@@ -718,7 +718,7 @@
     {
       "mode": "0644",
       "path": "skills/code-review/SKILL.md",
-      "sha256": "4c0c478984533c81f4711627ddf33078f369a1387ab64fd5cc243401bcab3415"
+      "sha256": "9af8855d25f48bea49f92e081256de2b7222aeb838dc62d21706c6acc2dbe5aa"
     },
     {
       "mode": "0644",
@@ -753,7 +753,7 @@
     {
       "mode": "0644",
       "path": "skills/code-review/references/report-recovery.md",
-      "sha256": "3c755333fc83d71b6fbe7f187411e97427c965b2a517fa04497dd0003ac63d94"
+      "sha256": "88e20b42f6676115dee53d42a32d2cb4a537a394c683ea45ae0c11d984b5b8e0"
     },
     {
       "mode": "0644",
@@ -763,7 +763,7 @@
     {
       "mode": "0644",
       "path": "skills/code-review/references/source-and-scope.md",
-      "sha256": "848ee0ed25204949425fc5a465f8904e2a182c5a398987dd7a81b8f4563caebc"
+      "sha256": "7512abd75686490aeaff832712c9668c42a59a25fcd24edaa7f17fe79670b86e"
     },
     {
       "mode": "0644",
@@ -803,7 +803,7 @@
     {
       "mode": "0755",
       "path": "skills/code-review/validate_artifacts.py",
-      "sha256": "a6b45cbebe194f8546a8b62a5734b349c954d8d2fb5e20b3be9f7be33bb2f74b"
+      "sha256": "6a3f85110bf858a4f32784f74edd7e3f499c958fd7eb0db764676a15334229fa"
     },
     {
       "mode": "0644",
@@ -1118,12 +1118,12 @@
     {
       "mode": "0644",
       "path": "tests/github/test_collect_pr.py",
-      "sha256": "f235a8d40c9233a35135b97da275ba427216c87cee8c4bef5467a71cf50f8e7e"
+      "sha256": "b3d0d559b39dcc82759f6328b0358ced44f51a98f7010090d00fe6eef9a834e1"
     },
     {
       "mode": "0644",
       "path": "tests/github/test_collect_pr_git_recovery.py",
-      "sha256": "4a4368ac5290b18ec22ea487bb24aa13aa180acc48a9179b6261ef3bc074caed"
+      "sha256": "fe3acff7a64ad8c4fc44435bd0c3e962b262fe7d0f3eadab9798593f2c5f3e69"
     },
     {
       "mode": "0644",
@@ -1743,7 +1743,7 @@
     {
       "mode": "0644",
       "path": "tests/review/validation/test_code_review_routing_contract.py",
-      "sha256": "b16488476bb85123585661cd446785e8bcacb3ba753a07d59c122be012b4595a"
+      "sha256": "89ebf90ba8935a0925d8ffc3d9735d45233f7e3270d41afbf6a93c2713c10f66"
     },
     {
       "mode": "0644",
@@ -1753,7 +1753,7 @@
     {
       "mode": "0644",
       "path": "tests/review/validation/test_review_candidate_recovery_contract.py",
-      "sha256": "02503812fa173b57dcbbdee8d3767ca90c7c18b1874cdda12b0d52d66f30132f"
+      "sha256": "34517d54e24693c2c3d6225be11e0268e9a76bed80f7f2098aca3337b970a8af"
     },
     {
       "mode": "0644",
@@ -1773,7 +1773,7 @@
     {
       "mode": "0644",
       "path": "tests/shipped/test_create_run.py",
-      "sha256": "34e2007c0e445cd65990cb41db7e5e8291f03c9aa1a073f027ebb73123459bb4"
+      "sha256": "277c0f367987a8bac007a10f5bb712682f975a7a3dcef26148af1c0cc59c35c0"
     },
     {
       "mode": "0644",
@@ -1788,7 +1788,7 @@
     {
       "mode": "0644",
       "path": "tests/shipped/test_review_stop_hook.py",
-      "sha256": "12132b9f926c8fb11ff4f13b8be569c6eb6ea2d6242306d882d8fefd40e4749b"
+      "sha256": "7983415b2cc76abc3681abf4b9544cb4a17e54425b8f79d4aaa2fe53b449f062"
     },
     {
       "mode": "0644",
@@ -2047,5 +2047,5 @@
       "path": "skills/sync/SKILL.md"
     }
   ],
-  "version": "0.43.3"
+  "version": "0.43.4"
 }

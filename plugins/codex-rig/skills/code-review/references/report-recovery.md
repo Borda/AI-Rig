@@ -23,6 +23,8 @@ For an interrupted gate or an irrecoverable ordering mistake in an identified re
 
 Neither choice overrides a denial, required capability, recurrence stop, source binding or artifact validation. A genuine permission decision still uses its owning approval boundary. Reuse an existing choice for the unchanged blocker; do not ask again merely because work remains.
 
+When this recovery ends in an incomplete handoff, apply [Review delivery](findings-and-completion.md#output-contract): show the preliminary snapshot and checkpoint tables even with zero findings, label the assessment unvalidated, and retain the notes link and factual limits. Presenting those tables does not require promotion and never establishes completed-review proof. An unanswered pending question still forbids a final or status handoff; continue already-authorized recoverable work before taking a terminal exit.
+
 ## Incomplete review decision
 
 Apply Interrupted checks and missed ordering first when its trigger matches; the choices below cover other genuine recovery decisions, such as missing source or unavailable retained reviewer evidence.

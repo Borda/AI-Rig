@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.75.2
+
+- `/foundry:audit` fix pass: `verbose-bash-block` findings no longer take the gate fast path on either fix path. The orchestrator path, which used to fast-path them ungated, now sends them through the two-agent pre-apply gate, and the audit-fix sub-agent treats them as parallel-safe like the orchestrator but gates them too, so a bash-compression fix can no longer drop a `# timeout: N` or a why-comment unreviewed. The sub-agent also serializes `orphaned-ref` fixes after inventory changes, as the orchestrator already did.
+- Duplicated gate wording in the audit skill, its Step 7 mode and its two fix-orchestration files now carries policy-sibling markers, so a later edit reaches every copy.
+- The always-loaded `claude-config.md` and `debugging.md` rules point to `communication.md` §Interactive Questions and `quality-gates.md` §Evidence Grounding instead of restating them, so the copies cannot drift apart. `/foundry:calibrate skills` names the `codemap-py` plugin consistently in its domain table.
+
 ## 0.75.1
 
 - Restyle the animated execution diagrams of the `/foundry:audit`, `calibrate`, `manage` and `distill` skills: card text is short fragments instead of sentences, key names are bold and conditions or bounds are italic, and each diagram's legend explains the emphasis; stop and skip conditions and gates are unchanged.

@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from _resolve_source import read_resolve_source
 from _text_io import dispatch_text
 
 _RESOLVE = Path(__file__).resolve().parents[3] / "skills/resolve"
@@ -116,7 +117,7 @@ def test_baseline_ask_still_happens(relative: str, section_start: str, section_e
     Moving a question is allowed only with the same decision and the same information; the marker is that question's own
     text, and its section must name the AskUserQuestion tool so a prose mention cannot stand in for a real ask.
     """
-    section = _section((_RESOLVE / relative).read_text(encoding="utf-8"), section_start, section_end)
+    section = _section(read_resolve_source(_RESOLVE / relative), section_start, section_end)
     assert marker in section
     assert "AskUserQuestion" in section
 

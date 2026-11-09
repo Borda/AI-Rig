@@ -1766,7 +1766,7 @@ def _validate_verified_pr_source(
         or pr_payload.get("headRefOid") != head_oid
         or target_branch.get("remote_ref") != target_branch.get("local_head")
         or target_branch.get("expected_base_oid") != base_oid
-        or head_fetch.get("remote_ref") != "FETCH_HEAD"
+        or head_fetch.get("remote_ref") not in ("FETCH_HEAD", head_oid)
         or head_fetch.get("local_head") != head_fetch.get("expected_head_oid")
         or head_fetch.get("expected_head_oid") != head_oid
         or head_fetch.get("head_matches_pr_metadata") is not True
@@ -1834,6 +1834,19 @@ def _validate_review_worktree_source(
         location_valid = False
     checkout_state = _load_json(out_dir / "checkout-state.json")
     source_context = _load_json(out_dir / "source-worktree-context.json")
+    observation_fields = {"source_observation_version", "source_head_before", "source_head_after"}
+    source_observation_valid = checkout_state.get("local_state") == "isolated-exact-pr-head; main-worktree-unchanged"
+    if observation_fields.intersection(checkout_state):
+        before = checkout_state.get("source_head_before")
+        after = checkout_state.get("source_head_after")
+        state = "unchanged" if before == after else "changed"
+        source_observation_valid = (
+            type(checkout_state.get("source_observation_version")) is int
+            and checkout_state["source_observation_version"] == 1
+            and all(isinstance(oid, str) and re.fullmatch(r"[0-9a-f]{40}", oid) for oid in (before, after))
+            and before == source_context.get("current_head")
+            and checkout_state.get("local_state") == f"isolated-exact-pr-head; main-worktree-head-{state}"
+        )
     if (
         not location_valid
         or original_run != original_run.resolve()
@@ -1844,7 +1857,7 @@ def _validate_review_worktree_source(
         or checkout.get("worktree_lifecycle") != "preserved-for-review"
         or preflight.get("worktree") != worktree
         or checkout_state.get("status") != "checkout-verified"
-        or checkout_state.get("local_state") != "isolated-exact-pr-head; main-worktree-unchanged"
+        or not source_observation_valid
         or checkout_state.get("local_head") != head_oid
         or checkout_state.get("worktree") != worktree
         or source_context.get("phase") != "source-worktree-context"

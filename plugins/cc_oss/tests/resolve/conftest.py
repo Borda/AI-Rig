@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -9,8 +10,12 @@ import pytest
 #: Directory of the shipped resolve skill.
 _RESOLVE_SKILL = Path(__file__).resolve().parents[2] / "skills/resolve"
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _resolve_source import read_resolve_source  # noqa: E402
+
 
 @pytest.fixture
 def skill() -> str:
-    """Return the resolve ``SKILL.md`` text."""
-    return (_RESOLVE_SKILL / "SKILL.md").read_text(encoding="utf-8")
+    """Return resolve's SKILL.md plus its relocated step bodies in workflow order."""
+    return read_resolve_source(_RESOLVE_SKILL / "SKILL.md")

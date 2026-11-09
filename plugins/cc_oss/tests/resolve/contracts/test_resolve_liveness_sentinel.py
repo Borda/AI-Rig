@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from _resolve_source import read_resolve_source
 
 _RESOLVE = Path(__file__).resolve().parents[3] / "skills/resolve"
 _PLUGIN = _RESOLVE.parents[1]
@@ -62,7 +63,7 @@ def test_step_1_writes_liveness_sentinel(tmp_path: Path, arguments: str, expecte
     itself clobbers.
     """
     session = "resolve-liveness-test"
-    block = _step_1_parse_block(_SKILL.read_text(encoding="utf-8"))
+    block = _step_1_parse_block(read_resolve_source(_SKILL))
     result = _run_bash(block, tmp_path, _env(tmp_path, session, arguments))
     assert result.returncode == 0, result.stderr
     assert (tmp_path / f"oss-resolve-active-{session}").read_text(encoding="utf-8").strip() == expected_sentinel
@@ -88,7 +89,7 @@ def test_completion_clears_liveness_sentinel(tmp_path: Path, first: bool) -> Non
     contract.write_text("- skill: oss:resolve · phase: x\n", encoding="utf-8", newline="\n")
     sentinel = tmp_path / f"oss-resolve-active-{session}"
     sentinel.write_text("1542\n", encoding="utf-8", newline="\n")
-    block = _completion_block(_SKILL.read_text(encoding="utf-8"), first=first)
+    block = _completion_block(read_resolve_source(_SKILL), first=first)
     env = os.environ | {"CLAUDE_CODE_SESSION_ID": session, "TMPDIR": str(tmp_path)}
     result = _run_bash(block, tmp_path, env)
     assert result.returncode == 0, result.stderr

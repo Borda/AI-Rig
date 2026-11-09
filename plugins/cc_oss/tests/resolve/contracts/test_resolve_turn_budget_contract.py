@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from _resolve_source import read_resolve_source
 from _text_io import bash_block_after, bash_path
 
 _RESOLVE = Path(__file__).resolve().parents[3] / "skills/resolve"
@@ -57,7 +58,7 @@ _STEP_TRANSITIONS = [
 
 def _raw(relative: str) -> str:
     """Read one resolve skill file verbatim, for extracting fenced blocks that must keep their newlines."""
-    return (_RESOLVE / relative).read_text(encoding="utf-8")
+    return read_resolve_source(_RESOLVE / relative)
 
 
 def _read(relative: str) -> str:

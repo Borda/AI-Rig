@@ -202,7 +202,7 @@ def test_resolve_step10_push_block_consumes_head_repo_name(needle: str) -> None:
     The sentinel is useless unless the push block consumes it: a fork remote missing at push time would otherwise be
     added with the upstream repository name, pointing at a repository the contributor may not own.
     """
-    skill = Path(rpr.__file__).resolve().parents[1] / "skills" / "resolve" / "SKILL.md"
+    skill = Path(rpr.__file__).resolve().parents[1] / "skills" / "resolve" / "modes" / "push.md"
     assert any(needle in line for line in skill.read_text(encoding="utf-8").splitlines())
 
 

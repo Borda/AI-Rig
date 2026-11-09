@@ -18,6 +18,7 @@ from pathlib import Path
 
 import merge_action_items as mai
 import pytest
+from _resolve_source import read_resolve_source
 from _review_fixtures import assessment, concern, finding_row
 from _text_io import bash_block_after
 
@@ -35,7 +36,7 @@ _REVISION = "abcdef1234567"
 
 def _bash_block_after(marker: str, source: Path = _SKILL) -> str:
     """Return the shipped Bash block immediately following a marker in a resolve skill file."""
-    return bash_block_after(source.read_text(encoding="utf-8"), marker)
+    return bash_block_after(read_resolve_source(source), marker)
 
 
 def _publication(run_dir: Path, outcome: str = "NEEDS_WORK") -> Path:
@@ -489,7 +490,7 @@ class TestIntakeInstructions:
         The triage moved so runs that never reach an incomplete report skip ~100 lines; a stub that stopped loading it,
         or a second copy left behind in SKILL.md, would silently fork the single intake contract.
         """
-        skill = " ".join(_SKILL.read_text(encoding="utf-8").split())
+        skill = " ".join(read_resolve_source(_SKILL).split())
         stub = skill[skill.index("### Report source resolution") : skill.index("### Create all workflow tasks upfront")]
         assert "<!-- loads: report-intake.md -->" in stub
         assert 'cat "$_OSS_RESOLVE/modes/report-intake.md"' in stub
@@ -499,7 +500,7 @@ class TestIntakeInstructions:
 
     def test_reject_gate_routes_incomplete_reports_to_triage(self) -> None:
         """The every-mode reject gate stops on its own exit 1 except for an incomplete report, which goes to triage."""
-        text = " ".join(_SKILL.read_text(encoding="utf-8").split())
+        text = " ".join(read_resolve_source(_SKILL).split())
         gate = text[text.index("### Reject-gate check") : text.index("### Report source resolution")]
         stop = gate.index("Every other exit 1")
         assert "is not yet a stop, in any mode: run **Report source resolution** next" in gate

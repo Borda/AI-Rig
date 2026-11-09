@@ -19,6 +19,7 @@ from typing import NamedTuple
 from unittest import mock
 
 import pytest
+from _resolve_source import read_resolve_source
 from _text_io import bash_block_after, bash_path, dispatch_text
 from append_resolution import build_records, parse_challenge_log
 
@@ -92,7 +93,7 @@ _UNTRUSTED_TEXT = "decoder drops values; $(touch c1-injection) `touch c1-backtic
 @functools.cache
 def _resolve_text(relative: str) -> str:
     """Return one file under the resolve skill directory."""
-    return (_RESOLVE / relative).read_text(encoding="utf-8")
+    return read_resolve_source(_RESOLVE / relative)
 
 
 @functools.cache

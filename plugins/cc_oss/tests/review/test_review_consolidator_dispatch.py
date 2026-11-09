@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 _PLUGIN = Path(__file__).resolve().parents[2]
-_SKILL = _PLUGIN / "skills/review/SKILL.md"
+_SKILL = _PLUGIN / "skills/review/modes/post-agent.md"
 _BASH = shutil.which("bash")
 _SESSION = "dispatch-test"
 

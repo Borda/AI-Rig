@@ -25,6 +25,7 @@ from pathlib import Path
 
 import parse_resolve_args as parser_module  # loaded by conftest.py
 import pytest
+from _resolve_source import read_resolve_source
 from parse_resolve_args import _emit, main, parse_resolve_args
 
 _PLUGIN = Path(__file__).resolve().parents[2]
@@ -347,7 +348,7 @@ class TestSkillIntake:
         A value carrying outside text must stay data: the intake reads ``KEY=value`` lines in a loop and assigns only
         the four known keys, never sourcing or evaluating the file.
         """
-        skill = _SKILL.read_text(encoding="utf-8")
+        skill = read_resolve_source(_SKILL)
         intake = skill.split("tmpenv=$(mktemp)", 1)[1].split("# sets:", 1)[0]
         assert "grep -qvE" in intake
         assert "exit 1" in intake
@@ -376,9 +377,7 @@ class TestSkillIntake:
         comment dispatch; every later PR step keys on PR_NUMBER, so the skill must stop right after parsing. The guard
         line is run under real bash.
         """
-        guard = next(
-            line for line in _SKILL.read_text(encoding="utf-8").splitlines() if "not a pull-request URL" in line
-        )
+        guard = next(line for line in read_resolve_source(_SKILL).splitlines() if "not a pull-request URL" in line)
         result = subprocess.run(
             [_BASH, "-c", f"MODE=pr; PR_NUMBER='{pr_number}'; PR_URL=https://github.com/o/r/issues/7\n{guard}"],
             capture_output=True,

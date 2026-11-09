@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.43.4
+
+- Include PR numbers or bounded branch identities in initial review and remediation run names while retaining atomic random uniqueness, and keep the stop hook tracking these runs through promotion and completion. Reject promotion when the initial PR number disagrees with collected identity.
+- Let verified isolated reviews continue when another task moves the invoking checkout, retaining truthful before/after HEAD observations. Resolve and fetch immutable remote commits without shared `FETCH_HEAD` writes so interleaved collections cannot read each other’s fetched revision.
+- Require the standard review handoff tables at every delivery route, including zero-finding and incomplete reviews after interrupted checks or missed ordering, so preliminary evidence is not reduced to a prose-only recap.
+
 ## 0.43.3
 
 - The parallel execution diagram now renders as an image on the documentation site; it was hidden inside a collapsed block that the site build does not parse.

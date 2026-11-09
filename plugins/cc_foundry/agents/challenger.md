@@ -253,7 +253,7 @@ Report above is Claude-only.
   - A literal default beside a `# substitute:` comment (`MODE=each  # substitute: each | grouped`) is a **finding, never a fix shape** — blueprint-allow rewards running blocks verbatim, so the default silently wins on every run (a real resolve run selected grouped, landed 12 per-item commits).
   - Closed option set → one fixed block per value; free text → guard that aborts on the unsubstituted placeholder.
   - Never cite an existing `# substitute` block as precedent for a new one.
-  <!-- policy-sibling: plugins/CLAUDE.md §Blueprint Blocks (canonical), plugins/cc_foundry/agents/challenger.md, plugins/cc_oss/skills/resolve/SKILL.md (Step 3d, Step 10), plugins/cc_oss/skills/review/SKILL.md (reject gate) -->
+  <!-- policy-sibling: plugins/CLAUDE.md §Blueprint Blocks (canonical), plugins/cc_foundry/agents/challenger.md, plugins/cc_oss/skills/resolve/modes/item-selection.md (Step 3d), plugins/cc_oss/skills/resolve/modes/push.md (Step 10), plugins/cc_oss/skills/review/modes/acceptance-gate.md (reject gate) -->
 
 </antipatterns-to-flag>
 

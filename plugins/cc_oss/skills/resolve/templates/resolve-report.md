@@ -20,11 +20,11 @@
 
 <!-- One row per SELECTED item. Columns: # | Type | Change | Status | Resolution | Commit -->
 
-<!-- Status: ✓ implemented / ⊘ skipped / ✗ rejected by challenge -->
+<!-- Status: ✓ implemented / ⊘ skipped / ✗ challenge-rejected -->
 
 <!-- Resolution: implemented / self-resolved / skipped / challenge-rejected -->
 
-<!-- Change: code / test / docs / config / ci / style / refactor -->
+<!-- Change: code / test / docs / config / ci / style / refactor / perf / architecture -->
 
 <!-- Commit: short SHA or "—" when COMMIT_MODE=stage -->
 

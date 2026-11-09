@@ -20,6 +20,8 @@ State (`$RUN_DIR`, `$AUDIT_TPL`, `LOCAL_MODE`, `summary.jsonl`) re-derived from 
 
 Apply hierarchy to every fix at all severity levels.
 
+<!-- policy-sibling: plugins/cc_foundry/skills/audit/templates/audit-fix-prompt.md (audit-fix sub-agent path: same PARALLEL_SAFE_CATEGORIES, coalescing, category-dependency rules, gate fast path and its verbose-bash-block exclusion; gate verdict files differ by design: per-finding here, per-file there) -->
+
 **Dependency classification — before any dispatch**
 
 Classify each finding from `summary.jsonl` before spawning fix agents to avoid stale-read conflicts (agent reads file A, concurrent agent modifies file A, first agent's assumptions wrong).
@@ -64,7 +66,7 @@ Narrate phase boundaries: `"Phase 1: N parallel-safe fixes launched"` → `"Phas
 
 Gate applies to every finding that misses the fast-path criteria below, at any severity; a user-resolved NON_AUTO_FIXABLE edit (option (c)) is gated like any other before its fix agent runs. Default-report-only NON_AUTO_FIXABLE findings (options a–b) never reach a fix agent, so never reach the gate.
 
-**Trivial-finding fast path** (see `agent-spawn-protocol.md` §Delegation cost discipline): batch parallel-safe findings by file adjacency, prefer `bridge:implement` when `bridge@borda-ai-rig` available. Each call must state exact finding, target paths, current evidence, permitted edits, required result, stop condition, verification command. Bridge absent/disabled → use normal per-file-type agent with `model: haiku`. Reserve full adversarial gate + top-tier agents for findings outside the fast-path criteria (`audit-fix-prompt.md` §Gate fast path): any CRITICAL/HIGH, non-`PARALLEL_SAFE_CATEGORIES` category, or cross-file-dependent.
+**Trivial-finding fast path** (see `agent-spawn-protocol.md` §Delegation cost discipline): batch parallel-safe findings by file adjacency, prefer `bridge:implement` when `bridge@borda-ai-rig` available. Each call must state exact finding, target paths, current evidence, permitted edits, required result, stop condition, verification command. Bridge absent/disabled → use normal per-file-type agent with `model: haiku`. Reserve full adversarial gate + top-tier agents for findings outside the fast-path criteria (`audit-fix-prompt.md` §Gate fast path): any CRITICAL/HIGH, non-`PARALLEL_SAFE_CATEGORIES` category, `verbose-bash-block`, or cross-file-dependent.
 
 Fix agent by file type:
 

@@ -910,7 +910,7 @@
     },
     "32bf8fef9faf4ca24752160a843e47544cd742f85694094230fbbe1009251178": {
       "kind": "command",
-      "src": "skills/audit/modes/fix.md:90"
+      "src": "skills/audit/modes/fix.md:92"
     },
     "331e93f151b484b6b2c21c3b3a4f0a576b21804b62ccdb95f010f71aa47bb32e": {
       "kind": "block",
@@ -986,7 +986,7 @@
     },
     "37d61e48dd82830f0e72560b10b0da7b128536a2bf55abc3a5696ca20ba9f91e": {
       "kind": "command",
-      "src": "skills/audit/modes/fix.md:90"
+      "src": "skills/audit/modes/fix.md:92"
     },
     "37e4088f8db02ed4f28ff86fddf15f403018c4e4607122561ffc5338d21b9bbf": {
       "kind": "command",
@@ -4182,7 +4182,7 @@
     },
     "e8fdad9749b9f1ace084a5034a19ec34733fb4f863a3b4f8d523d14b12261c10": {
       "kind": "block",
-      "src": "skills/audit/modes/fix.md:90"
+      "src": "skills/audit/modes/fix.md:92"
     },
     "e92fbcc811104305f6fd97c5848fb88dca622737256f191e1c1d18172d154fbd": {
       "kind": "command",
@@ -4585,6 +4585,6 @@
       "src": "skills/audit/templates/checks-skills-gaps.md:49"
     }
   },
-  "plugin": "cc_foundry@0.75.1",
+  "plugin": "cc_foundry@0.75.2",
   "schema": 1
 }

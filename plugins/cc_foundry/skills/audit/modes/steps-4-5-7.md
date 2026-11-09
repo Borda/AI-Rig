@@ -164,6 +164,8 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/write_skill_contract.py" -
 
 Before emitting, read current `$RUN_DIR/summary.jsonl` (Step 5b may have appended net-new promoted findings), recompute severity totals. Build the full report (omit Upgrade Proposals if none passed genuine-value filter), Write it to `$RUN_DIR/audit-report.md`, and deliver it once in the final reply after the answer, after the last tool call, below Step 11b's header table — never before the question, never in an option or Bash/tool stdout. The first question's text carries only the `Audit Report` headline, exact `Total: N`, severity counts and `→ $RUN_DIR/summary.jsonl`, plus `→ $RUN_DIR/audit-report.md`. Keep the question text to at most 6 plain lines (target 600 characters, hard cap 1,500), with no table, no pipe layout and no code fence. Options have no `preview`. `--skip-gate` (no question): the full findings report still goes into the turn's final reply after its last tool call, below Step 11b's header table — the `Stop` hook enforces delivery.
 
+<!-- policy-sibling: plugins/cc_foundry/skills/audit/SKILL.md (Follow-up gate: same question-text cap, no preview, full findings report once in the final reply) -->
+
 > **Output-Routing exemption**: this report-header follow-up carries a plain summary in the question and the full findings report in the final reply after the answer. Output Routing (5+ findings → `.temp/output-*.md`, summary only) does not shorten that final findings report, and the table-first-in-reply rule does not require a copy before the question; durable copies remain `$RUN_DIR/audit-report.md`, `$RUN_DIR/aggregate.md` and Step 11's report.
 
 ```markdown

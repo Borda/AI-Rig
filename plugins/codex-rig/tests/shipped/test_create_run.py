@@ -6,6 +6,7 @@ the frozen-clock and destination-collision checks replace their clock or filesys
 
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -412,3 +413,99 @@ class TestPromotePrRun:
 
         assert (promoted / "pr.json").read_bytes() == b'{"number": 41}'
         assert not claim.exists()
+
+
+@pytest.mark.parametrize("numbers", [pytest.param((41, 41), id="same-pr"), pytest.param((41, 42), id="different-pr")])
+def test_pr_identity_preserves_frozen_clock_uniqueness(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], numbers: tuple[int, int]
+) -> None:
+    """Make simultaneous PR runs identifiable without sharing a directory or evidence."""
+    module = _load_create_run()
+    clock = mock.Mock(wraps=datetime)
+    clock.now.return_value = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+    monkeypatch.setattr(module, "datetime", clock)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [str(CREATE_RUN), "--skill", "code-review", "--root", str(tmp_path), "--pr-number", str(numbers[0])],
+    )
+    assert module.main() == 0
+    first = Path(capsys.readouterr().out.strip())
+    (first / "evidence").write_bytes(b"first")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [str(CREATE_RUN), "--skill", "code-review", "--root", str(tmp_path), "--pr-number", str(numbers[1])],
+    )
+    assert module.main() == 0
+    second = Path(capsys.readouterr().out.strip())
+    assert first != second
+    assert first.name.startswith(f"2026-01-02T03-04-05-000000Z-pr-{numbers[0]}-")
+    assert second.name.startswith(f"2026-01-02T03-04-05-000000Z-pr-{numbers[1]}-")
+    assert not (second / "evidence").exists()
+    assert (first / "evidence").read_bytes() == b"first"
+
+
+@pytest.mark.parametrize(
+    ("branch", "slug"),
+    [
+        pytest.param("feature/topic", "feature-topic", id="slash-normalization"),
+        pytest.param("feature-topic", "feature-topic", id="normalization-collision"),
+        pytest.param("../../escape", "escape", id="path-like"),
+        pytest.param("větev/" + "界" * 1000, "v-tev", id="long-unicode"),
+        pytest.param("界" * 1000, "branch", id="unicode-only"),
+        pytest.param("topic" * 100, "topic" * 8, id="long-ascii"),
+    ],
+)
+def test_branch_identity_is_bounded_portable_and_digest_bound(tmp_path: Path, branch: str, slug: str) -> None:
+    """Keep the original branch's digest when unsafe or oversized text is normalized."""
+    completed = _run_create("--skill", "code-review", "--root", str(tmp_path), "--branch", branch)
+    assert completed.returncode == 0, completed.stderr
+    created = Path(completed.stdout.strip())
+    assert created.parent == tmp_path / "code-review"
+    assert len(created.name) < 128
+    assert created.name.isascii()
+    digest = hashlib.sha256(branch.encode("utf-8")).hexdigest()[:12]
+    assert f"-branch-{slug}-{digest}-" in created.name
+    assert _load_create_run().TIMESTAMP_RUN_ID.fullmatch(created.name)
+
+
+@pytest.mark.parametrize(
+    "identity",
+    [
+        pytest.param(["--pr-number", "0"], id="zero"),
+        pytest.param(["--pr-number", "-1"], id="negative"),
+        pytest.param(["--branch", " "], id="blank-branch"),
+        pytest.param(["--pr-number", "1", "--branch", "topic"], id="conflicting"),
+    ],
+)
+def test_invalid_creation_identity_creates_nothing(tmp_path: Path, identity: list[str]) -> None:
+    """Refuse malformed or ambiguous identity before allocating a run."""
+    completed = _run_create("--skill", "code-review", "--root", str(tmp_path), *identity)
+    assert completed.returncode == 2
+    assert not (tmp_path / "code-review").exists()
+
+
+@pytest.mark.parametrize("collected", [41, 42])
+def test_pr_named_promotion_checks_collected_identity(tmp_path: Path, collected: int) -> None:
+    """Move only matching PR runs and preserve all mismatched evidence before target allocation."""
+    completed = _run_create("--skill", "code-review", "--root", str(tmp_path), "--pr-number", "41")
+    assert completed.returncode == 0, completed.stderr
+    source = Path(completed.stdout.strip())
+    (source / "pr.json").write_text(json.dumps({"number": collected}), encoding="utf-8")
+    promoted = _promote(tmp_path, "code-review", source)
+    assert (promoted.returncode == 0) == (collected == 41)
+    assert source.exists() == (collected != 41)
+    assert (tmp_path / "code-review" / f"pr-{collected}").exists() == (collected == 41)
+
+
+def test_branch_named_run_promotes_collected_pr(tmp_path: Path) -> None:
+    """Keep branch-identified historical collection compatible with authoritative PR promotion."""
+    created = _run_create("--skill", "code-review", "--root", str(tmp_path), "--branch", "feature/topic")
+    assert created.returncode == 0, created.stderr
+    source = Path(created.stdout.strip())
+    (source / "pr.json").write_bytes(_PR41_IDENTITY)
+    completed = _promote(tmp_path, "code-review", source)
+    assert completed.returncode == 0, completed.stderr
+    assert (Path(completed.stdout.strip()) / "pr.json").read_bytes() == _PR41_IDENTITY
+    assert not source.exists()

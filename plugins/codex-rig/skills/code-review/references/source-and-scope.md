@@ -50,7 +50,7 @@ Direct-plan matching operates on serialized JSON, so an expected match can inclu
 
 ### 01: Create run directory
 
-Run `create_run.py --skill code-review` per `../../../shared/helper-cli-contract.md` and retain its printed timestamped path literally. A local review keeps that path for its complete lifecycle. A fresh PR review begins there after entry identity resolution; an identity/state-read failure stops before workflow run allocation and retains its temporary reader diagnostic.
+Run `create_run.py --skill code-review --pr-number <resolved-pr-number>` for PR scope, using the existing entry preflight identity. For local scope, use `create_run.py --skill code-review --branch <branch-name>` with local Git identity, or `detached-<commit-id>` for detached HEAD. Follow `../../../shared/helper-cli-contract.md` and retain the single printed identity-bearing timestamped path literally. Do not add a network read for naming. A local review keeps that path for its complete lifecycle. A fresh PR review begins there after entry identity resolution; an identity/state-read failure stops before workflow run allocation and retains its temporary reader diagnostic.
 
 ### 02: T0 mechanical scope gate
 

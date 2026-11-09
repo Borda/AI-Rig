@@ -883,7 +883,7 @@ class TestReviewShellGates:
     @staticmethod
     def _review_publication_gate() -> str:
         """Return review Step 5's publication-gate recipe, which must run before the Step 5b header print."""
-        skill = (_PLUGIN / "skills/review/SKILL.md").read_text(encoding="utf-8")
+        skill = (_PLUGIN / "skills/review/modes/post-agent.md").read_text(encoding="utf-8")
         step5 = skill.split("## Step 5: Consolidate findings", 1)[1]
         step5 = step5.split('TaskUpdate "Step 5b: Print report header" → `in_progress`', 1)[0]
         return next(block for block in _bash_blocks(step5) if '--report "$_REPORT_DIR/review-report.md"' in block)
@@ -965,7 +965,7 @@ class TestReviewShellGates:
         ("source_rel", "seed", "expected_items"),
         [
             pytest.param(
-                "skills/resolve/SKILL.md",
+                "skills/resolve/modes/report-merge.md",
                 {"action-items.jsonl": json.dumps(_ONLINE_ITEM) + "\n"},
                 [_ONLINE_ITEM],
                 id="pr-mode-keeps-online-items",
@@ -1001,7 +1001,9 @@ class TestReviewShellGates:
         ("source_rel", "seed"),
         [
             pytest.param(
-                "skills/resolve/SKILL.md", {"action-items.jsonl": json.dumps(_ONLINE_ITEM) + "\n"}, id="pr-mode"
+                "skills/resolve/modes/report-merge.md",
+                {"action-items.jsonl": json.dumps(_ONLINE_ITEM) + "\n"},
+                id="pr-mode",
             ),
             pytest.param("skills/resolve/modes/report-intelligence.md", {}, id="report-mode"),
         ],
@@ -1034,13 +1036,19 @@ class _ResolveConsumerRun:
 
 @pytest.fixture(name="prose", scope="module")
 def _prose() -> dict[str, str]:
-    """Return whitespace-flattened review skill, consolidator template, and resolve dispatch texts (read once)."""
+    """Return whitespace-flattened review skill, consolidator template, and resolve dispatch texts (read once).
+
+    The review skill text is SKILL.md plus its trigger-loaded late-step mode file, where the publication prose lives.
+    """
     dispatch = "\n".join(
         (_PLUGIN / f"skills/resolve/modes/dispatch-{phase}.md").read_text(encoding="utf-8")
         for phase in ("prelude", "phase1", "phase2", "phase3")
     )
+    review_skill = "\n".join(
+        (_PLUGIN / f"skills/review/{rel}").read_text(encoding="utf-8") for rel in ("SKILL.md", "modes/post-agent.md")
+    )
     return {
-        "skill": flat((_PLUGIN / "skills/review/SKILL.md").read_text(encoding="utf-8")),
+        "skill": flat(review_skill),
         "template": flat((_PLUGIN / "skills/review/templates/consolidator-prompt.md").read_text(encoding="utf-8")),
         "dispatch": flat(dispatch),
     }

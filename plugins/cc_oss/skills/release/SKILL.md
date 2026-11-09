@@ -125,7 +125,7 @@ fi
 
 Pass `$GATHER_FILE` path to artifact phase — do NOT read gather file into main context. The ledger is a separate, smaller file — grepping it is not a gather-file read.
 
-`notes` and `demo` modes: skip delegation — single-pass; run gather/explore/validate inline. **Size guard**: estimate commit count with `git rev-list --count ${RANGE:-${LAST_TAG:-HEAD~20}..HEAD} 2>/dev/null`. If >50, delegate to `foundry:sw-engineer` subagent same as prepare mode — inline gather with >50 commits causes context flood. Define `GATHER_FILE` before spawning so the envelope-validation block in `modes/delegation.md` can resolve the path:
+`notes` and `demo` modes: skip delegation — single-pass; run gather/explore/validate inline. **Size guard**: estimate commit count with `git rev-list --count ${RANGE:-${LAST_TAG:-HEAD~20}..HEAD} 2>/dev/null`. If >50, delegate to `foundry:sw-engineer` subagent same as prepare mode — inline gather with >50 commits causes context flood. Run the block below on every `notes`/`demo` run, inline or delegated, before Gather changes: it defines `GATHER_FILE` (which the envelope-validation block in `modes/delegation.md` resolves) and creates this invocation's `WAIVED_FILE` ledger, which inline Truth check reloads (`modes/classify-truth-check.md` "Waived changes ledger"):
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -526,7 +526,7 @@ Fresh shells must reload `$APPEND_STAGE` from `release-append-stage-${CSID}` and
 
 If `$EDIT_CHANGELOG_FILE` exists: cross-check its unreleased section. Items absent → add (same emoji format) to `$EDIT_CHANGELOG_FILE`. Items in CHANGELOG not matching classified → flag for review (no auto-delete). For each REVERT_SET pair: add `🔄 Reverted: <original change description> (introduced and reverted in this release)`. Preserve historical entries; remove only the exact matching Unreleased entry for an original change that has not shipped, when that stale claim is confirmed. Reverted items never in highlights or migration guide.
 
-**Mandatory evidence link** (`modes/classify-truth-check.md` "Mandatory evidence link"): every entry added carries its source in the artifact's own form — CHANGELOG `([#N](url))` per `guidelines/writing-rules.md`, or `(sha7)` when no PR exists — never bare. No PR/sha available for a classified item → flag it instead of writing it unsourced. Existing Unreleased bullet with no PR number and no sha in any form (`(#N)`, `([#N](url))`, `(sha7)`) → flag `medium`, "unsourced entry" (no auto-backfill, no auto-delete).
+**Mandatory evidence link** (`modes/classify-truth-check.md` "Mandatory evidence link"): every entry added carries its source in the artifact's own form — CHANGELOG `([#N](url))` per `guidelines/writing-rules.md`, or `(sha7)` when no PR exists — never bare. No PR/sha available for a classified item → flag it `high`, "no PR/commit evidence: <description>", instead of writing it unsourced. Existing Unreleased bullet with no PR number and no sha in any form (`(#N)`, `([#N](url))`, `(sha7)`) → flag `medium`, "unsourced entry" (no auto-backfill, no auto-delete).
 
 For each `CROSS_CYCLE_MATCH` targeting `$CHANGELOG_FILE` (from Gather changes' cross-cycle detection — original predates `$RANGE`, matched text found in Unreleased from a prior `--append` cycle): strike/remove the matched entry the same way — do not add a redundant `🔄 Reverted` bullet for something the reader never saw shipped in this visible cycle.
 
@@ -541,7 +541,7 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 printf '%s\n' "$CHANGELOG_FILE" > "${TMPDIR:-/tmp}/release-changelog-file-${CSID}"
 ```
 
-**Scope check** (same rule as delegated Agent A — see `modes/changelog-audit-prompt.md`): `git log $RANGE --merges --pretty='%H %P %s'`, keep rows whose subject doesn't match `merge pull request #[0-9]+|\(#[0-9]+\)` — a raw branch merge landed inside `$RANGE`, not a real PR merge. Diff each such commit's two parents to list what it pulled in; any pulled-in commit already shipped in a prior CHANGELOG section is `critical` — it's about to appear a second time in the wrong release under this PR by accident. Report as its own line, never folded into the add/flag count silently.
+**Scope check** (same rule as delegated Agent A — see `modes/changelog-audit-prompt.md`): `git log $RANGE --merges --pretty='%H %P %s'`, keep rows whose subject doesn't match `merge pull request #[0-9]+|\(#[0-9]+\)` — a raw branch merge landed inside `$RANGE`, not a real PR merge. Diff each such commit's two parents to list what it pulled in; any pulled-in commit already shipped in a prior CHANGELOG section is `critical` — it's about to appear a second time in the wrong release under this PR by accident. A pulled-in commit with no prior CHANGELOG entry is `medium`, "unreviewed branch merge" — confirm it belongs to this release before merging the PR. Report as its own line, never folded into the add/flag count silently.
 
 Always report: "N items added, M flagged for review, K scope-flagged (non-PR branch merge), U unsourced (no PR/commit evidence)." This phase owns CHANGELOG-format classification; Write release draft reads from it — does NOT copy. DRAFT.md uses different format.
 
@@ -711,7 +711,7 @@ cat "$SKILL_DIR/templates/release-draft.md"  # timeout: 5000
 
 Template (loaded above). Fill `[Full changelog URL]` as `<https form of $ORIGIN_URL>/compare/<LAST_TAG>...<new tag>` (no previous tag → link the release tag's commit history). Omit empty sections.
 
-Key difference from `prepare`: phases run inline (no subagent delegation); output to `DRAFT.md` and root `CHANGELOG.md`.
+Key difference from `prepare`: `notes` runs these phases in the main context, spawning subagents only where a step says so (over-50-commit gather under the Size guard, Adversarial review, shepherd voice review), and publishes `DRAFT.md` and the resolved `$CHANGELOG_FILE` from the staged candidate (`modes/release-draft-template.md`); `prepare` writes `releases/$VERSION/DRAFT.md` (`modes/prepare.md` Phase 5).
 
 ### Adversarial review
 

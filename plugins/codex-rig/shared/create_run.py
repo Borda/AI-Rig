@@ -16,7 +16,8 @@ workflow.
 
 ## Usage
 
-Run ``python create_run.py --skill <canonical-skill-id>`` once and use the printed path literally in later commands.
+Run ``python create_run.py --skill <canonical-skill-id> [--pr-number <number> | --branch <name>]`` once.
+Use the printed path literally in later commands.
 After PR collection, run it again with the same skill and ``--promote-pr-run <created-path>``. Pass ``--root``
 consistently when a workflow owns a different local artifact root; resumed runs retain their existing paths.
 
@@ -27,9 +28,10 @@ on its stdout path rather than recomputing timestamps or assuming a shell-specif
 
 ## Outputs
 
-Creation prints a UTC timestamp with a randomized suffix beneath ``.reports/codex/<skill>/`` unless an explicit root is
-supplied. Promotion prints ``<root>/<skill>/pr-<number>/run-<NNN>`` using the next positive numeric index with at least
-three digits. The directory is moved as one filesystem entry, retaining every collected artifact.
+Creation prints a UTC timestamp with optional PR or portable branch identity and a randomized suffix beneath
+``.reports/codex/<skill>/`` unless an explicit root is supplied. Promotion prints
+``<root>/<skill>/pr-<number>/run-<NNN>`` using the next positive numeric index with at least three digits.
+The directory is moved as one filesystem entry, retaining every collected artifact.
 
 ## Failure
 
@@ -43,6 +45,7 @@ from __future__ import annotations
 
 import argparse
 import errno
+import hashlib
 import json
 import os
 import re
@@ -54,7 +57,11 @@ from pathlib import Path
 #: Pattern for a valid skill id: lowercase words joined by single hyphens.
 SKILL_ID = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 #: Pattern for a timestamp-named run directory, which is the only kind eligible for promotion.
-TIMESTAMP_RUN_ID = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{6}Z(?:-[a-z0-9_]+)?\Z")
+TIMESTAMP_RUN_ID = re.compile(
+    r"\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{6}Z"
+    r"(?:-(?:pr-(?P<pr_number>[1-9]\d*)|branch-[a-z0-9]+(?:-[a-z0-9]+)*-[a-f0-9]{12}))?"
+    r"(?:-[a-z0-9_]+)?\Z"
+)
 #: Pattern for a promoted `run-NNN` directory name; the capture group is its sequence number.
 PROMOTED_RUN_ID = re.compile(r"run-(\d{3,})\Z")
 #: Hidden exclusive claims reserve sequence numbers until an atomic promotion completes.
@@ -78,7 +85,16 @@ def parse_args() -> argparse.Namespace:
         metavar="PATH",
         help="Atomically move one newly created code-review or code-remediate run into its PR-specific sequence",
     )
+    identity = parser.add_mutually_exclusive_group()
+    identity.add_argument("--pr-number", type=int, help="Known positive PR number for the initial run name")
+    identity.add_argument("--branch", help="Local branch identity, encoded as a bounded portable slug and digest")
     arguments = parser.parse_args()
+    if arguments.pr_number is not None and arguments.pr_number <= 0:
+        parser.error("PR number must be a positive integer")
+    if arguments.branch is not None and not arguments.branch.strip():
+        parser.error("branch must be nonempty")
+    if arguments.promote_pr_run is not None and (arguments.pr_number is not None or arguments.branch is not None):
+        parser.error("creation identity cannot be supplied during promotion")
     if SKILL_ID.fullmatch(arguments.skill) is None:
         parser.error("invalid skill id")
     return arguments
@@ -128,12 +144,16 @@ def promote_pr_run(root: Path, skill: str, source: Path) -> Path:
     normalized_source = Path(os.path.abspath(source))
     if normalized_source.parent != normalized_skill:
         raise RunPromotionError("promotion source must be a direct child of the skill root")
-    if TIMESTAMP_RUN_ID.fullmatch(source.name) is None:
+    source_identity = TIMESTAMP_RUN_ID.fullmatch(source.name)
+    if source_identity is None:
         raise RunPromotionError("promotion source is not a newly created timestamp run")
     if source.is_symlink() or not source.is_dir():
         raise RunPromotionError("promotion source must be a safe directory")
 
     pr_number = _read_pr_number(source / "pr" if skill == "code-remediate" else source)
+    named_number = source_identity.group("pr_number")
+    if named_number is not None and int(named_number) != pr_number:
+        raise RunPromotionError("initial PR run identity does not match authoritative pr.json")
     pr_directory = skill_directory / f"pr-{pr_number}"
     pr_directory.mkdir(parents=True, exist_ok=True)
     if pr_directory.is_symlink() or not pr_directory.is_dir():
@@ -179,7 +199,15 @@ def main() -> int:
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S-%fZ")
     skill_directory = arguments.root / arguments.skill
     skill_directory.mkdir(parents=True, exist_ok=True)
-    run_directory = Path(tempfile.mkdtemp(prefix=f"{timestamp}-", dir=skill_directory))
+    identity = ""
+    if arguments.pr_number is not None:
+        identity = f"-pr-{arguments.pr_number}"
+    elif arguments.branch is not None:
+        # Hash original UTF-8 text: distinct branches may normalize to the same portable slug.
+        slug = re.sub(r"[^a-z0-9]+", "-", arguments.branch.lower()).strip("-")[:40].rstrip("-") or "branch"
+        digest = hashlib.sha256(arguments.branch.encode("utf-8")).hexdigest()[:12]
+        identity = f"-branch-{slug}-{digest}"
+    run_directory = Path(tempfile.mkdtemp(prefix=f"{timestamp}{identity}-", dir=skill_directory))
     print(run_directory)
     return 0
 

@@ -195,6 +195,7 @@ def _collect(
     cross_repository: bool = True,
     state: str = "OPEN",
     mutate_after_checkout: bool = False,
+    switch_source_after_checkout: bool = False,
     checkout_mode: str = "review",
     gh_checkout_fails: bool = True,
     gh_local_branch: str = "topic",
@@ -245,12 +246,14 @@ def _collect(
             return result
         if arguments[:3] == ["git", "worktree", "add"]:
             result = subprocess.run(arguments, cwd=worktree, **kwargs)
+            if result.returncode == 0 and switch_source_after_checkout:
+                _git(worktree, "switch", "old-topic")
             if result.returncode == 0 and mutate_after_checkout:
                 (Path(arguments[-2]) / "module.py").write_text("value = 'raced'\n", encoding="utf-8")
             return result
         assert arguments[0] != "gh", arguments
-        if arguments[:2] == ["git", "fetch"]:
-            is_same_repo_head_fetch = arguments[-1] == "topic" and "--refmap=" in arguments
+        if arguments[:2] in (["git", "fetch"], ["git", "ls-remote"]):
+            is_same_repo_head_fetch = arguments[-1] == head and "--refmap=" in arguments
             arguments = [str(source) if argument == "origin" else argument for argument in arguments]
             result = subprocess.run(arguments, cwd=worktree, **kwargs)
             if move_source_after_head_fetch and is_same_repo_head_fetch:
@@ -745,8 +748,8 @@ class TestStaleCacheFetch:
         """Verify every Git route can inspect an exact PR head without updating a stale cache ref.
 
         The cached tracking ref for the PR points at an older commit. For a same-repository open PR, a fork, and a
-        merged PR alike, the head is fetched without a destination (FETCH_HEAD) so the stale cache ref is never
-        rewritten while the exact head is still inspected.
+        merged PR alike, the advertised head is fetched without a destination or FETCH_HEAD write. The stale cache ref
+        remains unchanged while the exact head is inspected.
         """
         module = _load_collector()
         source, worktree, base, old, head = _setup_repositories(tmp_path, repository_template)
@@ -765,7 +768,7 @@ class TestStaleCacheFetch:
         assert _git(worktree, "rev-parse", stale_ref) == old
         assert any(arguments[:4] == ["git", "fetch", "--no-tags", "--refmap="] for arguments in calls)
         fetched = json.loads((tmp_path / "collected" / "pr-head-fetch.json").read_text(encoding="utf-8"))
-        assert fetched["remote_ref"] == "FETCH_HEAD"
+        assert fetched["remote_ref"] == head
         assert fetched["local_head"] == head
 
     def test_target_fetch_leaves_stale_ref(self, tmp_path: Path, repository_template: RepositoryTemplate) -> None:
@@ -1624,3 +1627,74 @@ class TestGitFailureReason:
             "label": "pr-head-fetch",
         }
         assert "github_pat_secret" not in json.dumps(error.value.diagnostics)
+
+
+@pytest.mark.integration
+def test_isolated_review_survives_concurrent_source_branch_switch(
+    tmp_path: Path, repository_template: RepositoryTemplate
+) -> None:
+    """A different task switching the invoking checkout must not invalidate exact detached PR source."""
+    module = _load_collector()
+    source, main, base, old, head = _setup_repositories(tmp_path, repository_template)
+    output = tmp_path / "concurrent-review"
+
+    code, _calls = _collect(module, source, main, output, base, head, switch_source_after_checkout=True)
+
+    assert code == 0, (output / "pr-error.txt").read_text(encoding="utf-8")
+    receipt = json.loads((output / "local-checkout.json").read_text(encoding="utf-8"))
+    assert _git(Path(receipt["worktree"]), "rev-parse", "HEAD") == head
+    assert _git(main, "rev-parse", "HEAD") == old
+    assert _git(main, "branch", "--show-current") == "old-topic"
+    assert receipt["head_matches_pr"] is True
+    checkout_state = json.loads((output / "checkout-state.json").read_text(encoding="utf-8"))
+    assert checkout_state["source_observation_version"] == 1
+    assert checkout_state["source_head_before"] == head
+    assert checkout_state["source_head_after"] == old
+    assert checkout_state["local_state"] == "isolated-exact-pr-head; main-worktree-head-changed"
+    assert not (output / "pr-error.txt").exists()
+
+
+@pytest.mark.integration
+def test_interleaved_fetches_keep_their_own_remote_commit(
+    tmp_path: Path, repository_template: RepositoryTemplate
+) -> None:
+    """Two collectors sharing Git metadata must not read each other's FETCH_HEAD."""
+    module = _load_collector()
+    source, main, _base, old, head = _setup_repositories(tmp_path, repository_template)
+    second_head = None
+
+    def ordinary_run(arguments: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        """Execute the second collector against the same real Git directory."""
+        return subprocess.run(arguments, cwd=main, **kwargs)
+
+    def interleaved_run(arguments: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        """Finish another real fetch between the first collector's fetch and receipt read."""
+        nonlocal second_head
+        result = subprocess.run(arguments, cwd=main, **kwargs)
+        if arguments[:2] == ["git", "fetch"] and result.returncode == 0:
+            second_head = module._fetch_exact_ref(ordinary_run, 10, str(source), "old-topic", "other-fetch")
+        return result
+
+    first_head = module._fetch_exact_ref(interleaved_run, 10, str(source), "topic", "first-fetch")
+
+    assert first_head == head
+    assert second_head == old
+
+
+@pytest.mark.integration
+def test_failed_fetch_does_not_accept_a_preexisting_commit(
+    tmp_path: Path, repository_template: RepositoryTemplate
+) -> None:
+    """A local object cannot substitute for a successful fetch of the advertised remote commit."""
+    module = _load_collector()
+    source, main, _base, _old, head = _setup_repositories(tmp_path, repository_template)
+    assert _git(main, "rev-parse", "HEAD") == head
+
+    def run(arguments: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        """Resolve the actual remote but fail its object transfer at the transport boundary."""
+        if arguments[:2] == ["git", "fetch"]:
+            return subprocess.CompletedProcess(arguments, 128, stdout=b"", stderr=b"transport unavailable")
+        return subprocess.run(arguments, cwd=main, **kwargs)
+
+    with pytest.raises(module.CollectionError, match="command-failed:probe"):
+        module._fetch_exact_ref(run, 10, str(source), "topic", "probe")

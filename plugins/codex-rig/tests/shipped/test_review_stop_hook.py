@@ -612,3 +612,49 @@ def test_cli_truncated_final_record_in_large_transcript_is_not_continued(
         stream.truncate(review.transcript.stat().st_size - 1)
 
     assert review.invoke() == {}
+
+
+@pytest.mark.parametrize("identity", ["--pr-number 41", '--branch "feature/topic"', "--pr-number=41"])
+def test_identity_creation_promotion_and_completion_are_tracked(review_state, identity: str) -> None:
+    """Track identifiable creation through promotion and clear only its promoted completion."""
+    payload, records = review_state
+    source = ".reports/codex/code-review/2026-01-02T03-04-05-000000Z-pr-41-random"
+    destination = ".reports/codex/code-review/pr-41/run-001"
+    records[2] = command_record(
+        f'"/plugin/bin/python" "/plugin/shared/create_run.py" --skill code-review {identity}', source + "\n"
+    )
+    assert HOOK.evaluate(payload, records, "/plugin")["decision"] == "block"
+    records.append(
+        command_record(
+            f'"/plugin/bin/python" "/plugin/shared/create_run.py" --skill code-review --promote-pr-run {source}',
+            destination + "\n",
+        )
+    )
+    assert HOOK.evaluate(payload, records, "/plugin")["decision"] == "block"
+    records.append(
+        command_record(f'"/plugin/bin/python" "/plugin/shared/find-review-report.py" --complete-run {destination}')
+    )
+    assert HOOK.evaluate(payload, records, "/plugin") == {}
+
+
+@pytest.mark.parametrize(
+    "identity",
+    [
+        "--pr-number 0",
+        "--pr-number nope",
+        "--pr-number 41 --pr-number 42",
+        '--branch ""',
+        "--branch topic --branch other",
+        "--branch topic --pr-number 41",
+        "--unknown 41",
+        "--pr-number 41 --promote-pr-run .reports/codex/code-review/run-a",
+    ],
+)
+def test_invalid_identity_command_does_not_start_workflow(review_state, identity: str) -> None:
+    """Ignore malformed, duplicated and mixed-mode commands even with an exit-zero host receipt."""
+    payload, records = review_state
+    records[2] = command_record(
+        f'"/plugin/bin/python" "/plugin/shared/create_run.py" --skill code-review {identity}',
+        ".reports/codex/code-review/run-a\n",
+    )
+    assert HOOK.evaluate(payload, records, "/plugin") == {}

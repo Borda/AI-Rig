@@ -781,9 +781,27 @@ def _selector(
 
 
 def _fetch_exact_ref(run: RunCommand, timeout: int, remote_name: str, source_ref: str, label: str) -> str:
-    """Fetch one ref without updating local refs and return its captured object ID."""
-    _run(run, ["git", "fetch", "--no-tags", "--refmap=", remote_name, source_ref], timeout, label)
-    return _run(run, ["git", "rev-parse", "FETCH_HEAD"], timeout, f"{label}-rev-parse").decode().strip()
+    """Resolve and fetch one immutable remote commit without shared FETCH_HEAD state."""
+    remote_ref = source_ref if source_ref.startswith("refs/") else f"refs/heads/{source_ref}"
+    advertised = (
+        _run(run, ["git", "ls-remote", "--exit-code", "--refs", remote_name, remote_ref], timeout, f"{label}-resolve")
+        .decode()
+        .strip()
+        .splitlines()
+    )
+    if len(advertised) != 1:
+        raise CollectionError(f"invalid-remote-ref:{label}")
+    fields = advertised[0].split()
+    if len(fields) != 2 or re.fullmatch(r"[0-9a-f]{40}(?:[0-9a-f]{24})?", fields[0]) is None or fields[1] != remote_ref:
+        raise CollectionError(f"invalid-remote-ref:{label}")
+    oid = fields[0]
+    # FETCH_HEAD belongs to the shared repository. Resolve once, then fetch that immutable
+    # advertised object so another collector cannot replace the identity between commands.
+    _run(run, ["git", "fetch", "--no-tags", "--refmap=", "--no-write-fetch-head", remote_name, oid], timeout, label)
+    captured = _run(run, ["git", "rev-parse", "--verify", f"{oid}^{{commit}}"], timeout, f"{label}-rev-parse")
+    if captured.decode().strip() != oid:
+        raise CollectionError(f"fetched-object-mismatch:{label}")
+    return oid
 
 
 def _filesystem_path_parts(path: str, root: Path, directories: dict[Path, dict[str, Path]]) -> tuple[str, ...]:
@@ -1190,8 +1208,10 @@ def _review_worktree_checkout(
             "overlapping_pr_paths": [],
         },
     )
-    if _run(run, ["git", "rev-parse", "HEAD"], timeout, "post-review-source-head").decode().strip() != current_head:
-        raise CollectionError("source-worktree-head-changed")
+    # The detached review tree is authoritative. Other tasks may switch the invoking
+    # checkout while we collect; record that observation without rejecting verified PR source.
+    final_source_head = _run(run, ["git", "rev-parse", "HEAD"], timeout, "post-review-source-head").decode().strip()
+    source_head_state = "unchanged" if final_source_head == current_head else "changed"
     checkout_evidence = {
         "status": "checked-out",
         "pr_number": routing.get("pr_number"),
@@ -1230,7 +1250,10 @@ def _review_worktree_checkout(
         output / "checkout-state.json",
         {
             "status": "checkout-verified",
-            "local_state": "isolated-exact-pr-head; main-worktree-unchanged",
+            "local_state": f"isolated-exact-pr-head; main-worktree-head-{source_head_state}",
+            "source_observation_version": 1,
+            "source_head_before": current_head,
+            "source_head_after": final_source_head,
             "local_head": local_head,
             "worktree": review.as_posix(),
         },
@@ -1317,7 +1340,7 @@ def _fetch_and_verify_target_branch(
         "base_matches_pr_metadata": base_matches,
         "expected_base_is_ancestor": base_is_ancestor,
         "base_relation": base_relation,
-        "command": f"git fetch --no-tags --refmap= {remote_name} {base_ref}",
+        "command": f"git fetch --no-tags --refmap= --no-write-fetch-head {remote_name} {base_local}",
         "source_policy": "target branch is refreshed before review; advancement from the PR-recorded base is review context, while divergence fails an open-PR review",
     }
     _write_json(output / "target-branch.json", target)
@@ -1334,12 +1357,12 @@ def _fetch_pr_head_ref(run: RunCommand, timeout: int, output: Path, request: _He
         "status": "fetched",
         "remote": request.remote_name,
         "head_ref": request.head_ref,
-        "remote_ref": "FETCH_HEAD",
+        "remote_ref": head_local,
         "source_ref": request.source_ref,
         "local_head": head_local,
         "expected_head_oid": request.head_oid,
         "head_matches_pr_metadata": head_local == request.head_oid,
-        "command": f"git fetch --no-tags --refmap= {request.remote_name} {request.source_ref}",
+        "command": f"git fetch --no-tags --refmap= --no-write-fetch-head {request.remote_name} {head_local}",
         "source_policy": request.source_policy,
     }
     _write_json(output / "pr-head-fetch.json", head)

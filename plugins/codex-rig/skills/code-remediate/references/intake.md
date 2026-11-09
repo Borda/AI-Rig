@@ -12,7 +12,7 @@ Resolve the metadata reader's profile-or-approval route before the first read, a
 
 ### 01: Create Run Directory
 
-After entry admits an OPEN PR, or for local `mode=report` scope (report-backed or supplied findings), run `create_run.py --skill code-remediate` per `../../../shared/helper-cli-contract.md`; resume reuses its existing run.
+After entry admits an OPEN PR, or for local `mode=report` scope (report-backed or supplied findings), run `create_run.py --skill code-remediate --pr-number <resolved-pr-number>` for PR scope, using the already resolved entry identity. Local report-only scope uses `--branch <branch-name>` from local Git identity, or `detached-<commit-id>` for detached HEAD. Follow `../../../shared/helper-cli-contract.md`; naming makes no additional network read, and resume reuses its existing run.
 
 ### 02: Normalize input and optional report findings
 

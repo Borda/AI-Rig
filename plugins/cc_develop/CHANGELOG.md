@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.46.4
+
+- `/develop:review`'s perf brief asks for current behavior versus expected improvement per finding, which its report section requires.
+
 ## 0.46.3
 
 - Restyle the animated execution diagrams of the `/develop:fix`, `feature`, `refactor` and `review` skills: card text is short fragments instead of sentences, key names are bold and conditions or bounds are italic, and each diagram's legend explains the emphasis; stop and skip conditions and gates are unchanged.

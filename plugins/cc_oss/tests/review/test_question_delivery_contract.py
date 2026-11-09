@@ -31,7 +31,7 @@ def test_report_followup_uses_a_plain_summary_and_final_header(skill: str) -> No
     Both report-producing skills must put a plain-text summary in the question, defer the header table to the final
     reply after the answer, and no longer describe option previews or a preview cap.
     """
-    text = _read(skill, "SKILL.md")
+    text = _read(skill, "modes", "post-agent.md") if skill == "review" else _read(skill, "SKILL.md")
     missing = _missing(
         text,
         "first question's text",

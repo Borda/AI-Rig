@@ -331,6 +331,8 @@ Write full report to `$REPORT_FILE` (the path echoed above, `.reports/analyse/th
 
 **Hook-enforced**: `hooks/enforce-analyse-header.js` (PreToolUse on `AskUserQuestion`) denies SKILL.md Step 6a's follow-up while `$REPORT_FILE` is missing/empty. Denial `oss:analyse report gate` = the write never produced the report — write it, put its path and `Title`, `Outcome` values in the question text as a short plain summary, then re-issue the question. The full matching header table is required in the final reply after the answer; build it below, never put it in an option `preview`.
 
+<!-- policy-sibling: plugins/cc_oss/skills/analyse/modes/vitality.md (Step 7: same enforce-analyse-header.js denial-recovery paragraph) -->
+
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # reload _OSS_SHARED (Check 41)

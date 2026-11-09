@@ -485,6 +485,8 @@ When user picks fix option (a–c): run Steps 8–10 inline via `modes/fix.md` (
 
 - Every option: label plus a one-line action description, no `preview`. Display `Fix auto-fixable (Recommended)` second while preserving all labels and answer mapping. The full Step 7 findings report is printed once in the final reply after the answer, after the last tool call, below Step 11b's header table — never before the question (`steps-4-5-7.md` §Step 7).
 
+<!-- policy-sibling: plugins/cc_foundry/skills/audit/modes/steps-4-5-7.md (Step 7: same question-text cap, no preview, full findings report once in the final reply) -->
+
 `--consolidate` fires no gate: it is advisory, has no fix option, and prints its apply commands as plain text.
 
 After completing `--upgrade`, `--adversarial`, or `--efficiency`: also fire this gate. For (d) Skip: remove the mode just run from the "for other modes" list. When `--adversarial --efficiency` combined: fire gate once after both complete with merged finding counts; remove both from (d) hint. Efficiency distill: the user runs the printed `/distill executables` (→ `foundry:sw-engineer` extraction), then `/audit --efficiency` re-run confirms savings.

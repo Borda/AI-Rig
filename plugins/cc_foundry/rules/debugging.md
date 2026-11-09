@@ -8,7 +8,7 @@ paths:
 
 **Never patch symptom.** Diagnosis: observe ALL symptoms → hypothesize specific mechanism → **confirm with evidence** (code/logs/tests — no confirmation = no fix) → fix mechanism, not signal → validate ALL original symptoms. An explicitly invoked iterative review-and-fix loop follows the Adversarial Convergence Loop in `quality-gates.md`, including its evidence, score and stop rules; ordinary diagnosis does not start that loop.
 
-- Memory/training knowledge ≠ evidence — every premise grounded in source read now; "Where is this documented?" before building on it
+- Memory/training knowledge ≠ evidence — every premise must be grounded in source read now (`quality-gates.md` §Evidence Grounding)
 - Falsification before closing: could a second independent root cause remain? If yes, diagnose it too
 - **Same failure signature twice in a row → stop immediately** — repeat means the attempt added no new information
 - Run one bounded independent post-fix challenge under the proportional workflow in `quality-gates.md`; do not turn it into an iterative loop without explicit invocation.

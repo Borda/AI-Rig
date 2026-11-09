@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.56.6
+
+- `/oss:release` inline `notes` runs grade CHANGELOG problems like the delegated audit: a classified item with no PR or commit is flagged `high`, and a commit pulled in by a non-PR merge with no prior CHANGELOG entry is flagged `medium` ("unreviewed branch merge"). The setup block is described as running on every `notes`/`demo` run, inline or delegated, since it also creates the waived-changes ledger, and the `notes`-versus-`prepare` note now matches what `notes` actually spawns and writes.
+- `/oss:resolve` in `pr + report` mode reaches the legacy findings-parse rules without running Step 3a's `mktemp` block, which would replace the run's `IMPL_DIR`, and prints only the merged items table. The final report's `Change` values add `perf` and `architecture`, and its Status legend says `challenge-rejected`, matching the items it records.
+- `/oss:review`'s perf brief asks for current behavior versus expected improvement per finding, which its report section requires.
+- The `/oss:analyse` thread and vitality modes mark their shared report-gate recovery paragraph as a policy sibling, so a later edit reaches both copies.
+- `/oss:resolve` and `/oss:review` load about 22K and 15K fewer tokens up front: `/oss:resolve` item selection, push and final report, plus its empty-argument review handoff and `pr + report` merge, now load only when the run reaches them, and `/oss:review` loads its PR acceptance gate, blind-solve agent and post-agent steps (validation, consolidation, reply gate, `--reply` draft) the same way. Every step, gate, flag and stop condition is unchanged.
+
 ## 0.56.5
 
 - Restyle the animated execution diagrams of the `/oss:analyse`, `review`, `resolve` and `release` skills: card text is short fragments instead of sentences, key names are bold and conditions or bounds are italic, and each diagram's legend explains the emphasis; stop and skip conditions and gates are unchanged.

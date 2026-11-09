@@ -22,7 +22,7 @@ _RUNNING = "already running in this session for PR 1542"
 @cache
 def _bash_block_after(heading: str) -> str:
     """Return the executable Bash block right after a unique review-skill heading."""
-    return bash_block_after((_REVIEW / "SKILL.md").read_text(encoding="utf-8"), heading)
+    return bash_block_after((_REVIEW / "modes/post-agent.md").read_text(encoding="utf-8"), heading)
 
 
 def _env(tmp_path: Path, session: str) -> dict[str, str]:

@@ -18,7 +18,7 @@ def test_normal_and_terminal_publications_show_frozen_sha() -> None:
     The normal report template and the terminal-publication path of the skill each carry a ``Commit SHA:`` line, and the
     consolidator prompt names the frozen ``headRefOid`` source, so a report cannot cite whichever checkout ran it.
     """
-    skill = _read("SKILL.md")
+    skill = _read("SKILL.md") + _read("modes/acceptance-gate.md") + _read("modes/post-agent.md")
     terminal = skill.split("Orchestrator writes `$REPORT_DIR/review-report.md` itself", 1)[1].split(
         "Then jump straight", 1
     )[0]
@@ -37,7 +37,7 @@ def test_fill_gaps_never_upgrades_abbreviated_provenance() -> None:
     A fill-gaps run carries records bound to an abbreviated head; the skill and the consolidator prompt must both say so
     and keep source judgments and reviewer independence intact instead of inventing a full SHA.
     """
-    skill = _read("SKILL.md")
+    skill = _read("SKILL.md") + _read("modes/post-agent.md")
     prompt = _read("templates/consolidator-prompt.md")
     assert "legacy abbreviated" in skill
     assert "legacy abbreviated" in prompt

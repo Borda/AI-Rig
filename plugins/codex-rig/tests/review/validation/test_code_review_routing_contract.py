@@ -1315,6 +1315,87 @@ class TestVerifiedPrSource:
 
         _VALIDATOR._validate_verified_pr_source(tmp_path, *source)
 
+    @pytest.mark.parametrize(
+        ("after", "state"),
+        [
+            pytest.param(HEAD_OID, "changed", id="concurrent-switch"),
+            pytest.param(BASE_OID, "unchanged", id="stable-head"),
+        ],
+    )
+    def test_accepts_observed_invoking_head(self, tmp_path: Path, after: str, state: str) -> None:
+        """Source observations describe concurrency without changing isolated review identity."""
+        source = _verified_review_worktree_source(tmp_path)
+        checkout_state = read_json(tmp_path / "checkout-state.json")
+        checkout_state.update(
+            source_observation_version=1,
+            source_head_before=BASE_OID,
+            source_head_after=after,
+            local_state=f"isolated-exact-pr-head; main-worktree-head-{state}",
+        )
+        _write_json(tmp_path / "checkout-state.json", checkout_state)
+        head_fetch = read_json(tmp_path / "pr-head-fetch.json")
+        head_fetch["remote_ref"] = HEAD_OID
+        _write_json(tmp_path / "pr-head-fetch.json", head_fetch)
+
+        _VALIDATOR._validate_verified_pr_source(tmp_path, *source)
+
+    @pytest.mark.parametrize(
+        "patch",
+        [
+            pytest.param({"source_observation_version": True}, id="boolean-version"),
+            pytest.param({"source_observation_version": 2}, id="unknown-version"),
+            pytest.param({"source_head_before": HEAD_OID}, id="context-mismatch"),
+            pytest.param({"source_head_after": "unknown"}, id="malformed-head"),
+            pytest.param({"source_head_after": BASE_OID}, id="false-change-label"),
+            pytest.param(
+                {"local_state": "isolated-exact-pr-head; main-worktree-unchanged"}, id="legacy-with-new-fields"
+            ),
+        ],
+    )
+    def test_rejects_inconsistent_source_observation(self, tmp_path: Path, patch: dict) -> None:
+        """Malformed concurrency receipts cannot bypass the source admission contract."""
+        source = _verified_review_worktree_source(tmp_path)
+        checkout_state = read_json(tmp_path / "checkout-state.json")
+        checkout_state.update(
+            source_observation_version=1,
+            source_head_before=BASE_OID,
+            source_head_after=HEAD_OID,
+            local_state="isolated-exact-pr-head; main-worktree-head-changed",
+        )
+        checkout_state.update(patch)
+        _write_json(tmp_path / "checkout-state.json", checkout_state)
+
+        with pytest.raises(SystemExit, match="pr-source-review-worktree-invalid"):
+            _VALIDATOR._validate_verified_pr_source(tmp_path, *source)
+
+    @pytest.mark.parametrize("missing", ["source_observation_version", "source_head_before", "source_head_after"])
+    def test_rejects_partial_source_observation(self, tmp_path: Path, missing: str) -> None:
+        """New receipts require the complete versioned before-and-after observation."""
+        source = _verified_review_worktree_source(tmp_path)
+        checkout_state = read_json(tmp_path / "checkout-state.json")
+        checkout_state.update(
+            source_observation_version=1,
+            source_head_before=BASE_OID,
+            source_head_after=HEAD_OID,
+            local_state="isolated-exact-pr-head; main-worktree-head-changed",
+        )
+        checkout_state.pop(missing)
+        _write_json(tmp_path / "checkout-state.json", checkout_state)
+
+        with pytest.raises(SystemExit, match="pr-source-review-worktree-invalid"):
+            _VALIDATOR._validate_verified_pr_source(tmp_path, *source)
+
+    @pytest.mark.parametrize("remote_ref", [pytest.param([], id="list-ref"), pytest.param({}, id="object-ref")])
+    def test_rejects_malformed_fetched_reference(self, tmp_path: Path, remote_ref: object) -> None:
+        """Malformed external receipt values must retain the classified provenance diagnostic."""
+        source = _verified_review_worktree_source(tmp_path)
+        head_fetch = read_json(tmp_path / "pr-head-fetch.json")
+        head_fetch["remote_ref"] = remote_ref
+        _write_json(tmp_path / "pr-head-fetch.json", head_fetch)
+
+        with pytest.raises(SystemExit, match="pr-source-oid-provenance-invalid"):
+            _VALIDATOR._validate_verified_pr_source(tmp_path, *source)
+
     def test_accepts_unavailable_invoking_worktree_context(self, tmp_path: Path) -> None:
         """An unavailable invoking-worktree context is informational and does not block isolated-source admission."""
         source = _verified_review_worktree_source(tmp_path)

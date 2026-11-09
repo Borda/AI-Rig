@@ -28,7 +28,9 @@ _skip_no_bash = pytest.mark.skipif(_BASH is None, reason="the wake-up check is B
 @cache
 def _skill() -> str:
     """Read the review skill; the shipped text is immutable during a run."""
-    return (_REVIEW / "SKILL.md").read_text(encoding="utf-8")
+    return (_REVIEW / "SKILL.md").read_text(encoding="utf-8") + (_REVIEW / "modes/post-agent.md").read_text(
+        encoding="utf-8"
+    )
 
 
 #: (section start, section end, marker that only exists while the baseline question is still asked there)

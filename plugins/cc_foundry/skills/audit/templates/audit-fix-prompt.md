@@ -2,9 +2,11 @@
 
 <!-- Canonical multi-file fix orchestration. NOT derived from fix-prompt.md (per-file only). Keep both in sync when changing shared audit-fix behavior. -->
 
+<!-- policy-sibling: plugins/cc_foundry/skills/audit/modes/fix.md (Step 8 orchestrator path: same PARALLEL_SAFE_CATEGORIES, coalescing, category-dependency rules, gate fast path and its verbose-bash-block exclusion; gate verdict files differ by design: per-finding there, per-file here) -->
+
 Read `<RUN_DIR>/summary.jsonl` — the findings list (one JSON object per line). Run `cat "$AUDIT_TPL/fix-prompt.md"` via the Bash tool for the per-file fix prompt template.
 
-**Dependency classification**: (1) Coalesce all same-file findings into one group first. (2) Classify each coalesced group: parallel-safe = category in PARALLEL_SAFE_CATEGORIES {hardcoded-path, missing-confidence-block, typo, heading-hierarchy, duplicate-lines, broken-bash-fence, stale-version-ref, missing-frontmatter-field} AND fix writes only to its own file AND no other group writes to a file this group reads. All others sequential.
+**Dependency classification**: (1) Coalesce all same-file findings into one group first. (2) Classify each coalesced group: parallel-safe = category in PARALLEL_SAFE_CATEGORIES {hardcoded-path, missing-confidence-block, typo, heading-hierarchy, duplicate-lines, broken-bash-fence, stale-version-ref, missing-frontmatter-field, verbose-bash-block} AND fix writes only to its own file AND no other group writes to a file this group reads. All others sequential.
 
 **Model tiering (gate + fix calls)**: tier on whether the task PRODUCES a judgment or merely APPLIES one.
 
@@ -14,7 +16,7 @@ Read `<RUN_DIR>/summary.jsonl` — the findings list (one JSON object per line).
 
 Once a gate returns a verbatim replacement string, every downstream call is transcription; a gate that must derive correct wording from history, runtime behavior, or conflicting sources earns `opus` regardless of the resulting diff size.
 
-**Gate fast path** (mandated by `_shared/agent-spawn-protocol.md` §Delegation cost discipline: the two-agent gate on a mechanical, unambiguous, single-file substitution is "cost without signal"): a file qualifies for the fast path only when ALL of its approved findings are in PARALLEL_SAFE_CATEGORIES AND the coalesced group is single-file by the classification above (writes only its own file, reads no file another group writes) AND no finding on that file is CRITICAL or HIGH.
+**Gate fast path** (mandated by `_shared/agent-spawn-protocol.md` §Delegation cost discipline: the two-agent gate on a mechanical, unambiguous, single-file substitution is "cost without signal"): a file qualifies for the fast path only when ALL of its approved findings are in PARALLEL_SAFE_CATEGORIES AND the coalesced group is single-file by the classification above (writes only its own file, reads no file another group writes) AND no finding on that file is CRITICAL or HIGH AND none is `verbose-bash-block` (parallel-safe, but its compression can drop load-bearing `# timeout: N` and why-comments, so it always takes the full gate).
 
 - Fast-path files skip the pre-apply gate and go straight to their fix agent under the Model tiering rule above; record them under `fast_path` in the completion summary below.
 - Every other file — any CRITICAL or HIGH finding, any cross-file dependency, any category outside PARALLEL_SAFE_CATEGORIES — takes the full gate below unchanged (findings where a wrong fix has real cost keep the full gate regardless of how small the diff looks).
@@ -27,7 +29,7 @@ After gate verdicts received: **Phase 1 — Parallel basket**: issue all paralle
 
 - Bounded direct read — narrows the "do NOT inline-read — orchestration contract" rule rather than dropping it: run `wc -l` over the dependency-input set first; at ≤10 files AND ≤2000 lines total, read them yourself with the Read tool, because this prompt already runs inside a disposable fix sub-agent whose context ends with the pipeline, so paying a ~120K-token spawn to avoid ~5–10K tokens of reads is inverted.
 - Above either bound, keep the original contract: spawn a foundry:curator mini-agent to do the re-read, and do not inline-read.
-- Use category→dependency rules: broken-cross-ref reads target agent/skill file; inventory-drift reads MEMORY.md; README-sync reads agent/skill source files.
+- Use category→dependency rules: broken-cross-ref reads target agent/skill file; inventory-drift reads MEMORY.md; README-sync reads agent/skill source files; orphaned-ref reads the disk agent/skill inventory.
 - Serialize groups where group A output is group B input; parallel within independent groups.
 
 For each file that passed the gate or qualified for the fast path, spawn one fix agent (foundry:curator for .md files, foundry:sw-engineer for .js/.py files) with all approved findings batched into a single prompt — pass `model:` per the Model tiering rule above (parallel-safe/mechanical findings → `haiku`, override the agent's own opus-class default; placement/phrasing judgment → `sonnet`; never spend a fix-spawn on `opus`, reserved for the gate).

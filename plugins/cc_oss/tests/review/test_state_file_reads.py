@@ -54,7 +54,7 @@ def _read_back(tmp_path: Path, line: str, prelude: str, variable: str) -> tuple[
             id="review-flags-report-path",
         ),
         pytest.param(
-            _REVIEW_SKILL,
+            _REVIEW_SKILL.parent / "modes" / "post-agent.md",
             'oss-review-gate-${CSID}" ] && while',
             "oss-review-gate-test",
             f"GATE=BLOCK\nGATE_REASON=ci-red: lint, {_PAYLOAD}\n",
@@ -64,7 +64,7 @@ def _read_back(tmp_path: Path, line: str, prelude: str, variable: str) -> tuple[
             id="review-gate-ci-check-names",
         ),
         pytest.param(
-            _REVIEW_SKILL,
+            _REVIEW_SKILL.parent / "modes" / "post-agent.md",
             '[ -f "$_REVIEW_MODE_FILE" ] && while',
             "oss-review-mode-flags-7-test",
             f"PR_TYPE=CODE {_PAYLOAD}\n",

@@ -350,16 +350,23 @@ class FakeRunner:
                 stdout = b'{"repository":"Borda/AI-Rig","host":"github.com"}\n'
             else:
                 stdout = b'{"remote":"origin","remote_url":"https://github.com/Borda/AI-Rig.git"}\n'
+        elif argv[:2] == ["git", "ls-remote"]:
+            if self.named_head_ref_missing and "portable-pr" in argv[-1]:
+                return subprocess.CompletedProcess(argv, 2, stdout=b"", stderr=b"missing branch")
+            oid = self.current_base_oid if argv[-1] == "refs/heads/main" else HEAD_OID
+            stdout = f"{oid}\t{argv[-1]}\n".encode()
         elif argv[:3] == ["git", "fetch", "--no-tags"]:
             if self.named_head_ref_missing and "portable-pr" in argv[-1]:
                 return subprocess.CompletedProcess(argv, 1, stdout=b"", stderr=b"missing branch")
             stdout = b""
         elif argv[:2] == ["git", "rev-parse"]:
-            reference = argv[2]
+            reference = argv[-1] if argv[2] == "--verify" else argv[2]
             stdout = (
                 HEAD_OID if "portable-pr" in reference or "/pull/" in reference else self.current_base_oid
             ).encode() + b"\n"
-            if reference == "HEAD":
+            if reference.endswith("^{commit}"):
+                stdout = reference.removesuffix("^{commit}").encode() + b"\n"
+            elif reference == "HEAD":
                 stdout = f"{self.local_head_oid}\n".encode()
             elif reference == "--show-toplevel":
                 stdout = f"{Path.cwd()}\n".encode()
@@ -754,7 +761,8 @@ def test_collect_pr_uses_public_metadata_fallback_with_trusted_pr_identity(
     assert result == 0, _error_text(output)
     assert public_requests == ["https://api.github.com/repos/Borda/AI-Rig/pulls/17"]
     assert any(
-        argv == ["git", "fetch", "--no-tags", "--refmap=", "origin", "refs/pull/17/head"] for argv, _ in _runner.calls
+        argv == ["git", "fetch", "--no-tags", "--refmap=", "--no-write-fetch-head", "origin", HEAD_OID]
+        for argv, _ in _runner.calls
     )
     assert any(argv == _review_worktree_add(output) for argv, _ in _runner.calls)
     assert json.loads((output / "pr.json").read_text(encoding="utf-8"))["number"] == 17
@@ -1015,7 +1023,7 @@ def test_collect_pr_fetches_fork_head_before_creating_review_worktree(
     """Make a fresh fork commit available before isolated worktree creation."""
     module = _load_collector()
     runner = FakeRunner(cross_repository=True)
-    fork_fetch = ["git", "fetch", "--no-tags", "--refmap=", "origin", "refs/pull/17/head"]
+    fork_fetch = ["git", "fetch", "--no-tags", "--refmap=", "--no-write-fetch-head", "origin", HEAD_OID]
     review_add = _review_worktree_add(tmp_path / "pr")
 
     def run_with_unfetched_fork(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
@@ -1032,7 +1040,7 @@ def test_collect_pr_fetches_fork_head_before_creating_review_worktree(
 
     assert result == 0, _error_text(output)
     calls = [argv for argv, _ in runner.calls]
-    target_fetch = ["git", "fetch", "--no-tags", "--refmap=", "origin", "main"]
+    target_fetch = ["git", "fetch", "--no-tags", "--refmap=", "--no-write-fetch-head", "origin", BASE_OID]
     assert calls.index(target_fetch) < calls.index(fork_fetch) < calls.index(review_add)
     head = json.loads((output / "pr-head-fetch.json").read_text(encoding="utf-8"))
     assert head["status"] == "fetched"
@@ -1816,3 +1824,28 @@ def test_collect_pr_writes_classified_opaque_failure_artifact(tmp_path: Path, mo
 def test_collect_pr_does_not_ship_a_shell_compatibility_wrapper() -> None:
     """Keep the plugin collector surface Python-only across supported platforms."""
     assert not (PLUGIN_ROOT / "shared" / "collect-pr.sh").exists()
+
+
+@pytest.mark.parametrize(
+    "advertisement",
+    [
+        pytest.param(b"", id="missing-ref"),
+        pytest.param(f"{HEAD_OID}\trefs/heads/other\n".encode(), id="wrong-ref"),
+        pytest.param(f"{HEAD_OID}\trefs/heads/topic\n{BASE_OID}\trefs/heads/topic\n".encode(), id="ambiguous-ref"),
+        pytest.param(b"invalid\trefs/heads/topic\n", id="invalid-object-id"),
+    ],
+)
+def test_fetch_rejects_unbound_remote_advertisement(advertisement: bytes) -> None:
+    """Only one exact remote-ref advertisement may authorize an immutable-object fetch."""
+    module = _load_collector()
+    calls = []
+
+    def run(arguments: list[str], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        """Return one external advertisement and retain any attempted fetch."""
+        calls.append(arguments)
+        return subprocess.CompletedProcess(arguments, 0, stdout=advertisement, stderr=b"")
+
+    with pytest.raises(module.CollectionError, match="invalid-remote-ref:probe"):
+        module._fetch_exact_ref(run, 10, "origin", "topic", "probe")
+
+    assert calls == [["git", "ls-remote", "--exit-code", "--refs", "origin", "refs/heads/topic"]]

@@ -962,3 +962,26 @@ def test_interrupted_review_offers_continue_or_skip_without_restart() -> None:
     standalone = next(line for line in completion if "For a genuinely blocked standalone handoff" in line)
     assert "only when the blocker belongs to the three-option recovery branch" in standalone
     assert "never for interrupted checks or missed ordering" in standalone
+
+
+def test_review_entry_requires_table_delivery_before_any_exit() -> None:
+    """Prevent early or clean review exits from bypassing the table delivery contract."""
+    entry = flat(_before(_read(CODE_REVIEW_SKILL), "## Workflow"))
+
+    assert "[Review delivery](references/findings-and-completion.md#output-contract)" in entry
+    assert "before any user-facing review handoff" in entry
+    assert "including zero findings, preliminary, incomplete, blocked and terminal outcomes" in entry
+    assert "Tables are mandatory" in entry
+    assert "explicit exact caller output and nested delivery" in entry
+    assert "consult presentation only when needed" not in flat(_read(CODE_REVIEW_SKILL))
+
+
+def test_ordering_recovery_routes_to_preliminary_table_delivery() -> None:
+    """Keep Continue and Skip from becoming prose-only exits after a missed checkpoint."""
+    interrupted = flat(_section(_read(REVIEW_REPORT_RECOVERY), "## Interrupted checks and missed ordering"))
+
+    assert "[Review delivery](findings-and-completion.md#output-contract)" in interrupted
+    assert "preliminary snapshot and checkpoint tables" in interrupted
+    assert "zero findings" in interrupted
+    assert "does not require promotion" in interrupted
+    assert "pending question" in interrupted

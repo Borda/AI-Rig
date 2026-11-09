@@ -60,7 +60,7 @@ Exit 0 → print the summary lines (incl. `cost:`) as reply text before any spaw
 
 ## Step 5
 
-Consolidator prompt adds `FILL_GAPS_PLAN=<literal $REPORT_DIR/fill-gaps.json>`; consolidator merges per `consolidator-prompt.md` §Fill-gaps carry-over, incl. one new `findings.jsonl` row per `publish_rows` id. Zero units and zero `candidates` (publish-rows only) → skip Steps 2 launch and 4; consolidator only.
+Consolidator prompt adds `FILL_GAPS_PLAN=<literal $REPORT_DIR/fill-gaps.json>`; consolidator merges per `consolidator-prompt.md` §Fill-gaps carry-over, incl. one new `findings.jsonl` row per `publish_rows` id. Zero units and zero `candidates` (publish-rows only) → skip Steps 2 launch and 4; consolidator only (`modes/post-agent.md` Step 5).
 
 ### Carry check
 
@@ -74,5 +74,5 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/fill_gaps_scope.py" verify --r
 ```
 
 - Exit 0 (`[carry] intact`) → Step 5 publication gate.
-- Exit 1, re-spawn unused → run the publication gate's park block (SKILL.md Step 5), then re-spawn the consolidator **once**, same prompt plus `Carry-over check rejected: <every printed [carry] line>. The refused report is parked at <REPORT_DIR>/review-report.refused.md; write the corrected <REPORT_DIR>/review-report.md and restore each carried record verbatim from the prior run; only additions are allowed.` Re-run this block. The re-spawn budget is shared with the publication gate: one per run.
-- Exit 1 once the re-spawn is used, or the re-spawn ⏱ timed out or returned no publication → run the publication gate's truncation block (SKILL.md Step 5), print `! BLOCKED — fill-gaps run altered carried prior records: <reasons>; report kept at <path> for inspection` and stop before Step 5b.
+- Exit 1, re-spawn unused → run the publication gate's park block (modes/post-agent.md Step 5), then re-spawn the consolidator **once**, same prompt plus `Carry-over check rejected: <every printed [carry] line>. The refused report is parked at <REPORT_DIR>/review-report.refused.md; write the corrected <REPORT_DIR>/review-report.md and restore each carried record verbatim from the prior run; only additions are allowed.` Re-run this block. The re-spawn budget is shared with the publication gate: one per run.
+- Exit 1 once the re-spawn is used, or the re-spawn ⏱ timed out or returned no publication → run the publication gate's truncation block (modes/post-agent.md Step 5), print `! BLOCKED — fill-gaps run altered carried prior records: <reasons>; report kept at <path> for inspection` and stop before Step 5b.
