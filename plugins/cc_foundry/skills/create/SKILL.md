@@ -1,6 +1,6 @@
 ---
 name: create
-description: 'Interactive outline co-creation for developer advocacy content — collects format, audience profile, story arc (Problem→Journey→Insight→Action), and voice/tone; detects out-of-scope requests (FAQs, comparison tables); surfaces conflicts between user brief and audience needs. Writes approved outline to .plans/content/<slug>-outline.md for foundry:creator to execute. Use when starting a blog post, Marp slide deck, social thread, talk abstract, or lightning talk. SKIP: idea generation before an outline exists (use foundry:brainstorm — brainstorm explores directions into a tree; create co-creates the outline, foundry:creator writes the finished artifact).'
+description: 'Interactive outline co-creation for developer advocacy content — collects format, audience profile, story arc (Problem→Journey→Insight→Action), and voice/tone; detects out-of-scope requests (FAQs, comparison tables); surfaces conflicts between user brief and audience needs. Writes approved outline to .plans/content/<slug>-outline.md for foundry:creator to execute. Use when starting a blog post, Marp slide deck, social thread, talk abstract, lightning talk, animated SVG, or short video (HyperFrames HTML composition; render stays user-run). SKIP: idea generation before an outline exists (use foundry:brainstorm — brainstorm explores directions into a tree; create co-creates the outline, foundry:creator writes the finished artifact).'
 argument-hint: '[topic]'
 disable-model-invocation: true
 allowed-tools: Write, Bash, TaskCreate, TaskUpdate, TaskList, AskUserQuestion, Agent
@@ -11,7 +11,7 @@ effort: medium
 
 Story arc four-beat: Problem → Journey → Insight → Action.
 
-NOT for: implementation, code gen, README writing (use `foundry:doc-scribe`), structured ref docs (FAQs, comparison tables — use `foundry:doc-scribe`).
+NOT for: implementation, code gen, README writing (use `foundry:doc-scribe`), structured ref docs (FAQs, comparison tables — use `foundry:doc-scribe`), media processing of existing files (download, transcode, trim, transcribe — user runs `ffmpeg` / Whisper / `yt-dlp`).
 
 </objective>
 
@@ -32,15 +32,16 @@ NOT for: implementation, code gen, README writing (use `foundry:doc-scribe`), st
 - $ARGUMENTS provided: extract topic; note embedded format hint.
 - No $ARGUMENTS: AskUserQuestion — "What are you trying to write about, and for whom?" (free text). After answer, re-check against out-of-scope conditions: answer describes FAQs, comparison tables, feature matrices, README content, or docstrings: stop. Respond: "This format doesn't fit a narrative arc — use `foundry:doc-scribe` for structured reference content." No further steps.
 - Out-of-scope gate (when $ARGUMENTS provided): brief describes FAQs, comparison tables, feature matrices, or ref docs: stop. Respond: "This format doesn't fit a narrative arc — use `foundry:doc-scribe` for structured reference content." No further steps.
+- Media-processing gate (both inputs — $ARGUMENTS and the opener answer): brief only asks to download, transcode, trim, compress, caption or transcribe existing media, no new narrative artifact: stop. Respond: "This is media processing, not a narrative artifact — run `ffmpeg` / Whisper / `yt-dlp` directly; `/foundry:create` authors new content only." No further steps. Source media for a new artifact (own talk recording, demo clip) stays in scope: record its path in outline `## Constraints` as context.
 
 ## Step 2 — Format and audience (1 AskUserQuestion call — 2 questions; +1 follow-up call when Q1 = (d))
 
-**Format + audience** (single AskUserQuestion call with 2 questions; AskUserQuestion allows at most 4 options per question, so the two short talk formats share slot (d)):
+**Format + audience** (single AskUserQuestion call with 2 questions; AskUserQuestion allows at most 4 options per question, so the four short talk and visual formats share slot (d)):
 
-- Q1 "What content format?": (a) blog post · (b) conference / meetup talk with Marp slide deck ★ · (c) social thread (X/LinkedIn) · (d) short talk — talk abstract (CFP submission) or lightning talk (5–10 min)
+- Q1 "What content format?": (a) blog post · (b) conference / meetup talk with Marp slide deck ★ · (c) social thread (X/LinkedIn) · (d) short talk or visual — talk abstract, lightning talk, animated SVG, short video
 - Q2 "Who is the audience?": (a) beginners — new to problem space ★ · (b) intermediate — familiar with basics, seeking depth · (c) expert — know landscape, want novel insight · (d) describe your own profile
 
-Q1 = (d) → one follow-up AskUserQuestion call, 1 question "Which short talk format?": (a) talk abstract (CFP submission) · (b) lightning talk (5–10 min). No ★ — pure user choice. All five formats stay reachable.
+Q1 = (d) → one follow-up AskUserQuestion call, 1 question "Which format?": (a) talk abstract (CFP submission) · (b) lightning talk (5–10 min) · (c) animated SVG (looping explainer graphic, embeddable via `<img>`) · (d) short video (≤60 s, HyperFrames HTML composition). No ★ — pure user choice. All seven formats stay reachable.
 
 After answer: restate one sentence covering format + audience ("Got it — a [format] for [audience description].").
 
@@ -52,6 +53,7 @@ Propose four-beat arc from topic + audience:
 - **Journey**: 3–5 key points (what tried, what failed, what arc covers)
 - **Insight**: core "aha" framed for stated audience level — name directly
 - **Action**: specific next step for audience
+- **Visual formats** (animated SVG, short video): beats map to timed segments (SVG) or scenes (video); Journey 1–3 points max; Action = closing frame/card
 
 **Out-of-scope re-check (re-apply the Step 1 test to the constructed arc)**: the Step 1 gate tests the brief; this one tests what the arc turned out to be. If the Journey beat resolves mainly to a feature-by-feature comparison, an options matrix, a question-and-answer list, or reference material with no narrative through-line — i.e. the beats only hold together as a table or list — stop here, before writing any outline. Respond: "The arc for this topic resolves to structured reference content rather than a narrative — use `foundry:doc-scribe` instead." Do not write the outline file and do not offer the Step 4 generation gate. A topic that merely *mentions* alternatives still passes: the test is whether the Insight beat names a single transferable idea, or just summarises the comparison.
 
@@ -87,7 +89,7 @@ created: YYYY-MM-DD
 [who they are, experience level, what they've likely seen, what they need]
 
 ## Format
-[blog post | conference talk (N min) | social thread (x|linkedin) | talk abstract | lightning talk (N min)]
+[blog post | conference talk (N min) | social thread (x|linkedin) | talk abstract | lightning talk (N min) | animated svg (N s, loop|once, WxH) | short video (N s, landscape|portrait|square, fps 30|60, audio: none|music|voiceover)]
 
 ## Voice
 [tone brief: e.g., "direct and opinionated, first-person, no hedging"]
@@ -107,16 +109,45 @@ created: YYYY-MM-DD
 [call to action — specific, what audience should do next]
 
 ## Constraints
-[length target, things to avoid, format-specific constraints]
+[length target, things to avoid, format-specific constraints; visual: palette, fonts, assets/source media paths, captions yes/no]
 ```
 
 - Confirm file path to user.
 
-- Artifact extension `<ext>` = `md` for every supported Step 2 format (Marp deck included) — substitute it literally into the spawn prompt before invoking `Agent()`, so the path on disk is `.plans/content/<slug>.md`, never `.plans/content/<slug>.<ext>`. A future format with a different extension must add its own mapping here.
+- Artifact output path `<output-path>` per Step 2 format — substitute it literally into the spawn prompt before invoking `Agent()`, never pass literal `<ext>` (path on disk is never `.plans/content/<slug>.<ext>`):
+
+  - text formats (blog post, Marp deck, social thread, talk abstract, lightning talk) → `md`: `.plans/content/<slug>.md`
+  - animated SVG → `svg`: `.plans/content/<slug>.svg`
+  - short video → project directory `.plans/content/<slug>-video/` (creator writes `index.html` + `compositions/*.html` inside). Skill resolves the anti-overwrite counter for the directory before scaffolding (`ls -d .plans/content/<slug>-video*/ 2>/dev/null || true`; taken → smallest free `<slug>-video-2/`, `-3/`, …); resolved path = `<video-dir>`.
+  - A future format with a different extension must add its own mapping here.
+
+- **Short video prerequisite probe** (short video only, main thread, before the generation gate; read-only), one block each:
+
+  ```bash
+  node --version  # timeout: 5000
+  ```
+
+  ```bash
+  ffmpeg -version  # timeout: 5000
+  ```
+
+  - Node missing or major < 22 → print `**! MISSING — short video needs Node ≥22**`, keep the outline, print the resume lines below, end at (b) **Stop here** — no question asked.
+  - ffmpeg missing → warn only (`⚠ ffmpeg missing — needed later for the user-run render`); authoring proceeds.
+  - **Resume lines** (Node missing, or user picks (b)): after installing prerequisites, run `/foundry:create`'s scaffold block with `<video-dir>` + resolution, then `@foundry:creator <outline-path>` — creator defaults to `<video-dir>` when it holds a scaffolded `index.html`. Print with values substituted.
+
+- **Short video scaffold** — runs only after the user picks (a) at the generation gate (never before consent), as its own response; on success, spawn creator in the next response; non-zero exit → stop, report, keep outline, no spawn. Substitute `<video-dir>` and the outline's preset word. Telemetry off via env opt-out; `--skip-skills` (never install skills, never sign in). Vendor `CLAUDE.md`/`AGENTS.md` that `init` copies into the project are renamed to non-instruction `.txt` files so no agent loads them as instructions:
+
+  ```bash
+  VIDEO_DIR='<video-dir>'; RES='<resolution>'
+  case "$VIDEO_DIR" in *'<'*'>'*|"") echo "! BLOCKED — <video-dir> not substituted"; exit 1;; .plans/content/*-video*) ;; *) echo "! BLOCKED — video dir must be under .plans/content/"; exit 1;; esac
+  case "$RES" in landscape|portrait|square) ;; *) echo "! BLOCKED — resolution must be landscape|portrait|square"; exit 1;; esac
+  HYPERFRAMES_NO_TELEMETRY=1 DO_NOT_TRACK=1 npx hyperframes init "$VIDEO_DIR" --skip-skills --non-interactive --resolution "$RES" || exit 1  # timeout: 180000
+  for F in CLAUDE.md AGENTS.md; do [ -f "$VIDEO_DIR/$F" ] && mv "$VIDEO_DIR/$F" "$VIDEO_DIR/HYPERFRAMES-$F.txt"; done; true
+  ```
 
 > Creator spawn prompt must require an envelope even on exhaustion — `partial: true` plus what was finished.
 
-- End with `AskUserQuestion` gate, two options: (a) **Generate the full artifact now** — spawn `foundry:creator` via `Agent(subagent_type='foundry:creator', name='creator-<slug>', description='write <format> artifact', prompt='Read <outline-path> and generate the complete <format> artifact. Output file path: .plans/content/<slug>.<ext>. Return ONLY a JSON envelope: status, file (path actually written, counter suffix included), partial (true on exhaustion, plus what was finished), confidence (your Confidence score).')` where `<outline-path>` is resolved path from anti-overwrite step above, and `<slug>`, `<format>`, `<ext>` substituted from generated outline (`<ext>` per the extension rule above) before the call — never pass literal angle-bracket placeholders to spawned agent. (b) **Stop here** — I'll invoke `foundry:creator` manually when ready.
+- End with `AskUserQuestion` gate, two options: (a) **Generate the full artifact now** — spawn `foundry:creator` via `Agent(subagent_type='foundry:creator', name='creator-<slug>', description='write <format> artifact', prompt='Read <outline-path> and generate the complete <format> artifact. Output file path: <output-path>. Return ONLY a JSON envelope: status, file (path actually written, counter suffix included), partial (true on exhaustion, plus what was finished), confidence (your Confidence score).')` where `<outline-path>` is resolved path from anti-overwrite step above, and `<slug>`, `<format>`, `<output-path>` substituted from generated outline (`<output-path>` per the output path mapping above — file, or `<video-dir>` for short video) before the call — never pass literal angle-bracket placeholders to spawned agent. Short video: append to the prompt "Project scaffolded by `hyperframes init` at <video-dir>; Read its index.html first, keep its head/script tags and take width/height from it. Envelope also carries `assets`: list of {dest: assets/<name>, src: <source path>} for every media file the composition references." (b) **Stop here** — I'll invoke `foundry:creator` manually when ready (short video: print the resume lines above).
 
   **Substitution verification before issuing Agent call (mandatory)**:
 
@@ -124,7 +155,14 @@ created: YYYY-MM-DD
   2. Scan all three constructed strings for remaining `<` or `>` characters; either present means substitution incomplete — resolve missing value(s) before spawning
   3. Confirm outline file path in prompt matches `<outline-path>` exactly (resolved path including any counter suffix, not a guess)
 
+  Short video exception: on (a), run the scaffold block first as its own response; the Agent() call goes in the next response, only after the scaffold succeeded.
+
   If user selects (a), issue Agent() call in same response turn AFTER verification above passes. Do not narrate intent — call the tool. Same response: Write `.temp/create/agent-watch-creator.tsv` = `creator-<slug>\t-\t900` (`_shared/agent-spawn-protocol.md` §Deadlines) — envelope-only row: creator's anti-overwrite may write `<slug>-2.md`, so a fixed deliverable path could match a stale prior artifact and mark `done` at once. End the turn — never `ScheduleWakeup`, `ListAgents`, `Monitor`, a filler call, a "waiting" line, or a sleep. On its notification run `python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/agent_watch.py" --state-dir ".temp/create"` once; notification carried the envelope → done, report its `file` path; no envelope → report the artifact as ⏱ `timed_out`.
+
+- After a `done` envelope, print user-run next steps for the format — never run them:
+
+  - animated SVG: open the file in a browser to preview; embed via `<img src>` (SMIL plays; scripts never run).
+  - short video, from inside `<video-dir>`, POSIX shell (PowerShell: set both env vars first): one `mkdir -p assets && cp <src> <dest>` line per envelope `assets` entry → `HYPERFRAMES_NO_TELEMETRY=1 DO_NOT_TRACK=1 npm run check` (fix every error) → `HYPERFRAMES_NO_TELEMETRY=1 DO_NOT_TRACK=1 npm run dev` (preview) → `HYPERFRAMES_NO_TELEMETRY=1 DO_NOT_TRACK=1 npm run render -- --quality delivery --fps <fps> -o <slug>.mp4`. npm scripts pin the CLI version `init` used, so check and render match. Optional ffmpeg post-steps, one example each: social GIF `ffmpeg -i <slug>.mp4 -vf "fps=12,scale=640:-1" <slug>.gif`; WebM `ffmpeg -i <slug>.mp4 -c:v libvpx-vp9 -crf 34 -b:v 0 <slug>.webm`; compress `ffmpeg -i <slug>.mp4 -c:v libx264 -crf 28 -preset slow <slug>-small.mp4`. Never print or run `npx hyperframes events`, `feedback`, `skills`, `npm run publish`, or cloud render.
 
 - End with `## Confidence` block per quality-gates.md protocol, score based on outline coverage of topic, arc, audience.
 
@@ -132,11 +170,11 @@ created: YYYY-MM-DD
 
 <notes>
 
-- **Execution model**: `disable-model-invocation: true` — Claude itself follows this SKILL.md as workflow template directly in main context (no autonomous sub-agent dispatch during outline phase). Step 4 gate selects (a): exactly one sub-agent spawned, `foundry:creator` (executes outline, writes full artifact). No other sub-agent invocations by this skill.
+- **Execution model**: `disable-model-invocation: true` — Claude itself follows this SKILL.md as workflow template directly in main context (no autonomous sub-agent dispatch during outline phase). Step 4 gate selects (a): exactly one sub-agent spawned, `foundry:creator` (executes outline, writes full artifact). No other sub-agent invocations by this skill — short video included: still exactly one sub-agent; the scaffold runs in main thread.
 
-- Question budget: **3 `AskUserQuestion` calls / 4 questions** when a topic is supplied (step 2 = 1 call carrying 2 questions; steps 3 and 4 = 1 question each). Step 2 short-talk follow-up (Q1 = (d)) adds 1 call / 1 question. Topic absent adds step 1's opener → 4 calls / 5 questions. Each arc-conflict round in step 3 re-invokes that call → up to 7 calls / 8 questions worst case.
+- Question budget: **3 `AskUserQuestion` calls / 4 questions** when a topic is supplied (step 2 = 1 call carrying 2 questions; steps 3 and 4 = 1 question each). Step 2 format follow-up (Q1 = (d)) adds 1 call / 1 question. Short video with Node missing skips the step 4 gate → 1 call fewer. Topic absent adds step 1's opener → 4 calls / 5 questions. Each arc-conflict round in step 3 re-invokes that call → up to 7 calls / 8 questions worst case.
 
-- Each AskUserQuestion uses lettered options with one ★ recommended default, except the step 2 short-talk follow-up (pure user choice, no ★).
+- Each AskUserQuestion uses lettered options with one ★ recommended default, except the step 2 format follow-up (pure user choice, no ★).
 
 - After each answer, restate understanding in 1–2 sentences before proceeding.
 
@@ -149,5 +187,9 @@ created: YYYY-MM-DD
 - `foundry:creator` reads output outline file, generates full artifact autonomously.
 
 - Outline spec files written to `.plans/content/` — `.plans/` is manual lifecycle, never auto-deleted (`artifact-lifecycle.md`).
+
+- Media ingest (Whisper transcript of own talk, `yt-dlp` for own or licensed source video, `ffmpeg` cuts) = user-run prep; outputs referenced as paths in outline `## Constraints`. Respect source rights and ToS. Never upload user media.
+
+- Render, preview, check and cloud features stay user-run; skill runs only the `hyperframes init` scaffold, after generation consent, with `--skip-skills` and telemetry disabled by env opt-out (`HYPERFRAMES_NO_TELEMETRY=1 DO_NOT_TRACK=1`), and renames the vendor `CLAUDE.md`/`AGENTS.md` it copies. Never `events`, `feedback`, skills install, sign-in, `publish` or cloud render.
 
 </notes>

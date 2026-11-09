@@ -617,8 +617,9 @@ Interactive outline co-creation for developer advocacy content. Collects format,
 /foundry:create                   # no topic — skill asks interactively
 ```
 
-- **Supported formats**: blog post, Marp slide deck (conference/meetup talk), social thread (Twitter/LinkedIn), talk abstract (CFP submission), lightning talk (5–10 min).
-- **Out-of-scope detection**: refuses FAQs, comparison tables, reference docs at Step 1, redirects to `foundry:doc-scribe`.
+- **Supported formats**: blog post, Marp slide deck (conference/meetup talk), social thread (Twitter/LinkedIn), talk abstract (CFP submission), lightning talk (5–10 min), animated SVG (SMIL, plays inside `<img>`), short video (up to 60 s, written as a [HyperFrames](https://github.com/heygen-com/hyperframes) HTML composition).
+- **Short video prerequisites**: Node 22 or newer is required; `ffmpeg` is needed later for rendering, so a missing `ffmpeg` only triggers a warning. Only after you choose to generate does the skill run `npx hyperframes init --skip-skills` with telemetry turned off (`HYPERFRAMES_NO_TELEMETRY=1 DO_NOT_TRACK=1`) to scaffold `.plans/content/<slug>-video/`. It renames the `CLAUDE.md` and `AGENTS.md` that the scaffold copies in to `HYPERFRAMES-*.txt`, so no agent loads them as instructions. `foundry:creator` then writes the scenes into the project and lists the media files you need to copy into `assets/`. Check, preview and render stay user-run, and the skill prints the commands: `npm run check`, `npm run dev` and `npm run render -- --quality delivery --fps <fps> -o <slug>.mp4`. These use the CLI version pinned at scaffold time, run with the same telemetry opt-out, and come with optional `ffmpeg` GIF/WebM conversion. The skill never runs HyperFrames sign-in, skill installs, publish or cloud renders. If you stop before generating, the skill prints the commands to resume later without redoing the outline.
+- **Out-of-scope detection**: refuses FAQs, comparison tables, reference docs at Step 1, redirects to `foundry:doc-scribe`. Pure media processing (download, transcode, trim, transcribe existing media) is redirected to `ffmpeg`, Whisper or `yt-dlp` run directly. Their outputs, such as a transcript of your own talk, can be passed as source paths in the outline `## Constraints`. Remotion is not supported.
 - **Editorial conflict detection**: brief implies expert-level topic for beginner audience (or reverse) — skill surfaces mismatch explicitly before writing.
 - Writes `.plans/content/<slug>-outline.md`. Hand off to `foundry:creator` after approval: `@foundry:creator`.
 - Max 5 `AskUserQuestion` interactions for well-specified brief (format, audience, arc, voice). Skips interactive steps if all choices in initial brief.
@@ -827,13 +828,13 @@ Generally not invoked directly. `/foundry:audit` spawns it in batches across all
 
 **Role**: developer advocacy content specialist — outward-facing narrative artifacts.
 
-**Use for**: complete blog posts, Marp slide decks, social threads, talk abstracts, lightning talk outlines in one autonomous pass. Imagines ideal reader experience first, works backwards to structure + form — questions status-quo conventions, pushes for fresh angles. Reads approved outline file (`.plans/content/<slug>-outline.md`) from `/foundry:create`. Applies four-beat story arc (Problem→Journey→Insight→Action) calibrated to target audience level.
+**Use for**: complete blog posts, Marp slide decks, social threads, talk abstracts, lightning talk outlines, animated SVGs and short-video HyperFrames compositions (source only; it never renders) in one autonomous pass. Imagines ideal reader experience first, works backwards to structure + form — questions status-quo conventions, pushes for fresh angles. Reads approved outline file (`.plans/content/<slug>-outline.md`) from `/foundry:create`. Applies four-beat story arc (Problem→Journey→Insight→Action) calibrated to target audience level.
 
 **Model**: `sonnet`
 
-**Not for**: in-code documentation, docstrings, API references (`foundry:doc-scribe`), release notes/changelogs (`oss:shepherd` — requires `oss` plugin), structured reference content — FAQs, comparison tables (redirect to `foundry:doc-scribe`).
+**Not for**: in-code documentation, docstrings, API references (`foundry:doc-scribe`), release notes/changelogs (`oss:shepherd` — requires `oss` plugin), structured reference content — FAQs, comparison tables (redirect to `foundry:doc-scribe`), media processing of existing files (run `ffmpeg`, Whisper or `yt-dlp` directly).
 
-**Auto-invokes when:** outline file `.plans/content/<slug>-outline.md` approved; user asks for blog post, Marp slide deck, social thread, talk abstract, lightning talk outline. Skip when: outline file not found (run `/foundry:create` first); code documentation (`foundry:doc-scribe`); release notes (`oss:shepherd`).
+**Auto-invokes when:** outline file `.plans/content/<slug>-outline.md` approved; user asks for blog post, Marp slide deck, social thread, talk abstract, lightning talk outline, animated SVG, short video. Skip when: outline file not found (run `/foundry:create` first); code documentation (`foundry:doc-scribe`); release notes (`oss:shepherd`).
 
 Always downstream of `/foundry:create` — reads approved outline, generates full artifact. Two-phase system: `/foundry:create` (interactive intake → outline) then `foundry:creator` (autonomous generation → artifact). Outline format constraints override house defaults during generation and review; `critical` covers unusable or harmful output and outline violations that mislead readers.
 

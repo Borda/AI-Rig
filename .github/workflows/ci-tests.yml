@@ -92,7 +92,7 @@ jobs:
             --scan-dir plugins --check
 
   tests:
-    name: tests (${{ matrix.scope }}, ${{ matrix.os }}, Python ${{ matrix.python-version }})
+    name: tests (${{ matrix.scope }}, ${{ matrix.os }}, Python ${{ matrix.python-version }}${{ matrix.shards && format(', shard {0}/{1}', matrix.shard, matrix.shards) || '' }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -100,11 +100,28 @@ jobs:
         os: ["ubuntu-latest", "macos-latest", "windows-latest"]
         python-version: ["3.10", "3.11", "3.12", "3.13"]
         scope: ["codex", "claude", "shared"]
+        # Only the Codex scope on Windows and macOS is split: its process-heavy tests took 32-44 minutes on one Windows
+        # runner, close to the timeout. Every other combination runs one unsharded job, so shards 2 and 3 are excluded.
+        shard: [1, 2, 3]
         exclude:
           - { os: "windows-latest", python-version: "3.10" }
+          - { scope: "claude", shard: 2 }
+          - { scope: "claude", shard: 3 }
+          - { scope: "shared", shard: 2 }
+          - { scope: "shared", shard: 3 }
+          - { os: "ubuntu-latest", shard: 2 }
+          - { os: "ubuntu-latest", shard: 3 }
+          - { os: "macos-latest", shard: 3 }
+        # `shards` is the slice count; its presence marks a sharded job and adds the shard to the job name.
+        include:
+          - { scope: "codex", os: "windows-latest", shards: 3 }
+          - { scope: "codex", os: "macos-latest", shards: 2 }
     timeout-minutes: 45
     env:
       PYTHONFAULTHANDLER: "1"
+      SHARD: ${{ matrix.shards && format('{0}/{1}', matrix.shard, matrix.shards) || '' }}
+      # Coverage tracing added 10-13% to measured runs and is informational, so only the newest Python reports it.
+      COVERAGE: ${{ matrix.python-version == '3.13' }}
       PYTEST_ARGS: >-
         -n 4 --dist worksteal
         -W error::DeprecationWarning --durations=500 --durations-min=0.2
@@ -136,34 +153,42 @@ jobs:
         if: matrix.scope == 'codex'
         run: |
           read -r -a pytest_args <<< "$PYTEST_ARGS"
-          uv run --only-group test pytest plugins/codex-rig "${pytest_args[@]}" \
-            --cov=plugins/codex-rig/bin --cov=plugins/codex-rig/shared \
-            --cov=plugins/codex-rig/runtime --cov=plugins/codex-rig/scripts
+          # --shard comes from the root conftest.py and hashes node ids, so the slices are disjoint and complete.
+          if [ -n "$SHARD" ]; then pytest_args+=(--shard "$SHARD"); fi
+          if [ "$COVERAGE" = true ]; then
+            pytest_args+=(--cov=plugins/codex-rig/bin --cov=plugins/codex-rig/shared \
+              --cov=plugins/codex-rig/runtime --cov=plugins/codex-rig/scripts)
+          fi
+          uv run --only-group test pytest plugins/codex-rig "${pytest_args[@]}"
 
       - name: 🧪 Run Claude tests
         if: matrix.scope == 'claude'
         run: |
           read -r -a pytest_args <<< "$PYTEST_ARGS"
+          if [ "$COVERAGE" = true ]; then
+            pytest_args+=(--cov=plugins/cc_develop/bin --cov=plugins/cc_foundry/bin \
+              --cov=plugins/cc_oss/bin --cov=plugins/cc_research/bin)
+          fi
           uv run --only-group test pytest \
             plugins/cc_develop plugins/cc_foundry plugins/cc_oss plugins/cc_research \
-            "${pytest_args[@]}" \
-            --cov=plugins/cc_develop/bin --cov=plugins/cc_foundry/bin \
-            --cov=plugins/cc_oss/bin --cov=plugins/cc_research/bin
+            "${pytest_args[@]}"
 
       - name: 🧪 Run shared tests
         if: matrix.scope == 'shared'
         run: |
           read -r -a pytest_args <<< "$PYTEST_ARGS"
+          if [ "$COVERAGE" = true ]; then
+            pytest_args+=(--cov=plugins/codemap-py/bin --cov=plugins/codemap-py/src \
+              --cov=plugins/bridge_cc-codex/bin)
+          fi
           uv run --only-group test pytest \
             plugins/codemap-py plugins/bridge_cc-codex benchmarks tests \
-            "${pytest_args[@]}" \
-            --cov=plugins/codemap-py/bin --cov=plugins/codemap-py/src \
-            --cov=plugins/bridge_cc-codex/bin
+            "${pytest_args[@]}"
 
       # Coverage is informational only: an upload failure never fails the job, and codecov.yml
       # marks every status as informational so coverage changes never block a merge.
       - name: 📊 Upload coverage to Codecov
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && matrix.python-version == '3.13' }}
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}

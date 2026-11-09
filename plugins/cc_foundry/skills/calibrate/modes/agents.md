@@ -21,7 +21,7 @@ Problem domain by agent:
 - `foundry:web-explorer` → content quality: broken or unverified Uniform Resource Locators (URLs), outdated docs, incomplete extraction from fetched pages
 - `oss:shepherd` → Open Source Software (OSS) governance: incorrect Semantic Versioning (SemVer) decision, missing CHANGELOG entry, bad deprecation path, wrong release checklist item *(oss plugin required — skip if `$OSS_AVAILABLE` empty)*
 - `foundry:challenger` → plan/architecture challenges: missed assumptions, missing edge cases, unjustified blocker classification, skipped refutation step
-- `foundry:creator` → content quality: narrative arc gaps, audience-profile mismatches, voice inconsistency, missing story beats, out-of-scope format acceptance
+- `foundry:creator` → content quality: narrative arc gaps, audience-profile mismatches, voice inconsistency, missing story beats, out-of-scope format acceptance (incl. media-processing requests); visual formats: animated SVG (script/external refs, non-SMIL animation, beat-to-segment mapping), short-video HyperFrames compositions (data-composition-id linking, determinism, scene durations vs root, unlisted assets)
 
 All agents support `ceiling` difficulty tier. Ceiling patterns by domain: `foundry:sw-engineer` → adversarial (idiomatic-looking but subtly wrong), concurrency bugs; `foundry:qa-specialist` → incomplete detectability (coverage gaps visible only at runtime); `foundry:perf-optimizer` → deep cross-function control flow; `research:data-steward` → adversarial (split contamination disguised as correct preprocessing); `foundry:solution-architect` → deep dependency tracing. Agents where ceiling infeasible (e.g., `foundry:linting-expert` — violations always statically detectable): generators may substitute hard problem.
 

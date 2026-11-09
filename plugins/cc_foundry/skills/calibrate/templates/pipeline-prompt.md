@@ -103,7 +103,7 @@ Each problem must be JSON object with these exact fields:
 - problem_id: kebab-slug string, prefix with 'cx-' (e.g. 'cx-type-mismatch')
 - difficulty: exactly one of: trivial, low, medium, high, extreme — include at least 1 trivial in full mode
 - task_prompt: instruction to give reviewer (do NOT reveal issues)
-- input: code / config / content inline (no file paths) — must contain issues
+- input: ONE string holding code / config / content inline (no file paths) — must contain issues; multi-part input (e.g. outline + draft) = labelled sections inside that string, never a nested object or array
 - ground_truth: array of objects, each with:
   - issue: concise description (what is wrong)
   - location: function name, section, or line reference
@@ -171,6 +171,8 @@ Read file. Strip any markdown code fences or prose prefix/suffix — find first 
 
 Required fields: `problem_id` (string starting with `cx-`), `difficulty` (one of: `trivial`/`low`/`medium`/`high`/`extreme` — NOT `scope`), `task_prompt` (non-empty string), `input` (non-empty string), `ground_truth` (non-empty array; each item has `issue`, `location`, `severity`; `severity` must be one of: `critical`/`high`/`medium`/`low`).
 
+`input` returned as object or array despite the string rule: normalize before validating, don't reject — each top-level key becomes a `## <key>` section, nested objects become `<key>: <value>` lines under it, arrays one item per line; content unchanged. Log `normalized input: <problem_id>`.
+
 Reject and log any entry failing validation. If fewer than `floor(<N_CODEX> * 0.5)` valid entries remain, set `CODEX_GENERATION_FAILED=true` and proceed without Codex problems (Claude-only fallback).
 
 **Merge and tag**:
@@ -184,7 +186,7 @@ Write merged array to `.reports/calibrate/<TIMESTAMP>/<TARGET>/problems.json`.
 
 ### Phase 2 — Run target on each problem (parallel)
 
-Spawn one `<TARGET>` named subagent per problem using **Agent tool** — never via Bash or CLI. Issue ALL spawns in **single response** — no waiting between spawns.
+Spawn one `<TARGET>` subagent per problem using **Agent tool** — never via Bash or CLI. Issue ALL spawns in **single response** — no waiting between spawns. Never pass `name=` on nested spawns (Phases 2, 2b, 3a): a pipeline running as a named teammate gets named spawns refused, and nothing here addresses them by name.
 
 Prompt for each subagent:
 
@@ -202,7 +204,7 @@ Prompt for each subagent:
 
 **Completion handling** — never a poll loop or a waiting tool (`ScheduleWakeup`, `ListAgents`, `Monitor`); each subagent's result arrives as its `Agent()` result or completion notification (`_FOUNDRY_SHARED/agent-spawn-protocol.md`). Each subagent returns: check for `response-<problem_id>.md`; empty or missing: mark that problem `{"timed_out": true}` in scores.json, proceed. Never block indefinitely on single response.
 
-For **agent targets** when `LOCAL_MODE=true` and `TARGET_FILE` set: spawn `general-purpose` subagent with TARGET_FILE content prepended ("You are an agent described by the following instructions: <content of TARGET_FILE>") — tests source tree definition rather than installed plugin. Pass `model=` from `TARGET_FILE` frontmatter `model:` (omit when absent or `inherit`), so tier changes are measured at the tier the agent ships with. `Agent()` has no `effort`/`tools` parameter: frontmatter `effort`/`tools` go unapplied — add `"local mode: frontmatter effort/tools not applied"` to `gaps`. When LOCAL_MODE=false or TARGET_FILE empty: spawn `Agent(subagent_type="<TARGET>")` normally.
+For **agent targets** when `LOCAL_MODE=true` and `TARGET_FILE` set: spawn `general-purpose` subagent — tests source tree definition rather than installed plugin. Write `.reports/calibrate/<TIMESTAMP>/<TARGET>/prompt-<problem_id>.md` = "You are an agent described by the following instructions:" + TARGET_FILE content + a tool-limit line (`Use only these tools: <frontmatter tools:>`, omitted when `tools:` absent) + the per-problem prompt above; spawn prompt = one line: `Read .reports/calibrate/<TIMESTAMP>/<TARGET>/prompt-<problem_id>.md and follow it exactly.` Frontmatter mapped onto the spawn: `model=` from `model:` (omit when absent or `inherit`), so tier changes are measured at the tier the agent ships with; `effort=` from `effort:` (omit when absent) — this template explicitly asks for it. Spawn schema lacks `effort`: add `"local mode: frontmatter effort not applied"` to `gaps`. `tools:` is enforced by the prompt line only, not the harness — add `"local mode: tools limited by prompt, not enforced"` to `gaps` when `tools:` present. When LOCAL_MODE=false or TARGET_FILE empty: spawn `Agent(subagent_type="<TARGET>")` normally.
 
 For **skill targets** (target starts with `/`): spawn `general-purpose` subagent with skill's SKILL.md content prepended as context, running against synthetic input from problem. When `LOCAL_MODE=true` and `TARGET_FILE` set, read SKILL.md from `TARGET_FILE` (frontmatter `model:` handled as for agent targets); otherwise resolve, trying `skills/<NAME>/SKILL.md` then `claude-skills/<NAME>/SKILL.md` at each tier: `.claude/` → cache `~/.claude/plugins/cache/borda-ai-rig/<PLUGIN>/*/` (latest mtime) → `plugins/<PLUGIN>/`. Apply same write-and-acknowledge pattern.
 
