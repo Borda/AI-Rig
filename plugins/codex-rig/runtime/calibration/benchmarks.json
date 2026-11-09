@@ -678,7 +678,10 @@
       "Next steps",
       "Review Decision Summary",
       "shared ordered frame",
-      "helper-cli-contract.md"
+      "helper-cli-contract.md",
+      "without a Continue/Skip question",
+      "historical ordering lapse does not by itself prevent review completion",
+      "blind blueprint or its documented applicability skip before any diff evidence"
     ],
     "implement": [
       "## Input Schema",

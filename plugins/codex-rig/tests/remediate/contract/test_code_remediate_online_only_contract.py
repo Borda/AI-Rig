@@ -314,7 +314,7 @@ class TestRequestedReviewDecision:
                 (
                     "`mode=pr` and `REQUESTED_REPORT=true`",
                     "explicit PR report paths",
-                    "one native question naming the linked PR, applying its interrupted-check/ordering `Continue`/`Skip` exception first and otherwise offering exactly `New review`, `Resume last one`, `Stop`",
+                    "one native question naming the linked PR, recovering missed ordering automatically and applying its interrupted-check `Continue`/`Skip` exception only for a concrete remaining check decision and otherwise offering exactly `New review`, `Resume last one`, `Stop`",
                     "normal full `code-review` workflow",
                     "both artifact validators, promotion and `--complete-run`",
                     "resume this same remediation run",

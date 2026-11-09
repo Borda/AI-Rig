@@ -25,6 +25,8 @@ Runtime artifacts at **project root**, not inside `.claude/`. Output dirs dot-pr
   research/              ← research plugin skills (topic, judge, verify, fortify, retro, run)
 .experiments/            ← /research:run (run mode)
 .developments/           ← /develop:feature, /develop:fix, /develop:refactor runs
+.evolution/
+  <host>/<owner>/<repo>/ ← /oss:analyse evolution — durable scan store (clone, overrides.csv, LLM verdicts, store/)
 .cache/
   gh/                    ← shared GitHub API response cache (cross-skill)
 .temp/
@@ -64,10 +66,11 @@ Completed run always has `result.jsonl`. Incomplete runs (crashed, timed out) la
 | `.reports/review/pr-<N>/run-<NNN>/` (oss lineage) | 30 days | keyed per `run-<NNN>` dir, not per `pr-<N>` — an active PR's older runs still expire; empty `pr-<N>` parent swept once its last run ages out |
 | `.temp/<skill>/YYYY-MM-DDTHH-MM-SSZ/` | 30 days | keyed on file mtime (intermediate subagent handover dirs) |
 | `.plans/blueprint/` | 30 days | keyed on file mtime (flat spec/tree files) |
-| `.cache/gh/` | 30 days | keyed on file mtime (GitHub API response cache) |
+| `.cache/` (every subdir, `gh/` included) | 30 days | keyed on file mtime — the SessionEnd sweep deletes any file under `.cache` older than 30 days, so nothing durable belongs there |
 | `.temp/` | 30 days | keyed on file mtime |
 | `.plans/active/`, `.plans/closed/` | manual | move to `closed/` when done; never auto-delete |
 | `.notes/` | manual | human-maintained |
+| `.evolution/` | manual | `/oss:analyse evolution` store: reruns resume from it; `--full` rebuilds only its `store/` subdir |
 | `releases/<version>/` | manual | release artefacts; archive or delete after shipping |
 
 Log file TTL and SessionEnd cleanup hook in `foundry-config.md` (foundry-infrastructure only).

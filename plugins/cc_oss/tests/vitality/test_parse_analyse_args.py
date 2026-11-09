@@ -40,6 +40,8 @@ class TestClassifyReportPath:
             pytest.param("42", (False, ""), id="thread-number"),
             pytest.param("vitality owner/repo", (False, ""), id="vitality-keyword"),
             pytest.param("ecosystem", (False, ""), id="ecosystem-keyword"),
+            pytest.param("evolution owner/repo", (False, ""), id="evolution-keyword"),
+            pytest.param("evolution notes.md", (False, ""), id="evolution-prefixed-md-not-a-report"),
             pytest.param("vitality-notes.md", (False, ""), id="vitality-prefixed-md-not-a-report"),
         ],
     )

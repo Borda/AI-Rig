@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.43.5
+
+- Recover missed review ordering automatically with honest limitations and normal completion validation instead of an ineffective Continue/Skip prompt. Require the applicable blind blueprint before close-screening diff inspection, and preserve genuine check, coverage and permission blockers.
+- Keep verification results and compact log links together in one table instead of moving evidence into a separate list; preserve other table layouts, historical versions 1–12 and exact caller output.
+
 ## 0.43.4
 
 - Include PR numbers or bounded branch identities in initial review and remediation run names while retaining atomic random uniqueness, and keep the stop hook tracking these runs through promotion and completion. Reject promotion when the initial PR number disagrees with collected identity.

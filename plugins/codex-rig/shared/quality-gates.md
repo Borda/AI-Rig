@@ -151,4 +151,4 @@ Codex behavior changes must also update registrations, docs, calibration in same
 
 A passing assessed `audit` result additionally requires an executed passing `review` gate. The generic runner still permits all `not-applicable` diagnostics; skill applicability checks decide whether those records can certify workflow completion.
 
-New terminal handoffs use presentation version 12. Keep full evidence in machine records; display file paths outside every table as `- Item: file-path` lists. Presentation normalization is automatic; factual bindings, source coverage and authority checks retain their existing meaning.
+New terminal handoffs follow the current [final-handoff contract](final-handoff-contract.md). Keep full evidence in machine records. Verification uses one `Check | Status | Evidence` table with compact `Log` links in each row and no separate path list; other tables display file paths below as `- Item: file-path` lists. Presentation normalization is automatic; factual bindings, source coverage and authority checks retain their existing meaning.

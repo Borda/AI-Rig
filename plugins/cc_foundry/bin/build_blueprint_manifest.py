@@ -864,6 +864,11 @@ _MUTATING_HELPERS = {
     "commit_action_item.py": "oss:resolve per-item commit: stages only the files it is given, never pushes",
     "commit_all_items.py": "oss:resolve bulk commit of the resolved items, never pushes",
     "commit_lint_fixes.py": "commits only lint changes inside the branch's own changed files, never pushes",
+    "evolution_scan.py": (
+        "oss:analyse evolution: writes only inside its containment-checked .evolution/<host>/<owner>/<repo>/ store"
+        " and .reports/analyse/evolution/; --full deletes only that store's store/ subdir; clones and fetches only"
+        " its own dedicated clone, never the user checkout's refs, remotes or config"
+    ),
     "heal_git_artifacts.py": (
         "reclaims only provably stale skill locks and managed-prefix worktrees: dead-PID plus age guard for locks;"
         " a worktree holding uncommitted work is reported, never removed; orphans only with --include-orphans"

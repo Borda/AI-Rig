@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.76.1
+
+- The artifact-lifecycle rule now states that the SessionEnd cleanup deletes any file older than 30 days anywhere under `.cache/`, not only `.cache/gh/`, so durable state is never placed there. It also registers `.evolution/` (the `/oss:analyse evolution` scan store) as a manual-retention directory.
+
 ## 0.76.0
 
 - `/foundry:create` and `foundry:creator` now produce two visual formats. An animated SVG uses SMIL with no script or external resources, so it plays inside an `<img>` embed. A short video of up to 60 s is written as a HyperFrames HTML composition with one scene per story beat. For short video the skill requires Node 22+ and only warns when `ffmpeg` is missing. Once you choose to generate, it scaffolds the project with `npx hyperframes init --skip-skills` with telemetry disabled. It renames the vendor `CLAUDE.md`/`AGENTS.md` the scaffold copies in, so agents never load them as instructions. It then prints asset-copy, check, preview and render commands for you to run; these use the scaffold's version-pinned npm scripts with the same telemetry opt-out. Stopping early prints resume commands that reuse the approved outline. It never runs HyperFrames sign-in, skill installs, publish or cloud renders.

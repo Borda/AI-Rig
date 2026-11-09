@@ -71,17 +71,17 @@ text{font-family:Inter, "SF Pro Text", -apple-system, "Segoe UI", Roboto, Helvet
 <path d="M725,494 L725,534" fill="none" stroke="#5b66b3" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar-flow)"/>
 <g class="fi" style="--d:0.62s"><rect x="40" y="534" width="390" height="112" rx="12" fill="#fff" stroke="#c8ccf2" stroke-width="1.3" filter="url(#sh)"/><rect x="40" y="535" width="5.5" height="110" rx="2.75" fill="#6670b8"/>
 <text x="56" y="553" font-size="10.5" fill="#4b559f" font-weight="700" text-anchor="start" letter-spacing="0.6">SCOPE CONTEXT</text>
-<text x="56" y="571" font-size="14.5" fill="#1c2150" font-weight="700" text-anchor="start">Classify scope and read the diff</text>
-<text x="56" y="591" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">classify scope</tspan> · Python context</text>
+<text x="56" y="571" font-size="14.5" fill="#1c2150" font-weight="700" text-anchor="start">Primary review (blueprint retained)</text>
+<text x="56" y="591" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">local: scope</tspan> · blueprint or skip</text>
 <text x="56" y="607.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">primary diff review</tspan></text>
 <text x="56" y="624.0" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">PR: <tspan font-style="italic">triage online concerns</tspan></text>
 <text x="56" y="640.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">isolated worktree only</tspan></text>
 </g>
 <g class="fi" style="--d:0.68s"><rect x="530" y="534" width="390" height="112" rx="12" fill="#fff" stroke="#c8ccf2" stroke-width="1.3" filter="url(#sh)"/><rect x="530" y="535" width="5.5" height="110" rx="2.75" fill="#e0a010"/>
 <text x="546" y="553" font-size="10.5" fill="#a86f00" font-weight="700" text-anchor="start" letter-spacing="0.6">CLOSE SCREEN · OPEN PR ONLY</text>
-<text x="546" y="571" font-size="14.5" fill="#1c2150" font-weight="700" text-anchor="start">Proposal-level close gate</text>
+<text x="546" y="571" font-size="14.5" fill="#1c2150" font-weight="700" text-anchor="start">Blueprint, then proposal close gate</text>
 <g><path d="M878.0,570.0 L884.0,579.4 L896.0,579.4 L902.0,570.0 L902.0,574.6 L896.0,583.9 L884.0,583.9 L878.0,574.6 Z" fill="#f2cb75" stroke="#e0a010" stroke-width="1.2" stroke-linejoin="round"/><polygon points="902.0,570.0 896.0,578.1 884.0,578.1 878.0,570.0 884.0,561.9 896.0,561.9" fill="#fff0c9" stroke="#e0a010" stroke-width="1.2" stroke-linejoin="round"/><path d="M886.2,570.0 l2.6,2.4 l5.0,-4.8" fill="none" stroke="#e0a010" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></g>
-<text x="546" y="591" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">8 close codes</tspan> · <tspan font-style="italic">advisory only</tspan></text>
+<text x="546" y="591" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">T0 blueprint or skip</tspan> · <tspan font-style="italic">8 close codes</tspan></text>
 <text x="546" y="607.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">needs <tspan font-weight="700" fill="#1c2150">conf ≥ 0.90</tspan> + 2 sources</text>
 <text x="546" y="624.0" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">counterevidence · bound to head</tspan></text>
 <text x="546" y="640.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">public-HTTPS evidence cannot close</tspan></text>
@@ -247,12 +247,12 @@ text{font-family:Inter, "SF Pro Text", -apple-system, "Segoe UI", Roboto, Helvet
 <path d="M480,1890 L480,1928" fill="none" stroke="#d6284a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar-bypass)"/>
 <g class="fi" style="--d:2.12s"><rect x="496.0" y="1899" width="332.9" height="19.5" rx="9.8" fill="#fee6e2" stroke="#e0503f" stroke-width="1.1"/><text x="505.0" y="1912.6" font-size="10.5" fill="#b8321f" font-weight="700" text-anchor="start">checkpoint fails · permitted recovery exhausted</text></g>
 <g class="fi" style="--d:2.18s"><rect x="40" y="1928" width="880" height="86" rx="12" fill="#fff" stroke="#c8ccf2" stroke-width="1.3" filter="url(#sh)"/><rect x="40" y="1929" width="5.5" height="84" rx="2.75" fill="#e0503f"/>
-<text x="56" y="1947" font-size="10.5" fill="#b8321f" font-weight="700" text-anchor="start" letter-spacing="0.6">RECOVERY · ANY FAILED CHECKPOINT</text>
+<text x="56" y="1947" font-size="10.5" fill="#b8321f" font-weight="700" text-anchor="start" letter-spacing="0.6">RECOVERY · GENUINE REMAINING DECISION</text>
 <text x="56" y="1965" font-size="14.5" fill="#1c2150" font-weight="700" text-anchor="start">Incomplete review decision (native question tool)</text>
 <g><path d="M878.0,1964.0 L884.0,1973.4 L896.0,1973.4 L902.0,1964.0 L902.0,1968.6 L896.0,1977.9 L884.0,1977.9 L878.0,1968.6 Z" fill="#f2cb75" stroke="#e0a010" stroke-width="1.2" stroke-linejoin="round"/><polygon points="902.0,1964.0 896.0,1972.1 884.0,1972.1 878.0,1964.0 884.0,1955.9 896.0,1955.9" fill="#fff0c9" stroke="#e0a010" stroke-width="1.2" stroke-linejoin="round"/><path d="M886.2,1964.0 l2.6,2.4 l5.0,-4.8" fill="none" stroke="#e0a010" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></g>
 <text x="56" y="1985" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">Continue</tspan> / <tspan font-weight="700" fill="#1c2150">Skip</tspan> <tspan font-style="italic">interrupted check</tspan></text>
 <text x="56" y="2001.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">other: New review · Resume last one · Stop</tspan></text>
-<text x="490" y="1985" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">findings preliminary until answered</tspan></text>
+<text x="490" y="1985" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">ordering lapse: disclose + continue</tspan></text>
 </g>
 <rect x="40" y="2042" width="5" height="15" rx="2.5" fill="#6670b8"/>
 <text x="52" y="2054" font-size="11" fill="#6670b8" font-weight="700" text-anchor="start" letter-spacing="1.1">ROUTES — STAGE × PATH</text>

@@ -998,7 +998,7 @@
     },
     "38d906cb2b629585d51bfef740101930cbab0e1dbf82e7f03f0eb61f8f0f72d4": {
       "kind": "command",
-      "src": "rules/_full/artifact-lifecycle.md:42"
+      "src": "rules/_full/artifact-lifecycle.md:44"
     },
     "38e5ea30a1f01c61a9f05fa42225783fdde497196c52094facb71e56f6bd4b0c": {
       "kind": "command",
@@ -1642,7 +1642,7 @@
     },
     "5b9cfb27ca83c24829cc858f384a9037fccb2b1690f96cfe6306262912c7793d": {
       "kind": "command",
-      "src": "rules/_full/artifact-lifecycle.md:42"
+      "src": "rules/_full/artifact-lifecycle.md:44"
     },
     "5bcd5cfd935936423005fdbd898adc4760946238f8bf9e75358b5e8eb2109cba": {
       "kind": "command",
@@ -3286,7 +3286,7 @@
     },
     "b2bc112cae8b326c160c3d7bb008f1ff6a6e7b8cd89b8d81046ce035adad487f": {
       "kind": "block",
-      "src": "rules/_full/artifact-lifecycle.md:42"
+      "src": "rules/_full/artifact-lifecycle.md:44"
     },
     "b2cd73c5d38197a1499560f7ebc3637c06806a5c03f790cf393001ddf0ec77e5": {
       "kind": "command",
@@ -3330,7 +3330,7 @@
     },
     "b58d43271b427be4b79722989cfc4e80ec298321edec938f75d943a3707f9ef1": {
       "kind": "command",
-      "src": "rules/_full/artifact-lifecycle.md:42"
+      "src": "rules/_full/artifact-lifecycle.md:44"
     },
     "b64e4797535b743279f1036f11cdafd981e2909f403bc8839c9f635b79cffcba": {
       "kind": "command",
@@ -4258,7 +4258,7 @@
     },
     "ee0372fa2f235319f084451f83f79ab04b507a6d38886516f717336b43f2d68a": {
       "kind": "command",
-      "src": "rules/_full/artifact-lifecycle.md:42"
+      "src": "rules/_full/artifact-lifecycle.md:44"
     },
     "ee4c8fcb2e2130425c5c7cf6fc5b49f115645c65efbcbc42c7fd224f9a3cf878": {
       "kind": "command",
@@ -4585,6 +4585,6 @@
       "src": "skills/audit/templates/checks-skills-gaps.md:49"
     }
   },
-  "plugin": "cc_foundry@0.76.0",
+  "plugin": "cc_foundry@0.76.1",
   "schema": 1
 }

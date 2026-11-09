@@ -8,9 +8,9 @@ paths:
 
 Runtime artifacts at **project root** dot-dirs — never inside `.claude/`:
 
-- `.temp/<skill>/<ts>/` — intermediate/handover files · `.reports/<skill>/<ts>/` — final consolidated reports · `.plans/{blueprint,active,closed}` — specs/todos/results · `.notes/` — lessons, diary · `.cache/gh/` — GitHub API cache · `.experiments/`, `.developments/` — research/develop runs
+- `.temp/<skill>/<ts>/` — intermediate/handover files · `.reports/<skill>/<ts>/` — final consolidated reports · `.plans/{blueprint,active,closed}` — specs/todos/results · `.notes/` — lessons, diary · `.cache/gh/` — GitHub API cache · `.experiments/`, `.developments/` — research/develop runs · `.evolution/<host>/<owner>/<repo>/` — `/oss:analyse evolution` durable scan store
 - Run-dir timestamp: `$(date -u +%Y-%m-%dT%H-%M-%SZ)` (UTC, dashes, filesystem-safe); completed run contains `result.jsonl`
-- TTL: dot-prefixed artifact dirs gitignored, auto-cleaned at 30 days; `.plans/active|closed` and `.notes/` manual — never auto-delete
+- TTL: dot-prefixed artifact dirs gitignored, auto-cleaned at 30 days; `.plans/active|closed`, `.notes/` and `.evolution/` manual — never auto-delete; never place durable state under `.cache/`, `.temp/` or `.plans/blueprint/` (the SessionEnd sweep deletes any file there older than 30 days)
 
 ## Evidence Isolation — Plans and Benchmarks Never Ship
 

@@ -14,7 +14,7 @@ does not decide workflow findings, execute project gates, inspect chat transcrip
 ## Usage
 
 New handoffs set ``presentation_version=13`` for remediation resolution explanations, readable actions, confidence
-bullets, linked artifacts, terminal status tables and paths outside terminal tables.
+bullets, linked artifacts, terminal status tables, verification log links in rows and other paths outside tables.
 Historical versions retain their exact presentation.
 Run ``render`` after gates and handoff creation, then run ``check``
 directly or through the shared artifact validator
@@ -1199,7 +1199,9 @@ def render_selection(payload: object) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _externalize_table_paths(markdown: str, *, readable_breaks: bool = False) -> str:
+def _externalize_table_paths(
+    markdown: str, *, readable_breaks: bool = False, keep_verification_table: bool = False
+) -> str:
     """Move table destinations into item-labelled lists, retaining surrounding action text.
 
     Input is our deterministic table renderer, not an arbitrary Markdown parser. Historical renderings never enter this
@@ -1245,6 +1247,7 @@ def _externalize_table_paths(markdown: str, *, readable_breaks: bool = False) ->
                 rendered.append(lines[index])
             index += 1
             continue
+        table_start = index
         table: list[list[str]] = []
         while index < len(lines) and lines[index].startswith("|"):
             table.append(
@@ -1256,6 +1259,10 @@ def _externalize_table_paths(markdown: str, *, readable_breaks: bool = False) ->
             index += 1
         if len(table) < 2:
             rendered.extend("| " + " | ".join(_table_cell(cell) for cell in row) + " |" for row in table)
+            continue
+        # Current verification rows retain their evidence links; other tables keep external path lists.
+        if keep_verification_table and table[0] == ["Check", "Status", "Evidence"]:
+            rendered.extend(lines[table_start:index])
             continue
         # Evidence-only columns disappear; mixed cells retain a reference to their complete detail.
         removed = {
@@ -1390,6 +1397,7 @@ def render_handoff(payload: object, *, report_root: Path | None = None) -> str:
                 field_tables=handoff["presentation_version"] == 13,
             ),
             readable_breaks=handoff["presentation_version"] == 13,
+            keep_verification_table=handoff["presentation_version"] == 13,
         )
 
     if handoff.get("presentation_version") in {2, 3, 4, 5, 6, 7}:

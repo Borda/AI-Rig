@@ -55,8 +55,10 @@ class TestHandoffActionOrder:
         assert rendered.index("**Artifact**") < rendered.index("**Next steps**")
         assert payload == before
 
-    def test_v13_action_and_verification_paths_stay_outside_tables(self, finalizer: Any, tmp_path: Path) -> None:
-        """Action paths and existing gate logs retain their exact destinations below the respective tables."""
+    def test_v13_verification_links_stay_in_table_and_action_paths_stay_outside(
+        self, finalizer: Any, tmp_path: Path
+    ) -> None:
+        """Verification logs stay clickable in their rows while action paths retain their external list."""
         payload = _standard_payload(finalizer, "implement", 13)
         payload["remaining"][0]["next_action"] = "Inspect `src/worker.py` and rerun."
         payload["verification"][3]["evidence"] = "tests.stdout.txt"
@@ -66,9 +68,10 @@ class TestHandoffActionOrder:
         table_lines = "\n".join(line for line in rendered.splitlines() if line.startswith("|"))
 
         assert "src/worker.py" not in table_lines
-        assert tmp_path.as_posix() not in table_lines
+        assert "| Check | Status | Evidence |" in table_lines
+        assert f"| tests | pass | [Log](<{tmp_path.as_posix()}/tests.stdout.txt>) |" in table_lines
         assert "- External CI: src/worker.py" in rendered
-        assert f"- tests: {tmp_path.as_posix()}/tests.stdout.txt" in rendered
+        assert "- tests:" not in rendered
         assert "Inspect" in rendered
         assert "and rerun." in rendered
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.57.0
+
+- New `/oss:analyse evolution [owner/repo | url] [v1->v2]` mode shows, across releases, which features each fix repairs and which release introduced them. It links changelog "Added", "Changed" and "Fixed" entries to commits (SHA, PR, closing issue, then a low-confidence text match), blames the source lines each fix changed, and scores a feature × fix matrix. A fix can repair several features. Releases without a changelog section fall back to conventional-commit prefixes, marked as low confidence.
+- The report is one self-contained HTML page with inline SVG charts and no external script, plus a Markdown summary with static SVGs. It holds a fix-flow Sankey and release heatmap coloured by origin age, the most-fixed features, a burn-up of features, fixes and open bugs (marked approximate), a panel for bugs fixed before they shipped, and a count of every fix it could not place.
+- Scans are stored in `.evolution/<host>/<owner>/<repo>/`, which no cleanup sweep touches. A rerun resumes an interrupted scan, adds new releases and rescores from stored evidence and changelog links without blaming or querying GitHub again. Corrections in `overrides.csv` survive reruns and `--full`. A store lock stops two runs from writing at once, and moved or deleted upstream tags are picked up in the dedicated clone; your own checkout is never fetched or reconfigured.
+- The scan asks which releases to cover when no range is given, and remembers the choice. New flags: `--full`, `--break-lock`, `--adjudicate` (LLM decides ambiguous rows; off by default) and `--bug-labels`. Scoring weights are provisional until checked against hand-labelled fixes with the new `evolution_eval.py`, and the report says so.
+
 ## 0.56.6
 
 - `/oss:release` inline `notes` runs grade CHANGELOG problems like the delegated audit: a classified item with no PR or commit is flagged `high`, and a commit pulled in by a non-PR merge with no prior CHANGELOG entry is flagged `medium` ("unreviewed branch merge"). The setup block is described as running on every `notes`/`demo` run, inline or delegated, since it also creates the waived-changes ledger, and the `notes`-versus-`prepare` note now matches what `notes` actually spawns and writes.

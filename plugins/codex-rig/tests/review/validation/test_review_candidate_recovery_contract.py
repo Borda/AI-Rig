@@ -964,6 +964,35 @@ def test_interrupted_review_offers_continue_or_skip_without_restart() -> None:
     assert "never for interrupted checks or missed ordering" in standalone
 
 
+def test_missed_ordering_recovers_without_a_user_waiver() -> None:
+    """A missed blueprint must not trap a usable review behind a pointless choice."""
+    lines = REVIEW_REPORT_RECOVERY.read_text(encoding="utf-8").splitlines()
+    recovery = next(line for line in lines if line.startswith("For a missed ordering checkpoint"))
+    assert "without a Continue/Skip question" in recovery
+    assert "never recreate or backdate blind evidence" in recovery
+    assert "normal finalization, both validators, promotion and completion" in recovery
+    assert "does not by itself prevent review completion" in recovery
+    assert "substantive coverage" in recovery
+    assert "required independence" in recovery
+    assert "validator failures retain their normal consequences" in recovery
+    assert any("existing Continue choice" in line and "do not ask again" in line for line in lines)
+    entry = CODE_REVIEW_SKILL.read_text(encoding="utf-8").splitlines()
+    assert not any("using `Continue`/`Skip` for interrupted checks or missed ordering" in line for line in entry)
+    source = (CODE_REVIEW_SKILL.parent / "references/source-and-scope.md").read_text(encoding="utf-8").splitlines()
+    assert not any("interrupted-check/ordering Continue or Skip" in line for line in source)
+
+
+def test_blind_blueprint_precedes_close_screen_diff_access() -> None:
+    """Close screening must preserve the applicable pre-diff blind checkpoint."""
+    lines = (CODE_REVIEW_SKILL.parent / "references/source-and-scope.md").read_text(encoding="utf-8").splitlines()
+    close = next(line for line in lines if line.startswith("**Terminal close gate"))
+    assert "before any diff evidence" in close
+    assert "blind blueprint or its documented applicability skip" in close
+    assert "minimal verified diff evidence" not in close
+    entry = CODE_REVIEW_SKILL.read_text(encoding="utf-8").splitlines()
+    assert any("Before opening any diff or changed source" in line and "close screening" in line for line in entry)
+
+
 def test_review_entry_requires_table_delivery_before_any_exit() -> None:
     """Prevent early or clean review exits from bypassing the table delivery contract."""
     entry = flat(_before(_read(CODE_REVIEW_SKILL), "## Workflow"))

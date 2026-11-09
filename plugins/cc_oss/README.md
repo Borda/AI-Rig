@@ -152,7 +152,7 @@ ______________________________________________________________________
 
 ### /oss:analyse
 
-Analyse GitHub threads + repo vitality. Accepts issue/PR number, keyword `vitality`, keyword `ecosystem`, or path to saved report file.
+Analyse GitHub threads + repo vitality + release evolution. Accepts issue/PR number, keyword `vitality`, keyword `ecosystem`, keyword `evolution`, or path to saved report file.
 
 **Execution architecture** — animated diagram of fans, joins and gates.
 
@@ -160,7 +160,7 @@ Analyse GitHub threads + repo vitality. Accepts issue/PR number, keyword `vitali
 
 **Purpose:** Structured actionable summary of any GitHub thread, or broad view of open work. No need to read every comment yourself.
 
-**Auto-invokes when:** user gives GitHub issue/PR number (`#N`) or `github.com` URL + asks analyze/summarize/triage; user asks "is this repo healthy" or vitality stats.
+**Auto-invokes when:** user gives GitHub issue/PR number (`#N`) or `github.com` URL + asks analyze/summarize/triage; user asks "is this repo healthy" or vitality stats; user asks which release introduced the features that later releases fixed, or for a fix-lineage / feature burn-up chart.
 
 **Invocation:**
 
@@ -169,16 +169,22 @@ Analyse GitHub threads + repo vitality. Accepts issue/PR number, keyword `vitali
 /oss:analyse vitality           # repo vitality: 9-axis health scorecard, duplicate clustering, raw data JSONL
 /oss:analyse vitality --quick   # fast daily scorecard: core scoring only, skips codex + adversarial passes
 /oss:analyse ecosystem          # dependency health, upstream compatibility
+/oss:analyse evolution          # feature × fix lineage across releases of this repo (asks for the release scope)
+/oss:analyse evolution owner/repo v1.0.0->v2.0.0   # another repo, explicit range
 /oss:analyse path/to/report.md  # re-analyse a saved report
 ```
 
 **Flags:**
 
-| Flag               | Effect                                                                                                                                                                                 |
-| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--reply`          | Draft contributor-facing response after analysis (routed through `oss:shepherd` for voice consistency)                                                                                 |
-| `--quick`          | Vitality only: fast daily scorecard — skips Codex independent review + adversarial rework loop, reduces to 4 spawns. Full (reviewed) mode = default; confidence is lower in quick mode |
-| `--keep "<items>"` | Append quoted string to compaction contract's `preserve:` line — items survive auto-compact mid-run (advanced; long multi-agent sessions)                                              |
+| Flag                   | Effect                                                                                                                                                                                 |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--reply`              | Draft contributor-facing response after analysis (routed through `oss:shepherd` for voice consistency)                                                                                 |
+| `--quick`              | Vitality only: fast daily scorecard — skips Codex independent review + adversarial rework loop, reduces to 4 spawns. Full (reviewed) mode = default; confidence is lower in quick mode |
+| `--full`               | Evolution only: rebuild the scan store from scratch; keeps the clone, your `overrides.csv` and saved LLM verdicts                                                                      |
+| `--break-lock`         | Evolution only: remove a store lock the run cannot prove stale (another host, or native Windows), after you confirm                                                                    |
+| `--adjudicate`         | Evolution only: let an LLM decide fix rows whose evidence is ambiguous; off by default until the Phase 0 evaluation shows it helps                                                     |
+| `--bug-labels "<a,b>"` | Evolution only: replace the default bug label set (`bug`, `type: bug`, `kind/bug`, `type/bug`) for the open-bugs line                                                                  |
+| `--keep "<items>"`     | Append quoted string to compaction contract's `preserve:` line — items survive auto-compact mid-run (advanced; long multi-agent sessions)                                              |
 
 **What it does:**
 
@@ -188,6 +194,11 @@ Analyse GitHub threads + repo vitality. Accepts issue/PR number, keyword `vitali
 - **`vitality`:** pulls open issues + PRs, scores the repo across 9 axes (Axes 1–8 plus Axis 9 Trajectory), clusters duplicates, flags threads stale beyond the project threshold, and gives a prioritised triage list with a weighted Health Score %. All raw API data is saved to a JSONL file beside the report.
   - With a codemap index the report gains an Open-PR Overlap note (pairwise changed-file overlap plus tightly-coupled-module conflict candidates) and a Structural Constraints block (highest-blast-radius modules, collision/degraded/stale index signals).
   - Every codemap signal is optional — no index or plugin absent → GitHub-only behavior, gap flagged inline, never blocks.
+- **`evolution`:** traces which features each fix repairs and which release introduced them. It reads the changelog ("Added", "Changed", "Fixed" sections; conventional-commit fallback for releases without one), links entries to commits (SHA, PR, closing issue, then a low-confidence text match), and blames the lines each fix changed (SZZ, source files only). The result is a feature × fix association matrix with a soft view (each fix sums to 1, for release totals) and a binary view (one fix can repair several features).
+  - The report shows a fix-flow Sankey and release heatmap coloured by origin age (previous release, 2–5 back, legacy), the most-fixed features, a burn-up of features, fixes and approximate open bugs, a same-cycle panel for bugs fixed before they shipped, and every fix it could not place (`unlinked`, `unattributable`, `timed_out`, `unadjudicated`, `unknown`).
+  - All charts are inline SVG in one self-contained HTML file; no CDN, no script. A Markdown report with static SVGs sits beside it.
+  - Results live in a durable store, `.evolution/<host>/<owner>/<repo>/`, outside every TTL sweep. A rerun resumes an interrupted scan, adds new releases, and rescores from stored evidence without blaming again. Correct any cell in `overrides.csv` (`fix_id,column_id,assert|deny,note`); corrections survive reruns and `--full`.
+  - Scoring weights stay provisional until they are checked against hand-labelled fixes with `bin/evolution_eval.py`; the report says so while they are.
 
 **Sample vitality scorecard (terminal output):**
 
@@ -226,6 +237,7 @@ Bus factor of 2 is the primary risk. Dependency update config absent.
 - Thread analysis: `.reports/analyse/thread/`
 - Vitality report: `.reports/analyse/vitality/`
 - Ecosystem report: `.reports/analyse/ecosystem/`
+- Evolution report: `.reports/analyse/evolution/<host>-<owner>-<repo>-<date>/` (`report.md`, `report.html`, SVGs); scan store: `.evolution/<host>/<owner>/<repo>/` (never auto-deleted)
 
 GitHub API responses are cached in `.cache/gh/` by number and date (30-day TTL) — repeated calls on the same thread are fast.
 

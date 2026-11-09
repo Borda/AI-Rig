@@ -2,9 +2,9 @@
 name: analyse
 description: |
   Analyze GitHub issues, Pull Requests (PRs), Discussions, and repo vitality for an Open Source Software (OSS) project. For any specific item, casts a wide net — finds and lists all related open and closed issues/PRs/discussions, explicitly flags duplicates. Summarizes long threads, extracts reproduction steps, and generates repo vitality stats. Uses gh Command Line Interface (CLI) for GitHub Application Programming Interface (API) access. Complements oss:shepherd (requires `oss` plugin). NOT for PR readiness assessment or code review (use oss:review).
-  TRIGGER when: user provides GitHub issue number (#N), PR number, or github.com URL with issue/PR/discussion path AND asks to analyze, summarize, understand, or triage it; user asks for repo vitality stats or "is this repo healthy".
+  TRIGGER when: user provides GitHub issue number (#N), PR number, or github.com URL with issue/PR/discussion path AND asks to analyze, summarize, understand, or triage it; user asks for repo vitality stats or "is this repo healthy"; user asks which release introduced the features later releases fixed, for a fix-lineage/fix-flow chart, or a feature/fix burn-up across releases (`evolution`).
   SKIP: user already pasted full thread text inline; oss:resolve already active on same PR; user wants code review (use oss:review); user phrasing is "review PR" meaning code quality assessment, not thread triage (route to oss:review).
-argument-hint: <N|vitality [<owner>/<repo>|github-url]|ecosystem|path/to/report.md> [--reply] [--quick] [--keep "<items>"]
+argument-hint: <N|vitality [<owner>/<repo>|github-url]|ecosystem|evolution [<owner>/<repo>|url] [v1->v2]|path/to/report.md> [--reply] [--quick] [--full] [--break-lock] [--adjudicate] [--bug-labels "<a,b>"] [--keep "<items>"]
 allowed-tools: Read, Bash, Write, Edit, Agent, Skill, AskUserQuestion, TaskList, TaskCreate, TaskUpdate
 effort: high
 ---
@@ -23,6 +23,7 @@ NOT for implementing PR action items (use oss:resolve). NOT for **code-quality a
   - `N` (number, plain `123` or `#123`) — any GitHub thread: issue, PR, or discussion; auto-detects type
   - `vitality [<owner>/<repo> | <github-url>]` — repo vitality overview with 9-axis health scorecard, duplicate detection. Optional repo argument accepts `owner/repo` shorthand or full `https://github.com/owner/repo` URL. Omitted → auto-detected from git upstream. Non-GitHub remotes (GitLab, Bitbucket, etc.) stop with warning.
   - `ecosystem` — downstream consumer impact analysis for library maintainers
+  - `evolution [<owner>/<repo> | <url>] [v1->v2]` — release evolution: feature × fix association matrix (which features each fix repairs), fix-lineage flow coloured by origin age, feature/fix burn-up with approximate open bugs. Durable store under `.evolution/<host>/<owner>/<repo>/`: reruns resume, extend and rescore; user corrections in its `overrides.csv`. Flags (evolution only, ignored elsewhere): `--full` rebuild the store (keeps clone, overrides, saved LLM verdicts) · `--break-lock` remove a lock the run cannot prove stale, after confirmation · `--adjudicate` LLM step for ambiguous rows (off by default until Phase 0 evaluation enables it) · `--bug-labels "<a,b>"` replace the default bug label set
   - `--reply` — only valid with `N`; spawns shepherd to draft contributor-facing reply after thread analysis. Silently ignored for `vitality` and `ecosystem`.
   - `--quick` — only meaningful with `vitality`; fast daily-scorecard path skipping Codex independent review (Step 5) and mandatory adversarial rework loop (Step 6), reduces spawns to core 4 (gh-scraper + 3 axis scorers). Full mode (all quality passes) stays default. Silently ignored for `N`, `ecosystem`, report-path modes.
   - `path/to/report.md` — path to existing report file; only valid combined with `--reply`; skips all analysis, spawns shepherd directly using provided file
@@ -64,9 +65,9 @@ Resolved in Step 1's setup block — the `--reply` hard-fail branch needs `REPLY
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-# flags: --reply, --quick (vitality fast-path: skips codex review + adversarial rework; ignored for N/ecosystem), --keep
-# shared flag/--keep parser (C5; also resolve/review SKILL.md); --keep-state: no eval, writes analyse-{reply,quick,clean-args,keep-items}-${CSID} (compaction-contract.md §keep: semantics), owner-safe clear of a crashed run's stale contract (§Lifecycle)
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/parse-skill-flags.py" --flags reply,quick --keep-state analyse "$ARGUMENTS" >/dev/null  # timeout: 5000
+# flags: --reply, --quick (vitality fast-path: skips codex review + adversarial rework; ignored for N/ecosystem), --keep; evolution-only: --full, --break-lock, --adjudicate, --bug-labels (modes/evolution.md reads their sentinels)
+# shared flag/--keep parser (C5; also resolve/review SKILL.md); --keep-state: no eval, writes analyse-{reply,quick,full,break-lock,adjudicate,bug-labels,clean-args,keep-items}-${CSID} (compaction-contract.md §keep: semantics), owner-safe clear of a crashed run's stale contract (§Lifecycle)
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/parse-skill-flags.py" --flags reply,quick,full,break-lock,adjudicate --value-flags bug-labels --keep-state analyse "$ARGUMENTS" >/dev/null  # timeout: 5000
 IFS= read -r REPLY_MODE < "${TMPDIR:-/tmp}/analyse-reply-${CSID}" 2>/dev/null || REPLY_MODE=false
 IFS= read -r QUICK_MODE < "${TMPDIR:-/tmp}/analyse-quick-${CSID}" 2>/dev/null || QUICK_MODE=false
 IFS= read -r CLEAN_ARGS < "${TMPDIR:-/tmp}/analyse-clean-args-${CSID}" 2>/dev/null || CLEAN_ARGS=""
@@ -105,7 +106,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/parse_analyse_args.py" --args 
 
 **Unsupported flag check** — after all supported flags extracted, scan `$ARGUMENTS` for any remaining `--<token>` tokens. If found: invoke `AskUserQuestion` with:
 
-- question: "Unknown flag(s): `--<token>`. Supported: `--reply`, `--quick`, `--keep`. How to proceed?"
+- question: "Unknown flag(s): `--<token>`. Supported: `--reply`, `--quick`, `--keep`; evolution only: `--full`, `--break-lock`, `--adjudicate`, `--bug-labels`. How to proceed?"
 - (a) Abort — re-invoke with correct flags
 - (b) Continue ignoring unknown flags
 
@@ -279,8 +280,9 @@ Read and execute the mode file from `${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/skill
 | number (any type) | `modes/thread.md` |
 | `vitality` | `modes/vitality.md` |
 | `ecosystem` | `modes/ecosystem.md` |
+| `evolution …` | `modes/evolution.md` |
 
-> loads: vitality-report.md (used by modes/vitality.md as REPORT_TPL)
+> loads: vitality-report.md (used by modes/vitality.md as REPORT_TPL) loads: evolution.md (evolution mode; drives `bin/evolution_scan.py`)
 
 Run the boundary block below after the mode file's gather/fetch finishes, before synthesis — not before dispatch:
 
@@ -334,6 +336,14 @@ Invoke `AskUserQuestion`. In both menus, the question text carries at most 6 pla
 - `<N>` below = the highest-priority thread or PR number named in the report, substituted before asking; the report names none → omit options (a) and (b)
 - (a) label: `/oss:analyse <N> --reply` — description: draft reply for that thread
 - (b) label: `/oss:review <N>` — description: full code review of that PR (requires `oss` plugin; only when `<N>` is a PR)
+- (c) label: `skip` — description: no action
+
+**Evolution mode** (`$CLEAN_ARGS` starts with `evolution`):
+
+- header: `oss-analyse`
+- question: `Title: <report Title>`; `Outcome: <report Outcome>`; fix count, residue share, provisional-weights note when present; `→ <REPORT_FILE>`; `What next?`; "Long wait? `/compact` now — store saved, resume lossless." Use short plain lines, not a table.
+- (a) label: `revise` — description: edit `<store root>/overrides.csv` (one line per cell: fix_id, column_id, assert|deny, note), then rerun `/oss:analyse $CLEAN_ARGS` to rescore with no new blame
+- (b) label: `adjudicate` — description: rerun with `--adjudicate` so the LLM decides the ambiguous rows (only when the report lists any)
 - (c) label: `skip` — description: no action
 
 ### 6b — Confidence block (REPLY_MODE=false only)
@@ -395,7 +405,7 @@ rm -f .temp/state/skill-contract.md  # skill complete (compaction-contract.md §
 
 <calibration>
 
-Calibratable modes: thread (duplicate detection recall), vitality (repo vitality metrics accuracy), ecosystem (impact analysis accuracy).
+Calibratable modes: thread (duplicate detection recall), vitality (repo vitality metrics accuracy), ecosystem (impact analysis accuracy), evolution (fix → feature association precision/recall against hand-labelled fixes via `bin/evolution_eval.py`; bars: precision ≥0.70, recall ≥0.50, residue ≤35%).
 
 Scenarios:
 

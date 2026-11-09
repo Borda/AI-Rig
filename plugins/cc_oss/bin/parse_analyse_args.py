@@ -4,8 +4,8 @@
 Two modes, one per Step-1 argument-parsing stage of ``oss:analyse``:
 
 ``--mode classify``
-    Decide whether ``CLEAN_ARGS`` names a direct report path (``*.md`` that is neither a ``vitality``/``ecosystem``
-    keyword nor a plan/todo file) and make sure the ``analyse-today`` sentinel exists so later steps cannot straddle a
+    Decide whether ``CLEAN_ARGS`` names a direct report path (``*.md`` that is neither a ``vitality``/``ecosystem``/
+    ``evolution`` keyword nor a plan/todo file) and make sure the ``analyse-today`` sentinel exists so later steps cannot straddle a
     midnight rollover.
 
 ``--mode vitality`` (default)
@@ -209,7 +209,7 @@ def classify_report_path(clean_args: str) -> tuple[bool, str]:
         >>> classify_report_path("42")
         (False, '')
     """
-    if not clean_args.endswith(".md") or clean_args.startswith(("vitality", "ecosystem")):
+    if not clean_args.endswith(".md") or clean_args.startswith(("vitality", "ecosystem", "evolution")):
         return False, ""
     if clean_args.startswith(".plans/") or "todo_" in clean_args:
         raise _Abort(
