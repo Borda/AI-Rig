@@ -33,6 +33,7 @@ This repository's own convention, not shipped policy: other projects commonly de
 - Before changing any shipped version or serialized artifact schema, identify its version family and read that family's value from the last committed `HEAD`; do not use an earlier uncommitted edit or an unrelated nested version as the baseline.
 - A changed integer schema advances exactly one step from its committed current value. A new version family starts at 1. Keep older versions only as explicitly labeled historical readers; several revisions before the next commit still produce one bump from `HEAD`.
 - Check the proposed value against `HEAD` before handoff and record the comparison with the affected verification. Reject skipped or downgraded versions. Plugin release versions also follow the separate SemVer pre-bump gate in `plugins/CLAUDE.md`.
+- One step per commit, never skipped: every commit that changes a version family moves it exactly one step past the value in that commit's own parent. Amending, rebasing or squashing a commit that already carries a bump uses its parent as baseline (`HEAD~1` for `git commit --amend`), not `HEAD`: keep the existing bump rather than adding another, and roll back any second bump to one step past the parent.
 
 ## Edit Scope — Hard Constraint
 

@@ -42,10 +42,10 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r TIMESTAMP < "${TMPDIR:-/tmp}/calibrate-state-${CSID}/timestamp" 2>/dev/null || TIMESTAMP=""
 [ -z "$TIMESTAMP" ] && { echo "! TIMESTAMP state lost — re-invoke /foundry:calibrate"; exit 1; }
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/calibrate-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_agent_file.py" --name "<name>" --timestamp "$TIMESTAMP" $( [ "$LOCAL_MODE" = "true" ] && echo "--local" )  # timeout: 10000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_agent_file.py" --name "<name>" --timestamp "$TIMESTAMP" --run-slug "<run-slug>" $( [ "$LOCAL_MODE" = "true" ] && echo "--local" )  # timeout: 10000
 ```
 
-The script prints `agent-file=` and `proposal-path=` on stdout; read values from there, not from shell variables. Empty `agent-file=` means resolution failed: skip that target — don't spawn curator for it — the warning script already printed covers it. Never fall through to a cache path for a write target.
+`<name>` = the target (`curator`, `/oss:analyse`); `<run-slug>` = its run directory when that differs — a mode-level skill domain (`oss:analyse-vitality` resolves `/oss:analyse`) — else empty. The script prints `agent-file=` and `proposal-path=` on stdout; read values from there, not from shell variables. Empty `agent-file=` means resolution failed: skip that target — don't spawn curator for it — the warning script already printed covers it. Never fall through to a cache path for a write target.
 
 Each subagent receives this self-contained prompt (substitute `<TARGET>`, `<PROPOSAL_PATH>`, `<AGENT_FILE>` — resolved paths from above):
 

@@ -46,7 +46,7 @@ IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/calibrate-state-${CSID}/local-mode" 2
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" calibrate templates pipeline-prompt.md $([ "$LOCAL_MODE" = "true" ] && echo --local)  # timeout: 5000
 ```
 
-Use the standard pipeline template printed above with `<TARGET>=curator`, `<DOMAIN>` set to domain string above. Required substitutions: `<TARGET>`, `<DOMAIN>`, `<N>`, `<TIMESTAMP>`, `<MODE>`, `<AB_MODE>`. Spawn **single** `general-purpose` pipeline subagent — runs curator against synthetic agent responses, full/compact response pairs, team transcripts with injected violations.
+Use the standard pipeline template printed above with `<TARGET>=curator`, `<DOMAIN>` set to domain string above. Required substitutions: `<TARGET>`, `<DOMAIN>`, `<N>`, `<TIMESTAMP>`, `<MODE>`, `<AB_MODE>`; `<TARGET_LABEL>` = `<RUN_SLUG>` = `curator`; `<PROBLEM_SET_VERSION>` = SKILL.md constant; `<FLOORS_ARG>`, `<TEMPLATE_SECTIONS_NOT_FP>`, `<SEV_LABEL>` empty. Spawn **single** `general-purpose` pipeline subagent — runs curator against synthetic agent responses, full/compact response pairs, team transcripts with injected violations.
 
 **Phase 2 batching**: pipeline spawns Phase 2 target agents in **batches of 3** (not all at once), collects acknowledgments between batches. Each curator response ~1–4KB; batching prevents accumulation of all N problem inputs simultaneously. Add to pipeline prompt: "Spawn Phase 2 agents in batches of 3 — await all acknowledgments in a batch before spawning the next. Maximum batches: ceil(N/3) — for fast (N=3) that is 1 batch; for full (N=5) that is 2 batches."
 

@@ -191,7 +191,8 @@ Analyse GitHub threads + repo vitality + release evolution. Accepts issue/PR num
 - **Thread number:** fetches issue/PR, reads all comments, classifies thread type (bug report, feature request, question, duplicate, stale), produces a structured summary: what asked, current state, action needed from you, and — with `--reply` — a draft response.
   - With a codemap index, symbols/modules named in the thread are existence-checked; identifiers that no longer resolve flag the issue as referencing stale code (with a likely rename target when codemap suggests one).
   - PR mode reads review bodies and inline code comments, expands findings a bot collapsed into a `<details>` block, and merges the same finding when it recurs across review rounds.
-- **`vitality`:** pulls open issues + PRs, scores the repo across 9 axes (Axes 1–8 plus Axis 9 Trajectory), clusters duplicates, flags threads stale beyond the project threshold, and gives a prioritised triage list with a weighted Health Score %. All raw API data is saved to a JSONL file beside the report.
+  - The duplicate search reads a 400-character body snippet of every candidate, so a duplicate call rests on the reported failure rather than title words, then fetches the full thread of the top 3 potential duplicates to confirm each; an unconfirmed one is marked `(snippet only)` with "verify, then close". The canonical is the item a maintainer named, else the strongest failure match, the analysed item included.
+- **`vitality`:** pulls open issues + PRs, scores the repo across 9 axes (Axes 1–8 plus Axis 9 Trajectory), clusters duplicates, flags threads stale beyond the project threshold, and gives a prioritised triage list with a weighted Health Score % (🟢 ≥ 70%, 🟡 40–69.9%, 🔴 < 40%) and one Top Risk axis. All raw API data is saved to a JSONL file beside the report.
   - With a codemap index the report gains an Open-PR Overlap note (pairwise changed-file overlap plus tightly-coupled-module conflict candidates) and a Structural Constraints block (highest-blast-radius modules, collision/degraded/stale index signals).
   - Every codemap signal is optional — no index or plugin absent → GitHub-only behavior, gap flagged inline, never blocks.
 - **`evolution`:** traces which features each fix repairs and which release introduced them. It reads the changelog ("Added", "Changed", "Fixed" sections; conventional-commit fallback for releases without one), links entries to commits (SHA, PR, closing issue, then a low-confidence text match), and blames the lines each fix changed (SZZ, source files only). The result is a feature × fix association matrix with a soft view (each fix sums to 1, for release totals) and a binary view (one fix can repair several features).
@@ -199,6 +200,7 @@ Analyse GitHub threads + repo vitality + release evolution. Accepts issue/PR num
   - All charts are inline SVG in one self-contained HTML file; no CDN, no script. A Markdown report with static SVGs sits beside it.
   - Results live in a durable store, `.evolution/<host>/<owner>/<repo>/`, outside every TTL sweep. A rerun resumes an interrupted scan, adds new releases, and rescores from stored evidence without blaming again. Correct any cell in `overrides.csv` (`fix_id,column_id,assert|deny,note`); corrections survive reruns and `--full`.
   - Scoring weights stay provisional until they are checked against hand-labelled fixes with `bin/evolution_eval.py`; the report says so while they are.
+  - With `--adjudicate`, a model settles rows the scores leave ambiguous. It names a feature only when blame backs it: a blamed commit in that feature's footprint, a link inherited through an earlier fix, or, for an add-only fix, a blamed context line; otherwise it answers unknown. `bin/evolution_scan.py render-request` writes such a request from fix specs, for replaying one by hand.
 
 **Sample vitality scorecard (terminal output):**
 
@@ -213,8 +215,8 @@ Analyse GitHub threads + repo vitality + release evolution. Accepts issue/PR num
 Project is in healthy condition (73%) with strong CI/CD and documentation.
 Bus factor of 2 is the primary risk. Dependency update config absent.
 
-**Health Score:** 73% 🟡 · 5 healthy · 4 warning · 0 critical · 0 unavailable (⚪)
-**Top Risk:** Axis 3 bus factor = 2 — one departure stalls merges
+**Health Score:** 73% 🟢 · 5 healthy · 4 warning · 0 critical · 0 unavailable (⚪)
+**Top Risk:** Axis 3 Contributor health (conf 0.90) — bus factor = 2, one departure stalls merges
 
 ---
 

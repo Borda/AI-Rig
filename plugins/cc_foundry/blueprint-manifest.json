@@ -266,7 +266,7 @@
     },
     "0df1ef450898763fa1aa8163d10465b89b2a8077dfafcb35a99fef6e271c6d4a": {
       "kind": "command",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:39"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:43"
     },
     "0df4e358d0df4c7124ac3d8f0326d8e63fb74d0d10ec7e6d6f488bbc9732bef3": {
       "kind": "command",
@@ -558,7 +558,7 @@
     },
     "1de37c15254176d84025fff19dfa9bacea089b02c05d7567931de1a1e6c9edc3": {
       "kind": "command",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:39"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:43"
     },
     "1dff7896d4e709eb53a60cb078ef19701e5849d93360e72bd0957e964e585313": {
       "kind": "command",
@@ -598,7 +598,7 @@
     },
     "200f3308dd33ce3f2267f6c3407d4e8bf61ee71b66a98d10cc3c49a5b72cca08": {
       "kind": "command",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:39"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:43"
     },
     "2022a4c6897a39347b5a8a194ef1c07eb5cf0657c4a986619d705ef25bf2672c": {
       "kind": "command",
@@ -970,7 +970,7 @@
     },
     "3707e4d1f787dc4f3bca2334b22201a1c5d0cd3401ec0be2b7574c5e752bb101": {
       "kind": "command",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:39"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:43"
     },
     "37118195258364822b37d82b8a968fe6f02f061939cc65d22ac4ae4ca2046873": {
       "kind": "block",
@@ -1018,7 +1018,7 @@
     },
     "39ec3c245139eef59ea2aba756f4aeb267e9be8f5c7a26bf8f644810c3742847": {
       "kind": "command",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:39"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:43"
     },
     "3a474677cd23e96cccbdcf1f8a05c5b04319adc6cc74fb4b50c167667706d354": {
       "kind": "command",
@@ -1102,7 +1102,7 @@
     },
     "3da5e84dad3f8ab720277e3ce4b61000bffa16a4de725ba1fb54a25bafd6d956": {
       "kind": "command",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:39"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:43"
     },
     "3dfba49c26bbdcc04e371d4b8b2edc21d959e726435d33fab9ffdcba2f7d8482": {
       "kind": "command",
@@ -1139,6 +1139,10 @@
     "3f963a43fc7d8463ef2280d85e72ca835de6d27be18da3c819c793a6ff9b56df": {
       "kind": "command",
       "src": "skills/audit/templates/checks-skills-sweep.md:11"
+    },
+    "3fb20fd982e056b0170aa67a4130b36949b3f20a850b96e1b7c8dbaa0e49727e": {
+      "kind": "command",
+      "src": "skills/calibrate/modes/apply.md:40"
     },
     "40a70663e5e8a49692d101c19d497a954a068d6e1c2e430f496bffb112daf1e6": {
       "kind": "command",
@@ -1338,7 +1342,7 @@
     },
     "4c76d3010d479579e234879a3959339853ecebf052d629ad96672017a0ac7296": {
       "kind": "command",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:39"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:43"
     },
     "4c8c1ce2c256bc74daaec3bbc771450bc79c1e89c65ca864210e1b7a56ded66d": {
       "kind": "command",
@@ -1442,7 +1446,7 @@
     },
     "516d3824b3a1e01e66c3fc3246548481a2e725efcb69c9d00aef1e4156dafd01": {
       "kind": "command",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:23"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:27"
     },
     "518a253161c9a13184f1b5492dc8b6a42541670fc01f3c9168d393365f8814aa": {
       "kind": "command",
@@ -1594,7 +1598,7 @@
     },
     "58f809963d0594ee59f9daf907473ffa8a2c5defe1c5a6a7b10edb50d9e69667": {
       "kind": "command",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:39"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:43"
     },
     "595059f3f51f07b8e7efd212a1bc0f9c7d861f81b4f5a5df31b790d7e4980879": {
       "kind": "command",
@@ -1634,7 +1638,7 @@
     },
     "5b241be0cfbb1f6efd1965c980b31d3610128676088df5d1bdf4233c580c72a4": {
       "kind": "command",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:39"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:43"
     },
     "5b8720b31b96e52442ea3c47a1a8fc605fc7f59975ef2818076837b9418cba84": {
       "kind": "command",
@@ -1964,10 +1968,6 @@
       "kind": "command",
       "src": "skills/audit/templates/checks-shared.md:455"
     },
-    "6bd7b9b9e33d3791147814a3b19f493137abc8074c47f483f705dc515158eeb6": {
-      "kind": "block",
-      "src": "skills/calibrate/modes/apply.md:40"
-    },
     "6bdfd3eb64b80ab5418e71ca1584c56d6e89cb3a9e4e4bc40b8b6e26a704eda5": {
       "kind": "command",
       "src": "agents/doc-scribe.md:176"
@@ -2023,6 +2023,10 @@
     "6de2ca525aa0a8d26e4a0e994554932412b77ca229ddbfd7012fbd6db5cdc6d2": {
       "kind": "command",
       "src": "skills/audit/templates/checks-skills-bash.md:248"
+    },
+    "6ded3d74bc1e3a3db13782149f92b751f1f5db5c773341f913ca0de2ceab7dea": {
+      "kind": "block",
+      "src": "skills/calibrate/modes/apply.md:40"
     },
     "6e274d1f8d9bf310e5cd23b66307a102025508829251f689787be94a38df59b1": {
       "kind": "command",
@@ -2402,7 +2406,7 @@
     },
     "85a5bd7bab1c5d77dc945c5268276c234377b4496a381378bd70270419148759": {
       "kind": "block",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:39"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:43"
     },
     "85a6c7d41fa5d2d4abe8b028f0f5f374e06ad427f5d81721366c9d29dbc56926": {
       "kind": "command",
@@ -2434,7 +2438,7 @@
     },
     "86f33d659f185714f54c4bacf5dd0b83986f6ff79d8fd6e2afa7d53b20cc6709": {
       "kind": "command",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:39"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:43"
     },
     "86f5d8c2b344c0561abec086c46a16873918051a70f3ba9f86f8f791143a2379": {
       "kind": "command",
@@ -2451,6 +2455,10 @@
     "87cfe52208492e4d04ed83d737a1628936c681b39ee7e31130fc31be7a06aadc": {
       "kind": "command",
       "src": "skills/setup/SKILL.md:204"
+    },
+    "8841941b97df653adca793c179c9b6f4d5668f413cde9bb2c409b71669dc718e": {
+      "kind": "block",
+      "src": "skills/calibrate/templates/pipeline-prompt.md:170"
     },
     "88efebef78d0666892c2b553db86de2dacc2294b2c1b4be20dfd01bcbb130ab3": {
       "kind": "command",
@@ -2646,7 +2654,7 @@
     },
     "91e4214c5932bf007cd94d62e71eafa3f93d96dd452bba59daf541496ffa7817": {
       "kind": "block",
-      "src": "skills/_shared/agent-spawn-protocol.md:34"
+      "src": "skills/_shared/agent-spawn-protocol.md:35"
     },
     "91f2e0c524f48622d84ed02383f277a465a0d5977b3755b071be5694813748c0": {
       "kind": "command",
@@ -2832,10 +2840,6 @@
       "kind": "command",
       "src": "skills/audit/templates/checks-shared.md:499"
     },
-    "9b25708a349ee937d1238b62246eb51ad6d656104cbb5b04dbaef163061b2b4c": {
-      "kind": "command",
-      "src": "skills/calibrate/modes/apply.md:40"
-    },
     "9b5ae4d7f54a3ceadd420be2c390c09a98d2aebf24f1686b09447cbb8cee4902": {
       "kind": "command",
       "src": "skills/audit/templates/checks-skills-duplication.md:23"
@@ -2938,7 +2942,7 @@
     },
     "9f2689a76922b5df7a420c2b5d5b3d26dbbf83f0a2dff4390980a0715281711f": {
       "kind": "command",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:39"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:43"
     },
     "9f7b830a458652855c9d2e75783e4df9c97b2e8d112120a3f85d3a8bec4d8055": {
       "kind": "command",
@@ -3642,7 +3646,7 @@
     },
     "c83ae5491d36c879a26c17fc6ec7cf64eecbcad9fb4b7d24b728b9fb1de022bf": {
       "kind": "command",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:39"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:43"
     },
     "c848d7c38c2f9eef77f67b4227799d51fb3c4d25923043fb31d64086b26cdcb0": {
       "kind": "command",
@@ -3738,7 +3742,7 @@
     },
     "cd8bd14062fc3694453a17f46c583de2249f8253c5510dcb13c9c54ffae0e065": {
       "kind": "command",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:39"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:43"
     },
     "cdb2df94089c310da601c28f5117b5d092fd3737d9bd21caf13a1c53c65d0338": {
       "kind": "command",
@@ -3862,7 +3866,7 @@
     },
     "d37479335d206eb299ac481fa28d90b622d1880de1cbd23658560da3f638011a": {
       "kind": "block",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:23"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:27"
     },
     "d3c15ca8224454032a23d6f0fe4a43e9b9e3b5c62f768d8ab5a4750de142c7cb": {
       "kind": "command",
@@ -3994,7 +3998,7 @@
     },
     "dcd6469c6c447ce7d350df39ca4406142e844338b6a98c8b5369b3a613a06b66": {
       "kind": "command",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:23"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:27"
     },
     "dcfaa87a69790f3feea598a78934c25d531be93dbc342d93ec87ee2288e16e8d": {
       "kind": "command",
@@ -4118,7 +4122,7 @@
     },
     "e482281b6958a9c34c50dec3c0201739f4d88cc799a0a341d9833fe8408f5e48": {
       "kind": "command",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:39"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:43"
     },
     "e490e07d7190194f0a58f0f347031991958ade06a185530787a8d3c795340cdc": {
       "kind": "block",
@@ -4198,7 +4202,7 @@
     },
     "e9ce1d4ac7d0ae208def1f0ea1a8a667ce45438e5ddfc757136cc86fdf0e11f1": {
       "kind": "command",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:39"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:43"
     },
     "ea12f5578e80a15a89697c29c75e2c02cc0b79a0a99210d33ae4a84471f61d63": {
       "kind": "block",
@@ -4434,7 +4438,7 @@
     },
     "f74869babb8b6281031b33c13bf9c480bbdd82a5bcc803611ff7d79799b7df11": {
       "kind": "command",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:39"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:43"
     },
     "f7ebc5b181ef9ac843f99c2479a3c1f8f50ce59e3445d433d5c7f144552c59a9": {
       "kind": "block",
@@ -4442,7 +4446,7 @@
     },
     "f80b110e6fc5ac83d19cd6e3da0e1090ba9a6621b8da22421e48c26d9601b33d": {
       "kind": "command",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:39"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:43"
     },
     "f814010809b7ce8f68f334868e0b131ba185e23909c12c4acd5eef27010dad82": {
       "kind": "command",
@@ -4458,7 +4462,7 @@
     },
     "f84dcb47ac0a3820b8e6c138ec91c8b41a8517a350f59d530a3d885f5c4f82cb": {
       "kind": "command",
-      "src": "skills/calibrate/templates/pipeline-prompt.md:39"
+      "src": "skills/calibrate/templates/pipeline-prompt.md:43"
     },
     "f86c69516c51428cf83f27f895f6db43e46261e131e36e5a7476db019662511d": {
       "kind": "command",
@@ -4585,6 +4589,6 @@
       "src": "skills/audit/templates/checks-skills-gaps.md:49"
     }
   },
-  "plugin": "cc_foundry@0.76.1",
+  "plugin": "cc_foundry@0.77.0",
   "schema": 1
 }

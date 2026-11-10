@@ -124,7 +124,7 @@ A plugin may ship animated SVG diagrams of its runs, blocking gates, agent fan-o
 ## Version Pre-Bump Gate
 
 - Apply the repository Version Continuity rule to serialized artifact schemas separately from this plugin SemVer gate; compare each schema family with its own committed `HEAD` baseline before handoff.
-- Every commit touching a plugin's non-test file must apply exactly one SemVer bump to that plugin from its HEAD baseline, except a generated package manifest updated only to record test-file bytes.
+- Every commit touching a plugin's non-test file must apply exactly one SemVer bump to that plugin from its HEAD baseline (from the commit's parent when amending or rewriting a commit that already bumps — root `AGENTS.md` §Version Continuity), except a generated package manifest updated only to record test-file bytes.
 - A commit changing only files under `plugins/<name>/tests/` needs no bump. When the plugin ships its tests, regenerate and validate the package manifest for those test bytes without bumping the version or updating the changelog.
 - Pure test, CI, and documentation changes need no changelog entry unless they change shipped product or plugin behavior.
 - Every changelog bullet states what changed and its user-visible impact. A bare file or mechanism name ("Sync report-header-table.js", "update helper", "refactor") says nothing; name the behaviour, and trace each claim to the diff.

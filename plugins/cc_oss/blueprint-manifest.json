@@ -100,6 +100,10 @@
       "kind": "block",
       "src": "skills/resolve/modes/pr-intelligence.md:56"
     },
+    "057bae67828eda1c038e2db39ddbbc7d2f63a44dfc72d6921709612d3718a9f1": {
+      "kind": "command",
+      "src": "skills/analyse/modes/thread.md:124"
+    },
     "05ca5edab2859e30a195bc73947f571eabd9c1d2abb53ea6d2a32348c3bf99f2": {
       "kind": "command",
       "src": "skills/resolve/modes/item-selection.md:231"
@@ -427,10 +431,6 @@
     "10ade2cda81a7bd88ec980dcb41d274388d80057153133c8145e8a523e935f8d": {
       "kind": "command",
       "src": "skills/resolve/modes/final-report.md:29"
-    },
-    "10cac40edd1fdaec743d41d34e1e37b6e4d7d50b851e399ba3cbaaa94bf52773": {
-      "kind": "block",
-      "src": "skills/analyse/modes/thread.md:95"
     },
     "10cd759315bd9b4ad5f10220ecec8bd5e65f0e56731dc95da42de8f1335a48d6": {
       "kind": "command",
@@ -1152,6 +1152,10 @@
       "kind": "block",
       "src": "skills/resolve/modes/dispatch-phase1.md:102"
     },
+    "2a659afa2ee8e981c4d5b04f747a053189e54b4696055c15cc1495c3971689ff": {
+      "kind": "block",
+      "src": "skills/analyse/modes/thread.md:95"
+    },
     "2a70941c33907a344ed4974bd667617fb165a7e15dc1aa98160659d3ef18a8e7": {
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-phase3.md:113"
@@ -1492,9 +1496,9 @@
       "kind": "command",
       "src": "skills/analyse/SKILL.md:119"
     },
-    "370550878c941b03dedec9c4952723b2290449431a2bb045a9cf3cea9c8a105b": {
-      "kind": "block",
-      "src": "skills/analyse/modes/thread.md:107"
+    "371a368e5586df0cfea6784cb1ad1c36460c0311ec9207a32483d987504c7fa1": {
+      "kind": "command",
+      "src": "skills/analyse/modes/thread.md:95"
     },
     "37a10ba14c514da6442eae6087658417a9b322ee87c8725dc6d18fbbb3b04a41": {
       "kind": "block",
@@ -1844,6 +1848,10 @@
       "kind": "command",
       "src": "skills/release/modes/release-draft-template.md:63"
     },
+    "45696adafbed8625da360cc6efe4bf363a2a2167b4104ece1f3990f0e9bb82a1": {
+      "kind": "command",
+      "src": "skills/analyse/modes/thread.md:124"
+    },
     "45aa83bbd186fbe7aa307a660f57597f917799ee836b38a11592c21f7c9566d5": {
       "kind": "command",
       "src": "skills/review/SKILL.md:126"
@@ -2074,7 +2082,7 @@
     },
     "4c9d0fb1f5b58f5a2bcc708be687912dd1cabc11b1800f07e6b22fa8e4face3a": {
       "kind": "command",
-      "src": "skills/analyse/modes/thread.md:321"
+      "src": "skills/analyse/modes/thread.md:334"
     },
     "4cc94107f5ea36d91f21fcc1c3086257c8624008e61558905ddc305a5d47f096": {
       "kind": "command",
@@ -2134,7 +2142,7 @@
     },
     "4eabbdf41e881bff160e9e17782c2cc0463f1a02b7cac6745a09576d93fcbfb7": {
       "kind": "command",
-      "src": "skills/analyse/modes/thread.md:202"
+      "src": "skills/analyse/modes/thread.md:211"
     },
     "4edd35e8f645f557a893b3ab57e5fc8891164f3591ad5d76193d52107181ac06": {
       "kind": "command",
@@ -2691,10 +2699,6 @@
     "6267d553381ccecbca75dfb328924db1eeb7584737e3cb114c0ae292fa547b2f": {
       "kind": "command",
       "src": "skills/analyse/modes/vitality-adversarial-rework.md:51"
-    },
-    "626e310dc774d1e922b09965df7a45cb9c7010d654eeabe4a6e99f07168972cb": {
-      "kind": "command",
-      "src": "skills/analyse/modes/thread.md:95"
     },
     "62c2d1cca7caf3d1044e5e8cec5c4a95e562ecdb7508b5cf51e50256b5135f8a": {
       "kind": "command",
@@ -3498,7 +3502,7 @@
     },
     "7b8910e7ced98ab9c635922a3c562ea768195b5e407acd8f8df4fdbc31e30612": {
       "kind": "block",
-      "src": "skills/analyse/modes/thread.md:321"
+      "src": "skills/analyse/modes/thread.md:334"
     },
     "7ba268130982defe78ee67f934ab6d9d24dba704a6707a7b7f14f71d0a116142": {
       "kind": "command",
@@ -3656,10 +3660,6 @@
       "kind": "command",
       "src": "skills/review/modes/post-agent.md:28"
     },
-    "81620890d418c028f7009f3d147afd552f0185aa195804a016d1955977bf1c3d": {
-      "kind": "command",
-      "src": "skills/analyse/modes/thread.md:95"
-    },
     "8179bc6301ce3f3e4978b58acccb670354335c20eb116deaa9d0b585268e510b": {
       "kind": "command",
       "src": "skills/_shared/worktree-isolation.md:26"
@@ -3703,6 +3703,10 @@
     "837e5f4e83b2c32ef7eb0f61f810f4af9993097801fc605958b1e6884d03f4a8": {
       "kind": "command",
       "src": "skills/resolve/SKILL.md:670"
+    },
+    "8395a20d1333c52e069d69f35cc5576def6aeda9b85ba443aea8fb394b77894a": {
+      "kind": "block",
+      "src": "skills/analyse/modes/thread.md:124"
     },
     "83ea9f28463276b16fbed7e658540ba0e5d967341ba581ecbddd959c20c37261": {
       "kind": "command",
@@ -5332,6 +5336,10 @@
       "kind": "command",
       "src": "skills/resolve/modes/push.md:143"
     },
+    "b8d848a5ec7f52fd0f04e2907efc0100fb0a9ecc4bb3e96d20f8ceba5090d0f4": {
+      "kind": "command",
+      "src": "skills/analyse/modes/thread.md:95"
+    },
     "b905e22c52e796867e77503c0e887fb0e944ac7895ff2f9d5ffd271e7e78e635": {
       "kind": "command",
       "src": "agents/gh-scraper.md:86"
@@ -5458,7 +5466,7 @@
     },
     "bcc217d82a37b6d93f43b57abcc82e32b3f09cff6d54f03f31578861f10dcd72": {
       "kind": "command",
-      "src": "skills/analyse/modes/thread.md:202"
+      "src": "skills/analyse/modes/thread.md:211"
     },
     "bd051bca3c5d00d43870fddd3f26e6b2b5fc5ab110f29d158ad659b7297ba54c": {
       "kind": "command",
@@ -6968,6 +6976,10 @@
       "kind": "command",
       "src": "skills/resolve/modes/dispatch-prelude.md:58"
     },
+    "f005da4c8416f0401e403b557535299e5de453871790ef0108f3991e7e0323f1": {
+      "kind": "command",
+      "src": "skills/analyse/modes/thread.md:124"
+    },
     "f05e67a9bbc0c29d665f275f67008a8d094c3795aac438fcfbba80cca3a62af5": {
       "kind": "command",
       "src": "skills/resolve/SKILL.md:746"
@@ -7006,7 +7018,7 @@
     },
     "f1b5ca0e7eb214c97de68ef980ae80a3c7d43554912cffdbe82ce87022b251c6": {
       "kind": "block",
-      "src": "skills/analyse/modes/thread.md:202"
+      "src": "skills/analyse/modes/thread.md:211"
     },
     "f1cde537071dc1c2e09a0081cc02c1fa0643d1a7f800e256403627b1c03d63d2": {
       "kind": "command",
@@ -7215,6 +7227,10 @@
     "f94cc4aa411bde8812cbfa7a75b5e48d3fec1e22468004598747290f57137fea": {
       "kind": "command",
       "src": "skills/release/modes/prepare.md:105"
+    },
+    "f99eb0bc74884614b3bd6fc8198503f0c03917e54f1c01ffe51014c5bf18da20": {
+      "kind": "block",
+      "src": "skills/analyse/modes/thread.md:107"
     },
     "f9a19cfb05a37bb64ef8cc97a669ee9afed84b211c4d0f5a7e6c3e2fdc326c05": {
       "kind": "command",
@@ -7449,6 +7465,6 @@
       "src": "skills/resolve/SKILL.md:148"
     }
   },
-  "plugin": "cc_oss@0.57.0",
+  "plugin": "cc_oss@0.58.0",
   "schema": 1
 }

@@ -187,8 +187,8 @@ def _can_probe_pids() -> bool:
 
     On native Windows ``os.kill`` is not a probe: it either sends a console control event or kills the target through
     ``TerminateProcess`` (Python docs, ``os.kill``), so probing would interrupt or kill the lock holder. There is no
-    stdlib liveness check there, so a Windows lock never becomes stale automatically; the user removes it with
-    ``break-lock``.
+    stdlib liveness check there, so a Windows lock never becomes stale automatically; the user removes it with ``break-
+    lock``.
     """
     return os.name != "nt"
 
@@ -702,9 +702,9 @@ def write_matrix_csv(
 ) -> Path:
     """Write the binary view to ``store/matrix.csv`` by atomic rename and return its path.
 
-    One row per fix (input order), one column per real column with at least one binary link (input column order),
-    cells ``1``/``0``. Every cell, headers included, passes :func:`neutralise_cell`. Lines end with ``\\n`` on every
-    OS. The export mutates ``store/``, so the caller holds the lock.
+    One row per fix (input order), one column per real column with at least one binary link (input column order), cells
+    ``1``/``0``. Every cell, headers included, passes :func:`neutralise_cell`. Lines end with ``\\n`` on every OS. The
+    export mutates ``store/``, so the caller holds the lock.
     """
     row_list = list(rows)
     links = {str(row["fix_id"]): _binary_links(row) for row in row_list}
@@ -757,6 +757,20 @@ _PROMPT_INTRO: Final = (
     '- {"columns": {"<candidate column_id>": <confidence between 0 and 1>}} naming one or more candidates listed '
     "below, or",
     '- {"unknown": true} when the evidence supports no candidate.',
+    "Evidence rules:",
+    "- When the blame evidence lists `blamed` commits, name only blame-backed candidates: those whose footprint "
+    "`commits` include a `blamed` commit, or whose `signals.method` is `inherited` (the blamed lines belong to an "
+    "earlier fix already linked to that candidate). Context blame, symbol or file overlap, title or entry wording and "
+    "other `signals` never add a column on their own.",
+    "- Answer unknown when `blamed` lists commits but no candidate is blame-backed.",
+    "- When `blamed` is empty, candidates whose footprint `commits` include a `context_blamed` commit are "
+    "blame-backed; name only those. With none of them, or when `status` is not ok, judge from the entry text and the "
+    "symbols, symbols first: when the fix's `symbols` overlap the footprint `symbols` of exactly one candidate, name "
+    "only that candidate, even when the entry text reads like another candidate's title; when they overlap several "
+    "candidates, let the entry text choose among those candidates only; when they overlap none, judge from the entry "
+    "text alone or answer unknown.",
+    "- Leave a doubtful column out instead of naming it at low confidence: a named confidence becomes that column's "
+    "score in the matrix.",
 )
 
 
@@ -765,9 +779,9 @@ class _Fencer:
     """Wrap untrusted blocks in fences whose tokens are unique within one prompt.
 
     Tokens are derived from a hash of the neutralised block, not drawn at random: the adjudication key is the hash of
-    the whole prompt, so random tokens would make every prompt unique and no stored (paid) verdict would ever be
-    reused. Secrecy of the token is not needed for safety, because every closing-marker lookalike inside the content
-    is neutralised before wrapping, so content can never end its fence early.
+    the whole prompt, so random tokens would make every prompt unique and no stored (paid) verdict would ever be reused.
+    Secrecy of the token is not needed for safety, because every closing-marker lookalike inside the content is
+    neutralised before wrapping, so content can never end its fence early.
     """
 
     used: set[str] = field(default_factory=set)

@@ -257,7 +257,7 @@ Apply the repository Version Continuity rule to serialized artifact schemas sepa
 >
 > **Changelog shape: a plain list.** Every line of a section is a `- ` entry or a sub-entry of one; no free paragraph before, between or after entries, and no blank lines between items. One entry per topic: a few related sentences saying what changed and its user-visible impact, compact but complete. Sub-bullets only enumerate parallel items. No rationale, implementation mechanics or long example lists; compress, never drop a change. Match the released sections below.
 >
-> **Baseline = HEAD every time:** Re-read it fresh each session; never trust prior-session recall.
+> **Baseline = HEAD every time:** Re-read it fresh each session; never trust prior-session recall. Amending or rewriting a commit that already bumps: baseline = that commit's parent (root `CLAUDE.md` §Version Continuity).
 
 Per-plugin version in `.claude-plugin/plugin.json`, space `0.X.Y`:
 

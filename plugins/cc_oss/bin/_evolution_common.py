@@ -48,7 +48,7 @@ ALGO_VERSIONS: Final = {
     "evidence": 1,
     "column_map": 1,
     "scores": 1,
-    "adjudication_prompt": 1,
+    "adjudication_prompt": 2,
 }
 
 #: Residue pseudo-columns, one per bucket; a row with no other evidence puts its mass on exactly one of them.

@@ -165,7 +165,7 @@ IFS= read -r QUICK_MODE < "${TMPDIR:-/tmp}/analyse-quick-mode-${CSID}" 2>/dev/nu
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/build_vitality_paths.py" --owner "$GH_OWNER" --repo "$GH_REPO" --quick "$QUICK_MODE"  # timeout: 10000
 ```
 
-> `--quick` note: in quick mode the single-pass scorecard is un-reviewed — confidence is capped lower and the report's Adversarial Review section records "skipped (--quick)". Rerun without `--quick` for a merge/release-grade assessment.
+> `--quick` note: in quick mode the single-pass scorecard is un-reviewed — confidence carries a −0.10 review Gap (Confidence anchor below) and the report's Adversarial Review section records "skipped (--quick)". Rerun without `--quick` for a merge/release-grade assessment.
 
 Resolve template path (installed cache first, source tree fallback):
 
@@ -289,10 +289,10 @@ _(Omit Passes line when TOTAL_PASSES=1 — no retry loop needed.)_
 {2–3 sentences: overall health verdict, single top strength, single top risk. Example: "Project is in healthy condition (72%) with strong CI/CD and responsive maintainers. Contributor bus factor of 1 is the primary risk — a single maintainer departure could stall development. Dependency update automation is absent, leaving security hygiene dependent on manual effort."}
 
 **Health Score:** {XX}% {🟢/🟡/🔴} · {N} healthy · {N} warning · {N} critical · {N} unavailable (⚪)
-_(When OVERALL_CONFIDENCE < 0.7 prefix this line with: `⚠ LOW CONFIDENCE ({OVERALL_CONFIDENCE:.2f}) — directional only`)_
+_(Band by rule, the axis score bands applied to the printed percentage, rounded to one decimal: 🟢 ≥ 70% · 🟡 40–69.9% · 🔴 < 40%. When OVERALL_CONFIDENCE < 0.7 prefix this line with: `⚠ LOW CONFIDENCE ({OVERALL_CONFIDENCE:.2f}) — directional only`)_
 **Aggregate:**   {XX}% (mean main + Codex) — omit line when CODEX_AVAILABLE=0
 **Rework:**      {REWORK_ITER} iteration(s) — omit line when REWORK_ITER=0
-**Top Risk:**    {single most urgent finding, one line}
+**Top Risk:**    {Axis N name (conf X.XX) — most urgent finding, one line. Exactly one axis: worst band first (🔴 over 🟡), then higher axis weight, then lower score, then lower axis number; never a combined multi-axis risk. The report Summary names the same axis.}
 → {REPORT_FILE}
 
 ---
@@ -324,6 +324,16 @@ If Axis 3 specifically ⚪: `⚠ Axis 3 (contributor health, wt 10%) unavailable
 **Post-table validation (mandatory)**: after printing the scorecard, verify: (a) exactly 9 data rows appear with axis numbers 1–9, (b) no axis number repeated. Any duplicate or omission = immediately reprint the corrected full table before any other output. Never omit an axis row — even when data missing, show `--` in Score/Status.
 
 Block must begin with `# Repo Vitality — {GH_OWNER}/{GH_REPO}` title and close with `---` on own line. Do not print full analysis to terminal. Full Conf/Weight columns and per-axis detail in report file only.
+
+**Confidence anchor** (SKILL.md Step 6b): the response's `## Confidence` block assesses this scorecard. Start **Score** at `OVERALL_CONFIDENCE`, the mean per-axis `conf` that `bin/vitality_extract.py` derives from listed degraders only (`vitality-scoring.md` §Confidence — Listed Degraders Only), and carry `1.0 − OVERALL_CONFIDENCE` as one Gap naming the lowest-conf axes. Deduct further only for a gap that can move a band, the Health Score or the Top Risk:
+
+- a `partial` fetch envelope: cap Score at 0.70 (Step 1)
+- each ⚪ axis: −0.05
+- each extractor value disputed in Steps 5–6 that moves a band: −0.05
+- Steps 5–6 not run in full mode: −0.10; a run whose contract excludes Steps 5–6 (no spawns allowed) records them as a `(-0.00)` Gap instead
+- `--quick` (review skipped by design): −0.10
+
+Small samples, truncation and data inconsistencies that move no band stay `(-0.00)` Gaps.
 
 </workflow>
 

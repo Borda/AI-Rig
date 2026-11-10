@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any, ClassVar
 
 import evolution_scan
 import pytest
@@ -279,3 +280,90 @@ def test_scope_answer_file_drives_run(evo_repo: RepoBuilder, tmp_sentinels: Path
     assert _run(root, evo_repo.path) == 0
     manifest = json.loads((root / "store" / "manifest.json").read_text(encoding="utf-8"))
     assert (manifest["scope"]["kind"], manifest["scope"]["from"]) == ("last", "0.2.0")
+
+
+class TestRenderRequest:
+    """``render-request`` writes request items equal to what a run writes, without a store or a clone."""
+
+    _SPEC: ClassVar[list[dict[str, Any]]] = [
+        {
+            "fix_id": "fix-1",
+            "fix_entry": {"entry_id": "e-1", "kind": "fixed", "release": "0.3.0", "text": "Strip parser input"},
+            "candidates": [
+                {"column_id": "col-render", "title": "Add renderer", "kind": "added", "release": "0.2.0"},
+                {"column_id": "col-parse", "title": "Add parser", "kind": "added", "release": "0.2.0"},
+            ],
+            "evidence": {"status": "ok", "files": ["src/parse.py"]},
+        }
+    ]
+
+    def test_items_equal_production_builder(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """Each item carries the production prompt, its reuse key and the candidate IDs in request order."""
+        spec, out = tmp_path / "spec.json", tmp_path / "request.json"
+        spec.write_text(json.dumps(self._SPEC), encoding="utf-8")
+        assert evolution_scan.main(["render-request", "--spec", str(spec), "--out", str(out)]) == 0
+        entry = self._SPEC[0]
+        expected = evolution_scan.request_item("fix-1", entry["fix_entry"], entry["candidates"], entry["evidence"])
+        assert json.loads(out.read_text(encoding="utf-8")) == [expected]
+        assert expected["candidates"] == ["col-render", "col-parse"]
+        assert "ITEMS=1" in capsys.readouterr().out
+
+    @pytest.mark.parametrize(
+        "spec",
+        [
+            pytest.param([], id="empty-list"),
+            pytest.param({"fix_id": "x"}, id="not-a-list"),
+            pytest.param([{"fix_id": "x", "fix_entry": {"entry_id": "e"}, "candidates": []}], id="no-candidates"),
+            pytest.param([{"fix_id": "x", "fix_entry": {}, "candidates": [{"column_id": "c"}]}], id="no-entry-id"),
+            pytest.param(
+                [{"fix_id": " ", "fix_entry": {"entry_id": "e"}, "candidates": [{"column_id": "c"}]}], id="blank-fix-id"
+            ),
+            pytest.param(
+                [{"fix_id": "x", "fix_entry": {"entry_id": "e"}, "candidates": ["c"]}], id="non-dict-candidate"
+            ),
+        ],
+    )
+    def test_bad_spec_blocks(self, tmp_path: Path, capsys: pytest.CaptureFixture[str], spec: object) -> None:
+        """A malformed spec stops with a ``! BLOCKED`` line and writes no request file."""
+        path, out = tmp_path / "spec.json", tmp_path / "request.json"
+        path.write_text(json.dumps(spec), encoding="utf-8")
+        assert evolution_scan.main(["render-request", "--spec", str(path), "--out", str(out)]) == _BLOCKED
+        assert "! BLOCKED" in capsys.readouterr().out
+        assert not out.exists()
+
+    def test_malformed_json_blocks(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """A spec file that is not JSON stops with a ``! BLOCKED`` line, not a traceback."""
+        path, out = tmp_path / "spec.json", tmp_path / "request.json"
+        path.write_text("{not json", encoding="utf-8")
+        assert evolution_scan.main(["render-request", "--spec", str(path), "--out", str(out)]) == _BLOCKED
+        assert "! BLOCKED" in capsys.readouterr().out
+        assert not out.exists()
+
+    def test_missing_spec_blocks(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """A spec path that does not exist stops with a ``! BLOCKED`` line, not a traceback."""
+        path, out = tmp_path / "absent.json", tmp_path / "request.json"
+        assert evolution_scan.main(["render-request", "--spec", str(path), "--out", str(out)]) == _BLOCKED
+        assert "! BLOCKED" in capsys.readouterr().out
+        assert not out.exists()
+
+
+class TestEntriesKey:
+    """The entries cache key follows the entries stage's own inputs only."""
+
+    _INDEX: ClassVar[dict[str, Any]] = {"fingerprint": "idx", "head": {"sha": "abc"}}
+
+    @pytest.mark.parametrize("stage", ["evidence", "scores", "adjudication_prompt", "column_map"])
+    def test_later_stage_bump_keeps_key(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str) -> None:
+        """Bumping a later stage's algorithm version leaves the entries key unchanged.
+
+        A prompt-only or scoring-only change must not repeat the changelog parse and GitHub linkage lookups.
+        """
+        before = evolution_scan._entries_key(tmp_path, self._INDEX, gh_available=False)
+        monkeypatch.setitem(evolution_scan.ALGO_VERSIONS, stage, evolution_scan.ALGO_VERSIONS[stage] + 1)
+        assert evolution_scan._entries_key(tmp_path, self._INDEX, gh_available=False) == before
+
+    def test_entries_bump_changes_key(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Bumping the entries algorithm version invalidates the cached entries."""
+        before = evolution_scan._entries_key(tmp_path, self._INDEX, gh_available=False)
+        monkeypatch.setitem(evolution_scan.ALGO_VERSIONS, "entries", evolution_scan.ALGO_VERSIONS["entries"] + 1)
+        assert evolution_scan._entries_key(tmp_path, self._INDEX, gh_available=False) != before

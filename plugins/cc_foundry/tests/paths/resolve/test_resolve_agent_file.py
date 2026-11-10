@@ -106,6 +106,42 @@ class TestCli:
         assert "proposal-path=.reports/calibrate/TS/curator/proposal.md" in out
 
     @pytest.mark.parametrize(
+        ("run_slug", "expected"),
+        [
+            pytest.param("", "proposal-path=.reports/calibrate/TS/oss:analyse/proposal.md", id="empty-slug-keeps-target"),
+            pytest.param(
+                "oss:analyse-vitality",
+                "proposal-path=.reports/calibrate/TS/oss:analyse-vitality/proposal.md",
+                id="mode-slug-own-dir",
+            ),
+        ],
+    )
+    def test_run_slug_names_proposal_dir(
+        self, tmp_path: Path, run_cli: Callable[..., tuple[int, str]], run_slug: str, expected: str
+    ) -> None:
+        """``--run-slug`` moves only the proposal directory; the skill file still resolves from ``--name``.
+
+        Scenario: a mode-level calibration domain (vitality of ``/oss:analyse``) keeps its results apart from the
+        default thread domain, yet its proposals edit the same skill. An empty slug, which the apply recipe passes
+        for ordinary targets, must keep today's path.
+        """
+        skill = tmp_path / "plugins" / "cc_oss" / "skills" / "analyse"
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text("x", encoding="utf-8")
+
+        rc, out = run_cli("--name", "/oss:analyse", "--timestamp", "TS", "--run-slug", run_slug)
+
+        assert rc == 0
+        assert "agent-file=plugins/cc_oss/skills/analyse/SKILL.md" in out
+        assert expected in out
+
+    def test_run_slug_with_separator_rejected(self, run_cli: Callable[..., tuple[int, str]]) -> None:
+        """A slug carrying a path separator exits 2 instead of writing outside the run directory."""
+        rc, _ = run_cli("--name", "curator", "--timestamp", "TS", "--run-slug", "../escape")
+
+        assert rc == 2
+
+    @pytest.mark.parametrize(
         ("args", "fragments"),
         [
             pytest.param(

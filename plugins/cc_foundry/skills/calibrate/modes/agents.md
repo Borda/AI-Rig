@@ -48,5 +48,8 @@ Each subagent gets the pipeline template printed above, substitutions:
 - `<MODE>` = `fast` or `full`
 - `<AB_MODE>` = `true` or `false` — whether to run A/B variant scoring against `general-purpose` baseline (see pipeline-prompt.md Phase 2b)
 - `<LOCAL_MODE>` = `true` or `false` — from `--local` flag; when true pipeline resolves target file from source tree
+- `<TARGET_LABEL>` = `<TARGET>`; `<RUN_SLUG>` = `<TARGET>` (agent run dirs keep the agent name)
+- `<PROBLEM_SET_VERSION>` = SKILL.md constant `PROBLEM_SET_VERSION`
+- `<FLOORS_ARG>`, `<TEMPLATE_SECTIONS_NOT_FP>`, `<SEV_LABEL>` = empty unless the agent's domain entry sets `scale_chars:`, `template_sections_not_fp:` or `sev_label:` (keys as in `skills.md`)
 
-Run dir per agent: `.reports/calibrate/<TIMESTAMP>/<TARGET>/`
+Run dir per agent: `.reports/calibrate/<TIMESTAMP>/<RUN_SLUG>/`

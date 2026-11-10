@@ -90,7 +90,7 @@ query($owner: String!, $repo: String!, $number: Int!) {
 }' -f owner="${GH_SLUG%%/*}" -f repo="${GH_SLUG##*/}" -F number=$NUMBER  # timeout: 15000
 ```
 
-Wide-net duplicate search (all three types) — re-fetching the title beats pasting the literal: keeps this block's text invariant, so it stays a manifest match instead of prompting:
+Wide-net duplicate search (all three types) — re-fetching the title beats pasting the literal: keeps this block's text invariant, so it stays a manifest match instead of prompting. Each candidate carries a 400-char body snippet: a title alone cannot show whether two reports share a failure:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -98,8 +98,8 @@ IFS= read -r NUMBER < "${TMPDIR:-/tmp}/analyse-clean-args-${CSID}" 2>/dev/null |
 IFS= read -r TYPE < "${TMPDIR:-/tmp}/oss-detect-type-${CSID}" 2>/dev/null || TYPE="unknown"
 if [ "$TYPE" = "pr" ]; then TITLE=$(gh pr view $NUMBER --json title --jq .title 2>/dev/null); else TITLE=$(gh issue view $NUMBER --json title --jq .title 2>/dev/null); fi  # timeout: 15000
 printf '%s\n' "$TITLE" > "${TMPDIR:-/tmp}/analyse-thread-title-${CSID}"
-gh issue list --state all --search "$TITLE" --json number,title,state,labels --limit 50 | jq --argjson self "${NUMBER:-0}" '[.[] | select(.number != $self)]'  # timeout: 15000
-gh pr list --state all --search "$TITLE" --json number,title,state --limit 30 | jq --argjson self "${NUMBER:-0}" '[.[] | select(.number != $self)]'  # timeout: 15000
+gh issue list --state all --search "$TITLE" --json number,title,state,labels,body --limit 50 | jq --argjson self "${NUMBER:-0}" '[.[] | select(.number != $self) | .body = ((.body // "") | .[0:400])]'  # timeout: 15000
+gh pr list --state all --search "$TITLE" --json number,title,state,body --limit 30 | jq --argjson self "${NUMBER:-0}" '[.[] | select(.number != $self) | .body = ((.body // "") | .[0:400])]'  # timeout: 15000
 ```
 
 Discussion wide-net (own block — the multi-line query would otherwise suppress per-command entries for the searches above):
@@ -113,10 +113,19 @@ gh api graphql -f query='
 query($owner:String!,$repo:String!){
   repository(owner:$owner,name:$repo){
     discussions(first:100,orderBy:{field:UPDATED_AT,direction:DESC}){
-      nodes { number title closed }
+      nodes { number title closed body }
     }
   }
-}' -f owner="${GH_SLUG%%/*}" -f repo="${GH_SLUG##*/}" 2>/dev/null | jq --arg q "$TITLE" --argjson self "${NUMBER:-0}" '.data.repository.discussions.nodes // [] | map(select(.number != $self) | select(.title | ascii_downcase | contains(($q | ascii_downcase | split(" ") | .[0]))))'  # timeout: 15000
+}' -f owner="${GH_SLUG%%/*}" -f repo="${GH_SLUG##*/}" 2>/dev/null | jq --arg q "$TITLE" --argjson self "${NUMBER:-0}" '.data.repository.discussions.nodes // [] | map(select(.number != $self) | select(.title | ascii_downcase | contains(($q | ascii_downcase | split(" ") | .[0]))) | .body = ((.body // "") | .[0:400]))'  # timeout: 15000
+```
+
+Candidate verification — after the Duplicate bar below, write the Potential Duplicate numbers (issues and PRs, strongest match first) one per line to `${TMPDIR:-/tmp}/analyse-dup-candidates-${CSID}.txt`, then run this block; it fetches the full body and last 10 comments of the first 3:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+CANDS="${TMPDIR:-/tmp}/analyse-dup-candidates-${CSID}.txt"
+[ -s "$CANDS" ] || { echo "no duplicate candidates to verify"; exit 0; }
+head -3 "$CANDS" | while IFS= read -r N; do case "$N" in ''|*[!0-9]*) continue;; esac; gh issue view "$N" --json number,title,state,body,comments --jq '{number,title,state,body:((.body // "")[0:3000]),comments:[.comments[-10:][] | {author:.author.login,body:((.body // "")[0:1000])}]}' 2>/dev/null || gh pr view "$N" --json number,title,state,body,comments --jq '{number,title,state,body:((.body // "")[0:3000]),comments:[.comments[-10:][] | {author:.author.login,body:((.body // "")[0:1000])}]}' 2>/dev/null || echo "{\"number\":$N,\"fetch\":\"failed\"}"; done  # timeout: 45000
 ```
 
 ## Reproduction Check
@@ -211,9 +220,13 @@ Run its **Detect** block, then **Signal A** (loaded above). From thread body + c
 
 Status mapping: `reproduced` → ✓ · `not_reproduced` → ✗ · `partial` → ⚠ · `missing_context` → ⚠ (add missing detail) · `HAS_REPRO=false` → 🔍 No Example · PR → ⏭ Skipped
 
-**Severity/priority tier rubric** (applies to the `Priority:` header field and the inline `Severity:` fields above): Critical = data loss, security vulnerability, or a regression breaking core functionality with no workaround. High = confirmed bug blocking a common workflow, no workaround. Medium = confirmed bug or duplicate with a workaround, or a well-scoped feature request. Low = cosmetic, docs-only, or minor edge case. Base the tier on the underlying issue's technical impact, not on triage urgency alone — a stale/reopened duplicate of a critical bug is still Critical.
+**Severity/priority tier rubric** (applies to the `Priority:` header field and the inline `Severity:` fields in the template below): Critical = data loss, security vulnerability, or a regression breaking core functionality with no workaround. High = confirmed bug blocking a common workflow, no workaround. Medium = confirmed bug or duplicate with a workaround, or a well-scoped feature request. Low = cosmetic, docs-only, or minor edge case. Base the tier on the underlying issue's technical impact, not on triage urgency alone — a stale/reopened duplicate of a critical bug is still Critical.
 
 **PR mode — `Completeness`/`Must Fix`/`Suggestions` inputs** (below): built from the reviews AND inline comments fetched above, both expanded and deduped per `github-review-parsing.md` (loaded above) — never from the raw review-body text alone. A finding sitting inside a collapsed block counts the same as a visible one; a finding recurring across review rounds counts once.
+
+**Duplicate bar** (`### Related Items`): judge each search candidate on its title and body snippet first. A candidate showing the same failure — the same error raised by the same trigger or condition, the same broken behaviour, or the same root cause — is a **Potential Duplicate**. A candidate whose snippet names the same function, call, code path, or device-and-API pair that this item's own evidence names, but ends before stating any error or symptom, is also a **Potential Duplicate**, marked `(snippet only)`: a symptom the snippet does not show is missing, not different. On a request or question thread (no error of its own), a candidate that asks for the same work and that the same answer settles, or that a maintainer comment in this thread names as the tracker, prerequisite or work item this request belongs under, is a **Potential Duplicate** for the same question; a candidate cited only as the fixing PR or the release that resolved it is not. A shared error message alone, with a different or unknown trigger (a generic exception, an out-of-memory error), stays Related with the difference named. Incomplete evidence is a qualifier, never a veto: never demote a same-failure candidate to Related, to "prerequisite/blocker, not duplicate" or to "cannot confirm" — a dependency between two reports does not rule out a shared root cause. A root-cause overlap stated in the hypotheses also appears as a duplicate candidate. Shared title words or area with a different failure stay Related, and so does a candidate whose snippet shows a different failure, cause, code path or module, even when it shares the bug class or pattern, or one fix might touch both.
+
+Then run the candidate-verification block above and re-judge each fetched candidate on its full body and comments: keep it when the failure matches, move it to Related when the thread shows a different cause. A Potential Duplicate not fetched (beyond the first 3, a discussion, or a failed fetch) keeps its verdict, marked `(snippet only)`, and its Action is "verify, then close as duplicate of #canonical", never a plain close.
 
 Produce:
 
@@ -247,15 +260,15 @@ Action:      [most important next step]
 ### Related Items
 
 **⚠ Potential Duplicates** (same problem/question — suggest closing as duplicate):
-- #N: [title] ([open/closed]) ← DUPLICATE — [why: same error / same root cause / same question] — Severity: [Critical/High/Medium/Low] — Action: [close as duplicate of #canonical / other concrete next step]
-  Canonical: #[lowest-number] — close others with "Closing as duplicate of #[canonical]"
+- #N: [title] ([open/closed]) ← DUPLICATE — [why: same error / same root cause / same question] — Severity: [Critical/High/Medium/Low] — Action: [close as duplicate of #canonical / verify, then close as duplicate of #canonical — for a `(snippet only)` entry / other concrete next step]
+  Canonical: #[the item a maintainer comment names as duplicate target; else, on a request or question thread, the Potential Duplicate whose answer settles this item or that a maintainer comment names as its tracker; else, among this item and the Potential Duplicates, the strongest failure match judged on body content, never title wording alone; at an equal match, this item or a search result outranks an item only cited in the thread, then the lowest number wins] — close the others with "Closing as duplicate of #[canonical]"
 
 **Related** (same area, distinct problem — cross-link):
 - Issue #N: [title] ([state]) — [one-line distinction]
 - PR #N: [title] ([state]) — [one-line distinction]
 - Discussion #N: [title] — [one-line distinction]
 
-_If no related items found: "No related items found."_
+_A candidate whose title or snippet shares this item's error text or symptom gets its own line — as a Potential Duplicate, or under **Related** as a related line or `Not related: #N — <how its failure differs>` — never a place in a bulk dismissal list. If no related items found: "No related items found."_
 
 ### Analysis
 
@@ -352,5 +365,6 @@ Compact terminal summary template (loaded above). File absent → warn: "run /fo
 - **Discussion pagination cap**: 200-comment limit is safety rail; threads >200 exceptional; always note cap in Summary if hit
 - **Sensitive pattern scan**: flag presence only, never include actual values — GDPR/PII risk; if `"credentials"` flagged, add advisory to Suggested Response
 - **Reproduction agent**: default `foundry:sw-engineer`; `qa-specialist` only on pytest patterns. Bind `subagent_type` in the literal `Agent()` call — never let it default to `general-purpose` (unbound spawn downgrades + cascades generic children). Don't spawn if `HAS_REPRO=false`
+- **Duplicate-verdict confidence**: size the Confidence Gap for a duplicate verdict (SKILL.md Step 6b) by what the snippets settle. A verdict — "no duplicates" included — that rests on a `(snippet only)` entry, or that leaves any candidate whose snippet ends before showing its failure, deducts at least 0.20 and names those candidates; a "no duplicates" verdict where every candidate's snippet itself shows how its failure, cause or request differs deducts 0.05–0.10 for the unfetched bodies; a verdict whose every Potential Duplicate was verified by the fetch carries no such gap
 
 </notes>

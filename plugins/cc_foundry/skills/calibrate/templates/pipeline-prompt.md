@@ -2,19 +2,23 @@ Calibration pipeline runner for `<TARGET>`. Complete all phases in sequence.
 
 AB mode: `<AB_MODE>` — when `true`, also run `general-purpose` baseline on every problem and compute delta metrics. Local mode: `<LOCAL_MODE>` — when `true`, resolve target file from source tree (`plugins/`) first; see Pre-flight below.
 
-Run dir: `.reports/calibrate/<TIMESTAMP>/<TARGET>/`
+Run dir: `.reports/calibrate/<TIMESTAMP>/<RUN_SLUG>/`
+
+`<TARGET>` resolves the agent or skill file; `<TARGET_LABEL>` names this run in results and the ledger (the target, plus the mode for a mode-level domain, e.g. `/oss:analyse vitality`); `<RUN_SLUG>` is its directory name (e.g. `oss:analyse-vitality`). `<PROBLEM_SET_VERSION>` stamps every result line; ledger rows without it predate problem set 2.0 and are not comparable with it.
 
 **Scratchpad discipline**: session scratchpad is shared across every concurrent calibration pipeline, not per-target. Write every bridge task file and any other intermediate you create inside your own run dir above — never a bare filename in the shared scratchpad. A generic name there (`codex-gen-task.txt`, etc.) gets silently overwritten by a sibling pipeline within seconds, caller then scores against wrong domain's problems with no error surfaced.
 
 ### Graceful-exit protocol
 
-Before returning for ANY reason — crash, context limit, unhandled error, or early exit — always write minimal `result.jsonl` to run dir. Even if phases incomplete, orchestrator must receive signal.
+Before returning early for any reason — a failed check below, context running out, an unhandled error — write a minimal `result.jsonl` to run dir, so the orchestrator receives a signal even when phases are incomplete.
 
-Write this line to `.reports/calibrate/<TIMESTAMP>/<TARGET>/result.jsonl` if file does not already exist:
+Write it on that exit path only, never at pipeline start: the orchestrator's deadline check (`agent_watch.py`) counts any non-empty `result.jsonl` written after the spawn as a finished deliverable, so a startup placeholder disables the deadline for the whole run. A pipeline that dies without writing is recorded `timed_out` by the orchestrator.
 
-`{"ts":"<TIMESTAMP>","target":"<TARGET>","verdict":"incomplete","mean_recall":null,"mean_confidence":null,"calibration_bias":null,"mean_f1":null,"severity_accuracy":null,"format_score":null,"problems":null,"scope_fp":null,"gaps":["pipeline exited before Phase 4 — re-run individually: /calibrate <TARGET> --fast"],"source_mode":null,"scoring":null,"scorer_agreement":null}`
+Write this line to `.reports/calibrate/<TIMESTAMP>/<RUN_SLUG>/result.jsonl` if file does not already exist:
 
-Safety net — Phase 4 always overwrites this with full results when it runs successfully.
+`{"ts":"<TIMESTAMP>","target":"<TARGET_LABEL>","problem_set_version":"<PROBLEM_SET_VERSION>","verdict":"incomplete","mean_recall":null,"mean_confidence":null,"calibration_bias":null,"mean_f1":null,"severity_accuracy":null,"format_score":null,"problems":null,"scope_fp":null,"gaps":["pipeline exited before Phase 4 — re-run individually: /calibrate <TARGET> --fast"],"source_mode":null,"scoring":null,"scorer_agreement":null}`
+
+Phase 4 overwrites this line with full results when it runs.
 
 ### Pre-flight — Codex availability
 
@@ -83,110 +87,122 @@ When `LOCAL_MODE=false` or source file not found: Phase 2 dispatches normally (a
 
 **When CODEX_AVAILABLE=true**:
 
-Split `<N>` in-scope problems between two generators. Claude always owns 1 out-of-scope problem.
+Split `<N>` in-scope problems between two generators. Claude always owns 1 out-of-scope problem. Both generators cover every tier, so the hard tiers stay cross-family.
 
 | Pace | N_CLAUDE in-scope | N_CODEX in-scope | Scope (Claude) | Total |
 | -- | -- | -- | -- | -- |
-| fast (N=3) | 1 | 2 | 1 | 4 |
-| full (N=10) | 5 | 5 | 1 | 11 |
+| fast (N=3) | 1 (medium or high) | 2 (low, medium) | 1 | 4 |
+| full (N=10) | 5 (trivial, low, medium, high, extreme) | 5 (trivial, low, medium in one batch call; high and extreme one call each) | 1 | 11 |
 
-**Step 1 — Codex generates N_CODEX in-scope problems** (runs first; requires `bridge@borda-ai-rig`):
+**Problem schema v2** — both generators, one JSON object per problem:
 
-`bridge:advise`/`bridge:review` are read-only — they return their answer in the call's own envelope, never writing to the run dir. The public envelope omits `details`, so the payload must travel in `findings[]` (array of strings). Capture it from the call result, then write the target file yourself.
+- `problem_id`: kebab-slug; Codex ids start with `cx-`
+- `difficulty`: `trivial` | `low` | `medium` | `high` | `extreme` (`scope` only for Claude's out-of-scope problem)
+- `task_prompt`: instruction to the reviewer; never names or hints at an issue
+- `input`: ONE string holding the code / config / content inline (no file paths); multi-part input = labelled sections inside that string, never a nested object or array
+- `ground_truth`: array of atomic items `{claim, decisive, role, location, severity}`:
+  - `claim`: one checkable statement, never two facts joined; a negative claim ("#812 is not the duplicate") is not a ground-truth item, it belongs in `near_misses`
+  - `decisive`: the exact token a correct answer must state (`#811`, a symbol, a value), copied verbatim from `input`; `none` for a no-answer item (nothing fills `role`, e.g. no candidate is a duplicate)
+  - `role`: what a correct answer says `decisive` is (`duplicate`, `root cause`, `off-by-one`, `band 🔴`, …)
+  - `location`: function, section, line or item reference
+  - `severity`: `critical` | `high` | `medium` | `low`, or `null` for a classification or relation item with no technical impact (excluded from severity accuracy)
+- `near_misses`: `[{ref, wrong_role}]` — plausible distractors present in `input` (`ref` verbatim) that a careless answer asserts in `wrong_role`; never in `ground_truth`
 
-No independent work runs beside this call: Step 2 starts only after it returns.
-
-Skill(skill="bridge:advise", args="--timeout-seconds 120 Generate \<N_CODEX> synthetic calibration problems for domain: '<DOMAIN>'.
-
-Each problem must be JSON object with these exact fields:
-
-- problem_id: kebab-slug string, prefix with 'cx-' (e.g. 'cx-type-mismatch')
-- difficulty: exactly one of: trivial, low, medium, high, extreme — include at least 1 trivial in full mode
-- task_prompt: instruction to give reviewer (do NOT reveal issues)
-- input: ONE string holding code / config / content inline (no file paths) — must contain issues; multi-part input (e.g. outline + draft) = labelled sections inside that string, never a nested object or array
-- ground_truth: array of objects, each with:
-  - issue: concise description (what is wrong)
-  - location: function name, section, or line reference
-  - severity: exactly one of: critical, high, medium, low
+A `decisive` never equals the value of a labelled input field (`Type: pull_request` → `pull_request`): copying a field is not finding an issue.
 
 Difficulty tiers:
 
-- **trivial**: single-line, obvious issue visible at glance; any reviewer finds immediately; used in full mode only
+- **trivial**: single-line, obvious issue visible at glance; any reviewer finds immediately; full mode only
 - **low**: isolated, obvious issue; single-function scope; domain expert finds immediately
 - **medium**: requires reading 2-3 related functions or sections; non-obvious but unambiguous
-- **high**: requires cross-function or cross-module reasoning; subtle but detectable by reading
-- **extreme**: intentionally adversarial or near-unsolvable from reading alone — use ONE of these patterns:
-  1. adversarial/misleading decoy: code looks like common anti-pattern but is correct in context (tests false-positive discipline); the decoy stays out of ground_truth and the problem also carries a separate real issue
+- **high**: requires cross-function or cross-module reasoning; subtle but detectable by reading; `input` ≥ 6,000 characters
+- **extreme**: intentionally adversarial or near-unsolvable from reading alone; `input` ≥ 12,000 characters — use ONE of these patterns:
+  1. adversarial/misleading decoy: code looks like common anti-pattern but is correct in context (tests false-positive discipline); the decoy goes to `near_misses` and the problem also carries a separate real issue
   2. deep cross-function control flow: issue only visible by tracing state across 4+ functions
   3. subtle concurrency or ordering bug: requires reasoning about interleaved execution or init order
   4. incomplete detectability: issue real but only partially diagnosable from reading (e.g., depends on runtime config); ground_truth includes what IS detectable statically
 
-Extreme bar: a reviewer who reads once and reports what stands out must miss ≥1 ground-truth issue. Every extreme problem needs ≥1 issue whose evidence is split across two sections (visible only when both are read together) and ≥1 construct that looks defective but is correct (a decoy; decoys never enter ground_truth). Before returning, skim your own input: every ground-truth issue visible on a first pass → harden it.
+Size floors are secondary to reasoning load — reach them with realistic material (more code paths, more comments, more candidate items), never padding. A domain entry's `scale_chars:` overrides both floors. A domain entry declaring `haystack:` requires high and extreme problems to carry that candidate pool (default: ≥ 15 candidate items, ≥ 3 of them `near_misses` sharing title, keywords or error with the target but differing in root cause).
+
+Open shape: a domain entry declaring `open_shape: true` wants problems shaped like real reports, not closed puzzles. Render the candidate pool as at least 5 rows, one per item, as `#<N> | state: <s> | title: <t> | body: <b>` with each body a snippet of at most 300 characters, and make a duplicate answer one of those rows; put no code block inside the pool; quote no source of the project under analysis and plant no maintainer diagnosis that the input then refutes step by step. The link between the item and its answer is a shared symptom described in different words, with evidence that suggests rather than proves, and no phrase of four or more words copied between them. Phase 1b enforces the row format and count, snippet length, fence ban, pool membership of the duplicate and copied-phrase ban (`--open-shape`); real problems and the off-domain scope problem are exempt.
+
+Extreme bar: a reviewer who reads once and reports what stands out must miss ≥1 ground-truth item. Every extreme problem needs ≥1 item whose evidence is split across two sections (visible only when both are read together) and ≥1 construct that looks defective but is correct (a decoy, listed in `near_misses`). Before returning, skim your own input: every ground-truth item visible on a first pass → harden it.
 
 Signposting ban (medium and above): nothing in `input` or `task_prompt` names, labels or hints at an issue — no 'Risk:' headers, no comments flagging the flaw, no task_prompt wording that points at it.
 
-Distribution rules for N_CODEX problems (fast=2, full=5):
+Rules (both generators):
 
-- fast (N_CODEX=2): 1 low, 1 medium/high — no extreme in fast mode
-- full (N_CODEX=5): exactly 1 problem at each tier — trivial, low, medium, high, extreme
+- 2-5 ground-truth items per problem; extreme problems may have 1-3 if the issue is inherently hard to detect
+- Items must be unambiguous — a domain expert would confirm them
+- No runtime-only-detectable issues outside the extreme `incomplete detectability` pattern
 
-Rules:
+**Step 1 — Codex generates N_CODEX in-scope problems** (runs first; requires `bridge@borda-ai-rig`):
 
-- 2-5 known issues per problem; extreme problems may have fewer (1-3) if issue inherently hard to detect
-- Issues must be unambiguous — domain expert would confirm them
-- Do NOT include any out-of-scope problem — in-scope only
-- Return each problem as ONE entry of the envelope's `findings[]` array: a string holding one valid JSON object (no prose, no markdown fences, no trailing commas). `verdict` = one-line summary only
+`bridge:advise`/`bridge:review` are read-only — they return their answer in the call's own envelope, never writing to the run dir. The public envelope omits `details`, so the payload must travel in `findings[]` (array of strings). Capture it from the call result, then write the target files yourself.
 
-Do not attempt to write a file yourself.")
+No independent work runs beside these calls: Step 2 starts only after they return.
 
-Parse each `findings[]` string, assemble the objects into one JSON array, and write it to `.reports/calibrate/<TIMESTAMP>/<TARGET>/problems-codex.json` yourself. An unparsable entry is dropped; Phase 1b's `floor(<N_CODEX> * 0.5)` validity threshold accounts for partial yield.
+Batch call — unscaled tiers (fast: low, medium; full: trivial, low, medium):
+
+Skill(skill="bridge:advise", args="--timeout-seconds 240 --effort medium Generate \<K> synthetic calibration problems for domain: '<DOMAIN>', one per difficulty: \<TIERS>. Each problem is one JSON object following this problem schema v2, these difficulty tiers, the extreme bar, the signposting ban and these rules: \<copy the Problem schema v2, Difficulty tiers, size-floor, haystack, open-shape (when the domain declares it), Extreme bar, Signposting ban and Rules paragraphs above verbatim>. Do NOT include any out-of-scope problem. Return each problem as ONE entry of the envelope's `findings[]` array: a string holding one valid JSON object (no prose, no markdown fences, no trailing commas). `verdict` = one-line summary only. Do not attempt to write a file yourself.")
+
+Full mode only — scaled tiers, one call per problem so a 12,000-character input never shares one call's output budget: the same args with `1` problem and difficulty `high`, then again with `extreme`, each at `--timeout-seconds 240` (worst case 576 s, under the foreground Bash cap).
+
+Parse each `findings[]` string as one problem and write it to `.reports/calibrate/<TIMESTAMP>/<RUN_SLUG>/problems-codex-<problem_id>.json`, one Write per problem. An unparsable entry is dropped; Phase 1b's `floor(<N_CODEX> * 0.5)` validity threshold accounts for partial yield.
 
 **Step 2 — Claude generates N_CLAUDE in-scope problems + 1 out-of-scope problem**:
 
-Generate `<N_CLAUDE>` in-scope problems for domain `<DOMAIN>`, plus exactly 1 out-of-scope problem, as JSON array. Fields: `problem_id` (kebab-slug), `difficulty`, `task_prompt`, `input`, `ground_truth` (array of `{issue, location, severity}`).
+Generate `<N_CLAUDE>` in-scope problems for domain `<DOMAIN>` (tiers per the table above), plus exactly 1 out-of-scope problem, in problem schema v2 under the tiers, floors, extreme bar, signposting ban and rules above.
 
-Difficulty tiers: same as Step 1 above.
-
-Rules:
-
-- Issues must be unambiguous — domain expert would confirm them
-- Distribution for N_CLAUDE in-scope problems: fast (N_CLAUDE=1): 1 medium or high — no extreme in fast mode; when N_CLAUDE=1, use medium or high; full (N_CLAUDE=5): exactly 1 problem at each tier — trivial, low, medium, high, extreme
-- Extreme problems may have 1–3 known issues (fewer fine if issue inherently hard to detect)
-- Apply Step 1's extreme bar and signposting ban
-- Each non-extreme in-scope problem has 2–5 known issues; no runtime-only-detectable issues
-- **Include exactly 1 out-of-scope problem** (difficulty: `"scope"`): input clearly outside agent's domain (e.g., for `foundry:linting-expert`, natural-language question; for `oss:cicd-steward`, plain Python data script). Set `ground_truth: []`. Correct response declines, redirects, or reports no findings. Any findings = false positives (scope failure).
-- Return valid JSON array only (no prose)
-
-Write to `.reports/calibrate/<TIMESTAMP>/<TARGET>/problems-claude.json`.
+- **Exactly 1 out-of-scope problem** (difficulty: `"scope"`): input clearly outside the target's domain (e.g., for `foundry:linting-expert`, a natural-language question; for `oss:cicd-steward`, a plain Python data script). `ground_truth: []`, `near_misses: []`. Correct response declines, redirects, or reports no findings. Any findings = false positives (scope failure).
+- Write each problem with its own Write call to `.reports/calibrate/<TIMESTAMP>/<RUN_SLUG>/problems-claude-<problem_id>.json` — one JSON object per file. One array holding several scaled problems exceeds a safe single-response output.
 
 **When CODEX_AVAILABLE=false**:
 
-Claude generates all `<N>` in-scope problems + 1 out-of-scope using rules above. Write to `problems-claude.json`. Skip Codex step.
+Claude generates all `<N>` in-scope problems (fast: low, medium, high; full: two per tier) + 1 out-of-scope using the rules above, one `problems-claude-<problem_id>.json` per problem. Skip Codex step.
 
 ### Phase 1b — Validate and merge problems
 
-**Validate problems-codex.json** (skip if CODEX_AVAILABLE=false):
+**Real fixtures** (`--full` only): when the domain entry names `real_fixtures: <path>` and that directory exists in the working tree, copy each of its `*.json` files into the run dir as `problems-real-<problem_id>.json`. They are frozen problems with a maintainer-recorded outcome; never in `--fast` (their count is part of the full-run deadline the orchestrator armed). Absent directory → skip silently.
 
-Read file. Strip any markdown code fences or prose prefix/suffix — find first `[`, match to closing `]`. Parse, validate each entry:
+Run the deterministic validator over every `problems-*.json` in the run dir (`<FLOORS_ARG>` = the validator flags the domain entry implies, else empty: `--floors high=<H>,extreme=<E>` from `scale_chars:`, `--derived-gt` from `derived_gt: true`, `--open-shape` from `open_shape: true`, `--boundary` from `boundary: true`):
 
-Required fields: `problem_id` (string starting with `cx-`), `difficulty` (one of: `trivial`/`low`/`medium`/`high`/`extreme` — NOT `scope`), `task_prompt` (non-empty string), `input` (non-empty string), `ground_truth` (non-empty array; each item has `issue`, `location`, `severity`; `severity` must be one of: `critical`/`high`/`medium`/`low`).
+```bash
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/calibrate_validate_problems.py" --run-dir ".reports/calibrate/<TIMESTAMP>/<RUN_SLUG>" <FLOORS_ARG>  # timeout: 15000
+```
 
-`input` returned as object or array despite the string rule: normalize before validating, don't reject — each top-level key becomes a `## <key>` section, nested objects become `<key>: <value>` lines under it, arrays one item per line; content unchanged. Log `normalized input: <problem_id>`.
+It checks schema v2, that every `decisive` and near-miss `ref` occurs in `input` (skipped with `--derived-gt`), the labelled-field leak, the size floors (real problems exempt), contradictory near-misses and the single scope problem; `--open-shape` adds the candidate-row checks above for synthetic problems, and `--boundary` requires each high and extreme problem to hold at least 3 answers one step from a different outcome, read from the derived-answer outputs the domain entry tells you to save in the run dir. Any failure rejects the whole problem — never one item, because a dropped item leaves its defect in `input` and turns a correct report into a false positive. It merges valid problems into `problems.json` (with `source`, colliding ids prefixed by source) and logs rejections to `problems-rejected.json`; its one-line JSON summary lists `rejected_ids`.
 
-Reject and log any entry failing validation. If fewer than `floor(<N_CODEX> * 0.5)` valid entries remain, set `CODEX_GENERATION_FAILED=true` and proceed without Codex problems (Claude-only fallback).
+- The validator reads only files named `problems-<claude|codex|real>-<id>.json`; check that `valid + rejected` equals the number of problem files you wrote — a misnamed file is invisible to it, not rejected.
+- Rejected Claude problem: regenerate it once, addressing the logged reasons, and rerun the validator.
+- Rejected Codex problems are not retried. Fewer than `floor(<N_CODEX> * 0.5)` valid Codex problems → set `CODEX_GENERATION_FAILED=true` and Claude generates the missing tiers.
+- Validator exit 1 (no valid problem): write the graceful-exit `result.jsonl` with gap `"no problem passed validation"` and return.
 
-**Merge and tag**:
+### Phase 1c — Difficulty probe (weak solver)
 
-- Tag each Codex entry: add `"source": "codex"` field
-- Tag each Claude entry: add `"source": "claude"` field
-- Deduplicate `problem_id`: if collision, prefix with source (`claude-<id>`, `cx-<id>`)
-- Merge into single array; scope problem must appear exactly once (from Claude)
+Skip this phase when the domain entry sets `weak_probe: off`: its answers come from a rubric the target ships, so a solver without the rubric cannot answer at all and one that finds it is the target. Then `weak_solver_recall_*` = null, `probe_downgraded` = 0 and the gap `"weak probe off: rubric-bound domain"` is recorded; hardness comes from that domain's own checks instead (e.g. `--boundary`).
 
-Write merged array to `.reports/calibrate/<TIMESTAMP>/<TARGET>/problems.json`.
+A problem the generator calls hard is hard only if it defeats a solver without domain instructions. For every synthetic problem (`source` claude or codex) with difficulty `high` or `extreme`, spawn one `general-purpose` subagent with `model="haiku"`, all in a single response, prompt:
+
+> `<task_prompt>`
+>
+> `<input>`
+>
+> Answer directly from the text above. Do not read, search or open any file and run no command: your only tool call is the Write below. Write your complete response to `.reports/calibrate/<TIMESTAMP>/<RUN_SLUG>/response-<problem_id>-weak.md` using the Write tool, then reply with exactly one line: `Wrote: <problem_id>`
+
+The weak solver must see nothing but the problem: a probe that reads the target's shipped rubric, mode file or skill from the workspace measures the target's instructions, not the problem's difficulty, and its recall is void. When a weak response quotes or cites such a file, discard it and re-probe once.
+
+Score each weak response with one Phase 3a Claude scorer (same prompt, precision gate included, response file `-weak`, output `score-<problem_id>-weak.json`), all scorers in a single response as each probe batch returns — never one at a time. Then per problem:
+
+- weak recall < 1.0 → keep; record `probe_weak_recall` on the problem in `problems.json`
+- weak recall = 1.0 → regenerate once by the same generator with the note "a solver without domain instructions found every ground-truth item; move the decisive evidence behind cross-section reasoning or a near-miss ruling; keep schema v2", rerun the validator, probe again
+- still 1.0 → set `difficulty: "medium"` and `"probe": "downgraded"` on that problem
+
+Real problems are not probed here: they were filtered against a weak solver before they were frozen, and each carries that result as `provenance.probe` (`{model, hit}`). Probe responses never enter Phase 3 scoring of the target.
 
 ### Phase 2 — Run target on each problem (parallel)
 
-Spawn one `<TARGET>` subagent per problem using **Agent tool** — never via Bash or CLI. Issue ALL spawns in **single response** — no waiting between spawns. Never pass `name=` on nested spawns (Phases 2, 2b, 3a): a pipeline running as a named teammate gets named spawns refused, and nothing here addresses them by name.
+Spawn one `<TARGET>` subagent per problem using **Agent tool** — never via Bash or CLI. Issue ALL spawns in **single response** — no waiting between spawns — up to the effective tier's in-flight ceiling (haiku 20 · sonnet 8 · opus 5, `agent-spawn.md`); past it, spawn the rest as one more wave when the first returns. Same cap for Phases 2b and 3a. Never pass `name=` on nested spawns (Phases 2, 2b, 3a): a pipeline running as a named teammate gets named spawns refused, and nothing here addresses them by name.
 
 Prompt for each subagent:
 
@@ -198,19 +214,25 @@ Prompt for each subagent:
 >
 > Do not self-review or refine before answering — report your initial analysis directly.
 >
-> **Write your complete response** (including the Confidence block) to `.reports/calibrate/<TIMESTAMP>/<TARGET>/response-<problem_id>.md` using the Write tool. Then end your reply with exactly one line: `Wrote: <problem_id>`
+> **Write your complete response** (including the Confidence block) to `.reports/calibrate/<TIMESTAMP>/<RUN_SLUG>/response-<problem_id>.md` using the Write tool. Then end your reply with exactly one line: `Wrote: <problem_id>`
 
 **Context discipline**: subagents write to disk, return single-line acknowledgment. Pipeline agent must NOT accumulate their full analyses in context — scorers read from disk in Phase 3. `Wrote: <problem_id>` per agent = correct.
 
 **Completion handling** — never a poll loop or a waiting tool (`ScheduleWakeup`, `ListAgents`, `Monitor`); each subagent's result arrives as its `Agent()` result or completion notification (`_FOUNDRY_SHARED/agent-spawn-protocol.md`). Each subagent returns: check for `response-<problem_id>.md`; empty or missing: mark that problem `{"timed_out": true}` in scores.json, proceed. Never block indefinitely on single response.
 
-For **agent targets** when `LOCAL_MODE=true` and `TARGET_FILE` set: spawn `general-purpose` subagent — tests source tree definition rather than installed plugin. Write `.reports/calibrate/<TIMESTAMP>/<TARGET>/prompt-<problem_id>.md` = "You are an agent described by the following instructions:" + TARGET_FILE content + a tool-limit line (`Use only these tools: <frontmatter tools:>`, omitted when `tools:` absent) + the per-problem prompt above; spawn prompt = one line: `Read .reports/calibrate/<TIMESTAMP>/<TARGET>/prompt-<problem_id>.md and follow it exactly.` Frontmatter mapped onto the spawn: `model=` from `model:` (omit when absent or `inherit`), so tier changes are measured at the tier the agent ships with; `effort=` from `effort:` (omit when absent) — this template explicitly asks for it. Spawn schema lacks `effort`: add `"local mode: frontmatter effort not applied"` to `gaps`. `tools:` is enforced by the prompt line only, not the harness — add `"local mode: tools limited by prompt, not enforced"` to `gaps` when `tools:` present. When LOCAL_MODE=false or TARGET_FILE empty: spawn `Agent(subagent_type="<TARGET>")` normally.
+For **agent targets** when `LOCAL_MODE=true` and `TARGET_FILE` set: spawn `general-purpose` subagent — tests source tree definition rather than installed plugin. Write `.reports/calibrate/<TIMESTAMP>/<RUN_SLUG>/prompt-<problem_id>.md` = "You are an agent described by the following instructions:" + TARGET_FILE content + a tool-limit line (`Use only these tools: <frontmatter tools:>`, omitted when `tools:` absent) + the per-problem prompt above; spawn prompt = one line: `Read .reports/calibrate/<TIMESTAMP>/<RUN_SLUG>/prompt-<problem_id>.md and follow it exactly.` Frontmatter mapped onto the spawn: `model=` from `model:` (omit when absent or `inherit`), so tier changes are measured at the tier the agent ships with; `effort=` from `effort:` (omit when absent) — this template explicitly asks for it. Spawn schema lacks `effort`: add `"local mode: frontmatter effort not applied"` to `gaps`. `tools:` is enforced by the prompt line only, not the harness — add `"local mode: tools limited by prompt, not enforced"` to `gaps` when `tools:` present. When LOCAL_MODE=false or TARGET_FILE empty: spawn `Agent(subagent_type="<TARGET>")` normally.
 
-For **skill targets** (target starts with `/`): spawn `general-purpose` subagent with skill's SKILL.md content prepended as context, running against synthetic input from problem. When `LOCAL_MODE=true` and `TARGET_FILE` set, read SKILL.md from `TARGET_FILE` (frontmatter `model:` handled as for agent targets); otherwise resolve, trying `skills/<NAME>/SKILL.md` then `claude-skills/<NAME>/SKILL.md` at each tier: `.claude/` → cache `~/.claude/plugins/cache/borda-ai-rig/<PLUGIN>/*/` (latest mtime) → `plugins/<PLUGIN>/`. Apply same write-and-acknowledge pattern.
+For **skill targets** (target starts with `/`): spawn `general-purpose` subagent running the skill against the problem's inline fixture. Its context is the **fixture contract**, in this order, written to `.reports/calibrate/<TIMESTAMP>/<RUN_SLUG>/prompt-<problem_id>.md` (spawn prompt = one line: `Read <that file> and follow it exactly.`):
+
+1. The complete SKILL.md — never frontmatter only: routing, out-of-scope rules and `<notes>` are part of the behaviour under test. When `LOCAL_MODE=true` and `TARGET_FILE` set, read it from `TARGET_FILE` (frontmatter `model:` handled as for agent targets; a domain entry's `solver_model:` overrides it, in both modes, as the spawn's `model=`); otherwise resolve, trying `skills/<NAME>/SKILL.md` then `claude-skills/<NAME>/SKILL.md` at each tier: `.claude/` → cache `~/.claude/plugins/cache/borda-ai-rig/<PLUGIN>/*/` (latest mtime) → `plugins/<PLUGIN>/`.
+2. The mode file named by the domain entry's `mode:` key (from the same skill directory's `modes/`), when present.
+3. Every file that mode file loads (its `loads:` comments and `_shared/` documents it names), so the target scores with the rubric it ships with.
+4. This override line, verbatim: `Fixture contract: the input below replaces every live fetch. Do not call gh or any network command and do not spawn subagents; analyse the inline data, running only the skill's own local bin/ helpers on files you write from it.`
+5. The per-problem prompt above (task_prompt, input, Confidence instruction, write-and-acknowledge).
 
 ### Phase 2b — Run general-purpose baseline (skip if AB_MODE is false)
 
-Spawn one `general-purpose` subagent per problem using **identical prompt** as Phase 2 (same task_prompt + input + Confidence instruction), plus same write-and-acknowledge suffix pointing to `response-<problem_id>-general.md`. Issue ALL spawns in **single response** — no waiting between spawns.
+Spawn one `general-purpose` subagent per problem using **identical prompt** as Phase 2 (same task_prompt + input + Confidence instruction) and, when the domain entry sets `solver_model:`, the same `model=` as Phase 2, so both arms run at one tier, plus same write-and-acknowledge suffix pointing to `response-<problem_id>-general.md`. Issue ALL spawns in **single response** — no waiting between spawns.
 
 **Completion handling** — same as Phase 2 (`_FOUNDRY_SHARED/agent-spawn-protocol.md`): each subagent returns, check for `response-<problem_id>-general.md`; missing: proceed with partial baseline data.
 
@@ -218,29 +240,37 @@ Spawn one `general-purpose` subagent per problem using **identical prompt** as P
 
 Spawn one `general-purpose` scorer subagent per problem using **Agent tool** — never via Bash or CLI. Issue ALL spawns in **single response** — no waiting between spawns.
 
-Each scorer receives this prompt (substitute `<PROBLEM_ID>`, `<GROUND_TRUTH_JSON>`, `<RUN_DIR>`, `<AB_MODE>`):
+Each scorer receives this prompt (substitute `<PROBLEM_ID>`, `<GROUND_TRUTH_JSON>`, `<NEAR_MISSES_JSON>` from the problem; `<TEMPLATE_SECTIONS_NOT_FP>`, `<SEV_LABEL>` and `<PRECISION_GATE>` from the domain entry, empty when absent; `<RUN_DIR>`, `<AB_MODE>`):
 
 > Scoring agent responses against calibration ground truth.
 >
 > **Problem ID**: `<PROBLEM_ID>`
 >
-> **Ground truth** (JSON array — each entry has `issue`, `location`, `severity`):
+> **Ground truth** (JSON array — each item has `claim`, `decisive`, `role`, `location`, `severity`):
 >
 > ```text
 > <GROUND_TRUTH_JSON>
 > ```
 >
+> **Near misses** (JSON array of `{ref, wrong_role}` — distractors, never ground truth): `<NEAR_MISSES_JSON>`
+>
+> **Template sections whose extra entries are not false positives**: `<TEMPLATE_SECTIONS_NOT_FP>` (empty = none). **Severity label to read**: `<SEV_LABEL>` (empty = any severity or priority label on that finding).
+>
 > Read target response from `<RUN_DIR>/response-<PROBLEM_ID>.md`. \[If AB_MODE is true: also read `<RUN_DIR>/response-<PROBLEM_ID>-general.md`.\]
 >
-> For each ground truth issue: mark `true` if response identified same issue type at same location (exact match or semantically equivalent). Count false positives: reported issues with no corresponding ground truth entry. Extract confidence from `## Confidence` block (use 0.5 if absent).
+> For each ground-truth item: mark `true` only if the response states the item's `decisive` token in the item's `role` (the exact token or an unambiguous equivalent — same issue number, same symbol, same value). Topic overlap, or `decisive` listed under a different role, is `false`. An item with `decisive: none` is `true` when the response states that nothing fills `role` (e.g. "no duplicate among the candidates") and asserts no candidate in that role.
+>
+> Count false positives: (a) every near-miss `ref` the response asserts in its `wrong_role`; (b) every other reported finding with no matching ground-truth item — except entries inside the listed template sections, which count only under (a). Extract confidence from `## Confidence` block (use 0.5 if absent).
+>
+> **Precision gate**: `<PRECISION_GATE>` (empty = none). When `per-role`: ground-truth items sharing one `role` form a group; if the response names anything in that role that no item of the group carries, set every item of the group to `false` and count each extra name as a false positive — naming every candidate never scores.
 >
 > **For out-of-scope problems** (`ground_truth: []`): recall = N/A (skip from recall aggregate). Count all reported findings as false positives. If response declines or reports nothing, false_positives = 0 (correct scope discipline). Set severity_accuracy = N/A and format_score = N/A for this problem.
 >
 > **Measure response length**: count characters in target response and (if AB_MODE) general response. Token efficiency proxy — shorter = more focused.
 >
-> **Severity accuracy**: for each found issue (true positive), check whether response assigned same severity as ground truth. Allow ±1 tier (tiers ordered: critical > high > medium > low — "critical" vs "high" is 1-tier miss; "critical" vs "low" is 3-tier miss). Count exact-or-adjacent matches. `severity_accuracy = correct_severity / found_count` (N/A if found_count = 0). Orthogonal to recall — agent can find everything but mislabel severity. Also record `severity_assigned`: per ground-truth issue in order, the severity label the response gave it (null if not found or unlabeled) — Phase 3c compares these across scorers.
+> **Severity accuracy**: only for found items whose `severity` is not null. Compare the response's label (the `<SEV_LABEL>` field when given) with ground truth, allowing ±1 tier (tiers ordered: critical > high > medium > low — "critical" vs "high" is 1-tier miss; "critical" vs "low" is 3-tier miss). `severity_accuracy = correct_severity / found_with_severity_count` (N/A if 0). Orthogonal to recall — agent can find everything but mislabel severity. Also record `severity_assigned`: per ground-truth item in order, the label the response gave it (null if not found, unlabeled, or the item's severity is null) — Phase 3c compares these across scorers.
 >
-> **Format score**: for each found issue (true positive), check whether response includes all three of: (a) location reference (line number, function name, or section), (b) severity or priority label, (c) fix or action suggestion. `format_score = fully_structured_count / found_count` (N/A if found_count = 0). Measures actionability of findings, not just detection.
+> **Format score**: for each found item, check whether response includes all three of: (a) location reference (line number, function name, or section), (b) severity or priority label (not required when the item's `severity` is null), (c) fix or action suggestion. `format_score = fully_structured_count / found_count` (N/A if found_count = 0). Measures actionability of findings, not just detection.
 >
 > Compute: `recall = found / total` (skip if total=0), `precision = found / (found + fp + 1e-9)`, `f1 = 2·r·p / (r+p+1e-9)`.
 >
@@ -264,27 +294,31 @@ Skill(skill="bridge:review", args="--timeout-seconds 180 --effort medium Score a
 
 ```text
 Problem ID: \<PROBLEM_ID>
-Ground truth (JSON array): \<GROUND_TRUTH_JSON>
+Ground truth (JSON array of {claim, decisive, role, location, severity}): \<GROUND_TRUTH_JSON>
+Near misses (JSON array of {ref, wrong_role}): \<NEAR_MISSES_JSON>
+Template sections whose extra entries are not false positives: \<TEMPLATE_SECTIONS_NOT_FP>
+Severity label to read: \<SEV_LABEL>
+Precision gate: \<PRECISION_GATE> (per-role = a response naming anything in a role that no ground-truth item of that role carries sets every item of that role to false; each extra name is a false positive)
 ```
 
-Read response from: .reports/calibrate/<TIMESTAMP>/<TARGET>/response-\<PROBLEM_ID>.md \[If AB_MODE is true: also read .reports/calibrate/<TIMESTAMP>/<TARGET>/response-\<PROBLEM_ID>-general.md\]
+Read response from: .reports/calibrate/<TIMESTAMP>/\<RUN_SLUG>/response-\<PROBLEM_ID>.md \[If AB_MODE is true: also read .reports/calibrate/<TIMESTAMP>/\<RUN_SLUG>/response-\<PROBLEM_ID>-general.md\]
 
-For each ground truth issue: mark true if response identified same issue type at same location (exact or semantically equivalent). Count false positives: reported issues with no ground truth match. Extract confidence from ## Confidence block (use 0.5 if absent).
+For each ground truth item: mark true only if the response states the item's decisive token in the item's role (exact token or unambiguous equivalent); topic overlap or decisive under a different role is false. decisive none: true when the response states nothing fills role and asserts no candidate in it. False positives: each near-miss ref asserted in its wrong_role, plus each other reported finding with no ground truth match except entries inside the listed template sections. Extract confidence from ## Confidence block (use 0.5 if absent).
 
 For out-of-scope problems (ground_truth is []): set recall=null, all reported findings are FPs, set severity_accuracy=null, format_score=null.
 
 ```text
-Severity accuracy: for found issues, check severity match (allow +-1 tier; tiers: critical>high>medium>low).
-Format score: for found issues, check for all three of: location reference, severity label, fix suggestion.
+Severity accuracy: for found items with non-null severity only, compare the response's label (the named severity label when given), allowing +-1 tier; tiers: critical>high>medium>low.
+Format score: for found items, check for all three of: location reference, severity label (not required when the item's severity is null), fix suggestion.
 ```
 
 Compute: recall=found/total (null if total=0), precision=found/(found+fp+1e-9), f1=2*r*p/(r+p+1e-9).
 
-Also record `severity_assigned`: per ground-truth issue in order, the severity label the response gave it (null if issue not found or response gave no label).
+Also record `severity_assigned`: per ground-truth item in order, the severity label the response gave it (null if not found, unlabeled, or the item's severity is null).
 
 Return ONLY this JSON as the single string in `findings[0]` (no prose, no markdown fences, no trailing commas), and do not attempt to write a file yourself: {"problem_id":"\<PROBLEM_ID>","found":[true/false,...],"false_positives":N,"confidence":0.N,"recall":0.N,"precision":0.N,"f1":0.N,"severity_accuracy":0.N,"severity_assigned":["high",null,...],"format_score":0.N,"scorer":"codex"} \[If AB_MODE is true, append before closing }: ,"recall_general":0.N,"confidence_general":0.N,"precision_general":0.N,"f1_general":0.N,"severity_accuracy_general":0.N,"severity_assigned_general":["high",null,...],"format_score_general":0.N\]")
 
-Substitute `<PROBLEM_ID>` and `<GROUND_TRUTH_JSON>` per problem. Parse `findings[0]` from the call's return value, write it to `.reports/calibrate/<TIMESTAMP>/<TARGET>/score-<PROBLEM_ID>-codex.json` yourself. Returned payload missing or unparsable after one retry: set `scorer_mode: "single"` for that problem — Phase 3c uses Claude's score only.
+Substitute `<PROBLEM_ID>`, `<GROUND_TRUTH_JSON>`, `<NEAR_MISSES_JSON>`, `<TEMPLATE_SECTIONS_NOT_FP>`, `<SEV_LABEL>` and `<PRECISION_GATE>` per problem, as for Phase 3a. Parse `findings[0]` from the call's return value, write it to `.reports/calibrate/<TIMESTAMP>/<RUN_SLUG>/score-<PROBLEM_ID>-codex.json` yourself. Returned payload missing or unparsable after one retry: set `scorer_mode: "single"` for that problem — Phase 3c uses Claude's score only.
 
 ### Phase 3c — Consensus merge
 
@@ -310,7 +344,7 @@ Use Claude score directly; `scorer_agreement` = null; `scorer_mode` = `"single"`
 
 **A/B mode**: apply same consensus logic independently to general-purpose baseline scores.
 
-Write all merged scores to `.reports/calibrate/<TIMESTAMP>/<TARGET>/scores.json` as JSON array. Each entry includes `"source"` (from problems.json: `"claude"`/`"codex"`), `"scorer_mode"`, `"scorer_agreement"`, and `"severity_disputed_count"` (count of `severity_disputed` issues for this problem).
+Write all merged scores to `.reports/calibrate/<TIMESTAMP>/<RUN_SLUG>/scores.json` as JSON array. Each entry includes `"source"` (from problems.json: `"claude"`/`"codex"`), `"scorer_mode"`, `"scorer_agreement"`, and `"severity_disputed_count"` (count of `severity_disputed` issues for this problem).
 
 ### Phase 4 — Aggregate, write report and result
 
@@ -326,6 +360,10 @@ Compute aggregates (exclude out-of-scope problem from recall/F1/severity/format 
 - `mean_format_score` = mean of `format_score` for in-scope problems with found_count > 0
 - `token_ratio` = mean(target_chars) / mean(general_chars) across all problems — if AB_MODE, else omit
 - Recall by difficulty: `recall_trivial`, `recall_low`, `recall_medium`, `recall_high`, `recall_extreme` (omit if 0 problems at that level)
+- Real problems (`source: "real"`) are excluded from every aggregate above: `recall_real` = mean recall over them (null if none); `real_weak_hit_rate` = fraction of real problems whose `provenance.probe.hit` is true, over those carrying a probe record (null if none); `real_fp` = total false positives on real problems. Without `verdict_tier: real` they are reported beside the verdict, never instead of it
+- Domain entry `verdict_tier: real`: the verdict reads the real tier instead — `mean_recall` and `mean_confidence` are taken over real problems, and the synthetic non-extreme values move to `synthetic_recall` / `synthetic_confidence`, still reported; fewer than 5 real problems present → keep the synthetic basis and add gap `"real tier too small for the verdict (<N> problems)"`; `recall_real ≥ 0.95` → gap `"real tier saturated (recall_real <X>)"`
+- `weak_solver_recall_high`, `weak_solver_recall_extreme` = mean `probe_weak_recall` over the probed problems still at that tier (null if none); `probe_downgraded` = count of problems Phase 1c moved to medium
+- Discrimination gap: `recall_high ≥ 0.95` and `weak_solver_recall_high > recall_high − 0.15` → gap `"high tier does not discriminate (target <X>, weak solver <Y>)"`; same rule for extreme
 
 **Additional aggregates (populate when applicable; use null when not)**:
 
@@ -346,7 +384,7 @@ Verdict:
 - `bias > 0.15` → `overconfident`
 - `bias < −0.15` → `underconfident`
 
-Write tool refuses any file whose exact basename is `report.md` from a subagent context ("Subagents should return findings as text, not write report files") — use `benchmark-report.md` instead. Write full report to `.reports/calibrate/<TIMESTAMP>/<TARGET>/benchmark-report.md` using this structure:
+Write tool refuses any file whose exact basename is `report.md` from a subagent context ("Subagents should return findings as text, not write report files") — use `benchmark-report.md` instead. Write full report to `.reports/calibrate/<TIMESTAMP>/<RUN_SLUG>/benchmark-report.md` using this structure:
 
 ```markdown
 ## Benchmark Report — <TARGET> — <date>
@@ -372,6 +410,8 @@ Source: dual (claude+codex) | Scorer: dual | Scorer agreement: X.XX [consistent 
 
 Recall by difficulty: trivial=X.XX | low=X.XX | medium=X.XX | high=X.XX (omit levels with 0 problems)
 Extreme recall: X.XX (extreme problems excluded from mean_recall and verdict — partial performance 0.4–0.7 is expected; ≥0.95 with ≥2 extreme problems → saturated, gap recorded)
+Weak solver (Phase 1c): high=X.XX | extreme=X.XX | downgraded=N (a tier discriminates when target recall exceeds weak-solver recall by ≥ 0.15)
+Real problems: recall_real=X.XX over N | frozen-time weak hit rate=X.XX | real FP=N (verdict basis when the domain sets verdict_tier: real; reported only otherwise)
 
 ### Recall by Problem Source (dual source mode only)
 | Source | Problems | Mean Recall |
@@ -400,9 +440,9 @@ Verdict, first match wins: `significant` (delta_recall or delta_f1 > 0.10) / `ma
 ...
 ```
 
-Write single-line JSONL result to `.reports/calibrate/<TIMESTAMP>/<TARGET>/result.jsonl`: (one line per pipeline run — orchestrating skill appends these across runs to `.notes/logs/calibrations.jsonl`)
+Write single-line JSONL result to `.reports/calibrate/<TIMESTAMP>/<RUN_SLUG>/result.jsonl`: (one line per pipeline run — orchestrating skill appends these across runs to `.notes/logs/calibrations.jsonl`)
 
-`{"ts":"<TIMESTAMP>","target":"<TARGET>","mode":"<MODE>","mean_recall":0.N,"extreme_recall":0.N_or_null,"mean_confidence":0.N,"calibration_bias":0.N,"mean_f1":0.N,"severity_accuracy":0.N,"format_score":0.N,"problems":<N>,"scope_fp":N,"verdict":"...","gaps":["..."],"source_mode":"dual|claude-only","scoring":"dual|single","scorer_agreement":0.N_or_null,"recall_trivial":0.N_or_null,"recall_low":0.N_or_null,"recall_medium":0.N_or_null,"recall_high":0.N_or_null,"recall_extreme":0.N_or_null,"recall_claude_problems":0.N_or_null,"recall_codex_problems":0.N_or_null,"generator_recall_delta":0.N_or_null,"severity_disputed_count":N,"codex_generation_failed":false}`
+`{"ts":"<TIMESTAMP>","target":"<TARGET_LABEL>","problem_set_version":"<PROBLEM_SET_VERSION>","mode":"<MODE>","mean_recall":0.N,"extreme_recall":0.N_or_null,"mean_confidence":0.N,"calibration_bias":0.N,"mean_f1":0.N,"severity_accuracy":0.N,"format_score":0.N,"problems":<N>,"scope_fp":N,"verdict":"...","gaps":["..."],"source_mode":"dual|claude-only","scoring":"dual|single","scorer_agreement":0.N_or_null,"recall_trivial":0.N_or_null,"recall_low":0.N_or_null,"recall_medium":0.N_or_null,"recall_high":0.N_or_null,"recall_extreme":0.N_or_null,"recall_claude_problems":0.N_or_null,"recall_codex_problems":0.N_or_null,"generator_recall_delta":0.N_or_null,"severity_disputed_count":N,"codex_generation_failed":false,"recall_real":0.N_or_null,"real_weak_hit_rate":0.N_or_null,"real_fp":N,"verdict_tier":"synthetic|real","synthetic_recall":0.N_or_null,"weak_solver_recall_high":0.N_or_null,"weak_solver_recall_extreme":0.N_or_null,"probe_downgraded":N}`
 
 **If AB_MODE is true**, append these fields to same JSON line: `"delta_recall":0.N,"delta_f1":0.N,"delta_severity_accuracy":0.N,"delta_format_score":0.N,"token_ratio":0.N,"scope_fp_general":N,"ab_verdict":"significant|marginal|baseline-ahead|inconclusive|no-lift"`
 
@@ -426,7 +466,7 @@ Spawn **foundry:curator** subagent using **Agent tool** — never via Bash or CL
 > **Files to read** (use Read tool on each):
 >
 > 1. Target file: `<AGENT_OR_SKILL_FILE_PATH>`
-> 2. Benchmark report: `.reports/calibrate/<TIMESTAMP>/<TARGET>/benchmark-report.md` — focus on **Systematic Gaps** and **Improvement Signals** sections
+> 2. Benchmark report: `.reports/calibrate/<TIMESTAMP>/<RUN_SLUG>/benchmark-report.md` — focus on **Systematic Gaps** and **Improvement Signals** sections
 >
 > Propose specific, minimal instruction edits that directly address each systematic gap (issues missed in ≥2/N problems) and each false-positive pattern. Conservative: one targeted change per gap. Don't refactor sections unrelated to findings.
 >
@@ -445,7 +485,7 @@ Spawn **foundry:curator** subagent using **Agent tool** — never via Bash or CL
 > **Rationale**: one sentence — why this closes the gap
 > ```
 
-Write foundry:curator response verbatim to `.reports/calibrate/<TIMESTAMP>/<TARGET>/proposal.md`. Ask foundry:curator to end proposed changes with `## Confidence` block per CLAUDE.md output standards.
+Write foundry:curator response verbatim to `.reports/calibrate/<TIMESTAMP>/<RUN_SLUG>/proposal.md`. Ask foundry:curator to end proposed changes with `## Confidence` block per CLAUDE.md output standards.
 
 ### Return value
 
@@ -453,6 +493,6 @@ Write foundry:curator response verbatim to `.reports/calibrate/<TIMESTAMP>/<TARG
 
 Return **only** this compact JSON (no prose before or after):
 
-`{"target":"<TARGET>","mean_recall":0.N,"extreme_recall":0.N_or_null,"mean_confidence":0.N,"calibration_bias":0.N,"mean_f1":0.N,"severity_accuracy":0.N,"format_score":0.N,"scope_fp":N,"verdict":"calibrated|borderline|overconfident|underconfident","gaps":["..."],"proposed_changes":N,"source_mode":"dual|claude-only","scoring":"dual|single","scorer_agreement":0.N_or_null,"generator_recall_delta":0.N_or_null}`
+`{"target":"<TARGET_LABEL>","problem_set_version":"<PROBLEM_SET_VERSION>","mean_recall":0.N,"extreme_recall":0.N_or_null,"mean_confidence":0.N,"calibration_bias":0.N,"mean_f1":0.N,"severity_accuracy":0.N,"format_score":0.N,"scope_fp":N,"verdict":"calibrated|borderline|overconfident|underconfident","gaps":["..."],"proposed_changes":N,"source_mode":"dual|claude-only","scoring":"dual|single","scorer_agreement":0.N_or_null,"generator_recall_delta":0.N_or_null,"recall_real":0.N_or_null,"weak_solver_recall_high":0.N_or_null,"weak_solver_recall_extreme":0.N_or_null}`
 
 If AB_MODE is true, also include: `"delta_recall":0.N,"delta_f1":0.N,"delta_severity_accuracy":0.N,"delta_format_score":0.N,"token_ratio":0.N,"scope_fp_general":N,"ab_verdict":"significant|marginal|baseline-ahead|inconclusive|no-lift"`

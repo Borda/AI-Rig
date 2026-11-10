@@ -29,6 +29,7 @@ Skill prose still claiming spawns are "synchronous" or "the framework awaits eac
 One deadline per agent, armed in the spawn response, checked at each wake-up — the orchestrator never needs a clock, a timer, or a poll.
 
 - **Arm**: in the same response as the spawn batch, Write `<RUN_DIR>/agent-watch-<batch>.tsv` with the Write tool — one row per agent: `<name>\t<deliverable path, or - for an envelope-only agent>\t<deadline seconds>`. The file's write time is the batch's spawn time, so no clock value is ever typed; a write deferred to a later turn silently shifts every deadline — never defer it. Deadline seconds come from the skill's `<constants>` (default 900).
+- **Deliverable = completion signal**: a spawned agent writes its deliverable when it finishes or deliberately exits early, never as a placeholder at start. A non-empty deliverable written after the spawn reads as `done`, so a startup placeholder makes the deadline never fire; an agent that dies without writing is caught as `timed_out` instead.
 - **Check**: on each wake-up, re-read the run dir from the skill's own sentinel and run once, in the same block:
 
 ```bash

@@ -25,6 +25,11 @@ Subcommands:
     Validate LLM verdicts from ``adjudication-verdicts.json`` against each request's candidate set, store them by
     key, then run again (no new blame; the stored verdicts are reused by key).
 
+``render-request --spec FILE --out FILE``
+    Write an ``adjudication-request.json``-shaped list from fix specs (``{fix_id, fix_entry, candidates, evidence}``)
+    with the production prompt and key, without a store, clone or lock. Prints ``ITEMS`` and ``ADJ_REQUEST``. Used by
+    ``/foundry:calibrate`` fixtures (requires the ``foundry`` plugin) and for replaying a request by hand.
+
 Scope values (sentinel or the ``scope-choice.txt`` answer): ``all``, ``last:<N>``, ``<v1>-><v2>``, ``extend`` (saved
 scope extended to the newest release) or ``saved`` (saved scope unchanged).
 
@@ -460,17 +465,42 @@ def _adjudication_plan(rows: list[dict[str, Any]], ctx: dict[str, Any]) -> tuple
             for c in top
             if c["column_id"] in columns
         ]
-        prompt = build_prompt(ctx["fixes"][row["fix_id"]], cands, ctx["evidence"].get(row["fix_id"], {}))
-        key = adjudication_key(prompt, ADJ_MODEL, ADJ_EFFORT)
-        if key in stored:
-            verdicts[row["fix_id"]] = stored[key]
+        item = request_item(row["fix_id"], ctx["fixes"][row["fix_id"]], cands, ctx["evidence"].get(row["fix_id"], {}))
+        if item["key"] in stored:
+            verdicts[row["fix_id"]] = stored[item["key"]]
         elif ctx["adjudicate"] and len(requests) < ADJ_CAP:
-            requests.append(
-                {"fix_id": row["fix_id"], "key": key, "candidates": [c["column_id"] for c in cands], "prompt": prompt}
-            )
+            requests.append(item)
         elif ctx["adjudicate"]:
             verdicts[row["fix_id"]] = {"unadjudicated": True}
     return verdicts, requests
+
+
+def request_item(
+    fix_id: str, fix_entry: dict[str, Any], candidates: list[dict[str, Any]], evidence: dict[str, Any]
+) -> dict[str, Any]:
+    """Build one adjudication request item exactly as a run writes it into ``adjudication-request.json``.
+
+    Args:
+        fix_id: The fix row's ID.
+        fix_entry: The fix entry (``entry_id`` required).
+        candidates: Candidate columns in request order (``column_id`` required).
+        evidence: The fix's blame evidence record.
+
+    Returns:
+        ``{fix_id, key, candidates, prompt}``; ``key`` is the reuse key under the adjudicator's model and effort.
+
+    Examples:
+        >>> item = request_item("f1", {"entry_id": "e1", "text": "fix"}, [{"column_id": "c1", "title": "t"}], {})
+        >>> sorted(item), item["candidates"]
+        (['candidates', 'fix_id', 'key', 'prompt'], ['c1'])
+    """
+    prompt = build_prompt(fix_entry, candidates, evidence)
+    return {
+        "fix_id": fix_id,
+        "key": adjudication_key(prompt, ADJ_MODEL, ADJ_EFFORT),
+        "candidates": [candidate["column_id"] for candidate in candidates],
+        "prompt": prompt,
+    }
 
 
 def _changed(old: dict[str, Any] | None, new: dict[str, Any]) -> bool:
@@ -519,18 +549,20 @@ def _changelog_state(repo: Path) -> str:
 
 
 def _entries_key(repo: Path, index: dict[str, Any], gh_available: bool) -> str:
-    """Return the cache key of ``build_entries`` output: every input it reads, plus the algorithm versions.
+    """Return the cache key of ``build_entries`` output: every input it reads, plus its own algorithm version.
 
-    Covers the tag map (index fingerprint), HEAD (the unreleased range and committed history), the working-tree
-    changelog inputs, whether GitHub lookups ran, and :data:`ALGO_VERSIONS`. GitHub-side edits (a retitled PR, a
-    relabelled issue) are not covered; ``--full`` refetches them.
+    Covers the tag map (index fingerprint, which carries the index version), HEAD (the unreleased range and committed
+    history), the working-tree changelog inputs, whether GitHub lookups ran, and ``ALGO_VERSIONS["entries"]``. Later
+    stages' versions (evidence, scores, the adjudication prompt) are left out, so bumping one of them does not repeat
+    the changelog parse and GitHub lookups. GitHub-side edits (a retitled PR, a relabelled issue) are not covered;
+    ``--full`` refetches them.
     """
     inputs = {
         "index": index["fingerprint"],
         "head": (index.get("head") or {}).get("sha"),
         "changelog": _changelog_state(repo),
         "gh": gh_available,
-        "algo": ALGO_VERSIONS,
+        "algo": ALGO_VERSIONS["entries"],
     }
     return hashlib.sha256(canonical_json(inputs).encode("utf-8")).hexdigest()
 
@@ -816,6 +848,46 @@ def ingest_verdicts(paths: StorePaths) -> tuple[int, int]:
     return stored, rejected
 
 
+def cmd_render_request(args: argparse.Namespace) -> int:
+    """Run the ``render-request`` subcommand: write a request file from fix specs, without a store or a clone.
+
+    Each spec is ``{fix_id, fix_entry, candidates, evidence}``; the output is the list a run would write for those
+    fixes, so calibration fixtures and replays use the production prompt byte for byte.
+    """
+    try:
+        specs = json.loads(Path(args.spec).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise EvolutionError(f"cannot read spec {args.spec}: {exc}") from exc
+    if not isinstance(specs, list) or not specs:
+        raise EvolutionError("spec must be a non-empty JSON list of {fix_id, fix_entry, candidates, evidence}")
+    items = []
+    for index, spec in enumerate(specs):
+        if (
+            not isinstance(spec, dict)
+            or not str(spec.get("fix_id") or "").strip()
+            or not isinstance(spec.get("candidates"), list)
+            or not all(isinstance(cand, dict) for cand in spec["candidates"])
+        ):
+            raise EvolutionError(
+                f"spec[{index}] needs a non-empty fix_id, fix_entry, candidates (list of objects) and evidence"
+            )
+        try:
+            items.append(
+                request_item(
+                    str(spec["fix_id"]),
+                    spec.get("fix_entry") or {},
+                    spec["candidates"],
+                    spec.get("evidence") or {},
+                )
+            )
+        except ValueError as exc:
+            raise EvolutionError(f"spec[{index}]: {exc}") from exc
+    Path(args.out).write_text(json.dumps(items, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
+    _emit("ITEMS", len(items))
+    _emit("ADJ_REQUEST", args.out)
+    return 0
+
+
 def cmd_ingest(args: argparse.Namespace) -> int:
     """Run the ``ingest`` subcommand: store verdicts, then rerun the pipeline without new blame."""
     paths = paths_from_root(Path(args.root))
@@ -850,6 +922,9 @@ def build_parser() -> argparse.ArgumentParser:
         if name == "run":
             cmd.add_argument("--full", default="false", help="true rebuilds store/ (clone, overrides, verdicts kept)")
             cmd.add_argument("--adjudicate", default="false", help="true requests LLM verdicts for ambiguous rows")
+    render = sub.add_parser("render-request", help="write an adjudication request file from fix specs (no store)")
+    render.add_argument("--spec", required=True, help="JSON list of {fix_id, fix_entry, candidates, evidence}")
+    render.add_argument("--out", required=True, help="request file to write")
     return parser
 
 
@@ -858,7 +933,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", newline="\n")  # type: ignore[union-attr]
-    handlers = {"scope": cmd_scope, "run": cmd_run, "ingest": cmd_ingest}
+    handlers = {"scope": cmd_scope, "run": cmd_run, "ingest": cmd_ingest, "render-request": cmd_render_request}
     try:
         return handlers[args.command](args)
     except Blocked as blocked:

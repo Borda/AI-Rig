@@ -21,14 +21,18 @@ stdout is two lines the caller reads back:
     proposal-path=.reports/calibrate/<timestamp>/curator/proposal.md
 
 ``agent-file=`` is empty when nothing resolved, and the reason is printed above it.
+``--run-slug`` names the run directory when it differs from the target — a mode-level
+calibration domain such as ``oss:analyse-vitality`` resolves the ``/oss:analyse`` skill
+file but keeps its proposal in its own directory.
 
 Usage:
-    resolve_agent_file.py --name <target> [--timestamp <ts>] [--local]
+    resolve_agent_file.py --name <target> [--timestamp <ts>] [--run-slug <slug>] [--local]
 
 Exit codes:
     0   resolved
     1   no source file found for the target
-    2   invalid ``--name`` or ``--timestamp`` (path separators, dots or other characters outside ``[A-Za-z0-9_-]``)
+    2   invalid ``--name``, ``--timestamp`` or ``--run-slug`` (path separators, dots or other characters outside
+        ``[A-Za-z0-9_-]``; the run slug may also hold ``:``)
 """
 
 from __future__ import annotations
@@ -44,6 +48,8 @@ PLUGINS_ROOT = Path("plugins")
 _NAME_RE = re.compile(r"[A-Za-z0-9_-]+")
 #: Allowed shape of the run timestamp embedded in the proposal path; empty means no timestamp.
 _TIMESTAMP_RE = re.compile(r"[A-Za-z0-9_-]*")
+#: Allowed shape of a run directory name: target-like, ``:`` permitted, no separators or dots.
+_RUN_SLUG_RE = re.compile(r"[A-Za-z0-9_:-]+")
 #: Plugin assumed when the requested agent name carries no ``plugin:`` prefix.
 DEFAULT_PLUGIN = "foundry"
 
@@ -80,13 +86,16 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--name", required=True, help="agent name, plugin:agent, or /skill")
     parser.add_argument("--timestamp", default="", help="calibrate run timestamp for the proposal path")
+    parser.add_argument("--run-slug", default="", help="run directory name when it differs from the target")
     parser.add_argument("--local", action="store_true", help="label failures as --local for the caller")
     args = parser.parse_args()
 
     plugin, rest, rel = split_target(args.name)
-    if not (_NAME_RE.fullmatch(plugin) and _NAME_RE.fullmatch(rest) and _TIMESTAMP_RE.fullmatch(args.timestamp)):
+    slug = args.run_slug or args.name.lstrip("/")
+    names_ok = _NAME_RE.fullmatch(plugin) and _NAME_RE.fullmatch(rest)
+    if not (names_ok and _TIMESTAMP_RE.fullmatch(args.timestamp) and _RUN_SLUG_RE.fullmatch(slug)):
         print(
-            f"! invalid --name {args.name!r} or --timestamp {args.timestamp!r} "
+            f"! invalid --name {args.name!r}, --timestamp {args.timestamp!r} or --run-slug {args.run_slug!r} "
             "(allowed: letters, digits, '_' and '-' around one optional 'plugin:' prefix)",
             file=sys.stderr,
         )
@@ -103,7 +112,7 @@ def main() -> int:
         return 1
 
     print(f"agent-file={resolved.as_posix()}")
-    print(f"proposal-path=.reports/calibrate/{args.timestamp}/{args.name.lstrip('/')}/proposal.md")
+    print(f"proposal-path=.reports/calibrate/{args.timestamp}/{slug}/proposal.md")
     return 0
 
 

@@ -5,7 +5,7 @@
 
 > - Replace square-bracket placeholders with this run's findings and values; omit conditional sections and bullets when inapplicable.
 > - Front matter: list REPORT_AGENTS_YAML agents as a comma-joined line in the body.
-> - Summary: write 2–3 sentences covering overall health, top strength, top risk, health score badge, and axis tally.
+> - Summary: write 2–3 sentences covering overall health, top strength, top risk (one axis, chosen as the terminal summary's Top Risk rule chooses it), health score badge, and axis tally.
 > - Findings: use fetched data as evidence, explain project impact, and give concrete actions. Critical/high entries include score and confidence.
 > - Duplicate groups: identify the shared root; mark canonical and duplicate items; label related items with distinct problems as RELATED; recommend closing duplicates against the canonical item.
 > - Data Sources: counts are actual response sizes, not estimates. Open issues truncate at 500; closed issues truncate at 1,000. Note truncation and report any 403 or 202 endpoint in Gaps & Limitations.
@@ -41,7 +41,7 @@ agents:
 
 [summary]
 
-**Health Score:** [score]% · [status: 🟢/🟡/🔴] · [N] healthy · [N] warning · [N] critical · [N] unavailable (⚪)
+**Health Score:** [score]% · [status: 🟢 ≥ 70% / 🟡 40–69.9% / 🔴 < 40%] · [N] healthy · [N] warning · [N] critical · [N] unavailable (⚪)
 
 ---
 

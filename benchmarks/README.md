@@ -1255,3 +1255,60 @@ Measured 2026-09-06. `PARTIAL`, 14 of 18 primary scenarios, with self-consistenc
 | L4       | cold 351 ms vs warm 291 ms → 1.21×    | ≥ 2.0×   |
 
 L4 previously failed on undefined data: the timing helper counted `grep`'s "no matches" exit status 1 as a failed command, so the cold-baseline median was `NaN` and the speedup gate compared against nothing. Search tools now count exit 1 as a completed search. L1 (`central`, 142 ms against a 200 ms gate) and L2 together show roughly 140 ms of fixed process start-up per call, which is what both latency gates are really measuring.
+
+# Calibration real-thread fixtures
+
+`/foundry:calibrate` generates synthetic problems for every domain, but generated issue threads turned out to be closed puzzles that a solver without the skill also solves. The `/oss:analyse` thread domain therefore carries a frozen set of real, public issue threads whose outcome a maintainer recorded. They are the hard tier of that domain: the calibrate pipeline copies them into a run on `--full` (domain key `real_fixtures: benchmarks/calibrate/oss-analyse/real` in `plugins/cc_foundry/skills/calibrate/modes/skills.md`), reports them as `recall_real`, and takes the domain's calibration verdict from them (`verdict_tier: real`).
+
+## Files
+
+| Path                                             | Role                                                                                                       |
+| ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| `build-calibrate-real-threads.py`                | Fire CLI: lists candidate issues in one repository, builds problems, writes them unless they already exist |
+| `_bench_calibrate/real_threads.py`               | Builder: verdict detection, cutoff, snapshot, distractor pool, pseudonymization, problem assembly          |
+| `calibrate/oss-analyse/real/<problem_id>.json`   | Frozen problems, one schema-v2 calibration problem per file                                                |
+| `tests/manifests/test_calibrate_real_threads.py` | Builder tests (offline; GraphQL responses are fixtures)                                                    |
+
+## What one problem is
+
+A duplicate problem is an issue that a maintainer resolved as a duplicate of another issue in the same repository. The verdict comes from, in precedence order, a `MarkedAsDuplicateEvent`, a close-as-duplicate event by someone other than the reporter, or a "duplicate of #N" comment by a trusted author: an owner, member or collaborator, or a contributor when GitHub corroborates it (duplicate label or close reason, or the contributor closed the issue without being its author, which needs triage rights). The thread is cut at the verdict: title, labels, state and edited text are shown as they were then, bots are removed, and an issue is skipped when anything before the cut already names the answer. The input adds a pool of up to 20 candidate issues created before the cut (at least 5 required) that share title terms, with the canonical among them. The answer key is the canonical number in the role `duplicate`.
+
+A negative control is an issue closed as completed by a pull request; its correct answer is that no candidate is a duplicate.
+
+Logins in solver-visible text are replaced by stable per-thread aliases (`user-N`, `maintainer-N`); all issue text is wrapped as untrusted data. `provenance` records repository, numbers, verdict source and time, candidate count and fetch date, plus `redacted` when an alias had to be applied by hand.
+
+## Building and freezing
+
+```bash
+# Dry run: print what would be written for one repository (read-only gh calls)
+python benchmarks/build-calibrate-real-threads.py --repo roboflow/rf-detr --count 15 --negatives 2 --out_dir <scratch-dir> --dry_run
+
+# Build candidates into a scratch directory, never straight into the frozen set
+python benchmarks/build-calibrate-real-threads.py --repo roboflow/rf-detr --count 15 --negatives 2 --out_dir <scratch-dir>
+```
+
+Every skip is printed with its reason. A file that already exists is never overwritten: frozen problems are fixed benchmark coordinates.
+
+Freezing is an operator step after the build:
+
+1. **Weak-solver probe.** Give each candidate's `task_prompt` + `input` (never the JSON file, which holds the answer key) to Haiku with no skill and Read/Write tools only, asking for an explicit `Duplicate of: #N` or `Duplicate of: none` line. Drop every duplicate problem Haiku solves, and record the result in each kept file as `provenance.probe = {"model": "haiku", "hit": <bool>}`; the calibrate report turns it into the frozen-time weak hit rate.
+2. **Select** among the survivors: at most one problem per canonical issue; a structured verdict event before a maintainer comment; then the larger candidate pool; then more pre-cutoff comments. One negative control per repository.
+3. **Check pseudonymization** on each selected file: no contributor or thread participant login may remain in `input` as a whole word. Free-text mentions of accounts outside the thread are not detectable this way; read the candidate text of any thread that names an account.
+4. **Copy** the selected files into `calibrate/oss-analyse/real/` and run `plugins/cc_foundry/bin/calibrate_validate_problems.py` on them (as `problems-real-<problem_id>.json` in a scratch run dir).
+
+`benchmarks/calibrate/` is excluded from `pretty-format-json`, `mixed-line-ending` and `codespell` in `.pre-commit-config.yaml`: the files quote issue text verbatim, and a typo fix or reformat would change the benchmark.
+
+## Current set
+
+| Repository                     | Duplicate problems                         | Negative control |
+| ------------------------------ | ------------------------------------------ | ---------------- |
+| Lightning-AI/pytorch-lightning | 21694, 16691, 13609                        | 21930            |
+| roboflow/rf-detr               | 461, 580, 394                              | 1647             |
+| Lightning-AI/torchmetrics      | 3289                                       | 3489             |
+| roboflow/supervision           | none (Haiku solved both usable duplicates) | 2910             |
+
+## Known limits
+
+- Solvers without the skill default to "related, not duplicate" on real threads: Haiku missed every rf-detr candidate and Sonnet solved none of 20 Haiku survivors, including one the skill-equipped target solved. A strong-solver filter would therefore remove exactly the discriminating cases, so none is applied.
+- Maintainer verdicts are sometimes loose, routing a report into a tracking issue rather than marking a true duplicate. `recall_real` is a small-n point estimate over such labels.
+- Repositories run out quickly: pytorch-lightning and torchmetrics yielded 14 and 5 usable duplicate threads over their whole history, supervision 2.

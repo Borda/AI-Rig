@@ -55,7 +55,7 @@ repos:
         name: "↩️ mixed-line-ending"
         args: ["--fix=lf"]
         # Excludes identity-locked benchmark JSON owned by dedicated builders and tests.
-        exclude: ^benchmarks/(manifests|suites|tests/fixtures)/.*\.json$
+        exclude: ^benchmarks/(manifests|suites|tests/fixtures|calibrate)/.*\.json$
       - id: pretty-format-json
         name: "✨ pretty-format-json"
         args: ["--autofix"]
@@ -63,7 +63,7 @@ repos:
         # inputs/outputs. Their dedicated builders/tests own byte and hash validation.
         # The opencode-rig npm package owns its JSON layout through Prettier; this hook
         # would re-sort keys and rewrite the file Prettier just laid out.
-        exclude: ^benchmarks/(manifests|suites|tests/fixtures)/.*\.json$|^plugins/opencode-rig/.*\.json$
+        exclude: ^benchmarks/(manifests|suites|tests/fixtures|calibrate)/.*\.json$|^plugins/opencode-rig/.*\.json$
 
   - repo: https://github.com/JoC0de/pre-commit-prettier
     rev: v3.9.9 # using tag; previously pinned SHA when tags were not persistent
@@ -123,6 +123,8 @@ repos:
         # isolated hook env parse pyproject on Python <3.11 (3.11+ uses stdlib tomllib).
         args: ["--write-changes"]
         additional_dependencies: ["tomli"]
+        # Frozen real-thread calibration problems quote issue text verbatim; a typo fix would alter the benchmark.
+        exclude: ^benchmarks/calibrate/.*\.json$
 
   - repo: https://github.com/executablebooks/mdformat
     rev: 1.0.0
