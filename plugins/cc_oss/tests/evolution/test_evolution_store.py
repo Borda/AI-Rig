@@ -160,8 +160,8 @@ class TestLock:
     def test_second_acquire_raises_with_holder(self, store: StorePaths) -> None:
         """A second run on the same store is refused and told who holds the lock.
 
-        Two concurrent scans would interleave appends to the same JSONL files; the second must stop and name the
-        holder so the user can decide.
+        Two concurrent scans would interleave appends to the same JSONL files; the second must stop and name the holder
+        so the user can decide.
         """
         token = acquire_lock(store)
         with pytest.raises(LockHeld) as exc:

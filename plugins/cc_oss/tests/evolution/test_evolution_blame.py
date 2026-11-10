@@ -164,8 +164,8 @@ class TestCollectEvidence:
     def test_modify_fix_blames_feature(self, evo_repo: RepoBuilder) -> None:
         """A fix that rewrites one feature line blames exactly that line on the feature commit.
 
-        Root commit, feature commit adding ``parse_config``, then a one-line fix inside the function. The record
-        also lists the touched source file and the changed symbol.
+        Root commit, feature commit adding ``parse_config``, then a one-line fix inside the function. The record also
+        lists the touched source file and the changed symbol.
         """
         _, feature = _seed(evo_repo)
         fix = _modify_fix(evo_repo, day=3)
@@ -220,8 +220,8 @@ class TestCollectEvidence:
     def test_moved_code_blames_original_commit(self, evo_repo: RepoBuilder) -> None:
         """Code moved to another file in one refactor commit is still attributed to the feature (``-M -C``).
 
-        The refactor deletes ``parse_config`` from ``src/app.py`` and adds it to ``src/config.py`` in the same
-        commit; the fix repairs the moved line in its new home.
+        The refactor deletes ``parse_config`` from ``src/app.py`` and adds it to ``src/config.py`` in the same commit;
+        the fix repairs the moved line in its new home.
         """
         _, feature = _seed(evo_repo)
         evo_repo.write("src/app.py", _HEADER)
@@ -233,8 +233,8 @@ class TestCollectEvidence:
     def test_merge_fix_uses_first_parent(self, evo_repo: RepoBuilder) -> None:
         """A merge-workflow fix is diffed and blamed against its first parent, so only the fix's change counts.
 
-        The fix lands on a branch while main gains an unrelated commit; diffing against the second parent would
-        blame that unrelated commit instead of the feature.
+        The fix lands on a branch while main gains an unrelated commit; diffing against the second parent would blame
+        that unrelated commit instead of the feature.
         """
         _, feature = _seed(evo_repo)
         evo_repo.branch("fix-branch")
@@ -285,8 +285,8 @@ class TestCollectEvidence:
     def test_own_commits_are_never_origin(self, evo_repo: RepoBuilder) -> None:
         """In a two-commit fix, lines the second commit changes from the first are not blamed on the fix itself.
 
-        Commit one inserts a guard (context blamed on the feature); commit two rewrites that guard, whose only
-        origin is commit one, a commit of the same fix.
+        Commit one inserts a guard (context blamed on the feature); commit two rewrites that guard, whose only origin is
+        commit one, a commit of the same fix.
         """
         _, feature = _seed(evo_repo)
         _edit(evo_repo, "src/app.py", "entries = {}\n", "entries = {}\n    if not text:\n        return entries\n")
@@ -314,8 +314,8 @@ class TestCollectEvidence:
     def test_repo_blame_config_is_ignored(self, evo_repo: RepoBuilder, tmp_path: Path) -> None:
         """A ``blame.ignoreRevsFile`` set in the repository config does not change the evidence.
 
-        The config points at a file listing the noise commit, but the base tree has no ignore-revs file, so the
-        noise commit stays the origin (only the committed file is honoured and fingerprinted).
+        The config points at a file listing the noise commit, but the base tree has no ignore-revs file, so the noise
+        commit stays the origin (only the committed file is honoured and fingerprinted).
         """
         _, noise, fix = _noise_rename_scenario(evo_repo, ignore_file=False)
         revs = tmp_path / "local-ignore-revs"

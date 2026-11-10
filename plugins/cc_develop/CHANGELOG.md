@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.47.0
+
+- `/develop:review` now asks first whether the change is behavior the project is meant to have:
+  - The sw-engineer reviewer derives the contract from README/docs, public API, existing tests, CHANGELOG and ADRs at the pre-change ref, never from the plan, description or commit message.
+  - The report's `Summary:` opens with `Intended behavior: yes/partly/no/undetermined`.
+  - Behavior that contradicts the contract, undeclared or unimplemented behavior changes, and behavior outside project scope become `intent:` findings at HIGH or MEDIUM, for every change type including fixes.
+
 ## 0.46.4
 
 - `/develop:review`'s perf brief asks for current behavior versus expected improvement per finding, which its report section requires.

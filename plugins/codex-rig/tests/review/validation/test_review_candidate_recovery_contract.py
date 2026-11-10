@@ -150,11 +150,11 @@ class TestReviewEntryAndRoutes:
     """The review skill's entry choice, routing and handoff wording."""
 
     @pytest.mark.installed_plugin
-    def test_prior_choice_precedes_run_creation(self) -> None:
-        """A reusable completed report is offered before another run supersedes it.
+    def test_prior_report_does_not_pause_authorized_review(self) -> None:
+        """A prior report must not turn authorized review into a routine choice prompt.
 
-        The entry section must describe the reuse/fresh choice, the no-question fresh route and the unmet-checkpoint
-        resume wording before any run is created or promoted.
+        The entry distinguishes fresh requests, completed reuse and incomplete resume before allocating a run,
+        and preserves validated tables and findings on delivery.
         """
         entry = flat(_section(_review("source-and-scope.md"), ENTRY_HEADING, "### 01:"))
 
@@ -163,8 +163,11 @@ class TestReviewEntryAndRoutes:
             (
                 "--target",
                 "--result",
-                "Reuse completed review",
-                "Run fresh review",
+                "Do not ask a routine reuse/fresh question",
+                "A new review request proceeds fresh",
+                "An explicit resume of a completed run",
+                "summary table and findings",
+                "--complete-run",
                 "For a new review request without requested report recovery, no eligible completed report means fresh"
                 " review without a question",
                 "A failed requested-report recovery instead returns to the Incomplete review decision",

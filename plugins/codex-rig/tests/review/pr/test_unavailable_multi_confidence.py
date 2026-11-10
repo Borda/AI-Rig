@@ -317,7 +317,15 @@ class TestMultipleReportConfidenceGaps:
     @pytest.mark.parametrize(
         ("checkout_state", "mutate", "score", "in_final", "absent_from_final", "checkout_fields"),
         [
-            pytest.param(CHECKOUT_STARTED, _no_change, 0.95, (FIRST, SECOND), (), {}, id="valid"),
+            pytest.param(
+                CHECKOUT_STARTED,
+                _no_change,
+                0.95,
+                (FIRST_TEXT, "| unresolved | (-0.02) |", f"| unresolved | (-0.03) | {SECOND_TEXT} |"),
+                (),
+                {},
+                id="valid",
+            ),
             pytest.param(
                 GH_CHECKOUT_RETAINED,
                 _no_change,
@@ -358,7 +366,8 @@ class TestMultipleReportConfidenceGaps:
         assert all(text in final for text in in_final)
         assert not any(text in final for text in absent_from_final)
         assert {key: retained[key] for key in checkout_fields} == checkout_fields
-        assert "(-0.00) PR correctness was not assessed" in final
+        assert "| Status | Deduction | Gap or limitation | Closure evidence |" in final
+        assert "| limit | (-0.00) | PR correctness was not assessed;" in final
         assert f"{score:.2f}" in final
         assert score > 0.8 or NOT_ACCEPTABLE in failed
 

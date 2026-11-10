@@ -42,7 +42,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" calibrate te
 Each subagent gets the pipeline template printed above, substitutions:
 
 - `<TARGET>` = agent name (e.g., `foundry:sw-engineer`)
-- `<DOMAIN>` = domain string from table above
+- `<DOMAIN>` = domain string from table above, without its trailing availability note (`*(<plugin> plugin required — skip if ... empty)*`): the orchestrator applies that note before dispatch, and a generator reading it treats it as a reason to skip every problem
 - `<N>` = 3 (fast) or 10 (full)
 - `<TIMESTAMP>` = current run timestamp
 - `<MODE>` = `fast` or `full`

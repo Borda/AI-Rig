@@ -92,6 +92,10 @@
       "kind": "block",
       "src": "skills/release/modes/classify-truth-check.md:92"
     },
+    "04b68244d8ca52b79b42537837a634632fa31b93d43eac6b4d928ba06678dac9": {
+      "kind": "block",
+      "src": "skills/analyse/modes/thread.md:124"
+    },
     "054d0b52ddfffd5b5aab56718117ca17a39352ec57abeeec60274a274114a8b4": {
       "kind": "command",
       "src": "skills/review/SKILL.md:240"
@@ -99,10 +103,6 @@
     "0570e12e27d1777928b6ab5a8a0430c95839b9d5a017ba934fd28cb1fb835759": {
       "kind": "block",
       "src": "skills/resolve/modes/pr-intelligence.md:56"
-    },
-    "057bae67828eda1c038e2db39ddbbc7d2f63a44dfc72d6921709612d3718a9f1": {
-      "kind": "command",
-      "src": "skills/analyse/modes/thread.md:124"
     },
     "05ca5edab2859e30a195bc73947f571eabd9c1d2abb53ea6d2a32348c3bf99f2": {
       "kind": "command",
@@ -3704,10 +3704,6 @@
       "kind": "command",
       "src": "skills/resolve/SKILL.md:670"
     },
-    "8395a20d1333c52e069d69f35cc5576def6aeda9b85ba443aea8fb394b77894a": {
-      "kind": "block",
-      "src": "skills/analyse/modes/thread.md:124"
-    },
     "83ea9f28463276b16fbed7e658540ba0e5d967341ba581ecbddd959c20c37261": {
       "kind": "command",
       "src": "skills/release/SKILL.md:152"
@@ -5732,6 +5728,10 @@
       "kind": "command",
       "src": "agents/gh-scraper.md:36"
     },
+    "c485744df00088668dd9a12acb78c7270f0f1c95efe0239c83ecd7175b24f608": {
+      "kind": "command",
+      "src": "skills/analyse/modes/thread.md:124"
+    },
     "c48f54a3305b860c8efdc52d34ef7638de401bf72d2906862a625c35bdbbdb06": {
       "kind": "block",
       "src": "skills/release/SKILL.md:130"
@@ -7465,6 +7465,6 @@
       "src": "skills/resolve/SKILL.md:148"
     }
   },
-  "plugin": "cc_oss@0.58.0",
+  "plugin": "cc_oss@0.59.0",
   "schema": 1
 }

@@ -360,6 +360,102 @@ class TestRender:
         assert finalizer.render_handoff(payload) == '{"status":"ok"}\n'
 
 
+class TestConfidenceTable:
+    """Keep current confidence rows complete without changing historical presentations."""
+
+    @pytest.mark.parametrize(
+        ("gap", "detail", "deduction"),
+        [
+            pytest.param("Canonical gap", "(-0.05) Retained closure", "(-0.05)", id="fixed-label"),
+            pytest.param("Historical gap", "Retained closure", "—", id="missing-contribution"),
+        ],
+    )
+    def test_existing_closure_accounting_is_preserved(
+        self, finalizer: Any, gap: str, detail: str, deduction: str
+    ) -> None:
+        """Read fixed-label deductions from closure text without inventing missing contributions."""
+        payload = _unavailable_payload(presentation_version=14)
+        payload["confidence"]["limits"] = []
+        payload["confidence"]["gaps"] = [{"gap": gap, "status": "deferred", "rationale": detail}]
+
+        rendered = finalizer.render_handoff(payload)
+
+        assert f"| deferred | {deduction} | {gap} |" in rendered
+        assert detail in rendered
+
+    def test_version_13_retains_confidence_bullets(self, finalizer: Any) -> None:
+        """Keep the immediately previous presentation's confidence bytes intact."""
+        payload = _unavailable_payload(presentation_version=13)
+
+        rendered = finalizer.render_handoff(payload)
+        confidence = rendered.split("**Confidence**\n\n", 1)[1].split("\n**Artifact**", 1)[0]
+
+        assert confidence == "0.95 (fair).\n\n- Gap [unresolved]: External CI was not run. — CI is external.\n"
+
+    def test_current_confidence_table_retains_accounting_and_closure(self, finalizer: Any) -> None:
+        """Separate contributions from gap descriptions while retaining both closure fields."""
+        payload = _unavailable_payload()
+        payload["presentation_version"] = 14
+        payload["confidence"] = {
+            "score": 0.95,
+            "band": "fair",
+            "limits": ["(-0.05) External CI unavailable", "(-0.00) Platform coverage bounded"],
+            "gaps": [
+                {
+                    "gap": "(-0.05) External CI unavailable",
+                    "status": "unresolved",
+                    "rationale": "Runner unavailable",
+                    "evidence": "Controlled checks passed | retained\nlogs",
+                }
+            ],
+        }
+
+        rendered = finalizer.render_handoff(payload)
+
+        assert "| Status | Deduction | Gap or limitation | Closure evidence |" in rendered
+        assert "| unresolved | (-0.05) | External CI unavailable | Runner unavailable — " in rendered
+        assert "Controlled checks passed \\| retained<br>logs |" in rendered
+        assert "| limit | (-0.00) | Platform coverage bounded | — |" in rendered
+        assert rendered.count("External CI unavailable") == 1
+        assert "0.95 (fair)." in rendered
+        assert payload["confidence"]["gaps"][0]["gap"] == "(-0.05) External CI unavailable"
+
+    @pytest.mark.parametrize("presentation", [13, 14])
+    def test_no_confidence_gaps_does_not_invent_rows(self, finalizer: Any, presentation: int) -> None:
+        """Keep perfect confidence with no declared limitations as score-only output."""
+        payload = _unavailable_payload()
+        payload["presentation_version"] = presentation
+        payload["confidence"] = {"score": 1.0, "band": "fair", "limits": [], "gaps": []}
+
+        rendered = finalizer.render_handoff(payload)
+
+        assert "**Confidence**\n\n1.00 (fair).\n\n**Artifact**" in rendered
+        assert "| Status | Deduction |" not in rendered
+
+    @pytest.mark.parametrize("status", ["closed", "deferred", "unresolved"])
+    def test_current_confidence_paths_leave_table_without_losing_evidence(self, finalizer: Any, status: str) -> None:
+        """Externalize closure paths while retaining status, contributions and adjacent prose."""
+        payload = _unavailable_payload()
+        payload["presentation_version"] = 14
+        payload["confidence"]["limits"] = []
+        payload["confidence"]["gaps"] = [
+            {
+                "gap": "(-0.05) Coverage bounded",
+                "status": status,
+                "rationale": "Scope retained",
+                "evidence": "See `logs/check.txt`",
+            }
+        ]
+
+        rendered = finalizer.render_handoff(payload)
+        confidence = rendered.split("**Confidence**", 1)[1].split("**Artifact**", 1)[0]
+
+        assert f"| {status} | (-0.05) | Coverage bounded |" in confidence
+        assert "logs/check.txt" not in "\n".join(line for line in confidence.splitlines() if line.startswith("|"))
+        assert "logs/check.txt" in confidence
+        assert "Scope retained" in confidence
+
+
 class TestReviewAttribution:
     """Reviewer ratings and finding authors shown beside the aggregate review decision."""
 

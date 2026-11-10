@@ -32,6 +32,7 @@ Codex asks only for a genuinely missing decision, material input or protected ac
 - **No consent by default:** no answer, cancellation or unsupported input grants consent.
 - **Plain text:** when required, all context, reports, confidence and limitations come before the question; the question and complete options or accepted input syntax are the final terminal block, with no trailing summary or status. Headless hosts retain an explicit unresolved-input fallback.
 - **Dismissed question:** a user-reported dismissed question leaves its decision pending. The root checks another suitable control, then asks once in its final plain-chat response if no control remains usable; the dismissed transport stays unsuitable for later required questions in that host until delivery is verified again. Rejected question calls resume at the pending decision without replaying delivered report context.
+- **Existing code-review evidence:** the owning workflow handles new requests or explicit resume without a routine reuse/fresh prompt, preserving validated output and revision limits.
 - Claude-specific question behavior is unchanged.
 
 ______________________________________________________________________

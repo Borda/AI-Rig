@@ -115,61 +115,6 @@ def _collect_conftest_fixture_exports(modules: list[dict]) -> dict[str, dict]:
     return aggregated
 
 
-def _attach_fixture_graph(modules: list[dict], root: Path) -> None:
-    """Walk every parseable module and attach fixture exports/uses in two passes.
-
-    Pass 1 — re-parse each ``status == "ok"`` module to extract any
-    ``@pytest.fixture`` definitions; conftest and test files alike may define
-    fixtures locally. Non-test, non-conftest modules get an empty
-    ``fixture_exports`` list to keep the schema uniform.
-
-    Pass 2 — for every test module (``is_test=True``), reparse and resolve each
-    test function's parameter list against (a) fixtures defined in the same
-    module and (b) the aggregated conftest exports from pass 1.
-
-    Args:
-        modules: module entry list (mutated in-place).
-        root: project root used to resolve relative file paths.
-    """
-    # Pass 1: extract fixture_exports for every parseable module.
-    for m in modules:
-        if m.get("status") != "ok":
-            continue
-        path = m.get("path", "")
-        if not path:
-            m["fixture_exports"] = []
-            continue
-        filepath = root / path
-        try:
-            source = filepath.read_text(encoding="utf-8", errors="replace")
-            tree = ast.parse(source, filename=str(filepath))
-        except (OSError, SyntaxError):
-            m["fixture_exports"] = []
-            continue
-        m["fixture_exports"] = extract_fixtures(tree, filepath)
-
-    # Aggregate conftest exports once (deep-conftest wins).
-    all_conftest_exports = _collect_conftest_fixture_exports(modules)
-
-    # Pass 2: for test modules, extract fixture_uses.
-    for m in modules:
-        if m.get("status") != "ok" or not m.get("is_test"):
-            continue
-        path = m.get("path", "")
-        if not path:
-            m["fixture_uses"] = []
-            continue
-        filepath = root / path
-        try:
-            source = filepath.read_text(encoding="utf-8", errors="replace")
-            tree = ast.parse(source, filename=str(filepath))
-        except (OSError, SyntaxError):
-            m["fixture_uses"] = []
-            continue
-        defined_local = {f["name"]: f for f in m.get("fixture_exports", []) or []}
-        m["fixture_uses"] = extract_fixture_uses(tree, defined_local, all_conftest_exports)
-
-
 def _build_fixture_rdep_count(modules: list[dict]) -> dict[str, int]:
     """Count how many distinct test modules use each fixture (reverse index).
 
@@ -441,33 +386,136 @@ def _build_indexed_files(modules: list[dict]) -> dict[str, str]:
     return {m["path"]: m["name"] for m in modules if m.get("status") == "ok" and m.get("path")}
 
 
-def _attach_subprocess_calls(modules: list[dict], root: Path) -> None:
-    """Walk every parseable module file and attach ``subprocess_calls`` in-place.
+@dataclass(frozen=True)
+class _PhaseReuse:
+    """Inputs that decide which carried per-file results an incremental scan may keep.
 
-    The full module list must already be available so that script paths can be
-    matched to dotted module names. Re-parses each source file once — the cost
-    is small relative to the initial parse pass and avoids threading the AST
-    through ``_parse_file``.
+    Attributes:
+        indexed_files: ``rel-path -> module name`` map the carried ``subprocess_calls`` were resolved against, or
+            ``None`` when that resolution cannot be trusted (project root moved).
+        conftest_exports: conftest fixture aggregate the carried ``fixture_uses`` were resolved against.
+    """
+
+    indexed_files: dict[str, str] | None
+    conftest_exports: dict[str, dict]
+
+
+def _parse_source(filepath: Path) -> ast.Module | None:
+    """Parse *filepath* into an AST, or return ``None`` when it cannot be read or parsed."""
+    try:
+        source = filepath.read_text(encoding="utf-8", errors="replace")
+        return ast.parse(source, filename=str(filepath))
+    except (OSError, SyntaxError):
+        return None
+
+
+@dataclass(frozen=True)
+class _PhaseKeeps:
+    """Which carried per-file results one scan may keep, per result kind."""
+
+    calls: bool
+    exports: bool
+    uses: bool
+
+
+def _is_conftest(module: dict) -> bool:
+    """Return whether *module* is a ``conftest.py`` entry."""
+    return Path(module.get("path", "")).name == "conftest.py"
+
+
+def _attach_conftest_exports(modules: list[dict], root: Path, keep_exports: bool) -> dict[str, ast.Module | None]:
+    """Attach ``fixture_exports`` to every conftest and return the ASTs parsed for them, keyed by path.
+
+    Conftests go first because their exports form the aggregate every test module resolves fixture uses against;
+    the returned trees let the per-module pass reuse them instead of parsing a conftest twice.
 
     Args:
         modules: module entry list (mutated in-place).
-        root: project root used for script-path resolution.
+        root: project root used to resolve relative file paths.
+        keep_exports: keep a carried ``fixture_exports`` value instead of re-extracting it.
     """
-    indexed_files = _build_indexed_files(modules)
+    trees: dict[str, ast.Module | None] = {}
     for m in modules:
-        if m.get("status") != "ok":
+        if m.get("status") != "ok" or not _is_conftest(m) or (keep_exports and "fixture_exports" in m):
             continue
         path = m.get("path", "")
-        if not path:
-            continue
-        filepath = root / path
-        try:
-            source = filepath.read_text(encoding="utf-8", errors="replace")
-            tree = ast.parse(source, filename=str(filepath))
-        except (OSError, SyntaxError):
-            m["subprocess_calls"] = []
-            continue
-        m["subprocess_calls"] = extract_subprocess_calls(tree, filepath, root, indexed_files)
+        trees[path] = _parse_source(root / path)
+        tree = trees[path]
+        m["fixture_exports"] = [] if tree is None else extract_fixtures(tree, root / path)
+    return trees
+
+
+def _attach_module_phases(
+    m: dict,
+    root: Path,
+    indexed_files: dict[str, str],
+    trees: dict[str, ast.Module | None],
+    conftest_exports: dict[str, dict],
+    keeps: _PhaseKeeps,
+) -> None:
+    """Attach whichever of the three per-file results *m* still needs, from a single parse.
+
+    Args:
+        m: ``status == "ok"`` module entry (mutated in-place).
+        root: project root used to resolve file and script paths.
+        indexed_files: ``rel-path -> module name`` map for subprocess script resolution.
+        trees: ASTs already parsed for conftests, consumed here when present.
+        conftest_exports: aggregated conftest fixture exports for resolving fixture uses.
+        keeps: which carried results may be kept.
+    """
+    path = m.get("path", "")
+    is_test = bool(m.get("is_test"))
+    if not path:
+        m["fixture_exports"] = []
+        if is_test:
+            m["fixture_uses"] = []
+        return
+    need_calls = not (keeps.calls and "subprocess_calls" in m)
+    need_exports = not _is_conftest(m) and not (keeps.exports and "fixture_exports" in m)
+    need_uses = is_test and not (keeps.uses and "fixture_uses" in m)
+    if not (need_calls or need_exports or need_uses):
+        return
+    filepath = root / path
+    tree = trees.pop(path) if path in trees else _parse_source(filepath)
+    if need_calls:
+        m["subprocess_calls"] = [] if tree is None else extract_subprocess_calls(tree, filepath, root, indexed_files)
+    if need_exports:
+        m["fixture_exports"] = [] if tree is None else extract_fixtures(tree, filepath)
+    if need_uses:
+        defined_local = {f["name"]: f for f in m.get("fixture_exports", []) or []}
+        m["fixture_uses"] = [] if tree is None else extract_fixture_uses(tree, defined_local, conftest_exports)
+
+
+def _attach_per_file_phases(modules: list[dict], root: Path, reuse: _PhaseReuse | None = None) -> None:
+    """Attach ``subprocess_calls``, ``fixture_exports`` and ``fixture_uses``, parsing each source file at most once.
+
+    Subprocess edges and fixture extraction need the complete module list only for their cross-file lookups: script
+    paths resolve against the indexed-files map, and fixture uses resolve against the aggregated conftest exports.
+    Conftests are therefore handled first so the aggregate is complete before any test module needs it, and every
+    other module is then parsed once for all three results.
+
+    With *reuse*, a module entry that already carries a key is an unchanged file (a re-parsed file is a fresh entry
+    without it), so its stored value is kept whenever the lookup it depends on is unchanged:
+    ``fixture_exports`` depends on the file alone; ``subprocess_calls`` on the indexed-files map;
+    ``fixture_uses`` on the conftest aggregate.
+
+    Args:
+        modules: module entry list (mutated in-place).
+        root: project root used to resolve relative file paths and script paths.
+        reuse: carried-result context of an incremental scan; ``None`` recomputes everything.
+    """
+    indexed_files = _build_indexed_files(modules)
+    keep_exports = reuse is not None
+    trees = _attach_conftest_exports(modules, root, keep_exports)
+    conftest_exports = _collect_conftest_fixture_exports(modules)
+    keeps = _PhaseKeeps(
+        calls=reuse is not None and reuse.indexed_files == indexed_files,
+        exports=keep_exports,
+        uses=reuse is not None and reuse.conftest_exports == conftest_exports,
+    )
+    for m in modules:
+        if m.get("status") == "ok":
+            _attach_module_phases(m, root, indexed_files, trees, conftest_exports, keeps)
 
 
 def _build_subprocess_rdep_count(modules: list[dict]) -> dict[str, int]:
@@ -1270,6 +1318,7 @@ def _attach_whole_index_phases(
     modules: list[dict],
     root: Path,
     coverage_path: Path | None,
+    reuse: _PhaseReuse | None = None,
 ) -> tuple[dict[str, int], dict[str, int]]:
     """Run the phases that need the complete module list, then return their reverse counts.
 
@@ -1282,13 +1331,14 @@ def _attach_whole_index_phases(
         root: project root the modules were scanned from.
         coverage_path: optional ``.coverage`` file; ``None`` skips coverage annotation,
             leaving any annotations carried over from a previous index untouched.
+        reuse: carried per-file results an incremental scan may keep (see :func:`_attach_per_file_phases`);
+            ``None`` recomputes every file.
 
     Returns:
         ``(subprocess_rdep_count, fixture_rdep_count)``.
     """
-    _attach_subprocess_calls(modules, root)
+    _attach_per_file_phases(modules, root, reuse)
     subprocess_rdep_count = _build_subprocess_rdep_count(modules)
-    _attach_fixture_graph(modules, root)
     fixture_rdep_count = _build_fixture_rdep_count(modules)
     # Failures inside _read_coverage_data produce a stderr warning and a None return —
     # the rest of the index still builds.
@@ -1311,6 +1361,23 @@ def _apply_stub_keys(index: dict, shadowed_stubs: list[str], casefold_collisions
             index[key] = value
         else:
             index.pop(key, None)
+
+
+def _carried_phase_reuse(old_index: dict, stored_modules: list[dict], root: Path) -> _PhaseReuse:
+    """Describe the lookups the stored per-file results were resolved against.
+
+    A moved project root invalidates carried subprocess calls, whose recorded paths are absolute.
+
+    Args:
+        old_index: previously written index.
+        stored_modules: module entries of *old_index*, before this scan changed them.
+        root: project root being scanned.
+    """
+    same_root = old_index.get("scan_root") == str(root.resolve())
+    return _PhaseReuse(
+        indexed_files=_build_indexed_files(stored_modules) if same_root else None,
+        conftest_exports=_collect_conftest_fixture_exports(stored_modules),
+    )
 
 
 def incremental_scan(root: Path, old_index: dict, coverage_path: Path | None = None) -> dict:
@@ -1409,7 +1476,9 @@ def incremental_scan(root: Path, old_index: dict, coverage_path: Path | None = N
     # resolution and conftest fixture visibility are project-wide, so per-file
     # invalidation cannot preserve them. Coverage is skipped silently without a
     # coverage file so annotations carried over via {**old_index, ...} survive.
-    subprocess_rdep_count, fixture_rdep_count = _attach_whole_index_phases(modules, root, coverage_path)
+    subprocess_rdep_count, fixture_rdep_count = _attach_whole_index_phases(
+        modules, root, coverage_path, _carried_phase_reuse(old_index, stored_modules, root)
+    )
 
     index = {
         **old_index,

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.77.1
+
+- `/foundry:calibrate` no longer passes a domain's plugin-availability note ("skip if … empty") to the problem generators. The orchestrator already applies that note before dispatch; a generator that read it, Codex in particular, skipped every problem, so a full run lost its Codex share until someone added a clarifying note by hand.
+
 ## 0.77.0
 
 - `/foundry:calibrate` now measures whether its benchmark problems are hard instead of trusting the generator: every high and extreme problem first goes to a weak solver (Haiku with no domain instructions), and a problem it fully solves is regenerated once, then downgraded to medium. Reports show weak-solver recall per tier, and a tier counts as discriminating only when the target beats the weak solver by 0.15 or more. Before this, 37 of 46 logged runs scored recall 1.00 on every tier.

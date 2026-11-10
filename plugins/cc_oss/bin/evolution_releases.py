@@ -707,8 +707,8 @@ def _commit_releases(
 
     Where every chain release contains the previous one, the first containing release is the ``git rev-list r ^prev``
     range the commit falls in. Off-branch releases on a chain make that containment partial, and the first-containing
-    rule still names the release that first shipped the commit on the line. Commits sharing a mask share the answer,
-    so it is computed once per distinct mask.
+    rule still names the release that first shipped the commit on the line. Commits sharing a mask share the answer, so
+    it is computed once per distinct mask.
     """
     steps = {
         name: [(1 << index, releases[index].version.canonical) for index in chain] for name, chain in chains.items()

@@ -1300,15 +1300,25 @@ Freezing is an operator step after the build:
 
 ## Current set
 
-| Repository                     | Duplicate problems                         | Negative control |
-| ------------------------------ | ------------------------------------------ | ---------------- |
-| Lightning-AI/pytorch-lightning | 21694, 16691, 13609                        | 21930            |
-| roboflow/rf-detr               | 461, 580, 394                              | 1647             |
-| Lightning-AI/torchmetrics      | 3289                                       | 3489             |
-| roboflow/supervision           | none (Haiku solved both usable duplicates) | 2910             |
+| Repository                     | Duplicate problems                          | Negative control |
+| ------------------------------ | ------------------------------------------- | ---------------- |
+| Lightning-AI/pytorch-lightning | 21694, 16691, 13609, 7842                   | 21930            |
+| roboflow/rf-detr               | 461, 580, 394, 267, 258, 362, 426, 700, 722 | 1647             |
+| Lightning-AI/torchmetrics      | 3289, 2047                                  | 3489             |
+| roboflow/supervision           | none (Haiku solved both usable duplicates)  | 2910             |
+| pytorch/vision                 | 5798, 7011, 7969                            | 9687             |
+| Lightning-AI/litgpt            | 238                                         | 2348             |
+| huggingface/peft               | none (Haiku solved both usable duplicates)  | 4094             |
+| huggingface/accelerate         | none (no usable duplicate thread)           | 4353             |
+
+19 duplicate problems, each with a distinct canonical issue, and 8 negative controls. Haiku missed every kept duplicate and answered "none" on every negative control. rf-detr supplies 9 of the 19 duplicates, and its maintainers label loosely (see below), so report rf-detr recall beside the rest rather than only pooled.
+
+First baseline on this set (2026-11-10, `/oss:analyse` thread mode with the skill unchanged): duplicates 10/19 (rf-detr 1/9, the other repositories 9/10), negative controls 8/8, 6 wrong-canonical false positives across 4 problems, calibration bias +0.07. The 11 problems carried over from the earlier set reproduced their previous hits and false positives exactly. 8 of the 9 misses are rf-detr problems labelled only by a maintainer comment, and the fixtures stop before that comment, so whether those labels mark true duplicates is unaudited.
+
+After the thread-mode change that lists numbers cited only in the thread as unverified, leaves the canonical undetermined when every potential duplicate is snippet-only, and keeps a candidate bundling other questions related: duplicates 10/19, negative controls 8/8, false positives 6 → 4 (every remaining one was already present in the baseline), scorer agreement 1.00. Hit and miss confidence still do not separate (0.74 vs 0.76).
 
 ## Known limits
 
 - Solvers without the skill default to "related, not duplicate" on real threads: Haiku missed every rf-detr candidate and Sonnet solved none of 20 Haiku survivors, including one the skill-equipped target solved. A strong-solver filter would therefore remove exactly the discriminating cases, so none is applied.
 - Maintainer verdicts are sometimes loose, routing a report into a tracking issue rather than marking a true duplicate. `recall_real` is a small-n point estimate over such labels.
-- Repositories run out quickly: pytorch-lightning and torchmetrics yielded 14 and 5 usable duplicate threads over their whole history, supervision 2.
+- Repositories run out quickly: pytorch-lightning and torchmetrics yielded 14 and 5 usable duplicate threads over their whole history, supervision 2, peft 2, litgpt 1 and accelerate none; vision gave 8 from its newest issues, and Haiku solved 4 of them (three shared one canonical).

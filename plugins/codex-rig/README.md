@@ -155,24 +155,24 @@ codex '$codex-rig:code-remediate review'
 
 Codex Rig installs 16 skills: 15 workflows plus legacy shim manager.
 
-| Skill                                                    | Purpose                                                                                                                                                                            |
-| -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`assess`](skills/assess/SKILL.md)                       | Inspect issue, PR, module, or problem before implementation; emit ranked findings and gates, with self-review inside the final step.                                               |
-| [`challenge-resolve`](skills/challenge-resolve/SKILL.md) | Independently review and fix a bounded task through convergence rounds, retaining evidence and explicit stop reasons.                                                              |
-| [`audit`](skills/audit/SKILL.md)                         | Detect configuration, workflow, routing, documentation, prompt-efficiency, and quality-gate drift; optionally propose advisory instruction consolidation.                          |
-| [`calibrate`](skills/calibrate/SKILL.md)                 | Run fixed and behavioral checks across packaged skills and roles; score recall, precision, and confidence accuracy.                                                                |
-| [`code-remediate`](skills/code-remediate/SKILL.md)       | Triage review findings, select valid work, assign owners/verifiers, apply fixes, and prove closure.                                                                                |
-| [`code-review`](skills/code-review/SKILL.md)             | Review local diffs on mandatory and risk-triggered axes, or screen an open PR for close advice; read-only. Feature-shaped changes get a blind blueprint before the diff is opened. |
-| [`implement`](skills/implement/SKILL.md)                 | Run proportionate plan-build-verify work with bounded native implementation owners after independent plan challenges, or the separate promoted read-only route.                    |
-| [`investigate`](skills/investigate/SKILL.md)             | Debug code and narrow unknown failures to evidence-backed root cause before implementation.                                                                                        |
-| [`kaggle`](skills/kaggle/SKILL.md)                       | Create or extend grounded Jupytext Kaggle notebooks per `shared/notebook-style.md`, grounding schema via authenticated `kaggle` CLI.                                               |
-| [`manage`](skills/manage/SKILL.md)                       | Safely create, update, or remove Codex skills and agent configuration with optional disjoint read-only inventory support; mutations remain parent-serial.                          |
-| [`optimize`](skills/optimize/SKILL.md)                   | Measure first, reject regressions, resume numeric campaigns, run isolated ablations, and inspect retrospectives; iteration records are staged, then the ledger is created once.    |
-| [`profile`](skills/profile/SKILL.md)                     | Explain selected native session/agent counters, inclusive tool time and optional supplied-rate cost estimates, with explicit missing coverage.                                     |
-| [`release`](skills/release/SKILL.md)                     | Draft traced release notes, complete contributor credits, preserved changelogs, migration and summaries; report readiness in a check/evidence/action table.                        |
-| [`research`](skills/research/SKILL.md)                   | Collect current primary evidence, dispatch one specialist wave after the codemap artifact, and map findings to concrete implementation choices.                                    |
-| [`sync`](skills/sync/SKILL.md)                           | Inspect active plugin-cache drift or refresh public-GitHub Codex Rig installation without cache edits.                                                                             |
-| [`agent-shims`](skills/agent-shims/SKILL.md)             | Diagnose and remove authenticated thin shims from pre-release development; install only reports the platform block.                                                                |
+| Skill                                                    | Purpose                                                                                                                                                                         |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`assess`](skills/assess/SKILL.md)                       | Inspect issue, PR, module, or problem before implementation; emit ranked findings and gates, with self-review inside the final step.                                            |
+| [`challenge-resolve`](skills/challenge-resolve/SKILL.md) | Independently review and fix a bounded task through convergence rounds, retaining evidence and explicit stop reasons.                                                           |
+| [`audit`](skills/audit/SKILL.md)                         | Detect configuration, workflow, routing, documentation, prompt-efficiency, and quality-gate drift; optionally propose advisory instruction consolidation.                       |
+| [`calibrate`](skills/calibrate/SKILL.md)                 | Run fixed and behavioral checks across packaged skills and roles; score recall, precision, and confidence accuracy.                                                             |
+| [`code-remediate`](skills/code-remediate/SKILL.md)       | Triage review findings, select valid work, assign owners/verifiers, apply fixes, and prove closure.                                                                             |
+| [`code-review`](skills/code-review/SKILL.md)             | Review local diffs or open PRs: assess desired package behavior first, then correctness and risk; read-only. Feature-shaped changes get a pre-diff blind blueprint.             |
+| [`implement`](skills/implement/SKILL.md)                 | Run proportionate plan-build-verify work with bounded native implementation owners after independent plan challenges, or the separate promoted read-only route.                 |
+| [`investigate`](skills/investigate/SKILL.md)             | Debug code and narrow unknown failures to evidence-backed root cause before implementation.                                                                                     |
+| [`kaggle`](skills/kaggle/SKILL.md)                       | Create or extend grounded Jupytext Kaggle notebooks per `shared/notebook-style.md`, grounding schema via authenticated `kaggle` CLI.                                            |
+| [`manage`](skills/manage/SKILL.md)                       | Safely create, update, or remove Codex skills and agent configuration with optional disjoint read-only inventory support; mutations remain parent-serial.                       |
+| [`optimize`](skills/optimize/SKILL.md)                   | Measure first, reject regressions, resume numeric campaigns, run isolated ablations, and inspect retrospectives; iteration records are staged, then the ledger is created once. |
+| [`profile`](skills/profile/SKILL.md)                     | Explain selected native session/agent counters, inclusive tool time and optional supplied-rate cost estimates, with explicit missing coverage.                                  |
+| [`release`](skills/release/SKILL.md)                     | Draft traced release notes, complete contributor credits, preserved changelogs, migration and summaries; report readiness in a check/evidence/action table.                     |
+| [`research`](skills/research/SKILL.md)                   | Collect current primary evidence, dispatch one specialist wave after the codemap artifact, and map findings to concrete implementation choices.                                 |
+| [`sync`](skills/sync/SKILL.md)                           | Inspect active plugin-cache drift or refresh public-GitHub Codex Rig installation without cache edits.                                                                          |
+| [`agent-shims`](skills/agent-shims/SKILL.md)             | Diagnose and remove authenticated thin shims from pre-release development; install only reports the platform block.                                                             |
 
 ### Execution model
 
@@ -317,6 +317,7 @@ Completion requires requested output, explainable gate results, unresolved risks
 
 - Every skill keeps its normal closing gate after user intervention, recovery, compaction, or repeated invocation: resume at the first unmet checkpoint using still-valid evidence, and do not replace the required final summary/tables with an informal recap.
 - Re-running a gate in the same directory archives prior evidence under `gate-attempts/<NNN>`; a failed, timed-out, or missing-command check cannot become skipped.
+- New confidence sections show status, deduction, gap or limitation, and closure evidence in a four-column table; historical reports keep their original rendering.
 - Confidence is evidence-backed. Every reported gap starts with `(-0.NN)` before its description; deductions total `1.00 - score`. See [shared accounting rules](shared/quality-gates.md#confidence-deduction-accounting). Bands:
   - `<= 0.80`: incomplete; continue recovery or report blocker.
   - `0.80 < confidence < 0.85`: very questionable; stronger evidence is required.
@@ -333,6 +334,7 @@ Completion requires requested output, explainable gate results, unresolved risks
 
 ![$codex-rig:code-review execution architecture: fans, joins and gates (animated)](assets/images/code-review-arch.svg)
 
+- **Entry and resume:** New review requests review current source without a reuse/fresh prompt. Explicit resume continues the retained run; completed reuse reruns validation and returns the full summary table and findings with its recorded revision and limits.
 - **Intake:** `$codex-rig:code-review #123` collects contributor intent from PR title/body, comments/reviews, target-branch evidence, exact local PR head, and locally derived diff before producing a structured review artifact. Collection starts in an atomically allocated run named with a timestamp, PR number and random suffix; local review runs include a portable branch slug and digest instead. Same-target runs retain separate random suffixes; after authoritative `pr.json` succeeds it is promoted to `.reports/codex/code-review/pr-<number>/run-<NNN>/`, and that printed path owns every later artifact.
 - **Close advice:** after collection it may emit an evidence-backed terminal `close` decision for one of `FALSE_GOAL`, `BREAKING_CONDUCT`, `WRONG_SCOPE`, `WRONG_PROVENANCE`, `DUPLICATE`, `UNADDRESSED_REVERT`, `SPAM`, or `ARCHITECTURE_VIOLATION`. Ambiguous evidence always continues to detailed review, and the decision never closes, comments on, merges, or otherwise mutates GitHub.
 - **Checkout:** review creates a detached worktree at the exact PR head and leaves the invoking branch, index, and tracked files untouched. Local working-tree/path reviews use an isolated mirror of changed source. Worktrees separate caller edits but do not enforce immutability.

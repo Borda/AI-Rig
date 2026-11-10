@@ -9,7 +9,7 @@ text{font-family:Inter, "SF Pro Text", -apple-system, "Segoe UI", Roboto, Helvet
 <defs><filter id="sh" x="-10%" y="-10%" width="120%" height="130%"><feDropShadow dx="0" dy="2.5" stdDeviation="3.2" flood-color="#5b66b3" flood-opacity=".14"/></filter><pattern id="grid" width="26" height="26" patternUnits="userSpaceOnUse"><circle cx="2" cy="2" r="1.1" fill="#dde0f4"/></pattern><marker id="ar-bypass" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M1,1 L9,5 L1,9 z" fill="#d6284a"/></marker><marker id="ar-flow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M1,1 L9,5 L1,9 z" fill="#5b66b3"/></marker><marker id="ar-loop" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M1,1 L9,5 L1,9 z" fill="#7a5ae0"/></marker><marker id="ar-ok" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M1,1 L9,5 L1,9 z" fill="#2f9e73"/></marker></defs>
 <rect width="960" height="2916" fill="#f8f9ff"/><rect width="960" height="2916" fill="url(#grid)"/>
 <text x="40" y="56" font-size="28" fill="#1c2150" font-weight="700" text-anchor="start">code-review</text>
-<text x="40" y="82" font-size="13.5" fill="#6b72a8" font-weight="400" text-anchor="start">Codex Rig · execution architecture — routes, gates, reviewer fan-out and join</text>
+<text x="40" y="82" font-size="13.5" fill="#6b72a8" font-weight="400" text-anchor="start">First question: Is this desired behavior for this package?</text>
 <g><polygon points="36.0,112.0 42.0,108.8 48.0,112.0 42.0,115.2" fill="#ece6fd" stroke="#7a5ae0" stroke-width="1.2" stroke-linejoin="round"/><polygon points="36.0,112.0 42.0,115.2 42.0,118.9 36.0,115.7" fill="#dcd2fa" stroke="#7a5ae0" stroke-width="1.2" stroke-linejoin="round"/><polygon points="42.0,115.2 48.0,112.0 48.0,115.7 42.0,118.9" fill="#c8baf3" stroke="#7a5ae0" stroke-width="1.2" stroke-linejoin="round"/></g>
 <text x="56" y="116" font-size="10.5" fill="#454d87" font-weight="400" text-anchor="start">agent spawn</text>
 <g><path d="M128.0,105.0 L134.0,114.4 L146.0,114.4 L152.0,105.0 L152.0,109.6 L146.0,118.9 L134.0,118.9 L128.0,109.6 Z" fill="#f2cb75" stroke="#e0a010" stroke-width="1.2" stroke-linejoin="round"/><polygon points="152.0,105.0 146.0,113.1 134.0,113.1 128.0,105.0 134.0,96.9 146.0,96.9" fill="#fff0c9" stroke="#e0a010" stroke-width="1.2" stroke-linejoin="round"/><path d="M136.2,105.0 l2.6,2.4 l5.0,-4.8" fill="none" stroke="#e0a010" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></g>
@@ -39,12 +39,12 @@ text{font-family:Inter, "SF Pro Text", -apple-system, "Segoe UI", Roboto, Helvet
 <text x="56" y="270.0" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">reject</tspan> unsupported flags</text>
 <text x="56" y="286.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">resume</tspan> at first unmet checkpoint</text>
 <text x="490" y="237" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">PR State Preflight</tspan> <tspan font-style="italic">(PR only)</tspan></text>
-<text x="490" y="253.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">Prior report</tspan>: reuse or fresh?</text>
-<text x="490" y="270.0" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">ask once · no eligible report → fresh</tspan></text>
+<text x="490" y="253.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">Prior report</tspan>: honor request</text>
+<text x="490" y="270.0" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">new → fresh · resume → retained run</tspan></text>
 </g>
 <path d="M480,292 L480,332" fill="none" stroke="#5b66b3" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar-flow)"/>
 <g class="fi" style="--d:0.32s"><rect x="278.5" y="302" width="185.5" height="19.5" rx="9.8" fill="#fee6e2" stroke="#e0503f" stroke-width="1.1"/><text x="287.5" y="315.6" font-size="10.5" fill="#b8321f" font-weight="700" text-anchor="start">closed / merged PR · stop</text></g>
-<g class="fi" style="--d:0.38s"><rect x="496.0" y="302" width="292.7" height="19.5" rx="9.8" fill="#dcf5e9" stroke="#2f9e73" stroke-width="1.1"/><text x="505.0" y="315.6" font-size="10.5" fill="#1b7f59" font-weight="700" text-anchor="start">reuse chosen · validated bytes → COMPLETE</text></g>
+<g class="fi" style="--d:0.38s"><rect x="496.0" y="302" width="292.7" height="19.5" rx="9.8" fill="#dcf5e9" stroke="#2f9e73" stroke-width="1.1"/><text x="505.0" y="315.6" font-size="10.5" fill="#1b7f59" font-weight="700" text-anchor="start">explicit reuse · validated bytes → COMPLETE</text></g>
 <g class="fi" style="--d:0.44s"><rect x="40" y="332" width="880" height="28" rx="14" fill="#e6e9fa" stroke="#6670b8" stroke-width="1.3"/>
 <path d="M 56,346 h6 M 62,346 l8,-6 h4 M 62,346 h12 M 62,346 l8,6 h4" fill="none" stroke="#6670b8" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
 <text x="88" y="350.2" font-size="11.5" fill="#4b559f" font-weight="700" text-anchor="start">BRANCH · exactly one source route per run — local scope or PR (not a fan)</text>
@@ -71,8 +71,8 @@ text{font-family:Inter, "SF Pro Text", -apple-system, "Segoe UI", Roboto, Helvet
 <path d="M725,494 L725,534" fill="none" stroke="#5b66b3" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar-flow)"/>
 <g class="fi" style="--d:0.62s"><rect x="40" y="534" width="390" height="112" rx="12" fill="#fff" stroke="#c8ccf2" stroke-width="1.3" filter="url(#sh)"/><rect x="40" y="535" width="5.5" height="110" rx="2.75" fill="#6670b8"/>
 <text x="56" y="553" font-size="10.5" fill="#4b559f" font-weight="700" text-anchor="start" letter-spacing="0.6">SCOPE CONTEXT</text>
-<text x="56" y="571" font-size="14.5" fill="#1c2150" font-weight="700" text-anchor="start">Primary review (blueprint retained)</text>
-<text x="56" y="591" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">local: scope</tspan> · blueprint or skip</text>
+<text x="56" y="571" font-size="14.5" fill="#1c2150" font-weight="700" text-anchor="start">Primary review · desired behavior first</text>
+<text x="56" y="591" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">purpose baseline</tspan> · blueprint or skip</text>
 <text x="56" y="607.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">primary diff review</tspan></text>
 <text x="56" y="624.0" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">PR: <tspan font-style="italic">triage online concerns</tspan></text>
 <text x="56" y="640.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">isolated worktree only</tspan></text>
@@ -81,7 +81,7 @@ text{font-family:Inter, "SF Pro Text", -apple-system, "Segoe UI", Roboto, Helvet
 <text x="546" y="553" font-size="10.5" fill="#a86f00" font-weight="700" text-anchor="start" letter-spacing="0.6">CLOSE SCREEN · OPEN PR ONLY</text>
 <text x="546" y="571" font-size="14.5" fill="#1c2150" font-weight="700" text-anchor="start">Blueprint, then proposal close gate</text>
 <g><path d="M878.0,570.0 L884.0,579.4 L896.0,579.4 L902.0,570.0 L902.0,574.6 L896.0,583.9 L884.0,583.9 L878.0,574.6 Z" fill="#f2cb75" stroke="#e0a010" stroke-width="1.2" stroke-linejoin="round"/><polygon points="902.0,570.0 896.0,578.1 884.0,578.1 878.0,570.0 884.0,561.9 896.0,561.9" fill="#fff0c9" stroke="#e0a010" stroke-width="1.2" stroke-linejoin="round"/><path d="M886.2,570.0 l2.6,2.4 l5.0,-4.8" fill="none" stroke="#e0a010" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></g>
-<text x="546" y="591" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">T0 blueprint or skip</tspan> · <tspan font-style="italic">8 close codes</tspan></text>
+<text x="546" y="591" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-weight="700" fill="#1c2150">Purpose baseline · blueprint/skip</tspan> · <tspan font-style="italic">8 close codes</tspan></text>
 <text x="546" y="607.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">needs <tspan font-weight="700" fill="#1c2150">conf ≥ 0.90</tspan> + 2 sources</text>
 <text x="546" y="624.0" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">counterevidence · bound to head</tspan></text>
 <text x="546" y="640.5" font-size="12" fill="#363d75" font-weight="400" text-anchor="start"><tspan font-style="italic">public-HTTPS evidence cannot close</tspan></text>
@@ -333,7 +333,7 @@ text{font-family:Inter, "SF Pro Text", -apple-system, "Segoe UI", Roboto, Helvet
 <line x1="52" y1="2534" x2="908" y2="2534" stroke="#dde0f4"/>
 <text x="56" y="2552" font-size="12" fill="#1c2150" font-weight="700" text-anchor="start">prior report</text>
 <text x="230" y="2552" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">new PR run</text>
-<text x="600" y="2552" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">reuse or fresh</text>
+<text x="600" y="2552" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">fresh or explicit reuse</text>
 <line x1="52" y1="2560" x2="908" y2="2560" stroke="#dde0f4"/>
 <text x="56" y="2578" font-size="12" fill="#1c2150" font-weight="700" text-anchor="start">close screen</text>
 <text x="230" y="2578" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">open PR</text>
@@ -369,7 +369,7 @@ text{font-family:Inter, "SF Pro Text", -apple-system, "Segoe UI", Roboto, Helvet
 <text x="56" y="2822" font-size="12" fill="#1c2150" font-weight="700" text-anchor="start">parent-only route</text>
 <text x="230" y="2822" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">no spawn · parent-labelled assessments</text>
 <line x1="52" y1="2830" x2="908" y2="2830" stroke="#dde0f4"/>
-<text x="56" y="2848" font-size="12" fill="#1c2150" font-weight="700" text-anchor="start">reuse chosen</text>
+<text x="56" y="2848" font-size="12" fill="#1c2150" font-weight="700" text-anchor="start">explicit reuse</text>
 <text x="230" y="2848" font-size="12" fill="#363d75" font-weight="400" text-anchor="start">validated bytes · not a freshness claim</text>
 <line x1="52" y1="2856" x2="908" y2="2856" stroke="#dde0f4"/>
 </g>

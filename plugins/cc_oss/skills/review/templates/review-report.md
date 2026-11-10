@@ -29,13 +29,13 @@ Legend: 1 = Approve · 2 = Minor changes · 3 = Major revision · 4 = Insufficie
 > - CI: `passing (N/N)`, `failing — check-name, check-name`, or `pending`.
 > - Gate: `REVIEW_V1_PASS`, `REVIEW_V1_BLOCK`, or `REVIEW_V1_REJECT_<GROUND> @<sha>`, where GROUND is `GOAL`, `CONDUCT`, `SCOPE`, `LICENSE`, `DUPLICATE`, `REVERTED`, `SPAM`, or `PHILOSOPHY` (review SKILL.md Stage 1). PASS/BLOCK continue to full review. The `@<sha>` suffix on a `REJECT_<GROUND>` gate carries the reviewed commit SHA so `/oss:resolve` can detect whether the PR changed.
 > - Outcome: `APPROVE`, `MINOR_EDITS`, `NEEDS_WORK`, `INSUFFICIENT_BUT_PROMISING`, `REJECT`, or literal `null`. Write the verdict token alone, optionally after its `✓`/`⚠`/`✗` symbol; severity counts and other detail belong in Summary.
-> - Summary: 1–2 sentences describing key findings. Next steps are comma-separated actionable items, blockers first.
+> - Summary: opens `Intended behavior: <yes/partly/no/undetermined>`, then 1–2 sentences describing key findings. Next steps are comma-separated actionable items, blockers first.
 
 ## Code Review: [target]
 
 [aggregate summary]
 
-> Keep the aggregate summary as prose, including the overall verdict and material limits.
+> Keep the aggregate summary as prose, including the overall verdict and material limits. Open it with `Intended behavior: <yes/partly/no/undetermined> — <basis>`.
 
 ### Findings overview
 

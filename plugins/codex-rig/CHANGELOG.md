@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.43.6
+
+- Start every Code Review with “Is this desired behavior for this package?” Ground the answer in the pre-change package purpose and contracts, validate PR claims and actual effects against it, and retain unresolved intent explicitly instead of treating passing tests as proof of desirability.
+- Remove the routine reuse-or-fresh prompt from Code Review. New review requests inspect current source; explicit resume continues incomplete work or validates and returns a completed review with its full summary table and findings. Preserve recorded revision limits, completion checks and genuine permission or missing-input decisions instead of repeating a waiting-status message.
+- Show confidence gaps and standalone limitations in new Codex reports as `Status | Deduction | Gap or limitation | Closure evidence`, keeping the score and band above the table. Preserve deductions, explanations and closure evidence, combine exact duplicate limit/gap entries, and omit an empty table. Historical reports retain their original formatting; this presentation change applies only to Codex Rig.
+
 ## 0.43.5
 
 - Recover missed review ordering automatically with honest limitations and normal completion validation instead of an ineffective Continue/Skip prompt. Require the applicable blind blueprint before close-screening diff inspection, and preserve genuine check, coverage and permission blockers.

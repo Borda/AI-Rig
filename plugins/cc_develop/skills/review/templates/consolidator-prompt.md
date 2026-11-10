@@ -66,6 +66,8 @@ When `blind-solve.md` exists:
 
 No `blind-solve.md` (skipped or FIX/REFACTOR/CHORE): omit the section entirely, with no placeholder note.
 
+Intended behavior (always): the `Summary:` field opens with `Intended behavior: <verdict> — <basis>` copied from the first line of `sw-engineer.md`. Verdict `no` or `partly` → its `intent:` findings stay at least HIGH. Line missing (agent skipped or failed) → `undetermined` plus a Review Confidence note naming the gap. Never infer `yes` from a plan or description.
+
 ## Report header
 
 The file MUST begin with the template's `---`-delimited YAML metadata block: opening `---` on line 1, all template fields in order (including `Review contract:`, `Rating scale:`, `Readiness:` and `Gate:`), closing `---`, then body. No HTML comments (`<!-- ... -->`) or prose before the block; the orchestrator reads it verbatim as the reply header. Missing `---` head breaks terminal output.
@@ -86,7 +88,7 @@ The file MUST begin with the template's `---`-delimited YAML metadata block: ope
 | `Readiness:` | `complete`, `blocked`, or `incomplete`, matching the envelope. |
 | `Gate:` | `REVIEW_V1_PASS`, `REVIEW_V1_BLOCK`, or an evidenced `REVIEW_V1_REJECT_<GROUND> @<sha>`. |
 | `Outcome:` | APPROVE / MINOR_EDITS / NEEDS_WORK / INSUFFICIENT_BUT_PROMISING / REJECT / literal null. |
-| `Summary:` | 1–2 sentence overview. |
+| `Summary:` | Opens `Intended behavior: <yes/partly/no/undetermined>`, then 1–2 sentence overview. |
 | `Confidence:` | Aggregate score — key gaps. |
 | `Next steps:` | Comma-separated blockers + high-priority actions, max 5. |
 | `Path:` | `→ <REPORT_DIR_LITERAL>/review-report.md` |

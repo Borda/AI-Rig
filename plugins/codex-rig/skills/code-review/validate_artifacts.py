@@ -1300,7 +1300,7 @@ def _validate_unavailable_result(
     if (
         handoff_path is not None
         and handoff_path.is_file()
-        and _load_json(handoff_path).get("presentation_version") in {12, 13}
+        and _load_json(handoff_path).get("presentation_version") in {12, 13, 14}
     ):
         raise SystemExit("unavailable-review-judged-confidence-required")
     if metadata.get("confidence_gaps") != [UNAVAILABLE_CONFIDENCE_GAP]:
@@ -1403,7 +1403,7 @@ def _validate_unavailable_final_handoff(out_dir: Path, metadata: dict[str, Any])
     if not handoff_path.is_file():
         return
     handoff = _load_json(handoff_path)
-    if handoff.get("presentation_version") not in {2, 3, 8, 9, 10, 11, 12, 13}:
+    if handoff.get("presentation_version") not in {2, 3, 8, 9, 10, 11, 12, 13, 14}:
         return
     failure = metadata["collection_failure"]
     code = failure["code"]
@@ -1454,7 +1454,7 @@ def _validate_unavailable_final_handoff(out_dir: Path, metadata: dict[str, Any])
     row_id = recovery.get("row_id")
     next_action = recovery.get("next_action")
     resume_condition = "Resume only after a fresh collector run produces and validates the PR source bundle."
-    if handoff.get("presentation_version") in {12, 13}:
+    if handoff.get("presentation_version") in {12, 13, 14}:
         expected_action = (
             f"Inspect the classified `{label}` collector failure. "
             f"{_unavailable_recovery_action(code, checkout_diagnostic is not None, command_reason)} {resume_condition}"

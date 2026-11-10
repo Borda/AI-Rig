@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.12.5
+
+- Synchronize the shared Codex question guidance with the owning code-review workflow: proceed without a routine reuse-or-fresh prompt, honor explicit resume or reuse, and retain validated summary tables, findings and revision limits. Confidence formatting is unchanged in this plugin.
+
 ## 0.12.4
 
 - The architecture and request lifecycle diagrams now render as images on the documentation site; they were hidden inside a collapsed block that the site build does not parse.

@@ -6,7 +6,7 @@ Establish that a user decision is actually missing before inspecting question to
 
 Routine preparation, internal recovery and completing authorized work need no new consent. Resolve implementation and workflow details from the user's request, retained answers and verified evidence. Do not manufacture a flow choice merely because a helper failed or a template contains a question. Preserve required runtime permission, sensitive/protected actions, exact-token confirmation and genuinely ambiguous scope or missing material input; authorization to review does not authorize editing source, installing permissions or publishing.
 
-For code review, ask the initial reuse/fresh choice only when an eligible validated completed review exists and the user has not already supplied that choice. No eligible report means proceed fresh. Resuming an incomplete run means recover its first unmet checkpoint under existing authorization, not ask whether to continue or recreate the run. Reuse states the recorded reviewed revision and evidence limits; it never establishes current source freshness.
+For code review, follow the owning skill's entry route without a routine reuse/fresh question. A new review request proceeds fresh; explicit reuse or resume remains binding. Resume incomplete work at its first unmet checkpoint, or validate and emit a completed run's full summary table and findings. Reuse states the recorded reviewed revision and evidence limits; it never establishes current source freshness. Genuine missing decisions and runtime permissions retain their own controls.
 
 ### Choose the control
 

@@ -125,7 +125,7 @@ Regenerate the manifest with `build_package.py --update` after any shipped-file 
 - Codex asks only for a genuinely missing decision, material input or protected action.
 - Authorized preparation, internal recovery and completion need no new consent; transport discovery follows that necessity check.
 - Existing answers, scope/digest confirmation and runtime permission remain authoritative.
-- Code Review checks eligible completed evidence before opening the initial reuse/fresh choice; no eligible result means fresh review without a question.
+- Code Review resolves retained evidence before allocating another run, defaults new requests to fresh review without a routine question, and honors explicit resume/reuse through the normal completion gate and full table output.
 - A user may explicitly waive additional reviewers, rounds or broader coverage, including previously requested independence.
 - Record the target and decision, preserve the original frozen plan, and complete a separate revised-scope parent fallback through all normal validators and completion checks.
 - Declining an optional repair alone does not waive required independence.
@@ -997,7 +997,7 @@ Regenerate the manifest with `build_package.py --update` after any shipped-file 
 - Local completion retains current runtime defaults.
 - Same-directory gate reruns archive prior runner-owned evidence under `gate-attempts/<NNN>` before executing. A failed, timed-out, or missing-command check cannot become skipped; re-execute it through the canonical runner. Unreadable or incomplete prior evidence blocks overwrite and requires diagnosis.
 - Review and remediation check current PR state before report lookup, run allocation, checkout or specialist work, including resumed and `+review` requests. Closed or merged PRs are reported immediately and stop intake; local report-only work stays local. The early read validates repository identity and uses the existing GitHub reader permission boundary.
-- New final handoffs use `presentation_version=13`; remediation with findings includes a compact per-item table—even for one item—with Finding, Selected, Outcome and How resolved, preserving each concrete resolution reason; an empty result states that there are no findings to remediate.
+- New final handoffs use `presentation_version=14`; remediation with findings includes a compact per-item table—even for one item—with Finding, Selected, Outcome and How resolved, preserving each concrete resolution reason; an empty result states that there are no findings to remediate.
 - Terminal review outcomes include a compact status table; remediation retains its resolution explanations, with compact tables and evidence paths in separate `- Item: file-path` lists; every workflow renders separate confidence bullets, coalescing only identical limit/gap labels while retaining closure details.
 - Handoffs lead with a plain-English explanation, no empty Results section, one concise line for checks not run, and each recovery action shown once in an Owner / Issue / Action table; machine row IDs stay in JSON.
 - Historical handoff versions retain their original bytes during validation.
@@ -1217,7 +1217,7 @@ Regenerate the manifest with `build_package.py --update` after any shipped-file 
 - Implementation style corrections recover automatically; release headings and contributor credit accept equivalent Markdown while preserving identity and content checks.
 - Ambiguous plain table cells containing paths and words or spaces, including unmarked slash expressions, move verbatim into item-labelled detail lists.
 - Explicit Markdown links and quoted paths retain adjacent prose in the table.
-- This automatic fallback preserves complete instructions and directory names without guessing path boundaries; new writers use presentation version 13, supported version-8/9/10/11/12 candidates remain admissible, and archived results retain their original rendering.
+- This automatic fallback preserves complete instructions and directory names without guessing path boundaries; new writers use presentation version 14, supported version-8/9/10/11/12/13 candidates remain admissible, and archived results retain their original rendering.
 - Cosmetic handoff failures use automatic presentation recovery: regenerate owned display fields from retained evidence and rerun the affected check without another user decision.
 - Reader defects are reproduced and fixed in authorized package source; genuine evidence, verification and authority failures retain their gates.
 - Canonical PR remediation lifecycle roots accept the promoted PR/run layout while preserving legacy flat runs and rejecting malformed or foreign identities.

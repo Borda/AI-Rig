@@ -100,6 +100,7 @@ These workflows address common maintenance failures with concrete gates:
 - **plan**: scope complexity and blast radius; challenge the plan's feasibility before committing unless waived
 - **review**: local Python review across architecture, tests, performance, docs, lint, security, and API design.
   - Groups the relevant dimensions into spawn units (performance+architecture and docs+lint each share one agent) and runs the top three units by default, or all selected units with `--full`; no GitHub PR is required.
+  - The sw-engineer reviewer first asks whether the change is behavior the project is meant to have, judged against README/docs, public API, tests, CHANGELOG and ADRs at the pre-change ref rather than the plan or description. The report summary opens with `Intended behavior: yes/partly/no/undetermined`; contradictions, undeclared or unimplemented behavior changes and out-of-scope behavior are `intent:` findings.
   - FEATURE/MIXED changes also get an isolated blind-solve pass outside the cap when a matching `.plans/active/*.md` exists: one agent sketches its own blueprint from that plan without seeing the diff, and the consolidated report lists where that blueprint diverges from the change (`### Design Divergence`), marking divergences that may be explained by context the agent lacked as questions rather than findings.
   - Before its follow-up gate the skill refreshes its compaction contract and prints a `/compact` hint, so a long wait at the gate can be spent compacted and resumed from the report file.
 

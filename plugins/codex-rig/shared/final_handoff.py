@@ -13,8 +13,8 @@ does not decide workflow findings, execute project gates, inspect chat transcrip
 
 ## Usage
 
-New handoffs set ``presentation_version=13`` for remediation resolution explanations, readable actions, confidence
-bullets, linked artifacts, terminal status tables, verification log links in rows and other paths outside tables.
+New handoffs set ``presentation_version=14`` for remediation resolution explanations, readable actions, confidence
+tables, linked artifacts, terminal status tables, verification log links in rows and other paths outside tables.
 Historical versions retain their exact presentation.
 Run ``render`` after gates and handoff creation, then run ``check``
 directly or through the shared artifact validator
@@ -683,14 +683,15 @@ def _validate_handoff(payload: object, *, allow_empty_remediation: bool = False)
     """Validate a handoff while preserving the original presentation's empty-result rule."""
     handoff = _require_object(payload, "handoff")
     presentation_version = handoff.get("presentation_version")
-    if type(presentation_version) is int and presentation_version in {8, 9, 10, 11, 12, 13}:
+    if type(presentation_version) is int and presentation_version in {8, 9, 10, 11, 12, 13, 14}:
         # Only terminal layout changes; use the existing branch's complete factual contract.
         previous = 7 if handoff.get("skill") == "code-review" and handoff.get("branch") == "assessed" else 3
         if handoff.get("skill") == "code-remediate":
             previous = 6
         _validate_handoff(
             {**handoff, "presentation_version": previous},
-            allow_empty_remediation=handoff.get("skill") == "code-remediate" and presentation_version in {11, 12, 13},
+            allow_empty_remediation=handoff.get("skill") == "code-remediate"
+            and presentation_version in {11, 12, 13, 14},
         )
         return handoff
     expected_fields = HANDOFF_FIELDS if presentation_version is None else HANDOFF_FIELDS | {"presentation_version"}
@@ -1200,7 +1201,11 @@ def render_selection(payload: object) -> str:
 
 
 def _externalize_table_paths(
-    markdown: str, *, readable_breaks: bool = False, keep_verification_table: bool = False
+    markdown: str,
+    *,
+    readable_breaks: bool = False,
+    keep_verification_table: bool = False,
+    confidence_table: bool = False,
 ) -> str:
     """Move table destinations into item-labelled lists, retaining surrounding action text.
 
@@ -1301,6 +1306,13 @@ def _externalize_table_paths(
                 return reference.sub(shorten, value)
 
             for column, value in enumerate(row):
+                if (
+                    confidence_table
+                    and table[0] == ["Status", "Deduction", "Gap or limitation", "Closure evidence"]
+                    and column == 1
+                ):
+                    cells.append(value)
+                    continue
                 # Visible link labels need the same path checks as prose; destinations alone cannot preserve them.
                 plain = link.sub(lambda match: match[1], value)
                 if readable_breaks:
@@ -1348,7 +1360,11 @@ def _externalize_table_paths(
                     cursor = match.end()
                 parts.append(shorten_plain(value[cursor:]))
                 cells.append("".join(parts))
-            item = cells[1] if readable_breaks and table[0] == ["Owner", "Issue", "Action"] else cells[0]
+            item = (
+                cells[2]
+                if confidence_table and table[0] == ["Status", "Deduction", "Gap or limitation", "Closure evidence"]
+                else (cells[1] if readable_breaks and table[0] == ["Owner", "Issue", "Action"] else cells[0])
+            )
             for destination in destinations:
                 pair = (item, destination)
                 if pair not in resources:
@@ -1381,7 +1397,7 @@ def render_handoff(payload: object, *, report_root: Path | None = None) -> str:
     if handoff["branch"] == "caller-contract":
         return handoff["caller_contract"]["output"]
 
-    if handoff.get("presentation_version") in {8, 9, 10, 11, 12, 13}:
+    if handoff.get("presentation_version") in {8, 9, 10, 11, 12, 13, 14}:
         previous = 7 if handoff["skill"] == "code-review" and handoff["branch"] == "assessed" else 3
         if handoff["skill"] == "code-remediate":
             previous = 6
@@ -1389,15 +1405,17 @@ def render_handoff(payload: object, *, report_root: Path | None = None) -> str:
             _render_v2_handoff(
                 {**handoff, "presentation_version": previous},
                 report_root=report_root,
-                readable=handoff["presentation_version"] in {9, 10, 11, 12, 13},
-                show_resolution=handoff["presentation_version"] in {10, 11, 12, 13},
-                status_table=handoff["presentation_version"] in {11, 12, 13},
-                actions_last=handoff["presentation_version"] in {12, 13},
-                current_review_summary=handoff["presentation_version"] in {12, 13},
-                field_tables=handoff["presentation_version"] == 13,
+                readable=handoff["presentation_version"] in {9, 10, 11, 12, 13, 14},
+                show_resolution=handoff["presentation_version"] in {10, 11, 12, 13, 14},
+                status_table=handoff["presentation_version"] in {11, 12, 13, 14},
+                actions_last=handoff["presentation_version"] in {12, 13, 14},
+                current_review_summary=handoff["presentation_version"] in {12, 13, 14},
+                field_tables=handoff["presentation_version"] in {13, 14},
+                confidence_table=handoff["presentation_version"] == 14,
             ),
-            readable_breaks=handoff["presentation_version"] == 13,
-            keep_verification_table=handoff["presentation_version"] == 13,
+            readable_breaks=handoff["presentation_version"] in {13, 14},
+            keep_verification_table=handoff["presentation_version"] in {13, 14},
+            confidence_table=handoff["presentation_version"] == 14,
         )
 
     if handoff.get("presentation_version") in {2, 3, 4, 5, 6, 7}:
@@ -1449,6 +1467,30 @@ def render_handoff(payload: object, *, report_root: Path | None = None) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _render_confidence_table(confidence: dict[str, Any]) -> list[str]:
+    """Display existing deductions and closure records without modifying their machine identities."""
+    gaps = confidence["gaps"]
+    labels = {gap["gap"] for gap in gaps}
+    records = [("limit", limit, "—") for limit in dict.fromkeys(confidence["limits"]) if limit not in labels]
+    records.extend(
+        (
+            gap["status"],
+            gap["gap"],
+            " — ".join(dict.fromkeys(gap[key] for key in ("rationale", "evidence") if gap.get(key))),
+        )
+        for gap in gaps
+    )
+    if not records:
+        return []
+    lines = ["", "| Status | Deduction | Gap or limitation | Closure evidence |", "| --- | --- | --- | --- |"]
+    for status, label, detail in records:
+        contribution = re.search(r"\(-0\.\d{2}\)", label) or re.search(r"\(-0\.\d{2}\)", detail)
+        deduction = contribution[0] if contribution else "—"
+        description = re.sub(r"^\(-0\.\d{2}\)\s*", "", label)
+        lines.append("| " + " | ".join(_table_cell(cell) for cell in (status, deduction, description, detail)) + " |")
+    return lines
+
+
 def _render_v2_handoff(
     handoff: dict[str, Any],
     *,
@@ -1459,6 +1501,7 @@ def _render_v2_handoff(
     actions_last: bool = False,
     current_review_summary: bool = False,
     field_tables: bool = False,
+    confidence_table: bool = False,
 ) -> str:
     """Render a plain-English-first report while retaining the validated machine fields."""
     outcome = handoff["outcome"]
@@ -1589,27 +1632,29 @@ def _render_v2_handoff(
 
     confidence = handoff["confidence"]
     lines.extend(("", "**Confidence**", "", f"{confidence['score']:.2f} ({confidence['band']})."))
-    compact_review = readable or handoff["presentation_version"] == 7
-    if compact_review and (confidence["limits"] or confidence["gaps"]):
-        lines.append("")
-    if confidence["limits"]:
-        if compact_review:
-            limits = confidence["limits"]
+    if confidence_table:
+        lines.extend(_render_confidence_table(confidence))
+    else:
+        compact_review = readable or handoff["presentation_version"] == 7
+        if compact_review and (confidence["limits"] or confidence["gaps"]):
+            lines.append("")
+        if confidence["limits"]:
+            if compact_review:
+                limits = confidence["limits"]
+                if readable:
+                    # Exact matching joins repeated labels without hiding distinct limitations or gap closure details.
+                    gap_labels = {gap["gap"] for gap in confidence["gaps"]}
+                    limits = [limit for limit in dict.fromkeys(limits) if limit not in gap_labels]
+                lines.extend("- Limit: " + (limit.replace("\n", "\n  ") if readable else limit) for limit in limits)
+            else:
+                lines.append("Limits: " + "; ".join(confidence["limits"]))
+        for gap in confidence["gaps"]:
+            detail = gap.get("evidence") or gap.get("rationale")
             if readable:
-                # Exact matching joins repeated labels without hiding distinct limitations or gap closure details.
-                gap_labels = {gap["gap"] for gap in confidence["gaps"]}
-                limits = [limit for limit in dict.fromkeys(limits) if limit not in gap_labels]
-            lines.extend("- Limit: " + (limit.replace("\n", "\n  ") if readable else limit) for limit in limits)
-        else:
-            lines.append("Limits: " + "; ".join(confidence["limits"]))
-    for gap in confidence["gaps"]:
-        detail = gap.get("evidence") or gap.get("rationale")
-        if readable:
-            detail = " — ".join(dict.fromkeys(gap[key] for key in ("rationale", "evidence") if gap.get(key)))
-        prefix = "- " if compact_review else ""
-        gap_text = f"Gap [{gap['status']}]: {gap['gap']} — {detail}"
-        lines.append(prefix + (gap_text.replace("\n", "\n  ") if readable else gap_text))
-
+                detail = " — ".join(dict.fromkeys(gap[key] for key in ("rationale", "evidence") if gap.get(key)))
+            prefix = "- " if compact_review else ""
+            gap_text = f"Gap [{gap['status']}]: {gap['gap']} — {detail}"
+            lines.append(prefix + (gap_text.replace("\n", "\n  ") if readable else gap_text))
     lines.extend(("", "**Artifact**", ""))
     lines.extend(
         f"- [{artifact['label']}](<{artifact['path']}>)"

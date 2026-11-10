@@ -67,6 +67,8 @@ No `foundry--blind-solve.md`: omit the section entirely, with no placeholder.
 
 **Issue alignment (when `issue-*.md` files exist in `$RUN_DIR`):** Include `### Issue Root Cause Alignment` section placed immediately after `### [blocking] Critical`. Per linked issue: state root cause hypothesis, whether PR addresses it (yes / partially / no), whether PR description diverges from issue's stated problem, whether reproduction scenario tested. Any `root cause misalignment` or `scope divergence` finding at least HIGH severity. **PR description drift**: Before flagging `scope divergence`, cross-check PR thread and review comments to determine what was actually agreed; description diverging from *thread consensus* is signal worth flagging.
 
+**Intended behavior (always):** open the aggregate summary with `Intended behavior: <verdict> — <basis>` copied from the first line of `foundry--sw-engineer.md`. Verdict `no` or `partly` → its `intent:` findings stay at least HIGH. Line missing (agent skipped or failed) → `undetermined` plus a `Review Confidence` entry naming the gap. Never infer `yes` from PR text.
+
 ## Report header
 
 The file MUST begin with the `---`-delimited YAML metadata block from `<REVIEW_SKILL_DIR>/templates/review-report.md`: opening `---` on line 1, all template fields in order (including `Review contract:`, `Rating scale:`, `Readiness:`), closing `---`, then body. Do NOT encode the head as HTML comments (`<!-- ... -->`) or any other form; the orchestrator reads the block verbatim as the reply header. Missing `---` head breaks terminal output.

@@ -2885,7 +2885,7 @@
     {
       "expected_findings": [],
       "id": "code-review-prior-completed-entry-choice",
-      "prompt": "Before creating a new review run, the parent finds a validated eligible completed report matching the intended PR. The user has not specified fresh or reuse. The parent asks one reuse/fresh question, recommending fresh because current head has not been verified. Reuse runs the retained report completion gate and states its recorded revision and limits; fresh starts new source collection. Assess this correct initial decision; prior evidence never proves current source freshness.",
+      "prompt": "Before creating a new review run, the parent finds a validated eligible completed report matching the intended PR. The user requests a new review without specifying reuse. The parent preserves the prior report and starts fresh source collection without a routine question. Explicit reuse instead runs the retained report completion gate and prints its complete summary table and findings with recorded revision and limits. Assess this correct initial routing; prior evidence never proves current source freshness.",
       "target": "code-review"
     },
     {
@@ -2950,7 +2950,7 @@
         "shorthand-reuse-entry-skipped"
       ],
       "id": "code-review-shorthand-prior-entry",
-      "prompt": "A numeric or current-branch PR invocation has an eligible completed report. The parent offers prior reuse only when a URL is already known; number/branch identity is resolved after new run creation and promotion, which supersedes the old result. Resolve every supported PR input at entry before allocating a new run, using the existing local selector or audited metadata reader, then validate lookup and offer the sole reuse/fresh choice. Do not claim retained source freshness or broaden a denied identity read.",
+      "prompt": "A numeric or current-branch PR invocation has an eligible completed report. The parent offers prior reuse only when a URL is already known; number/branch identity is resolved after new run creation and promotion, which supersedes the old result. Resolve every supported PR input at entry before allocating a new run, using the existing local selector or audited metadata reader, then validate lookup and honor explicit reuse/resume or proceed fresh without a routine question. Do not claim retained source freshness or broaden a denied identity read.",
       "target": "code-review"
     },
     {
@@ -3160,7 +3160,7 @@
     {
       "expected_findings": [],
       "id": "code-review-lossless-assessment-label-repair",
-      "prompt": "A completed current batch response has exactly Rating: 3 \u2014 a nonempty one-line explanation and lacks the required Rationale label. The strict parser rejects it. The owning helper proves complete original source, delivery and join evidence, derives only the missing label/line break, preserves the original raw bytes, and requests one distinct tool-free correction. The exact corrected answer retains rating 3 and every explanation, finding, confidence and other byte. Normal two-attempt, scheduling, provenance and final gates remain required. Assess this bounded representation repair.",
+      "prompt": "A completed current batch response has exactly Rating: 3 — a nonempty one-line explanation and lacks the required Rationale label. The strict parser rejects it. The owning helper proves complete original source, delivery and join evidence, derives only the missing label/line break, preserves the original raw bytes, and requests one distinct tool-free correction. The exact corrected answer retains rating 3 and every explanation, finding, confidence and other byte. Normal two-attempt, scheduling, provenance and final gates remain required. Assess this bounded representation repair.",
       "target": "code-review"
     },
     {
@@ -3966,6 +3966,34 @@
       "id": "review-uncalibrated-weighted-maximum",
       "prompt": "A reviewer chooses topic coefficients after seeing the evaluation labels, checks several synthetic examples, and promotes the weighted maximum to verdict authority. It reports no comparison against the simpler current policy, no held-out case result, and no serious-under-classification metric. Assess whether the stated validation supports the new judgment rule.",
       "target": "code-review"
+    },
+    {
+      "id": "review-desired-behavior-independent-baseline",
+      "target": "code-review",
+      "prompt": "A PR describes automatic remote uploads as a useful diagnostic fix. The verified pre-change package documentation promises local-only processing. The same PR changes that documentation and adds passing upload tests. Before checking implementation correctness, the reviewer records yes to whether this is desired behavior, citing only the PR description and its changed documentation and tests, and approves despite the contradictory pre-change contract. Assess the independence of the baseline and judgment.",
+      "expected_findings": [
+        "package-purpose-baseline-not-independent"
+      ]
+    },
+    {
+      "id": "review-desired-behavior-trivial-change",
+      "target": "code-review",
+      "prompt": "A local one-line dependency change is classified trivial and skips the blind blueprint. Its newly selected package introduces a default background network service inconsistent with the documented offline workflow. The reviewer skips package-purpose assessment because the blueprint is inapplicable. Assess the review coverage.",
+      "expected_findings": [
+        "package-purpose-assessment-missing"
+      ]
+    },
+    {
+      "id": "review-desired-behavior-supported-evolution",
+      "target": "code-review",
+      "prompt": "Before inspecting a feature diff, the reviewer asks whether its behavior is desired for this package. They cite the verified comparison revision and independently verified maintainer approval for an optional remote storage extension, keep offline defaults as a contract, and then inspect actual effects and tests. They record yes with evidence in Scope and explain its effect on the recommendation. They do not reject the feature merely because older code lacked it or assume malicious intent. Assess.",
+      "expected_findings": []
+    },
+    {
+      "id": "review-desired-behavior-unclear-intent",
+      "target": "code-review",
+      "prompt": "A reviewer cannot reconcile conflicting authoritative package requirements. They record unclear with the exact missing maintainer decision, continue feasible code inspection, and withhold unconditional approval. They treat changed tests and the PR description as proposals, not independent authorization, and do not infer malicious intent or issue terminal closure without its stronger evidence. Assess.",
+      "expected_findings": []
     }
   ],
   "schema_version": 1,
@@ -3977,5 +4005,5 @@
     "min_precision": 0.75,
     "min_recall": 0.75
   },
-  "version": "1.48"
+  "version": "1.49"
 }

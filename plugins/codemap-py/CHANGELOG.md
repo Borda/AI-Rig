@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.43.5
+
+- Synchronize the shared Codex question guidance with the owning code-review workflow: proceed without a routine reuse-or-fresh prompt, honor explicit resume or reuse, and retain validated summary tables, findings and revision limits. Confidence formatting is unchanged in this plugin.
+- Incremental index refresh no longer re-parses every Python file when one file changes: subprocess calls, fixture exports and fixture uses are carried over for unchanged files and re-extracted only when the file, the set of indexed scripts or the conftest fixtures changed, and each remaining file is parsed once instead of up to three times. On a repository of about 1,200 modules a one-file refresh drops from about 7.5 s to about 0.3 s with an index identical to a full scan. Unresolvable-script warnings are no longer repeated for unchanged files on an incremental refresh.
+
 ## 0.43.4
 
 - Add an animated plugin architecture diagram to the README showing the source text to AST to index pipeline, the index build-and-refresh cycle, which index fields each request type reads, the hooks and telemetry flow, and the gates that can stop or skip a step.

@@ -9,10 +9,10 @@
 .codex/reports/
 
 # Hook runtime state and invocation logs
-.claude/state/
-.claude/logs/
-.claude/worktrees/
-.claude/scheduled_tasks.lock
+**/.claude/state/
+**/.claude/logs/
+**/.claude/worktrees/
+**/.claude/scheduled_tasks.lock
 
 # Per-machine permission overrides (auto-appended by "always allow" clicks,
 # contains installer's own absolute home paths — never portable, never shared)
