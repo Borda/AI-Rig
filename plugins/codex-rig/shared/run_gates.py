@@ -305,7 +305,7 @@ def command_argv(command: str, platform: str | None = None) -> list[str]:
         # Check shell success first so a recovered native failure does not override it.
         command += "\nif ($?) { exit 0 } elseif ($LASTEXITCODE) { exit $LASTEXITCODE } else { exit 1 }"
         return ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command]
-    return ["bash", "-lc", command]
+    return ["bash", "-c", command]
 
 
 def default_commands(platform: str) -> dict[str, str]:
@@ -332,7 +332,7 @@ def default_commands(platform: str) -> dict[str, str]:
                 "elseif (Get-Command uv -ErrorAction SilentlyContinue) { uv run --no-sync pytest -q } "
                 "else { [Console]::Error.WriteLine('missing-command:pytest'); exit 127 }"
             ),
-            "review": "git diff --check",
+            "review": "",
         }
     return {
         "lint": (
@@ -355,7 +355,7 @@ def default_commands(platform: str) -> dict[str, str]:
             "elif command -v uv >/dev/null 2>&1; then uv run --no-sync pytest -q; "
             'else echo "missing-command:pytest" >&2; exit 127; fi'
         ),
-        "review": "git diff --check",
+        "review": "",
     }
 
 
@@ -401,6 +401,66 @@ def terminate_process(process: subprocess.Popen[str], platform: str) -> None:
     process.wait()
 
 
+def gate_environment(environment: dict[str, str] | None = None) -> dict[str, str]:
+    """Retain runtime and tool configuration without passing parent credentials to gate code."""
+    allowed = {
+        "PATH",
+        "HOME",
+        "USERPROFILE",
+        "APPDATA",
+        "LOCALAPPDATA",
+        "SYSTEMROOT",
+        "COMSPEC",
+        "PATHEXT",
+        "TEMP",
+        "TMP",
+        "TMPDIR",
+        "LANG",
+        "LC_ALL",
+        "LC_CTYPE",
+        "TZ",
+        "TERM",
+        "VIRTUAL_ENV",
+        "UV_PROJECT_ENVIRONMENT",
+        "UV_CACHE_DIR",
+        "XDG_CACHE_HOME",
+        "PYTHONPATH",
+        "PYTHONDONTWRITEBYTECODE",
+        "PYTEST_ADDOPTS",
+        "PYTEST_DISABLE_PLUGIN_AUTOLOAD",
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+        "REQUESTS_CA_BUNDLE",
+        "CURL_CA_BUNDLE",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "NO_PROXY",
+        "ALL_PROXY",
+        "CI",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+        "USER",
+        "LOGNAME",
+        "USERNAME",
+        "LD_LIBRARY_PATH",
+        "PYTHONUTF8",
+        "PYTHONIOENCODING",
+        "WINDIR",
+        "PROGRAMFILES",
+        "PROGRAMDATA",
+        "NUMBER_OF_PROCESSORS",
+        "PROCESSOR_ARCHITECTURE",
+    }
+    source = os.environ if environment is None else environment
+    return {
+        key: value
+        for key, value in source.items()
+        if (key.upper() in allowed or key.upper().startswith(("UV_", "PIP_")))
+        and not key.upper().endswith(("_PASSWORD", "_TOKEN", "_KEY", "_SECRET"))
+        and not re.search(r"(?:[A-Za-z][A-Za-z0-9+.-]*:)?//[^/\s]*@", value)
+    }
+
+
 def execute_command(
     command: str | list[str],
     timeout: int,
@@ -414,16 +474,13 @@ def execute_command(
     platform = sys.platform
     creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) if platform == "win32" else 0
     argv = command_argv(command, platform) if isinstance(command, str) else command
-    if environment is not None and platform != "win32" and isinstance(command, str):
-        # A login shell may replace PATH and hide the explicitly selected project environment.
-        argv = ["bash", "-c", command]
     try:
         process = subprocess.Popen(  # noqa: S603 - argv list, no shell
             argv,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             cwd=worktree,
-            env=environment,
+            env=gate_environment(environment),
             start_new_session=platform != "win32",
             creationflags=creationflags,
         )
@@ -802,6 +859,66 @@ def skipped_check(gate_id: str, reason: str, paths: dict[str, Path], recorded: d
     }
 
 
+def _ignored_source_inventory(worktree: Path | None) -> str:
+    """Record ignored paths outside tool caches without mixing them into Git status."""
+    caches = (".venv", "__pycache__", ".pytest_cache", ".ruff_cache", ".mypy_cache")
+    ignored = subprocess.run(  # noqa: S603 - fixed local Git inspection with cache exclusions
+        [  # noqa: S607 - Git resolved through PATH for local inspection
+            "git",
+            "ls-files",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+            "-z",
+            "--",
+            ".",
+            *(f":(exclude,glob)**/{cache}/**" for cache in caches),
+        ],
+        cwd=worktree,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=SOURCE_INSPECTION_TIMEOUT_SECONDS,
+    )
+    return json.dumps([path for path in ignored.stdout.split("\0") if path])
+
+
+def _concealed_source_error(flags: str, worktree: Path | None) -> str | None:
+    """Reject flagged index entries only when present working bytes differ from the index."""
+    concealed = [row for row in flags.split("\0") if row and (row[0].islower() or row[0] == "S")]
+    if not concealed:
+        return None
+    staged = subprocess.run(
+        ["git", "ls-files", "-s", "-z"],  # noqa: S607 - local Git inspection
+        cwd=worktree,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=SOURCE_INSPECTION_TIMEOUT_SECONDS,
+    )
+    index = dict(row.split("\t", 1)[::-1] for row in staged.stdout.split("\0") if row)
+    changed = []
+    for row in concealed:
+        path = row[2:]
+        target = (worktree or Path.cwd()) / path
+        if row[0].upper() == "S" and not target.exists() and not target.is_symlink():
+            continue
+        link = target.is_symlink()
+        observed = subprocess.run(  # noqa: S603 - index-derived path after the option terminator
+            ["git", "hash-object", "--stdin"] if link else ["git", "hash-object", "--", path],
+            cwd=worktree,
+            input=os.fsencode(os.readlink(target)) if link else None,
+            capture_output=True,
+            check=False,
+            timeout=SOURCE_INSPECTION_TIMEOUT_SECONDS,
+        )
+        if observed.returncode != 0 or observed.stdout.strip().decode("ascii") != index[path].split()[1]:
+            changed.append(path)
+    if changed:
+        return f"git-index-concealed-entries:count={len(changed)}:paths={changed[:10]!r}"
+    return None
+
+
 def inspect_source(worktree: Path | None = None) -> dict[str, str]:
     """Return the selected Git checkout head and status, or a failed inspection receipt."""
     empty = {"head": "", "status": ""}
@@ -840,9 +957,27 @@ def inspect_source(worktree: Path | None = None) -> dict[str, str]:
         if status.returncode != 0:
             detail = status.stderr.strip() or f"exit {status.returncode}"
             return {**empty, "error": f"git-status-failed:{detail}"}
-    except (OSError, subprocess.TimeoutExpired) as error:
+        flags = subprocess.run(
+            ["git", "ls-files", "-v", "-z"],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
+            cwd=worktree,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=SOURCE_INSPECTION_TIMEOUT_SECONDS,
+        )
+        if flags.returncode != 0:
+            return {**empty, "error": f"git-index-flags-failed:exit {flags.returncode}"}
+        snapshot = {
+            "head": head.stdout.strip(),
+            "status": status.stdout.rstrip("\r\n"),
+            "ignored": _ignored_source_inventory(worktree),
+        }
+        concealed_error = _concealed_source_error(flags.stdout, worktree)
+        if concealed_error:
+            snapshot["error"] = concealed_error
+        return snapshot
+    except (OSError, subprocess.TimeoutExpired, subprocess.CalledProcessError) as error:
         return {**empty, "error": f"git-inspection-failed:{error}"}
-    return {"head": head.stdout.strip(), "status": status.stdout.rstrip("\r\n")}
 
 
 def source_guard_error(snapshot: dict[str, str], expected_head: str) -> str | None:
@@ -853,6 +988,13 @@ def source_guard_error(snapshot: dict[str, str], expected_head: str) -> str | No
         return f"source-head-mismatch:expected {expected_head}, observed {snapshot['head']}"
     if snapshot["status"]:
         return "source-dirty:git status --porcelain=v1 --untracked-files=all --ignore-submodules=none was non-empty"
+    inputs = [
+        path
+        for path in json.loads(snapshot.get("ignored", "[]"))
+        if Path(path).suffix in {".py", ".pth", ".ini"} or Path(path).name in {"pyproject.toml", "setup.cfg"}
+    ]
+    if inputs:
+        return f"source-dirty:ignored-inputs:count={len(inputs)}:paths={inputs[:10]!r}"
     return None
 
 
@@ -911,7 +1053,9 @@ def run_check(
             worktree.as_posix(),
             str(proof_path.resolve()),
             json.dumps(python_test.modules),
-            json.dumps(python_test.arguments),
+            json.dumps(
+                (*python_test.arguments, "-o", f"cache_dir={(out_dir / CHECKS_DIRNAME / 'pytest-cache').resolve()}")
+            ),
             python_test.interpreter.as_posix(),
         ]
         if local_source is not None:
@@ -1145,10 +1289,9 @@ def main() -> int:
     if not ((arguments.worktree or Path.cwd()) / "src").is_dir() and not getattr(arguments, "types"):
         commands["types"] = "$null" if sys.platform == "win32" else ":"
         skip_reasons["types"] = skip_reasons["types"] or "no src directory or typed package target"
-    environment = None
+    environment = gate_environment()
     if arguments.project_env is not None:
         scripts = arguments.project_env / ("Scripts" if sys.platform == "win32" else "bin")
-        environment = os.environ.copy()
         environment["PATH"] = os.pathsep.join((str(scripts), environment.get("PATH", "")))
         environment["VIRTUAL_ENV"] = str(arguments.project_env)
         # uv project commands ignore VIRTUAL_ENV; bind nested hooks to the explicitly selected environment too.

@@ -1,6 +1,6 @@
 ---
 name: plan
-description: Interactive wizard that scans the codebase, proposes a metric/guard/agent config, and writes a program.md run spec. Also runs cProfile on a file path to surface bottlenecks before prompting for optimization goal. Distinct from `/research:topic plan`, which turns prior SOTA research into an implementation roadmap, not a program.md.
+description: Interactive wizard that scans the codebase, proposes a metric/guard/agent config, and writes a program.md run spec. With confirmation, runs cProfile on a Python file path to surface bottlenecks before prompting for optimization goal. Distinct from `/research:topic plan`, which turns prior SOTA research into an implementation roadmap, not a program.md.
 argument-hint: <goal> | <file.py> [out.md] [--team]
 effort: medium
 allowed-tools: Read, Write, Edit, Bash, Grep, Glob, Agent, TaskCreate, TaskUpdate, AskUserQuestion
@@ -9,7 +9,7 @@ disable-model-invocation: true
 
 <objective>
 
-Wizard: scans codebase, proposes metric/guard/agent config, writes `program.md` run spec. Also runs cProfile on file path to surface bottlenecks before prompting for optimization goal.
+Wizard: scans codebase, proposes metric/guard/agent config, writes `program.md` run spec. With confirmation, runs cProfile on a Python file path to surface bottlenecks before prompting for optimization goal.
 
 NOT for: running experiments (use `/research:run`); methodology validation (use `/research:judge`); full pipeline from goal to result (use `/research:sweep`); benchmarking or microbenchmark design (use `foundry:perf-optimizer` — plan's scope is ML metric optimization loops, not raw latency/throughput benchmarking).
 
@@ -33,9 +33,7 @@ The same call prints the unsupported-flag protocol used by the flag check below.
 
 ## Plan Mode (Steps P-P0–P-P4)
 
-<!-- P-P prefix = Plan-mode steps; R-prefix = Run-mode steps; these labels appear in task-tracking instructions -->
-
-Triggered by `plan <goal|file>`. Wizard configures run.
+<!-- P-P prefix = Plan wizard steps; these labels appear in task-tracking instructions -->
 
 **Task tracking**: create tasks for P-P0, P-P1, P-P2, P-P2b, P-P3 at start, all in the same response as the first real tool call; add P-P4 only if `--team` detected in arguments. Every later `TaskUpdate` rides with the next real tool call — never a bookkeeping-only turn; the one standalone call is a `completed` right before a long report.
 
@@ -47,7 +45,7 @@ Parse `<input>` from arguments. Determine: **file path** or **goal string**:
 
 Extract first positional token (strip all `--<flag>` tokens from `$ARGUMENTS`, take first remaining token as `FILE_ARG`). Then:
 
-**Disambiguation guard** — treat `FILE_ARG` as file path only if it exists on disk, and only when the non-flag token count is 1 or 2 (the 2-token form additionally requires the second token to end `.md` — see classification below). 3+ non-flag tokens is always goal text — never run `test -f` on first token of a 3+-token goal:
+**Disambiguation guard** — treat `FILE_ARG` as file path only if it matches `*.py` and exists on disk, and only when the non-flag token count is 1 or 2 (the 2-token form additionally requires the second token to end `.md` — see classification below). Other file types and 3+ non-flag tokens are always goal text — never run `test -f` on first token of a 3+-token goal:
 
 **Quoting note**: `$ARGUMENTS` raw string (not shell-tokenized). User-supplied quotes (e.g. `plan "train.py out.md"`) appear as literal characters. Before token counting, strip surrounding matched quotes from `$ARGUMENTS` so `FILE_ARG` resolves bare (`"train.py out.md"` → `train.py`, not `"train.py`):
 
@@ -63,25 +61,41 @@ NONFLAG_TOKEN_COUNT=$(echo "$_STRIPPED" | tr ' ' '\n' | grep -v '^--' | grep -v 
 FILE_ARG=$(echo "$_STRIPPED" | tr ' ' '\n' | grep -v '^--' | grep -v '^$' | head -1)  # timeout: 5000
 SECOND_ARG=$(echo "$_STRIPPED" | tr ' ' '\n' | grep -v '^--' | grep -v '^$' | sed -n '2p')  # timeout: 5000
 echo "$FILE_ARG" > "${TMPDIR:-/tmp}/research-plan-file-arg-${CSID}"
-OUT_ARG=""; [ "$NONFLAG_TOKEN_COUNT" = "2" ] && [ -f "$FILE_ARG" ] && case "$SECOND_ARG" in *.md) OUT_ARG="$SECOND_ARG";; esac
+OUT_ARG=""; [ "$NONFLAG_TOKEN_COUNT" = "2" ] && case "$FILE_ARG" in *.py) [ -f "$FILE_ARG" ] && case "$SECOND_ARG" in *.md) OUT_ARG="$SECOND_ARG";; esac ;; esac
 echo "$OUT_ARG" > "${TMPDIR:-/tmp}/research-plan-out-arg-${CSID}"  # empty = no override, P-P2b defaults to program.md
-FILE_EXISTS=false; { [ "$NONFLAG_TOKEN_COUNT" = "1" ] || [ "$NONFLAG_TOKEN_COUNT" = "2" ]; } && [ -f "$FILE_ARG" ] && FILE_EXISTS=true  # 3+ tokens are goal text: never test -f
+FILE_EXISTS=false; { [ "$NONFLAG_TOKEN_COUNT" = "1" ] || [ "$NONFLAG_TOKEN_COUNT" = "2" ]; } && case "$FILE_ARG" in *.py) [ -f "$FILE_ARG" ] && FILE_EXISTS=true ;; esac  # 3+ tokens are goal text: never test -f
 echo "NONFLAG_TOKEN_COUNT=$NONFLAG_TOKEN_COUNT FILE_ARG=$FILE_ARG FILE_EXISTS=$FILE_EXISTS OUT_ARG=$OUT_ARG"  # classification rules below read these values
 ```
 
-1. `NONFLAG_TOKEN_COUNT == 1` AND `test -f "$FILE_ARG"` succeeds → **file path**, default output (`program.md`). Enter profiling flow.
-2. `NONFLAG_TOKEN_COUNT == 2` AND `test -f "$FILE_ARG"` succeeds AND second token matches `*.md` → **file path**, output path = second token (persisted above as `OUT_ARG`). Enter profiling flow.
-3. Otherwise (3+ tokens, first token not on disk, or 2-token where second isn't `.md`) → **goal string**. Use `$_STRIPPED` (minus flags — not raw `$ARGUMENTS`) as `<goal>`. Skip to Step P-P1.
+1. `NONFLAG_TOKEN_COUNT == 1` AND `FILE_ARG` matches `*.py` AND `test -f "$FILE_ARG"` succeeds → **file path**, default output (`program.md`). Enter profiling flow.
+2. `NONFLAG_TOKEN_COUNT == 2` AND `FILE_ARG` matches `*.py` AND `test -f "$FILE_ARG"` succeeds AND second token matches `*.md` → **file path**, output path = second token (persisted above as `OUT_ARG`). Enter profiling flow.
+3. Otherwise (non-Python file, 3+ tokens, first token not on disk, or 2-token where second isn't `.md`) → **goal string**. Use `$_STRIPPED` (minus flags — not raw `$ARGUMENTS`) as `<goal>`. Skip to Step P-P1.
 
 **Profiling flow** (file path detected):
 
 Run baseline profiling using `FILE_ARG` only — never raw `$ARGUMENTS` in cProfile command.
+
+**Eligibility pre-check** — run this cheap file check before asking for profiling consent; it never executes the script:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r FILE_ARG < "${TMPDIR:-/tmp}/research-plan-file-arg-${CSID}" 2>/dev/null || FILE_ARG=""
+PROFILE_ELIGIBLE=false
+case "$FILE_ARG" in *.py) [ -f "$FILE_ARG" ] && grep -q '__main__' "$FILE_ARG" 2>/dev/null && PROFILE_ELIGIBLE=true ;; esac
+echo "PROFILE_ELIGIBLE=$PROFILE_ELIGIBLE"
+```
+
+If `PROFILE_ELIGIBLE=false`, set `PROFILE_AVAILABLE=false` and go directly to the fallback path below, skipping consent and the cProfile block.
+
+**Profiling consent** — only when `PROFILE_ELIGIBLE=true`, before running the block below, invoke `AskUserQuestion`: "Profile `<FILE_ARG>`? This executes the script for up to 600 seconds and can train models, write checkpoints, or perform downloads. To provide a goal without profiling, enter it in Other." Routes: (a) **Provide goal without profiling** — enter the goal as free text through the question's built-in **Other** input, skip execution, and use that text as `<goal>` to proceed directly to P-P1 without another question; (b) **Profile** — authorize this script execution; (c) **Abort** — stop. Supply only **Profile** and **Abort** as predefined options; route (a) uses **Other**. Only after the user selects **Profile** may the cProfile block run. A warning or a supplied file path is not confirmation.
 
 **Module-file guard**: `python -m cProfile` requires executable script (has `if __name__ == "__main__":` guard or runs directly). Library/module files without entry point produce empty cProfile output. One block pre-checks the guard and, when it passes, profiles — a failed guard only skips the profile run. The last line prints `PROFILE_AVAILABLE=true|false`:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r FILE_ARG < "${TMPDIR:-/tmp}/research-plan-file-arg-${CSID}" 2>/dev/null || FILE_ARG=""   # re-derive — bash state lost between Bash() calls
+PROFILE_AVAILABLE=true
+case "$FILE_ARG" in *.py) ;; *) echo "⚠ Not a Python file — falling back to goal-string path."; PROFILE_AVAILABLE=false ;; esac
 grep -q '__main__' "$FILE_ARG" 2>/dev/null || { echo "⚠ File has no __main__ guard — cProfile will produce empty output. Falling back to goal-string path."; PROFILE_AVAILABLE=false; }
 if [ "$PROFILE_AVAILABLE" != "false" ]; then
     CPROFILE_OUT=$(mktemp -t research-plan-XXXX)  # timeout: 3000
@@ -164,7 +178,7 @@ Dry-run both commands before presenting (add `# timeout: 60000` to timed bash ca
 
 After user confirms, run expert agent review before writing `program.md`. Dispatch conditional on goal type — run whichever apply in parallel.
 
-**Foundry availability check** — before dispatching any `foundry:*` agent: run `find ~/.claude/plugins/cache -path "*/foundry*" -name "solution-architect.md" 2>/dev/null | head -1`. Result empty: follow the loaded `agent-resolution.md` fallback table — spawn `general-purpose` in place of `foundry:solution-architect` and of a **solo** `foundry:perf-optimizer` (perf gate fired alone), with the same prompts and gates; print `⚠ foundry plugin not installed — architecture/perf reviews run as general-purpose (reduced specialisation).`; record in advisory block as `architect: general-purpose fallback (foundry absent)`. When the merged spawn is `research:scientist` (both ML and perf gates fired), the perf dimension still runs as part of that merged spawn — it is not foundry-gated. Proceed to P-P3 with available advisor output (scientist when ML gate fired, carrying the perf dimension too when both gates fired).
+**Foundry availability check** — before dispatching any `foundry:*` agent: run `{ find ~/.claude/plugins/cache -maxdepth 5 -path "*/foundry/*/agents/sw-engineer.md" 2>/dev/null; ls plugins/cc_foundry/agents/sw-engineer.md 2>/dev/null; } | head -1`. Result empty: follow the loaded `agent-resolution.md` fallback table — spawn `general-purpose` in place of `foundry:solution-architect` and of a **solo** `foundry:perf-optimizer` (perf gate fired alone), with the same prompts and gates; print `⚠ foundry plugin not installed — architecture/perf reviews run as general-purpose (reduced specialisation).`; record in advisory block as `architect: general-purpose fallback (foundry absent)`. When the merged spawn is `research:scientist` (both ML and perf gates fired), the perf dimension still runs as part of that merged spawn — it is not foundry-gated. Proceed to P-P3 with available advisor output (scientist when ML gate fired, carrying the perf dimension too when both gates fired).
 
 **Pre-spawn — create plan run dir** (review files share single timestamped dir):
 
@@ -176,7 +190,7 @@ echo "PLAN_RUN_DIR=$PLAN_RUN_DIR"  # value substituted into spawn prompts below;
 
 **Spawn note**: P-P2 advisors (architect, scientist, perf) run in the background — issue the batch, then end the turn; no filler call, no "waiting" line, no sleep (CLAUDE.md §6). Timeout handled post-hoc — on completion notifications, check review file of each dimension ACTUALLY dispatched this run (subset of `plan-review-architect.md`, `plan-review-scientist.md`, `plan-review-perf.md` — derive expected list from launch batch, never from gates' full menu). Any expected file missing or empty = that dimension timed out: surface with ⏱ and continue to P-P3 with remaining advisor output.
 
-**Architect gate** — spawn `foundry:solution-architect` only when `scope_files` contains >1 file OR `agent_strategy = arch`. Single-file optimization goals skip architect (no architectural surface to validate; saves ~5–10 min opus-tier compute). Record skip reason in advisory block as `architect: skipped (single-file scope)`.
+**Architect gate** — expand every `scope_files` glob with the Glob tool, deduplicate matched files across entries, and count the resulting paths; an unmatched literal path intended for creation counts as one file. Never count a glob as one entry regardless of its matches. Spawn `foundry:solution-architect` only when this count is >1 OR `agent_strategy = arch`. Single-file optimization goals skip architect (no architectural surface to validate; saves ~5–10 min opus-tier compute). Record skip reason in advisory block as `architect: skipped (single-file scope)`.
 
 When gate fires, before constructing the Agent() call, substitute actual computed value of `$PLAN_RUN_DIR` into the prompt string (e.g. `.experiments/plan-2026-05-13T10-00-00Z`):
 
@@ -185,7 +199,7 @@ When gate fires, before constructing the Agent() call, substitute actual compute
 > **Agent budget** — every spawn prompt must require an envelope even on exhaustion — `partial: true` plus what was finished.
 
 ````text
-Agent(subagent_type="foundry:solution-architect", prompt="Review a proposed research experiment scope.\n\nGoal: <goal>\nScope files (newline-separated paths in a markdown code block):\n```\n<scope_files — one path per line>\n```\nMetric command: <metric_cmd>\n\nCheck: (1) Do scope_files cover the components relevant to the goal? List architectural dependencies outside scope that the ideation agent would need to touch. (2) Are there shared abstractions (base classes, imports, shared state) outside scope required for changes within it?\n\nWrite your full review to `<PLAN_RUN_DIR>/plan-review-architect.md` using the Write tool.\nReturn ONLY: {\"ok\":true|false,\"gaps\":[\"...\"],\"suggestions\":[\"...\"],\"file\":\"<PLAN_RUN_DIR>/plan-review-architect.md\",\"confidence\":0.N}")
+Agent(subagent_type="foundry:solution-architect", name="scope-architect", description="Scope dependency coverage", prompt="Scope review: check a proposed research experiment scope.\n\nGoal: <goal>\nScope files (newline-separated paths in a markdown code block):\n```\n<scope_files — one path per line>\n```\nMetric command: <metric_cmd>\n\nCheck: (1) Do scope_files cover the components relevant to the goal? List architectural dependencies outside scope that the ideation agent would need to touch. (2) Are there shared abstractions (base classes, imports, shared state) outside scope required for changes within it?\n\nWrite your full review to `<PLAN_RUN_DIR>/plan-review-architect.md` using the Write tool.\nReturn ONLY: {\"ok\":true|false,\"gaps\":[\"...\"],\"suggestions\":[\"...\"],\"file\":\"<PLAN_RUN_DIR>/plan-review-architect.md\",\"confidence\":0.N}")
 ````
 
 **Scientist/perf advisory — merged spawn unit.** Two keyword gates decide which dimensions are active: ML gate (`agent_strategy = ml` or goal contains accuracy, loss, model, training, inference, classification, regression) and perf gate (`agent_strategy = perf` or goal contains latency, throughput, wall-clock, speed, memory, FPS). When BOTH fire, spawn ONE agent covering both question sets — never two (their prompts overlap on metric_cmd validity, and each extra spawn pays ~120,851 tok of fixed overhead): agent type `research:scientist` when ML gate fired, else `foundry:perf-optimizer`. When only one fires, spawn that single dimension as before. Merged spawn writes ONE FILE PER DIMENSION (own Confidence block each), returns JSON array, one element per dimension file. Substitute computed `$PLAN_RUN_DIR` before spawning:
@@ -193,7 +207,7 @@ Agent(subagent_type="foundry:solution-architect", prompt="Review a proposed rese
 > Merge is competence-safe once the perf dimension carries concrete, self-contained checks (below) rather than relying on the model's own domain branding.
 
 ```text
-Agent(subagent_type="<research:scientist | foundry:perf-optimizer per rule above>", prompt="Review a proposed experiment configuration across the listed dimensions.\n\nGoal: <goal>\nMetric command: <metric_cmd>\nGuard command: <guard_cmd>\nAgent strategy: <agent_strategy>\n\n[ML dimension — include only when ML gate fired] Check: (1) Is the goal a well-formed ML hypothesis — falsifiable, with a concrete success criterion? (2) Could metric_cmd improve while the real goal is not achieved (Goodhart's Law)? (3) Is agent_strategy appropriate for this goal type? Write this dimension's full review to `<PLAN_RUN_DIR>/plan-review-scientist.md` using the Write tool.\n\n[Perf dimension — include only when perf gate fired] Check: (1) Does metric_cmd measure the right performance characteristic for this goal? (2) Is guard_cmd comprehensive enough to catch regressions an ideation agent might introduce? (3) Name the unit metric_cmd reports (wall-clock / CPU time / throughput / peak RSS) and state whether it matches the goal's stated characteristic. (4) State whether a single run can distinguish the expected delta from run-to-run noise. (5) Verify guard_cmd's exit code actually depends on test outcomes. Write this dimension's full review to `<PLAN_RUN_DIR>/plan-review-perf.md` using the Write tool.\n\nEach review file carries its own Confidence block — never blend the dimensions into one file.\nReturn ONLY a JSON array with one element per dimension file: [{\"dim\":\"scientist|perf\",\"ok\":true|false,\"issues\":[\"...\"],\"suggestions\":[\"...\"],\"file\":\"<PLAN_RUN_DIR>/plan-review-<dim>.md\",\"confidence\":0.N}, ...]")
+Agent(subagent_type="<research:scientist | foundry:perf-optimizer per rule above>", name="metric-advisor", description="Metric and guard validity", prompt="Metric/guard review: check a proposed experiment configuration across the listed dimensions.\n\nGoal: <goal>\nMetric command: <metric_cmd>\nGuard command: <guard_cmd>\nAgent strategy: <agent_strategy>\n\n[ML dimension — include only when ML gate fired] Check: (1) Is the goal a well-formed ML hypothesis — falsifiable, with a concrete success criterion? (2) Could metric_cmd improve while the real goal is not achieved (Goodhart's Law)? (3) Is agent_strategy appropriate for this goal type? Write this dimension's full review to `<PLAN_RUN_DIR>/plan-review-scientist.md` using the Write tool.\n\n[Perf dimension — include only when perf gate fired] Check: (1) Does metric_cmd measure the right performance characteristic for this goal? (2) Is guard_cmd comprehensive enough to catch regressions an ideation agent might introduce? (3) Name the unit metric_cmd reports (wall-clock / CPU time / throughput / peak RSS) and state whether it matches the goal's stated characteristic. (4) State whether a single run can distinguish the expected delta from run-to-run noise. (5) Verify guard_cmd's exit code actually depends on test outcomes. Write this dimension's full review to `<PLAN_RUN_DIR>/plan-review-perf.md` using the Write tool.\n\nEach review file carries its own Confidence block — never blend the dimensions into one file.\nReturn ONLY a JSON array with one element per dimension file: [{\"dim\":\"scientist|perf\",\"ok\":true|false,\"issues\":[\"...\"],\"suggestions\":[\"...\"],\"file\":\"<PLAN_RUN_DIR>/plan-review-<dim>.md\",\"confidence\":0.N}, ...]")
 ```
 
 Print advisory block below config:
@@ -229,7 +243,7 @@ All advisors return `ok: true` AND `OUTPUT_EXISTS`: invoke `AskUserQuestion` aft
 
 Output path: resolved above in P-P2b pre-check.
 
-Write file using canonical template, pre-populated from wizard findings:
+Write file using canonical template, pre-populated from wizard findings. Replace defaults with confirmed wizard values; emit one selected scalar per key, never a literal choice set or inline comment. Omit unset optional keys. Add `target` only for a numeric target collected from the user. Add `colab_hw` only when `compute: colab` and hardware was selected (`H100`, `L4`, `T4`, or `A100`). `sandbox_network` is `none` by default; `bridge` requires an explicit selection and manual verification before running (`judge/SKILL.md` C-checks do not validate it). Carry the wizard's `metric_repeats` (1–10, ≥3 for timing or stochastic metrics; run keeps only gains beyond noise) and `min_delta_pct` (smallest kept gain, % of best metric) as comment-free numbers:
 
 ````markdown
 # Program: <title from goal>
@@ -240,8 +254,7 @@ Write file using canonical template, pre-populated from wizard findings:
 ## Metric
 ```yaml
 command: <metric_cmd from wizard>
-direction: higher | lower
-target: <optional numeric goal — campaign stops when crossed>
+direction: <metric_direction from wizard: higher or lower>
 ```
 
 ## Guard
@@ -252,14 +265,13 @@ command: <guard_cmd from wizard>
 ## Config
 ```yaml
 max_iterations: 20
-agent_strategy: auto | perf | code | ml | arch
+agent_strategy: auto
 scope_files:
   - <path or glob>
-compute: local | colab | docker
-colab_hw: # optional: H100 | L4 | T4 | A100 (used when compute: colab)
-sandbox_network: none | bridge  # ⚠ not validated by judge.md C-checks — manually verify before running
-metric_repeats: 1  # optional: 1–10; ≥3 for timing or stochastic metrics (run keeps only gains beyond noise)
-min_delta_pct: 0.1  # optional: smallest gain kept, % of best metric
+compute: local
+sandbox_network: none
+metric_repeats: 1
+min_delta_pct: 0.1
 ```
 
 ## Notes

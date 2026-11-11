@@ -44,6 +44,9 @@ UNSUPPORTED_SUPPORT = [
 
 def _run(script: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
     """Run the shipped CLI with its normal evidence checks."""
+    if script == CHUNKER and "--manifest" in arguments:
+        manifest = json.loads(Path(arguments[arguments.index("--manifest") + 1]).read_bytes())
+        arguments = (*arguments, "--repository", manifest["repository"])
     return subprocess.run([sys.executable, str(script), *arguments], capture_output=True, text=True, check=False)
 
 

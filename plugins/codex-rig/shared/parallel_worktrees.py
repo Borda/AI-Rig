@@ -41,6 +41,7 @@ from __future__ import annotations
 import argparse
 import errno
 import hashlib
+import importlib.util
 import json
 import logging
 import os
@@ -49,6 +50,14 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
+
+_DIFF_SPEC = importlib.util.spec_from_file_location(
+    "codex_rig_worktree_diff", Path(__file__).with_name("collect_diff.py")
+)
+if _DIFF_SPEC is None or _DIFF_SPEC.loader is None:
+    raise ImportError("canonical diff arguments unavailable")
+_DIFF_MODULE = importlib.util.module_from_spec(_DIFF_SPEC)
+_DIFF_SPEC.loader.exec_module(_DIFF_MODULE)
 
 #: Module logger for worktree pilot lifecycle events.
 LOGGER = logging.getLogger(__name__)
@@ -115,7 +124,7 @@ def _git_environment() -> dict[str, str]:
 def _git(repository: Path, *arguments: str) -> str:
     """Run Git without a shell or inherited Git redirection overrides."""
     completed = subprocess.run(  # noqa: S603 - argv list, no shell
-        ["git", "-C", str(repository), *arguments],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
+        ["git", "-C", str(repository), *_safe_git_arguments(arguments)],  # noqa: S607 - explicit local tool
         check=False,
         text=True,
         shell=False,
@@ -131,7 +140,7 @@ def _git(repository: Path, *arguments: str) -> str:
 def _git_bytes(repository: Path, *arguments: str) -> bytes:
     """Run Git and return exact stdout bytes for patch hashing."""
     completed = subprocess.run(  # noqa: S603 - argv list, no shell
-        ["git", "-C", str(repository), *arguments],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
+        ["git", "-C", str(repository), *_safe_git_arguments(arguments)],  # noqa: S607 - explicit local tool
         check=False,
         text=False,
         shell=False,
@@ -142,6 +151,70 @@ def _git_bytes(repository: Path, *arguments: str) -> bytes:
     if completed.returncode != 0:
         raise PilotError(f"git-command-failed:{arguments[0] if arguments else 'unknown'}")
     return completed.stdout
+
+
+def _safe_git_arguments(arguments: tuple[str, ...]) -> tuple[str, ...]:
+    """Disable diff transforms, hooks and filesystem monitors for lifecycle Git reads."""
+    canonical = _DIFF_MODULE.canonical_diff_arguments(arguments)
+    if "--raw" in arguments:
+        canonical = tuple(
+            argument for argument in canonical if argument not in {"--unified=3", "--inter-hunk-context=0"}
+        )
+    return (
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        f"core.hooksPath={os.devnull}",
+        *canonical,
+    )
+
+
+def _gitfile_target(gitfile: Path) -> Path:
+    """Read a real linked-worktree gitfile without following a filesystem alias."""
+    if gitfile.is_symlink() or not gitfile.is_file() or gitfile.stat().st_size > 4096:
+        raise PilotError("worktree-gitfile-invalid")
+    text = gitfile.read_text(encoding="utf-8").strip()
+    if not text.startswith("gitdir: ") or "\n" in text:
+        raise PilotError("worktree-gitfile-invalid")
+    return (gitfile.parent / text.removeprefix("gitdir: ")).resolve(strict=True)
+
+
+def _verify_worktree_gitfile(source: Path, worktree: Path) -> None:
+    """Bind a child's gitfile to the trusted source common directory and reciprocal registration."""
+    try:
+        source_git = source / ".git"
+        if source_git.is_symlink():
+            raise PilotError("worktree-gitfile-source-invalid")
+        common = source_git.resolve(strict=True) if source_git.is_dir() else _gitfile_target(source_git)
+        if (common / "commondir").is_file():
+            common = (common / (common / "commondir").read_text(encoding="utf-8").strip()).resolve(strict=True)
+        administrative = _gitfile_target(worktree / ".git")
+        registered = (administrative / "gitdir").read_text(encoding="utf-8").strip()
+        registered_common = administrative / (administrative / "commondir").read_text(encoding="utf-8").strip()
+        if (
+            administrative.parent != common / "worktrees"
+            or (administrative / registered).resolve(strict=True) != (worktree / ".git").resolve(strict=True)
+            or registered_common.resolve(strict=True) != common
+        ):
+            raise PilotError("worktree-gitfile-target-mismatch")
+    except (OSError, UnicodeError) as error:
+        raise PilotError("worktree-gitfile-invalid") from error
+
+
+def _verify_state_worktrees(state: dict[str, Any], workspace: Path, source: Path) -> None:
+    """Verify every retained child and integration registration before parent-side lifecycle reads."""
+    paths = [node["worktree_path"] for node in state["nodes"]]
+    if state.get("integration_worktree"):
+        paths.append(state["integration_worktree"])
+    for relative in paths:
+        if state.get("consumer") == "code-remediate":
+            _, worktree = _code_remediate_worktree_path(
+                workspace, state["source_repository"], relative, "managed-worktree"
+            )
+        else:
+            _, worktree = _workspace_path(workspace, relative, "managed-worktree")
+        if worktree.is_dir():
+            _verify_worktree_gitfile(source, worktree)
 
 
 def _git_batched_lines(repository: Path, *arguments: str, expected: int) -> list[str] | None:
@@ -442,10 +515,11 @@ def _repository_unchanged(repository: Path, baseline_head: str, label: str) -> N
         raise PilotError(f"{label}-dirty")
 
 
-def _retained_worktree_fingerprint(worktree: Path) -> dict[str, str]:
+def _retained_worktree_fingerprint(worktree: Path, source: Path) -> dict[str, str]:
     """Fingerprint one retained diagnostic worktree without modifying it."""
     if not worktree.is_dir():
         raise PilotError("prior-attempt-worktree-missing")
+    _verify_worktree_gitfile(source, worktree)
     return {
         "head": _git(worktree, "rev-parse", "HEAD"),
         "status_sha256": hashlib.sha256(
@@ -480,7 +554,9 @@ def _prior_attempt_fingerprint(
         _, worktree = _workspace_path(workspace, relative, "prior-worktree")
         worktrees[node["node_id"]] = {
             "path": relative,
-            **_retained_worktree_fingerprint(worktree),
+            **_retained_worktree_fingerprint(
+                worktree, _workspace_path(workspace, stage.get("fixture_repository"), "fixture-repository")[1]
+            ),
         }
     return {
         "runtime_record": runtime_relative,
@@ -646,6 +722,7 @@ def _rederive_authority(
     if state.get("retry_count") != 0:
         raise PilotError("lifecycle-state-retry-drift")
     _state_nodes(state, nodes, workspace, state_path)
+    _verify_state_worktrees(state, workspace, repository)
     if not isinstance(state.get("baseline_head"), str) or not isinstance(state.get("baseline_tree"), str):
         raise PilotError("lifecycle-state-baseline-invalid")
     if state.get("prior_attempt_fingerprint") != _prior_attempt_fingerprint(plan, stage, workspace):
@@ -698,6 +775,7 @@ def _child_patch(state: dict[str, Any], workspace: Path, node: dict[str, Any]) -
     worktree = workspace.joinpath(*PurePosixPath(node["worktree_path"]).parts)
     if not worktree.is_dir():
         raise PilotError(f"child-worktree-missing:{node_id}")
+    _verify_worktree_gitfile(workspace.joinpath(*PurePosixPath(state["repository"]).parts), worktree)
     if _git(worktree, "rev-parse", "HEAD") != state.get("baseline_head"):
         raise PilotError(f"child-commit-forbidden:{node_id}")
     if _git(worktree, "ls-files", "--others", "--exclude-standard", "-z"):
@@ -1460,6 +1538,7 @@ def _code_remediate_authority(
         if node.get("worktree_path") != expected:
             raise PilotError("lifecycle-state-node-drift")
         _code_remediate_worktree_path(workspace, source_relative, expected, "child-worktree-path")
+    _verify_state_worktrees(state, workspace, source)
     if plan.get("baseline_head") != state.get("baseline_head") or plan.get("baseline_tree") != state.get(
         "baseline_tree"
     ):
@@ -1483,6 +1562,7 @@ def _code_remediate_child_patch(
     )
     if not worktree.is_dir():
         raise PilotError(f"child-worktree-missing:{node_id}")
+    _verify_worktree_gitfile(workspace.joinpath(*PurePosixPath(state["source_repository"]).parts), worktree)
     if _git(worktree, "rev-parse", "HEAD") != state.get("baseline_head"):
         raise PilotError(f"child-commit-forbidden:{node_id}")
     if _git_bytes(worktree, "ls-files", "--others", "-z"):

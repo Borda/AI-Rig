@@ -15,10 +15,16 @@ Thresholds (from SKILL.md constants): `ROUTING_ACCURACY_THRESHOLD=0.90`, `ROUTIN
 Mark "Calibrate routing" in_progress. Load routing pipeline template via Bash (not Read tool — Bash grant is version-proof):
 
 ```bash
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" calibrate templates routing-pipeline-prompt.md --fallback-source  # timeout: 5000
+CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/calibrate-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
+if [ "$LOCAL_MODE" = "true" ]; then
+    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" calibrate templates routing-pipeline-prompt.md --local --fallback-source  # timeout: 5000
+else
+    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" calibrate templates routing-pipeline-prompt.md --fallback-source  # timeout: 5000
+fi
 ```
 
-Substitute `<N>` (5 fast, 10 full), `<TIMESTAMP>`, `<MODE>`. Spawn **single** `general-purpose` pipeline subagent with substituted template — handles all phases internally. Proceed to Step 3.
+Substitute `<N>` (5 fast, 10 full), `<TIMESTAMP>`, `<MODE>`, and `<CHILD_BATCH>` with `1`. Spawn **single** `general-purpose` pipeline subagent with substituted template — handles all phases internally. Proceed to Step 3.
 
 Run dir: `.reports/calibrate/<TIMESTAMP>/routing/`
 
@@ -39,6 +45,8 @@ When target is `routing`, replace standard combined report table with:
 Flag routing accuracy < 0.90 or hard accuracy < 0.80 with ⚠. Print confused pair details from routing report's Confused Pairs section. Mark "Calibrate routing" completed.
 
 Verdict `incomplete` (empty agent roster — pipeline Phase 1 hard stop): omit table, print `⚠ routing — no agent roster resolved; accuracy not measured`. Never substitute a number for an unmeasured run.
+
+Verdict `incomplete` with gap `resolver unavailable`: omit table and print `⚠ routing — resolver unavailable; accuracy not measured`.
 
 ### Follow-up chain
 

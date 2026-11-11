@@ -10,17 +10,22 @@ These phases execute only when `sandbox_mode = "docker"`. When `sandbox_mode = "
 
 Skip entirely if `sandbox_mode = "local"`.
 
-If Phase 2 returned non-empty `"scripts"`: run each in Docker sandbox with read-only project mount. Per script (`SANDBOX_NETWORK` resolves from the R1 sentinel — Phase 5 uses the identical pattern):
+If Phase 2 returned non-empty `"scripts"`: run each in Docker sandbox with read-only project mount. Per script, substitute one filename from that returned list into `SCRIPT` below (`SANDBOX_NETWORK` resolves from the R1 sentinel — Phase 5 uses the identical pattern):
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r RUN_ID < "${TMPDIR:-/tmp}/research-run-id-${CSID}" 2>/dev/null || RUN_ID=""
 [ -n "$RUN_ID" ] || { echo "! BLOCKED — Phase 2a: research run-id sentinel missing"; exit 1; }
+SCRIPT="<one filename from Phase 2's returned scripts list>"
+case "$SCRIPT" in
+    ""|*'<'*|*'>'*) echo "! BLOCKED — Phase 2a: returned script filename missing or unresolved"; exit 1 ;;
+esac
+SCRIPT=".experiments/state/${RUN_ID}/scripts/${SCRIPT}"
 IFS= read -r _CFG_NET < "${TMPDIR:-/tmp}/research-run-sandbox-network-${CSID}" 2>/dev/null || _CFG_NET=""
 IFS= read -r VERIFY_TIMEOUT_MS < "${TMPDIR:-/tmp}/research-run-verify-timeout-ms-${CSID}" 2>/dev/null || VERIFY_TIMEOUT_MS=""
 [ -n "$VERIFY_TIMEOUT_MS" ] || { echo "! BLOCKED — Phase 2a: R2 verify-timeout sentinel missing"; exit 1; }
 echo "VERIFY_TIMEOUT_MS=$VERIFY_TIMEOUT_MS"
-SANDBOX_NETWORK="${SANDBOX_NETWORK:-${_CFG_NET:-none}}" python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/docker_sandbox_run.py" --mode explore ".experiments/state/${RUN_ID}/scripts/${script}"
+SANDBOX_NETWORK="${SANDBOX_NETWORK:-${_CFG_NET:-none}}" python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/docker_sandbox_run.py" --mode explore "$SCRIPT"
 ```
 
 Use Bash tool `timeout`: `timeout: $VERIFY_TIMEOUT_MS` (R2 computes it from `$VERIFY_TIMEOUT_SEC`, prints it, and persists it to the sentinel the block above reloads; take the number from R2's printed line or the previous script's reload, since the Bash tool needs it before the call). Not shell `timeout` command.
@@ -33,7 +38,7 @@ If `"scripts"` empty or absent: 2a no-op — proceed to 2b.
 
 Skip if `sandbox_mode = "local"` (Phase 2 already applied changes).
 
-Spawn same specialist agent (R3), `maxTurns: 10`:
+Spawn the R3 specialist, or `foundry:sw-engineer` for `arch`/`ml`, `maxTurns: 10`:
 
 ```text
 Read proposed change in `.experiments/state/<run-id>/ideation-<i>.md`.

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
+import tracemalloc
 from pathlib import Path
 from unittest import mock
 
@@ -161,6 +163,20 @@ class TestReadTranscript:
         _, skills = ahc.read_transcript(path)
         assert skills == {"oss:review"}
 
+    def test_discarded_transcript_rows_do_not_accumulate_in_memory(self, tmp_path: Path) -> None:
+        """Large transcripts are streamed instead of retaining all their discarded rows."""
+        path = tmp_path / "large.jsonl"
+        path.write_text(("{}" + " " * 1022 + "\n") * 10000, encoding="utf-8")
+        tracemalloc.start()
+        try:
+            commands, skills = ahc.read_transcript(path)
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+
+        assert (commands, skills) == ([], set())
+        assert peak < 2 * 1024 * 1024
+
 
 class TestLoadDigests:
     """Manifest union across installed plugins."""
@@ -254,7 +270,18 @@ class TestClassifier:
             capture_output=True,
             text=True,
             check=False,
+            timeout=30.0,
         )
+
+    @mock.patch(
+        "audit_hook_coverage.subprocess.run",
+        autospec=True,
+        side_effect=subprocess.TimeoutExpired(["node", "shape-hook.js"], 30.0),
+    )
+    def test_shape_hook_timeout_is_an_uncovered_command(self, mock_run: mock.Mock) -> None:
+        """A stalled hook cannot hang the scan or grant permission coverage."""
+        assert ahc.Classifier({}, Path("shape-hook.js")).verdict("pwd") == "none"
+        assert mock_run.call_args.kwargs["timeout"] == 30.0
 
 
 class TestCollect:

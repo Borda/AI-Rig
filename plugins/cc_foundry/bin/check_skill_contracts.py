@@ -40,6 +40,9 @@ MIN_MODE_LINES = 20
 #: Overlapping substantive lines before an inline twin is reported.
 MIN_OVERLAP = 20
 
+#: Fraction of distinct substantive mode lines required to identify an inline twin.
+MIN_OVERLAP_FRACTION = 0.8
+
 #: Matches an inline `# timeout: N` comment that marks a Bash call as carrying an explicit timeout.
 _TIMEOUT_COMMENT = re.compile(r"#\s*timeout:\s*\d")
 #: Matches a shell ``timeout N`` wrapper on a command line.
@@ -165,7 +168,16 @@ def check_timeouts(root: Path) -> None:
 
 
 def _substantive(lines: list[str]) -> list[str]:
-    return [ln for ln in lines if ln.strip() and not ln.lstrip().startswith("#")]
+    """Keep body lines that convey content rather than Markdown or control-flow scaffolding."""
+    boilerplate = {"then", "else", "fi", "do", "done", "esac", "try:", "except:", "pass", "break", "continue"}
+    return [
+        line.strip()
+        for line in lines
+        if line.strip()
+        and not line.lstrip().startswith(("#", "```", "~~~", "<!--"))
+        and line.strip() not in boilerplate
+        and re.search(r"[A-Za-z0-9]", line)
+    ]
 
 
 def shadowed_mode(skill_md: Path, mode_file: Path) -> str | None:
@@ -173,14 +185,12 @@ def shadowed_mode(skill_md: Path, mode_file: Path) -> str | None:
     skill_text = skill_md.read_text(encoding="utf-8", errors="replace")
     if mode_file.name not in skill_text:
         return None
-    mode_lines = _substantive(_read_lines(mode_file))
+    mode_lines = set(_substantive(_read_lines(mode_file)))
     if len(mode_lines) < MIN_MODE_LINES:
         return None
-    # Count lines of SKILL.md that match a mode line, matching the `grep -Fxf`
-    # original: a mode line duplicated twice inline counts twice.
-    wanted = set(mode_lines)
-    overlap = sum(1 for line in skill_text.splitlines() if line in wanted)
-    if overlap < MIN_OVERLAP:
+    # Repeated scaffolding cannot establish that the extracted body survives inline.
+    overlap = len(mode_lines.intersection(_substantive(skill_text.splitlines())))
+    if overlap < MIN_OVERLAP or overlap / len(mode_lines) < MIN_OVERLAP_FRACTION:
         return None
     return (
         f"⚠ 32f [medium] {skill_md.as_posix()} — body of {mode_file.name} shadowed inline "

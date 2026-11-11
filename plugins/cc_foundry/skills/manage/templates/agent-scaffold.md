@@ -5,21 +5,24 @@
 name / description / tools / model / color (frontmatter)
 ---
 <role> — 2-3 sentences establishing expertise from description
+
+</role>
+
 <core-knowledge> — 2 subsections, 3-5 bullets each (domain-specific, not generic)
 
 </core-knowledge>
 
-`<workflow>` — 5 numbered steps appropriate to the domain
+<workflow> — 5 numbered steps appropriate to the domain
 
 </workflow>
 
-\<notes> — 1-2 operational notes + cross-refs to related agents
+<notes> — 1-2 operational notes + cross-refs to related agents
 
-\</notes>
+</notes>
 
 ```
 
-**Content rules:** `<role>`, `<workflow>`: normal tags. Others: `\<escaped>` tags. Real domain content, 80-120 lines total.
+**Content rules:** use normal balanced tags for every section (`<role>`, `<core-knowledge>`, `<workflow>`, `<notes>`); no escaped tags. Real domain content, 80-120 lines total.
 
 **Tool selection**: match tools to domain, no padding. By role:
 

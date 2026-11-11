@@ -55,9 +55,8 @@ def _validate_base_dir(base_dir: str) -> None:
     """Reject absolute paths that escape allowed roots (CWE-22).
 
     Absolute paths are accepted only when they resolve under the current working
-    directory (treated as project root) or ``$HOME/.claude``.  Relative paths
-    are accepted unconditionally — they are anchored to the caller's CWD by the
-    invoking skill.  Any ``..`` traversal in the input is rejected outright.
+    directory (treated as project root) or ``$HOME/.claude``. Relative paths
+    must resolve inside the project root. Any ``..`` traversal in the input is rejected outright.
 
     Args:
         base_dir: Raw path supplied on argv.
@@ -73,6 +72,8 @@ def _validate_base_dir(base_dir: str) -> None:
     # On Windows /etc/evil is not `is_absolute()` (no drive letter) but is still
     # a Unix-style absolute path — check the posix form too.
     if not candidate.is_absolute() and not candidate.as_posix().startswith("/"):
+        if not candidate.resolve().is_relative_to(Path.cwd().resolve()):
+            raise ValueError(f"base_dir resolves outside project root: {base_dir!r}")
         _refuse_instruction_source(base_dir)
         return
     resolved = candidate.expanduser().resolve()

@@ -31,6 +31,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -804,7 +805,8 @@ class TestCompactionLogs:
         logs = tmp_home / ".claude" / "logs"
         break_logs(logs)
         contract = b"Keep the current contract verbatim.\r\n"
-        project, _state, transcript = _stage_contract(tmp_path, contract)
+        project, state, transcript = _stage_contract(tmp_path, contract)
+        (state / "skill-contract.owner").write_text(json.dumps(_owner_record(sid, contract)), encoding="utf-8")
 
         result = run_hook("task-log.js", _pre_compact(sid, str(transcript)), home=tmp_home, cwd=project)
 
@@ -812,7 +814,11 @@ class TestCompactionLogs:
         assert result.stdout == result.stderr == ""
         snapshot = (project / ".claude" / "state" / "session-context.md").read_bytes()
         assert b"- src/result.py\n" in snapshot
-        assert snapshot.endswith(b"## Skill Compaction Contract\nunverified at PreCompact\n" + contract)
+        assert (
+            b"## Skill Compaction Contract\n" + f"verified for session {sid} at PreCompact\n".encode() + contract
+            in snapshot
+        )
+        assert re.search(rb"<untrusted-[a-f0-9]+>\n.*</untrusted-[a-f0-9]+>", snapshot, re.DOTALL)
         check_logs(logs)
         post = run_hook(
             "task-log.js",
@@ -957,6 +963,19 @@ class TestLogMasking:
         assert log.stat().st_mode & 0o777 == 0o600
 
 
+def _assert_saved_contract(saved: bytes, raw: bytes, status: str) -> None:
+    """Require exact owned bytes inside an untrusted boundary and omit all unverified bodies."""
+    if status == "unverified at PreCompact":
+        assert raw not in saved
+        assert b"## Skill Compaction Contract" not in saved
+        return
+    assert saved.count(b"## Skill Compaction Contract") == 1
+    assert b"## Skill Compaction Contract\n" + status.encode() + b"\n" + raw in saved
+    match = re.search(rb"<(untrusted-[a-f0-9]+)>\n(.*?)\n</\1>\n$", saved, re.DOTALL)
+    assert match is not None
+    assert match[2].endswith(raw)
+
+
 class TestPreCompactContract:
     """task-log.js: PreCompact writes session-context.md and preserves the skill contract verbatim.
 
@@ -981,6 +1000,9 @@ class TestPreCompactContract:
         _write_transcript(transcript, ["/proj/src/foo.py"])
         contract = "CONTRACT: keep phase 3 in-progress; do NOT re-run steps 1-2.\n- next: verify tests"
         (contract_dir / "skill-contract.md").write_text(contract, encoding="utf-8")
+        (contract_dir / "skill-contract.owner").write_text(
+            json.dumps(_owner_record(sid, contract.encode())), encoding="utf-8"
+        )
 
         result = run_hook("task-log.js", _pre_compact(sid, str(transcript)), home=tmp_home, cwd=proj)
 
@@ -1103,10 +1125,9 @@ class TestPreCompactContract:
         owner_text: Callable[[str, bytes], str],
         status: str,
     ) -> None:
-        """PreCompact keeps every byte of the contract and labels it verified only for a matching same-session owner.
+        """PreCompact preserves matching session-owned bytes and omits contracts without valid ownership.
 
-        Save and restore share provenance states: a missing, stale, malformed, incomplete or unreadable owner stamp
-        leaves the contract in place but marked unverified.
+        A missing, stale, malformed, incomplete or unreadable owner stamp cannot carry repository instructions forward.
         """
         raw = b"  CONTRACT: keep whitespace\r\nnext: resume\n\n"
         project, state, transcript = _stage_contract(tmp_path, raw)
@@ -1117,9 +1138,7 @@ class TestPreCompactContract:
         assert result.returncode == 0, result.stderr
         saved = (project / ".claude" / "state" / "session-context.md").read_bytes()
         assert b"## Files Modified This Session" in saved
-        assert saved.count(b"## Skill Compaction Contract") == 1
-        assert b"## Skill Compaction Contract\n" + status.format(sid=sid).encode() + b"\n" + raw in saved
-        assert saved.endswith(raw)
+        _assert_saved_contract(saved, raw, status.format(sid=sid))
 
     def test_precompact_foreign_owner_omits_contract(self, sid: str, tmp_home: Path, tmp_path: Path, run_hook) -> None:
         """A contract whose owner stamp matches its bytes but names another session is not carried over.
@@ -1321,10 +1340,8 @@ class TestUnsafeContractPaths:
         assert "## Skill Compaction Contract" not in output
 
     @pytest.mark.parametrize("plant", _UNSAFE_KINDS)
-    def test_unsafe_owner_leaves_contract_unverified(
-        self, tmp_path: Path, safe_contract: tuple, plant: Callable
-    ) -> None:
-        """An oversized, symlinked or FIFO owner stamp is ignored: the contract text is kept but marked unverified.
+    def test_unsafe_owner_omits_contract(self, tmp_path: Path, safe_contract: tuple, plant: Callable) -> None:
+        """An oversized, symlinked or FIFO owner stamp cannot authorize carrying a contract into context.
 
         The stamp is advisory provenance; an unsafe stamp path must not block compaction nor pass for a verified owner.
         """
@@ -1334,7 +1351,7 @@ class TestUnsafeContractPaths:
 
         output = _precompact_session_context(tmp_path, project)
 
-        assert "CONTRACT: continue safely" in output
-        assert "unverified at PreCompact" in output
+        assert "CONTRACT: continue safely" not in output
+        assert "## Skill Compaction Contract" not in output
         assert "Skill contract, verified:" not in output
         assert "verified for session" not in output

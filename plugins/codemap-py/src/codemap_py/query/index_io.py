@@ -11,7 +11,7 @@ import time
 from collections import ChainMap
 from collections.abc import Mapping
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import NamedTuple
 
 from codemap_py import index_paths, rwgate
@@ -295,7 +295,93 @@ _SELF_CHECK_DETAIL = {
     "version_too_old": "the index predates the readable schema and cannot be loaded",
     "modules_not_list": "the index 'modules' field is not a list",
     "collisions_not_list": "the index 'collisions' field is corrupt (not a list of objects)",
+    "invalid_entries": "the index contains malformed module or symbol entries",
+    "unsafe_module_path": "an indexed module path is absolute or traverses outside the project",
 }
+
+
+def _safe_module_path(path: object) -> bool:
+    """Accept only relative module paths without parent traversal on either host platform."""
+    if not isinstance(path, str) or "\0" in path:
+        return False
+    posix, windows = PurePosixPath(path), PureWindowsPath(path)
+    windows_anchored = (os.name == "nt" or "\\" in path) and windows.anchor
+    return not (posix.anchor or windows_anchored or ".." in posix.parts or ".." in windows.parts)
+
+
+def _valid_symbol_entry(symbol: object) -> bool:
+    """Check the symbol fields that query handlers read without defaults."""
+    if not isinstance(symbol, dict):
+        return False
+    if not all(isinstance(symbol.get(key), str) for key in ("name", "qualified_name")):
+        return False
+    if not isinstance(symbol.get("type", ""), str):
+        return False
+    start, end = symbol.get("start_line"), symbol.get("end_line")
+    if not (type(start) is int and type(end) is int and 1 <= start <= end):
+        return False
+    calls = symbol.get("calls", [])
+    return isinstance(calls, list) and all(
+        isinstance(edge, dict) and isinstance(edge.get("target"), str) and isinstance(edge.get("resolution", ""), str)
+        for edge in calls
+    )
+
+
+def _valid_module_collections(module: dict) -> bool:
+    """Validate optional import and evidence containers consumed by query verbs."""
+    groups = module.get("import_groups", {})
+    if not isinstance(groups, dict):
+        return False
+    string_lists = [module.get("direct_imports", []), *groups.values()]
+    if not all(isinstance(items, list) and all(isinstance(item, str) for item in items) for items in string_lists):
+        return False
+    for key in (
+        "fixture_exports",
+        "fixture_uses",
+        "mock_patches",
+        "subprocess_calls",
+        "config_refs",
+        "sphinx_xrefs",
+        "dynamic_imported_by",
+    ):
+        records = module.get(key, [])
+        if not isinstance(records, list) or not all(isinstance(record, dict) for record in records):
+            return False
+    for fixture in [*module.get("fixture_exports", []), *module.get("fixture_uses", [])]:
+        if not isinstance(fixture.get("name"), str):
+            return False
+        params = fixture.get("params", [])
+        if not isinstance(params, list) or not all(isinstance(param, str) for param in params):
+            return False
+    return True
+
+
+def _index_entries_reason(index: dict) -> str | None:
+    """Reject malformed query records before they reach command-specific handlers."""
+    if not _valid_scan_root(index.get("scan_root")):
+        return "invalid_entries"
+    for module in index["modules"]:
+        if not isinstance(module, dict) or not isinstance(module.get("name"), str):
+            return "invalid_entries"
+        if not _safe_module_path(module.get("path", "")):
+            return "unsafe_module_path"
+        symbols = module.get("symbols", [])
+        if not isinstance(symbols, list) or not all(_valid_symbol_entry(symbol) for symbol in symbols):
+            return "invalid_entries"
+        if not _valid_module_collections(module):
+            return "invalid_entries"
+    return None
+
+
+def _valid_scan_root(root: object) -> bool:
+    """Check optional root metadata lexically without resolving an untrusted location."""
+    if root is None:
+        return True
+    if not isinstance(root, str) or "\0" in root:
+        return False
+    if PureWindowsPath(root).drive.startswith("\\\\"):
+        return False
+    return True
 
 
 def _missing_index(path: Path) -> None:
@@ -344,7 +430,7 @@ def load_index(path: Path) -> dict:
             {"error": "index is not valid JSON", "path": str(path), "detail": str(exc)},
             _EXIT_NOT_INDEXED,
         )
-    reason = validate_index(index)
+    reason = validate_index(index) or _index_entries_reason(index)
     if reason is not None:
         detail = _SELF_CHECK_DETAIL.get(reason, "the index failed its structural self-check")
         _print(
@@ -1121,14 +1207,27 @@ def _indexed_untracked_modified(paths: list[str], scanned_at: str) -> bool:
 def _resolve_project_root(explicit_root: Path | None, index: dict) -> Path:
     """Resolve project root for file path lookups using priority chain.
 
-    Priority: explicit ``--root`` flag > scan_root stored in index > git root from CWD > CWD.
+    Priority: explicit ``--root`` > an anchored stored root > git root from CWD > CWD.
+    A stored root must agree with the invoking project or the standard cache location of the loaded index.
     """
     if explicit_root is not None:
         return explicit_root.resolve()
+    query_path = (_fingerprint_root or _get_git_root_cached() or Path.cwd()).absolute()
+    queried = query_path.resolve()
     stored = index.get("scan_root")
-    if stored:
-        return Path(stored)
-    return _get_git_root_cached() or Path.cwd()
+    if not stored:
+        return queried
+    if not isinstance(stored, str) or PureWindowsPath(stored).drive.startswith("\\\\"):
+        return queried
+    stored_path = Path(stored).absolute()
+    if stored_path in (query_path, queried):
+        return stored_path.resolve()
+    loaded = Path(state._LOADED_INDEX_PATH).absolute()
+    if loaded.parent.name == "codemap" and loaded.parent.parent.name == ".cache":
+        cache_root = loaded.parent.parent.parent
+        if stored_path in (cache_root, cache_root.resolve()):
+            return stored_path.resolve()
+    return queried
 
 
 def _detect_root_mismatch(explicit_root: Path | None, index: dict) -> bool:
@@ -1147,11 +1246,14 @@ def _detect_root_mismatch(explicit_root: Path | None, index: dict) -> bool:
     stored = index.get("scan_root")
     if not stored:
         return False
-    stored_root = Path(stored).resolve()
-    queried = (
-        explicit_root.resolve() if explicit_root is not None else (_get_git_root_cached() or Path.cwd())
-    ).resolve()
-    return stored_root != queried
+    if not isinstance(stored, str) or PureWindowsPath(stored).drive.startswith("\\\\"):
+        return True
+    query_path = (explicit_root if explicit_root is not None else (_get_git_root_cached() or Path.cwd())).absolute()
+    queried = query_path.resolve()
+    stored_path = Path(stored).absolute()
+    if stored_path not in (query_path, queried):
+        return True
+    return stored_path.resolve() != queried
 
 
 def _require_subprocess_rdep_count(index: dict) -> dict:

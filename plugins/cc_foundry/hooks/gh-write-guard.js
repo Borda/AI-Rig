@@ -51,13 +51,12 @@
 //      admit set (`${~x}`, `$=x`, `${!x}`, `$[…]`, `${x:=…}`), a `{name}>` descriptor variable, a shell option
 //      switched at run time; the Bash tool runs the user's shell), gh is named in
 //      `python3 -c`/`perl -e`/`node -e` code, lib/shell-git.js cannot load, or classifying throws.
-//      Then every command naming gh together with `api` or a write verb is blocked, read with and
-//      without its quote and backslash characters, and so is every command whose quoting the shells
-//      read differently, which may hide the gh word itself. A guessed argv cannot fail closed: stripping
+//      Then every command naming gh requests ordinary permission, read with and
+//      without its quote and backslash characters. An unrelated unreadable command produces no guard verdict.
+//      Size, word, invocation, command, time and nesting limits use this same permission fallback. A guessed argv cannot fail closed: stripping
 //      quotes from `--title 'a b' create` shifts `create` off the verb position. When the lexer names
-//      the construct (shell-git `info.unreadableReason`), the block says "Bash command blocked — it
-//      holds shell syntax the guards cannot read exactly: <construct>" and offers no gh-write
-//      question: no approval covers such a command, and it may name no gh at all.
+//      the construct (shell-git `info.unreadableReason`), the permission reason names it and offers no gh-write
+//      token: a token never substitutes for permission to run unreadable text.
 //   6. A write items 2–3 found in an exact argv runs once when the user approved exactly this
 //      command: the session project's git common dir holds a valid `gh-write-once` token
 //      (claude-gh-write-approval.json, 15 min) whose `command` equals the whole Bash command,
@@ -120,8 +119,13 @@ const path = require("path");
 // write through. Without the lexer, gh writes fail closed below.
 let programInvocations = null;
 let XARGS_TAIL = null;
+let coarseProgramInvocations = null;
+// Library unavailable: ask on every Bash command rather than guessing program names.
+let namesProgram = () => true;
 try {
-  ({ programInvocations, XARGS_TAIL } = require(path.join(__dirname, "lib", "shell-git.js")));
+  const lexer = require(path.join(__dirname, "lib", "shell-git.js"));
+  ({ programInvocations, XARGS_TAIL, coarseProgramInvocations } = lexer);
+  if (lexer.namesProgram) namesProgram = lexer.namesProgram;
 } catch {
   // programInvocations stays null
 }
@@ -132,6 +136,7 @@ const WRITES = {
   "agent-task": ["create"],
   cache: ["delete"],
   codespace: ["create", "delete", "edit", "ports visibility", "rebuild", "stop"],
+  config: ["set"],
   discussion: ["comment", "create", "edit"],
   gist: ["create", "new", "delete", "edit", "rename"],
   "gpg-key": ["add", "delete"],
@@ -268,17 +273,10 @@ const SPENT_ALLOW = {
     permissionDecisionReason: "one-time gh-write approval spent",
   },
 };
-const UNREADABLE =
-  "gh-write-guard cannot read this command's gh arguments exactly (quoting it cannot follow or that bash and zsh read differently, or gh named in interpreter code); every such command naming gh with api or a write verb, and every command with quoting the shells read differently, is blocked";
+const UNREADABLE = "gh-write-guard cannot read this command's gh arguments exactly; permission is required";
 // Why no approval covers a write found without an exact argv (HOW IT WORKS item 5).
 const INEXACT =
   "a command whose gh arguments cannot be read exactly is never covered, since the text approved and the argv run may differ; rewrite it in plain quoting";
-
-const FALLBACK_VERBS = [...new Set(Object.values(WRITES).flatMap((verbs) => verbs.flatMap((v) => v.split(" "))))];
-const FALLBACK_WRITE = new RegExp(
-  `(?<![\\w.-])gh(?:\\.exe)?(?![\\w.-])[\\s\\S]*\\b(?:api|${FALLBACK_VERBS.join("|")})\\b`,
-  "i",
-);
 
 // --- subcommands ---
 
@@ -531,35 +529,37 @@ function writeReason(tokens) {
   return null;
 }
 
-/** True when `command` names gh with `api` or a write verb, read with and without quote characters. */
-function namesGhWrite(command) {
-  return FALLBACK_WRITE.test(command) || FALLBACK_WRITE.test(command.replace(/["'\\]/g, ""));
+/** True when `command` names gh, even without an exact program or subcommand word. */
+function namesGh(command) {
+  return namesProgram(command, "gh");
 }
 
 /**
  * The first gh write in a Bash command, or null; throws only if the lexer does. `exact` when it was read from an
  * exact argv, the only kind a gh-write approval can cover.
  */
-function findWrite(command) {
-  const info = {};
-  const invocations = programInvocations(command, "gh", info);
-  if (invocations === null) {
-    // No exact argv: quoting the lexer cannot follow, or interpreter code naming gh. Quoting the
-    // shells read differently can hide the gh word itself, so it blocks without one, naming that syntax.
-    if (info.unreadable && info.unreadableReason) {
-      return { reason: info.unreadableReason, exact: false, syntax: true, namesWrite: namesGhWrite(command) };
-    }
-    return namesGhWrite(command) || info.unreadable ? { reason: UNREADABLE, exact: false } : null;
-  }
-  // A force update anywhere in the command outranks every other write: no approval covers it.
-  for (const tokens of invocations) {
+function findWrite(command, info) {
+  const coarse = coarseProgramInvocations?.(command, "gh", 0, info.deadline) || [];
+  info.coarseInvocations = coarse;
+  for (const tokens of coarse) {
     const reason = forceReason(tokens);
     if (reason) return { reason, exact: true, force: true };
   }
-  for (const tokens of invocations) {
-    const reason = writeReason(tokens);
-    if (reason) return { reason, exact: true };
+  const parsed = programInvocations(command, "gh", info);
+  const invocations = info.unreadable || parsed === null ? info.exactInvocations || [] : parsed;
+  // A force update anywhere in the command outranks every other write: no approval covers it.
+  for (const tokens of [...invocations, ...(info.prefixInvocations || [])]) {
+    const reason = forceReason(tokens);
+    if (reason) return { reason, exact: true, force: true };
   }
+  for (const tokens of [...invocations, ...(info.unreadable || parsed === null ? coarse : [])]) {
+    const reason = writeReason(tokens);
+    if (reason) return { reason, exact: true, unreadable: info.unreadable || parsed === null };
+  }
+  if (parsed === null || info.unreadable)
+    return namesGh(command) || info.unreadableExecutable
+      ? { reason: info.unreadableReason || UNREADABLE, exact: false, syntax: true }
+      : null;
   return null;
 }
 
@@ -618,16 +618,20 @@ function block(reason, approvalProblem) {
 }
 
 /**
- * Block a command holding shell syntax the lexer cannot read exactly (`reason` names the construct). No gh-write
- * question is offered: no approval covers such a command, and it may name no gh at all.
+ * Ask permission for a command naming gh that the lexer cannot read exactly (`reason` names the construct).
+ * A gh-write token never substitutes for this ordinary permission decision.
  */
-function blockSyntax(reason, namesWrite) {
-  const tail = namesWrite ? `No gh-write approval covers it: ${INEXACT}.` : "Rewrite the command without that syntax.";
-  process.stderr.write(
-    `Bash command blocked — it holds shell syntax the guards cannot read exactly: ${reason}. bash and zsh read ` +
-      `it differently, or it runs code no string inspection sees, so it may hide a gh write. ${tail}\n`,
+function blockSyntax(reason) {
+  process.stdout.write(
+    JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "ask",
+        permissionDecisionReason: `gh-write-guard cannot read this command exactly: ${reason}; it may hold a push or GitHub write the guard could not read`,
+      },
+    }),
   );
-  process.exit(2);
+  process.exit(0);
 }
 
 function blockForce(reason) {
@@ -654,21 +658,24 @@ process.stdin.on("end", () => {
   if (typeof command !== "string" || command === "") process.exit(0);
 
   let found;
+  const info = { deadline: Date.now() + 1000 };
   try {
     if (programInvocations === null) throw new Error("lib/shell-git.js did not load");
-    found = findWrite(command);
+    found = findWrite(command, info);
   } catch (error) {
-    if (!namesGhWrite(command)) process.exit(0);
+    if (!namesGh(command)) process.exit(0);
     found = {
-      reason: `gh-write-guard cannot inspect the command (${error.message}); every command naming gh with api or a write verb is blocked until the plugin is reinstalled`,
+      reason: `gh-write-guard cannot inspect the command (${error.message}); permission is required`,
       exact: false,
+      syntax: true,
     };
   }
   if (!found) process.exit(0);
-  if (found.syntax) blockSyntax(found.reason, found.namesWrite);
   if (found.force) blockForce(found.reason);
+  if (found.syntax) blockSyntax(found.reason);
   const problem = found.exact ? spendApproval(command, data) : INEXACT;
   if (problem === null) {
+    if (found.unreadable) blockSyntax(UNREADABLE);
     process.stdout.write(JSON.stringify(SPENT_ALLOW));
     process.exit(0);
   }

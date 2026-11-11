@@ -1,6 +1,6 @@
 ---
 name: fix
-description: 'Reproduce-first bug resolution — capture bug in failing regression test, apply minimal fix, run quality stack and a bounded independent challenge. TRIGGER when: user reports a bug, regression, or unexpected behaviour in Python code with a traceback, failing test, or issue number; phrases: "fix this bug", "repair X", "broken since Y", "test failing". SKIP when: CI-only failures without local traceback (use `/develop:debug` first); new features (use `/develop:feature`); `.claude/` config issues (use `/foundry:audit`); non-Python projects.'
+description: 'Reproduce-first bug resolution — capture bug in failing regression test, apply minimal fix, run quality stack and a bounded independent challenge. TRIGGER when: user reports a bug, regression, or unexpected behaviour in Python code with a traceback, failing test, or issue number; phrases: "fix this bug", "repair X", "broken since Y", "test failing". SKIP when: performance regressions (use `foundry:perf-optimizer` agent, requires foundry plugin); CI-only failures without local traceback (use `/develop:debug` first); new features (use `/develop:feature`); `.claude/` config issues (use `/foundry:audit`); non-Python projects.'
 argument-hint: '<symptom or issue # (plain 123 or #123)> [--repo <owner/repo>] [--plan <path>] [--diagnosis <path>] [--no-challenge] [--challenge] [--codemap] [--no-codemap] [--accept-no-plan] [--team] [--worktree] [--keep "<items>"]'
 effort: medium
 allowed-tools: Read, Write, Edit, Bash, Grep, Glob, Agent, Skill, TaskList, TaskCreate, TaskUpdate, AskUserQuestion, EnterWorktree, ExitWorktree
@@ -13,6 +13,7 @@ Reproduce-first bug resolution. Capture bug in failing regression test, apply mi
 
 NOT for:
 
+- performance regressions — use the `foundry:perf-optimizer` agent (requires foundry plugin); if unavailable, report the missing route and request benchmark evidence before choosing another workflow
 - CI-only failures with no local traceback — use `/develop:debug` first (`--ci-run <run-id>` for GitHub Actions logs)
 - production incidents with no CI run or traceback (use `/foundry:investigate` (requires foundry plugin))
 - `.claude/` config issues (use `/foundry:audit` (requires foundry plugin))
@@ -56,7 +57,7 @@ Contains: foundry check + fallback table, and §Agent waits — no polling (appl
 
 - **Checkpoint appends ride along.** Each `step: N — completed` line is staged to `$DEV_DIR/checkpoint.md.rec` (Write tool) and appended to `$DEV_DIR/checkpoint.md` by `append_ledger.py` inside the next real Bash block, never as a call of its own.
 
-- **Independent calls share one response — never across a question.** After Agent Resolution: Project Detection alone (its language gate may ask); then the preflight-helpers load, checkpoint init and the diagnosis parse together; both flag-parsing blocks together in the next response (after the resume offer, when a prior checkpoint exists). Every later preamble block keeps its order: each sits behind a question (codemap gates, unsupported flag) or the worktree entry, which must precede the codemap gate. Step 1 evidence gathering — issue fetch, Reads of suspect files, Grep for the error pattern — in one response. Consecutive Edits to the same file in one response, unless an edit depends on the previous one's result.
+- **Independent calls share one response — never across a question.** After Agent Resolution: Project Detection alone (its language gate may ask); then the preflight-helpers load, checkpoint init and the diagnosis parse together; both flag-parsing blocks together in the next response. Every later preamble block keeps its order: each sits behind a question (codemap gates, unsupported flag) or the worktree entry, which must precede the codemap gate. Step 1 evidence gathering — issue fetch, Reads of suspect files, Grep for the error pattern — in one response. Consecutive Edits to the same file in one response, unless an edit depends on the previous one's result.
 
 ## Project Detection
 
@@ -78,11 +79,13 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" prefli
 
 Execute --plan path extraction; sets `$PLAN_FILE`.
 
-**Checkpoint init**: creates `.developments/<TS>/`, captures path. Write `checkpoint.md` inside `$DEV_DIR`. After each major step (1, 2, 3, 4), stage `step: N — completed` as a record in `$DEV_DIR/checkpoint.md.rec` (Write tool) and append it with `append_ledger.py` (Growing Ledgers `.rec` staging). On skill start, check for existing `.developments/*/checkpoint.md` — offer resume from last completed step if found.
+**Checkpoint init**: creates `.developments/<TS>/`, captures path. Write `checkpoint.md` inside `$DEV_DIR`. After each major step (1, 2, 3, 4), stage `step: N — completed` as a record in `$DEV_DIR/checkpoint.md.rec` (Write tool) and append it with `append_ledger.py` (Growing Ledgers `.rec` staging).
 
 ```bash
 # timeout: 5000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+echo missing > "${TMPDIR:-/tmp}/dev-fix-gate-p1-${CSID}"
+echo missing > "${TMPDIR:-/tmp}/dev-fix-gate-p2-${CSID}"
 DEV_DIR=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_dir.py" --persist fix)  # also writes the dev-fix-dev-dir sentinel
 ```
 
@@ -95,7 +98,11 @@ DEV_DIR=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_dir.py" 
 - The cannot-reproduce gate is satisfied by the diagnosis file's Root Cause and Evidence sections; empty or absent → the gate fires as normal.
 
 ```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+printf '%s\n' "" > "${TMPDIR:-/tmp}/dev-fix-diag-file-${CSID}"
 DIAG_FILE=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/diagnosis_parse.py" "$ARGUMENTS" 2>&1) || { echo "$DIAG_FILE"; exit 1; }  # timeout: 5000
+DIAG_FILE=$(python -c 'import pathlib, sys; print(pathlib.Path(sys.argv[1]).resolve().as_posix() if sys.argv[1] else "")' "$DIAG_FILE") || exit 1
+printf '%s\n' "$DIAG_FILE" > "${TMPDIR:-/tmp}/dev-fix-diag-file-${CSID}"
 ```
 
 Diagnosis file format: see `/develop:debug` Step 4 (Hand off to fix) for canonical field definitions (Root Cause, Suspect Files, Evidence).
@@ -177,7 +184,11 @@ Gather all available context about bug:
 # timeout: 6000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r CLEAN_ARGS < "${TMPDIR:-/tmp}/dev-fix-clean-args-${CSID}" 2>/dev/null || CLEAN_ARGS=""  # flags already stripped — a raw --repo o/r 42 fails the issue-number check
-case "${CLEAN_ARGS%% *}" in '#'[0-9]*|[0-9]*) python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_issue_fetch_wrap.py" fix "$CLEAN_ARGS" || echo "⚠ issue fetch failed (exit $?) — proceed without the issue body and say so";; *) echo "no issue number — symptom text";; esac
+if [[ "$CLEAN_ARGS" =~ ^#?[0-9]+$ ]]; then
+    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_issue_fetch_wrap.py" fix "$CLEAN_ARGS" || echo "⚠ issue fetch failed (exit $?) — proceed without the issue body and say so"
+else
+    echo "no issue number — symptom text"
+fi
 ```
 
 **Cross-repo adaptation** (`REPO_NAME` set) — issue filed against a different codebase. After fetching issue, analysis must:
@@ -193,20 +204,79 @@ If error message or pattern provided: use Grep tool (pattern `<error_pattern>`, 
 ```bash
 # timeout: 600000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-TEST_PATH=""   # REPLACE with the resolved failing test file/node before running this block — do not leave empty
-if [ -z "$TEST_PATH" ]; then
-    echo "! Cannot run reproduction: TEST_PATH unresolved — resolve TEST_PATH from \$ARGUMENTS/issue before running"
-else
-    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_tests.py" pytest -- --tb=long "$TEST_PATH" -v >"${TMPDIR:-/tmp}/pytest-out.txt-${CSID}" 2>&1; PYTEST_EXIT=$?; tail -40 "${TMPDIR:-/tmp}/pytest-out.txt-${CSID}"; if [ $PYTEST_EXIT -eq 64 ]; then echo "! runner refused to start — no test ran; re-run Project Detection"; elif [ $PYTEST_EXIT -ne 0 ]; then echo "PYTEST FAILED (exit $PYTEST_EXIT)"; fi
-fi
+TEST_PATH="<test_path>"   # REPLACE with the resolved failing test file/node before running this block — do not leave empty
+case "$TEST_PATH" in ""|*'<'*|*'>'*) echo "! Cannot run reproduction: TEST_PATH unresolved — resolve TEST_PATH from \$ARGUMENTS/issue before running"; exit 1;; esac
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_tests.py" pytest -- --tb=long "$TEST_PATH" -v >"${TMPDIR:-/tmp}/pytest-out.txt-${CSID}" 2>&1
+PYTEST_EXIT=$?
+tail -40 "${TMPDIR:-/tmp}/pytest-out.txt-${CSID}"; if [ $PYTEST_EXIT -eq 64 ]; then echo "! runner refused to start — no test ran; re-run Project Detection"; elif [ $PYTEST_EXIT -ne 0 ]; then echo "PYTEST FAILED (exit $PYTEST_EXIT)"; fi
 ```
 
 **Codemap route and target derivation** — resolve `CODEMAP_QUERY_KIND` before loading `codemap-context.md`. Use `skip` when request supplies exact file/symbol for a localized edit and no caller, dependency, blast-radius, test-impact, or coupling fact remains unresolved. Use `callers`, `blast`, `dependencies`, `test-impact`, `coupling`, or `central` for one matching unresolved fact; use `standard` when affected surface isn't yet bounded or needs symbol/import context. An explicit structural/tool request overrides `skip`. User may pass an explicit suspect as `module.path::function`:
 
+Run exactly one fixed block for the route decided above:
+
+`skip`:
+
 ```bash
 # timeout: 5000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/parse_target_qname.py" --query-kind "" -- "$ARGUMENTS"  # REPLACE --query-kind "" with the route decided above; empty fails safe to standard
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/parse_target_qname.py" --query-kind skip -- "$ARGUMENTS"
+```
+
+`callers`:
+
+```bash
+# timeout: 5000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/parse_target_qname.py" --query-kind callers -- "$ARGUMENTS"
+```
+
+`blast`:
+
+```bash
+# timeout: 5000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/parse_target_qname.py" --query-kind blast -- "$ARGUMENTS"
+```
+
+`dependencies`:
+
+```bash
+# timeout: 5000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/parse_target_qname.py" --query-kind dependencies -- "$ARGUMENTS"
+```
+
+`test-impact`:
+
+```bash
+# timeout: 5000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/parse_target_qname.py" --query-kind test-impact -- "$ARGUMENTS"
+```
+
+`coupling`:
+
+```bash
+# timeout: 5000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/parse_target_qname.py" --query-kind coupling -- "$ARGUMENTS"
+```
+
+`central`:
+
+```bash
+# timeout: 5000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/parse_target_qname.py" --query-kind central -- "$ARGUMENTS"
+```
+
+`standard`:
+
+```bash
+# timeout: 5000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/parse_target_qname.py" --query-kind standard -- "$ARGUMENTS"
 ```
 
 **If `CODEMAP_ENABLED=true`**:
@@ -230,7 +300,7 @@ Spawn **foundry:sw-engineer** agent to analyze failing code path — Arm batch `
 - Related code possibly affected by fix — blast radius
 - Recent commits touching this path (from git log output, if provided)
 
-**Direct-caller impact** — `CODEMAP_ENABLED=true` and `TARGET_FN` NOT supplied via `$ARGUMENTS` → derive suspect qualified name from sw-engineer Step 1 finding (module/function named as minimal code surface), run `fn-rdeps` for direct callers — benchmarked far cheaper than a plain caller walk (94k vs 1M+ tokens, +40pp accuracy). Fires only when `TARGET_FN` NOT pre-set from args — pre-set case already covered by `fn-rdeps`/`fn-blast` queries inside shared `codemap-context.md`, which ran earlier using persisted `TARGET_MODULE`/`TARGET_FN`. Before this block, in the same response, Write the suspect as `module::function` plus the line `step: 1 — completed` as one record to the dev-dir’s `checkpoint.md.rec` with the Write tool; the block then appends it with `append_ledger.py` (unconditional — run the block even with codemap off; only the `fn-rdeps` query is conditional) and greps the ledger:
+**Direct-caller impact** — `CODEMAP_ENABLED=true` and `TARGET_FN` NOT supplied via `$ARGUMENTS` → derive suspect qualified name from sw-engineer Step 1 finding (module/function named as minimal code surface), run `fn-rdeps` for direct callers — benchmarked far cheaper than a plain caller walk (94k vs 1M+ tokens, +40pp accuracy). Fires only when `TARGET_FN` NOT pre-set from args — pre-set case already covered by `fn-rdeps`/`fn-blast` queries inside shared `codemap-context.md`, which ran earlier using persisted `TARGET_MODULE`/`TARGET_FN`. Before this block, in the same response, Write the suspect as `suspect: module::function` plus the line `step: 1 — completed` as one record to the dev-dir’s `checkpoint.md.rec` with the Write tool; the block then appends it with `append_ledger.py` (unconditional — run the block even with codemap off; only the `fn-rdeps` query is conditional) and greps the ledger:
 
 ```bash
 # timeout: 6000
@@ -246,7 +316,7 @@ _CODEMAP_NO_HEAL=""
 if [ "$CODEMAP_CURRENCY" = "stale" ] || [ "${SCAN_NO_AUTOBUILD:-0}" = "1" ]; then _CODEMAP_NO_HEAL="--no-heal"; fi
 [ -n "$DEV_DIR" ] && python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/append_ledger.py" "$DEV_DIR/checkpoint.md"
 if [ "$CODEMAP_ENABLED" = "true" ] && [ -z "$TARGET_FN" ] && command -v codemap-py >/dev/null 2>&1; then
-    DERIVED_FN=$(grep -oE '[A-Za-z_][A-Za-z0-9_.]*::[A-Za-z_][A-Za-z0-9_]*' "$DEV_DIR/checkpoint.md" 2>/dev/null | head -1)
+    DERIVED_FN=$(grep -E '^suspect: [A-Za-z_][A-Za-z0-9_.]*::[A-Za-z_][A-Za-z0-9_]*$' "$DEV_DIR/checkpoint.md" 2>/dev/null | tail -1 | sed 's/^suspect: //')
     if [ -n "$DERIVED_FN" ]; then
         TARGET_QUALIFIED="$DERIVED_FN"
         TARGET_MODULE="${DERIVED_FN%%::*}"
@@ -258,7 +328,7 @@ if [ "$CODEMAP_ENABLED" = "true" ] && [ -z "$TARGET_FN" ] && command -v codemap-
 fi
 ```
 
-> Derived qualified name comes from the staged Step 1 record appended to `$DEV_DIR/checkpoint.md` above (suspect as `module::function`). No suspect in `module::function` form recorded → skip silently; `central` baseline already ran.
+> Stage the suspect as the tagged line `suspect: module::function`. After revising the approach, append a new tagged suspect record; the last tagged line wins. Derived qualified name comes from that Step 1 record appended to `$DEV_DIR/checkpoint.md` above. No tagged suspect recorded → skip silently; `central` baseline already ran.
 
 **Cannot-reproduce gate**: sw-engineer unable to identify root cause, traceback, or any failing test → invoke `AskUserQuestion` — do NOT proceed to Step 2 with no reproduction path:
 
@@ -266,6 +336,7 @@ fi
 - (a) Use `/develop:debug` — investigate interactively first
 - (b) Provide additional context — user pastes traceback, logs, or minimal reproduction; after reply, re-run Step 1 analysis with new context same session (DMI: can't wait for next invocation; apply additional context inline)
 - (c) Use `/foundry:investigate` (requires foundry plugin) — for production incidents with no CI trace
+- (d) Use the `foundry:perf-optimizer` agent (requires foundry plugin) — for performance regressions; if unavailable, report the missing route and request benchmark evidence
 
 Stop until user provides option (b) context or selects a redirect.
 
@@ -327,18 +398,17 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/plan_hash.py" record "$PLA
 
 1. Search for existing tests covering broken behavior:
 
-   ```bash
-   grep -r "<broken_symbol_or_error>" tests/ --include="*.py" -l
-   grep -r "#<issue_number>" tests/ --include="*.py" -l
-   ```
+   Use the Grep tool with `output_mode: files_with_matches`, `glob: *.py`, and the discovered test directory as `path`: first search the resolved broken symbol or error pattern, then search `#` plus the resolved issue number when one is available.
 
    Run any candidate tests found to see if they currently pass or fail:
 
    ```bash
    export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+   CANDIDATE_TEST="<candidate_test_file>::<candidate_test_name>"
+   case "$CANDIDATE_TEST" in ""|*'<'*|*'>'*) echo "! candidate test unresolved — resolve the archaeology target before running"; exit 1;; esac
    IFS= read -r PYTEST_CMD < "${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}" 2>/dev/null || PYTEST_CMD=""  # reload (Check 41)
    [ -n "$PYTEST_CMD" ] || { echo "! BLOCKED — PYTEST_CMD sentinel missing; re-run Project Detection"; exit 1; }
-   python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/pytest_gate.py" "$PYTEST_CMD" <candidate_test_file>::<candidate_test_name>  # timeout: 120000
+   python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/pytest_gate.py" "$PYTEST_CMD" "$CANDIDATE_TEST"  # timeout: 120000
    CANDIDATE_EXIT=$?; case $CANDIDATE_EXIT in 0) echo "CANDIDATE PASSES (exit 0) — not Outcome A";; 1) echo "CANDIDATE FAILS (exit 1) — Outcome A only if the failure matches the reported bug";; *) echo "! GATE ERROR: candidate could not run (exit $CANDIDATE_EXIT) — not a reproduction, never Outcome A; fix the path or runner and rerun";; esac
    ```
 
@@ -387,34 +457,67 @@ Spawn with context:
 - Use `pytest.mark.parametrize` if bug affects multiple input patterns
 - Add brief comment linking to issue if applicable (e.g., `# Regression test for #123`)
 
-**When to skip Path 1**: bug purely internal (no user-facing flow exists) → document why, proceed with Path 2 only.
+**When to skip Path 1**: bug purely internal (no user-facing flow exists) → document why, run the Path 1 skip block, then Path 2.
 
-Both tests must **fail** against current code before proceeding. Check exit codes for each independently:
+Both tests must **fail** against current code before proceeding, except for the documented internal-only Path 1 skip. Run the Path 1 reproduction block or its fixed skip block, then always run the Path 2 block. Check exit codes for each independently:
 
 ```bash
 # timeout: 600000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 echo missing > "${TMPDIR:-/tmp}/dev-fix-gate-p1-${CSID}"; echo missing > "${TMPDIR:-/tmp}/dev-fix-gate-p2-${CSID}"  # reset — a stale or never-written value must block the stop gate
+GATE_P1=missing
+FLOW_TEST="tests/integration/<test_file>::test_<bug>_user_flow"
+case "$FLOW_TEST" in ""|*'<'*|*'>'*) echo "! Path 1 test unresolved — resolve the user-flow target before running"; exit 1;; esac
 IFS= read -r PYTEST_CMD < "${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}" 2>/dev/null || PYTEST_CMD=""  # reload (Check 41)
 [ -n "$PYTEST_CMD" ] || { echo "! BLOCKED — PYTEST_CMD sentinel missing; re-run Project Detection"; exit 1; }
 VERDICT_FILE="${TMPDIR:-/tmp}/dev-tests-verdict-${CSID}"
 export DEV_TESTS_VERDICT_NONCE="$$.$RANDOM.$RANDOM"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_tests.py" pytest -- --tb=short tests/integration/<test_file>::test_<bug>_user_flow -v
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_tests.py" pytest -- --tb=short "$FLOW_TEST" -v
 GATE_P1=$?
 VERDICT=""; [ -f "$VERDICT_FILE" ] && [ ! -L "$VERDICT_FILE" ] && [ -O "$VERDICT_FILE" ] && IFS= read -r VERDICT < "$VERDICT_FILE"
 # wrapper writes failed NONCE only for a pytest failure with a summary: exit 1 without it = interpreter died first, 70 = never a reproduction
 [ "$GATE_P1" -eq 1 ] && [ "$VERDICT" != "failed $DEV_TESTS_VERDICT_NONCE" ] && { echo "! exit 1 but no failed verdict from the wrapper — no test ran"; GATE_P1=70; }
 case $GATE_P1 in 0) echo "GATE FAIL (Path 1): test passed — bug not captured";; 1) echo "GATE OK (Path 1): failed as expected (exit 1)";; *) echo "! GATE ERROR (Path 1): pytest could not run (exit $GATE_P1) — not a reproduction";; esac
+echo "$GATE_P1" > "${TMPDIR:-/tmp}/dev-fix-gate-p1-${CSID}"  # 1 = failed as expected; a skipped Path 1 must not read as a pass
+```
+
+Path 1 skip alternative — only after documenting why no user-facing flow exists:
+
+```bash
+# timeout: 3000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r GATE_P1 < "${TMPDIR:-/tmp}/dev-fix-gate-p1-${CSID}" 2>/dev/null || GATE_P1=missing
+case "$GATE_P1" in 0|1|70) echo "! Path 1 already ran — cannot replace its result with a skip"; exit 1;; esac
+PATH1_SKIP_REASON="<why no user-facing flow exists>"
+case "$PATH1_SKIP_REASON" in ""|*'<'*|*'>'*) echo "! Path 1 skip reason unresolved — document why no user-facing flow exists"; exit 1;; esac
+IFS= read -r _DEV_DIR < "${TMPDIR:-/tmp}/dev-fix-dev-dir-${CSID}" 2>/dev/null || _DEV_DIR=""
+[ -n "$_DEV_DIR" ] && [ -d "$_DEV_DIR" ] || { echo "! BLOCKED — dev-dir missing; re-run Checkpoint init"; exit 1; }
+printf '%s\n' "$PATH1_SKIP_REASON" > "$_DEV_DIR/path-1-skip-reason.txt" || exit 1
+echo skipped > "${TMPDIR:-/tmp}/dev-fix-gate-p1-${CSID}"
+echo missing > "${TMPDIR:-/tmp}/dev-fix-gate-p2-${CSID}"
+```
+
+Path 2 — required for both Path 1 routes:
+
+```bash
+# timeout: 600000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+echo missing > "${TMPDIR:-/tmp}/dev-fix-gate-p2-${CSID}"
+GATE_P2=missing
+UNIT_TEST="<unit_test_file>::test_<bug>_unit"
+case "$UNIT_TEST" in ""|*'<'*|*'>'*) echo "! Path 2 test unresolved — resolve the targeted test before running"; exit 1;; esac
+IFS= read -r PYTEST_CMD < "${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}" 2>/dev/null || PYTEST_CMD=""  # reload (Check 41)
+[ -n "$PYTEST_CMD" ] || { echo "! BLOCKED — PYTEST_CMD sentinel missing; re-run Project Detection"; exit 1; }
+VERDICT_FILE="${TMPDIR:-/tmp}/dev-tests-verdict-${CSID}"
 
 export DEV_TESTS_VERDICT_NONCE="$$.$RANDOM.$RANDOM"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_tests.py" pytest -- --tb=short <unit_test_file>::test_<bug>_unit -v
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_tests.py" pytest -- --tb=short "$UNIT_TEST" -v
 GATE_P2=$?
 VERDICT=""; [ -f "$VERDICT_FILE" ] && [ ! -L "$VERDICT_FILE" ] && [ -O "$VERDICT_FILE" ] && IFS= read -r VERDICT < "$VERDICT_FILE"
 [ "$GATE_P2" -eq 1 ] && [ "$VERDICT" != "failed $DEV_TESTS_VERDICT_NONCE" ] && { echo "! exit 1 but no failed verdict from the wrapper — no test ran"; GATE_P2=70; }
 case $GATE_P2 in 0) echo "GATE FAIL (Path 2): test passed — bug not captured";; 1) echo "GATE OK (Path 2): failed as expected (exit 1)";; *) echo "! GATE ERROR (Path 2): pytest could not run (exit $GATE_P2) — not a reproduction";; esac
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-echo "${GATE_P1:-1}" > ${TMPDIR:-/tmp}/dev-fix-gate-p1-${CSID}  # 1 = failed as expected; a skipped Path 1 must not read as a pass
-echo "${GATE_P2:-1}" > ${TMPDIR:-/tmp}/dev-fix-gate-p2-${CSID}
+echo "$GATE_P2" > "${TMPDIR:-/tmp}/dev-fix-gate-p2-${CSID}"
 ```
 
 Either gate exit is 0 → stop. Bug not reproduced on that path. Do not apply fix. Only exit 1 with the wrapper's `failed` verdict counts as reproduced — any other exit (pytest usage error, no tests collected, runner not found, or exit 1 from an interpreter that never reached the wrapper, recorded as 70) is a gate error, not a reproduction. DMI skill — stop enforced via bash gate check:
@@ -424,11 +527,15 @@ Either gate exit is 0 → stop. Bug not reproduced on that path. Do not apply fi
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r GATE_P1 < "${TMPDIR:-/tmp}/dev-fix-gate-p1-${CSID}" 2>/dev/null || GATE_P1=missing
 IFS= read -r GATE_P2 < "${TMPDIR:-/tmp}/dev-fix-gate-p2-${CSID}" 2>/dev/null || GATE_P2=missing
+if [ "$GATE_P1" = skipped ]; then
+    IFS= read -r _DEV_DIR < "${TMPDIR:-/tmp}/dev-fix-dev-dir-${CSID}" 2>/dev/null || _DEV_DIR=""
+    [ -n "$_DEV_DIR" ] && [ -s "$_DEV_DIR/path-1-skip-reason.txt" ] || { echo "! GATE ERROR: Path 1 skip reason missing from this run; cannot apply fix"; exit 1; }
+fi
 if [ "$GATE_P1" = 0 ] || [ "$GATE_P2" = 0 ]; then
     echo "! GATE FAIL: one or more reproduction tests passed — bug not captured; cannot apply fix against unverified bug"
     exit 1
 fi
-if [ "$GATE_P1" != 1 ] || [ "$GATE_P2" != 1 ]; then
+if { [ "$GATE_P1" != 1 ] && [ "$GATE_P1" != skipped ]; } || [ "$GATE_P2" != 1 ]; then
     echo "! GATE ERROR: reproduction did not run cleanly — exit P1=$GATE_P1 P2=$GATE_P2; cannot apply fix against unverified bug"
     exit 1
 fi
@@ -439,11 +546,13 @@ fi
 ```bash
 set -o pipefail  # PIPESTATUS is bash-only, absent under zsh (Claude Code's Bash tool login shell on macOS)
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+EXISTING_TEST="<existing_test_file>::<existing_test_name>"
+case "$EXISTING_TEST" in ""|*'<'*|*'>'*) echo "! existing test unresolved — resolve the corrected test before running"; exit 1;; esac
 IFS= read -r PYTEST_CMD < "${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}" 2>/dev/null || PYTEST_CMD=""  # reload (Check 41)
 [ -n "$PYTEST_CMD" ] || { echo "! BLOCKED — PYTEST_CMD sentinel missing; re-run Project Detection"; exit 1; }
 VERDICT_FILE="${TMPDIR:-/tmp}/dev-tests-verdict-${CSID}"
 export DEV_TESTS_VERDICT_NONCE="$$.$RANDOM.$RANDOM"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_tests.py" pytest --tail 30 -- --tb=long <existing_test_file>::<existing_test_name> -v; GATE_EXIT=$?  # timeout: 30000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_tests.py" pytest --tail 30 -- --tb=long "$EXISTING_TEST" -v; GATE_EXIT=$?  # timeout: 30000
 VERDICT=""; [ -f "$VERDICT_FILE" ] && [ ! -L "$VERDICT_FILE" ] && [ -O "$VERDICT_FILE" ] && IFS= read -r VERDICT < "$VERDICT_FILE"
 # wrapper writes failed NONCE only for a pytest failure with a summary: exit 1 without it = interpreter died first, 70 = never a reproduction
 [ "$GATE_EXIT" -eq 1 ] && [ "$VERDICT" != "failed $DEV_TESTS_VERDICT_NONCE" ] && { echo "! exit 1 but no failed verdict from the wrapper — no test ran"; GATE_EXIT=70; }
@@ -501,20 +610,25 @@ Make minimal change to fix root cause:
    ```bash
    # timeout: 600000
    export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-   python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_tests.py" pytest -- --tb=short <test_file>::<test_name> -v
+   REGRESSION_TEST="<test_file>::<test_name>"
+   case "$REGRESSION_TEST" in ""|*'<'*|*'>'*) echo "! regression test unresolved — resolve the Step 2 test before running"; exit 1;; esac
+   python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_tests.py" pytest -- --tb=short "$REGRESSION_TEST" -v
+   REGRESSION_EXIT=$?
+   case $REGRESSION_EXIT in 0) echo "GATE OK: regression test passes (exit 0)";; *) echo "! GATE STOP: regression test did not pass (exit $REGRESSION_EXIT) — fix the test or runner and rerun before continuing"; exit 1;; esac
    ```
 
 3. Run affected tests — targeted only (Test-run policy):
 
    **Test impact (codemap-py)** — derive minimal test set before running anything.
 
-   **Reuse from diagnosis handoff first** — when invoked with `--diagnosis`, `/develop:debug` may have already run this query and written it into diagnosis file under `## Test Impact (codemap-py)`. Reuse it (one query total across debug→fix) only when still fresh — not `stale` and not older than current index:
+   **Reuse from diagnosis handoff first** — when invoked with `--diagnosis`, `/develop:debug` may have already run this query and written it into diagnosis file under `## Test Impact (codemap-py)`. Reuse it (one query total across debug→fix) only when still fresh — not `stale` and not older than current index — and every changed or untracked file belongs to the handoff's queried module. Function-specific queries, unknown coverage, changed tests, and any additional file force live selection. Reuse replaces affected-test selection only; the regression run in item 2 remains mandatory:
 
    ````bash
    # timeout: 6000
    export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-   DIAG_FILE=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/diagnosis_parse.py" "$ARGUMENTS" 2>/dev/null)  # re-derive — bash resets between calls
+   IFS= read -r DIAG_FILE < "${TMPDIR:-/tmp}/dev-fix-diag-file-${CSID}" 2>/dev/null || DIAG_FILE=""  # reload — bash resets between calls
    REUSED_PYTEST_CMD=""
+   if [ -n "$DIAG_FILE" ] && [ ! -f "$DIAG_FILE" ]; then echo "! diagnosis file unavailable — select tests live"; fi
    if [ -n "$DIAG_FILE" ] && grep -q '^## Test Impact (codemap-py)' "$DIAG_FILE" 2>/dev/null; then
        # extract the fenced JSON block that follows the marker heading
        _TI_JSON=$(awk '/^## Test Impact \(codemap-py\)/{f=1} f&&/^```json/{g=1;next} f&&/^```/{g=0} g' "$DIAG_FILE")
@@ -523,11 +637,15 @@ Make minimal change to fix root cause:
        PROJ=$(basename "$_ROOT")   # raw basename — scanner writes it verbatim, never sanitized
        _LIVE_AT=$(grep -o '"scanned_at"[[:space:]]*:[[:space:]]*"[^"]*"' "${CODEMAP_INDEX_DIR:-$_ROOT/.cache/codemap}/${PROJ}.json" 2>/dev/null | head -1 | sed 's/.*"\([^"]*\)"$/\1/')
        case "$_TI_JSON" in *'"stale": true'*|*'"stale":true'*) _TI_STALE=1;; *) _TI_STALE=0;; esac
-       if [ "$_TI_STALE" -eq 0 ] && [ -n "$_HANDOFF_AT" ] && [ "$_HANDOFF_AT" = "$_LIVE_AT" ]; then
+       _TI_SCOPE_OK=0
+       if _TRACKED=$(git diff --name-only HEAD) && _UNTRACKED=$(git ls-files --others --exclude-standard); then
+           _TI_SCOPE_OK=$(TI_JSON="$_TI_JSON" CHANGED_FILES="$(printf '%s\n' "$_TRACKED" "$_UNTRACKED")" python -c 'import json, os, re; data = json.loads(os.environ["TI_JSON"]); module = data.get("qname", ""); changed = set(os.environ["CHANGED_FILES"].splitlines()) - {""}; valid = isinstance(module, str) and re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", module); stem = module.replace(".", "/") if valid else ""; covered = {prefix + stem + suffix for prefix in ("", "src/", "lib/") for suffix in (".py", "/__init__.py")}; print(int(bool(valid and changed and changed <= covered and data.get("index", {}).get("stale") is False)))' 2>/dev/null) || _TI_SCOPE_OK=0
+       fi
+       if [ "$_TI_STALE" -eq 0 ] && [ "$_TI_SCOPE_OK" = 1 ] && [ -n "$_HANDOFF_AT" ] && [ "$_HANDOFF_AT" = "$_LIVE_AT" ]; then
            REUSED_PYTEST_CMD=$(printf '%s' "$_TI_JSON" | grep -o '"pytest_cmd"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"\([^"]*\)"$/\1/')
            echo "→ reusing test-impact from diagnosis handoff (index unchanged): $REUSED_PYTEST_CMD"
        else
-           echo "→ diagnosis test-impact stale or index moved — re-querying live"
+           echo "→ diagnosis test-impact freshness or scope check failed — re-querying live"
        fi
    fi
    echo "$REUSED_PYTEST_CMD" > "${TMPDIR:-/tmp}/dev-fix-reused-pytest-cmd-${CSID}"  # always written — an empty value clears a stale one; the next block re-reads it
@@ -566,7 +684,7 @@ Before this block, in the same response, Write the fix summary, targeted-test re
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _DEV_DIR < "${TMPDIR:-/tmp}/dev-fix-dev-dir-${CSID}" 2>/dev/null || _DEV_DIR=""
 IFS= read -r _PYTEST_CMD < "${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}" 2>/dev/null || _PYTEST_CMD=""
-_CHANGED=$(git diff --name-only HEAD 2>/dev/null | tr '\n' ' ' | sed 's/ *$//')
+_CHANGED=$({ git diff --name-only HEAD 2>/dev/null; git ls-files --others --exclude-standard; } | sort -u | tr '\n' ' ' | sed 's/ *$//')
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/append_ledger.py" "$_DEV_DIR/checkpoint.md"  # timeout: 5000
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" "develop:fix" "review+quality (after fix applied)" "$_DEV_DIR" "dev-dir=$_DEV_DIR, changed-files=$_CHANGED, pytest-cmd=$_PYTEST_CMD; phase-report=$_DEV_DIR/checkpoint.md" "resume: re-cat own agent-resolution.md; review and close gaps (Step 4) → Final Report" -- calls_ahead=40 "drop=fix analysis and targeted-test results"  # timeout: 5000
 IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _DEV_SHARED=""

@@ -57,7 +57,7 @@ _load_bin_modules()
 
 
 @pytest.fixture(name="run_hook")
-def _run_hook() -> Callable[..., subprocess.CompletedProcess]:
+def _run_hook(tmp_path: Path) -> Callable[..., subprocess.CompletedProcess]:
     """Return callable that spawns a foundry hook via ``node``.
 
     Strips ``OPENAI_API_KEY`` and ``ANTHROPIC_API_KEY`` so ``agent-router.js`` falls through to tier-3 fallback without
@@ -90,7 +90,7 @@ def _run_hook() -> Callable[..., subprocess.CompletedProcess]:
             # markers. The pipe reader thread dies mid-decode and stdout silently becomes None.
             encoding="utf-8",
             env=env,
-            cwd=str(cwd) if cwd else None,
+            cwd=str(cwd or tmp_path),
         )
 
     return _run

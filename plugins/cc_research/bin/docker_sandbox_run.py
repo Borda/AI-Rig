@@ -13,7 +13,7 @@ Limitation: that destructive-binary rejection is a defense-in-depth speed bump a
 interpreter (``python -c "...rmtree(...)"``) passes it; containment is the Docker isolation flags.
 
 Network defaults to ``none``; override via ``SANDBOX_NETWORK`` environment variable.
-Each ``docker run`` is capped at ``SANDBOX_TIMEOUT_SEC`` seconds (default 600) as a host-side
+Each ``docker run`` is capped at ``SANDBOX_TIMEOUT_SEC`` seconds (default 600, maximum 86400) as a host-side
 backstop; on expiry the container is killed via its ``--cidfile`` id and ``124`` is returned.
 Every container also carries in-container resource quotas — ``--cpus`` (``SANDBOX_CPUS``,
 default 2), ``--memory`` (``SANDBOX_MEMORY``, default ``2g``) and ``--pids-limit``
@@ -35,8 +35,10 @@ import argparse
 import contextlib
 import csv
 import io
+import math
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -57,6 +59,7 @@ DEFAULT_NETWORK = "none"
 # thing that stops a merely *slow* command.  Callers with their own shorter cap hit theirs first.
 #: Default wall-clock limit in seconds for one docker run, overridable with SANDBOX_TIMEOUT_SEC.
 DEFAULT_TIMEOUT_SEC = 600
+MAX_TIMEOUT_SEC = 86400
 # Cap for the post-timeout ``docker kill`` itself — a wedged daemon must not re-hang the exit path.
 #: Seconds allowed for the docker kill issued after a timeout, so a stuck daemon cannot hang the exit path.
 _KILL_TIMEOUT_SEC = 15
@@ -153,7 +156,7 @@ DEFAULT_LIMITS = SandboxLimits()
 def find_destructive_tokens(arg: str) -> list[str]:
     """Return sorted destructive command tokens found in a verify-mode command string.
 
-    Splits on whitespace-equivalent word boundaries and matches whole tokens against
+    Joins shell-quoted token fragments, then splits on word boundaries and matches whole tokens against
     :data:`_VERIFY_FORBIDDEN_TOKENS`. Substrings never match (``pytest_rm`` is safe;
     ``rm`` is not).
 
@@ -173,7 +176,7 @@ def find_destructive_tokens(arg: str) -> list[str]:
         >>> find_destructive_tokens("python -c 'import armor'")
         []
     """
-    tokens = set(re.split(r"[^A-Za-z0-9_]+", arg))
+    tokens = set(re.split(r"[^A-Za-z0-9_]+", " ".join(shlex.split(arg))))
     return sorted(tokens & _VERIFY_FORBIDDEN_TOKENS)
 
 
@@ -203,7 +206,10 @@ def _verify_rejection_reason(arg: str) -> str | None:
             f"verify-mode command contains shell metacharacters {unsafe!r}; "
             "use a script entry point instead of inline shell composition"
         )
-    destructive = find_destructive_tokens(arg)
+    try:
+        destructive = find_destructive_tokens(arg)
+    except ValueError:
+        return "verify-mode command has malformed shell quoting; use a script entry point"
     if destructive:
         return (
             f"verify-mode command uses destructive binaries {destructive!r} "
@@ -332,6 +338,14 @@ def build_explore_command(
     ]
 
 
+def _experiments_path(workdir: str) -> Path:
+    """Resolve the writable directory, refusing dangling links and non-directory entries."""
+    experiments = Path(workdir) / ".experiments"
+    if (experiments.exists() or experiments.is_symlink()) and not experiments.is_dir():
+        raise ValueError(f".experiments must be a directory: {experiments}")
+    return experiments.resolve()
+
+
 def build_verify_command(
     arg: str,
     network: str,
@@ -390,7 +404,7 @@ def build_verify_command(
         "--mount",
         bind_mount(workdir, "/workspace", readonly=True),
         "--mount",
-        bind_mount(Path(workdir) / ".experiments", "/workspace/.experiments", readonly=False),
+        bind_mount(_experiments_path(workdir), "/workspace/.experiments", readonly=False),
         "--tmpfs",
         TMPFS_MOUNT,
         "-w",
@@ -465,14 +479,15 @@ def _resolve_positive_float(raw: str | float, default: float) -> float:
 def _resolve_timeout(raw: str | int) -> float:
     """Coerce a ``SANDBOX_TIMEOUT_SEC`` value into a positive number of seconds.
 
-    A malformed or non-positive override falls back to :data:`DEFAULT_TIMEOUT_SEC` rather than
+    A malformed, non-finite, non-positive or greater-than-one-day override falls back to
+    :data:`DEFAULT_TIMEOUT_SEC` rather than
     raising: this is a backstop against a hung container, so it must never end up disabled.
 
     Args:
         raw: Raw env value, or :data:`DEFAULT_TIMEOUT_SEC` when the variable is unset.
 
     Returns:
-        Timeout in seconds, always ``> 0``.
+        Finite timeout in seconds, always ``0 < timeout <= MAX_TIMEOUT_SEC``.
 
     Examples:
         >>> _resolve_timeout(600)
@@ -486,7 +501,8 @@ def _resolve_timeout(raw: str | int) -> float:
         >>> _resolve_timeout("-5")
         600.0
     """
-    return _resolve_positive_float(raw, DEFAULT_TIMEOUT_SEC)
+    value = _resolve_positive_float(raw, DEFAULT_TIMEOUT_SEC)
+    return value if math.isfinite(value) and value <= MAX_TIMEOUT_SEC else float(DEFAULT_TIMEOUT_SEC)
 
 
 def _resolve_memory(raw: str) -> str:
@@ -683,10 +699,14 @@ def main(argv: list[str] | None = None, env: dict[str, str] | None = None, cwd: 
         if reason:
             print(f"docker_sandbox_run.py: {reason}", file=sys.stderr)
             return 2
-        cmd = build_verify_command(arg, network, workdir, cidfile=cidfile, limits=limits)
         # ``--mount type=bind`` refuses a missing source, where ``-v`` silently created it.
-        experiments = Path(workdir) / ".experiments"
-        experiments.mkdir(exist_ok=True)
+        try:
+            experiments = _experiments_path(workdir)
+            experiments.mkdir(exist_ok=True)
+            cmd = build_verify_command(arg, network, workdir, cidfile=cidfile, limits=limits)
+        except (OSError, ValueError) as exc:
+            print(f"docker_sandbox_run.py: {exc}", file=sys.stderr)
+            return 2
         if hasattr(os, "getuid") and not os.access(experiments, os.W_OK):
             # Sandboxes before ``--user`` ran as root, so on Linux earlier runs may have left this dir root-owned.
             print(
@@ -699,6 +719,12 @@ def main(argv: list[str] | None = None, env: dict[str, str] | None = None, cwd: 
         print(f"unknown mode: {mode} (expected: explore|verify)", file=sys.stderr)
         return 2
 
+    if network == "bridge":
+        print(
+            "docker_sandbox_run.py: warning: bridge enables outbound network access; "
+            "the container can read the entire project, including .env and .git/config",
+            file=sys.stderr,
+        )
     return _run_docker(cmd, timeout, cidfile)
 
 

@@ -10,6 +10,8 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
+from codemap_py.scanner import discovery
+
 # Transitional seam: exclusion rules live in codemap_py.scanner, but this
 # module still reaches them through the old bare-name ``_exclusions`` import
 # (bin/_exclusions.py, itself a shim onto codemap_py.scanner) via a
@@ -162,9 +164,23 @@ def _symbol_group_results(
     lines: list[str] = []
     file_path: Path | None = None
     if rel_path:
-        file_path = git_root / rel_path
+        if not index_io._safe_module_path(rel_path):
+            _die_json({"error": "invalid symbol path", "path": rel_path}, _EXIT_BAD_INPUT)
+        try:
+            root = git_root.resolve()
+            file_path = (root / rel_path).resolve()
+        except (OSError, RuntimeError, ValueError):
+            _die_json({"error": "invalid symbol path", "path": rel_path}, _EXIT_BAD_INPUT)
+        if not file_path.is_relative_to(root):
+            _die_json({"error": "symbol path outside project", "path": rel_path}, _EXIT_BAD_INPUT)
         if file_path.exists():
-            lines = file_path.read_text(encoding="utf-8", errors="replace").splitlines()
+            if not file_path.is_file() or file_path.stat().st_size > discovery._MAX_FILE_SIZE_BYTES:
+                _die_json({"error": "invalid symbol source", "path": rel_path}, _EXIT_BAD_INPUT)
+            with file_path.open("rb") as source_file:
+                content = source_file.read(discovery._MAX_FILE_SIZE_BYTES + 1)
+            if len(content) > discovery._MAX_FILE_SIZE_BYTES:
+                _die_json({"error": "invalid symbol source", "path": rel_path}, _EXIT_BAD_INPUT)
+            lines = content.decode("utf-8", errors="replace").splitlines()
 
     import_block: str | None = _extract_import_block(lines, file_path) if with_imports else None
 
@@ -175,7 +191,7 @@ def _symbol_group_results(
             {
                 "name": sym["name"],
                 "qualified_name": sym["qualified_name"],
-                "type": sym["type"],
+                "type": sym.get("type", ""),
                 "module": m["name"],
                 "path": m.get("path", ""),
                 "start_line": sym["start_line"],
@@ -269,7 +285,7 @@ def cmd_symbols(index: dict, module: str) -> None:
                     {
                         "name": s["name"],
                         "qualified_name": s["qualified_name"],
-                        "type": s["type"],
+                        "type": s.get("type", ""),
                         "start_line": s["start_line"],
                         "end_line": s["end_line"],
                     }
@@ -333,7 +349,11 @@ def _is_dangerous_regex(pattern: str) -> bool:
         >>> _is_dangerous_regex("^Auth.*Handler$")
         False
     """
-    return bool(_DANGEROUS_PATTERN.search(pattern) or _ALT_REDOS_RE.search(pattern))
+    if len(pattern) > 4096:
+        return True
+    normalized = re.sub(r"\\.|\[(?:\\.|[^\]\\])*\]", "a", pattern)
+    unbounded = re.findall(r"[*+]|\{[0-9]+,\}", normalized)
+    return bool(len(unbounded) > 3 or _DANGEROUS_PATTERN.search(normalized) or _ALT_REDOS_RE.search(normalized))
 
 
 def cmd_find_symbol(index: dict, pattern: str, limit: int = 20, exclude_tests: bool = False) -> None:
@@ -374,7 +394,7 @@ def cmd_find_symbol(index: dict, pattern: str, limit: int = 20, exclude_tests: b
                     {
                         "name": sym["name"],
                         "qualified_name": sym["qualified_name"],
-                        "type": sym["type"],
+                        "type": sym.get("type", ""),
                         "module": m["name"],
                         "path": m.get("path", ""),
                         "start_line": sym["start_line"],

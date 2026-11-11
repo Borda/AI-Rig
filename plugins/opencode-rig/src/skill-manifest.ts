@@ -70,12 +70,12 @@ export const SKILLS: readonly SkillDefinition[] = [
     id: "rig-release",
     name: "Rig Release",
     description:
-      "Assess release readiness: version baseline from HEAD, full configured gates, changelog and README synchronization, packaged file verification, and read-only release-note, migration, and contributor-reply drafts. Use before tagging or publishing. NOT for performing the publication itself.",
+      "Assess release readiness: version baseline from the last release tag, full configured gates, changelog and README synchronization, packaged file verification, and read-only release-note, migration, and contributor-reply drafts. Use before tagging or publishing. NOT for performing the publication itself.",
   },
   {
     id: "rig-doctor",
     name: "Rig Doctor",
     description:
-      "Check opencode-rig install health: plugin load, version synchronization, agent installation, Git grant, artifact root, and detected gates. Use when a workflow or tool is unavailable.",
+      "Check opencode-rig install health: plugin load, version synchronization, agent installation, Git grant, artifact root, and detected gates. Use when a workflow or tool is unavailable. Also curates shipped cards (assets). NOT for deleting runs, editing configuration or fixing files.",
   },
 ]

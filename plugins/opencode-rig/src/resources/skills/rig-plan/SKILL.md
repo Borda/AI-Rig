@@ -18,8 +18,8 @@ Produce one plan that implementation can execute without re-deciding scope.
 ## Workflow
 
 1. **Classify scope.** `TRIVIAL` under 3 files and 50 changed lines; `LOCAL` one subsystem; `BROAD` cross-subsystem or 8+ files; `HIGH_RISK` when auth, credentials, data, release, CI, or migrations are touched. State the classification and why.
-2. **Collect evidence.** Read the actual source, tests, configuration, and consumers. Do not plan from filenames alone. Record each authoritative file in the run.
-3. **Start the run.** Call `rig_evidence` with `action: "start"`, `skill: "rig-plan"`, and the target paths. Keep the returned `run_id`.
+2. **Start the run.** Detect gates with `rig_gate` and `action: "detect"`. Call `rig_evidence` with `action: "start"`, `skill: "rig-plan"`, and the target paths; if no configured gate exists, include `gate_exemption` describing the manual check that replaces it. Keep the returned `run_id`.
+3. **Collect evidence.** Read the actual source, tests, configuration, and consumers. Do not plan from filenames alone. Record each authoritative file with `rig_evidence`, `action: "record"`, the returned `run_id`, and `inputs`.
 4. **Decide every surface.** Put each candidate surface in one verdict table with exactly one verdict: `in-scope`, `deferred` with its unblock condition, or `out-of-scope` with its reason. No surface stays unclassified.
 5. **Reconcile owned paths.** For each `in-scope` row, name its owned path, its consumer, and the check that proves it still works. The table and the owned-path list must reconcile both ways: every owned path has an `in-scope` row, and every `in-scope` row names a path.
 6. **Derive the delegation brief.** Never hand-write it. Disjoint `in-scope` rows become parallel workstreams with one owner per path; rows that share a path are serialised as prerequisites.
@@ -34,7 +34,7 @@ Produce one plan that implementation can execute without re-deciding scope.
 - Every revision lists each changed verdict under "Verdict changes since the previous revision"; a surface moving to `deferred` or `out-of-scope` must appear there, never only inside rewritten prose.
 - Every step names its owned path. Two steps may not own the same path, and no path enters a workstream unless the table marks it `in-scope`.
 - Gates come from `rig_gate` detection, never from invented commands.
-- If no configured gate exists, record a gate exemption and say what manual check replaces it.
+- If no configured gate exists, pass `gate_exemption` at `action: "start"` and say what manual check replaces it.
 - Plans stay in the run directory. Do not ship plan text or private evidence as product content.
 
 ## Output

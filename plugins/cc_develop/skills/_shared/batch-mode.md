@@ -108,6 +108,22 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" batch-
 
 A batch writes all N members' red tests up front; **one run** confirms all N red, not N runs. Implement all N. **One run** confirms all N green. Red-before-green still holds per test — only the run *count* collapses, never the ordering guarantee.
 
+Use this red-confirmation block before implementation, never the green Batch run block. Only pytest exit 1 is expected here; exit 0 is unexpected green, and collection, usage or empty-selection outcomes do not establish red. Inspect the recorded full log to confirm each new test failed for its intended missing behavior before implementing. This run never loads bisect, clears batch identity or writes cap accounting.
+
+```bash
+# timeout: 600000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r _SKILL < "${TMPDIR:-/tmp}/dev-batch-skill-${CSID}" 2>/dev/null || _SKILL="feature"
+IFS= read -r PYTEST_CMD < "${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}" 2>/dev/null || PYTEST_CMD=""
+IFS= read -r DEV_DIR < "${TMPDIR:-/tmp}/dev-${_SKILL}-dev-dir-${CSID}" 2>/dev/null || DEV_DIR=""
+[ -n "$PYTEST_CMD" ] || { echo "! BLOCKED — PYTEST_CMD sentinel missing; re-run Project Detection"; exit 1; }
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_test_targets.py" --skill "$_SKILL" --run --record-dir "${DEV_DIR:-.developments}"
+BATCH_RED_EXIT=$?
+echo "BATCH_RED_EXIT=$BATCH_RED_EXIT"
+[ "$BATCH_RED_EXIT" -eq 1 ] || { echo "! red confirmation requires test failures (exit 1); inspect the log before implementing"; exit 1; }
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_test_targets.py" --check-record "${DEV_DIR:-.developments}/test-targets.jsonl" --expect-exit 1 || exit 1
+```
+
 ### Skill contexts (substitute when loading this protocol)
 
 **feature** (Step 3, TDD implementation loop):

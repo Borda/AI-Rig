@@ -8,6 +8,7 @@ every test, so no test reads the machine's git config or touches the network.
 from __future__ import annotations
 
 import json
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -545,12 +546,20 @@ def _tags(path: Path, builder: RepoBuilder) -> dict[str, str]:
     return dict(line.split(" ", 1) for line in out.splitlines())
 
 
+def _ssh_url(path: Path) -> str:
+    """Return a fixture SSH URL served by the local upload-pack command."""
+    return "ssh://fixture" + path.as_uri().removeprefix("file://")
+
+
 class TestSyncClone:
     """Dedicated clone creation and refresh."""
 
     @pytest.fixture
-    def source(self, evo_repo: RepoBuilder) -> RepoBuilder:
+    def source(self, evo_repo: RepoBuilder, monkeypatch: pytest.MonkeyPatch) -> RepoBuilder:
         """Build a source repository with two tags, one on a commit no branch reaches."""
+        transport = Path(__file__).resolve().parents[1] / "_evolution_ssh_transport.py"
+        monkeypatch.setenv("GIT_SSH_COMMAND", f'"{sys.executable}" "{transport}"')
+        monkeypatch.setenv("GIT_SSH_VARIANT", "ssh")
         _commit(evo_repo, "one", 1)
         evo_repo.tag("v1.0.0", day=1)
         evo_repo.branch("side")
@@ -567,7 +576,7 @@ class TestSyncClone:
         ``v0.5.0`` sits on a commit whose branch was deleted.
         """
         clone = tmp_path / "store" / "repo"
-        assert sync_clone(clone, source.path.as_uri()) == []
+        assert sync_clone(clone, _ssh_url(source.path)) == []
         assert (_tags(clone, source), is_shallow(clone)) == (_tags(source.path, source), False)
 
     def test_refresh_follows_moved_new_and_deleted_tags(self, source: RepoBuilder, tmp_path: Path) -> None:
@@ -576,12 +585,12 @@ class TestSyncClone:
         After the first sync the source adds ``v1.1.0``, moves ``v1.0.0`` and deletes ``v0.5.0``.
         """
         clone = tmp_path / "store" / "repo"
-        sync_clone(clone, source.path.as_uri())
+        sync_clone(clone, _ssh_url(source.path))
         tip = _commit(source, "two", 3)
         source.tag("v1.1.0", day=3)
         source.git("tag", "-f", "-a", "v1.0.0", "-m", "moved", day=4)
         source.git("tag", "-d", "v0.5.0")
-        assert sync_clone(clone, source.path.as_uri()) == []
+        assert sync_clone(clone, _ssh_url(source.path)) == []
         assert _tags(clone, source) == _tags(source.path, source)
         assert source.git("-C", str(clone), "rev-parse", "HEAD").strip() == tip
 
@@ -594,7 +603,7 @@ class TestSyncClone:
         _commit(upstream, "up", 1)
         upstream.tag("v9.0.0", day=1)
         clone = tmp_path / "store" / "repo"
-        assert sync_clone(clone, source.path.as_uri(), upstream.path.as_uri()) == []
+        assert sync_clone(clone, _ssh_url(source.path), _ssh_url(upstream.path)) == []
         assert "v9.0.0" in _tags(clone, source)
         assert (source.git("remote").split(), source.git("-C", str(clone), "remote").split()) == (
             [],

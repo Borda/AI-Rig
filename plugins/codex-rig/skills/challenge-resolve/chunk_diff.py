@@ -54,6 +54,7 @@ The challenge-resolve planner and acceptance check; reviewers consume its frozen
 from __future__ import annotations
 
 import argparse
+import errno
 import hashlib
 import itertools
 import json
@@ -69,19 +70,34 @@ from collect_diff import (
     canonical_diff_arguments,
     canonical_diff_environment,
     capture_source_snapshot,
+    diff_sections,
     reject_gitlink_changes,
 )
 
 #: Default per-chunk size budget, in bytes, for the --budget-bytes planner option.
 DEFAULT_BUDGET_BYTES = 1_000_000
+#: Maximum inventory accepted before capturing source or generating interaction work.
+MAX_FILES = 10_000
+#: Leave room for Git's fixed arguments and Windows command-line quoting.
+MAX_PATH_ARG_BYTES = 24_000
 
 
 def _git(repository: Path, *arguments: str) -> bytes:
     """Read one local Git result and fail when source inspection is incomplete."""
+    bulk_patch = "--binary" in arguments and "--" in arguments and len(arguments[arguments.index("--") + 1 :]) > 1
     result = subprocess.run(  # noqa: S603 - argv list, no shell
-        ["git", "-C", os.fspath(repository), "--literal-pathspecs", *canonical_diff_arguments(arguments)],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
+        [  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
+            "git",
+            "-c",
+            "core.fsmonitor=false",
+            "-C",
+            os.fspath(repository),
+            "--literal-pathspecs",
+            *canonical_diff_arguments(arguments),
+        ],
         capture_output=True,
         check=False,
+        timeout=120 if bulk_patch else 30,
         env=canonical_diff_environment() if arguments and arguments[0] == "diff" else None,
     )
     if result.returncode:
@@ -111,10 +127,59 @@ def _inventory(repository: Path, scopes: list[str], scope_mode: str, base: str =
 
 def _material(repository: Path, paths: list[str], base: str = "HEAD") -> tuple[bytes, bytes]:
     """Capture the exact source serializer and patch that a reviewer must receive."""
-    snapshot = capture_source_snapshot(repository, paths)
+    snapshot = _capture_snapshot(repository, paths)
     source = (json.dumps(snapshot, indent=2, sort_keys=True, ensure_ascii=True) + "\n").encode("utf-8")
-    diff = _git(repository, "diff", base, "--binary", "--no-renames", "--", *paths)
+    diff = _capture_patch(repository, paths, base)
     return source, diff
+
+
+def _path_batches(paths: list[str]) -> list[list[str]]:
+    """Bound encoded path arguments, including worst-case command-line quoting overhead."""
+    batches: list[list[str]] = []
+    current: list[str] = []
+    size = 0
+    for path in paths:
+        contribution = 2 * len(os.fsencode(path)) + 3
+        if contribution > MAX_PATH_ARG_BYTES:
+            raise ValueError("chunk-path-argv-limit")
+        if current and size + contribution > MAX_PATH_ARG_BYTES:
+            batches.append(current)
+            current, size = [], 0
+        current.append(path)
+        size += contribution
+    if current:
+        batches.append(current)
+    return batches
+
+
+def _capture_snapshot(repository: Path, paths: list[str]) -> dict[str, object]:
+    """Merge bounded source captures with the same scoped index digest as a single capture."""
+    batches = _path_batches(paths)
+    snapshots = [capture_source_snapshot(repository, batch) for batch in batches]
+    snapshot = snapshots[0]
+    if len(snapshots) == 1:
+        return snapshot
+    if any(item["revision"] != snapshot["revision"] for item in snapshots):
+        raise ValueError("chunk-inventory-changed")
+    # Hash the ordered index entries themselves; individual batch digests cannot be combined.
+    indices = [_git(repository, "ls-files", "--stage", "-z", "--", *batch) for batch in batches]
+    if any(hashlib.sha256(index).hexdigest() != item["index_sha256"] for index, item in zip(indices, snapshots)):
+        raise ValueError("chunk-inventory-changed")
+    entries = sorted(filter(None, b"".join(indices).split(b"\0")), key=lambda entry: entry.partition(b"\t")[2])
+    index = b"\0".join(entries) + (b"\0" if entries else b"")
+    return snapshot | {
+        "scope_paths": paths,
+        "files": [record for item in snapshots for record in item["files"]],
+        "index_sha256": hashlib.sha256(index).hexdigest(),
+    }
+
+
+def _capture_patch(repository: Path, paths: list[str], base: str) -> bytes:
+    """Concatenate complete file patches from portable argument slices in inventory order."""
+    return b"".join(
+        _git(repository, "diff", base, "--binary", "--no-renames", "--", *batch)
+        for batch in _path_batches(sorted(paths, key=os.fsencode))
+    )
 
 
 def _safe_output(repository: Path, output: Path) -> Path:
@@ -125,9 +190,21 @@ def _safe_output(repository: Path, output: Path) -> Path:
     except ValueError:
         return destination
     ignored = subprocess.run(  # noqa: S603 - argv list, no shell
-        ["git", "-C", os.fspath(repository), "check-ignore", "-q", "--no-index", "--", relative],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
+        [  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
+            "git",
+            "-c",
+            "core.fsmonitor=false",
+            "-C",
+            os.fspath(repository),
+            "check-ignore",
+            "-q",
+            "--no-index",
+            "--",
+            relative,
+        ],
         capture_output=True,
         check=False,
+        timeout=30,
     )
     if ignored.returncode != 0:
         raise ValueError("output-must-be-ignored-or-outside-repository")
@@ -240,7 +317,7 @@ def _scoped_supporting_units(manifest: dict[str, object]) -> list[dict[str, obje
     prior_paths.difference_update(manifest["inventory"])
     if not paths:
         return []
-    records = capture_source_snapshot(Path(manifest["repository"]), sorted(paths))["files"]
+    records = _capture_snapshot(Path(manifest["repository"]), sorted(paths))["files"]
     if manifest.get("diff_base_oid") and any(
         record["kind"] == "symlink"
         or record.get("encoding") == "base64"
@@ -315,7 +392,7 @@ def _validate_scoped_assignments(manifest: dict[str, object]) -> None:
             or not claim.strip()
         ):
             raise ValueError("scoped-assignment-invalid")
-        records = capture_source_snapshot(repository, paths)["files"]
+        records = _capture_snapshot(repository, paths)["files"]
         if len(records) != len(paths) or any(
             record["kind"] == "missing" and record["path"] not in manifest["inventory"] for record in records
         ):
@@ -325,9 +402,9 @@ def _validate_scoped_assignments(manifest: dict[str, object]) -> None:
         raise ValueError("scoped-assignment-invalid")
 
 
-def scoped_plan(manifest_path: Path, assignments_path: Path, output: Path) -> Path:
+def scoped_plan(manifest_path: Path, assignments_path: Path, output: Path, *, repository: Path | None = None) -> Path:
     """Create an additive source-derived scoped inventory without changing its schema-one plan."""
-    check(manifest_path, allow_draft=True)
+    check(manifest_path, allow_draft=True, repository=repository)
     manifest = json.loads(manifest_path.read_bytes())
     assignments = json.loads(assignments_path.read_bytes())
     if not isinstance(assignments, dict) or set(assignments) != {"interactions", "audit_assignments"}:
@@ -350,8 +427,8 @@ def scoped_plan(manifest_path: Path, assignments_path: Path, output: Path) -> Pa
     manifest["supporting_units"] = _scoped_supporting_units(manifest)
     if manifest.get("diff_base_oid") and manifest["supporting_units"]:
         support_paths = [unit["path"] for unit in manifest["supporting_units"]]
-        origin_support = capture_source_snapshot(Path(manifest["origin_repository"]), support_paths)
-        mirror_support = capture_source_snapshot(Path(manifest["repository"]), support_paths)
+        origin_support = _capture_snapshot(Path(manifest["origin_repository"]), support_paths)
+        mirror_support = _capture_snapshot(Path(manifest["repository"]), support_paths)
         if (
             origin_support["revision"] != mirror_support["revision"]
             or origin_support["files"] != mirror_support["files"]
@@ -371,6 +448,38 @@ def scoped_plan(manifest_path: Path, assignments_path: Path, output: Path) -> Pa
     return destination
 
 
+def _sized_groups(repository: Path, inventory: list[str], budget_bytes: int, base: str) -> list[list[str]]:
+    """Pack files using additive serialized sizes from one source and patch capture."""
+    snapshot = _capture_snapshot(repository, inventory)
+    records = {record["path"]: record for record in snapshot["files"]}
+    patch = _capture_patch(repository, inventory, base)
+    try:
+        sections = diff_sections(patch)
+    except ValueError:
+        # Preserve paths the shared UTF-8 parser cannot decode without recapturing source per file.
+        print("chunk-diff-warning:patch-sizing-per-file", file=sys.stderr)
+        sections = {path: _git(repository, "diff", base, "--binary", "--no-renames", "--", path) for path in inventory}
+    empty = snapshot | {"scope_paths": [], "files": []}
+    header_bytes = len(json.dumps(empty, indent=2, sort_keys=True, ensure_ascii=True)) + 1
+    groups: list[list[str]] = []
+    current: list[str] = []
+    # Each nonempty JSON array adds two bytes beyond its additive element sizes.
+    current_bytes = header_bytes + 4
+    for path in inventory:
+        single = snapshot | {"scope_paths": [path], "files": [records[path]]}
+        size = len(json.dumps(single, indent=2, sort_keys=True, ensure_ascii=True)) + 1
+        contribution = size - header_bytes - 4 + len(sections.get(path, b""))
+        if current and current_bytes + contribution > budget_bytes:
+            groups.append(current)
+            current = []
+            current_bytes = header_bytes + 4
+        current.append(path)
+        current_bytes += contribution
+    if current:
+        groups.append(current)
+    return groups
+
+
 def plan(
     repository: Path,
     output: Path,
@@ -384,7 +493,7 @@ def plan(
     diff_base_oid: str | None = None,
     origin_repository: Path | None = None,
 ) -> Path:
-    """Freeze disjoint chunks and declare whether this review resumes a caller run."""
+    """Freeze disjoint chunks for at most 10,000 files and declare whether this resumes a caller run."""
     if budget_bytes <= 0:
         raise ValueError("budget-must-be-positive")
     if (
@@ -412,9 +521,11 @@ def plan(
             raise ValueError("chunk-diff-base-invalid")
         base = diff_base_oid
     inventory = _inventory(repository, scopes, scope_mode, base)
+    if len(inventory) > MAX_FILES:
+        raise ValueError(f"chunk-file-count-limit:{MAX_FILES}")
     # A base-only deletion has no current source record; fail before publishing partial coverage.
     if base != "HEAD":
-        captured = {record["path"] for record in capture_source_snapshot(repository, inventory)["files"]}
+        captured = {record["path"] for record in _capture_snapshot(repository, inventory)["files"]}
         if not set(inventory).issubset(captured):
             raise ValueError("chunk-base-only-deletion-unsupported")
     output = _safe_output(repository, output)
@@ -435,18 +546,7 @@ def plan(
         raise ValueError("prior-ledger-invalid")
     coverage = json.loads(prior_coverage.read_bytes()) if prior_coverage is not None else []
 
-    groups: list[list[str]] = []
-    current: list[str] = []
-    for path in inventory:
-        candidate = [*current, path]
-        source, diff = _material(repository, candidate, base)
-        if current and len(source) + len(diff) > budget_bytes:
-            groups.append(current)
-            current = [path]
-        else:
-            current = candidate
-    if current:
-        groups.append(current)
+    groups = _sized_groups(repository, inventory, budget_bytes, base)
 
     chunk_ids = {path: f"chunk-{index:03d}" for index, paths in enumerate(groups, 1) for path in paths}
     signatures = {finding["signature"] for finding in prior["rounds"][-1]["findings"]} if prior else set()
@@ -545,17 +645,15 @@ def plan(
                 != (repository / os.fsdecode(_git(repository, "rev-parse", "--git-common-dir").strip())).resolve()
             ):
                 raise ValueError("chunk-origin-repository-invalid")
-            original = capture_source_snapshot(origin, inventory)
-            mirror = capture_source_snapshot(repository, inventory)
+            original = _capture_snapshot(origin, inventory)
+            mirror = _capture_snapshot(repository, inventory)
             if original["repository"] != origin.as_posix() or mirror["repository"] != repository.as_posix():
                 raise ValueError("chunk-origin-repository-invalid")
             if original["revision"] != mirror["revision"] or original["files"] != mirror["files"]:
                 raise ValueError("chunk-origin-source-mismatch")
             if _inventory(origin, scopes, scope_mode, base) != inventory:
                 raise ValueError("chunk-origin-inventory-mismatch")
-            if _git(origin, "diff", base, "--binary", "--no-renames", "--", *inventory) != _git(
-                repository, "diff", base, "--binary", "--no-renames", "--", *inventory
-            ):
+            if _capture_patch(origin, inventory, base) != _capture_patch(repository, inventory, base):
                 raise ValueError("chunk-origin-diff-mismatch")
             original_bytes = (json.dumps(original, indent=2, sort_keys=True, ensure_ascii=True) + "\n").encode("utf-8")
             (output / "origin-source.json").write_bytes(original_bytes)
@@ -569,12 +667,33 @@ def plan(
             )
     manifest_path = output / "chunks.json"
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
-    check(manifest_path, allow_draft=diff_base_oid is not None)
+    check(manifest_path, allow_draft=diff_base_oid is not None, repository=repository)
     return manifest_path
 
 
+def _check_source_repositories(root: Path, manifest: dict[str, object]) -> None:
+    """Bind repository coordinates to retained source before executing Git in them."""
+    chunks = manifest["chunks"]
+    if not isinstance(chunks, list) or not chunks:
+        raise ValueError("chunk-manifest-invalid")
+    for chunk in chunks:
+        if not isinstance(chunk, dict) or "source_path" not in chunk:
+            raise ValueError("chunk-manifest-invalid")
+        snapshot = json.loads(_artifact(root, chunk["source_path"]).read_bytes())
+        if not isinstance(snapshot, dict) or snapshot.get("repository") != manifest["repository"]:
+            raise ValueError("chunk-source-repository-mismatch")
+    if "origin_repository" in manifest:
+        original = json.loads(_artifact(root, manifest["origin_snapshot_path"]).read_bytes())
+        if not isinstance(original, dict) or original.get("repository") != manifest["origin_repository"]:
+            raise ValueError("chunk-origin-repository-invalid")
+
+
 def check(
-    manifest_path: Path, results_path: Path | None = None, *, allow_draft: bool = False
+    manifest_path: Path,
+    results_path: Path | None = None,
+    *,
+    allow_draft: bool = False,
+    repository: Path | None = None,
 ) -> dict[str, object] | None:
     """Reject stale chunk evidence and summarize validated result references when supplied."""
     root = manifest_path.resolve().parent
@@ -618,6 +737,14 @@ def check(
         )
     ):
         raise ValueError("chunk-manifest-invalid")
+    trusted = repository.resolve(strict=True) if repository is not None else Path.cwd().resolve()
+    if repository is None:
+        prefix = os.fsdecode(_git(trusted, "rev-parse", "--show-prefix").rstrip(b"\r\n"))
+        for _ in filter(None, prefix.split("/")):
+            trusted = trusted.parent
+    if manifest["repository"] != trusted.as_posix():
+        raise ValueError("chunk-source-repository-mismatch")
+    _check_source_repositories(root, manifest)
     if "diff_base_oid" in manifest:
         base = manifest["diff_base_oid"]
         if (
@@ -655,7 +782,7 @@ def check(
         if hashlib.sha256(origin_bytes).hexdigest() != manifest["origin_snapshot_sha256"]:
             raise ValueError("chunk-origin-source-changed")
         saved = json.loads(origin_bytes)
-        current = capture_source_snapshot(source_repo, manifest["inventory"])
+        current = _capture_snapshot(source_repo, manifest["inventory"])
         if current.get("repository") != source_repo.as_posix():
             raise ValueError("chunk-origin-repository-invalid")
         if (
@@ -669,7 +796,7 @@ def check(
         ):
             raise ValueError("chunk-origin-source-changed")
         if (
-            saved != capture_source_snapshot(source_repo, manifest["inventory"])
+            saved != _capture_snapshot(source_repo, manifest["inventory"])
             or hashlib.sha256(
                 _git(source_repo, "ls-files", "--stage", "-z", "--", *manifest["requested_scope_paths"])
             ).hexdigest()
@@ -772,8 +899,8 @@ def check(
             support_bytes = _artifact(root, manifest["origin_supporting_snapshot_path"]).read_bytes()
             support_paths = [unit["path"] for unit in manifest["supporting_units"]]
             saved_support = json.loads(support_bytes)
-            original_support = capture_source_snapshot(Path(manifest["origin_repository"]), support_paths)
-            mirror_support = capture_source_snapshot(repository, support_paths)
+            original_support = _capture_snapshot(Path(manifest["origin_repository"]), support_paths)
+            mirror_support = _capture_snapshot(repository, support_paths)
             if (
                 hashlib.sha256(support_bytes).hexdigest() != manifest["origin_supporting_snapshot_sha256"]
                 or saved_support != original_support
@@ -959,9 +1086,9 @@ def _prior_result_issue(
     return None
 
 
-def check_stopped(manifest_path: Path, results_path: Path) -> dict[str, object]:
+def check_stopped(manifest_path: Path, results_path: Path, *, repository: Path | None = None) -> dict[str, object]:
     """Summarize validated partial child results and the review slots still pending."""
-    check(manifest_path)
+    check(manifest_path, repository=repository)
     root = manifest_path.resolve().parent
     manifest_bytes = manifest_path.read_bytes()
     manifest = json.loads(manifest_bytes)
@@ -1527,6 +1654,7 @@ def _check_clean_run(
         ],
         capture_output=True,
         check=False,
+        timeout=60,
     )
     if validated.returncode:
         raise ValueError(f"chunk-result-validation-failed:{label}")
@@ -1540,7 +1668,7 @@ def main() -> int:
     """Expose planning and freshness checks without running a reviewer."""
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    planner = commands.add_parser("plan")
+    planner = commands.add_parser("plan", description=f"Plan complete review chunks for at most {MAX_FILES:,} files.")
     planner.add_argument("--repository", type=Path, required=True)
     planner.add_argument("--out", type=Path, required=True)
     planner.add_argument("--scope-path", action="append", default=[])
@@ -1560,12 +1688,19 @@ def main() -> int:
     scoped.add_argument("--manifest", type=Path, required=True)
     scoped.add_argument("--assignments", type=Path, required=True)
     scoped.add_argument("--out", type=Path, required=True)
-    checker = commands.add_parser("check")
+    scoped.add_argument("--repository", type=Path, help="Trusted repository root; defaults to the invoking Git root")
+    checker = commands.add_parser(
+        "check",
+        description="Bind evidence to the invoking Git root or --repository before inspecting the manifest repository. "
+        "Repository-configured clean/process filters may still execute during Git reads.",
+    )
     checker.add_argument("--manifest", type=Path, required=True)
+    checker.add_argument("--repository", type=Path, help="Trusted repository root; defaults to the invoking Git root")
     checker.add_argument("--results", type=Path, help="Ordered chunk result map for final coverage validation")
     checker.add_argument("--summary", action="store_true", help="Print validated child-backed JSON; requires --results")
     stopped = commands.add_parser("check-stopped")
     stopped.add_argument("--manifest", type=Path, required=True)
+    stopped.add_argument("--repository", type=Path, help="Trusted repository root; defaults to the invoking Git root")
     stopped.add_argument("--results", type=Path, required=True)
     stopped.add_argument("--summary", action="store_true", help="Print validated partial child-backed JSON")
     arguments = parser.parse_args()
@@ -1591,9 +1726,11 @@ def main() -> int:
                 )
             )
         elif arguments.command == "scoped-plan":
-            print(scoped_plan(arguments.manifest, arguments.assignments, arguments.out))
+            print(
+                scoped_plan(arguments.manifest, arguments.assignments, arguments.out, repository=arguments.repository)
+            )
         elif arguments.command == "check-stopped":
-            summary = check_stopped(arguments.manifest, arguments.results)
+            summary = check_stopped(arguments.manifest, arguments.results, repository=arguments.repository)
             if arguments.summary:
                 print(json.dumps(summary, sort_keys=True, ensure_ascii=True))
             else:
@@ -1601,14 +1738,23 @@ def main() -> int:
         else:
             if arguments.summary and arguments.results is None:
                 raise ValueError("chunk-summary-results-required")
-            summary = check(arguments.manifest, arguments.results)
+            summary = check(arguments.manifest, arguments.results, repository=arguments.repository)
             if arguments.summary:
                 print(json.dumps(summary, sort_keys=True, ensure_ascii=True))
             elif arguments.results is None:
                 print("chunk source inventory current")
             else:
                 print("declared interaction evidence current; undeclared interactions unverified")
-    except (OSError, ValueError, RuntimeError, UnicodeError, json.JSONDecodeError) as error:
+    except OSError as error:
+        print(f"chunk-diff-error:os-error:{errno.errorcode.get(error.errno, 'UNKNOWN')}", file=sys.stderr)
+        return 2
+    except subprocess.TimeoutExpired:
+        print("chunk-diff-error:git-timeout", file=sys.stderr)
+        return 2
+    except (KeyError, TypeError, RecursionError):
+        print("chunk-diff-error:inspection-failed", file=sys.stderr)
+        return 2
+    except (ValueError, RuntimeError, UnicodeError, json.JSONDecodeError) as error:
         print(f"chunk-diff-error:{error}", file=sys.stderr)
         return 2
     return 0

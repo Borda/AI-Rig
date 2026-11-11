@@ -46,11 +46,11 @@
   IFS= read -r CLS_RANGE < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-cls-range-${CSID}" 2>/dev/null || CLS_RANGE=""
   set -- $CLS_RANGE; CLS_START="${1:-}"; CLS_END="${2:-}"
   if [ -n "$CLS_START" ]; then
-      grep -n "@overload" "$SYM_PATH" | awk -F: -v s="$CLS_START" -v e="$CLS_END" '$1>=s && $1<=e' | grep -A1 "def $OLD_NAME("  # timeout: 3000
+      grep -n -A1 -E '@(typing\.)?overload\b' "$SYM_PATH" | grep "def $OLD_NAME(" | awk -F'[:-]' -v s="$CLS_START" -v e="$CLS_END" '$1>=s && $1<=e'  # timeout: 3000
   else
-      grep -n "@overload" "$SYM_PATH" | grep -A1 "def $OLD_NAME("  # timeout: 3000
+      grep -n -A1 -E '@(typing\.)?overload\b' "$SYM_PATH" | grep "def $OLD_NAME("  # timeout: 3000
   fi
-  grep -n "@overload" "${SYM_PATH%.py}.pyi" 2>/dev/null | grep -A1 "def $OLD_NAME("  # timeout: 3000
+  grep -n -A1 -E '@(typing\.)?overload\b' "${SYM_PATH%.py}.pyi" 2>/dev/null | grep "def $OLD_NAME("  # timeout: 3000
   ```
 
 **4b — `__all__` re-exports**:
@@ -62,11 +62,12 @@ _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/nul
 IFS= read -r OLD_NAME < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-OLD_NAME-${CSID}" 2>/dev/null || OLD_NAME=""
 # scope to pkg tree — avoids same-name false positives; sym-path written by Step 2
 IFS= read -r OLD_FILE_PATH < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-sym-path-${CSID}" 2>/dev/null || OLD_FILE_PATH=""
+_CM_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 PKG_DIR=$(dirname "${OLD_FILE_PATH:-.}")
 printf '%s\n' "$PKG_DIR" > "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-pkg-dir-${CSID}"
 # init 4c import-dedup tracker before the caller loop
 printf '' > "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-processed-import-files-${CSID}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/find_module_refs.py" --kind all-exports --name "$OLD_NAME" --scope "${PKG_DIR:-.}"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/find_module_refs.py" --kind all-exports --name "$OLD_NAME" --scope "$_CM_ROOT/${PKG_DIR:-.}"
 ```
 
 For each `__all__` hit, Edit `"old_name"` → `"new_name"`.
@@ -89,12 +90,18 @@ grep -qxF "$TARGET_FILE" "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-processed-import-f
 
 Edit imports only when `SKIP_IMPORT=false`.
 
-Per caller (`called_by[i].caller` is `module::qualified_name`; `query symbol` never matches the `::` form — it returns not-found, so split it first):
+Read Step 3's saved caller inventory before the loop:
 
-1. Split `caller` at the first `::` into `<caller_module>` and `<caller_qualified>`. Run `codemap-py query symbols "<caller_module>"` once per distinct module — timeout: 10000; result `{module, path, symbols:[{qualified_name, start_line, end_line, ...}]}` (exact module key, full ranges, no cap)
-   - Error, unknown module, or 0 entries with `qualified_name == <caller_qualified>` → stop; the preflight must resolve every known caller before edits. Unexpected drift after edits means an incomplete migration; report the partial state, never skip the caller or claim success
-   - Filter `symbols[]` by exact `qualified_name == <caller_qualified>`; more than one match (e.g. `@overload`/`@property` siblings) is ambiguous and stops the operation
-   - Use the answer's top-level `path` plus the matched entry's `start_line`, `end_line` for step 2
+```bash
+# timeout: 5000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+_CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || echo "cm")
+cat "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-caller-ranges-${CSID}" || { echo "! caller preflight missing — finish remaining Step 6 checks, then Step 7: ⚠ Rename incomplete"; exit 1; }
+```
+
+Per caller (Step 3 split `module::qualified_name` at `::` and ran `codemap-py query symbols` before edits):
+
+1. Read `path`, `start_line`, `end_line` and `source` for the exact `caller` from the caller-ranges sentinel. Do not derive ranges again from an index that may refresh after source edits. Compare the current source at those bounds to the saved source, allowing only this run's recorded 1:1 substitutions. Missing/duplicate inventory row or unexpected drift → stop apply; report the partial state through Steps 6–7, never skip the caller or claim success.
 2. Within caller's line range in `path`:
    - **Priority**: (1) module-level imports (whole-file, once/file, may precede `start_line`); (2) qualified `X.old_name(` within start_line–end_line; (3) bare `old_name(` only within start_line–end_line
    - Edit bare `old_name(` → `new_name(` **only** within start_line–end_line — never bare-replace outside confirmed caller scope
@@ -135,7 +142,8 @@ IFS= read -r OLD_NAME < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-OLD_NAME-${C
 # full module prefix — avoids false positive on same bare name elsewhere
 IFS= read -r OLD_MODULE_PATH < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-OLD_MODULE_PATH-${CSID}" 2>/dev/null || OLD_MODULE_PATH=""
 # matches bare name anywhere — verify module before edit
-python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/find_module_refs.py" --kind sphinx-symbol --name "$OLD_NAME"
+_CM_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/find_module_refs.py" --kind sphinx-symbol --name "$OLD_NAME" --scope "$_CM_ROOT"
 ```
 
 For each match, replace `old_name`/`OldName` inside backtick-delimited role only after verifying expected module path (`${OLD_MODULE_PATH}` or qualified form); avoid same-name unrelated package refs.
@@ -175,6 +183,7 @@ else
         ${SINCE_VER:+--since "$SINCE_VER"} \
         ${REMOVED_IN_VER:+--removed-in "$REMOVED_IN_VER"}) || { echo "! gen_deprecation_wrapper failed — check symbol type and names"; exit 1; }
 fi
+printf '%s\n' "$DEPRECATION_CODE"
 ```
 
 Insert `$DEPRECATION_CODE` immediately after new definition (`end_line` from Step 2). Target needs pyDeprecate; otherwise inserted `from deprecate import ...` raises import-time `ImportError`. Surface Step 6 advisory.

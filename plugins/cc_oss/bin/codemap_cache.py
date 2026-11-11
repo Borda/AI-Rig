@@ -65,8 +65,10 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import sys
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
@@ -114,7 +116,7 @@ def _valid_module(module: str) -> bool:
         >>> _valid_module("a\\\\b")
         False
     """
-    return bool(_MODULE_RE.match(module)) and ".." not in module and "\\" not in module
+    return bool(_MODULE_RE.fullmatch(module)) and ".." not in module and "\\" not in module
 
 
 def _content_hash(answers: dict[str, object]) -> str:
@@ -245,6 +247,30 @@ def _module_answers_from_batch(batch: dict) -> dict[str, dict[str, object]]:
     return by_module
 
 
+def _write_artifact(path: Path, artifact: dict) -> None:
+    """Replace a cache artifact atomically without leaving a partial file on failure."""
+    descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            json.dump(artifact, handle)
+        os.replace(temporary, path)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+
+
+def _read_artifact(path: Path) -> dict:
+    """Read a cache artifact only when its answers and telemetry have usable shapes."""
+    artifact = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(artifact, dict) or not isinstance(artifact.get("prefix"), dict):
+        raise ValueError("Artifact and prefix must be objects")
+    if not isinstance(artifact["prefix"].get("answers", {}), dict):
+        raise ValueError("Artifact answers must be an object")
+    delta = artifact.get("delta", {})
+    if not isinstance(delta, dict) or not isinstance(delta.get("notes", []), list):
+        raise ValueError("Artifact telemetry must contain a notes list")
+    return artifact
+
+
 def cmd_write(args: argparse.Namespace) -> int:
     """Split a batch result into per-module prefix/delta artifacts.
 
@@ -278,7 +304,7 @@ def cmd_write(args: argparse.Namespace) -> int:
             },
             "delta": {"touched_files": [], "exhausted_queries": [], "notes": []},
         }
-        (cache_dir / f"{module}.json").write_text(json.dumps(artifact), encoding="utf-8")
+        _write_artifact(cache_dir / f"{module}.json", artifact)
         written += 1
 
     print(json.dumps({"status": "done", "modules_written": written}))
@@ -447,8 +473,12 @@ def cmd_read(args: argparse.Namespace) -> int:
     if not artifact_path.exists():
         print(json.dumps({"reuse": False, "reason": "cold_miss", "answers": {}}))
         return 0
-    artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
-    reuse, reason = _reuse_verdict(artifact, *_index_stamp(Path(args.index)))
+    try:
+        artifact = _read_artifact(artifact_path)
+        reuse, reason = _reuse_verdict(artifact, *_index_stamp(Path(args.index)))
+    except (OSError, ValueError, TypeError, AttributeError):
+        print(json.dumps({"reuse": False, "reason": "invalid_artifact", "answers": {}}))
+        return 0
     answers = artifact.get("prefix", {}).get("answers", {}) if reuse else {}
     print(json.dumps({"reuse": reuse, "reason": reason, "answers": answers}))
     return 0
@@ -470,14 +500,24 @@ def cmd_report(args: argparse.Namespace) -> int:
     cache_dir = Path(args.cache_dir)
     total = 0
     reused = 0
+    invalid = 0
     for artifact_path in sorted(cache_dir.glob("*.json")):
-        artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+        try:
+            artifact = _read_artifact(artifact_path)
+        except (OSError, ValueError, TypeError, AttributeError) as exc:
+            print(f"codemap_cache: ignoring {artifact_path.name}: {exc}", file=sys.stderr)
+            invalid += 1
+            continue
         answers = artifact.get("prefix", {}).get("answers", {})
         total += len(answers)
         if any(str(n).startswith("reused") for n in artifact.get("delta", {}).get("notes", [])):
             reused += len(answers)
     ratio = round(reused / total, 3) if total else 0.0
-    print(json.dumps({"reuse_ratio": ratio, "answers_reused": reused, "answers_total": total}))
+    print(
+        json.dumps(
+            {"reuse_ratio": ratio, "answers_reused": reused, "answers_total": total, "artifacts_invalid": invalid}
+        )
+    )
     return 0
 
 
@@ -513,7 +553,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "read":
             return cmd_read(args)
         return cmd_report(args)
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, TypeError, AttributeError) as exc:
         print(json.dumps({"error": str(exc)}), file=sys.stderr)
         return 1
 

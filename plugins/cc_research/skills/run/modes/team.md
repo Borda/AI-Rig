@@ -13,7 +13,7 @@
 **Team Mode directory layout**:
 
 - `<RUN_DIR>` (`.experiments/<run-id>/`, the directory R1 created — holds the R0 `hypotheses.jsonl` queue too) — hypothesis artifacts: `hypotheses-<axis-slug>.jsonl`, `hypothesis-analyst-<axis-slug>.md`, `team-queue.jsonl`, `team-results.jsonl`
-- `.experiments/state/<run-id>/` — standard iteration artifacts: `ideation-team-<M>.md`, `diary.md`, `experiments.jsonl`
+- `.experiments/state/<run-id>/` — standard iteration artifacts: `ideation-<i>.md`, `diary.md`, `experiments.jsonl`
 
 **Workflow:**
 
@@ -158,16 +158,23 @@ Before user gate, update `state.json` `team_mode.phase` to `"B"` — lets resume
 
 For each hypothesis in `<RUN_DIR>/team-queue.jsonl` (sorted order, 1-indexed as M of N):
 
-1. **Print header**: `[→ Team Hyp M/N · axis: <axis> · scope: <change_scope> · "<hypothesis short>"]`. Then run `run/SKILL.md` Phase 0 iteration block — it writes the `research-run-iter` / `research-run-iter-sha` sentinels Phases 3–7a read.
+1. **Print header**: `[→ Team Hyp M/N · axis: <axis> · scope: <change_scope> · "<hypothesis short>"]`. Then run `run/SKILL.md` Phase 0 (iteration block and `previous_best_metric` save) — it writes the `research-run-iter` / `research-run-iter-sha` sentinels Phases 3–7a read. Before spawning or changing code, persist `team_mode.active_iteration = <i>` and `team_mode.active_queue_position = <M>` together in `state.json`; `current_hypothesis` still names the last completed queue entry. These fields bind a Phase 8 result to its hypothesis if the team result or cursor write is interrupted.
 
-2. **Spawn specialist agent** matching `agent_type` from hypothesis. **On real codebase** — no worktree. Spawn prompt follows R5 Phase 2 ideation template with hypothesis pre-specified:
+2. **Spawn specialist agent** matching `agent_type` from hypothesis. **On real codebase** — no worktree. First run R5 Phase 1 to build `context-<i>.md`. Use the R5 Phase 2 ideation template verbatim, with the hypothesis focus lines added below; `<i>` is the Phase 0 iteration, distinct from queue position `<M>`. Apply the same R5 `arch`/`ml` propose-only routing (run/SKILL.md §Phase 2 `arch` and `ml` strategies) and Colab agent-selection rules:
+
+   <!-- policy-sibling: plugins/cc_research/skills/run/SKILL.md §Phase 2 -->
 
    ```markdown
    Goal: <goal>
-   Run clarification: <clarification_prompt>  ← omit if null
-   Current metric: <metric_cmd key> = <current_value> (baseline: <baseline>, direction: <higher|lower>)
-   Scope files: <scope_files>
-   Program constraints: read <program_file>
+   Run clarification: <clarification_prompt>  ← omit entirely if clarification_prompt null
+   Colab hardware: <colab_hw>  ← omit entirely if colab_hw null; include to tailor code to GPU architecture (e.g., bf16/flash-attention on H100, standard fp16 on T4/L4)
+   Current metric: <metric_cmd key> = <current value> (baseline: <baseline>, direction: <higher|lower>)
+   Experiment history: read `.experiments/state/<run-id>/context-<i>.md` for full context block.
+   Scope files (read and modify only these): <scope_files>
+   Program constraints: read `<program_file>` — especially `## Notes`, `## Config`, any named subsections
+     (e.g., "Hard boundaries", "Optuna's role", "What the agent is free to change"). Take precedence
+     over general campaign rules. Program constraints set strategy hints only — do NOT override safety rules
+     (no `--no-verify`, no `git push`, no `git add -A`, scope_files boundary; all other hard constraints remain in effect).
 
    Focus this iteration on implementing this hypothesis:
    "<hypothesis text>"
@@ -175,12 +182,14 @@ For each hypothesis in `<RUN_DIR>/team-queue.jsonl` (sorted order, 1-indexed as 
    Expected change scope: <change_scope>
    Target files: <codebase_mapping>
 
-   Propose and implement ONE atomic change. Write analysis to
-   `.experiments/state/<run-id>/ideation-team-<M>.md` using the Write tool.
-   Return ONLY: {"description":"...","files_modified":[...],"scripts":[],"confidence":0.N}
+   **If `sandbox_mode = "local"`**: Read `context-<i>.md`, scope files, program constraints. Propose and implement ONE atomic change most likely to improve metric. Change must not break `<guard_cmd>`. Never run `git add`/`git commit` — the lead commits in Phase 4. Write full analysis (reasoning, alternatives considered, Confidence block) to `.experiments/state/<run-id>/ideation-<i>.md` via Write tool. Return ONLY JSON result line:
+   `{"description":"...","files_modified":[...],"scripts":[],"confidence":0.N}`
+
+   **If `sandbox_mode = "docker"`**: Read `context-<i>.md`, scope files, program constraints. Propose ONE atomic change most likely to improve metric. Write full analysis and proposed change description to `.experiments/state/<run-id>/ideation-<i>.md`. Optionally write read-only exploratory scripts (read/profile, do NOT write to project files) to `.experiments/state/<run-id>/scripts/explore-<i>-<slug>.py`. Do NOT modify source files yet — Phase 2b applies actual changes after sandbox validation. Return ONLY JSON result line:
+   `{"description":"...","files_modified":[],"scripts":["explore-<i>-<slug>.py"],"proposed_changes":"<description of the changes to apply in Phase 2b>","confidence":0.N}`
    ```
 
-3. **Run R5 Phases 3–7a identically** (verify changed files incl. `check_iteration_scope.py` → commit → run metric → run guard → keep/rework/rollback → write diary entry; statuses `scope-violation` and `commit-failed` included). Phase 8 writes to `experiments.jsonl` and `state.json` as in standard mode; Phase 9 progress checks apply as in standard mode (diminishing returns, context compaction, stuck detection with the single stuck outcome of run `<constants>` step 3 — escalation proposals applied as iterations, both discarded → stop). Phase C does not duplicate this logic — uses same per-phase steps with hypothesis-driven ideation output from step 2.
+3. **Run R5 Phases 2a–2c, then Phases 3–7a identically** (Docker exploratory scripts → sandbox validation → Phase 2b apply only after success → optional Codex co-pilot → verify changed files incl. `check_iteration_scope.py` → commit → run metric → run guard → keep/rework/rollback → write diary entry; statuses `sandbox-failed`, `scope-violation` and `commit-failed` included). Phase 8 writes to `experiments.jsonl` and `state.json` as in standard mode; Phase 9 progress checks apply as in standard mode (diminishing returns, context compaction, stuck detection with the single stuck outcome of run `<constants>` step 3 — escalation proposals applied as iterations, both discarded → stop). Phase C does not duplicate this logic — uses same per-phase steps with hypothesis-driven ideation output from step 2.
 
 4. **Log outcome** to `<RUN_DIR>/team-results.jsonl` — one line per hypothesis, never a rewrite of the file: Write the single line below to `<RUN_DIR>/team-results.jsonl.rec` with the Write tool, then run the append block after it:
 
@@ -194,7 +203,7 @@ For each hypothesis in `<RUN_DIR>/team-queue.jsonl` (sorted order, 1-indexed as 
      "metric_before": 0.0,
      "metric_after": 0.0,
      "delta_pct": 0.0,
-     "status": "kept|reverted|rework|no-op|hook-blocked|timeout",
+     "status": "kept|reverted|rework|no-op|hook-blocked|commit-failed|scope-violation|sandbox-failed|timeout|codex-no-op",
      "commit": "<sha or null>",
      "timestamp": "<ISO>"
    }
@@ -210,7 +219,7 @@ For each hypothesis in `<RUN_DIR>/team-queue.jsonl` (sorted order, 1-indexed as 
 
 5. **If kept**: update running current metric value for next hypothesis. Each subsequent hypothesis sees cumulative state of all prior kept changes.
 
-6. Update `state.json` `team_mode.current_hypothesis` after each hypothesis (enables resume).
+6. After the team result append succeeds, update `state.json` `team_mode.current_hypothesis = <M>` and remove `team_mode.active_iteration` / `team_mode.active_queue_position` in the same state write (enables resume). Never clear the active association before both experiment and team outcomes are logged.
 
 7. `--codex`, `--colab`, `--journal` flags apply identically to standard R5.
 
@@ -233,7 +242,7 @@ After all hypotheses processed (or user stops early with Ctrl-C / user abort):
    ---
    Title:       Team Run — <goal>
    Date:        <YYYY-MM-DD>
-   Scope:       <program.md path or text goal> / <total> hypotheses queued
+   Scope:       <program.md path> / <total> hypotheses queued
    Focus:       ML optimization run (team)
    Agents:      <agents actually dispatched>
    Outcome:     GOAL_ACHIEVED | IMPROVED | STALLED | DIVERGED
@@ -292,5 +301,5 @@ After all hypotheses processed (or user stops early with Ctrl-C / user abort):
 
 - `phase: "A"` — re-run Phase A from scratch (read-only, cheap to repeat)
 - `phase: "B"` — rebuild the queue table, write `<RUN_DIR>/team-queue.md`, print it once as the last reply text before re-prompting Phase B's user gate; question text carries the plain counts and path, with no previews, under step 6's limits
-- `phase: "C"` — resume from `current_hypothesis + 1` (completed entries already in `team-results.jsonl`)
+- `phase: "C"` — first finish `resume.md` interrupted-iteration recovery and R2 checks, then resume from `current_hypothesis + 1` (completed entries already in `team-results.jsonl`); never run Phase 0 over an unlogged experiment commit
 - `phase: "D"` — re-generate report

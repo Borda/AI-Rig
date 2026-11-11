@@ -391,8 +391,9 @@ if [ -f "$IMPL_DIR/worktrees-before.txt" ]; then
     [ -s "$IMPL_DIR/worktrees-unreported.txt" ] && echo "⚠ worktree(s) created this run but never reported by any group's envelope (a stalled group?) — left untouched, reclaim manually once you've confirmed the group isn't still running: $(tr '\n' ' ' < "$IMPL_DIR/worktrees-unreported.txt")"
 fi
 _GITDIR=$(git rev-parse --git-common-dir 2>/dev/null || echo ".git")  # timeout: 3000
-_BRANCH=$(git branch --show-current 2>/dev/null | tr '/' '-' || echo "detached")  # timeout: 3000
-rm -f "$_GITDIR/oss-resolve-${_BRANCH}.lock"  # timeout: 3000
+_BRANCH=$(git symbolic-ref --quiet HEAD 2>/dev/null) || _BRANCH="detached"  # timeout: 3000
+_BRANCH_KEY=$(printf '%s\n' "$_BRANCH" | git hash-object --stdin) || { echo "! BLOCKED — cannot derive branch mutex key"; exit 1; }  # timeout: 3000
+rm -f "$_GITDIR/oss-resolve-${_BRANCH_KEY}.lock"  # timeout: 3000
 # resolve-base-sha-${CSID} deliberately NOT removed here — SKILL.md's straggler gate (after this whole
 # Step 8) reads it to range-bound its confirmation grep to this run's commits. Next run's entry block
 # (mutex fence, dispatch-prelude.md) always overwrites it unconditionally before reading, so leaving it stale is safe.
@@ -411,7 +412,7 @@ echo "GROUP_STRATEGY=$GROUP_STRATEGY"  # timeout: 3000
 No strategy reaches the user here on the normal path — Step 3d collected every grouping answer, typed labels included; only a lost labels file asks again (below):
 
 - `domain` (default) — topic = each item's `.change` field, mapped by the `auto` table below
-- `file` — topic = the item's `file` basename without extension, derived with `basename "$_FILE" | sed 's/\.[^.]*$//' | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '-' | sed 's/-\+/-/g; s/^-//; s/-$//'` (items sharing a file share a commit) — a PR-controlled filename can contain characters git permits in a path but a commit-subject prefix should not carry literally; `my_module.py` → `my-module`, `` a`id`b.py `` → `a-id-b`
+- `file` — topic = the item's `file` basename without extension, derived with `basename "$_FILE" | sed 's/\.[^.]*$//' | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '-' | sed -E 's/-+/-/g; s/^-//; s/-$//'` (items sharing a file share a commit) — a PR-controlled filename can contain characters git permits in a path but a commit-subject prefix should not carry literally; `my_module.py` → `my-module`, `` a`id`b.py `` → `a-id-b`
 - `specialist` — topic = the Phase 2 `group` tag the item was dispatched under
 - `labels` — topic = the label typed at Step 3d, read from `$IMPL_DIR/group-labels.tsv` with the Read tool (`<id>\t<topic>` rows, topics already sanitized to `[a-z0-9-]`); never ask again here
 
@@ -450,7 +451,7 @@ else
     case "$PR_NUMBER" in ''|*[!0-9]*) echo "! BLOCKED — PR number missing or invalid"; exit 1 ;; esac
     case "$PR_REF" in "#$PR_NUMBER"|https://*/pull/"$PR_NUMBER") ;; *) echo "! BLOCKED — PR reference missing or mismatched"; exit 1 ;; esac
 fi
-[ -f "${TMPDIR:-/tmp}/resolve-preflight-CODEX_AVAILABLE-${CSID}" ] && IFS= read -r CODEX_AVAILABLE < "${TMPDIR:-/tmp}/resolve-preflight-CODEX_AVAILABLE-${CSID}" || CODEX_AVAILABLE="false"  # reload (Check 41: fresh shell) — set in Step 1; a bare shell var here would always read unset in this separate Bash call, so the Codex co-author trailer below could never fire
+[ -f "${TMPDIR:-/tmp}/resolve-preflight-CODEX_AVAILABLE-${CSID}" ] && IFS= read -r CODEX_AVAILABLE < "${TMPDIR:-/tmp}/resolve-preflight-CODEX_AVAILABLE-${CSID}" || CODEX_AVAILABLE="false"  # reload (Check 43: fresh shell) — set in Step 1; a bare shell var here would always read unset in this separate Bash call, so the Codex co-author trailer below could never fire
 # topic + ids from a Write-tool file, never placeholders: block text stays invariant for the blueprint manifest
 _GROUP_NOW="$IMPL_DIR/group-commit-now.txt"
 [ -s "$_GROUP_NOW" ] || { echo "! BLOCKED — $_GROUP_NOW missing; create it with the Write tool (one line: <topic> then this group's item ids, space-separated) before running this block"; exit 1; }
@@ -546,7 +547,7 @@ else
     case "$PR_REF" in "#$PR_NUMBER"|https://*/pull/"$PR_NUMBER") ;; *) echo "! BLOCKED — PR reference missing or mismatched"; exit 1 ;; esac
 fi
 [ -f "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" ] && IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" || IMPL_DIR=""
-[ -f "${TMPDIR:-/tmp}/resolve-preflight-CODEX_AVAILABLE-${CSID}" ] && IFS= read -r CODEX_AVAILABLE < "${TMPDIR:-/tmp}/resolve-preflight-CODEX_AVAILABLE-${CSID}" || CODEX_AVAILABLE="false"  # reload (Check 41: fresh shell) — set in Step 1; a bare shell var here would always read unset in this separate Bash call, so --codex could never be passed
+[ -f "${TMPDIR:-/tmp}/resolve-preflight-CODEX_AVAILABLE-${CSID}" ] && IFS= read -r CODEX_AVAILABLE < "${TMPDIR:-/tmp}/resolve-preflight-CODEX_AVAILABLE-${CSID}" || CODEX_AVAILABLE="false"  # reload (Check 43: fresh shell) — set in Step 1; a bare shell var here would always read unset in this separate Bash call, so --codex could never be passed
 # grep -c prints 0 AND exits 1 on no match — `|| echo 0` would yield "0\n0" and commit_all_items.py rejects it; only a missing file leaves stdout empty
 # anchored right after id= (resolution= is the field placed there, before any free-text field — see the append
 # block, dispatch-prelude.md) so a reviewer's quoted text can never masquerade as the real field; -i absorbs casing drift

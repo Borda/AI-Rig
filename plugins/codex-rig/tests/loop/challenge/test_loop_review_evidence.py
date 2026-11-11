@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import importlib.util
 import json
@@ -14,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 from _artifact_files import write_json
@@ -33,6 +35,87 @@ CONTEXT_INCOMPLETE = "loop-evidence-review-context-incomplete"
 ENVELOPE_INVALID = "loop-evidence-report-envelope-invalid"
 COVERAGE_MISSING = "loop-evidence-report-coverage-missing"
 ASSESSMENT_INVALID = "loop-evidence-report-assessment-invalid"
+
+
+@pytest.mark.parametrize(
+    ("error", "diagnostic"),
+    [
+        pytest.param(RecursionError("private-path"), "inspection-failed", id="deep-json"),
+        pytest.param(KeyError("private-path"), "inspection-failed", id="missing-key"),
+        pytest.param(TypeError("private-path"), "inspection-failed", id="wrong-type"),
+        pytest.param(OSError("private-path"), "os-error:UNKNOWN", id="unknown-os-error"),
+        pytest.param(FileNotFoundError(errno.ENOENT, "private-path"), "os-error:ENOENT", id="missing-input"),
+        pytest.param(PermissionError(errno.EACCES, "private-path"), "os-error:EACCES", id="unreadable-input"),
+        pytest.param(subprocess.TimeoutExpired("private-command", 30), "git-timeout", id="child-timeout"),
+    ],
+)
+def test_cli_bounds_unexpected_validation_errors(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], error: Exception, diagnostic: str
+) -> None:
+    """Operational failures return exit two without a traceback or local path disclosure."""
+    validator = _validator()
+    monkeypatch.setattr(sys, "argv", [str(VALIDATOR_PATH), "--out", "unused"])
+    monkeypatch.setattr(validator, "validate_loop_evidence", Mock(side_effect=error))
+    assert validator.main() == 2
+    assert capsys.readouterr().err == f"loop-evidence-{diagnostic}\n"
+
+
+def test_comparison_base_bounds_git_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An immutable base lookup cannot wait forever for Git."""
+    validator = _validator()
+    base = "a" * 40
+    run = Mock(return_value=subprocess.CompletedProcess([], 0, stdout=base.encode()))
+    monkeypatch.setattr(validator.subprocess, "run", run)
+    assert validator._comparison_base({"schema_version": 3, "diff_base_oid": base}, Path.cwd()) == base
+    assert 0 < run.call_args.kwargs["timeout"] <= 60
+    argv = run.call_args.args[0]
+    assert argv[argv.index("-c") + 1] == "core.fsmonitor=false"
+
+
+def test_current_patch_bounds_git_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Current-patch validation limits Git runtime while retaining its source recheck."""
+    validator = _validator()
+    run = Mock(return_value=subprocess.CompletedProcess([], 0, stdout=b"patch"))
+    monkeypatch.setattr(validator.subprocess, "run", run)
+    monkeypatch.setattr(validator, "capture_source_snapshot", Mock(return_value={}))
+    assert validator._current_scoped_diff(Path.cwd(), ["widget.py"], {}, "capture-failed") == b"patch"
+    assert 0 < run.call_args.kwargs["timeout"] <= 60
+    argv = run.call_args.args[0]
+    assert argv[argv.index("-c") + 1] == "core.fsmonitor=false"
+
+
+def test_help_explains_success_does_not_prove_completion() -> None:
+    """Successful provenance validation still requires the caller's clean-ledger decision."""
+    completed = subprocess.run(
+        [sys.executable, str(VALIDATOR_PATH), "--help"], capture_output=True, text=True, check=True
+    )
+    assert "check the ledger summary" in completed.stdout
+    assert "zero rounds" in completed.stdout
+    assert "self-attested by the parent triage" in completed.stdout
+
+
+@pytest.mark.parametrize(
+    ("content", "status", "diagnostic"),
+    [
+        pytest.param("[" * 20_000 + "0" + "]" * 20_000, 2, "loop-evidence-inspection-failed", id="deep-json"),
+        pytest.param("{}", 1, "loop-evidence-invalid", id="contract-failure"),
+    ],
+)
+def test_cli_reports_malformed_json_without_traceback(
+    tmp_path: Path, content: str, status: int, diagnostic: str
+) -> None:
+    """Real CLI parsing distinguishes excessive nesting from an ordinary contract rejection."""
+    (tmp_path / "loop-evidence.json").write_text(content, encoding="utf-8")
+    completed = subprocess.run(
+        [sys.executable, str(VALIDATOR_PATH), "--out", str(tmp_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+    )
+    assert completed.returncode == status
+    assert completed.stderr == diagnostic + "\n"
+    assert completed.stdout == ""
 
 
 @pytest.fixture(autouse=True)
@@ -1846,6 +1929,13 @@ class TestParentTriage:
             pytest.param(1, {}, {}, "loop-evidence-triage-coverage-invalid", id="omitted"),
             pytest.param(
                 2,
+                {0: {"tier": "informational", "reason": "Local impact.", "evidence": ["Source proof."]}},
+                {},
+                "loop-evidence-triage-invalid",
+                id="unsupported-tier",
+            ),
+            pytest.param(
+                2,
                 {1: {"reported_signature": "first-guard"}},
                 {},
                 "loop-evidence-triage-raw-duplicate",
@@ -2075,7 +2165,7 @@ def large_dispatch(
     with monkeypatch.context() as host:
         factory = protocol._fake_public_processes(host, launches)
         protocol._adapter().run_review(plan_path, output_root, Path("codex"), 10)
-    requests = [json.loads(line) for line in factory.processes[1].stdin.getvalue().splitlines()]
+    requests = [json.loads(line) for line in factory.processes[0].stdin.getvalue().splitlines()]
     evidence_path = output_root / "evidence.json"
     evidence = json.loads(evidence_path.read_bytes())
     ledger_path = run / "loop-ledger.json"

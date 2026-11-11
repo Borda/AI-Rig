@@ -354,7 +354,7 @@ class TestSourceGuard:
         assert check["status"] == "fail"
         assert check["source"] == {
             "expected_head": expected_head,
-            "before": {"head": head, "status": ""},
+            "before": {"head": head, "status": "", "ignored": "[]"},
             "after": None,
         }
         assert HEAD_MISMATCH in _receipt_text(output, check)
@@ -376,8 +376,8 @@ class TestSourceGuard:
         assert check["exit_code"] == exit_code
         assert check["source"] == {
             "expected_head": head,
-            "before": {"head": head, "status": ""},
-            "after": {"head": head, "status": ""},
+            "before": {"head": head, "status": "", "ignored": "[]"},
+            "after": {"head": head, "status": "", "ignored": "[]"},
         }
 
     @pytest.mark.parametrize(
@@ -405,7 +405,7 @@ class TestSourceGuard:
         assert check["status"] == "fail"
         assert check["source"] == {
             "expected_head": head,
-            "before": {"head": head, "status": expected_status},
+            "before": {"head": head, "status": expected_status, "ignored": "[]"},
             "after": None,
         }
         assert SOURCE_DIRTY_STATUS in _receipt_text(output, check)
@@ -435,8 +435,8 @@ class TestSourceGuard:
         assert check["exit_code"] == 0
         assert check["source"] == {
             "expected_head": head,
-            "before": {"head": head, "status": ""},
-            "after": {"head": actual_head, "status": ""},
+            "before": {"head": head, "status": "", "ignored": "[]"},
+            "after": {"head": actual_head, "status": "", "ignored": "[]"},
         }
         assert HEAD_MISMATCH in _receipt_text(output, check)
 
@@ -460,8 +460,8 @@ class TestSourceGuard:
         assert check["exit_code"] == 0
         assert check["source"] == {
             "expected_head": head,
-            "before": {"head": head, "status": ""},
-            "after": {"head": head, "status": "?? during-gate.txt"},
+            "before": {"head": head, "status": "", "ignored": "[]"},
+            "after": {"head": head, "status": "?? during-gate.txt", "ignored": "[]"},
         }
         assert SOURCE_DIRTY_STATUS in _receipt_text(output, check)
         validator = _load_validator()
@@ -590,7 +590,7 @@ class TestSelectedWorktree:
         assert check["source"] == {
             "expected_head": expected_head,
             "worktree": selected.resolve().as_posix(),
-            "before": {"head": actual_head, "status": ""},
+            "before": {"head": actual_head, "status": "", "ignored": "[]"},
             "after": None,
         }
         assert HEAD_MISMATCH in _receipt_text(output, check)
@@ -612,8 +612,8 @@ class TestSelectedWorktree:
         assert result.returncode == 0
         assert payload["source"] == {"expected_head": expected_head, "worktree": selected.resolve().as_posix()}
         assert source["worktree"] == selected.resolve().as_posix()
-        assert source["before"] == {"head": expected_head, "status": ""}
-        assert source["after"] == {"head": expected_head, "status": ""}
+        assert source["before"] == {"head": expected_head, "status": "", "ignored": "[]"}
+        assert source["after"] == {"head": expected_head, "status": "", "ignored": "[]"}
         assert original.resolve().as_posix() != source["worktree"]
 
     def test_command_runs_in_selected_worktree(self, linked_worktree: tuple[Path, Path, str], output: Path) -> None:
@@ -727,10 +727,9 @@ def editable_checkout(tmp_path: Path, request: pytest.FixtureRequest) -> _Editab
     (tests / "test_demo.py").write_text(
         "from demo_package import VALUE\n"
         "\ndef test_value():\n"
-        "    import os\n"
         "    from pathlib import Path\n"
-        "    if marker := os.environ.get('SOURCE_BOUND_MARKER'):\n"
-        "        Path(marker).write_text('executed', encoding='utf-8')\n"
+        "    marker = Path(__file__).resolve().parents[2] / 'selected-test-ran.txt'\n"
+        "    marker.write_text('executed', encoding='utf-8')\n"
         "    assert VALUE == 'same in both checkouts'\n",
         encoding="utf-8",
         newline="\n",
@@ -881,7 +880,6 @@ class TestEditableSourceProvenance:
         """
         editable_checkout.link_editable(editable_checkout.selected)
         marker = tmp_path / "selected-test-ran.txt"
-        editable_checkout.environment["SOURCE_BOUND_MARKER"] = str(marker)
         editable_checkout.environment.update(extra_environment)
 
         result = editable_checkout.run_tests(output, pytest_arguments=pytest_arguments)
@@ -915,7 +913,6 @@ class TestEditableSourceProvenance:
         """
         editable_checkout.link_editable(editable_checkout.selected)
         marker = tmp_path / "selected-test-ran.txt"
-        editable_checkout.environment["SOURCE_BOUND_MARKER"] = str(marker)
 
         result = editable_checkout.run_tests(output, pytest_arguments=pytest_arguments)
 

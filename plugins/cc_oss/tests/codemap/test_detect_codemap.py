@@ -19,6 +19,20 @@ _CODEMAP = "/usr/bin/codemap-py"
 
 
 @pytest.fixture(autouse=True)
+def _available_probe_response(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Let test-only probe executable paths report current while keeping git subprocesses real."""
+    original_run = subprocess.run
+
+    def run(command: list[str], *args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        """Answer the provider boundary and delegate other commands to the real subprocess runner."""
+        if len(command) > 1 and command[1] in {_CODEMAP, "/usr/bin/check-index-currency"}:
+            return subprocess.CompletedProcess(command, 0, stdout='{"status":"current","reason":"verified"}')
+        return original_run(command, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", run)
+
+
+@pytest.fixture(autouse=True)
 def _isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Point ``TMPDIR`` at ``tmp_path`` and drop ``CODEMAP_INDEX_DIR`` so state files and index lookups stay private."""
     monkeypatch.setenv("TMPDIR", str(tmp_path))
@@ -324,32 +338,118 @@ class TestIndexAnchoring:
 
 
 class TestCurrency:
-    """Currency probe: fail-open, but never silently."""
+    """Currency probe failures disable unverified index use."""
 
     @mock.patch("detect_codemap.subprocess.run", autospec=True, return_value=mock.Mock(returncode=0, stdout="not json"))
     @mock.patch("detect_codemap.shutil.which", autospec=True, side_effect=_which_with_currency_probe)
-    def test_probe_failure_announces_the_coercion(
+    def test_probe_failure_disables_unverified_index(
         self, which: mock.Mock, run: mock.Mock, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """Unparsable probe output writes ``current`` and notes the coercion on stderr.
-
-        The probe's answer is unusable, so the index is treated as current rather than blocking the run, but the warning
-        says staleness was not verified so the fail-open choice is never silent.
-        """
+        """Unparsable probe output writes unknown currency and disables the index with a warning."""
         idx_dir = _make_index_dir(tmp_path, "idx", "proj.json")
         rc = detect_codemap.main(["--prefix", "test", "--proj", "proj", "--idx-dir", str(idx_dir)])
         assert rc == 0
-        assert (tmp_path / "test-codemap-currency-shared").read_text() == "current\n"
+        assert (tmp_path / "test-codemap-currency-shared").read_text() == "unknown\n"
+        assert _enabled(tmp_path) == "false\n"
         assert "staleness was NOT verified" in capsys.readouterr().err
 
     @mock.patch("detect_codemap.shutil.which", autospec=True, side_effect=_which_without_currency_probe)
-    def test_probe_absent_is_silent(self, which: mock.Mock, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """Without ``check-index-currency`` on PATH the state is ``current`` and no warning is printed.
-
-        An absent optional probe is not a failure, so nothing is announced.
-        """
+    def test_probe_absent_disables_index(
+        self, which: mock.Mock, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """An absent probe leaves currency unknown and prevents index use."""
         idx_dir = _make_index_dir(tmp_path, "idx", "proj.json")
         rc = detect_codemap.main(["--prefix", "test", "--proj", "proj", "--idx-dir", str(idx_dir)])
         assert rc == 0
-        assert (tmp_path / "test-codemap-currency-shared").read_text() == "current\n"
-        assert "staleness was NOT verified" not in capsys.readouterr().err
+        assert (tmp_path / "test-codemap-currency-shared").read_text() == "unknown\n"
+        assert _enabled(tmp_path) == "false\n"
+        assert "staleness was NOT verified" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("prefix", ["../escape", "a/b", "a\\b", "name\n", ".", ".."])
+def test_prefix_rejects_unsafe_names(prefix: str, tmp_path: Path) -> None:
+    """Unsafe sentinel prefixes fail before writing any session state."""
+    assert detect_codemap.main(["--prefix", prefix, "--force-off"]) == 2
+    assert list(tmp_path.iterdir()) == []
+
+
+@mock.patch("detect_codemap.subprocess.run", autospec=True)
+@mock.patch("detect_codemap.shutil.which", autospec=True, side_effect=_which_with_currency_probe)
+@pytest.mark.parametrize(
+    ("code", "payload"),
+    [
+        pytest.param(1, '{"status":"current"}', id="nonzero-current"),
+        pytest.param(0, '{"status":"stale"}', id="zero-stale"),
+        pytest.param(0, '{"status":"no_index"}', id="zero-no-index"),
+        pytest.param(3, '{"status":"stale"}', id="unexpected-exit"),
+        pytest.param(2, '{"status":"stale"}', id="mismatched-nonzero"),
+        pytest.param(0, "null", id="null-response"),
+        pytest.param(0, '{"status":"invented"}', id="unknown-status"),
+        pytest.param(0, "{}", id="absent-status"),
+        pytest.param(0, '{"status":null}', id="null-status"),
+        pytest.param(0, '{"status":[]}', id="list-status"),
+    ],
+)
+def test_unusable_probe_fails_closed(which: mock.Mock, run: mock.Mock, tmp_path: Path, code: int, payload: str) -> None:
+    """Only a successful probe with a recognized status can verify currency."""
+    run.return_value = subprocess.CompletedProcess([], code, stdout=payload)
+    assert detect_codemap._check_currency(tmp_path / "index.json")[0] == "unknown"
+
+
+@mock.patch("detect_codemap.subprocess.run", autospec=True, side_effect=subprocess.TimeoutExpired("probe", 15))
+@mock.patch("detect_codemap.shutil.which", autospec=True, side_effect=_which_with_currency_probe)
+def test_strict_probe_failure_writes_disabled_before_exit(which: mock.Mock, run: mock.Mock, tmp_path: Path) -> None:
+    """A strict failure overwrites previously enabled state before returning an error."""
+    idx_dir = _make_index_dir(tmp_path, "idx", "proj.json")
+    (tmp_path / "test-codemap-enabled-shared").write_text("true\n")
+    assert detect_codemap.main(["--prefix", "test", "--proj", "proj", "--idx-dir", str(idx_dir), "--strict"]) == 1
+    assert _enabled(tmp_path) == "false\n"
+
+
+@mock.patch("detect_codemap.subprocess.run", autospec=True)
+@mock.patch("detect_codemap.shutil.which", autospec=True, side_effect=_which_with_currency_probe)
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        pytest.param("current", "true\n", id="current-enabled"),
+        pytest.param("stale", "true\n", id="stale-retains-refresh-gate"),
+        pytest.param("no_index", "false\n", id="provider-rejects-index"),
+    ],
+)
+def test_verified_provider_status_controls_enabled_state(
+    which: mock.Mock, run: mock.Mock, tmp_path: Path, status: str, expected: str
+) -> None:
+    """Stale indexes reach the refresh gate, while a provider-rejected index stays disabled."""
+    code = {"current": 0, "stale": 1, "no_index": 2}[status]
+    run.return_value = subprocess.CompletedProcess([], code, stdout=f'{{"status":"{status}"}}')
+    idx_dir = _make_index_dir(tmp_path, "idx", "proj.json")
+    assert detect_codemap.main(["--prefix", "test", "--proj", "proj", "--idx-dir", str(idx_dir)]) == 0
+    assert _enabled(tmp_path) == expected
+    assert (tmp_path / "test-codemap-currency-shared").read_text() == status + "\n"
+
+
+@pytest.mark.integration
+def test_real_probe_accepts_stale_index(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The shipped provider's stale exit code keeps the index eligible for refresh."""
+    probe = Path(__file__).resolve().parents[3] / "codemap-py" / "bin" / "check-index-currency"
+    monkeypatch.setattr(detect_codemap.shutil, "which", lambda name: str(probe) if name == probe.name else _CODEMAP)
+    monkeypatch.chdir(tmp_path)
+    index = tmp_path / "index.json"
+    index.write_text("{}", encoding="utf-8")
+    assert detect_codemap._check_currency(index) == ("stale", "no file_shas in index — rebuild required")
+
+
+@mock.patch("detect_codemap.subprocess.run", autospec=True)
+def test_extensionless_probe_beside_pathext_launcher(
+    run: mock.Mock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A PATHEXT-only lookup still finds the provider's extensionless sibling probe."""
+    launcher = tmp_path / "codemap-py.cmd"
+    launcher.write_text("", encoding="utf-8")
+    probe = tmp_path / "check-index-currency"
+    probe.write_text("", encoding="utf-8")
+    monkeypatch.setattr(detect_codemap.shutil, "which", lambda name: str(launcher) if name == "codemap-py" else None)
+    run.return_value = subprocess.CompletedProcess([], 0, stdout='{"status":"current"}')
+    index = tmp_path / "index.json"
+    assert detect_codemap._check_currency(index) == ("current", "")
+    assert run.call_args.args[0] == [sys.executable, str(probe), "--index-path", str(index)]

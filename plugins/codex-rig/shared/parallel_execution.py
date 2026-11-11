@@ -99,8 +99,13 @@ _PROMOTED_PORTABLE_READ_CONSUMERS = frozenset({"code-review", "implement", "mana
 _SECRET_PATTERNS = (
     re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
     re.compile(r"(?i)authorization\s*:\s*bearer\s+\S+"),
-    re.compile(r"\b(?:gh[pousr]|github_pat)_[A-Za-z0-9_]{20,}\b"),
-    re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b"),
+    re.compile(r"(?<![A-Za-z0-9])(?:gh[pousr]|github_pat)_[A-Za-z0-9_]{20,}\b"),
+    re.compile(r"(?<![A-Za-z0-9])sk-[A-Za-z0-9_-]{20,}\b"),
+    re.compile(r"(?<![A-Za-z0-9])(?:AKIA|ASIA)[A-Z0-9]{16}\b"),
+    re.compile(r"(?<![A-Za-z0-9])xox[baprs]-[A-Za-z0-9-]{10,}\b"),
+    re.compile(r"(?<![A-Za-z0-9])AIza[A-Za-z0-9_-]{35}\b"),
+    re.compile(r"(?<![A-Za-z0-9])npm_[A-Za-z0-9]{36,}\b"),
+    re.compile(r"(?<![A-Za-z0-9])eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{20,}\b"),
 )
 
 

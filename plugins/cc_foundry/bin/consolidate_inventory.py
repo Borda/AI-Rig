@@ -50,6 +50,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import bisect
 import hashlib
 import html
 import json
@@ -114,8 +115,8 @@ _CLUSTER_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
 #: One item of an inline YAML list: a quoted string (commas allowed inside) or a bare word.
 _INLINE_ITEM = re.compile(r"'(?:[^']|'')*'|\"[^\"]*\"|[^, \t][^,]*")
 
-#: A ``<!-- policy-sibling: ... -->`` marker, capturing its payload.
-_SIBLING = re.compile(r"<!--\s*policy-sibling:\s*(.*?)\s*-->", re.DOTALL)
+#: The opening prefix of a ``<!-- policy-sibling: ... -->`` marker.
+_SIBLING = re.compile(r"<!--\s*policy-sibling:")
 
 #: A repo-relative path inside a sibling payload (up to whitespace, comma, parenthesis or section sign).
 _SIBLING_PATH = re.compile(r"(?:plugins|tests|\.claude|\.codex)/[^\s,()§]+")
@@ -186,7 +187,8 @@ _HTML_TAG_ALONE = re.compile(r"^ {0,3}(?:<[A-Za-z][A-Za-z0-9-]*(?:\s[^<>]*)?/?>|
 #: A ``<file>.md §<Heading>`` or ``<file>.md (§<Heading>)`` citation, capturing the file name and the text from the
 #: first heading on to the next file.
 _CITATION = re.compile(
-    r"([\w./\\-]+\.md)[`'\"\])]*\s*\(?\s*§\s*([`'\"*_\u201c\u2018]*)((?:(?![\w./\\-]+\.md[`'\"\])]*\s*\(?\s*§)[^;|\n])+)"
+    r"(?<![\w./\\-])([\w./\\-]+\.md)[`'\"\])]*(?:\s*\(\s*|\s*)§\s*([`'\"*_\u201c\u2018]*)"
+    r"((?:(?!(?<![\w./\\-])[\w./\\-]+\.md[`'\"\])]*(?:\s*\(\s*|\s*)§)[^;|\n])+)"
 )
 
 #: Quote or emphasis marks that close a quoted heading: followed by a space, a separator or the end of the text.
@@ -258,7 +260,8 @@ _YAML_UNREAD_CHAR = re.compile(r"[^\n\r\x20-\x7e\xa0-\ud7ff\ue000-\ufffd\U000100
 
 #: Plain scalars YAML reads as something other than a string: null, booleans, numbers and dates.
 _TYPED_PLAIN = re.compile(
-    r"^(?:~|null|true|false|yes|no|on|off|y|n|<<|=|[-+]?\.(?:inf|nan)|[-+]?(?=[\d_.]*\d)[\d_]*\.?[\d_]*(?:e[-+]?\d+)?"
+    r"^(?:~|null|true|false|yes|no|on|off|y|n|<<|=|[-+]?\.(?:inf|nan)"
+    r"|[-+]?(?=[\d_.]*\d)(?:[\d_]+(?:\.[\d_]*)?|\.[\d_]+)(?:e[-+]?\d+)?"
     r"|[-+]?0b[01_]+|[-+]?0x[0-9a-f_]+|[-+]?0o?[0-7_]+|[-+]?\d[\d_]*(?::[0-5]?\d)+(?:\.\d*)?"
     r"|\d{4}-\d\d?-\d\d?(?:[t ].*)?)$",
     re.IGNORECASE,
@@ -1164,16 +1167,17 @@ _ESCAPE_OR_ENTITY = re.compile(
     r"\\([!-/:-@\[-`{-~])|(&(?:#[0-9]{1,7}|#[xX][0-9a-fA-F]{1,6}|[A-Za-z][A-Za-z0-9]{1,31});)"
 )
 
-#: A CommonMark raw HTML tag (attribute values in quotes may hold ``>``): an open or closing tag, a processing
-#: instruction, a declaration, a CDATA section or a comment.
+#: A CommonMark raw HTML tag (attribute values in quotes may hold ``>``): an open or closing tag.
+#: Processing instructions, declarations, CDATA sections and comments use their literal closing delimiters.
 _HTML_TAG = re.compile(
     r"<[A-Za-z][A-Za-z0-9-]*(?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*(?:\s*=\s*(?:[^\s\"'=<>`]+|'[^']*'|\"[^\"]*\"))?)*\s*/?>"
-    r"|</[A-Za-z][A-Za-z0-9-]*\s*>|<\?.*?\?>|<![A-Za-z][^>]*>|<!\[CDATA\[.*?\]\]>|<!--.*?-->",
+    r"|</[A-Za-z][A-Za-z0-9-]*\s*>",
     re.DOTALL,
 )
+_HTML_DECLARATION = re.compile(r"<![A-Za-z]")
 
 #: A cited file name followed by a section sign: where the text cited for one file ends and the next file's begins.
-_FILE_SIGN = re.compile(r"[\w./\\-]+\.md[`'\"\])]*\s*\(?\s*§")
+_FILE_SIGN = re.compile(r"(?<![\w./\\-])[\w./\\-]+\.md[`'\"\])]*(?:\s*\(\s*|\s*)§")
 
 #: Up to three words just before a cited file name, in case the name itself holds spaces (``my rules.md``), even when
 #: a line break falls between them.
@@ -1195,7 +1199,66 @@ _AUTOLINK = re.compile(
 )
 
 
-def _link_target_end(text: str, pos: int) -> int:
+def _link_delimiters(text: str) -> tuple[dict[int, int], dict[str, list[int]]]:
+    """Index unescaped target delimiters and balanced parentheses within each destination run."""
+    pairs: dict[int, int] = {}
+    closers: dict[str, list[int]] = {}
+    stack: list[int] = []
+    pos = 0
+    while pos < len(text):
+        char = text[pos]
+        if char == "\\":
+            if text[pos + 1 : pos + 2] == "\n":
+                closers.setdefault("\n", []).append(pos + 1)
+            pos += 2
+            continue
+        if char in ">\"')\n":
+            closers.setdefault(char, []).append(pos)
+        if char <= " " or char == "\x7f":
+            stack.clear()
+        elif char == "(":
+            stack.append(pos)
+        elif char == ")" and stack:
+            pairs[stack.pop()] = pos
+        pos += 1
+    return pairs, closers
+
+
+def _link_destination_end(text: str, pos: int, pairs: dict[int, int]) -> int:
+    """Return the end of an unbracketed destination, rejecting unmatched opening parentheses."""
+    while pos < len(text) and text[pos] > " " and text[pos] != "\x7f":
+        char = text[pos]
+        if char == "\\":
+            pos += 2
+        elif char == "(":
+            if pos not in pairs:
+                return -1
+            pos = pairs[pos] + 1
+        elif char == ")":
+            break
+        else:
+            pos += 1
+    return pos
+
+
+def _link_title_end(text: str, pos: int, closers: dict[str, list[int]]) -> int:
+    """Return the closing target boundary after its optional whitespace-separated title."""
+    size = len(text)
+    after = pos
+    while after < size and text[after] in " \t\n":
+        after += 1
+    if after > pos and after < size and text[after] in "\"'(":
+        positions = closers.get({"(": ")"}.get(text[after], text[after]), [])
+        index = bisect.bisect_left(positions, after + 1)
+        if index >= len(positions):
+            return -1
+        after = positions[index] + 1
+        while after < size and text[after] in " \t\n":
+            after += 1
+    return after + 1 if after < size and text[after] == ")" else -1
+
+
+def _link_target_end(text: str, pos: int, pairs: dict[int, int], closers: dict[str, list[int]]) -> int:
     """Return the index after the ``)`` that closes a link target starting at ``pos``, or -1 when it is no target.
 
     A target is a destination (``<...>``, or a run without spaces or control characters and with balanced parentheses),
@@ -1204,41 +1267,24 @@ def _link_target_end(text: str, pos: int) -> int:
     """
     size = len(text)
 
-    def skip_space(at: int) -> int:
-        while at < size and text[at] in " \t\n":
-            at += 1
-        return at
-
     def find_close(at: int, mark: str) -> int:
-        while at < size and text[at] != mark:
-            at += 2 if text[at] == "\\" else 1
-        return at if at < size else -1
+        positions = closers.get(mark, [])
+        index = bisect.bisect_left(positions, at)
+        return positions[index] if index < len(positions) else -1
 
-    pos = skip_space(pos)
+    while pos < size and text[pos] in " \t\n":
+        pos += 1
     if pos < size and text[pos] == "<":
         close = find_close(pos + 1, ">")
-        if close < 0 or "\n" in text[pos:close]:
+        newline = find_close(pos + 1, "\n")
+        if close < 0 or 0 <= newline < close:
             return -1
         pos = close + 1
     else:
-        depth = 0
-        while pos < size and text[pos] > " " and text[pos] != "\x7f":
-            if text[pos] == "\\":
-                pos += 2
-                continue
-            depth += (text[pos] == "(") - (text[pos] == ")")
-            if depth < 0:
-                break
-            pos += 1
-        if depth > 0:
+        pos = _link_destination_end(text, pos, pairs)
+        if pos < 0:
             return -1
-    after = skip_space(pos)
-    if after > pos and after < size and text[after] in "\"'(":
-        end = find_close(after + 1, {"(": ")"}.get(text[after], text[after]))
-        if end < 0:
-            return -1
-        after = skip_space(end + 1)
-    return after + 1 if after < size and text[after] == ")" else -1
+    return _link_title_end(text, pos, closers)
 
 
 def _drop_link_targets(text: str) -> str:
@@ -1246,15 +1292,56 @@ def _drop_link_targets(text: str) -> str:
     kept: list[str] = []
     done = 0
     scan = 0
+    pairs, closers = _link_delimiters(text)
     while (hit := text.find("](", scan)) >= 0:
-        slashes = len(text[:hit]) - len(text[:hit].rstrip("\\"))
-        end = -1 if slashes % 2 else _link_target_end(text, hit + 2)
+        before = hit
+        while before > 0 and text[before - 1] == "\\":
+            before -= 1
+        end = -1 if (hit - before) % 2 else _link_target_end(text, hit + 2, pairs, closers)
         if end < 0:
             scan = hit + 2
             continue
         kept.append(text[done : hit + 1])
         done = scan = end
     return "".join(kept) + text[done:]
+
+
+def _html_token_end(text: str, start: int, ends: dict[str, int]) -> int:
+    """Return one raw HTML token's end using cached literal terminators for non-tag tokens."""
+    prefix, mark = next(
+        (
+            (prefix, end)
+            for prefix, end in (("<!--", "-->"), ("<?", "?>"), ("<![CDATA[", "]]>"))
+            if text.startswith(prefix, start)
+        ),
+        ("", ""),
+    )
+    if not mark and _HTML_DECLARATION.match(text, start):
+        prefix, mark = text[start : start + 3], ">"
+    if not mark:
+        match = _HTML_TAG.match(text, start)
+        return match.end() if match else -1
+    minimum = start + len(prefix)
+    end = ends[mark]
+    if 0 <= end < minimum:
+        end = ends[mark] = text.find(mark, minimum)
+    return end + len(mark) if end >= 0 else -1
+
+
+def _drop_html_tags(text: str) -> str:
+    """Drop complete raw HTML tokens without retrying unfinished token suffixes."""
+    kept: list[str] = []
+    pos = 0
+    scan = 0
+    ends = {mark: text.find(mark) for mark in ("-->", "?>", "]]>", ">")}
+    while (start := text.find("<", scan)) >= 0:
+        end = _html_token_end(text, start, ends)
+        if end >= 0:
+            kept.append(text[pos:start])
+            pos = scan = end
+        else:
+            scan = start + 1
+    return "".join(kept) + text[pos:]
 
 
 def _plain_title(title: str) -> str:
@@ -1266,10 +1353,10 @@ def _plain_title(title: str) -> str:
     """
     text = _ESCAPE_OR_ENTITY.sub(lambda m: m.group(1) or html.unescape(m.group(2)), _drop_link_targets(title))
     text = _AUTOLINK.sub(r"\1", unicodedata.normalize("NFKC", text))
-    text = _HTML_TAG.sub("", text)
+    text = _drop_html_tags(text)
     text = re.sub(r"\]\[[^\[\]]*\]", "]", text)
     text = re.sub(r"[\[\]]|!(?=\[)", "", text)
-    return re.sub(r"[`*~]+|(?<!\w)_+|_+(?!\w)", "", text)
+    return re.sub(r"[`*~]+|(?<!\w)_+|(?<!_)_+(?!\w)", "", text)
 
 
 def _normalize_title(title: str) -> str:
@@ -1292,7 +1379,10 @@ class Mention:
 
 def _markdown_files(root: Path) -> list[Path]:
     """Return every Markdown file under ``plugins/``: the files whose text can cite a section."""
-    return sorted((root / "plugins").rglob("*.md"))
+    base = root.resolve()
+    return sorted(
+        path for path in (root / "plugins").rglob("*.md") if path.is_file() and path.resolve().is_relative_to(base)
+    )
 
 
 def citation_digest(root: Path) -> str:
@@ -1579,6 +1669,19 @@ def merge_allowed(group: str) -> bool:
     return group.startswith(("always:", "scoped:"))
 
 
+def _sibling_markers(text: str) -> list[tuple[int, str]]:
+    """Return the offsets and payloads of complete policy sibling markers."""
+    found: list[tuple[int, str]] = []
+    pos = 0
+    while marker := _SIBLING.search(text, pos):
+        end = text.find("-->", marker.end())
+        if end < 0:
+            break
+        found.append((marker.start(), text[marker.end() : end].strip()))
+        pos = end + 3
+    return found
+
+
 def _block_dependencies(items: list[Item], sections: list[tuple[str, int, int, str]], text: str, root: Path) -> None:
     """Record on ``items`` every dependency that makes a merge unsafe: shared copy, frontmatter, policy siblings."""
     for item in items:
@@ -1586,9 +1689,9 @@ def _block_dependencies(items: list[Item], sections: list[tuple[str, int, int, s
             item.blocked.append(f"shared-file: {item.shared}")
     if sections and sections[0][0] == "(frontmatter)":
         items[0].blocked.append("frontmatter: routing or scope metadata (description, trigger, paths)")
-    for marker in _SIBLING.finditer(text):
-        line = text.count("\n", 0, marker.start()) + 1
-        targets = sibling_targets(marker.group(1))
+    for start, payload in _sibling_markers(text):
+        line = text.count("\n", 0, start) + 1
+        targets = sibling_targets(payload)
         missing = [t for t in targets if not (root / t).exists()]
         owner = section_for_line(sections, line)
         file_wide = owner < 0 or sections[owner][0] in ("(preamble)", "(frontmatter)")
@@ -2940,6 +3043,9 @@ def _run_collect(args: argparse.Namespace) -> int:
     """Run the collect subcommand: join the JSON lists of the files a pattern names into one list."""
     root = Path(args.root).resolve()
     folder = Path(args.dir).resolve()
+    if ".." in args.glob or "/" in args.glob or "\\" in args.glob:
+        print("! BLOCKED — --glob must be a bare filename pattern without '..'")
+        return 1
     if not _allowed_output(Path(args.out), root, folder):
         print(f"! BLOCKED — {args.out} is not a run artifact location inside {args.dir}")
         return 1

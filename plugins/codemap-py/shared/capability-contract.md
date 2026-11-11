@@ -85,26 +85,26 @@ Complete-query paths are caller-repo-relative, never Skill-relative; do not re-q
 
 ## Skill: `test-impact`
 
-**Purpose**: identify the minimal test set affected by a changed function or module via static call/import graph traversal (no test execution); emits a ready-to-run `pytest` command.
+**Purpose**: identify the minimal static test set for a changed function/module or the union of working-tree Python changes (no test execution); emits a ready-to-run `pytest` command.
 
-**Inputs**: `<module::symbol | module> [--no-mocks]`. Function-level (`module::symbol`) does BFS over the reverse call graph; module-level (bare `module`) does BFS over the reverse import graph. Both include tests that mock the target (`mock_patches`) unless `--no-mocks` is passed.
+**Inputs**: `[<module::symbol | module>] [--no-mocks]`. Function-level (`module::symbol`) does BFS over the reverse call graph; module-level (bare `module`) does BFS over the reverse import graph. Both include tests that mock the target (`mock_patches`) unless `--no-mocks` is passed. Omitted target queries `diff-impact` for tracked staged and unstaged Python changes against `HEAD` (untracked excluded); `len(changed_modules) + len(unmapped_files) > 1` selects the whole-change union. Zero/one changed file or unavailable diff analysis asks for a concrete target, retaining original flags; failed diff analysis is never an empty result.
 
-**Outputs**: JSON with `test_files`, `pytest_cmd`, `via_call`/`via_mock` breakdown, `index` block. Rendered as: affected-tests list + copy-pasteable pytest command + caveat line when applicable.
+**Outputs**: single-target JSON with `test_files`, `pytest_cmd`, `via_call`/`via_mock` breakdown and `index`; rendered with target-only scope and other-changed-module count (or count unknown). Whole-change analysis uses `summarize_test_impact.py --diff-impact`: `test_impact.test_files`, `test_impact.total`, `test_impact.pytest_cmd`, `index`, `unmapped_files` and `changed_modules[].errors`, scoped to `working-tree changes`, without invented call/mock counts. With `--no-mocks`, `test_impact_union.py` batches all changed modules and their changed symbols from the original diff, fails on any failed query, and adds `diff_index`, batch `index` and `target_caveats`. Render affected tests, host-quoted pytest command and all completeness/coverage caveats; `test_files` is authoritative for other shells.
 
 **Exit codes**: `0` success including `total == 0` (valid "no tests found" result, not an error); `1` index build/query failure or non-JSON output from the underlying query; `2` no target supplied and the interactive clarification path is unavailable (non-interactive runtime); `127` propagated from a missing interpreter at the `scan-query` binary boundary.
 
-**Completeness metadata**: `index.not_covered` surfaced as a caveat (dynamic dispatch, hook callbacks, string-dispatch callers — same blind spot as `fn-blast`); this is a structural limitation of static analysis, not a query-quality defect, and is never closed by grepping.
+**Completeness metadata**: `index.query_complete: false` or `index.stale: true` is caveated on both empty and nonempty outputs independently of `not_covered`; missing signals stay absent, and `completeness_reason` may be absent on compact complete answers. Surface `index.not_covered` (dynamic dispatch, hook callbacks, string-dispatch callers — same blind spot as `fn-blast`); this static limitation is never closed by grepping. Whole-change unions always retain that limitation, unmapped files and module errors, even on the question route; failed subqueries may be omitted without listed errors, so never claim complete coverage. Mock-excluding unions retain both diff/batch metadata and every target caveat.
 
 **Caveats**:
 
-- Accepts exactly one symbol/module per invocation; multiple space-separated tokens use only the first — the discarded remainder must be surfaced, never silently dropped.
+- Accepts one explicit symbol/module per invocation; multiple space-separated tokens use only the first — the discarded remainder must be surfaced, never silently dropped. Omitted-target whole-change routing is the separate union mode.
 - Underlying JSON may carry non-JSON prefix/suffix noise on some model tiers — the truth claim is "test-impact returns exactly the JSON payload's `test_files`/`pytest_cmd` fields," and a runtime that can't parse it must fail loudly (re-run/rebuild suggestion), never guess.
 
 **NOT for**: enumerating all callers of a function (`query-code fn-blast`); running the identified tests (identifies, does not execute).
 
 ## Skill: `rename-refs`
 
-**Purpose**: atomic rename of a Python symbol or module across every statically discoverable site — definition, `__all__` re-exports, import call sites (via `fn-rdeps`/`rdeps` + symbol line-range narrowing), Sphinx docstring cross-refs (`:func:`/`:class:`/`:meth:`/`:mod:`/`:attr:`) — with optional deprecated-alias (`--deprecate`) or hard-delete (`--remove-if-no-callers`) behavior.
+**Purpose**: best-effort rename of a Python symbol or module with preflight and verification across statically discoverable sites — definition, `__all__` re-exports, import call sites (via `fn-rdeps`/`rdeps` + symbol line-range narrowing), Sphinx docstring cross-refs (`:func:`/`:class:`/`:meth:`/`:mod:`/`:attr:`) — with optional deprecated-alias (`--deprecate`) or hard-delete (`--remove-if-no-callers`) behavior. A post-edit failure can leave partial changes without automatic rollback; the summary names edited files and remaining work.
 
 **Inputs**: `symbol <old_qname> <new_qname> [--dry-run] [--deprecate[=<decorator>]] [--since <ver>] [--removed-in <ver>] [--remove-if-no-callers]` or `module <old_module_path> <new_module_path> [--dry-run]`. 1:1 renames only.
 
@@ -112,14 +112,14 @@ Complete-query paths are caller-repo-relative, never Skill-relative; do not re-q
 
 **Exit codes**: `0` rename applied and verified (or dry-run report written); `1` index missing/ staleness abort, symbol not found, or scan-index re-verify failure; `2` invalid subcommand/flag or conflicting flags (`--deprecate` + `--remove-if-no-callers`); `3` zero matches for the target symbol/module (distinct from a valid "renamed with zero callers" outcome, which is `0`).
 
-**Completeness metadata**: gates every mutating action on the index's `exhaustive`/`stale` state — `--remove-if-no-callers` refuses to fire unless the caller count is both `0` and exhaustive, and refuses a zero-caller answer carrying a method/constructor `hint` (instance calls, overrides, subclass constructors, and implicit protocol (dunder) calls are never resolved statically, so zero static callers is not evidence of none); a non-exhaustive rename proceeds but the summary must carry the non-exhaustive caveat.
+**Completeness metadata**: inspect every query's `query_complete`/`stale` metadata (legacy `exhaustive` only when `query_complete` is absent). Explicit recorded Proceed anyway permits uniquely resolved, source-verified known callers with stale/incomplete metadata; preserve that caveat in the blast report and summary. `--remove-if-no-callers` still refuses unless the caller count is both `0` and exhaustive, and refuses a zero-caller method/constructor `hint` (instance calls, overrides, subclass constructors and implicit protocol calls are unresolved statically). Post-query metadata must be complete/fresh when pre-rename evidence was exhaustive; otherwise compare known identities and preserve the non-exhaustive caveat.
 
 **Caveats** (static-analysis hard limits — not fixable by this skill, must be surfaced, never silently missed):
 
 - `getattr(obj, "old_name")` string-bound dispatch — not statically tracked; grep advisory emitted.
 - Cross-repo callers — out of scope; recommend `--deprecate` + semver bump for public APIs.
 - ABC/Protocol subclass overrides — not tracked by static import analysis; must be reviewed and renamed manually via `fn-rdeps` inspection.
-- Caller count > 50 → retain the full caller report and stop before any source edit on either host, including deprecation mode. At or below the budget, resolve every known caller before any source edit; missing, ambiguous or stale sites stop with source unchanged. Both symbol and module migrations must cover every known caller; unexpected drift or failed consumer checks leaves migration incomplete, never successful.
+- Caller count alone never blocks migration. Save the full caller/source inventory before confirmation and edits; missing, ambiguous or source-mismatched sites stop with source unchanged. Apply from saved caller ranges without re-querying after edits, allowing only recorded substitutions. Completion requires a successful rescan, old-target/residual checks, consumer identity/source comparisons and separate provider/consumer import processes bounded to 20 seconds per module. History references and the suggested test-impact pytest command are advisory; tests never run automatically. Unresolved references or failed/unavailable required checks leave migration incomplete; success reports verified/known consumer counts and residual classifications.
 
 **NOT for**: building the index (`scan-codebase`); querying without rename intent (`query-code`); non-Python files; 1:N symbol splits; package-directory rename (use `git mv` directly). No `--index <path>` override — always operates against the default project index.
 

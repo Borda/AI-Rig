@@ -230,3 +230,81 @@ class TestCli:
         hook = hook_file('const RTK_PREFIXES = ["bogus"];\n')
         assert run_cli("--hook", str(hook)) == 0
         assert "! INVALID hook prefix: 'bogus'" in capsys.readouterr().out
+
+    @mock.patch.object(
+        cra.subprocess,
+        "run",
+        autospec=True,
+        return_value=subprocess.CompletedProcess(args=[], returncode=0, stdout=_HELP, stderr=""),
+    )
+    @mock.patch.object(cra.shutil, "which", autospec=True, return_value=_RTK_PATH)
+    def test_help_runs_the_absolute_resolved_executable(
+        self,
+        mock_which: mock.Mock,
+        mock_run: mock.Mock,
+        hook_file: Callable[[str], Path],
+        run_cli,
+    ) -> None:
+        """The checked executable is passed by absolute path so Windows cannot search cwd again."""
+        hook = hook_file('const RTK_PREFIXES = ["search"];\n')
+
+        assert run_cli("--hook", str(hook)) == 0
+        assert mock_run.call_args.args[0] == [str(Path(_RTK_PATH).resolve()), "--help"]
+
+
+class TestExecutableResolution:
+    """Executable lookup excludes the audited checkout before consulting the platform finder."""
+
+    @mock.patch.object(cra.shutil, "which", autospec=True)
+    def test_windows_lookup_checks_pathext_candidates(
+        self, mock_which: mock.Mock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Python finders that require an exact filename can locate external Windows executables."""
+        checkout = tmp_path / "checkout"
+        checkout.mkdir()
+        external = tmp_path / "tools"
+        external.mkdir()
+        executable = external / "rtk.EXE"
+        monkeypatch.chdir(checkout)
+        monkeypatch.setattr(cra.sys, "platform", "win32")
+        monkeypatch.setattr(cra.os, "pathsep", ";")
+        monkeypatch.setattr(cra.os, "get_exec_path", lambda: [str(checkout), str(external)])
+        monkeypatch.setenv("PATHEXT", ".COM;.EXE;.BAT")
+        mock_which.side_effect = lambda candidate: candidate if candidate == str(executable) else None
+
+        assert cra.resolve_rtk() == str(executable)
+        assert mock_which.call_args_list == [
+            mock.call(str(external / "rtk")),
+            mock.call(str(external / "rtk.COM")),
+            mock.call(str(executable)),
+        ]
+
+    @mock.patch.object(cra.shutil, "which", autospec=True)
+    def test_cwd_path_entries_are_never_searched(self, mock_which: mock.Mock, tmp_path: Path, monkeypatch) -> None:
+        """Even a Windows finder that prepends cwd receives only an explicit external candidate path."""
+        checkout = tmp_path / "checkout"
+        checkout.mkdir()
+        external = tmp_path / "tools"
+        external.mkdir()
+        monkeypatch.chdir(checkout)
+        monkeypatch.setenv("PATH", str(checkout) + cra.os.pathsep + str(external))
+        executable = external / "rtk.exe"
+        mock_which.return_value = str(executable)
+
+        assert cra.resolve_rtk() == str(executable)
+        mock_which.assert_called_once_with(str(external / "rtk"))
+
+    @mock.patch.object(cra.shutil, "which", autospec=True)
+    def test_resolved_executable_inside_checkout_is_rejected(
+        self, mock_which: mock.Mock, tmp_path: Path, monkeypatch
+    ) -> None:
+        """A finder result pointing back into the checkout is never admitted for execution."""
+        checkout = tmp_path / "checkout"
+        checkout.mkdir()
+        external = tmp_path / "tools"
+        external.mkdir()
+        monkeypatch.chdir(checkout)
+        monkeypatch.setenv("PATH", str(external))
+        mock_which.return_value = str(checkout / "rtk.exe")
+
+        assert cra.resolve_rtk() is None

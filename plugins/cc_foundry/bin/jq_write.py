@@ -19,6 +19,10 @@ in ``~/.claude/`` (``settings.json``, ``settings.local.json``) — the user sett
 outside. ``--slurpfile`` sources must resolve under cwd, ``TMPDIR`` or ``~/.claude/``
 (a plugin's shipped ``.claude-plugin/*.json`` lives in the plugin cache there).
 
+The 30-second subprocess timeout is enforced on every platform. The 256 MiB address-space limit is best-effort:
+macOS does not reliably enforce ``RLIMIT_AS``, and Windows has no limit here. Memory-intensive filters can exceed
+that bound on those platforms.
+
 Exit codes:
     0 — success
     1 — target file missing
@@ -47,17 +51,18 @@ from pathlib import Path
 _OPERAND_COUNTS = {"--arg": 2, "--argjson": 2, "--indent": 1, "--slurpfile": 2}
 #: Hostile jq filters can exhaust CPU/memory (CWE-400); cap wall-clock at 30s.
 _JQ_TIMEOUT_SECONDS = 30
-#: Hard virtual-memory ceiling for the jq subprocess (bytes). 256 MB is far
+#: Best-effort virtual-memory ceiling for the jq subprocess (bytes). 256 MB is far
 #: beyond any realistic foundry config file (typical settings.json is < 64 KB)
 #: while still stopping a runaway filter that builds large in-memory data.
 _JQ_MEMORY_LIMIT_BYTES = 256 * 1024 * 1024
 
 
 def _jq_preexec() -> None:  # pragma: no cover — runs in subprocess fork
-    """Build a subprocess initializer that caps the child address space.
+    """Attempt to cap the child address space on platforms that enforce resource limits.
 
     Unix-only (``resource`` module unavailable on Windows); on platforms where ``RLIMIT_AS`` is unsupported, the import
-    is wrapped so the failure mode is "no limit applied" rather than "no jq spawned at all".
+    is wrapped so the failure mode is "no limit applied" rather than "no jq spawned at all". macOS may accept
+    ``setrlimit`` without enforcing the bound; the subprocess timeout remains the enforced limit there.
     """
     try:
         import resource  # imported here so non-POSIX platforms aren't penalised at module load

@@ -53,7 +53,7 @@ code that is never a rename target and made the walk slow enough to exceed the s
 
 Exit codes:
     0 — search completed (with or without hits)
-    1 — a ``--files-from-json`` answer is unreadable, carries an ``error``, or cannot map modules to paths
+    1 — a ``--files-from-json`` answer is invalid/unreadable, or one of its explicit source files cannot be read
     2 — usage error (unknown kind, missing ``--module`` / ``--name``, ``--alias-in`` without ``--kind name``)
 """
 
@@ -236,8 +236,8 @@ def iter_files(scope: str, includes: tuple[str, ...]) -> Iterator[str]:
                 yield scope + path[len(scope) :].replace(os.sep, "/")
 
 
-def search_file(path: str, pattern: re.Pattern[str]) -> Iterator[tuple[int, str]]:
-    """Yield ``(line_number, text)`` for each line of ``path`` matching ``pattern``; unreadable -> nothing.
+def search_file(path: str, pattern: re.Pattern[str], *, required: bool = False) -> Iterator[tuple[int, str]]:
+    """Yield matching lines, raising read errors for required explicit reference files.
 
     The file is scanned whole first and only split into lines when it matches: most files hold no hit, and
     one C-speed scan is several times cheaper than a Python-level pass over every line of a large tree.
@@ -247,6 +247,8 @@ def search_file(path: str, pattern: re.Pattern[str]) -> Iterator[tuple[int, str]
         with open(path, encoding="utf-8", errors="replace", newline="\n") as handle:
             content = handle.read()
     except OSError:
+        if required:
+            raise
         return
     if not pattern.search(content):
         return
@@ -337,7 +339,7 @@ def answer_paths(payload: object) -> set[str]:
 
 
 def files_from_answers(sources: Iterable[str]) -> list[str]:
-    """Sorted existing files named by the saved query answers in ``sources`` (JSON file paths).
+    """Return sorted non-symlink paths named by saved query answers, retaining missing files for validation.
 
     Raises:
         ValueError: A source is unreadable, is not JSON, or fails :func:`answer_paths`.
@@ -353,7 +355,7 @@ def files_from_answers(sources: Iterable[str]) -> list[str]:
             paths |= answer_paths(payload)
         except ValueError as exc:
             raise ValueError(f"{source}: {exc}") from exc
-    return sorted(p for p in paths if os.path.isfile(p) and not os.path.islink(p))
+    return sorted(p for p in paths if not os.path.islink(p))
 
 
 def find_refs(
@@ -386,7 +388,7 @@ def find_refs(
         hits = [
             f"{path}:{number}:{text}"
             for path in candidates
-            for number, text in search_file(path, pattern)
+            for number, text in search_file(path, pattern, required=files is not None)
             if not (stub and os.path.normpath(path) == alias_path and stub.search(text))
         ]
         if hits:
@@ -430,7 +432,11 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError as exc:
             sys.stderr.write(f"! {_SCRIPT_NAME}: {exc} — reference sites unknown\n")
             return 1
-    hits, tier = find_refs(args.kind, args.module, args.name, scope, files, args.alias_in)
+    try:
+        hits, tier = find_refs(args.kind, args.module, args.name, scope, files, args.alias_in)
+    except OSError as exc:
+        sys.stderr.write(f"! cannot read {exc.filename}: {exc.strerror}\n")
+        return 1
     if args.kind == "sphinx-mod" and hits and tier:
         sys.stderr.write(f"{_SCRIPT_NAME}: no full-path :mod: match; basename-only hits — verify package context\n")
     for line in hits:

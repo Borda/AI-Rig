@@ -87,10 +87,12 @@ def pick_latest_install_path(entries: list[dict]) -> str | None:
     """
     if not entries:
         return None
-    candidates = [e for e in entries if e.get("installPath")]
+    candidates = [
+        e for e in entries if isinstance(e, dict) and isinstance(e.get("installPath"), str) and e["installPath"]
+    ]
     if not candidates:
         return None
-    candidates.sort(key=lambda e: e.get("installedAt", ""), reverse=True)
+    candidates.sort(key=lambda e: e["installedAt"] if isinstance(e.get("installedAt"), str) else "", reverse=True)
     return str(candidates[0]["installPath"])
 
 
@@ -123,7 +125,7 @@ def resolve_install_path(registry_path: Path, marketplace: str, plugin_name: str
         return None
     try:
         data = json.loads(registry_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return None
     plugins = data.get("plugins") if isinstance(data, dict) else None
     if not isinstance(plugins, dict):

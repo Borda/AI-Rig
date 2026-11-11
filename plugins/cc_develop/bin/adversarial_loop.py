@@ -61,11 +61,12 @@ schema-1 and schema-2 action records stay readable under their own evidence rule
 
 The CLI prints one JSON object. A valid ledger yields its deterministic summary and exit status zero; an invalid ledger
 yields ``status=invalid``, error names, and exit status one. ``--require-clean`` preserves the valid JSON summary but
-exits one unless its reason is ``clean``. Optional progress cells split old and new open findings, with security and
-critical in separate columns and their distinct weights; no table is printed before a completed round. Action
-validation checks record consistency, not whether a claimed fix or cause is true. Only ``--append`` and
-``--append-metrics`` modify files: each adds one line to its log (round log, cost log) and removes its staged record; a
-rejected round is kept for inspection and nothing is appended, and a rejected cost record is kept the same way.
+exits one unless its reason is ``clean`` and its schema is current. Optional progress cells split old and new open
+findings, with security and critical in separate columns and their distinct weights; no table is printed before a
+completed round. Action validation checks record consistency, not whether a claimed fix or cause is true. Only
+``--append`` and ``--append-metrics`` modify files: each adds one line to its log (round log, cost log) and removes its
+staged record; a rejected round is kept for inspection and nothing is appended, and a rejected cost record is kept the
+same way.
 
 ## Failure
 
@@ -183,13 +184,16 @@ def _read_rounds(path: Path) -> list[object]:
     """Read one JSON value per line from a round log; an absent log has no completed round."""
     if not path.is_file():
         return []
+    text = path.read_text(encoding="utf-8")
+    if not text:
+        return []
     rounds: list[object] = []
-    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+    for number, line in enumerate(text.removesuffix("\n").split("\n"), start=1):
         if not line.strip():
             raise ValueError(f"rounds-line-blank:{number}")
         try:
             rounds.append(json.loads(line))
-        except json.JSONDecodeError as error:
+        except (ValueError, RecursionError) as error:
             raise ValueError(f"rounds-line-invalid-json:{number}") from error
     return rounds
 
@@ -223,7 +227,7 @@ def ledger_digest(path: Path) -> str:
     header = path.read_bytes()
     try:
         payload = json.loads(header)
-    except (UnicodeDecodeError, json.JSONDecodeError):
+    except (ValueError, RecursionError):
         payload = None
     if not isinstance(payload, dict) or payload.get("schema_version") != SCHEMA_VERSION:
         return hashlib.sha256(header).hexdigest()
@@ -269,13 +273,13 @@ def append_round(ledger_path: Path) -> list[str]:
         record = json.loads(staged.read_bytes())
     except OSError:
         return [f"append-record-missing:{staged.name}"]
-    except (UnicodeDecodeError, json.JSONDecodeError):
+    except (ValueError, RecursionError):
         return ["append-record-invalid-json"]
     if not isinstance(record, dict):
         return ["append-record-object-required"]
     try:
         ledger = load_ledger(ledger_path)
-    except (OSError, ValueError) as error:
+    except (OSError, ValueError, RecursionError) as error:
         return [f"ledger-read-failed:{error}"]
     if not isinstance(ledger, dict) or ledger.get("schema_version") != SCHEMA_VERSION:
         return ["append-requires-current-schema"]
@@ -283,8 +287,14 @@ def append_round(ledger_path: Path) -> list[str]:
     if errors:
         return errors
     warnings = _missing_origin_warnings(ledger["rounds"], record)
-    _append_line(log, record)
-    staged.unlink()
+    try:
+        _append_line(log, record)
+    except OSError as error:
+        return [f"append-round-write-failed:{type(error).__name__}"]
+    try:
+        staged.unlink()
+    except OSError as error:
+        print(f"warning: round-staged-record-not-removed:{type(error).__name__}", file=sys.stderr)
     for warning in warnings:
         print(f"warning: {_one_line(warning)}", file=sys.stderr)
     return []
@@ -430,7 +440,7 @@ def append_metrics(ledger_path: Path) -> list[str]:
         return ["append-metrics-record-invalid-json"]
     try:
         ledger = load_ledger(ledger_path)
-    except (OSError, ValueError) as error:
+    except (OSError, ValueError, RecursionError) as error:
         return [f"ledger-read-failed:{error}"]
     if not isinstance(ledger, dict) or ledger.get("schema_version") != SCHEMA_VERSION:
         return ["append-metrics-requires-current-schema"]
@@ -508,6 +518,7 @@ def _validate_rounds(payload: dict[str, Any], errors: list[str]) -> list[dict[st
         errors.append("rounds-list-required")
         return []
     author = payload.get("implementation_author")
+    author_identity = author.strip().casefold() if isinstance(author, str) else None
     prior_findings: dict[str, dict[str, Any]] = {}
     rounds: list[dict[str, Any]] = []
     for expected_index, value_round in enumerate(value, start=1):
@@ -520,11 +531,14 @@ def _validate_rounds(payload: dict[str, Any], errors: list[str]) -> list[dict[st
             errors.append("round-index-must-be-contiguous-integer")
         reviewer = _exact_keys(round_record.get("reviewer"), _REVIEWER_KEYS, f"round-{expected_index}-reviewer", errors)
         if reviewer is not None:
-            if not _text(reviewer.get("identity")):
+            identity = reviewer.get("identity")
+            if not _text(identity):
                 errors.append(f"round-{expected_index}-reviewer-identity-required")
             if not isinstance(reviewer.get("independent"), bool):
                 errors.append(f"round-{expected_index}-reviewer-independent-boolean-required")
-            elif reviewer["independent"] and reviewer.get("identity") == author:
+            elif (
+                reviewer["independent"] and isinstance(identity, str) and identity.strip().casefold() == author_identity
+            ):
                 errors.append(f"round-{expected_index}-self-review-forbidden")
         _validate_snapshot(round_record.get("snapshot"), f"round-{expected_index}-snapshot", errors)
         if not _text(round_record.get("report_path")):
@@ -601,7 +615,7 @@ def _is_independent_round(round_record: dict[str, Any], author: str) -> bool:
         isinstance(reviewer, dict)
         and reviewer.get("independent") is True
         and _text(reviewer.get("identity"))
-        and reviewer.get("identity") != author
+        and reviewer["identity"].strip().casefold() != author.strip().casefold()
     )
 
 
@@ -612,7 +626,11 @@ def _score(round_record: dict[str, Any]) -> int:
 
 
 def _summary_from_valid(payload: dict[str, Any]) -> dict[str, object]:
-    """Infer a status from a structurally valid ledger without rerunning validation."""
+    """Infer a status from a structurally valid ledger without rerunning validation.
+
+    A clean decision trusts the declared reviewer identity, independence, report path and recorded findings. It does
+    not authenticate a reviewer or read and bind a report's contents; the accepting workflow must verify that evidence.
+    """
     rounds = payload["rounds"]
     if not isinstance(rounds, list):
         raise TypeError(f"rounds must be list, got {type(rounds).__name__}")
@@ -1033,7 +1051,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"warning: metrics-rejected:{_one_line(','.join(metrics_errors))}", file=sys.stderr)
     try:
         payload = load_ledger(args.ledger)
-    except (OSError, ValueError) as error:
+    except (OSError, ValueError, RecursionError) as error:
         print(
             json.dumps({"status": "invalid", "reason": "ledger-read-failed", "errors": [str(error)]}, sort_keys=True),
             file=sys.stderr,
@@ -1044,7 +1062,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             with args.actions.open(encoding="utf-8") as handle:
                 actions = json.load(handle)
-        except (OSError, json.JSONDecodeError) as error:
+        except (OSError, ValueError, RecursionError) as error:
             errors.append(f"actions-read-failed:{error}")
         else:
             errors.extend(validate_actions(payload, actions))
@@ -1061,7 +1079,14 @@ def main(argv: list[str] | None = None) -> int:
         stopped_on_score = summary["reason"] in ("plateau", "nonconverging")
         print(f"plateau-kind: {(stopped_on_score and plateau_kind(payload)) or 'none'}", file=sys.stderr)
     print(json.dumps(summary, sort_keys=True))
-    return 0 if not args.require_clean or summary["reason"] == "clean" else 1
+    if args.require_clean and payload["schema_version"] != SCHEMA_VERSION:
+        print("require-clean-schema-not-current", file=sys.stderr)
+        return 1
+    return (
+        0
+        if not args.require_clean or (payload["schema_version"] == SCHEMA_VERSION and summary["reason"] == "clean")
+        else 1
+    )
 
 
 if __name__ == "__main__":

@@ -40,13 +40,13 @@ from pathlib import Path
 # newline that Python's \s would. \S is safe as-is for the same reason.
 #: Regex character class for horizontal whitespace, used instead of \s so matching never spans a line break.
 _WS = r"[ \t\r\f\v]"
-#: Matches a program line that lists one source file (py, ts, js, cpp, go or rs), optionally as a bullet.
-_SCOPE_RE = re.compile(rf"^{_WS}*[-*]?{_WS}*\S+\.(py|ts|js|cpp|go|rs){_WS}*$")
+#: Matches the scope_files label and captures its optional inline entries.
+_SCOPE_RE = re.compile(rf"^{_WS}*scope_files:{_WS}*(.*)$")
 #: Matches everything up to and including the agent_strategy: label, so substituting it away leaves the strategy value.
 _STRATEGY_RE = re.compile(rf"^.*agent_strategy:{_WS}*")
 #: Case-insensitive phrases in a program that signal cross-domain or multi-component work and mark it complex.
 _CROSS_DOMAIN_RE = re.compile(
-    r"cross.domain|multi.system|distributed|multiple.*component|pipeline.*stage",
+    r"cross.domain|multi.system|distributed",
     re.IGNORECASE,
 )
 
@@ -75,6 +75,38 @@ def _strategy(lines: list[str]) -> str:
     return ""
 
 
+def _scope_count(lines: list[str]) -> int:
+    """Count declared scope entries regardless of file extension or glob spelling."""
+    count = 0
+    in_scope = False
+    for line in lines:
+        label = _SCOPE_RE.match(line)
+        if label:
+            value = label.group(1).split("#", 1)[0].strip()
+            count += sum(bool(part.strip()) for part in value.strip("[]").split(","))
+            in_scope = not value
+            continue
+        stripped = line.strip()
+        if not in_scope or not stripped or stripped.startswith("#"):
+            continue
+        if re.match(rf"[-*]{_WS}+", stripped):
+            count += 1
+        else:
+            in_scope = False
+    return count
+
+
+def _cross_domain(line: str) -> bool:
+    """Recognize ordered keyword pairs without rescanning every repeated prefix."""
+    if _CROSS_DOMAIN_RE.search(line):
+        return True
+    lower = line.lower()
+    return any(
+        (start := lower.find(prefix)) >= 0 and lower.find(suffix, start + len(prefix)) >= 0
+        for prefix, suffix in (("multiple", "component"), ("pipeline", "stage"))
+    )
+
+
 def main(argv: list[str]) -> int:
     """Print the complexity verdict for argv's program path, or return 2 when absent.
 
@@ -91,8 +123,8 @@ def main(argv: list[str]) -> int:
         print(f"detect-complexity: cannot read program file {program!r}; treating as complex", file=sys.stderr)
         print("true")
         return 2
-    scope_count = sum(1 for line in lines if _SCOPE_RE.search(line))
-    is_complex = scope_count > 1 or _strategy(lines) == "arch" or any(_CROSS_DOMAIN_RE.search(line) for line in lines)
+    scope_count = _scope_count(lines)
+    is_complex = scope_count > 1 or _strategy(lines) == "arch" or any(_cross_domain(line) for line in lines)
 
     print("true" if is_complex else "false")
     return 0

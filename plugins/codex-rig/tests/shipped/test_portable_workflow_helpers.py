@@ -209,13 +209,41 @@ def test_collect_diff_uses_only_git_argv(tmp_path: Path, monkeypatch: pytest.Mon
         "--ignore-submodules=none",
     ]
     assert calls == [
-        ["git", "status", "--short"],
+        ["git", "-c", "core.fsmonitor=false", "status", "--short"],
         *[
-            ["git", "-c", "core.quotePath=true", "diff", option, "HEAD", *canonical_options]
+            [
+                "git",
+                "-c",
+                "core.fsmonitor=false",
+                "-c",
+                "core.quotePath=true",
+                "diff",
+                option,
+                "HEAD",
+                *canonical_options,
+            ]
             for option in ("--binary", "--name-only", "--stat", "--numstat")
         ],
-        ["git", "-C", str(repository.resolve()), "--literal-pathspecs", "rev-parse", "--show-toplevel"],
-        ["git", "-C", str(repository.resolve()), "ls-files", "--others", "--exclude-standard"],
+        [
+            "git",
+            "-c",
+            "core.fsmonitor=false",
+            "-C",
+            str(repository.resolve()),
+            "--literal-pathspecs",
+            "rev-parse",
+            "--show-toplevel",
+        ],
+        [
+            "git",
+            "-c",
+            "core.fsmonitor=false",
+            "-C",
+            str(repository.resolve()),
+            "ls-files",
+            "--others",
+            "--exclude-standard",
+        ],
     ]
 
 
@@ -234,7 +262,7 @@ def test_command_argv_selects_powershell_for_simulated_windows_and_bash_on_posix
         "-Command",
         "Write-Output ok\nif ($?) { exit 0 } elseif ($LASTEXITCODE) { exit $LASTEXITCODE } else { exit 1 }",
     ]
-    assert module.command_argv("printf ok", platform="linux") == ["bash", "-lc", "printf ok"]
+    assert module.command_argv("printf ok", platform="linux") == ["bash", "-c", "printf ok"]
     assert set(module.default_commands("win32")) == set(GATE_IDS)
     assert all("command -v" not in command for command in module.default_commands("win32").values())
     expected_executable = "powershell.exe" if sys.platform == "win32" else "bash"

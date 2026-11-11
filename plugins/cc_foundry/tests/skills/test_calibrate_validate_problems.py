@@ -10,6 +10,8 @@ codes).
 from __future__ import annotations
 
 import json
+import os
+import stat
 import subprocess
 import sys
 from collections.abc import Callable
@@ -18,7 +20,77 @@ from typing import Any
 
 import calibrate_validate_problems
 import pytest
+from _file_modes import _file_modes_supported
+from _hook_env import _symlinks_supported
 from calibrate_validate_problems import Floors, main, parse_floors, validate_problem
+
+
+@pytest.mark.timeout(3)
+def test_malformed_candidate_fields_do_not_backtrack_over_whitespace() -> None:
+    """A malformed model row with long blank fields is rejected promptly by the open-pool parser."""
+    malformed = "#1 | state: " + " " * 2000 + "| title: " + " " * 2000
+    assert calibrate_validate_problems._candidate_rows([malformed]) == []
+
+
+def test_candidate_title_preserves_embedded_pipes() -> None:
+    """A pipe in a candidate title does not hide its row or change its body."""
+    rows = calibrate_validate_problems._candidate_rows(["#12 | state: open | title: a | b | body: x | y"])
+    assert rows == [calibrate_validate_problems._CandidateRow(0, 12, "a | b", "x | y")]
+
+
+@pytest.mark.skipif(not _file_modes_supported(), reason="POSIX group permission bits unavailable")
+@pytest.mark.parametrize(
+    ("mask", "expected"), [pytest.param(0o022, 0o644, id="public-read"), pytest.param(0o027, 0o640, id="group-read")]
+)
+def test_json_output_uses_umask_permissions(tmp_path: Path, mask: int, expected: int) -> None:
+    """Atomic JSON output retains the read permissions of an ordinary newly created file."""
+    output = tmp_path / "problems.json"
+    previous = os.umask(mask)
+    try:
+        calibrate_validate_problems._write_json(output, [])
+    finally:
+        os.umask(previous)
+    assert stat.S_IMODE(output.stat().st_mode) == expected
+
+
+@pytest.mark.timeout(3)
+def test_labelled_line_trailing_spaces_are_stripped_once() -> None:
+    """A labelled value with a long trailing blank run remains a free-recall leak without quadratic scanning."""
+    problem = _problem(input="Type: issue" + " " * 200000, ground_truth=[_gt(decisive="issue")])
+    assert len(calibrate_validate_problems._leak_reasons(problem)) == 1
+
+
+@pytest.mark.timeout(3)
+def test_blank_labelled_value_does_not_backtrack_over_whitespace() -> None:
+    """A label followed only by a long blank run does not cause overlapping whitespace matches."""
+    problem = _problem(input="Type:" + " " * 200000, ground_truth=[_gt(decisive="issue")])
+    assert calibrate_validate_problems._leak_reasons(problem) == []
+
+
+@pytest.mark.skipif(not _symlinks_supported(), reason="symlinks unavailable")
+def test_json_outputs_replace_symlinks_without_touching_targets(tmp_path: Path) -> None:
+    """Writing merged data replaces an output link and preserves the external target's bytes."""
+    target = tmp_path / "unrelated.json"
+    target.write_text("untouched", encoding="utf-8")
+    output = tmp_path / "problems.json"
+    output.symlink_to(target)
+    calibrate_validate_problems._write_json(output, [{"value": 1}])
+    assert target.read_text(encoding="utf-8") == "untouched"
+    assert not output.is_symlink()
+    assert json.loads(output.read_text(encoding="utf-8")) == [{"value": 1}]
+
+
+@pytest.mark.skipif(not _symlinks_supported(), reason="symlinks unavailable")
+def test_json_outputs_refuse_linked_parent(tmp_path: Path) -> None:
+    """A linked run directory cannot redirect generated reports into another directory."""
+    target = tmp_path / "target"
+    target.mkdir()
+    linked = tmp_path / "linked"
+    linked.symlink_to(target, target_is_directory=True)
+    with pytest.raises(OSError, match="symlink"):
+        calibrate_validate_problems._write_json(linked / "problems.json", [])
+    assert not (target / "problems.json").exists()
+
 
 _SCRIPT = Path(calibrate_validate_problems.__file__)
 #: Baseline input: two labelled header lines, then a short function whose file handle is never closed.
@@ -451,6 +523,56 @@ class TestOccurrence:
 
         assert reasons == [
             "ground_truth[0].decisive 'declining' is the value of a labelled input line (free-recall leak)"
+        ]
+
+
+#: Input holding a maintainer claim and a restore command, for answer keys longer than one token.
+_CLAIM_INPUT = (
+    _INPUT
+    + "A maintainer replied This was fixed in 1.4.0.\n$ parcel restore --cache-dir /var/tmp/parcel-cache\nsee v2.7.2.\n"
+)
+
+
+class TestDecisiveShape:
+    """Check 9: a ``decisive`` is the token an answer states, never a sentence."""
+
+    @pytest.mark.parametrize(
+        "decisive",
+        ["1.4.0", "v2.7.2.", "fixed in 1.4.0", "parcel restore --cache-dir /var/tmp/parcel-cache"],
+    )
+    def test_accepts_token_shaped_answer(self, decisive: str) -> None:
+        """A token, a short phrase and a four-word command all pass.
+
+        The longest legitimate answer keys in the frozen sets are commands of four words, and a version that closes a
+        sentence keeps its full stop, so neither may trip the sentence check.
+        """
+        problem = _problem(input=_CLAIM_INPUT, ground_truth=[_gt(decisive=decisive, role="stale claim")])
+
+        reasons = validate_problem(problem, "codex", Floors())
+
+        assert reasons == []
+
+    @pytest.mark.parametrize(
+        ("decisive", "words"),
+        [
+            pytest.param("This was fixed in 1.4.0.", 5, id="five-words"),
+            pytest.param("was fixed in 1.4.0.", 4, id="four-words-full-stop"),
+            pytest.param("fixed in 1.4.0.", 3, id="three-words-full-stop"),
+        ],
+    )
+    def test_rejects_sentence(self, decisive: str, words: int) -> None:
+        """A quoted sentence used as the answer key is rejected, with its word count in the reason.
+
+        A reviewer never restates a maintainer's sentence verbatim, so such an item would be scored on topic overlap
+        rather than on the version the claim hinges on.
+        """
+        problem = _problem(input=_CLAIM_INPUT, ground_truth=[_gt(decisive=decisive, role="stale claim")])
+
+        reasons = validate_problem(problem, "codex", Floors())
+
+        assert reasons == [
+            f"ground_truth[0].decisive {decisive!r} is a sentence ({words} words); "
+            "name the token it hinges on, at most 4 words"
         ]
 
 

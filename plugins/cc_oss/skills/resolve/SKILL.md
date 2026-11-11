@@ -48,8 +48,8 @@ NOT-for additions (scope guards):
 
 <constants>
 ```text
-CHALLENGE_TIMEOUT_S=300  # intel + challenge agent deadline; tightened from CLAUDE.md §6 default 900s
-AGENT_DEADLINE_S=900     # conflict, specialist, QA/lint agent deadline — checked at wake-ups, never polled
+CHALLENGE_TIMEOUT_S=300  # intel + read-only challenge agents have bounded evidence scopes
+AGENT_DEADLINE_S=900     # conflict, specialist, QA/lint agents need editing + validation time; checked at wake-ups, never polled
 ```
 > Shell `timeout S cmd` prefix only for commands that could hang in direct-shell execution (git push, gh pr checkout); `# timeout: N` covers the rest.
 </constants>
@@ -82,13 +82,13 @@ AGENT_DEADLINE_S=900     # conflict, specialist, QA/lint agent deadline — chec
 
 <!-- Inline fallback (if agent-resolution.md unreadable): foundry:sw-engineer → general-purpose, foundry:qa-specialist → general-purpose, foundry:linting-expert → general-purpose, foundry:doc-scribe → general-purpose, foundry:perf-optimizer → general-purpose, foundry:solution-architect → general-purpose, foundry:challenger → general-purpose. -->
 
-**Task hygiene** — task tools may be deferred; load before first use: `ToolSearch(query="select:TaskList,TaskCreate,TaskUpdate,TaskGet", max_results=4)`. Call `TaskList` first and triage each task it returns: `completed` if work clearly done, `deleted` if orphaned, keep `in_progress` only if genuinely continuing. Never spend a turn on bookkeeping alone — every `TaskCreate`/`TaskUpdate` ships in the same response as the next substantive tool call; one exception, `TaskUpdate(completed)` immediately before a long output block (`rules/task-lifecycle.md`).
+**Task hygiene** — task tools may be deferred; load before first use: `ToolSearch(query="select:TaskList,TaskCreate,TaskUpdate,TaskGet", max_results=4)`. Call `TaskList` first and triage each task it returns: `completed` if work clearly done, `deleted` if orphaned, keep `in_progress` only if genuinely continuing. Task-call timing: see the **Zero bookkeeping-only turns** table below.
 
 <!-- ../../assets/images/resolve-arch.svg diagrams the runs, gates and parallel fan-out. Documentation only, never loaded — update it in the same commit as any change to step order, gate placement, or agent fan-out. -->
 
 ## Run structure — text order is not execution order
 
-Two blocking user gates cut this workflow into three **runs**; an explicit "don't push" at Step 3d removes the second gate, leaving two. Within a run, work that shares no data dependency is dispatched in the same response turn so it overlaps instead of queueing. Sections below stay in step-number order for reading; the run marker on each heading says when it actually executes.
+Two blocking user gates cut this workflow into three **runs**; an explicit "don't push" at Step 3d removes the second gate, leaving two. Within a run, work that shares no data dependency is dispatched in the same response turn so it overlaps instead of queueing. Sections below stay in step-number order for reading, except the Step 7b join coordination placed after Step 3d; the run marker on each heading says when it actually executes.
 
 | Run | Executes | Ends at |
 | -- | -- | -- |
@@ -154,12 +154,15 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _OSS_SHARED=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/resolve_shared_path.py" oss skills/_shared 2>/dev/null)  # timeout: 5000
 _OSS_RESOLVE=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/resolve_shared_path.py" oss skills/resolve 2>/dev/null)  # timeout: 5000
 [ -z "$_OSS_RESOLVE" ] && _OSS_RESOLVE="plugins/cc_oss/skills/resolve"
-echo "$_OSS_SHARED" > "${TMPDIR:-/tmp}/resolve-oss-shared-${CSID}"  # cross-block (Check 41)
+echo "$_OSS_SHARED" > "${TMPDIR:-/tmp}/resolve-oss-shared-${CSID}"  # cross-block (Check 43)
 echo "$_OSS_RESOLVE" > "${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}"
 cat "$_OSS_SHARED/agent-resolution.md"  # timeout: 5000
 
 SAVED_BRANCH=$(git branch --show-current 2>/dev/null || echo "")
 echo "$SAVED_BRANCH" > "${TMPDIR:-/tmp}/resolve-saved-branch-${CSID}"
+SAVED_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
+echo "$SAVED_SHA" > "${TMPDIR:-/tmp}/resolve-saved-sha-${CSID}"
+[ -n "$SAVED_BRANCH" ] || echo "⚠ Caller has detached HEAD at $SAVED_SHA — saved for recovery; Step 11 will report it instead of switching to an unnamed branch"
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/resolve_preflight.py"
 _PREFLIGHT_RC=$?
 [ "$_PREFLIGHT_RC" -ne 0 ] && { echo "! BLOCKED — resolve_preflight.py failed (gh missing/unauthenticated or git pull conflict); cannot proceed"; exit 1; }
@@ -198,7 +201,7 @@ Load and execute only when `$ARGUMENTS` is empty; any other run skips it.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r _OSS_RESOLVE < "${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}" 2>/dev/null || _OSS_RESOLVE=""  # reload (Check 41)
+IFS= read -r _OSS_RESOLVE < "${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}" 2>/dev/null || _OSS_RESOLVE=""  # reload (Check 43)
 cat "$_OSS_RESOLVE/modes/handoff-detect.md"  # timeout: 5000
 ```
 
@@ -270,9 +273,21 @@ echo targeted > "${TMPDIR:-/tmp}/resolve-change-scope-${CSID}"  # Step 8 prelude
 **Unsupported flag check** — the parse block above prints `UNKNOWN_FLAGS=<tokens>` when a PR/report request carried a `--<token>` outside `{--no-challenge, --agent, --codemap, --no-codemap, --worktree}`, and has already removed those tokens from `$ARGUMENTS` (the parser anchors on `<PR#> [report]` alone: a surviving token would reroute the run to comment dispatch and drop `PR_NUMBER`). Printed → invoke `AskUserQuestion` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (the tokens are already stripped; proceed). Bare comment text is never scanned: its dashes are text. Supported: `--no-challenge`, `--agent <name>`, `--codemap`, `--no-codemap`, `--worktree`, `--keep "<items>"`.
 
 - `MODE="pr+report"` or `MODE="report"` → resolve the report source with the **Report source resolution** block below (executable, not prose), then branch on its printed `REPORT_STATUS`.
-  - `MODE="report"` additionally: extract PR# from the report header if present; no PR# in header → add branch safety check before Step 8 — `CURRENT=$(git branch --show-current); DEFAULT=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||'); [ -z "$DEFAULT" ] && DEFAULT=$(git remote show origin 2>/dev/null | grep 'HEAD branch' | awk '{print $NF}'); [ -z "$DEFAULT" ] && { printf "! BLOCKED — cannot determine default branch; refusing to proceed\n"; exit 1; }; [ "$CURRENT" = "$DEFAULT" ] && { echo "! BLOCKED — on default branch '$CURRENT': report mode without PR# must not operate on default branch; check out a feature branch first"; exit 1; }; [ -z "$(git status --porcelain -uno)" ] || { echo "! BLOCKED — uncommitted edits on '$CURRENT': report mode without PR# commits on this branch as-is; commit or stash them first"; exit 1; }`
+  - `MODE="report"` additionally: extract PR# from the report header if present; no PR# in header → execute the **Local branch safety guard** below before Step 8, then reject tracked local edits: `[ -z "$(git status --porcelain -uno)" ] || { echo "! BLOCKED — uncommitted edits: report mode without PR# commits on this branch as-is; commit or stash them first"; exit 1; }`
 - `MODE="pr"` → continue Step 2; only when the reject gate printed `incomplete-review-report`, run **Report source resolution** first for its gap triage
-- `MODE="comment-dispatch"` → branch safety check before Step 12: `export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"; IFS= read -r WT_ENABLED < "${TMPDIR:-/tmp}/oss-resolve-worktree-${CSID}" 2>/dev/null; [ "$WT_ENABLED" = "true" ] || WT_ENABLED=false; CURRENT=$(git branch --show-current); DEFAULT=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||'); [ -z "$DEFAULT" ] && DEFAULT=$(git remote show origin 2>/dev/null | grep 'HEAD branch' | awk '{print $NF}'); [ -z "$DEFAULT" ] && { printf "! BLOCKED — cannot determine default branch; refusing to proceed\n"; exit 1; }; [ "$CURRENT" = "$DEFAULT" ] && { echo "! BLOCKED — on default branch '$CURRENT': comment dispatch must not commit to default branch"; exit 1; }; [ "$WT_ENABLED" = "true" ] && echo "⚠ --worktree has no effect in comment-dispatch mode"` → jump to Step 12
+- `MODE="comment-dispatch"` → execute the **Local branch safety guard** below before Step 12; then `export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"; IFS= read -r WT_ENABLED < "${TMPDIR:-/tmp}/oss-resolve-worktree-${CSID}" 2>/dev/null; [ "$WT_ENABLED" = "true" ] || WT_ENABLED=false; [ "$WT_ENABLED" = "true" ] && echo "⚠ --worktree has no effect in comment-dispatch mode"` → jump to Step 12
+
+### Local branch safety guard
+
+Execute only at the mode-specific point above: before Step 8 for a report without a PR#, or before Step 12 for comment dispatch. Both routes must refuse the default branch and an unknown default:
+
+```bash
+CURRENT=$(git branch --show-current)
+DEFAULT=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||')
+[ -z "$DEFAULT" ] && DEFAULT=$(git remote show origin 2>/dev/null | grep 'HEAD branch' | awk '{print $NF}')
+[ -z "$DEFAULT" ] && { printf "! BLOCKED — cannot determine default branch; refusing to proceed\n"; exit 1; }
+if [ "$CURRENT" = "$DEFAULT" ]; then echo "! BLOCKED — on default branch '$CURRENT': local report/comment dispatch must use a feature branch"; exit 1; fi
+```
 
 ### Reject-gate check (every mode — run the block even without a `PR_NUMBER`)
 
@@ -296,7 +311,7 @@ Single lookup for both modes, the **only** sanctioned way to conclude that no re
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r _OSS_RESOLVE < "${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}" 2>/dev/null || _OSS_RESOLVE=""  # reload (Check 41)
+IFS= read -r _OSS_RESOLVE < "${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}" 2>/dev/null || _OSS_RESOLVE=""  # reload (Check 43)
 cat "$_OSS_RESOLVE/modes/report-intake.md"  # timeout: 5000
 ```
 
@@ -316,12 +331,12 @@ TASK_LINT     = TaskCreate(subject="Step 9: Lint and QA gate",                  
 TASK_CLOSE    = TaskCreate(subject="Steps 10–11: Push and final report [if pr mode]",      activeForm="Pushing to fork and reporting")
 ```
 
-**Zero bookkeeping-only turns.** Step-level progress stays visible — every task above moves `pending` → `in_progress` → `completed` (or `deleted` when skipped) exactly as before — but no response may consist only of `TaskCreate`/`TaskUpdate`/`TaskList` calls, per-item and per-conflict tasks included. Each update rides in the response that carries the named real tool call; the only standalone one is `TASK_CLOSE` → `completed` immediately before the long Step 11 report (`rules/task-lifecycle.md` §TaskUpdate before long output):
+**Zero bookkeeping-only turns.** Step-level progress stays visible — every task above moves `pending` → `in_progress` → `completed` (or `deleted` when skipped) exactly as before — but no response may consist only of `TaskCreate`/`TaskUpdate`/`TaskList` calls, per-item and per-conflict tasks included. Each update rides in the response that carries the named real tool call; the only standalone one is `TASK_CLOSE` → `completed` immediately before the long Step 11 report, using `TaskUpdate(completed)` (`rules/task-lifecycle.md` §TaskUpdate before long output):
 
 | Step | Updates | Rides with |
 | -- | -- | -- |
 | 2 | `TASK_GATHER` → `in_progress` | the Step 3a/3b `cat` block |
-| 4 | `TASK_CHECKOUT` → `in_progress` (or `TASK_CHECKOUT`, `TASK_CONFLICT` → `deleted` when skipped) | the Step 4 checkout block |
+| 4 | `TASK_CHECKOUT` → `in_progress` (or `TASK_CHECKOUT`, `TASK_CONFLICT` → `deleted` when skipped) | the Step 4 checkout block; when skipped, the next real call |
 | 4 end | `TASK_CHECKOUT` → `completed` | the same Step 4 checkout block |
 | 5 | `TASK_CONFLICT` → `in_progress` | the `conflict-resolution.md` load |
 | 3d | `TASK_GATHER` → `completed`, `TASK_SELECT` → `in_progress` | the boundary-0 contract block, before the selection prompt |
@@ -329,14 +344,14 @@ TASK_CLOSE    = TaskCreate(subject="Steps 10–11: Push and final report [if pr 
 | 7b join | `TASK_CONFLICT` → `completed` | the merge commit call (zero conflicts: the fan's first tool call) |
 | 8 | `TASK_IMPL` → `in_progress` (or `deleted` when no items) | the codemap index block, or Step 9's first call |
 | 8 end | `TASK_IMPL` → `completed` | Step 9's boundary-2 block, with `TASK_LINT` → `in_progress` |
-| 9 end | `TASK_LINT` → `completed` | Step 10's first block, with `TASK_CLOSE` → `in_progress` (or `deleted` when Step 10 is skipped) |
+| 9 end | `TASK_LINT` → `completed`, `TASK_CLOSE` → `in_progress` (or `deleted` when Step 10 is skipped) | Step 10's first block; when Step 10 is skipped, Step 11's first call |
 | 11 | `TASK_CLOSE` → `completed` | standalone, right before the report |
 
 Per-item tasks (Step 3e) and per-conflict tasks (Step 5a): create each set in one response, and close each item's task in the response that already carries the next real call.
 
 ## Step 2: Gather action items
 
-`TaskUpdate(task_id=TASK_GATHER, status="in_progress")` — rides with the Step 3a/3b `cat` block (§Zero bookkeeping-only turns).
+`TaskUpdate(task_id=TASK_GATHER, status="in_progress")` — see the **Zero bookkeeping-only turns** table.
 
 ## Step 3a: Report intelligence (report mode only)
 
@@ -344,7 +359,7 @@ Per-item tasks (Step 3e) and per-conflict tasks (Step 5a): create each set in on
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r _OSS_RESOLVE < "${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}" 2>/dev/null || _OSS_RESOLVE=""  # reload (Check 41)
+IFS= read -r _OSS_RESOLVE < "${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}" 2>/dev/null || _OSS_RESOLVE=""  # reload (Check 43)
 cat "$_OSS_RESOLVE/modes/report-intelligence.md"  # timeout: 5000
 ```
 
@@ -356,8 +371,8 @@ Execute its steps (loaded above).
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r _OSS_RESOLVE < "${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}" 2>/dev/null || _OSS_RESOLVE=""  # reload (Check 41)
-IFS= read -r _OSS_SHARED < "${TMPDIR:-/tmp}/resolve-oss-shared-${CSID}" 2>/dev/null || _OSS_SHARED=""  # reload (Check 41)
+IFS= read -r _OSS_RESOLVE < "${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}" 2>/dev/null || _OSS_RESOLVE=""  # reload (Check 43)
+IFS= read -r _OSS_SHARED < "${TMPDIR:-/tmp}/resolve-oss-shared-${CSID}" 2>/dev/null || _OSS_SHARED=""  # reload (Check 43)
 echo "_OSS_SHARED=$_OSS_SHARED"  # printed (not just written to a file) — pr-intelligence.md's
                                  # spawn prompt substitutes <_OSS_SHARED> with this literal value
 cat "$_OSS_RESOLVE/modes/pr-intelligence.md"  # timeout: 5000
@@ -379,7 +394,7 @@ Load and execute in `pr + report` mode only; any other mode skips it.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r _OSS_RESOLVE < "${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}" 2>/dev/null || _OSS_RESOLVE=""  # reload (Check 41)
+IFS= read -r _OSS_RESOLVE < "${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}" 2>/dev/null || _OSS_RESOLVE=""  # reload (Check 43)
 cat "$_OSS_RESOLVE/modes/report-merge.md"  # timeout: 5000
 ```
 
@@ -389,23 +404,25 @@ Execute its blocks (loaded above).
 
 <!-- loads: item-selection.md -->
 
-Gather is complete here (3a, 3b, or 3c done). Report mode also enters this step for nonempty report items, so the same user choice supplies item scope and commit mode. Mark TASK_GATHER `completed` and TASK_SELECT `in_progress` **before** the selection prompt — otherwise the gather `activeForm` keeps driving the spinner through the user-selection window, falsely implying gather is still running. `TaskUpdate(task_id=TASK_GATHER, status="completed")` and `TaskUpdate(task_id=TASK_SELECT, status="in_progress")` both ride with the boundary-0 contract block below.
+For `bridge:implement`, this gate's recorded user decision naming the selected task set is the approval; workspace is the skill's absolute launch directory and network is `none` unless that decision names otherwise. After the answer, use Write to record the user's decision with its conversation reference, selected task ids, absolute workspace and network in `$IMPL_DIR/bridge-approval.md`; never manufacture approval from an internal invocation. Cite the decision and selected tasks in each dispatch brief; reuse it only for tasks in that set. A subagent may dispatch only when its brief carries the orchestrating skill's recorded approval; otherwise return `blocked` and never dispatch. If no approval exists, use AskUserQuestion before dispatch; if AskUserQuestion is unavailable, return `blocked` and never dispatch.
+
+Gather is complete here (3a, 3b, or 3c done). Report mode also enters this step for nonempty report items, so the same user choice supplies item scope and commit mode. Mark TASK_GATHER `completed` and TASK_SELECT `in_progress` **before** the selection prompt — otherwise the gather `activeForm` keeps driving the spinner through the user-selection window, falsely implying gather is still running. `TaskUpdate(task_id=TASK_GATHER, status="completed")` and `TaskUpdate(task_id=TASK_SELECT, status="in_progress")` both ride as specified in the **Zero bookkeeping-only turns** table.
 
 Load and execute at Step 3d for user item selection.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r _OSS_RESOLVE < "${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}" 2>/dev/null || _OSS_RESOLVE=""  # reload (Check 41)
+IFS= read -r _OSS_RESOLVE < "${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}" 2>/dev/null || _OSS_RESOLVE=""  # reload (Check 43)
 cat "$_OSS_RESOLVE/modes/item-selection.md"  # timeout: 5000
 ```
 
 Execute its blocks (loaded above).
 
-## Step 7b join: dispatch and collect conflict resolutions — opens Run 2
+## Step 7b join: dispatch and collect conflict resolutions — Run 2 coordination
 
 Run 2 opens with a fan, not a wait: conflict resolution (Steps 6–7a) and the Phase 1 early challenge wave start in one response, after the Step 3d answers are in. Order:
 
-1. **First response** — `TaskUpdate(task_id=TASK_SELECT, status="completed")` rides with Step 3e's `TaskCreate` batch and, when files conflict, the Step 6 context call (`conflict-resolution.md`; it needs only refs and the Step 3b motivation). The Step 3d confirm block rides here too. The one standalone-bookkeeping rule stays: no response of task calls alone (§Zero bookkeeping-only turns).
+1. **First response** — `TaskUpdate(task_id=TASK_SELECT, status="completed")`: see the **Zero bookkeeping-only turns** table. Include Step 3e's `TaskCreate` batch and, when files conflict, the Step 6 context call (`conflict-resolution.md`; it needs only refs and the Step 3b motivation). The Step 3d confirm block rides here too.
 2. **Prep response(s)** — Step 3e's map Write, then Step 8's `cat` load and every block through its prelude, C1-candidate split and verdict re-check, up to the first `Agent()` call. `report` mode skips 3e; zero selected items skips Step 8 and the fan holds Step 7a alone. In the last Prep response — or, with no Prep response (`report` mode and zero selected items), in a response of its own before the Fan response — run the write+gate block below before any fan spawn: the fan outlives the Step 3d contract, and a resume must never re-dispatch 7a while its watch row is open.
 
 Persist the completed intake report in `pr-intelligence.md` and selected scope in `selected-items.txt` before this refresh.
@@ -442,7 +459,7 @@ Nothing to fan (no conflicted files and an empty early set, or `report` mode wit
 
 ## Step 3e: Create tasks for selected items
 
-`report` mode skips Step 3e, whether or not the report header names a PR. Step 3a already persisted its action items, and Step 8's report-mode task handling expects no `item-tasks.tsv`. Continue to Step 8 — Steps 4–5 already ran back in Run 1 when a PR# was found (skipped entirely when none was); Steps 6–7a fire in the Run 2 fan (Step 7b join). `pr` and `pr+report` create per-item tasks below.
+`report` mode skips Step 3e, whether or not the report header names a PR. Step 3a already persisted its action items, and Step 8's report-mode task handling expects no `item-tasks.tsv`. When a PR# was found, execute Steps 4–5 after the Step 3d gate, then Steps 6–7a in the Run 2 fan (Step 7b join) before continuing to Step 8; no PR# skips Steps 4–7 entirely. `pr` and `pr+report` create per-item tasks below.
 
 For each item in `SELECTED_ITEMS`, call `TaskCreate` **once per item** — one task per action item; scoped to selected items only, not all pending (avoids bloat when 20+ items exist but only a subset is selected). Issue every item's `TaskCreate` in **one response**, never one per turn — the same response as the Step 7b join's first tool call, so it is never a bookkeeping-only turn:
 
@@ -486,7 +503,7 @@ IFS= read -r _OSS_SHARED < "${TMPDIR:-/tmp}/resolve-oss-shared-${CSID}" 2>/dev/n
 
 *Skip only when `MODE = report` with no PR# (`$PR_NUMBER` unset — no remote branch to check out). In pr mode, runs unconditionally regardless of `SELECTED_ITEMS` — conflict resolution must happen even when 0 action items selected.*
 
-When skipping, both ride with the next real call: `TaskUpdate(task_id=TASK_CHECKOUT, status="deleted")`, `TaskUpdate(task_id=TASK_CONFLICT, status="deleted")`. Otherwise `TaskUpdate(task_id=TASK_CHECKOUT, status="in_progress")` and `TaskUpdate(task_id=TASK_CHECKOUT, status="completed")` both ride with the one Step 4 block below.
+When skipping: `TaskUpdate(task_id=TASK_CHECKOUT, status="deleted")`, `TaskUpdate(task_id=TASK_CONFLICT, status="deleted")`. Otherwise: `TaskUpdate(task_id=TASK_CHECKOUT, status="in_progress")`, then `TaskUpdate(task_id=TASK_CHECKOUT, status="completed")`. Timing: see the **Zero bookkeeping-only turns** table.
 
 **Branch-safety pre-check** — must run BEFORE `gh pr checkout` so a wrong-branch commit is impossible (per `git-commit.md` Gate 2). Verify PR's `headRefName` isn't repo's default branch — `gh pr checkout` of a same-repo PR whose HEAD = default branch would land on default; any later commit (Step 8) would violate Gate 2. One block, in order: the pre-check (`resolve_pr_refs.py`), the `gh` check + checkout + same-branch verify, then the `FORK_REMOTE`/`PR_REF` derivation for Step 10. Every hard `exit 1` ends the whole block, so a failed stage never reaches the next:
 
@@ -509,9 +526,14 @@ if [ -n "$PR_HEAD_OID" ] && [ "$LOCAL_SHA" = "$PR_HEAD_OID" ]; then
     CURRENT=$(git branch --show-current 2>/dev/null)
     if [ -n "$PR_HEAD_REF" ] && [ "$CURRENT" != "$PR_HEAD_REF" ]; then
         echo "→ Re-aligning local branch: $CURRENT → $PR_HEAD_REF (same SHA $LOCAL_SHA)"
-        git switch --end-of-options "$PR_HEAD_REF" 2>/dev/null \
-            || git switch -c "$PR_HEAD_REF" --end-of-options "$LOCAL_SHA" \
+        if git show-ref --verify --quiet "refs/heads/$PR_HEAD_REF"; then
+            [ "$(git rev-parse "refs/heads/$PR_HEAD_REF")" = "$PR_HEAD_OID" ] || { echo "! BLOCKED — existing branch $PR_HEAD_REF is not at PR head $PR_HEAD_OID; preserve its history and reconcile before retrying"; exit 1; }
+            git switch --end-of-options "$PR_HEAD_REF" \
+                || { echo "! BLOCKED — Cannot switch to $PR_HEAD_REF — aborting (branch active in another worktree?)"; exit 1; }
+        else
+            git switch -c "$PR_HEAD_REF" --end-of-options "$PR_HEAD_OID" \
             || { echo "! BLOCKED — Cannot switch to $PR_HEAD_REF — aborting (branch active in another worktree?)"; exit 1; }
+        fi
     fi
 else
     # hard-exit on failure — else HEAD_REF set but git stuck on caller branch, Step8 commits land wrong branch
@@ -532,6 +554,12 @@ if [ "$IS_CROSS_REPO" = "false" ] && [ "$CURRENT_BRANCH" != "$PR_HEAD_REF" ]; th
     exit 1
 fi
 [ "$CURRENT_BRANCH" = "$HEAD_REF" ] || { echo "! BLOCKED — checkout did not land on $HEAD_REF (current: $CURRENT_BRANCH) — aborting before Step 8 can commit to wrong branch"; exit 1; }  # timeout: 3000
+CURRENT_SHA=$(git rev-parse HEAD 2>/dev/null)  # timeout: 3000
+if [ -n "$PR_HEAD_OID" ] && [ "$CURRENT_SHA" != "$PR_HEAD_OID" ] && git merge-base --is-ancestor "$PR_HEAD_OID" HEAD; then
+    echo "! BLOCKED — '$CURRENT_BRANCH' is ahead of PR head $PR_HEAD_OID (unpushed local commits or a newer push) — push or move those commits, then re-run"
+    exit 1
+fi
+[ -n "$PR_HEAD_OID" ] && [ "$CURRENT_SHA" = "$PR_HEAD_OID" ] || { echo "! BLOCKED — checkout HEAD '$CURRENT_SHA' differs from PR head '$PR_HEAD_OID' — aborting before Step 8 can commit"; exit 1; }
 # FORK_REMOTE for the Step 10 push; truncate first so a failed derivation leaves no stale value
 : > "${TMPDIR:-/tmp}/resolve-pr-ref-${CSID}"
 : > "${TMPDIR:-/tmp}/resolve-fork-remote-${CSID}"
@@ -560,13 +588,13 @@ git remote get-url "$FORK_REMOTE" >/dev/null 2>&1 \
 
 <!-- Steps 5–7 defined in conflict-resolution.md — see that file for sub-step numbering -->
 
-`TaskUpdate(task_id=TASK_CONFLICT, status="in_progress")` — rides with the load block below; it flips to `completed` at the Step 7b join.
+`TaskUpdate(task_id=TASK_CONFLICT, status="in_progress")` — see the **Zero bookkeeping-only turns** table; it flips to `completed` at the Step 7b join.
 
 > **Split across three dispatch points, one loaded file.** Step 5 runs in Run 1 immediately after Step 4, beside the intel agent. Steps 6–7a are dispatched in Run 2's fan, beside the Phase 1 early challenge wave (Step 7b join section) — never before the Step 3d picker; 7b is collected at the same join. Load the file once here and execute the parts at their own points — re-`cat` it only if a compaction dropped it from context.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r _OSS_RESOLVE < "${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}" 2>/dev/null || _OSS_RESOLVE=""  # reload (Check 41)
+IFS= read -r _OSS_RESOLVE < "${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}" 2>/dev/null || _OSS_RESOLVE=""  # reload (Check 43)
 cat "$_OSS_RESOLVE/modes/conflict-resolution.md"  # timeout: 5000
 ```
 
@@ -576,7 +604,7 @@ Execute its steps (loaded above) at their dispatch points.
 
 *Skip when `SELECTED_ITEMS` is empty — jump to Step 9.*
 
-When skipping, `TaskUpdate(task_id=TASK_IMPL, status="deleted")` rides with Step 9's first call. Otherwise `TaskUpdate(task_id=TASK_IMPL, status="in_progress")` rides with the codemap index block below.
+When skipping: `TaskUpdate(task_id=TASK_IMPL, status="deleted")`. Otherwise: `TaskUpdate(task_id=TASK_IMPL, status="in_progress")`. Timing: see the **Zero bookkeeping-only turns** table.
 
 Step 8 starts inside the Run 2 fan (Step 7b join): its prelude and the Phase 1 early wave run while the merge is still uncommitted; C1, the Phase 1 late wave and Phase 2 wait for the join.
 
@@ -632,7 +660,7 @@ Read `--no-challenge` from its sentinel, not from the raw argument blob — SKIL
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r _OSS_RESOLVE < "${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}" 2>/dev/null || _OSS_RESOLVE=""  # reload (Check 41)
+IFS= read -r _OSS_RESOLVE < "${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}" 2>/dev/null || _OSS_RESOLVE=""  # reload (Check 43)
 [ -f "${TMPDIR:-/tmp}/resolve-no-challenge-${CSID}" ] && IFS= read -r NO_CHALLENGE < "${TMPDIR:-/tmp}/resolve-no-challenge-${CSID}" || NO_CHALLENGE="false"
 echo "NO_CHALLENGE=$NO_CHALLENGE"
 cat "$_OSS_RESOLVE/modes/dispatch-prelude.md"
@@ -694,7 +722,7 @@ else
     exit 0
 fi
 # timeout: 3000
-IFS= read -r COMMIT_MODE < "${TMPDIR:-/tmp}/resolve-commit-mode-${CSID}" 2>/dev/null || COMMIT_MODE="each"
+IFS= read -r COMMIT_MODE < "${TMPDIR:-/tmp}/resolve-commit-mode-${CSID}" 2>/dev/null || COMMIT_MODE="unset"
 IFS= read -r _BASE_SHA < "${TMPDIR:-/tmp}/resolve-base-sha-${CSID}" 2>/dev/null || _BASE_SHA=""
 [ -s "$IMPL_DIR/straggler-check-ids.txt" ] || { echo "n/a — no check: line above"; exit 0; }
 [ -n "$_BASE_SHA" ] || echo "⚠ resolve-base-sha sentinel missing — confirmation below is unscoped, verify the matched commit's date/author before trusting it"
@@ -735,11 +763,11 @@ done < "$IMPL_DIR/straggler-check-ids.txt"
 
 No confirming commit found → this item was never closed by any exit path; that's the exact defect this gate exists to catch — surface it via `AskUserQuestion` (dispose as `deleted` with a stated reason, or leave open and investigate) rather than guessing either status. Only once every printed id is accounted for, continue to Step 9. Batch every `TaskList`/`TaskUpdate` this gate needs into one response.
 
-`TaskUpdate(task_id=TASK_IMPL, status="completed")` — only once every id is accounted for; rides with Step 9's boundary-2 block.
+`TaskUpdate(task_id=TASK_IMPL, status="completed")` — only once every id is accounted for; see the **Zero bookkeeping-only turns** table.
 
 ## Step 9: Lint and QA gate
 
-`TaskUpdate(task_id=TASK_LINT, status="in_progress")` rides with the boundary-2 block below (beside Step 8's `TASK_IMPL` completion); `TASK_LINT` flips to `completed` with Step 10's first block (§Zero bookkeeping-only turns).
+`TaskUpdate(task_id=TASK_LINT, status="in_progress")` — see the **Zero bookkeeping-only turns** table.
 
 Implementation envelopes and commit ledgers must be persisted before this refresh.
 
@@ -752,10 +780,10 @@ IFS= read -r _PUSH_AUTH < "${TMPDIR:-/tmp}/resolve-push-auth-${CSID}" 2>/dev/nul
 IFS= read -r _POST_PR < "${TMPDIR:-/tmp}/resolve-post-pr-action-${CSID}" 2>/dev/null || _POST_PR="skip"
 IFS= read -r _PUSH_STATUS < "${TMPDIR:-/tmp}/resolve-push-status-${CSID}" 2>/dev/null || _PUSH_STATUS="none"
 _PRESERVE="pr=${_PR_NUMBER}, items-implemented, impl-dir=${_IMPL_DIR}, challenge-log=${_IMPL_DIR}/challenge-log.txt, item-tasks=${_IMPL_DIR}/item-tasks.tsv, push-auth=${_PUSH_AUTH} (Step 3d answer), post-pr=${_POST_PR}, push-status=${_PUSH_STATUS} (file resolve-push-status, Step 10 overwrites); next: lint/push/report"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" --keep-sentinel resolve-keep-items "oss:resolve" "lint-qa (after implementation loop)" "$_IMPL_DIR" "${_PRESERVE}; phase-reports=${_IMPL_DIR}/phase2-envelope-*.json, commits=${_IMPL_DIR}/phase2-commits.jsonl, c1-summaries=${_IMPL_DIR}/c1-item-summary.tsv" "resume: re-cat own agent-resolution.md and modes/lint-qa-gate.md; lint/QA gate (Step 9) → push per the recorded Step 3d answer, never re-ask (Step 10) → final report (Step 11)" -- calls_ahead=30 "drop=implementation summaries"  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" --keep-sentinel resolve-keep-items "oss:resolve" "lint-qa (after implementation loop)" "$_IMPL_DIR" "${_PRESERVE}; phase-reports=${_IMPL_DIR}/phase2-envelope-*.json, commits=${_IMPL_DIR}/phase2-commits.jsonl, c1-summaries=${_IMPL_DIR}/c1-item-summary.tsv" "resume: re-cat own agent-resolution.md and modes/lint-qa-gate.md; lint/QA gate (Step 9) → push intent recorded at Step 3d; Step 10 still asks the git-push confirmation (modes/push.md), unless the recorded intent is don't push → final report (Step 11)" -- calls_ahead=30 "drop=implementation summaries"  # timeout: 5000
 IFS= read -r _OSS_SHARED < "${TMPDIR:-/tmp}/resolve-oss-shared-${CSID}" 2>/dev/null || _OSS_SHARED=""
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/compaction_boundary.py" "$_OSS_SHARED"
-IFS= read -r _OSS_RESOLVE < "${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}" 2>/dev/null || _OSS_RESOLVE=""  # reload (Check 41)
+IFS= read -r _OSS_RESOLVE < "${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}" 2>/dev/null || _OSS_RESOLVE=""  # reload (Check 43)
 cat "$_OSS_RESOLVE/modes/lint-qa-gate.md"  # timeout: 5000
 ```
 
@@ -769,13 +797,13 @@ Execute its steps (loaded above).
 
 *Skip when report mode with no PR# (`$FORK_REMOTE`, `$HEAD_REF`, `$BASE_REF` unset — no fork branch; workflow ends at Step 11).*
 
-When skipping, `TaskUpdate(task_id=TASK_CLOSE, status="deleted")` rides with Step 11's first call. Otherwise `TaskUpdate(task_id=TASK_CLOSE, status="in_progress")` rides with the block below, together with `TaskUpdate(task_id=TASK_LINT, status="completed")`.
+When skipping: `TaskUpdate(task_id=TASK_CLOSE, status="deleted")`. Otherwise: `TaskUpdate(task_id=TASK_CLOSE, status="in_progress")`. Also `TaskUpdate(task_id=TASK_LINT, status="completed")`. Timing: see the **Zero bookkeeping-only turns** table.
 
 Load and execute at Step 10 unless report mode has no PR number.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r _OSS_RESOLVE < "${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}" 2>/dev/null || _OSS_RESOLVE=""  # reload (Check 41)
+IFS= read -r _OSS_RESOLVE < "${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}" 2>/dev/null || _OSS_RESOLVE=""  # reload (Check 43)
 cat "$_OSS_RESOLVE/modes/push.md"  # timeout: 5000
 ```
 
@@ -789,7 +817,7 @@ Load and execute at Step 11 for the final report.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r _OSS_RESOLVE < "${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}" 2>/dev/null || _OSS_RESOLVE=""  # reload (Check 41)
+IFS= read -r _OSS_RESOLVE < "${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}" 2>/dev/null || _OSS_RESOLVE=""  # reload (Check 43)
 cat "$_OSS_RESOLVE/modes/final-report.md"  # timeout: 5000
 ```
 
@@ -799,7 +827,7 @@ Execute its blocks (loaded above).
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r _OSS_RESOLVE < "${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}" 2>/dev/null || _OSS_RESOLVE=""  # reload (Check 41)
+IFS= read -r _OSS_RESOLVE < "${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}" 2>/dev/null || _OSS_RESOLVE=""  # reload (Check 43)
 cat "$_OSS_RESOLVE/modes/comment-dispatch.md"  # timeout: 5000
 ```
 
@@ -843,7 +871,7 @@ Non-calibratable — multi-gate interactive workflow dispatching sub-agents, wit
 - **Thread resolution via GraphQL** — `isResolved` on `PullRequestReviewThread` (GraphQL only); REST doesn't expose it. `bin/fetch_pr_intel.py` queries it and stamps `resolved` on each inline record; GraphQL failure → every `resolved` false and `resolved_threads_ok: false`.
 - **Discussion vs inline**: `source: discussion` records (PR conversation comments) = discussion (`location: discussion`; no Resolve button); `source: inline` records (`pulls/<N>/comments`) = inline (`location: inline`; resolvable). `location: discussion` + `[report]` items: implement-only, no GitHub close action. Surface unresolvable rows through the Status suffix `· thread (no GH resolve)`, not a separate column.
 - **Commit attribution** — `[gh]`: `[resolve No.<id>] <reviewer> (gh):`; `[report]`: `[resolve No.<id>] /review finding by <agent> (report: <path>):`.
-- **Reference scenarios**: Mode: bare PR# → pr; `42 report` → pr+report; `report` → report mode; bare comment → comment dispatch. Classification: LGTM/emoji → `[info]`; `nit:` → `[gh][suggest]`; resolved thread → keeps `[gh][req]`/`[gh][suggest]` type, `status: resolved`; "must fix" from write-access reviewer → `[gh][req]`. Challenge: present bug → VALID; evidenced later fix → ALREADY_FIXED; affirmative refutation → REJECT; better alternative → suggestion REJECT with alternative.
+- **Reference scenarios**: Classification: LGTM/emoji → `[info]`; `nit:` → `[gh][suggest]`; resolved thread → keeps `[gh][req]`/`[gh][suggest]` type, `status: resolved`; "must fix" from write-access reviewer → `[gh][req]`. Challenge: present bug → VALID; evidenced later fix → ALREADY_FIXED; affirmative refutation → REJECT; better alternative → suggestion REJECT with alternative. Mode examples: see **$ARGUMENTS** in inputs.
 - Follow-up chains:
   - After push → maintainer reviews, clicks Merge; never approve/comment on PR.
   - Unanswered `[question]` → resolve report only; do NOT post to PR.

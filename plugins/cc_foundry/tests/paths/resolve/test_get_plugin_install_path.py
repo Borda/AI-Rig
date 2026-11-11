@@ -11,7 +11,27 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from get_plugin_install_path import main, stale_root_warning
+from get_plugin_install_path import main, pick_latest_install_path, stale_root_warning
+
+
+@pytest.mark.parametrize("timestamp", [None, 7, False, pytest.param([], id="list"), pytest.param({}, id="object")])
+def test_non_string_timestamp_keeps_undated_install(timestamp: object) -> None:
+    """An undated but usable installation remains available when its timestamp has the wrong type."""
+    assert pick_latest_install_path([{"installPath": "available", "installedAt": timestamp}]) == "available"
+
+
+@pytest.mark.parametrize("timestamp", [None, 7, False, pytest.param([], id="list"), pytest.param({}, id="object")])
+def test_valid_timestamp_outranks_non_string_timestamp(timestamp: object) -> None:
+    """A dated installation sorts ahead of a malformed timestamp rather than raising or shadowing it."""
+    assert (
+        pick_latest_install_path(
+            [
+                {"installPath": "undated", "installedAt": timestamp},
+                {"installPath": "dated", "installedAt": "2026-01-01"},
+            ]
+        )
+        == "dated"
+    )
 
 
 def _write_registry(path: Path, payload: dict) -> None:

@@ -6,12 +6,13 @@
  * writes through the atomic helpers, so a rejected call leaves no trace.
  */
 
-import { existsSync, rmSync, writeFileSync } from "node:fs"
+import { randomUUID } from "node:crypto"
+import { appendFileSync, chmodSync, existsSync, rmSync, writeFileSync } from "node:fs"
 import { isAbsolute, join, relative, resolve, sep } from "node:path"
 import type { Plugin } from "@opencode/plugin"
 import { sha256File } from "../digest.ts"
 import { dispatchRole, ROLE_IDS, type RoleId } from "../dispatch.ts"
-import { doctorReport, resolveAgentDirs, staleRuns } from "../doctor.ts"
+import { doctorReport, installedAgentStatus, resolveAgentDirs, staleRuns } from "../doctor.ts"
 import { collectCommitScope, collectScope, detectDrift, refreshScope } from "../evidence.ts"
 import {
   bucketCounts,
@@ -39,6 +40,7 @@ import { resolveGitCommonDir, type RigPaths } from "../paths.ts"
 import {
   appendJournal,
   createRun,
+  currentGateReceipts,
   finalizeRun,
   loadRun,
   saveRun,
@@ -48,6 +50,7 @@ import {
   type RunRecord,
 } from "../run.ts"
 import { SKILLS } from "../skill-manifest.ts"
+import { PLUGIN_VERSION } from "../version.ts"
 import { activeRun, rememberRun, skillForRun } from "../state.ts"
 import { ensureDir, readJsonIfExists, writeJsonAtomic } from "../util/fsx.ts"
 import type { RigOptions } from "../options.ts"
@@ -84,10 +87,21 @@ function resolveInsideProject(projectRoot: string, path: string): string {
   return absolute
 }
 
-function fileRecords(projectRoot: string, paths: readonly string[]): FileRecord[] {
+function fileRecords(projectRoot: string, paths: readonly string[], allowDeleted = false): FileRecord[] {
   return paths.map((path) => {
     const absolute = resolveInsideProject(projectRoot, path)
-    if (!existsSync(absolute)) throw new Error(`evidence path does not exist: ${path}`)
+    if (!existsSync(absolute)) {
+      const canonical = relative(projectRoot, absolute).split(sep).join("/")
+      if (
+        allowDeleted &&
+        collectScope(projectRoot, [path]).entries.some(
+          (entry) => entry.path === canonical && entry.status.includes("D"),
+        )
+      ) {
+        return { path, sha256: "" }
+      }
+      throw new Error(`evidence path does not exist: ${path}`)
+    }
     return { path, sha256: sha256File(absolute) }
   })
 }
@@ -98,6 +112,11 @@ function resolveRun(paths: RigPaths, sessionID: string, runId: string | undefine
   const skill = skillForRun(paths.artifactRoot, id)
   if (!skill) throw new Error(`unknown run: ${id}`)
   return loadRun(paths, skill, id)
+}
+
+/** Keep evidence mutations inside the active phase of a run. */
+function requireInProgress(run: RunRecord): void {
+  if (run.status !== "in_progress") throw new Error(`run status is '${run.status}', not 'in_progress'`)
 }
 
 function runSummary(run: RunRecord): string {
@@ -125,10 +144,15 @@ function findingsSummary(path: string, findings: readonly Finding[]): FindingsSu
 
 function gateTable(run: RunRecord): string {
   if (run.gates.length === 0) return "No gate receipts."
+  const current = new Set(currentGateReceipts(run))
+  const latest = new Map(run.gates.map((gate) => [gate.id, gate]))
   return [
-    "| Gate | Status | Exit | Command |",
-    "| --- | --- | --- | --- |",
-    ...run.gates.map((gate) => `| \`${gate.id}\` | ${gate.status} | ${gate.exit_code ?? "-"} | \`${gate.command}\` |`),
+    "| Gate | Status | Exit | Command | Currency |",
+    "| --- | --- | --- | --- | --- |",
+    ...run.gates.map((gate) => {
+      const currency = current.has(gate) ? "current" : latest.get(gate.id) === gate ? "stale" : "superseded"
+      return `| \`${gate.id}\` | ${gate.status} | ${gate.exit_code ?? "-"} | \`${gate.command}\` | ${currency} |`
+    }),
   ].join("\n")
 }
 
@@ -218,7 +242,10 @@ const EVIDENCE_INPUT = {
       description: "Reason no configured gate applies. Only for a project with no detectable gate.",
     },
     inputs: { ...strArray, description: "Files read as authoritative evidence. Must exist." },
-    outputs: { ...strArray, description: "Files created or modified by the run. Must exist." },
+    outputs: {
+      ...strArray,
+      description: "Files created, modified, or deleted by the run. Missing paths must be tracked deletions.",
+    },
     limits: { ...strArray, description: "Explicit coverage limits, for example an unavailable environment." },
     decision: { type: "string", description: "Decision worth preserving in the journal." },
     confidence: { type: "number", minimum: 0, maximum: 1, description: "Confidence in the recorded result." },
@@ -443,12 +470,38 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
         }
 
         if (input.action === "refresh") {
+          if (run.status === "completed" || run.status === "failed") {
+            throw new Error(`cannot refresh a run with status '${run.status}'`)
+          }
+          if (run.loop && run.loop.stop_reason !== "converged") {
+            throw new Error(
+              `cannot refresh a run whose loop stopped with '${run.loop.stop_reason}'; a replacement run is needed`,
+            )
+          }
           if (!input.message?.trim()) throw new Error("refresh requires message: the reason source was recollected")
           if (run.scope.commit) throw new Error("a commit scope is immutable and cannot be refreshed")
           const previous = run.scope.digest
           const next = refreshScope(paths.projectRoot, run.scope)
-          const updated: RunRecord = { ...run, scope: next }
+          const updated: RunRecord = {
+            ...run,
+            status: "in_progress",
+            scope: next,
+          }
+          if (next.digest !== previous) {
+            delete updated.review
+            delete updated.findings
+          }
+          delete updated.loop
+          appendJournal(paths, updated, {
+            event: "scope.refresh",
+            previous_status: run.status,
+            status: updated.status,
+            previous_digest: previous,
+            scope_digest: next.digest,
+            reason: input.message,
+          })
           save(updated)
+          rememberRun(paths.artifactRoot, context.sessionID, { runId: run.run_id, skill: run.skill })
           return {
             content: `Scope refreshed.\nprevious_digest: ${previous}\ncurrent_digest: ${next.digest}\nentries: ${next.entries.length}\nreason: ${input.message}`,
             metadata: { run_id: run.run_id, scope_digest: next.digest },
@@ -456,6 +509,7 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
         }
 
         if (input.action === "record") {
+          requireInProgress(run)
           if (input.reviewer && detectDrift(paths.projectRoot, run.scope)) {
             throw new Error(
               "source changed after the recorded scope; refresh the scope before recording independent review so the reviewer evidence binds to current bytes",
@@ -471,7 +525,7 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
             ...run,
             ...(plan ? { plan } : {}),
             inputs: [...run.inputs, ...fileRecords(paths.projectRoot, input.inputs ?? [])],
-            outputs: [...run.outputs, ...fileRecords(paths.projectRoot, input.outputs ?? [])],
+            outputs: [...run.outputs, ...fileRecords(paths.projectRoot, input.outputs ?? [], true)],
             limits: [...run.limits, ...(input.limits ?? [])],
             confidence: input.confidence ?? run.confidence,
             ...(input.reviewer
@@ -493,14 +547,18 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
         const result = finalizeRun(run, { drift })
         if (!result.ok) {
           const failed: RunRecord = { ...run, status: result.status }
-          save(failed)
+          if (run.status === "in_progress") save(failed)
           return {
             content: [
               `FINALIZE FAILED (status: ${result.status})`,
               ...result.problems.map((problem) => `- ${problem}`),
-              drift
-                ? "Source changed after the last recorded scope. Call rig_evidence action=refresh with a reason, then rerun gates."
-                : "",
+              run.loop && run.loop.stop_reason !== "converged"
+                ? "A recorded non-converged loop stop cannot be reopened; a replacement run is needed."
+                : drift
+                  ? `Source changed after the last recorded scope. Call rig_evidence action=refresh run_id=${run.run_id} with a reason, then rerun gates and required review.`
+                  : result.status === "blocked"
+                    ? "The challenge loop blocks completion; a replacement run is needed."
+                    : "",
             ]
               .filter(Boolean)
               .join("\n"),
@@ -546,7 +604,8 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
         }
 
         if (input.action !== "run") throw new Error(`unknown gate action: ${String(input.action)}`)
-        const run = resolveRun(paths, context.sessionID, input.run_id)
+        let run = resolveRun(paths, context.sessionID, input.run_id)
+        requireInProgress(run)
         if (specs.length === 0) {
           throw new Error("no configured gates detected; record gate_exemption instead of inventing a command")
         }
@@ -558,19 +617,38 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
           }
         }
 
+        if (detectDrift(paths.projectRoot, run.scope)) {
+          throw new Error("source changed after the recorded scope; refresh the scope before running gates")
+        }
+        const approvedScope = run.scope
+        const fileArgs = files
+          .map((file) => (file.startsWith("-") ? `./${file}` : file))
+          .map((arg) => (/^[a-zA-Z0-9_./:-]+$/.test(arg) ? arg : `'${arg.replaceAll("'", `'"'"'`)}'`))
+          .join(" ")
         await ctx.permission.assert({
           sessionID: context.sessionID,
           agent: context.agent,
           source: { type: "tool", messageID: context.messageID, id: context.id },
           action: "shell",
-          resources: selected.map((spec) => spec.command),
+          resources: selected.map((spec) => (spec.needsFiles ? `${spec.command} ${fileArgs}` : spec.command)),
           metadata: { gates: selected.map((spec) => spec.id) },
         })
 
+        run = loadRun(paths, run.skill, run.run_id)
+        requireInProgress(run)
+        if (detectDrift(paths.projectRoot, approvedScope) || run.scope.digest !== approvedScope.digest)
+          throw new Error("run scope changed during approval; refresh the scope and request gate approval again")
         const timeout = input.timeout_ms ?? options.gateTimeoutMs
-        const results = runGates(selected, paths.projectRoot, files, timeout)
+        const samples = runGates(selected, paths.projectRoot, files, timeout)
+        const drift = detectDrift(paths.projectRoot, run.scope)
+        const sourceDigest = drift ? refreshScope(paths.projectRoot, run.scope).digest : run.scope.digest
+        const results = samples.map((result) => ({
+          ...result,
+          receipt: { ...result.receipt, source_digest: sourceDigest },
+        }))
         const directory = ensureDir(join(paths.runsRoot, run.skill, run.run_id, "gates"))
         for (const result of results) {
+          const sample = `${safeName(result.receipt.id)}-${randomUUID()}`
           const log = [
             `# ${result.receipt.id}`,
             `command: ${result.receipt.command}`,
@@ -584,27 +662,34 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
             result.receipt.tail,
             "",
           ].join("\n")
-          writeJsonAtomic(join(directory, `${safeName(result.receipt.id)}.json`), result.receipt)
-          writeFileSync(join(directory, `${safeName(result.receipt.id)}.log`), log, "utf8")
+          writeFileSync(join(directory, `${sample}.json`), `${json(result.receipt)}\n`, {
+            encoding: "utf8",
+            flag: "wx",
+            mode: 0o600,
+          })
+          writeFileSync(join(directory, `${sample}.log`), log, { encoding: "utf8", flag: "wx", mode: 0o600 })
+          appendFileSync(join(directory, "receipts.jsonl"), `${JSON.stringify(result.receipt)}\n`, {
+            encoding: "utf8",
+            mode: 0o600,
+          })
+          chmodSync(join(directory, "receipts.jsonl"), 0o600)
         }
-        // A rerun after a fix replaces the earlier receipt for the same gate.
-        const replaced = new Set(results.map((result) => result.receipt.id))
-        const gates = [
-          ...run.gates.filter((receipt) => !replaced.has(receipt.id)),
-          ...results.map((result) => result.receipt),
-        ]
+        // A rerun after a fix supersedes the earlier receipt for completion, preserving history.
+        const gates = [...run.gates, ...results.map((result) => result.receipt)]
         const updated: RunRecord = { ...run, gates }
         save(updated)
         writeJsonAtomic(join(directory, "summary.json"), gates)
 
-        const failed = gates.filter((receipt) => receipt.status === "failed")
+        const failed = currentGateReceipts(updated).filter((receipt) => receipt.status === "failed")
         return {
           content: [
             gateTable(updated),
             "",
-            failed.length === 0
-              ? "All recorded gates passed."
-              : `FAILED: ${failed.map((receipt) => receipt.id).join(", ")}. Fix the cause and rerun the same gate; do not retry unchanged.`,
+            drift
+              ? "Source changed while gates ran. Receipts carry the live digest and do not certify the saved scope; refresh the scope and rerun gates."
+              : failed.length === 0
+                ? "All recorded gates passed."
+                : `FAILED: ${failed.map((receipt) => receipt.id).join(", ")}. Fix the cause and rerun the same gate; do not retry unchanged.`,
           ].join("\n"),
           metadata: { run_id: run.run_id, failed: failed.map((receipt) => receipt.id) },
         }
@@ -632,11 +717,12 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
           return { content: json(existing), metadata: { run_id: run.run_id } }
         }
 
+        requireInProgress(run)
         if (!input.findings)
           throw new Error("write requires findings: an array, empty only when review genuinely found nothing")
         const incoming = validateFindings(input.findings)
         const rawAxes = (input.axes ?? input.aspects ?? existing?.axes ?? []) as readonly string[]
-        if (rawAxes.length === 0)
+        if (run.skill === "rig-review" && rawAxes.length === 0)
           throw new Error("write requires axes/aspects: the review axes that actually ran (include 'correctness')")
         const normalizedAxes = [...new Set(rawAxes.map((a) => String(a).trim().toLowerCase()))].filter(Boolean)
         const allowed = new Set(["correctness", "security", "tests", "api", "performance", "docs", "data"])
@@ -647,7 +733,7 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
             )
           }
         }
-        if (normalizedAxes.length === 0)
+        if (run.skill === "rig-review" && normalizedAxes.length === 0)
           throw new Error("write requires axes/aspects: the review axes that actually ran (include 'correctness')")
         if (run.skill === "rig-review" && !normalizedAxes.includes("correctness")) {
           throw new Error(
@@ -655,7 +741,8 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
           )
         }
         const coverage = (input.coverage ?? existing?.coverage ?? []) as readonly string[]
-        if (coverage.length === 0) throw new Error("write requires coverage: the files or areas actually reviewed")
+        if (run.skill === "rig-review" && coverage.length === 0)
+          throw new Error("write requires coverage: the files or areas actually reviewed")
         if (run.skill === "rig-review" && normalizedAxes.includes("correctness") && coverage.length === 0) {
           throw new Error(
             "rig-review with correctness axis requires non-empty coverage of files/areas actually inspected",
@@ -735,6 +822,7 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
         }
 
         if (input.action === "start") {
+          requireInProgress(run)
           if (records.length > 0) throw new Error("loop already started; use action=append")
           const reviewer = requireReviewer(input.reviewer)
           const findingList = validateLoopFindings(input.findings)
@@ -758,9 +846,10 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
         }
 
         if (input.action === "append") {
+          requireInProgress(run)
           const last = latestRecord(records)
           if (!last) throw new Error("loop not started; use action=start for the baseline round")
-          if (last.stop_reason) throw new Error(`loop already finalized with '${last.stop_reason}'`)
+          if (last.stop_reason && run.loop) throw new Error(`loop already finalized with '${last.stop_reason}'`)
           const reviewer = requireReviewer(input.reviewer)
           if (input.findings === undefined)
             throw new Error("append requires findings: every prior signature must be assessed")
@@ -793,26 +882,27 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
         }
 
         // finalize
+        requireInProgress(run)
         if (!input.stop_reason) throw new Error(`finalize requires stop_reason: one of ${STOP_REASONS.join(", ")}`)
-        const reviewer = requireReviewer(input.reviewer)
         const last = latestRecord(records)
         if (!last) throw new Error("loop not started; cannot finalize")
+        const reviewer = input.stop_reason === "unavailable-reviewer" ? last.reviewer : requireReviewer(input.reviewer)
         if (last.stop_reason) throw new Error(`loop already finalized with '${last.stop_reason}'`)
         const rows = progress(records)
         const decision = convergence(rows)
         validateStop(input.stop_reason, decision, rows.length, options.maxLoopRounds, input.note)
-        if (!run.scope.commit && detectDrift(paths.projectRoot, run.scope)) {
+        if (input.stop_reason !== "drift" && !run.scope.commit && detectDrift(paths.projectRoot, run.scope)) {
           throw new Error(
             "source changed after the recorded scope; refresh and run one more assessed round before finalizing the loop",
           )
         }
-        if (last.source_digest !== run.scope.digest) {
+        if (input.stop_reason !== "drift" && last.source_digest !== run.scope.digest) {
           throw new Error(
             `the last round assessed ${last.source_digest} but the current scope is ${run.scope.digest}; refresh and append a re-assessment first`,
           )
         }
         const residue = score(last.findings)
-        if (residue.security > 0 || residue.critical > 0) {
+        if (input.stop_reason === "converged" && (residue.security > 0 || residue.critical > 0)) {
           throw new Error(
             `cannot finalize with ${residue.security} security and ${residue.critical} critical finding(s) open`,
           )
@@ -830,7 +920,9 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
         })
         const updated: RunRecord = {
           ...run,
-          review: { run_id: run.run_id, reviewer, source_digest: last.source_digest },
+          ...(input.stop_reason !== "unavailable-reviewer"
+            ? { review: { run_id: run.run_id, reviewer, source_digest: last.source_digest } }
+            : {}),
           loop: {
             path,
             rounds: rows.length,
@@ -912,7 +1004,7 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
           const removed = revokeGrant(commonDir)
           return {
             content: removed ? `Grant revoked: ${path}` : `No grant to revoke at ${path}.`,
-            metadata: { status: removed ? "absent" : "granted" },
+            metadata: { status: readGrant(commonDir).status },
           }
         }
 
@@ -971,7 +1063,10 @@ export async function registerTools(deps: ToolDeps): Promise<Registration[]> {
         const input = raw as DoctorInputTool
         const commonDir = resolveGitCommonDir(paths.projectRoot)
         const dirs = resolveAgentDirs(paths.projectRoot)
-        const agentDir = existsSync(dirs.project) ? dirs.project : dirs.global
+        const agentDir =
+          [dirs.project, dirs.global].find(
+            (directory) => installedAgentStatus(directory, PLUGIN_VERSION).length === 0,
+          ) ?? (existsSync(dirs.project) ? dirs.project : dirs.global)
         const listed = await ctx.plugin.list()
         const pluginListed = listed.data.some((plugin: any) => plugin.id === "opencode-rig")
 

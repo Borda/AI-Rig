@@ -288,7 +288,7 @@ class TestCaptureSourceSnapshot:
 
         def record_run(argv: list[str], *args: object, **kwargs: object) -> subprocess.CompletedProcess[bytes]:
             """Record the Git subcommand, then run it unchanged."""
-            subcommands.append(argv[4])
+            subcommands.append(argv[argv.index("--literal-pathspecs") + 1])
             return real_run(argv, *args, **kwargs)
 
         monkeypatch.setattr(module.subprocess, "run", record_run)

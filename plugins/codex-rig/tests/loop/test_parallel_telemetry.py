@@ -7,8 +7,10 @@ retained-evidence record, and the 30-day diagnostic expiry enforcement with its 
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -16,6 +18,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
+from shared import parallel_telemetry
 from shared.parallel_telemetry import (
     TelemetryError,
     aggregate_wave_telemetry,
@@ -157,9 +160,11 @@ def diagnostics(tmp_path: Path) -> Path:
 
 
 def _write_artifact(directory: Path, record: dict[str, object], text: str = "sanitized\n") -> Path:
-    """Write the fixed-name sanitized diagnostic for a retained record and return its path."""
+    """Write a historical diagnostic with its recorded observation time as the actual modification time."""
     artifact = directory / f"{record['wave_id_hmac']}.diagnostic.json"
     artifact.write_text(text, encoding="utf-8", newline="\n")
+    observed = datetime.fromisoformat(record["observed_at"]).timestamp()
+    os.utime(artifact, (observed, observed))
     return artifact
 
 
@@ -474,7 +479,14 @@ def _read_all(contents: dict[Path, str]) -> dict[Path, str]:
 class TestEnforceDiagnosticExpiry:
     """Expiry deletes exactly one sanitized diagnostic after a durable audit intent, or leaves it alone."""
 
-    def test_deletes_only_the_fixed_diagnostic(self, diagnostics, bystanders) -> None:
+    @pytest.fixture(autouse=True)
+    def _system_clock(self, monkeypatch) -> None:
+        """Keep the trusted system clock after the historical fixture retention boundaries."""
+        clock = mock.Mock(wraps=datetime)
+        clock.now.return_value = datetime(2026, 10, 5, 12, tzinfo=timezone.utc)
+        monkeypatch.setattr(parallel_telemetry, "datetime", clock)
+
+    def test_deletes_only_the_fixed_diagnostic(self, diagnostics, bystanders, monkeypatch) -> None:
         """The expired record's own diagnostic is deleted and audited; neighbouring files survive.
 
         The wave's diagnostic sits next to an unrelated evidence file and another wave's diagnostic. Only the fixed-name
@@ -482,6 +494,9 @@ class TestEnforceDiagnosticExpiry:
         """
         record = _retained_record()
         artifact = _write_artifact(diagnostics, record)
+        clock = mock.Mock(wraps=datetime)
+        clock.now.return_value = datetime(2026, 10, 2, 12, tzinfo=timezone.utc)
+        monkeypatch.setattr(parallel_telemetry, "datetime", clock)
 
         deleted = enforce_diagnostic_expiry(record, diagnostics_directory=diagnostics, now="2026-10-02T12:00:00Z")
 
@@ -655,3 +670,55 @@ class TestEnforceDiagnosticExpiry:
             enforce_diagnostic_expiry(record, diagnostics_directory=diagnostics, now="2026-10-03T12:00:00Z")
 
         assert outside.read_text(encoding="utf-8") == "keep\n"
+
+
+class _FrozenClock(datetime):
+    """Keep expiry decisions at one trusted instant for deterministic tests."""
+
+    @classmethod
+    def now(cls, tz=None) -> datetime:
+        """Return the fixed local decision time, preserving the requested timezone."""
+        return datetime(2026, 11, 11, tzinfo=timezone.utc).astimezone(tz)
+
+
+def test_claimed_future_now_does_not_expire_recent_diagnostic(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A far-future argument cannot advance the trusted expiry clock."""
+    monkeypatch.setattr(parallel_telemetry, "datetime", _FrozenClock)
+    record = _retained_record(observed_at="2026-11-10T12:00:00Z")
+    target = tmp_path / f"{record['wave_id_hmac']}.diagnostic.json"
+    target.write_text("sanitized", encoding="utf-8")
+    written = datetime(2026, 11, 10, tzinfo=timezone.utc).timestamp()
+    os.utime(target, (written, written))
+
+    result = parallel_telemetry.enforce_diagnostic_expiry(
+        record, diagnostics_directory=tmp_path, now="2030-01-01T00:00:00Z"
+    )
+
+    assert target.is_file()
+    assert result["action"] == "not-expired"
+    assert result["checked_at"] == "2026-11-11T00:00:00+00:00"
+
+
+def test_declared_expiry_deletes_recently_modified_diagnostic(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A diagnostic's declared expiry remains authoritative after a recent touch or copy."""
+    monkeypatch.setattr(parallel_telemetry, "datetime", _FrozenClock)
+    record = _retained_record(status="failed", resolved_at="2026-09-05T12:00:00Z")
+    target = tmp_path / f"{record['wave_id_hmac']}.diagnostic.json"
+    target.write_text("sanitized", encoding="utf-8")
+    written = datetime(2026, 11, 10, tzinfo=timezone.utc).timestamp()
+    os.utime(target, (written, written))
+
+    result = parallel_telemetry.enforce_diagnostic_expiry(
+        record, diagnostics_directory=tmp_path, now="2030-01-01T00:00:00Z"
+    )
+
+    assert not target.exists()
+    assert result["action"] == "deleted"
+    assert result["diagnostic_expires_at"] == "2026-10-05T12:00:00+00:00"
+    assert _expiry_audit_rows(tmp_path)[-1] == result
+
+
+def test_expiry_overflow_has_a_validation_error() -> None:
+    """A timestamp near the calendar limit yields a policy error rather than an uncaught overflow."""
+    with pytest.raises(parallel_telemetry.TelemetryError, match="retention-expiry-invalid"):
+        _retained_record(observed_at="9999-12-31T12:00:00Z")

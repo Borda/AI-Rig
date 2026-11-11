@@ -14,6 +14,7 @@ import pytest
 from evolution_score import (
     DEFAULT_THRESHOLD,
     aggregate,
+    blame_only_on_pseudo,
     build_columns,
     build_sha_map,
     main,
@@ -225,6 +226,30 @@ class TestResidue:
         cells = _cells(_score(index, columns, [_fix("1.3/F", ["f"])], evidence)[0])
         assert cells["1.2/A"]["binary"] is False
         assert cells["1.2/A"]["raw_score"] < DEFAULT_THRESHOLD
+
+    @pytest.mark.parametrize(
+        ("evidence", "expected"),
+        [
+            pytest.param(_evidence("1.3/F", {"p1": 8}), True, id="pre-window-only"),
+            pytest.param(_evidence("1.3/F", {"p1": 8, "f": 3}), True, id="own-commit-ignored"),
+            pytest.param(_evidence("1.3/F", {"p1": 8, "a1": 1}), False, id="reaches-feature"),
+            pytest.param(_evidence("1.3/F", {"p1": 8, "g": 1}), False, id="reaches-earlier-fix"),
+            pytest.param(_evidence("1.3/F", {}), False, id="no-blamed-lines"),
+            pytest.param(_evidence("1.3/F", {"p1": 8}, status="timed_out"), False, id="blame-unfinished"),
+            pytest.param(None, False, id="no-evidence"),
+        ],
+    )
+    def test_blame_only_on_pseudo(self, evidence: dict | None, expected: bool) -> None:
+        """Blame counts as pseudo-only when lines are blamed and none reach a feature or an earlier fix.
+
+        Feature A owns commit ``a1`` and an earlier fix owns ``g``; ``p1`` predates the window. A commit owned by
+        another fix can carry inherited shares to a real column, so it keeps the row eligible for adjudication.
+        """
+        index = _index(_VERSIONS, {"a1": "1.2", "p1": "1.0", "g": "1.2"})
+        fixes = [_fix("1.2/G", ["g"]), _fix("1.3/F", ["f"])]
+        sha_map = build_sha_map(build_columns([_column("1.2/A", ["a1"])], index), index, fixes)
+
+        assert blame_only_on_pseudo(fixes[1], evidence, sha_map) is expected
 
     def test_unattributable_fix_ignores_file_overlap(self) -> None:
         """An unattributable fix (tests and changelog only) never associates through file overlap.

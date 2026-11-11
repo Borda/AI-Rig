@@ -47,6 +47,7 @@ if _BIN_DIR not in sys.path:
 
 from _evolution_common import (  # noqa: E402
     DEFAULT_BUG_LABELS,
+    MAX_ENTRY_LINE_CHARS,
     SOURCE_CHANGELOG,
     SOURCE_HEURISTIC,
     GitError,
@@ -60,6 +61,7 @@ from _evolution_common import (  # noqa: E402
     parse_remote_url,
     parse_version,
     python_symbols_changed,
+    read_bounded_text,
     run_git,
 )
 
@@ -118,7 +120,7 @@ _STOPWORDS: Final = frozenset(
     "request".split()
 )
 
-_SHA_FULL = re.compile(r"^[0-9a-f]{40}(?:[0-9a-f]{24})?$")
+_SHA_FULL = re.compile(r"^[0-9a-f]{40}(?:[0-9a-f]{24})?\Z")
 _SHA_TOKEN = re.compile(r"(?<![0-9A-Za-z])[0-9a-f]{7,40}(?![0-9A-Za-z])")
 _HASH_REF = re.compile(r"(?<![\w/&#])#(\d{1,7})\b")
 _GH_REF = re.compile(r"\bgh-(\d{1,7})\b", re.IGNORECASE)
@@ -137,7 +139,7 @@ _VERSION_TOKEN = re.compile(
     re.IGNORECASE,
 )
 _UNRELEASED_WORD = re.compile(r"\bunreleased\b", re.IGNORECASE)
-_ATX = re.compile(r"^ {0,3}(?P<hashes>#{1,6})\s+(?P<text>.*?)\s*#*\s*$")
+_ATX = re.compile(r"^ {0,3}(?P<hashes>#{1,6})\s+(?P<text>.*)")
 _SETEXT = re.compile(r"^ {0,3}(?:={3,}|-{3,})\s*$")
 _FENCE = re.compile(r"^ {0,3}(?:```|~~~)")
 _ADORNMENT = re.compile(r"^([!-/:-@\[-`{-~])\1{2,}\s*$")
@@ -153,7 +155,7 @@ _SUBSECTION_RULES: Final = (
 )
 #: Towncrier fragment ``<ref>.<type>[.<counter>][.<ext>]``; an extension alone (``notes.txt``) is not a type.
 _FRAGMENT_NAME = re.compile(
-    r"^(?P<ref>[^.]+)\.(?P<type>(?!(?:md|rst|txt)$)[A-Za-z]+)(?:\.\d+)?(?:\.(?:md|rst|txt))?$", re.IGNORECASE
+    r"^(?P<ref>[^.]+)\.(?P<type>(?!(?:md|rst|txt)$)[A-Za-z]+)(?:\.\d+)?(?:\.(?:md|rst|txt))?\Z", re.IGNORECASE
 )
 _TOWNCRIER_HEADER = re.compile(r"^\s*\[tool\.towncrier\]\s*$")
 _TOML_HEADER = re.compile(r"^\s*\[")
@@ -250,7 +252,7 @@ def _find_towncrier(root: Path) -> dict[str, Any] | None:
         path = root / config
         if path.is_symlink() or not path.is_file():
             continue
-        settings = _towncrier_settings(path.read_text(encoding="utf-8", errors="replace"))
+        settings = _towncrier_settings(read_bounded_text(path, errors="replace"))
         if settings is None and config == "pyproject.toml":
             continue
         settings = settings or {}
@@ -322,7 +324,7 @@ def _md_events(lines: list[str]) -> list[tuple[str, int, str]]:
         elif in_fence:
             pass
         elif (atx := _ATX.match(line)) is not None:
-            events.append(("heading", len(atx.group("hashes")), atx.group("text")))
+            events.append(("heading", len(atx.group("hashes")), re.sub(r"\s+#+$", "", atx.group("text").rstrip())))
         elif _SETEXT.match(following) and _is_title_line(line):
             events.append(("heading", 1 if following.strip()[0] == "=" else 2, line.strip()))
             index += 1
@@ -461,7 +463,7 @@ class _SectionParser:
         return self.out
 
 
-def parse_changelog(text: str, fmt: str) -> dict[str, Buckets]:
+def parse_changelog(text: str, fmt: str, *, warnings: list[str] | None = None) -> dict[str, Buckets]:
     """Split changelog text into per-version Added/Changed/Fixed bullet lists.
 
     Version headings: Markdown ``## [1.2.0] - date``, ``## 1.2.0``, ``## v1.2.0 (date)``, ``## [Unreleased]``
@@ -475,18 +477,23 @@ def parse_changelog(text: str, fmt: str) -> dict[str, Buckets]:
     Args:
         text: Changelog text (untrusted; parsed as data only).
         fmt: ``"md"``, ``"rst"`` or ``"txt"``.
+        warnings: Optional list receiving a warning when lines are truncated to 10000 characters.
 
     Returns:
         ``{version: {"added": [...], "changed": [...], "fixed": [...]}}``.
 
     Raises:
-        ValueError: ``fmt`` is not one of the supported formats.
+        ValueError: ``fmt`` is unsupported.
 
     Examples:
         >>> parse_changelog("## [1.2.0] - 2024-01-01\\n### Fixed\\n- Crash on start\\n  when empty\\n", "md")
         {'1.2.0': {'added': [], 'changed': [], 'fixed': ['Crash on start when empty']}}
     """
     lines = [line.expandtabs(4) for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n")]
+    truncated = sum(len(line) > MAX_ENTRY_LINE_CHARS for line in lines)
+    if truncated and warnings is not None:
+        warnings.append(f"changelog: truncated {truncated} line(s) to {MAX_ENTRY_LINE_CHARS} characters")
+    lines = [line[:MAX_ENTRY_LINE_CHARS] for line in lines]
     if fmt == "md":
         return _SectionParser().feed(_md_events(lines))
     if fmt == "rst":
@@ -1331,7 +1338,7 @@ def _fragment_buckets(root: Path, fragments: list[str]) -> Buckets:
         bucket = _FRAGMENT_BUCKET.get(match.group("type").lower()) if match else None
         if path is None or match is None or bucket is None:
             continue
-        text = " ".join(path.read_text(encoding="utf-8", errors="replace").split())
+        text = " ".join(read_bounded_text(path, errors="replace").split())
         ref = match.group("ref")
         if text:
             buckets[bucket].append(f"{text} (#{ref})" if ref.isdigit() else text)
@@ -1346,8 +1353,8 @@ def _load_sections(
     if found["path"] is None:
         warnings.append("no changelog file found; every release uses heuristic commit classification")
     else:
-        text = (root / found["path"]).read_text(encoding="utf-8", errors="replace")
-        parsed = parse_changelog(text, found["format"])
+        text = read_bounded_text(root / found["path"], errors="replace")
+        parsed = parse_changelog(text, found["format"], warnings=warnings)
     sections = _map_sections(parsed, releases, warnings)
     towncrier = found.get("towncrier") or {}
     if UNRELEASED not in sections and towncrier.get("fragments"):
@@ -1477,7 +1484,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "discover":
             print(canonical_json(discover_changelog(args.repo)))
             return 0
-        index = json.loads(args.index.read_text(encoding="utf-8"))
+        index = json.loads(read_bounded_text(args.index))
         result = build_entries(args.repo, index, gh_available=not args.no_gh and which("gh") is not None)
         atomic_write_json(args.out, result)
     except GitError as exc:

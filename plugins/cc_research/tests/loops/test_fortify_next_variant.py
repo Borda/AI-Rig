@@ -5,7 +5,7 @@ Covers:
 * Unreadable / null / malformed ``.variant_name`` → ``! BLOCKED``, exit 1
 * Name normalisation, including an already-prefixed and an upper-case label
 * Resume guard: terminal statuses skip and advance the cursor; a timeout status does not
-* Cleanup pre-registration in the run-dir accumulator (never a TMPDIR pointer), the ``FORTIFY_WORKTREE`` override,
+* Cleanup pre-registration in the run-dir accumulator (never a TMPDIR pointer or ``FORTIFY_WORKTREE`` override),
   and the stale-worktree marker
 """
 
@@ -341,7 +341,7 @@ class TestMainCleanupRegistration:
         assert (fortify / "worktree-paths.txt").read_text(encoding="utf-8") == f"{fortify}/worktrees/variant-alpha\n"
 
     def test_fortify_worktree_env_override(self, env: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch) -> None:
-        """``FORTIFY_WORKTREE`` replaces the derived worktree path in the accumulator."""
+        """An ambient ``FORTIFY_WORKTREE`` cannot replace the selected variant's cleanup path."""
         sentinels, fortify = env
         _after_full(sentinels, fortify, ["alpha"])
         monkeypatch.setenv("FORTIFY_WORKTREE", "/custom/wt")
@@ -349,7 +349,9 @@ class TestMainCleanupRegistration:
         code = main(["--", str(fortify)])
 
         assert code == 0
-        assert (fortify / "worktree-paths.txt").read_text(encoding="utf-8") == "/custom/wt\n"
+        assert (fortify / "worktree-paths.txt").read_text(encoding="utf-8") == (
+            f"{fortify.as_posix()}/worktrees/variant-alpha\n"
+        )
 
     @pytest.mark.parametrize(
         ("existing_dir", "flagged"),

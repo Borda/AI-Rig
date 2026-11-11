@@ -40,6 +40,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 
 const MAX_AGE_MS = 30 * 60 * 1000; // auto-restore window
 const MAX_INJECT_CHARS = 8000; // above this, head + pointer only
@@ -154,9 +155,15 @@ process.stdin.on("end", () => {
     if (fields.consumed !== "false") process.exit(0);
 
     const createdMs = Date.parse(fields.created || "");
-    if (Number.isNaN(createdMs) || Date.now() - createdMs > MAX_AGE_MS) process.exit(0);
+    const now = Date.now();
+    if (Number.isNaN(createdMs) || createdMs > now || now - createdMs > MAX_AGE_MS) process.exit(0);
 
-    process.stdout.write(buildOutput(slug, split.body, fields, path.join(STORE_SUBDIR, `${slug}.md`)));
+    const boundary = `untrusted-${crypto.randomBytes(16).toString("hex")}`;
+    process.stdout.write(
+      `Handover written by a prior session in this checkout via /foundry:session dump; confirm the next step with the user before acting.\n<${boundary}>\n` +
+        buildOutput(slug, split.body, fields, path.join(STORE_SUBDIR, `${slug}.md`)) +
+        `</${boundary}>\n`,
+    );
 
     try {
       markConsumed(docPath, split);

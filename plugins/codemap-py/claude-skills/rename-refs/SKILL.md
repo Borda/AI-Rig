@@ -1,9 +1,9 @@
 ---
 name: rename-refs
 description: |
-  Atomic rename of Python symbols or modules via the structural index — static callers, import sites, __all__ re-exports, Sphinx cross-refs; optional deprecated alias (--deprecate) or hard-delete (--remove-if-no-callers).
+  Rename Python symbols or modules via the structural index — static callers, import sites, __all__ re-exports, Sphinx cross-refs; optional deprecated alias (--deprecate) or hard-delete (--remove-if-no-callers). Best-effort edits; partial state is reported on failure.
   TRIGGER: "rename X to Y" (function/class/method/module), "move module X to Y", "update all references to X".
-  SKIP: non-Python; index not built (/codemap-py:scan-codebase first); local-variable rename; grep-only rename wanted; 1:N symbol splits; package directory rename (git mv).
+  SKIP: non-Python; local-variable rename; grep-only rename wanted; 1:N symbol splits; package directory rename (git mv).
 argument-hint: symbol <old_qname> <new_qname> [--dry-run] [--deprecate[='@deprecated(...)'|'@deprecated_class(...)'] | --no-deprecate] [--since <ver>] [--removed-in <ver>] [--remove-if-no-callers] | module <old_module_path> <new_module_path> [--dry-run]
 allowed-tools: Bash, Read, Edit, Write, AskUserQuestion
 effort: medium
@@ -11,7 +11,7 @@ effort: medium
 
 <objective>
 
-Atomically rename Python symbol/module. Coverage:
+Rename a Python symbol/module with preflight and verification. Edits are best-effort: a post-edit failure can leave partial changes; Step 7 lists edited files and remaining work, without automatic rollback. Coverage:
 
 - Definition site (def/class line)
 - `__all__` re-exports in `__init__.py` files
@@ -35,9 +35,9 @@ Atomically rename Python symbol/module. Coverage:
 
 **Hard limits** (static-analysis boundary):
 
-- `getattr(obj, "old_name")` — statically unbound string; Step 6 emits grep advisory
+- `getattr(obj, "old_name")` — statically unbound string; Step 7 emits grep advisory
 - Cross-repo callers — out of scope; public APIs need `--deprecate` + semver bump
-- Importers beyond one re-export hop, string references, and same-name symbols of another origin — never edited; Step 6 lists every whole-word `OLD_NAME` left in the project's Python files and Step 7 reports the count
+- Importers beyond one re-export hop, string references, and same-name symbols of another origin — never edited automatically; Step 6 lists residual whole-word `OLD_NAME` in Python files for symbols (methods scoped to reference-site files), or literal dotted `OLD_REF` in Python, stub, documentation and config files for modules. Step 7 reports the count and unresolved references
 
 IDE/LSP coverage preview → `--dry-run`. Only 1:1 renames.
 
@@ -63,9 +63,9 @@ _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/nul
 python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/parse_rename_args.py" "$ARGUMENTS" --output-prefix "codemap-${_CM_PROJ}" || exit 1
 ```
 
-Non-zero exit → print the helper's stderr unchanged; stop. It rejects: missing/unknown subcommand (Usage line); missing old/new ref; flag-shaped ref (`looks like a flag, not a target — check argument order`); a ref that is not a dotted Python name, incl. `module::symbol` (own message); symbol-only flags under `module`; `--since`/`--removed-in` without a value; unquoted text left over; `--deprecate` with `--remove-if-no-callers` (`conflicting flags`). Unknown `--` tokens print `! Unknown flag(s): --<token>. Supported flags: --dry-run, --deprecate[=<decorator>], --no-deprecate, --since, --removed-in, --remove-if-no-callers. Re-invoke with corrected flags.` Never AskUserQuestion here: fail-fast keeps the worst-case AskUserQuestion path at 4 (STALE-index, multiple-matches, apply/dry-run, hard-delete confirmation).
+Non-zero exit → print the helper's stderr unchanged; stop. It rejects: missing/unknown subcommand (Usage line); missing old/new ref; flag-shaped ref (`looks like a flag, not a target — check argument order`); a ref that is not a dotted Python name, incl. `module::symbol` (own message); symbol-only flags under `module`; `--since`/`--removed-in` without a value; unquoted text left over; `--deprecate` with `--remove-if-no-callers` (`conflicting flags`). Unknown `--` tokens print `! Unknown flag(s): --<token>. Supported flags: --dry-run, --deprecate[=<decorator>], --no-deprecate, --since, --removed-in, --remove-if-no-callers. Re-invoke with corrected flags.` Never AskUserQuestion here: fail-fast keeps the worst-case AskUserQuestion path at 4 (post-query stale index, multiple-matches, apply/dry-run, hard-delete confirmation).
 
-## Step 1: Validate index
+## Step 1: Validate project
 
 ```bash
 # timeout: 5000
@@ -76,24 +76,29 @@ find "$(git rev-parse --show-toplevel 2>/dev/null || echo .)" \( -name .git -o -
 python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/resolve_index_env.py" \
     --output-prefix "codemap-${_CM_PROJ}" 2>/dev/null  # timeout: 5000
 IFS= read -r PROJ < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-resolve-proj-${CSID}" 2>/dev/null || PROJ=""
-IFS= read -r INDEX < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-resolve-index-${CSID}" 2>/dev/null || INDEX=""
 [ -n "$PROJ" ] || { printf "! resolve_index_env.py failed — check Python availability and CLAUDE_PLUGIN_ROOT\n"; exit 1; }
-[ -n "$INDEX" ] && [ -f "$INDEX" ] || { echo "! index not found${INDEX:+ at $INDEX} — run /codemap-py:scan-codebase first"; exit 1; }
-_SMOKE_FILE="${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-smoke-json-${CSID}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/check_index_smoke.py" --index-path "$INDEX" > "$_SMOKE_FILE"  # timeout: 10000
-# python not jq — jq absent on stock Windows/CI; ok!=true (missing/corrupt index → {"ok":false,"stale":false}) or stale absent/null → unknown, never fresh
-python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/cm_json.py" stale --input "$_SMOKE_FILE" --output-prefix "codemap-${_CM_PROJ}" --name rename-STALE
-IFS= read -r STALE < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-STALE-${CSID}" 2>/dev/null || STALE="unknown"
-# emit — the branch below reads a printed value, not an invisible var
-printf 'STALE=%s\n' "$STALE"
+printf 'false\n' > "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-PROCEED_STALE-${CSID}"
+printf '' > "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-edited-files-${CSID}"
+printf '' > "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-processed-import-files-${CSID}"
 ```
 
-- Block exits 1 (`! UNSUPPORTED`, `! index not found`, `! resolve_index_env.py failed`) → stop the skill. Every `!` line routes by edit state, never by step number; in no case finish the rename by hand (grep, `Edit`, `git mv`), in any language:
+- Block exits 1 (`! UNSUPPORTED`, `! resolve_index_env.py failed`) → stop the skill. Every `!` line routes by edit state, never by step number; in no case finish the rename by hand (grep, `Edit`, `git mv`), in any language:
   - Before the first source edit (`Edit` or `git mv`) — Steps 0–3, incl. Step 3's `--remove-if-no-callers` stops, Step 4 before its first write, Step 5's pre-`git mv` checks — every `!` stop ends the run. Never read a stop as a gate to answer.
   - `! BLOCKED — substitute …` (Step 2, Step 4c) is a placeholder self-check, not a stop: substitute the named value and re-run that block.
-  - After the first source edit, a `!` line never ends the run before the summary. Any Step 4 `!` after a file was written (e.g. `! BLOCKED — sym-path sentinel missing`, `! gen_deprecation_wrapper failed`) and any Step 6 `!` (e.g. `! BLOCKED — OLD_NAME sentinel missing`) → finish the Step 6 checks that still run, then go to Step 7 and print `⚠ Rename incomplete`, naming the files already edited. The re-scan `! codemap-py index --incremental failed` warning is advisory: continue Step 6 verification, then Step 7, and repeat the warning in Step 7's summary.
-- `STALE=true` → `AskUserQuestion`: (a) Proceed anyway (callers may be incomplete); (b) Abort (first re-run /codemap-py:scan-codebase). Abort → print "Run `/codemap-py:scan-codebase` then re-invoke"; stop.
-- `STALE=unknown` (JSON parse failed, `ok` not true, or `stale` absent/null) → print `⚠ Could not determine index freshness — proceeding but callers may be incomplete` and repeat it in Step 7's summary (a mid-run print can arrive as an empty progress update); continue cautiously, never treat fresh.
+  - After the first source edit, a `!` line never ends the run before the summary. Any Step 4 `!` after a file was written (e.g. `! BLOCKED — sym-path sentinel missing`, `! gen_deprecation_wrapper failed`) and any Step 6 `!` (e.g. `! BLOCKED — OLD_NAME sentinel missing`) → finish the Step 6 checks that still run, then go to Step 7 and print `⚠ Rename incomplete`, naming the files already edited. The re-scan `! codemap-py index --incremental failed` warning does not skip other Step 6 checks; verification remains unavailable until a successful rescan, and Step 7 must report `⚠ Rename incomplete` with that warning.
+
+Let Step 2's first query create a missing index or refresh a stale one within the engine's heal cap. Inspect each answer's `index.query_complete` and `index.stale` before using it, including each batch item's `ok` and `result.index`. A failed query/preparation stops before edits. Only if a query still reports `stale: true` after bounded preparation (or preparation is explicitly disabled) ask: (a) Proceed anyway (callers may be incomplete); (b) Abort (explicitly refresh the index, then re-invoke). Abort stops. Missing/unknown freshness or `query_complete: false` → report the metadata and exact coverage gap in the blast report and Step 7; never treat it as complete or allow hard-delete. The caller preflight must still resolve every known site.
+
+After the stale-index answer, record the user's decision with this block. Substitute `true` only for an explicit Proceed anyway answer; otherwise use `false`. Repeat when a later query first triggers that question; never infer consent from elapsed time or incomplete coverage.
+
+```bash
+# timeout: 3000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+_CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || echo "cm")
+PROCEED_STALE="<true for Proceed anyway; false otherwise>"
+case "$PROCEED_STALE" in true|false) ;; *) echo "! BLOCKED — substitute PROCEED_STALE with the user's decision"; exit 1 ;; esac
+printf '%s\n' "$PROCEED_STALE" > "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-PROCEED_STALE-${CSID}"
+```
 
 ## Step 2: Resolve targets
 
@@ -108,6 +113,19 @@ _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/nul
 IFS= read -r OLD_REF < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-OLD_REF-${CSID}" 2>/dev/null || OLD_REF=""
 _FS_SENTINEL="${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-find-symbol-json-${CSID}"
 codemap-py query --timeout 20 find-symbol "$OLD_REF" --limit 0 > "$_FS_SENTINEL" || { printf '! find-symbol failed (exit %d) — stop before any source edit\n' "$?"; exit 1; }
+python - "$_FS_SENTINEL" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+try:
+    coverage = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8")).get("index", {})
+    print("STALE=" + json.dumps(coverage.get("stale", "unknown")))
+    print("QUERY_COMPLETE=" + json.dumps(coverage.get("query_complete", "unknown")))
+except (OSError, ValueError, AttributeError) as exc:
+    sys.exit(f"! query coverage unavailable: {exc}")
+PY
+[ "$?" -eq 0 ] || exit 1
 # find-symbol is an unanchored pattern — keep exact qualified_name matches when any exist, so a unique exact target never asks
 python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/cm_json.py" narrow --input "$_FS_SENTINEL" --qualified-name "$OLD_REF"
 ```
@@ -115,7 +133,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/cm_json.py" narrow --input
 `find-symbol` returns `matches`, each `{name, qualified_name, type, module, path, start_line, end_line, source}` (same as `query-code` `symbol`). Edits use `path`, `start_line`, `end_line`; exact filter uses `qualified_name` (applied above when any match is exact); Step 4e reads `.matches[0].type`.
 
 - 0 matches → print `! Symbol '$OLD_REF' not found. Verify with: codemap-py query find-symbol <pattern>`; stop.
-- Multiple → Write the full candidate list (name/type/module/path) to `.temp/rename-refs-candidates-<session-id>.md` first; print it once as the last reply text before `AskUserQuestion`. The question text carries a plain candidate-count summary and `→ <candidate list path>`; options identify the candidate with a one-line description, no previews. At most 4 options: more than 4 candidates → offer the first 3 plus `Abort — re-invoke with a more specific qualified name`. After choice, narrow sentinel so every downstream `.matches[0]` is correct:
+- Multiple → Write the full candidate list (name/type/module/path) with each match's 0-based index to `.temp/rename-refs-candidates-<session-id>.md` first; print it once as the last reply text before `AskUserQuestion`. The question text carries a plain candidate-count summary and `→ <candidate list path>`; options identify the candidate with a one-line description, no previews. At most 4 options: more than 4 candidates → offer the first 3 plus `Abort — keep code unchanged`. In the question text, say the Other free-text answer accepts any 0-based index from the saved candidate list. Accept any in-range index, including candidates 4 and later; an abort answer stops without edits. Bind `CHOSEN_IDX` to that exact saved list, never to a new query or a module-qualified re-invocation. After choice, narrow sentinel so every downstream `.matches[0]` is correct:
   ```bash
   # timeout: 5000
   export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -157,7 +175,7 @@ printf 'REMOVE_IF_ZERO=%s DRY_RUN=%s RDEP_COUNT=%s EXHAUSTIVE=%s\nRDEP_HINT=%s\n
 
 `fn-rdeps` returns `{qname, called_by:[{caller, module, path}], count, index:{query_complete, hint, ...}}`, plus a top-level `hint` for a method or constructor with zero static callers.
 
-- `called_by` has **no line numbers**; `caller` is `module::qualified_name`, which `symbol` never matches. Step 4c splits it at `::` and resolves the range via `codemap-py query symbols <module>` filtered by exact `qualified_name`.
+- `called_by` has **no line numbers**; `caller` is `module::qualified_name`, which `symbol` never matches. Step 3 splits it at `::` and saves ranges from `codemap-py query symbols <module>` filtered by exact `qualified_name`; Step 4c reads that preflight sentinel.
 - `EXHAUSTIVE` first reads `result["index"]["query_complete"]`; only if absent, use legacy `result["index"]["exhaustive"]`; neither → `false`. Incomplete → note in blast report.
 - `RDEP_HINT` non-empty → zero static callers is not zero callers: instance calls (`obj.method()`), overrides, subclass constructors, and implicit protocol (dunder) calls such as `len(x)` or `x == y` are never resolved statically. Print it in the blast report.
 - `INDEX_HINT` (`index.hint`) names the search for references the static AST never sees, such as hook-registered callers. Print it in the blast report; it never blocks the rename on its own.
@@ -172,13 +190,14 @@ IFS= read -r SYM_MODULE < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-sym-module-${CSID
 IFS= read -r OLD_NAME < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-OLD_NAME-${CSID}" 2>/dev/null || OLD_NAME=""
 [ -n "$SYM_MODULE" ] && [ -n "$OLD_NAME" ] || { echo "! BLOCKED — sym-module or OLD_NAME sentinel missing; stop, then re-invoke rename-refs"; exit 1; }
 _T="${TMPDIR:-/tmp}/codemap-${_CM_PROJ}"
+_CM_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 # rdeps of the module + every ancestor package: a re-export lives in an ancestor __init__.py, its users import the package
 _ITEMS='{"cmd":"list","args":["--limit","0"]}'; _M="$SYM_MODULE"
 while :; do _ITEMS="$_ITEMS,{\"cmd\":\"rdeps\",\"args\":[\"$_M\"]}"; case "$_M" in *.*) _M="${_M%.*}" ;; *) break ;; esac; done
 printf '[%s]\n' "$_ITEMS" > "${_T}-ref-batch-in-${CSID}"
 codemap-py query --timeout 20 batch "${_T}-ref-batch-in-${CSID}" > "${_T}-ref-batch-json-${CSID}" || { printf '! importer batch failed (exit %d) — reference sites unknown; stop before any source edit\n' "$?"; exit 1; }
 # exit 1 = unreadable answer or unmappable batch; a partial site list would silently skip importers
-python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/find_module_refs.py" --kind name --name "$OLD_NAME" --files-from-json "${_T}-rdeps-json-${CSID}" --files-from-json "${_T}-find-symbol-json-${CSID}" --files-from-json "${_T}-ref-batch-json-${CSID}" > "${_T}-ref-sites-${CSID}" || exit 1
+(cd "$_CM_ROOT" && python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/find_module_refs.py" --kind name --name "$OLD_NAME" --files-from-json "${_T}-rdeps-json-${CSID}" --files-from-json "${_T}-find-symbol-json-${CSID}" --files-from-json "${_T}-ref-batch-json-${CSID}") > "${_T}-ref-sites-${CSID}" || exit 1
 printf 'REF_SITES='; wc -l < "${_T}-ref-sites-${CSID}" | tr -d ' '
 cat "${_T}-ref-sites-${CSID}"
 ```
@@ -197,6 +216,19 @@ printf '%s\n' "$OLD_MODULE_PATH" > "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-O
 _RDEPS_FILE="${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rdeps-json-${CSID}"
 codemap-py query --timeout 20 rdeps "$OLD_REF" > "$_RDEPS_FILE" || { printf '! rdeps failed (exit %d) — importers unknown; stop before any source edit\n' "$?"; exit 1; }
 grep -q '^{"error"' "$_RDEPS_FILE" && { printf '! rdeps returned an error — importers unknown; stop before any source edit\n'; head -c 400 "$_RDEPS_FILE"; exit 1; }
+python - "$_RDEPS_FILE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+try:
+    coverage = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8")).get("index", {})
+    print("STALE=" + json.dumps(coverage.get("stale", "unknown")))
+    print("QUERY_COMPLETE=" + json.dumps(coverage.get("query_complete", "unknown")))
+except (OSError, ValueError, AttributeError) as exc:
+    sys.exit(f"! query coverage unavailable: {exc}")
+PY
+[ "$?" -eq 0 ] || exit 1
 # same forward-first, fail-closed read as the symbol branch; rdeps carries no method hint, so --kind module overwrites it empty (an earlier symbol run's hint never reaches this gate)
 python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/cm_json.py" rdeps-summary --kind module --input "$_RDEPS_FILE" --output-prefix "codemap-${_CM_PROJ}"
 IFS= read -r RDEP_COUNT < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rdep-count-${CSID}" 2>/dev/null || RDEP_COUNT="0"
@@ -209,7 +241,9 @@ IFS= read -r INDEX_HINT < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-INDEX_HINT
 printf 'REMOVE_IF_ZERO=%s DRY_RUN=%s RDEP_COUNT=%s EXHAUSTIVE=%s\nRDEP_HINT=%s\nINDEX_HINT=%s\n' "$REMOVE_IF_ZERO" "$DRY_RUN" "$RDEP_COUNT" "$EXHAUSTIVE" "" "$INDEX_HINT"
 ```
 
-Returns `{imported_by:[...], index:{query_complete,...}}`; extract `RDEP_COUNT`, `EXHAUSTIVE`.
+Returns `{imported_by:[...], dynamic_imported_by:[...], config_refs:[...], index:{query_complete,...}}`; extract `RDEP_COUNT`, `EXHAUSTIVE`. Count and list `dynamic_imported_by` and `config_refs` separately in the blast report; include every listed location in preflight and Step 6 verification. String imports and mock/config targets need explicit source review; an unresolved old target leaves the migration incomplete.
+
+Apply Step 1's stale decision to the printed `STALE=` and `QUERY_COMPLETE=` values immediately after the first answer, before candidate selection or further queries. Inspect later query coverage as Step 1 requires.
 
 ## Step 3: Blast-radius report + confirmation gate
 
@@ -229,26 +263,146 @@ Static callers: N (across N files)
 
 [symbol] Reference sites (imports, bases, isinstance, callbacks, re-exports): N lines across N files
   - pkg/c.py:4   class Child(OldName):
+[module] Dynamic importers: D (list every module/location from dynamic_imported_by)
+[module] Config references: C (list every location from config_refs)
 
 Docstring refs: (will grep :func:/:class:/:meth:/:mod:/:attr: in Step 4d)
 
 [if DEPRECATE]
 Deprecation wrapper: <OLD_REF> kept as @deprecated alias → <NEW_REF>
 
-⚠ Not covered (hard limits — grep advisories in Step 8):
+⚠ Not covered (hard limits — grep advisories in Step 7):
   - getattr("old_name") dynamic dispatch
   - Cross-repo consumers
 [if not EXHAUSTIVE]
 ⚠ Index non-exhaustive — some callers may not appear above
+[if PROCEED_STALE=true or caller preflight reports incomplete coverage]
+⚠ User chose Proceed anyway — source-verified known callers only; coverage remains stale or incomplete
 [if RDEP_HINT]
 ⚠ <RDEP_HINT>
 [if INDEX_HINT]
 ℹ Outside the static AST: <INDEX_HINT>
 ```
 
-Caller count alone never blocks a complete migration. Enumerate and preflight every known caller; for a long list, save the complete inventory to a free branch-scoped `.temp/output-rename-refs-blast-<branch>-<YYYY-MM-DD>.md` path and print its path. Derive `<branch>` from `git branch --show-current`, replacing `/` with `-` (`main` if empty/detached). Never overwrite: probe before Writing and append `-2`, `-3`, … until free. The inventory supports confirmation and complete execution; it never permits a partial migration.
+Caller count alone never blocks a complete migration. Enumerate and preflight every known caller; include the complete caller inventory and resolved locations in the same `.temp/rename-refs-blast-<session-id>.md` report, regardless of its length. Never overwrite an existing report: probe before Writing and append `-2`, `-3`, … until free. The inventory supports confirmation and complete execution; it never permits a partial migration.
 
-Before apply confirmation, resolve every known caller before any source edit: for symbols, query every caller and verify its unique source range and expected imports/calls; for modules, inspect every dependent file and matching import. For a missing, ambiguous or stale site, stop before any source edit with source unchanged. Retain these locations for apply; recheck them before mutation. The complete preflight applies to both subcommands regardless of caller count.
+Before apply confirmation, resolve every known caller before any source edit: for symbols, query every caller and verify its unique source range and expected imports/calls; for modules, inspect every dependent file and matching import. For a missing, ambiguous or source-mismatched site, stop before any source edit with source unchanged. With the recorded Proceed anyway decision, stale or incomplete metadata alone does not reject a uniquely resolved, source-verified caller; carry that caveat into the blast report and Step 7. Without that decision, unavailable caller coverage stops as before. Retain these locations for apply; recheck them before mutation. The complete preflight applies to both subcommands regardless of caller count.
+
+For symbols, run this preflight once before the confirmation gate. It queries `symbols <module>` once per caller module and publishes the caller-ranges sentinel only after every caller resolves. Read its saved source alongside the expected imports/calls before confirmation; Step 4c consumes these ranges without re-querying after edits.
+
+```bash
+# timeout: 400000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+_CM_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+_CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || echo "cm")
+_T="${TMPDIR:-/tmp}/codemap-${_CM_PROJ}"
+IFS= read -r SUBCOMMAND < "${_T}-rename-SUBCOMMAND-${CSID}" || exit 1
+[ "$SUBCOMMAND" = "symbol" ] || exit 0
+python - "$_T" "$CSID" "$_CM_ROOT" <<'PY'
+import ast
+import json
+import shutil
+import subprocess
+import sys
+import textwrap
+from pathlib import Path
+
+prefix, session, root = sys.argv[1:]
+output = Path(f"{prefix}-caller-ranges-{session}")
+output.unlink(missing_ok=True)
+launcher = shutil.which("codemap-py")
+if launcher is None:
+    sys.exit("! caller preflight unavailable: codemap-py launcher not found")
+decision = Path(f"{prefix}-rename-PROCEED_STALE-{session}")
+
+
+def matches_caller(source, whole, qualified, start, end):
+    """Verify that the current range still belongs to the indexed caller."""
+    definitions = ast.parse(textwrap.dedent(source)).body
+    kinds = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+    if len(definitions) != 1 or not isinstance(definitions[0], kinds):
+        return False
+    if definitions[0].name != qualified.rsplit(".", 1)[-1]:
+        return False
+    try:
+        pending = [(ast.parse(whole), "")]
+    except SyntaxError:
+        return True
+    while pending:
+        node, prefix = pending.pop()
+        if isinstance(node, kinds):
+            prefix = f"{prefix}.{node.name}" if prefix else node.name
+            if node.lineno == start and node.end_lineno == end:
+                return prefix == qualified
+        pending.extend((child, prefix) for child in ast.iter_child_nodes(node))
+    return False
+
+
+def has_expected_call(source, whole, old_ref):
+    """Check the saved range for the old call, including imported aliases and constructors."""
+    names = {old_ref.rsplit(".", 1)[-1]}
+    if old_ref.endswith(".__init__"):
+        names.add(old_ref.split(".")[-2])
+    try:
+        imports = ast.walk(ast.parse(whole))
+    except SyntaxError:
+        imports = ()
+    aliases = {alias.asname for node in imports if isinstance(node, ast.ImportFrom)
+               for alias in node.names if alias.name in names and alias.asname}
+    names |= aliases
+    return any(isinstance(node, ast.Call) and
+               ((isinstance(node.func, ast.Name) and node.func.id in names) or
+                (isinstance(node.func, ast.Attribute) and node.func.attr in names))
+               for node in ast.walk(ast.parse(textwrap.dedent(source))))
+
+
+modules = {}
+resolved = []
+identity = "saved inventory"
+try:
+    proceed = decision.is_file() and decision.read_text().strip() == "true"
+    callers = json.loads(Path(f"{prefix}-rdeps-json-{session}").read_text(encoding="utf-8"))["called_by"]
+    for caller in callers:
+        identity = caller["caller"]
+        module, qualified = identity.split("::", 1)
+        if module not in modules:
+            answer = subprocess.run(
+                [launcher, "query", "--timeout", "20", "symbols", module],
+                cwd=root, capture_output=True, text=True, timeout=25, check=True,
+            )
+            modules[module] = json.loads(answer.stdout)
+        data = modules[module]
+        if "error" in data:
+            raise ValueError(data["error"])
+        coverage = data.get("index", {})
+        incomplete = coverage.get("query_complete") is not True or coverage.get("stale") is not False
+        if incomplete and not proceed:
+            sys.exit(f"! caller preflight unavailable: {identity} — {coverage}")
+        matches = [item for item in data["symbols"] if item["qualified_name"] == qualified]
+        if len(matches) != 1 or data["path"] != caller["path"]:
+            sys.exit(f"! caller preflight missing/ambiguous: {identity}")
+        item = matches[0]
+        start, end = item["start_line"], item["end_line"]
+        whole = (Path(root) / data["path"]).read_text(encoding="utf-8")
+        lines = whole.splitlines()
+        if not 1 <= start <= end <= len(lines):
+            sys.exit(f"! caller preflight invalid range: {identity}")
+        source = "\n".join(lines[start - 1:end])
+        if incomplete:
+            old_ref = Path(f"{prefix}-rename-OLD_REF-{session}").read_text().strip()
+            if not matches_caller(source, whole, qualified, start, end) or not has_expected_call(source, whole, old_ref):
+                sys.exit(f"! caller preflight source mismatch: {identity}")
+            print(f"⚠ caller preflight used Proceed anyway: {identity} — {coverage}")
+        resolved.append({**caller, "start_line": start, "end_line": end, "source": source})
+    output.write_text(json.dumps(resolved) + "\n", encoding="utf-8")
+except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError, AttributeError, SyntaxError) as exc:
+    diagnostic = getattr(exc, "stderr", None) or str(exc)
+    if isinstance(diagnostic, bytes):
+        diagnostic = diagnostic.decode("utf-8", errors="replace")
+    sys.exit(f"! caller preflight unavailable: {identity} — {diagnostic[:400]}")
+print(f"PREFLIGHT_CALLERS={len(resolved)}\n{output}")
+PY
+```
 
 **`--remove-if-no-callers` guards** — evaluated before any rename edits, on the `REMOVE_IF_ZERO=… DRY_RUN=… RDEP_COUNT=… EXHAUSTIVE=…` and `RDEP_HINT=…` lines printed by Step 2's last block (symbol: fn-rdeps block; module: rdeps block):
 
@@ -262,7 +416,8 @@ Before apply confirmation, resolve every known caller before any source edit: fo
   _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || echo "cm")
   IFS= read -r OLD_NAME < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-OLD_NAME-${CSID}" 2>/dev/null || OLD_NAME=""
   [ -n "$OLD_NAME" ] || { echo "! BLOCKED — OLD_NAME sentinel missing; stop, then re-invoke rename-refs"; exit 1; }
-  grep -rnw --include='*.py' --include='*.pyi' --exclude-dir=.git --exclude-dir=.venv --exclude-dir=node_modules -- "$OLD_NAME" . | head -50
+  _CM_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+  grep -rnw --include='*.py' --include='*.pyi' --exclude-dir=.git --exclude-dir=.venv --exclude-dir=node_modules -- "$OLD_NAME" "$_CM_ROOT" | head -50
   ```
 - `REMOVE_IF_ZERO=true` AND `RDEP_COUNT == 0` AND `EXHAUSTIVE=true` AND `RDEP_HINT` empty AND no non-call hit AND `DRY_RUN=false` → `AskUserQuestion`: (a) Delete `$OLD_REF` — confirmed no callers; (b) Abort — keep file. Abort: stop. Delete: find-symbol line range, then `Read` block bounds. Verify `start_line` contains expected bare `OLD_NAME` or qualified `OLD_REF`; mismatch → print `! Symbol name mismatch at line <start_line>: expected <OLD_NAME>, index may be stale — run /codemap-py:scan-codebase first`; abort without delete. Only then `Edit`: remove definition from `def`/`class` through final body, including immediately preceding `@decorator` lines. Skip Steps 4a–4d. Print `ℹ Symbol had no callers — removed $OLD_REF without rename`; go Step 6.
 - `REMOVE_IF_ZERO=true` AND `RDEP_COUNT == 0` AND `EXHAUSTIVE=true` AND `RDEP_HINT` empty AND no non-call hit AND `DRY_RUN=true` → record "would delete `$OLD_REF` — no callers, exhaustive" as a line in the dry-run report below; fall through to the `--dry-run` block. No `AskUserQuestion`, no `Edit` — dry-run means no edits, including the delete.
@@ -298,6 +453,17 @@ Path:       → <the resolved $DRY_OUT path>
 Otherwise `AskUserQuestion`: print the saved blast-radius report once as the last reply text before the call; question text carries the rename headline, caller count, any cap/incomplete-index warning, and `→ <resolved blast report path>`, no previews. (a) Apply edits — rename the listed sites; (b) Abort — keep the current code. Abort → stop.
 
 ## Step 4: Apply edits — symbol rename
+
+For either subcommand, immediately after each successful source `Edit`, record its exact path with this block, including definition, re-export, non-call, documentation and config edits. After a successful Step 5 `git mv`, run it for both the source and destination paths from that operation before any further edit. A failed write records no new path; retain all earlier entries for the partial-state summary.
+
+```bash
+# timeout: 3000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+_CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || echo "cm")
+EDITED_PATH="<exact path just edited or moved>"
+case "$EDITED_PATH" in *'<'*'>'*|"") echo "! BLOCKED — substitute EDITED_PATH with the actual edited path"; exit 1 ;; esac
+printf '%s\n' "$EDITED_PATH" >> "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-edited-files-${CSID}"
+```
 
 Skip to Step 5 if `SUBCOMMAND=module`.
 
@@ -344,7 +510,7 @@ codemap-py index --incremental --timeout 360
 _scan_rc=$?
 if [ "$_scan_rc" -ne 0 ]; then
     printf "! codemap-py index --incremental failed (exit %d) — verification may be incomplete; run /codemap-py:scan-codebase for full rebuild\n" "$_scan_rc"
-    # don't skip — stale results are advisory only
+    # don't skip — gather the remaining evidence even when the rescan failed
 fi
 IFS= read -r OLD_REF < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-OLD_REF-${CSID}" 2>/dev/null || OLD_REF=""
 codemap-py query --timeout 20 find-symbol "$OLD_REF" --limit 0  # timeout: 25000
@@ -359,6 +525,54 @@ _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/nul
 IFS= read -r OLD_REF < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-OLD_REF-${CSID}" 2>/dev/null || OLD_REF=""
 codemap-py query --timeout 20 rdeps "$OLD_REF"
 ```
+
+Interpret the module query with its actual exit status: exit 3 plus structured `error: "module not indexed"` for `OLD_REF` is clean absence only after a successful rescan. Exit 0 with any `imported_by`, `dynamic_imported_by` or `config_refs` entry is a residual; exit 0 with empty lists still means the old module is indexed, so inspect its source rather than calling it absent. Any other error, malformed result or failed rescan means verification unavailable and Step 7 must report an incomplete rename.
+
+For `module`, also search literal dotted `OLD_REF`, including string imports, mock targets and config/documentation references. This scan is required even when `rdeps` reports clean absence:
+
+```bash
+# timeout: 30000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+_CM_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+_CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || echo "cm")
+_T="${TMPDIR:-/tmp}/codemap-${_CM_PROJ}"
+IFS= read -r SUBCOMMAND < "${_T}-rename-SUBCOMMAND-${CSID}" || exit 1
+[ "$SUBCOMMAND" = "module" ] || exit 0
+IFS= read -r OLD_REF < "${_T}-rename-OLD_REF-${CSID}" || exit 1
+[ -n "$OLD_REF" ] || { echo "! module residual verification unavailable — OLD_REF missing"; exit 1; }
+IFS= read -r NEW_REF < "${_T}-rename-NEW_REF-${CSID}" 2>/dev/null || NEW_REF=""
+grep -rnE --include='*.py' --include='*.pyi' --include='*.rst' --include='*.md' --include='*.toml' --include='*.cfg' --include='*.ini' --include='*.json' --include='*.yaml' --include='*.yml' --exclude-dir=.git --exclude-dir=.venv --exclude-dir=venv --exclude-dir=node_modules --exclude-dir=__pycache__ --exclude-dir=.temp --exclude-dir=.reports --exclude-dir=.plans --exclude-dir=.cache --exclude-dir=.tox --exclude-dir=build --exclude-dir=dist -- "(^|[^A-Za-z0-9_])${OLD_REF//./\\.}([^A-Za-z0-9_]|$)" "$_CM_ROOT" > "${_T}-module-residual-raw-${CSID}"
+_residual_rc=$?
+[ "$_residual_rc" -le 1 ] || { echo "! module residual verification unavailable — search failed"; exit 1; }
+python - "$_T" "$CSID" "$OLD_REF" "$NEW_REF" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+prefix, session, old, new = sys.argv[1:]
+try:
+    pattern = re.compile(r"(?<![A-Za-z0-9_])" + re.escape(old) + r"(?![A-Za-z0-9_])")
+    hits, history = [], []
+    for line in Path(f"{prefix}-module-residual-raw-{session}").read_text(encoding="utf-8").splitlines():
+        path, text = re.split(r":\d+:", line, maxsplit=1)
+        if not pattern.search(text.replace(new, "") if new else text):
+            continue
+        filename = Path(path)
+        historical = filename.suffix.lower() in {".md", ".rst"} and filename.stem.lower() in {
+            "changelog", "history", "changes"
+        }
+        (history if historical else hits).append(line)
+    Path(f"{prefix}-module-residual-{session}").write_text("".join(line + "\n" for line in hits), encoding="utf-8")
+    print(f"MODULE_RESIDUAL_COUNT={len(hits)}")
+    print("\n".join(hits))
+    print(f"MODULE_HISTORY_ADVISORY={len(history)}")
+    print("\n".join(history))
+except (OSError, ValueError) as exc:
+    sys.exit(f"! module residual verification unavailable — {exc}")
+PY
+```
+
+Classify every module residual hit against its origin and the Step 3 inventory. An old module target in a string import, `mock.patch`, config or current documentation is unresolved and prevents `Renamed`; report the exact location and required edit. Changelog/history hits are advisory and never unresolved; do not rewrite history. Same-text references to another origin may remain, with their classification recorded.
 
 Expected: old name absent, except deprecated alias with `--deprecate`. `find-symbol` is an unanchored pattern, so count only matches whose `qualified_name` equals `OLD_REF`; a new name containing the old one (`old_fn` → `old_fn_v2`) is not a residual.
 
@@ -376,11 +590,12 @@ IFS= read -r SYM_TYPE < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-sym-type-${CSID}" 2
 IFS= read -r DEPRECATE < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-DEPRECATE-${CSID}" 2>/dev/null || DEPRECATE="false"
 [ -n "$OLD_NAME" ] || { echo "! BLOCKED — OLD_NAME sentinel missing; source already edited — finish remaining Step 6 checks, then Step 7: ⚠ Rename incomplete"; exit 1; }
 _T="${TMPDIR:-/tmp}/codemap-${_CM_PROJ}"
+_CM_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 _ALIAS=""; [ "$DEPRECATE" = "true" ] && _ALIAS="$SYM_PATH"
 if [ "$SYM_TYPE" = "method" ]; then
-    python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/find_module_refs.py" --kind name --name "$OLD_NAME" ${_ALIAS:+--alias-in "$_ALIAS"} --files-from-json "${_T}-rdeps-json-${CSID}" --files-from-json "${_T}-find-symbol-json-${CSID}" --files-from-json "${_T}-ref-batch-json-${CSID}" > "${_T}-residual-${CSID}" || exit 1
+    (cd "$_CM_ROOT" && python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/find_module_refs.py" --kind name --name "$OLD_NAME" ${_ALIAS:+--alias-in "$_ALIAS"} --files-from-json "${_T}-rdeps-json-${CSID}" --files-from-json "${_T}-find-symbol-json-${CSID}" --files-from-json "${_T}-ref-batch-json-${CSID}") > "${_T}-residual-${CSID}" || exit 1
 else
-    python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/find_module_refs.py" --kind name --name "$OLD_NAME" ${_ALIAS:+--alias-in "$_ALIAS"} > "${_T}-residual-${CSID}" || exit 1
+    python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/find_module_refs.py" --kind name --name "$OLD_NAME" ${_ALIAS:+--alias-in "$_CM_ROOT/$_ALIAS"} --scope "$_CM_ROOT" > "${_T}-residual-${CSID}" || exit 1
 fi
 printf 'RESIDUAL_COUNT='; wc -l < "${_T}-residual-${CSID}" | tr -d ' '
 cat "${_T}-residual-${CSID}"
@@ -388,9 +603,194 @@ cat "${_T}-residual-${CSID}"
 
 Classify each residual line: an unedited reference to the renamed symbol (an import from its module or a re-exporting package, a base, a call, an `isinstance` target, a callback value, a comment or docstring naming it) or a same-name symbol of another origin. Any unedited reference makes the migration incomplete (Step 7). Hard-limit cases: dynamic refs, template strings, out-of-scope config strings.
 
-Before claiming completion, verify the renamed provider and every known caller with the relevant import and call checks. An unresolved known caller, failed check or unavailable verification leaves the migration incomplete; list the exact remaining consumer and next action. Index results alone do not establish that consumers still work.
+Before claiming completion, record these verification results in the saved blast report:
+
+1. Require a successful rescan and the old-definition/importer and residual checks above. Record all residual classifications and exact unresolved locations.
+2. Run the identity comparison block below. For symbols it saves `fn-rdeps` for the new qualified name and compares every (`caller`, `path`) against `caller-ranges`, including equal total `count`; only the renamed provider's own qualified prefix and nested members transform. An equal count alone cannot substitute for the identity comparison. A hard-delete has no new target: require the old definition and all references absent instead.
+3. For modules the same block saves `rdeps <NEW_REF>` and compares static importers, dynamic importer locations and config locations with the pre-rename answer. Verify each saved source location names the new module, including relative imports; any absent or still-old consumer fails verification. Review extra identities as newly discovered consumers. Require complete, fresh post-query metadata only when pre-rename `EXHAUSTIVE=true`; otherwise compare known identities and carry the same non-exhaustive caveat into Step 7 without downgrading a fully matched rename.
+4. Run the bounded import-smoke block below using the project's Python environment. It imports the provider and every inventoried Python consumer module in separate processes, with a 20-second limit per module, and prints the `test-impact` pytest command as advisory only. Record each module, command and exit status in the same report. No covering test is advisory and never blocks `✓ Renamed`; no test suite runs automatically.
+
+```bash
+# timeout: 400000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+_CM_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+_CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || echo "cm")
+_T="${TMPDIR:-/tmp}/codemap-${_CM_PROJ}"
+python - "$_T" "$CSID" "$_CM_ROOT" <<'PY'
+import json
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+prefix, session, root = sys.argv[1:]
+
+
+def saved(name):
+    """Read a required session value."""
+    return Path(f"{prefix}-{name}-{session}").read_text(encoding="utf-8").strip()
+
+
+def module_identities(data, old, new):
+    """Compare consumer origins and locations without target literals or context text."""
+    def moved_name(name):
+        """Map the moved provider's own module identity."""
+        return new if name == old else name
+
+    def moved_path(path):
+        """Preserve the import root while mapping the provider's file path."""
+        suffix = old.replace(".", "/") + ".py"
+        return path[:-len(suffix)] + new.replace(".", "/") + ".py" if path.endswith(suffix) else path
+
+    identities = {("static", moved_name(name)) for name in data["imported_by"]}
+    identities.update(("dynamic", moved_name(row["importer"]), moved_path(row["path"]), row["line"])
+                      for row in data["dynamic_imported_by"])
+    identities.update(("config", row["file"], row["line"]) for row in data["config_refs"])
+    return identities
+
+
+output = Path(f"{prefix}-new-rdeps-json-{session}")
+output.unlink(missing_ok=True)
+try:
+    mode, old, new = saved("rename-SUBCOMMAND"), saved("rename-OLD_REF"), saved("rename-NEW_REF")
+    if mode == "symbol" and saved("rename-REMOVE_IF_ZERO") == "true":
+        print("NO_NEW_TARGET=hard-delete; verify old definition and all references absent")
+        sys.exit(0)
+    launcher = shutil.which("codemap-py")
+    if launcher is None:
+        raise ValueError("codemap-py launcher not found")
+    before = json.loads(saved("rdeps-json"))
+    if mode == "symbol":
+        module, qualified = saved("sym-module"), saved("sym-qname")
+        if "." not in new and "." in qualified:
+            new = qualified.rsplit(".", 1)[0] + "." + new
+        old_prefix, new_prefix = f"{module}::{qualified}", f"{module}::{new}"
+        rows = json.loads(saved("caller-ranges"))
+        expected = {(new_prefix + row["caller"][len(old_prefix):]
+                     if row["caller"] == old_prefix or row["caller"].startswith(old_prefix + ".")
+                     else row["caller"], row["path"]) for row in rows}
+        command, target = "fn-rdeps", new_prefix
+    else:
+        expected = module_identities(before, old, new)
+        command, target = "rdeps", new
+    answer = subprocess.run([launcher, "query", "--timeout", "20", command, target],
+                            cwd=root, capture_output=True, text=True, timeout=25, check=True)
+    after = json.loads(answer.stdout)
+    if "error" in after:
+        raise ValueError(after["error"])
+    output.write_text(json.dumps(after) + "\n", encoding="utf-8")
+    coverage = after.get("index", {})
+    if saved("rename-EXHAUSTIVE") == "true":
+        if coverage.get("query_complete") is not True or coverage.get("stale") is not False:
+            sys.exit(f"! new-target coverage unavailable: {coverage}")
+    else:
+        print(f"⚠ Index non-exhaustive — comparing known consumers only; post-query coverage: {coverage}")
+    actual = ({(row["caller"], row["path"]) for row in after["called_by"]} if mode == "symbol"
+              else module_identities(after, new, new))
+    print("MATCHED_IDENTITIES=" + json.dumps(sorted(expected & actual)))
+    print("MISSING_IDENTITIES=" + json.dumps(sorted(expected - actual)))
+    print("EXTRA_IDENTITIES=" + json.dumps(sorted(actual - expected)))
+    if mode == "symbol" and not (after["count"] == len(after["called_by"]) == len(rows) == before["count"]):
+        sys.exit("! caller identity count mismatch")
+    if expected - actual or (mode == "symbol" and actual - expected):
+        sys.exit("! consumer identity mismatch — finish remaining checks, then Step 7: ⚠ Rename incomplete")
+except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError, AttributeError) as exc:
+    diagnostic = getattr(exc, "stderr", None) or str(exc)
+    sys.exit(f"! new-target verification unavailable: {str(diagnostic)[:400]}")
+PY
+```
+
+```bash
+# timeout: 400000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+_CM_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+_CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || echo "cm")
+_T="${TMPDIR:-/tmp}/codemap-${_CM_PROJ}"
+python - "$_T" "$CSID" "$_CM_ROOT" <<'PY'
+import json
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+prefix, session, root = sys.argv[1:]
+try:
+    mode = Path(f"{prefix}-rename-SUBCOMMAND-{session}").read_text().strip()
+    new = Path(f"{prefix}-rename-NEW_REF-{session}").read_text().strip()
+    before = json.loads(Path(f"{prefix}-rdeps-json-{session}").read_text(encoding="utf-8"))
+    if mode == "symbol":
+        provider = Path(f"{prefix}-sym-module-{session}").read_text().strip()
+        modules = {provider, *(row["module"] for row in before["called_by"])}
+        batch = json.loads(Path(f"{prefix}-ref-batch-json-{session}").read_text(encoding="utf-8"))
+        modules.update(name for item in batch["batch"] if item.get("ok") and item["cmd"] == "rdeps"
+                       for name in item["result"]["imported_by"])
+        qualified = Path(f"{prefix}-sym-qname-{session}").read_text().strip()
+        if "." not in new and "." in qualified:
+            new = qualified.rsplit(".", 1)[0] + "." + new
+        target = f"{provider}::{new}"
+    else:
+        modules = {new, *before["imported_by"], *(row["importer"] for row in before["dynamic_imported_by"])}
+        old = Path(f"{prefix}-rename-OLD_REF-{session}").read_text().strip()
+        modules = {new if module == old else module for module in modules}
+        target = new
+except (OSError, ValueError, KeyError, TypeError) as exc:
+    sys.exit(f"! import smoke inventory unavailable: {exc}")
+failed = []
+for module in sorted(modules):
+    command = [sys.executable, "-c", "import importlib, sys; importlib.import_module(sys.argv[1])", module]
+    try:
+        result = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=20)
+        print(f"IMPORT_SMOKE={module} EXIT={result.returncode} COMMAND={json.dumps(command)}")
+        if result.returncode:
+            failed.append(module)
+            print(result.stderr[:400])
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        failed.append(module)
+        print(f"IMPORT_SMOKE={module} unavailable: {exc}")
+try:
+    launcher = shutil.which("codemap-py")
+    if launcher is None:
+        raise ValueError("codemap-py launcher not found")
+    result = subprocess.run([launcher, "query", "--timeout", "20", "test-impact", target],
+                            cwd=root, capture_output=True, text=True, timeout=25, check=True)
+    impact = json.loads(result.stdout)
+    print("ADVISORY pytest command: " + (impact.get("pytest_cmd") or "no covering test"))
+except (OSError, subprocess.SubprocessError, ValueError, TypeError, AttributeError) as exc:
+    print(f"ADVISORY test-impact unavailable: {str(exc)[:400]}")
+if failed:
+    sys.exit("! import smoke failed: " + ", ".join(failed))
+PY
+```
+
+`N` is the preflight inventory's distinct caller count (module mode: distinct static/dynamic/config consumers). `M` counts consumers passing the identity/source comparison and, for Python consumers, their module's import smoke check. Config consumers require their source-location check. An unresolved known caller, failed smoke check or unavailable required verification leaves the migration incomplete; list the exact remaining consumer and next action. A non-exhaustive index or missing covering test remains a caveat, not an additional failure. Import smoke verifies import-time behavior; runtime call behavior remains outside this bounded check.
 
 ## Step 7: Summary
+
+Run this block even after a post-edit failure. It combines the edit journal with `processed-import-files` and the definition path; the journal includes both paths of each successful `git mv`. Print its `Files edited:` list in either summary outcome.
+
+```bash
+# timeout: 5000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+_CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || echo "cm")
+_T="${TMPDIR:-/tmp}/codemap-${_CM_PROJ}"
+python - "$_T" "$CSID" <<'PY'
+import sys
+from pathlib import Path
+
+prefix, session = sys.argv[1:]
+paths = set()
+mode = Path(f"{prefix}-rename-SUBCOMMAND-{session}")
+names = ["edited-files", "processed-import-files"]
+if mode.is_file() and mode.read_text().strip() == "symbol":
+    names.append("sym-path")
+for name in names:
+    source = Path(f"{prefix}-{name}-{session}")
+    if source.is_file():
+        paths.update(line for line in source.read_text(encoding="utf-8").splitlines() if line)
+print("Files edited:")
+print("\n".join("  " + path for path in sorted(paths)) or "  (none recorded)")
+PY
+```
 
 Print:
 
@@ -399,14 +799,20 @@ Print:
 ⚠ Rename incomplete — M of N callers verified; R unedited reference(s) to <OLD_NAME>:
     <file>:<line>
   <remaining consumers, failed checks and next actions>
+  Files edited: <the exact list printed above>
 [else]
-✓ Renamed: <OLD_REF> → <NEW_REF> — residual whole-word references: RESIDUAL_COUNT (each a same-name symbol of another origin; 0 when none)
+✓ Renamed: <OLD_REF> → <NEW_REF> — residual references: RESIDUAL_COUNT (symbol) / MODULE_RESIDUAL_COUNT (module); each remaining hit classified as another origin, 0 when none
   Files changed: N
+  Files edited: <the exact list printed above>
   Call sites updated: M
   Docstring refs updated: K
   [if DEPRECATE] Deprecation alias added at: <path>:<line>
 
 Advisory — check manually (outside static analysis coverage):
+  [if PROCEED_STALE=true] User chose Proceed anyway — coverage remains stale or incomplete; only known source-verified consumers checked
+  [if not EXHAUSTIVE] Index non-exhaustive — unknown consumers remain outside this rename's verification
+  - <the printed test-impact pytest command, or no covering test; advisory only>
+  [if MODULE_HISTORY_ADVISORY > 0] Historical module references: <locations; advisory, left unchanged>
   - getattr("<old_name>") dynamic dispatch: grep -rn '"<old_name>"' src/
   [if cross-repo public API and DEPRECATE not used]
   - External consumers: update CHANGELOG; use --deprecate alias until next major release

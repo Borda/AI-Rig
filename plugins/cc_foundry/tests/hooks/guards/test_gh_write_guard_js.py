@@ -209,7 +209,6 @@ class TestWritesBlocked:
             pytest.param("cd /x && { GH.EXE pr merge 1; }", id="grouped-case-and-exe"),
             pytest.param("bash <<< 'gh release create v1'", id="here-string"),
             pytest.param('gh "pr" "comment" 1 -b x', id="quoted-words"),
-            pytest.param("python3 -c \"import os; os.system('gh pr comment 1 -b x')\"", id="interpreter-code"),
             pytest.param("echo 1 | xargs gh issue close", id="xargs"),
             pytest.param("gh api $'repos/o/r/issues' -f title=x", id="ansi-c-endpoint"),
             pytest.param("$'gh' api repos/o/r/issues -f title=x", id="ansi-c-program"),
@@ -232,6 +231,21 @@ class TestWritesBlocked:
             pytest.param("exit '$(gh pr merge 1)'", id="count-exit-arithmetic-substitution"),
             pytest.param("shift '$(gh pr merge 1)'", id="count-shift-arithmetic-substitution"),
             pytest.param("repeat '$(gh pr merge 1)' true", id="count-repeat-arithmetic-substitution"),
+            pytest.param("gh pr $'cr\\x65ate' -t x", id="ansi-c-hex-escape-verb"),
+            pytest.param("gh pr $'\\143reate' -t x", id="ansi-c-octal-escape-verb"),
+            pytest.param("$'\\x67h' pr create -t x", id="ansi-c-escape-program"),
+            pytest.param('gh pr "`echo create`" --title x', id="backticks-as-verb"),
+            pytest.param('gh pr "$(echo merge)" 1', id="substitution-as-verb"),
+            pytest.param('gh pr "$VERB" 1', id="variable-as-verb"),
+            pytest.param('gh repo autolink "$X" a b', id="variable-as-second-verb-word"),
+            pytest.param('gh "$G" create', id="variable-as-group"),
+            pytest.param('x="${a%"b"}"; gh pr merge 1', id="write-after-nested-expansion-quotes"),
+            pytest.param("cat <<EOF\n$$$(gh pr create)\nEOF", id="pid-then-substitution-in-heredoc"),
+            pytest.param(
+                'gh pr view "`echo \\"\'\\"; gh pr create --title t --body b; \\"\'\\"`"',
+                id="escaped-double-quote-in-backticks",
+            ),
+            pytest.param("echo hi # note \\\ngh pr create", id="comment-does-not-continue"),
         ],
     )
     def test_blocks_write_behind_spelling(self, run_hook, command: str) -> None:
@@ -245,64 +259,57 @@ class TestWritesBlocked:
         assert result.returncode == 2, f"{command!r} was not blocked"
 
     @pytest.mark.parametrize(
-        "command",
+        ("command", "expected_exit"),
         [
-            pytest.param('gh pr $"create" --title x --body y', id="locale-string-verb"),
-            pytest.param("gh pr $'cr\\x65ate' -t x", id="ansi-c-hex-escape-verb"),
-            pytest.param("gh pr $'\\143reate' -t x", id="ansi-c-octal-escape-verb"),
-            pytest.param("gh pr $'\\u0063reate' -t x", id="ansi-c-unicode-escape-verb"),
-            pytest.param("$'\\x67h' pr create -t x", id="ansi-c-escape-program"),
-            pytest.param('gh pr "`echo create`" --title x', id="backticks-as-verb"),
-            pytest.param('gh pr "$(echo merge)" 1', id="substitution-as-verb"),
-            pytest.param('gh pr "$VERB" 1', id="variable-as-verb"),
-            pytest.param('gh repo autolink "$X" a b', id="variable-as-second-verb-word"),
-            pytest.param('gh "$G" create', id="variable-as-group"),
-            pytest.param("gh pr $'\\x{63}reate' -t x", id="hex-brace-escape-verb"),
-            pytest.param("$'\\x{67}h' pr create -t x", id="hex-brace-escape-program"),
-            pytest.param("x=$'\\c\\\\'; gh pr create # '", id="control-escape-before-a-write"),
-            pytest.param("cat <<$'EOF'\nhi\nEOF\ngh pr merge 1", id="ansi-c-heredoc-delimiter"),
-            pytest.param("gh pr $'\\qmerge' 1", id="unknown-escape-verb"),
-            pytest.param("x=$$'\\'; gh pr create #'", id="dollars-before-a-quote"),
-            pytest.param('x="${y:-\'"\'}"; gh pr create # "\'', id="single-quote-in-double-quoted-expansion"),
-            pytest.param('x="${a%"b"}"; gh pr merge 1', id="write-after-nested-expansion-quotes"),
-            pytest.param('x="$${y:-"}"; gh pr create # "', id="dollars-before-a-brace-in-double-quotes"),
-            pytest.param('x="${y:-\\}\'"\'}"; gh pr create # "\'', id="escaped-brace-then-single-quote"),
-            pytest.param('x="${ gh pr create; }"', id="bash-5-3-command-brace"),
-            pytest.param('x="${|gh pr create;}"', id="bash-5-3-value-brace"),
-            pytest.param("cat <<EOF\n${ gh pr create; }\nEOF", id="bash-5-3-command-brace-in-heredoc"),
-            pytest.param('gh pr view "${ gh pr create --title t --body b; }"', id="bash-5-3-command-brace-in-a-read"),
+            pytest.param('gh pr $"create" --title x --body y', 2, id="locale-string-verb"),
+            pytest.param("gh pr $'\\u0063reate' -t x", 2, id="ansi-c-unicode-escape-verb"),
+            pytest.param("gh pr $'\\x{63}reate' -t x", 2, id="hex-brace-escape-verb"),
+            pytest.param("$'\\x{67}h' pr create -t x", 0, id="hex-brace-escape-program"),
+            pytest.param("x=$'\\c\\\\'; gh pr create # '", 2, id="control-escape-before-a-write"),
+            pytest.param("cat <<$'EOF'\nhi\nEOF\ngh pr merge 1", 0, id="ansi-c-heredoc-delimiter"),
+            pytest.param("gh pr $'\\qmerge' 1", 2, id="unknown-escape-verb"),
+            pytest.param("x=$$'\\'; gh pr create #'", 2, id="dollars-before-a-quote"),
+            pytest.param('x="${y:-\'"\'}"; gh pr create # "\'', 2, id="single-quote-in-double-quoted-expansion"),
+            pytest.param('x="$${y:-"}"; gh pr create # "', 2, id="dollars-before-a-brace-in-double-quotes"),
+            pytest.param('x="${y:-\\}\'"\'}"; gh pr create # "\'', 2, id="escaped-brace-then-single-quote"),
+            pytest.param('x="${ gh pr create; }"', 2, id="bash-5-3-command-brace"),
+            pytest.param('x="${|gh pr create;}"', 2, id="bash-5-3-value-brace"),
+            pytest.param("cat <<EOF\n${ gh pr create; }\nEOF", 0, id="bash-5-3-command-brace-in-heredoc"),
+            pytest.param(
+                'gh pr view "${ gh pr create --title t --body b; }"', 0, id="bash-5-3-command-brace-in-a-read"
+            ),
             pytest.param(
                 'gh api "repos/o/r/pulls/${ gh pr create --title t --body b; }"',
+                2,
                 id="bash-5-3-command-brace-in-an-endpoint",
             ),
-            pytest.param("cat <<EOF\n$$$(gh pr create)\nEOF", id="pid-then-substitution-in-heredoc"),
             pytest.param(
-                "gh pr view 1 <<EO\\\nF\nx\nEOF\ngh pr create --title t --body b", id="continued-heredoc-delimiter"
+                "gh pr view 1 <<EO\\\nF\nx\nEOF\ngh pr create --title t --body b", 0, id="continued-heredoc-delimiter"
             ),
-            pytest.param("gh pr view 1 $\\\n'\\''; gh pr create #'", id="continued-ansi-c-string"),
+            pytest.param("gh pr view 1 $\\\n'\\''; gh pr create #'", 2, id="continued-ansi-c-string"),
             pytest.param(
-                "gh pr view 1 <<EOF\n$\\\n(gh pr create --title t --body b)\nEOF", id="continued-substitution"
+                "gh pr view 1 <<EOF\n$\\\n(gh pr create --title t --body b)\nEOF", 0, id="continued-substitution"
             ),
-            pytest.param('gh api "repos/o/r/pulls/$\\\n(gh pr create)"', id="continued-substitution-in-an-endpoint"),
-            pytest.param('x="${\\\n gh pr create; }"', id="continued-command-brace"),
-            pytest.param(
-                'gh pr view "`echo \\"\'\\"; gh pr create --title t --body b; \\"\'\\"`"',
-                id="escaped-double-quote-in-backticks",
-            ),
-            pytest.param("echo hi # note \\\ngh pr create", id="comment-does-not-continue"),
+            pytest.param('gh api "repos/o/r/pulls/$\\\n(gh pr create)"', 0, id="continued-substitution-in-an-endpoint"),
+            pytest.param('x="${\\\n gh pr create; }"', 2, id="continued-command-brace"),
         ],
     )
-    def test_blocks_encoded_or_run_time_subcommand(self, run_hook, command: str) -> None:
-        """An escaped subcommand decodes where bash and zsh agree; quoting they disagree on, or a run-time verb, blocks.
+    def test_blocks_encoded_or_run_time_subcommand(self, run_hook, command: str, expected_exit: int) -> None:
+        """Visible writes reach the token gate even beside shell-dependent encodings.
 
         ``$'\\x63reate'`` is ``create`` to both shells, so it reads as the write it spells. ``$"create"``, ``\\u``,
         ``\\x{…}``, ``\\c``, unknown escapes and such heredoc delimiters decode differently between the shells, so the
-        guard has no exact argv and blocks, gh word or not. A variable or substitution where a write verb could stand
-        hides the subcommand, so the guard cannot show it is a read.
+        guard has no exact argv. A plain token scan that still reads a write blocks without approval; otherwise it asks.
         """
         result = run_hook("gh-write-guard.js", _bash(command))
 
-        assert result.returncode == 2, f"{command!r} was not blocked"
+        assert result.returncode == expected_exit, result.stderr
+        decision = json.loads(result.stdout or "{}").get("hookSpecificOutput", {})
+        assert decision.get("permissionDecision") == ("ask" if expected_exit == 0 else None)
+        assert (result.stdout == "") is (expected_exit == 2)
+        assert result.stderr.startswith("gh write blocked — ") is (expected_exit == 2)
+        assert ("AskUserQuestion" in result.stderr) is (expected_exit == 2)
+        assert (result.stderr == "") is (expected_exit == 0)
 
     @pytest.mark.parametrize(
         "command",
@@ -357,8 +364,6 @@ class TestWritesBlocked:
             pytest.param("{ . /dev/stdin; } <<< 'gh pr create --title t --body b'", id="dot-in-group"),
             pytest.param("X=1 . /dev/stdin <<< 'gh pr create --title t --body b'", id="dot-after-assignment"),
             pytest.param("builtin source /dev/stdin <<< 'gh pr create --title t --body b'", id="builtin-source"),
-            pytest.param("cat <<EOF\nEO\\\nF\ngh pr create --title t --body b\nEOF", id="continued-terminator-line"),
-            pytest.param("cat <\\\n<EOF\nx'\nEOF\ngh pr create --title t --body b #'", id="continued-heredoc-operator"),
         ],
     )
     def test_blocks_write_through_another_command(self, run_hook, command: str) -> None:
@@ -400,14 +405,17 @@ class TestWritesBlocked:
         ],
     )
     def test_blocks_zsh_code_syntax(self, run_hook, command: str) -> None:
-        """Zsh syntax that evaluates text as code blocks, since zsh is the Bash tool's shell on macOS.
+        """Zsh syntax that evaluates text as code requires permission when its argv cannot be read.
 
         A ``(e:…:)`` or ``(+name)`` glob qualifier closing a word and a ``${(flags)…}`` expansion run a gh write under
         zsh while bash rejects or ignores them, so the lexer's bash reading would show no gh word at all.
         """
         result = run_hook("gh-write-guard.js", _bash(command))
 
-        assert result.returncode == 2, f"{command!r} was not blocked"
+        assert result.returncode == 0, result.stderr
+        decision = json.loads(result.stdout)["hookSpecificOutput"]
+        assert decision["permissionDecision"] == "ask"
+        assert result.stderr == ""
 
 
 @_skip_node_unavailable
@@ -456,7 +464,6 @@ class TestShellSyntaxOnlyWhereUnquoted:
         [
             pytest.param("gh 2>/dev/null pr create", id="before-the-group"),
             pytest.param("gh pr 2<<<x create", id="fd-here-string-between-words"),
-            pytest.param("gh pr {fd}>x create", id="variable-fd"),
             pytest.param("gh api repos/o/r/issues -q x>/dev/null -ftitle=x", id="ends-a-flag-value"),
         ],
     )
@@ -493,32 +500,34 @@ class TestShellSyntaxOnlyWhereUnquoted:
 
 @_skip_node_unavailable
 class TestNoExactArgvFailsClosed:
-    """Without gh's exact argv, a command naming gh with ``api`` or a write verb is blocked rather than guessed.
+    """Without gh's exact argv, visible writes reach the token gate and other named gh commands ask permission.
 
     Quote-stripped or code-split words are not a superset of the argv: ``--title 'a b' create`` read without its
     quoting puts ``b`` where gh reads ``create``. The guard tests the raw text, and the text without quote characters.
     """
 
     @pytest.mark.parametrize(
-        "command",
+        ("command", "asks"),
         [
-            'fish -C "$x" -c :',
-            'exec 3<<< "$x"; sh <&3',
-            "function gh { :; }; gh pr list",
-            "alias gh=':'; gh pr list",
-            'eval "$(cat f)"',
-            r"env -S 'printf %s gh\ pr\ list' | sh",
+            pytest.param('fish -C "$x" -c :', False, id="fish-without-gh"),
+            pytest.param('exec 3<<< "$x"; sh <&3', False, id="descriptor-without-gh"),
+            pytest.param("function gh { :; }; gh pr list", True, id="function-shadowing-gh"),
+            pytest.param("alias gh=':'; gh pr list", True, id="alias-shadowing-gh"),
+            pytest.param('eval "$(cat f)"', False, id="eval-without-gh"),
+            pytest.param(r"env -S 'printf %s gh\ pr\ list' | sh", True, id="unproven-gh-source"),
         ],
     )
-    def test_blocks_unproven_code_consumer(self, run_hook, command: str) -> None:
-        """Unproven consumers produce a blocking verdict without executing the supplied shell text.
+    def test_blocks_unproven_code_consumer(self, run_hook, command: str, asks: bool) -> None:
+        """Unproven consumers request permission only when the text names gh.
 
         Scenario: a shell, ``eval`` or redefined ``gh`` consumes text from a variable, file or alias the guard cannot
-        read, so it blocks naming the unreadable syntax rather than guessing the text is harmless.
+        read, so it asks rather than guessing the text is harmless.
         """
         result = run_hook("gh-write-guard.js", _bash(command))
-        assert result.returncode == 2
-        assert "shell syntax the guards cannot read exactly" in result.stderr
+        assert result.returncode == 0, result.stderr
+        decision = json.loads(result.stdout or "{}").get("hookSpecificOutput", {})
+        assert decision.get("permissionDecision") == ("ask" if asks else None)
+        assert result.stderr == ""
 
     @pytest.mark.parametrize(
         "command",
@@ -543,36 +552,51 @@ class TestNoExactArgvFailsClosed:
         assert result.stderr == ""
 
     @pytest.mark.parametrize(
-        "command",
+        ("command", "expected_exit"),
         [
-            pytest.param("gh api repos/o/r/issues -q '>' -ftitle=x {1..300}", id="oversized-braces-api"),
-            pytest.param("gh pr --title 'a b' create {1..300}", id="oversized-braces-quoted-space"),
-            pytest.param("gh pr --title 'a b' create 'x", id="unbalanced-quote-quoted-space"),
-            pytest.param('"g"h pr merge 1 \'x', id="unbalanced-quote-quoted-program-name"),
+            pytest.param("gh api repos/o/r/issues -q '>' -ftitle=x {1..300}", 2, id="oversized-braces-api"),
+            pytest.param("python3 -c \"import os; os.system('gh pr comment 1 -b x')\"", 0, id="interpreter-code"),
+            pytest.param("gh pr {fd}>x create", 0, id="variable-fd"),
+            pytest.param("cat <<EOF\nEO\\\nF\ngh pr create --title t --body b\nEOF", 0, id="continued-terminator-line"),
+            pytest.param(
+                "cat <\\\n<EOF\nx'\nEOF\ngh pr create --title t --body b #'", 2, id="continued-heredoc-operator"
+            ),
+            pytest.param("gh pr --title 'a b' create {1..300}", 0, id="oversized-braces-quoted-space"),
+            pytest.param("gh pr --title 'a b' create 'x", 0, id="unbalanced-quote-quoted-space"),
+            pytest.param('"g"h pr merge 1 \'x', 2, id="unbalanced-quote-quoted-program-name"),
             pytest.param(
                 "python3 -c \"import subprocess; subprocess.run(['gh','api','repos/o/r/issues','-q','>','-f','t=x'])\"",
+                0,
                 id="python-argument-list-quoted-gt",
             ),
             pytest.param(
                 "python3 -c \"import subprocess; subprocess.run(['gh','pr','--title','a b','create'])\"",
+                0,
                 id="python-argument-list-quoted-space",
             ),
             pytest.param(
                 "node -e \"require('child_process').execFileSync('gh', ['pr', '--title', 'a b', 'create'])\"",
+                0,
                 id="node-argument-array",
             ),
         ],
     )
-    def test_blocks_write_word_without_exact_argv(self, run_hook, command: str) -> None:
-        """Each row writes when run; the guard cannot show it does not, so it blocks with the reason named.
+    def test_blocks_write_word_without_exact_argv(self, run_hook, command: str, expected_exit: int) -> None:
+        """A visible write reaches the token gate; other unreadable gh commands request permission.
 
         Scenario: quoting or interpreter code leaves no exact argv, yet ``api`` or a write verb sits beside gh, so the
-        guard fails closed and says it cannot read the arguments exactly.
+        plain scan either identifies the write and blocks without approval or requests ordinary permission.
         """
         result = run_hook("gh-write-guard.js", _bash(command))
 
-        assert result.returncode == 2, f"{command!r} was not blocked"
-        assert "cannot read this command's gh arguments exactly" in result.stderr
+        assert result.returncode == expected_exit, result.stderr
+        decision = json.loads(result.stdout or "{}").get("hookSpecificOutput", {})
+        assert decision.get("permissionDecision") == ("ask" if expected_exit == 0 else None)
+        assert (result.stdout == "") is (expected_exit == 2)
+        assert result.stderr.startswith("gh write blocked — ") is (expected_exit == 2)
+        assert ("AskUserQuestion" in result.stderr) is (expected_exit == 2)
+        assert ("cannot read this command" in decision.get("permissionDecisionReason", "")) is (expected_exit == 0)
+        assert (result.stderr == "") is (expected_exit == 0)
 
     @pytest.mark.parametrize(
         ("command", "construct"),
@@ -609,30 +633,29 @@ class TestNoExactArgvFailsClosed:
         ],
     )
     def test_names_unreadable_syntax_not_a_write(self, run_hook, command: str, construct: str) -> None:
-        """Shell syntax the shells read differently still blocks, but the reason names that syntax, not a gh write.
+        """Shell syntax the shells read differently requests permission beside a named gh read.
 
-        These commands name no gh at all; the old text led with "gh write blocked" and the gh-write question, which no
-        approval could ever satisfy, so the model was told to ask the user for nothing.
+        The reason names the unreadable construct without claiming a gh write or spending a write token.
         """
-        result = run_hook("gh-write-guard.js", _bash(command))
+        result = run_hook("gh-write-guard.js", _bash(command + "; gh pr view 1"))
 
-        assert result.returncode == 2
-        assert result.stderr.startswith("Bash command blocked — it holds shell syntax the guards cannot read exactly")
-        assert construct in result.stderr
-        assert ("gh write blocked" in result.stderr, "AskUserQuestion" in result.stderr) == (False, False)
+        assert result.returncode == 0, result.stderr
+        decision = json.loads(result.stdout)["hookSpecificOutput"]
+        assert decision["permissionDecision"] == "ask"
+        assert construct in decision["permissionDecisionReason"]
+        assert result.stderr == ""
 
     def test_unreadable_syntax_beside_write_is_never_approvable(self, run_hook) -> None:
-        """A gh write written with such syntax names the syntax and says no gh-write approval can cover it.
+        """A readable gh write with an unreadable title still requires gh-write approval.
 
-        Scenario: ``gh pr create`` with a locale-string title; unlike the no-gh rows above, the reason must say that no
-        approval can cover it and must not offer the approval question.
+        Scenario: ``gh pr create`` is visible before the locale-string title, so the write token gate blocks the call.
         """
         result = run_hook("gh-write-guard.js", _bash('gh pr create --title $"fix"'))
 
-        assert result.returncode == 2
-        assert "locale string" in result.stderr
-        assert "cannot be read exactly is never covered" in result.stderr
-        assert "AskUserQuestion" not in result.stderr
+        assert result.returncode == 2, result.stderr
+        assert result.stdout == ""
+        assert result.stderr.startswith("gh write blocked — gh pr create.")
+        assert "AskUserQuestion" in result.stderr
 
     @pytest.mark.parametrize(
         "command",
@@ -695,16 +718,18 @@ class TestLexerAdmitSet:
         ],
     )
     def test_blocks_unmodeled_syntax_naming_it(self, run_hook, command: str, construct: str) -> None:
-        """A form outside the lexer's admit set blocks with the construct named, never read as plain words.
+        """A form outside the lexer's admit set asks with the construct named, never read as plain words.
 
         A zsh sigil or assigning expansion changes what later words are, a `{name}>` prefix is a word to bash 3.2 and a
         variable to bash 4.1+ and zsh, and an option switched at run time changes how every later command is read.
         """
         result = run_hook("gh-write-guard.js", _bash(command))
 
-        assert result.returncode == 2, f"{command!r} was not blocked"
-        assert result.stderr.startswith("Bash command blocked — it holds shell syntax the guards cannot read exactly")
-        assert construct in result.stderr
+        assert result.returncode == 0, result.stderr
+        decision = json.loads(result.stdout)["hookSpecificOutput"]
+        assert decision["permissionDecision"] == "ask"
+        assert construct in decision["permissionDecisionReason"]
+        assert result.stderr == ""
 
     @pytest.mark.parametrize(
         "command",
@@ -1049,7 +1074,7 @@ class TestReadsPass:
 
 @_skip_node_unavailable
 class TestMissingLibrary:
-    """Without ``lib/shell-git.js`` the guard cannot lex, so it blocks every command naming gh with a write word."""
+    """Without ``lib/shell-git.js`` the guard asks for every Bash command."""
 
     @pytest.fixture
     def bare_hook(self, tmp_path: Path) -> Path:
@@ -1060,24 +1085,27 @@ class TestMissingLibrary:
         return hook
 
     @pytest.mark.parametrize(
-        ("command", "expected"),
+        ("command", "asks"),
         [
-            pytest.param("gh pr create -t x", 2, id="write-blocked"),
-            pytest.param("gh api repos/o/r", 2, id="any-api-blocked"),
-            pytest.param("gh pr view 1", 0, id="read-passes"),
-            pytest.param("ls", 0, id="no-gh-passes"),
+            pytest.param("gh pr create -t x", True, id="write-asks"),
+            pytest.param("gh api repos/o/r", True, id="any-api-asks"),
+            pytest.param("gh pr view 1", True, id="read-asks"),
+            pytest.param("ls", True, id="no-gh-asks"),
         ],
     )
-    def test_fails_closed(self, bare_hook: Path, command: str, expected: int) -> None:
-        """A crash would exit 1, which Claude Code treats as non-blocking; the guard exits 2 for a write instead.
+    def test_fails_closed(self, bare_hook: Path, command: str, asks: bool) -> None:
+        """A missing lexer requests permission rather than allowing silently or blocking unconditionally.
 
         Scenario: the guard script runs with no ``lib/`` beside it; a command naming gh with ``api`` or a write verb
-        exits 2 naming the missing lexer, while reads and non-gh commands still pass.
+        asks naming the missing lexer, as do commands that do not name gh.
         """
         result = _run_node(bare_hook, json.dumps(_bash(command)))
 
-        assert result.returncode == expected, result.stderr
-        assert ("shell-git.js" in result.stderr) == (expected == 2)
+        assert result.returncode == 0, result.stderr
+        decision = json.loads(result.stdout or "{}").get("hookSpecificOutput", {})
+        assert decision.get("permissionDecision") == ("ask" if asks else None)
+        assert ("shell-git.js" in decision.get("permissionDecisionReason", "")) is asks
+        assert result.stderr == ""
 
 
 APPROVED = "gh pr create --title fix --body-file body.md"
@@ -1273,7 +1301,10 @@ class TestOneTimeApproval:
         command = 'gh pr create --title $"fix"'
         token = gh_write_token(checkout, command)
         result = guard(_call(command, checkout))
-        assert (result.returncode, "cannot be read exactly" in result.stderr) == (2, True)
+        assert result.returncode == 2, result.stderr
+        assert result.stdout == ""
+        assert result.stderr.startswith("gh write blocked — gh pr create.")
+        assert "No gh-write approval covers this call" in result.stderr
         assert token.exists()
 
     def test_block_names_the_question_to_ask(self, guard, checkout: Path) -> None:

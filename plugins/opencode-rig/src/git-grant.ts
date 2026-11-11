@@ -2,12 +2,23 @@
  * Local Git approval grant.
  *
  * The grant lives in the repository's common Git directory, which Git never
- * tracks. Validation is deliberately strict: a symlink, a different directory,
- * or an unknown schema counts as no grant.
+ * tracks. A symlink, nonregular file, changed file identity, or unknown schema
+ * counts as no grant. The common directory itself remains a trusted boundary.
  */
 
-import { lstatSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
-import { dirname, join, resolve } from "node:path"
+import { randomUUID } from "node:crypto"
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs"
+import { join } from "node:path"
 import { PLUGIN_VERSION, SCHEMA_VERSION } from "./version.ts"
 
 export const GRANT_FILENAME = "opencode-rig-approval.json"
@@ -57,19 +68,35 @@ export function validateGrant(raw: unknown): { ok: true; record: GrantRecord } |
 export function readGrant(commonDir: string | undefined): GrantState {
   if (!commonDir) return { status: "no-git" }
   const path = grantPath(commonDir)
-  const stats = lstatSync(path, { throwIfNoEntry: false })
-  if (!stats) return { status: "absent", path }
-  if (stats.isSymbolicLink()) return { status: "invalid", path, reason: "grant path is a symlink" }
-  if (!stats.isFile()) return { status: "invalid", path, reason: "grant path is not a regular file" }
-  if (dirname(resolve(path)) !== resolve(commonDir))
-    return { status: "invalid", path, reason: "grant escaped the common Git directory" }
+  let descriptor: number | undefined
   try {
-    const parsed = validateGrant(JSON.parse(readFileSync(path, "utf8")))
+    const stats = lstatSync(path, { throwIfNoEntry: false })
+    if (!stats) return { status: "absent", path }
+    if (stats.isSymbolicLink()) return { status: "invalid", path, reason: "grant path is a symlink" }
+    if (!stats.isFile()) return { status: "invalid", path, reason: "grant path is not a regular file" }
+    // Bind validation and reading to one file. Identity checks also cover hosts
+    // without O_NOFOLLOW; nonblocking open prevents a swapped FIFO from hanging.
+    descriptor = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0))
+    const opened = fstatSync(descriptor)
+    const current = lstatSync(path)
+    if (current.isSymbolicLink()) return { status: "invalid", path, reason: "grant path is a symlink" }
+    if (!opened.isFile() || !current.isFile())
+      return { status: "invalid", path, reason: "grant path is not a regular file" }
+    if (
+      opened.dev !== stats.dev ||
+      opened.ino !== stats.ino ||
+      current.dev !== opened.dev ||
+      current.ino !== opened.ino
+    )
+      return { status: "invalid", path, reason: "grant file changed while opening" }
+    const parsed = validateGrant(JSON.parse(readFileSync(descriptor, "utf8")))
     return parsed.ok
       ? { status: "granted", path, record: parsed.record }
       : { status: "invalid", path, reason: parsed.reason }
   } catch (error) {
     return { status: "invalid", path, reason: error instanceof Error ? error.message : "unreadable grant" }
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor)
   }
 }
 
@@ -78,6 +105,9 @@ export function readGrant(commonDir: string | undefined): GrantState {
  * the permission hook never calls this function.
  */
 export function writeGrant(commonDir: string): GrantRecord {
+  const path = grantPath(commonDir)
+  const stats = lstatSync(path, { throwIfNoEntry: false })
+  if (stats && !stats.isFile()) throw new Error("grant path is not a regular file")
   const record: GrantRecord = {
     schema: SCHEMA_VERSION,
     scope: "local-git",
@@ -85,7 +115,24 @@ export function writeGrant(commonDir: string): GrantRecord {
     plugin_version: PLUGIN_VERSION,
     created_at: new Date().toISOString(),
   }
-  writeFileSync(grantPath(commonDir), `${JSON.stringify(record, null, 2)}\n`, { encoding: "utf8", mode: 0o600 })
+  // An exclusive temporary file plus rename never follows a destination
+  // symlink or modifies another hard link to a previous grant.
+  const temporary = join(commonDir, `.${GRANT_FILENAME}.${randomUUID()}.tmp`)
+  const descriptor = openSync(temporary, "wx", 0o600)
+  try {
+    try {
+      writeFileSync(descriptor, `${JSON.stringify(record, null, 2)}\n`, "utf8")
+    } finally {
+      closeSync(descriptor)
+    }
+    renameSync(temporary, path)
+  } finally {
+    try {
+      unlinkSync(temporary)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
+    }
+  }
   return record
 }
 

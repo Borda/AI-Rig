@@ -494,14 +494,19 @@ def _probe_codemap(resolution: LauncherResolution, timeout: float, cwd: Path | N
             launcher=None,
             doctor=None,
         )
+    text_fields = ("python", "version", "implementation", "plugin_root", "index_path")
+    if any(name in payload and not isinstance(payload[name], str) for name in text_fields) or (
+        "supported" in payload and type(payload["supported"]) is not bool
+    ):
+        return ProbeResult(STATUS_INCOMPATIBLE, "doctor payload field type mismatch", None, None)
     try:
         doctor = DoctorReport(
-            python=str(payload["python"]),
-            version=str(payload["version"]),
-            implementation=str(payload["implementation"]),
-            supported=bool(payload["supported"]),
-            plugin_root=str(payload["plugin_root"]),
-            index_path=str(payload["index_path"]),
+            python=payload["python"],
+            version=payload["version"],
+            implementation=payload["implementation"],
+            supported=payload["supported"],
+            plugin_root=payload["plugin_root"],
+            index_path=payload["index_path"],
         )
     except KeyError as missing:
         return ProbeResult(
@@ -562,6 +567,8 @@ def _run_one_query(
     """
     if spec.requires_target and target is None:
         return QueryOutcome(spec.subcommand, target, -1, False, False, (), 0, target_error)
+    if spec.requires_target and target is not None and target.lstrip().startswith("-"):
+        return QueryOutcome(spec.subcommand, target, -1, False, False, (), 0, _MALFORMED_TARGET_ERROR)
     if spec.requires_diff_file and diff_file is None:
         # Never fall back to the provider's working-tree diff: in a detached review worktree at the reviewed head it
         # compares the tree with itself and reports zero changed files as a complete answer.
@@ -572,6 +579,9 @@ def _run_one_query(
     exit_code, payload, error = _run_json(_query_argv(launcher, spec, target, root, diff_file), timeout, root)
     if exit_code != 0 or payload is None:
         return _failed_query_outcome(spec.subcommand, target, exit_code, payload, error)
+    metadata_error = _query_metadata_error(payload)
+    if metadata_error is not None:
+        return _failed_query_outcome(spec.subcommand, target, -1, payload, f"query payload invalid: {metadata_error}")
     body = payload if isinstance(payload, dict) else {}
     index = body.get("index", {})
     index = index if isinstance(index, dict) else {}
@@ -584,10 +594,10 @@ def _run_one_query(
         subcommand=spec.subcommand,
         target=target,
         exit_code=exit_code,
-        stale=bool(index.get("stale", False)),
-        query_complete=bool(index.get("query_complete", index.get("exhaustive", False))),
+        stale=index.get("stale", False),
+        query_complete=index.get("query_complete", index.get("exhaustive", False)),
         not_covered=tuple(index.get("not_covered", ())),
-        degraded_count=int(index.get("degraded", 0)),
+        degraded_count=index.get("degraded", 0),
         error=None,
         index_path=_reported_text(index, "index_path"),
         completeness_reason=_reported_text(index, "completeness_reason"),
@@ -598,6 +608,23 @@ def _run_one_query(
         answer=answer,
         answer_truncated=answer_truncated,
     )
+
+
+def _query_metadata_error(payload: Any) -> str | None:
+    """Reject malformed completeness fields before constructing a query outcome."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("index", {}), dict):
+        return "index object required"
+    index = payload.get("index", {})
+    for name in ("stale", "query_complete", "exhaustive", "root_mismatch"):
+        if name in index and type(index[name]) is not bool:
+            return f"{name} boolean required"
+    degraded = index.get("degraded", 0)
+    if type(degraded) is not int or degraded < 0:
+        return "degraded nonnegative integer required"
+    not_covered = index.get("not_covered", [])
+    if not isinstance(not_covered, list) or any(not isinstance(item, str) for item in not_covered):
+        return "not_covered text list required"
+    return None
 
 
 def _failed_query_outcome(
@@ -1115,7 +1142,7 @@ def _normalized_fact_target(query_kind: str, target: str | None) -> str | None:
         return None
     normalized = target.strip()
     module, separator, symbol = normalized.partition("::")
-    if not normalized or "::" in symbol or (separator and (not module or not symbol)):
+    if not normalized or normalized.startswith("-") or "::" in symbol or (separator and (not module or not symbol)):
         return None
     return module if separator and query_kind == "dependencies" else normalized
 

@@ -1,6 +1,6 @@
 ---
 name: gh-scraper
-description: 'Fetches all GitHub API data for a repo (REST + GraphQL) in two parallel groups; writes raw JSONL for oss:repo-warden axis scorers. TRIGGER when: spawned by /oss:analyse (vitality mode) to fetch raw GitHub data. NOT for axis scoring or report generation. NOT for direct user invocation.'
+description: 'Fetches all GitHub API data for a repo (REST + GraphQL) in two sequential groups with parallel calls inside each; writes raw JSONL for oss:repo-warden axis scorers. TRIGGER when: spawned by /oss:analyse (vitality mode) to fetch raw GitHub data. NOT for axis scoring or report generation. NOT for direct user invocation.'
 tools: Bash
 model: haiku
 effort: medium
@@ -9,7 +9,7 @@ color: cyan
 
 <role>
 
-Data collection agent, /oss:analyse (vitality mode). Fetches required GitHub data (REST + GraphQL) in two parallel groups, writes raw JSONL, returns path. Scoring: 3 parallel oss:repo-warden instances.
+Data collection agent, /oss:analyse (vitality mode). Fetches required GitHub data (REST + GraphQL) in two sequential groups with parallel calls inside each, writes raw JSONL, returns path. Scoring: 3 parallel oss:repo-warden instances.
 
 NOT for axis scoring — oss:repo-warden owns all axis scoring. NOT for report formatting, terminal summary, or adversarial review — /oss:analyse (vitality mode) Steps 4–7 own those.
 
@@ -17,13 +17,13 @@ NOT for axis scoring — oss:repo-warden owns all axis scoring. NOT for report f
 
 <inputs>
 
-Prompt must supply key=value pairs (space-separated):
+The caller supplies session sentinels under `${TMPDIR:-/tmp}`; Step 1 reads these values only, never shell-variable placeholders from the prompt:
 
-- `GH_OWNER=<owner>` — GitHub owner or org
-- `GH_REPO=<repo>` — GitHub repository name
-- `DATA_FILE=<path>` — output path for raw JSONL (one JSON object per line)
+- `analyse-gh-owner-${CSID}` — `GH_OWNER`, GitHub owner or org
+- `analyse-gh-repo-${CSID}` — `GH_REPO`, GitHub repository name
+- `vitality-data-file-${CSID}` — `DATA_FILE`, output path for raw JSONL (one JSON object per line)
 
-Any of the three missing, or prompt asks for anything but a GitHub fetch (code review, bug hunt, Q&A) → run nothing, return only `{"status":"error","file":"","error":"out of scope: gh-scraper needs GH_OWNER, GH_REPO, DATA_FILE"}`. Never review, probe or rewrite supplied code.
+Prompt asks for anything but a GitHub fetch (code review, bug hunt, Q&A) → run nothing, return only `{"status":"error","file":"","error":"out of scope: gh-scraper only fetches GitHub data"}`. Missing, empty or unsubstituted sentinel values → Step 1 returns an error envelope before auth, API calls or output writes. Never review, probe or rewrite supplied code.
 
 </inputs>
 
@@ -31,10 +31,24 @@ Any of the three missing, or prompt asks for anything but a GitHub fetch (code r
 
 ## Step 1 — Setup
 
-Parse `GH_OWNER`, `GH_REPO`, `DATA_FILE` from prompt key=value pairs. Compute time anchors:
+Load `GH_OWNER`, `GH_REPO`, `DATA_FILE` from the caller's session sentinels, then compute time anchors:
 
 ```bash
+set -e
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+export GH_HOST=github.com
+DATA_FILE=""
+SETUP_ERROR="setup failed — see stderr"
+trap 'python -c '\''import json,sys; print(json.dumps({"status":"error","file":sys.argv[1],"error":sys.argv[2]}))'\'' "$DATA_FILE" "$SETUP_ERROR"' ERR
+IFS= read -r GH_OWNER < "${TMPDIR:-/tmp}/analyse-gh-owner-${CSID}" 2>/dev/null || GH_OWNER=""
+IFS= read -r GH_REPO < "${TMPDIR:-/tmp}/analyse-gh-repo-${CSID}" 2>/dev/null || GH_REPO=""
+IFS= read -r DATA_FILE < "${TMPDIR:-/tmp}/vitality-data-file-${CSID}" 2>/dev/null || DATA_FILE=""
+SETUP_ERROR="missing, empty or unsubstituted scrape sentinel — rerun /oss:analyse vitality"
+[ -n "$GH_OWNER" ] && [ -n "$GH_REPO" ] && [ -n "$DATA_FILE" ] || { echo "[gh-scraper] ERROR: $SETUP_ERROR" >&2; false; }
+case "$GH_OWNER/$GH_REPO/$DATA_FILE" in
+    *'$'*|*'<'*|*'>'*) echo "[gh-scraper] ERROR: $SETUP_ERROR" >&2; false ;;
+esac
+SETUP_ERROR="setup failed — see stderr"
 # cross-platform: macOS BSD vs GNU/Linux
 if date -v-1d +%Y-%m-%d 2>/dev/null | grep -q '^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$'; then
     # BSD date (-v offset) — verify output shape, not just exit code
@@ -50,13 +64,27 @@ else
 fi
 
 # auth preflight — fail fast before any API calls
-gh auth status 2>/dev/null || { echo "[gh-scraper] ERROR: not authenticated — run gh auth login"; exit 1; }  # timeout: 6000
+gh auth status --hostname github.com 2>/dev/null || { SETUP_ERROR="not authenticated — run gh auth login --hostname github.com"; echo "[gh-scraper] ERROR: $SETUP_ERROR" >&2; false; }  # timeout: 6000
 
 # rate-limit preflight — warn if <80 calls remain (~80 needed for full scrape)
-RATE_REMAINING=$(gh api rate_limit --jq '.resources.core.remaining' 2>/dev/null || echo "unknown")  # timeout: 6000
-if [ "$RATE_REMAINING" != "unknown" ] && [ "$RATE_REMAINING" -lt 80 ]; then
-    echo "[gh-scraper] WARN: only $RATE_REMAINING core API calls remaining — results may be incomplete; reset at $(gh api rate_limit --jq '.resources.core.reset | todate' 2>/dev/null || echo 'unknown time')"  # timeout: 6000
-fi
+for BUCKET in core search graphql; do
+    case "$BUCKET" in
+        core) RATE_REMAINING=$(gh api rate_limit --jq '.resources.core.remaining' 2>/dev/null || echo unknown) ;;  # timeout: 6000
+        search) RATE_REMAINING=$(gh api rate_limit --jq '.resources.search.remaining' 2>/dev/null || echo unknown) ;;  # timeout: 6000
+        graphql) RATE_REMAINING=$(gh api rate_limit --jq '.resources.graphql.remaining' 2>/dev/null || echo unknown) ;;  # timeout: 6000
+    esac
+    RATE_MIN=80
+    [ "$BUCKET" = search ] && RATE_MIN=10
+    case "$RATE_REMAINING" in
+        ''|*[!0-9]*) ;;
+        *)
+            if [ "$RATE_REMAINING" -lt "$RATE_MIN" ]; then
+                RATE_RESET=$(gh api rate_limit --jq ".resources.$BUCKET.reset | todate" 2>/dev/null || echo 'unknown time')
+                echo "[gh-scraper] WARN: only $RATE_REMAINING $BUCKET API budget remaining — results may be incomplete; reset at $RATE_RESET"  # timeout: 6000
+            fi
+            ;;
+    esac
+done
 
 # DATA_FILE set by caller — do NOT inject PID suffix; breaks handoff (vitality.md reads original path)
 echo "[gh-scraper] analysing $GH_OWNER/$GH_REPO"  # timeout: 5000
@@ -85,6 +113,7 @@ Steps 2–4 are ONE Bash call — the block below, with Bash `timeout: 240000` (
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+export GH_HOST=github.com
 # reload — Check 41: fresh shell loses Step 1 vars
 IFS= read -r GH_OWNER < "${TMPDIR:-/tmp}/gh-scraper-owner-${CSID}" 2>/dev/null || GH_OWNER=""
 IFS= read -r GH_REPO < "${TMPDIR:-/tmp}/gh-scraper-repo-${CSID}" 2>/dev/null || GH_REPO=""
@@ -120,7 +149,7 @@ Content records appended straight to `$DATA_FILE`: `readme_content`, `contributi
 
 Last command of the Step 2 block, after Group 1 and Group 2 complete. `bin/assemble_vitality_data.py` converts each Group 1 file into a JSONL record per the plugin's `skills/_shared/vitality-data-schema.md` (`records`, `partial` on truncation, `"403"` for failed alert fetches, `202_pending` for empty contributor stats), keeps the Group 2 records already in `$DATA_FILE`, replaces the file atomically, then checks it against the expected dataset list. Re-running replaces same-type records — idempotent.
 
-Never write `$DATA_FILE` with the Write tool or a shell redirect, never hand-build records — the script is the only writer. Stderr names missing required datasets; stdout's last line is the envelope.
+Only Step 1 may truncate `$DATA_FILE` with a shell redirect; never use the Write tool or hand-build records. Group 2 appends fetched content and the assembler writes the merged snapshot. Stderr names missing required datasets; stdout's last line is the envelope.
 
 ## Step 5 — Return Envelope
 
@@ -129,6 +158,7 @@ Final output = Step 4's stdout JSON line, verbatim:
 `{"status":"done|partial","file":"<DATA_FILE>","datasets":N,"partial":[...],"missing_required":[...],"missing_optional":[...],"confidence":0.NN}`
 
 - `status: "partial"` + `missing_required` = required datasets absent; confidence capped ≤0.70 — never edit status, list, or confidence upward.
+- Step 1 exits non-zero → stop immediately and return its stdout error envelope verbatim; never continue to Step 2. If setup cannot emit JSON (e.g. Python unavailable), return `{"status":"error","file":"","error":"setup failed: <stderr line>"}`.
 - Step 4 exits non-zero (Group 1 dir missing, write failed) → return `{"status":"error","file":"<DATA_FILE>","error":"<stderr line>"}`.
 
 </workflow>
@@ -139,7 +169,7 @@ Final output = Step 4's stdout JSON line, verbatim:
 - **--limit caps and truncation detection**: all limits set to target+1 (e.g. `--limit 501`); response length equals limit → at least that many items exist (truncation at target count); Step 4 sets `"partial": true` in JSONL record; `vitality_extract.py` applies only the truncation degraders the Weights table lists. Unambiguous — 501 returned means ≥501 items exist, not off-by-one ambiguity. Exceptions: `closed_issues` search stops at GitHub's 1000-result ceiling (`--limit 1000`) — 1000 returned read as truncated without proof; `ci_workflows` page of 100 is partial when `total_count` > `count`
 - **Stats 202**: contributor stats answers 202 while GitHub computes them; no retry — Step 4 writes `"partial": true, "data": null, "202_pending": true`; scorer Group C handles fallback
 - **403 on security APIs**: Dependabot and secret scanning require push access, 403 expected; Step 4 records a failed fetch as `"data": "403"`; Group B scorer applies partial-scoring formula
-- **`CUTOFF_*` variables**: computed in Step 1; CUTOFF_30D/CUTOFF_90D/CUTOFF_180D/CUTOFF_3Y all persisted to /tmp; Group 1 searches closed issues and closed PRs from CUTOFF_30D, merged PRs from CUTOFF_90D (CUTOFF_3Y and CUTOFF_180D reserved); repo-warden Group C reads CUTOFF_30D via ANALYSIS_NOW - 30\*86400 (repo-warden derives ANALYSIS_NOW from the JSONL timestamp and uses it for every age calculation)
+- **`CUTOFF_*` variables**: computed in Step 1; CUTOFF_30D/CUTOFF_90D/CUTOFF_180D/CUTOFF_3Y all persisted to `${TMPDIR:-/tmp}`; Group 1 searches closed issues and closed PRs from CUTOFF_30D, merged PRs from CUTOFF_90D (CUTOFF_3Y and CUTOFF_180D reserved); repo-warden Group C reads CUTOFF_30D via ANALYSIS_NOW - 30\*86400 (repo-warden derives ANALYSIS_NOW from the JSONL timestamp and uses it for every age calculation)
 
 </notes>
 

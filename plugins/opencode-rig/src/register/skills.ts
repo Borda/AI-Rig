@@ -22,11 +22,18 @@ function stripFrontmatter(markdown: string): string {
 export async function registerSkills(ctx: any, resourcesDir: string): Promise<Registration> {
   const loaded = SKILLS.map((skill) => {
     const directory = join(resourcesDir, "skills", skill.id)
+    const content = stripFrontmatter(readFileSync(join(directory, "SKILL.md"), "utf8"))
+    const references = new Set(
+      [...content.matchAll(/\]\(\.\.\/\.\.\/references\/([a-z0-9-]+\.md)\)/g)].map((match) => match[1]!),
+    )
     return {
       ...skill,
       directory,
       path: join(directory, "SKILL.md"),
-      content: stripFrontmatter(readFileSync(join(directory, "SKILL.md"), "utf8")),
+      content: [
+        content,
+        ...[...references].map((name) => readFileSync(join(resourcesDir, "references", name), "utf8")),
+      ].join("\n\n"),
     }
   })
 

@@ -909,6 +909,18 @@ class TestActiveCapacity:
         assert summary["capacity_limited"] is True
         assert checked.returncode == 0, checked.stderr
 
+    def test_unreadable_session_prevents_no_child_capacity_proof(self, tmp_path: Path) -> None:
+        """A refusal cannot prove no child was allocated when session metadata is unknown."""
+        run, home, children = _five_role_wave(tmp_path, active_limit=2)
+        _record_native_schedule(run, home, children, pool_size=2, scenario="capacity-rejected")
+        (home / "sessions/unknown.jsonl").write_bytes(b"\xff\n")
+
+        result = _assemble(run, home)
+
+        assert result.returncode != 0
+        assert "provenance-session-unreadable" in result.stderr
+        assert not (run / "specialist-manifest.json").exists()
+
 
 class TestRetryTiming:
     """Failed attempts count toward capacity, while parallel review is derived only from the selected completions."""

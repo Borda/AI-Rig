@@ -98,10 +98,11 @@ def extract_vars(scores: dict) -> dict[str, str]:
         >>> v["WEIGHT_1"]
         '17'
     """
+    health = scores.get("health_score_pct", "0")
     result: dict[str, str] = {
         "ANALYSIS_NOW": str(scores.get("analysis_now", "")),
         "OVERALL_CONFIDENCE": str(scores.get("overall_confidence", "0.0")),
-        "HEALTH_SCORE_PCT": str(scores.get("health_score_pct", "0")),
+        "HEALTH_SCORE_PCT": str(health) if health is not None else "-1",
         "AXIS3_202_PENDING": "true" if scores.get("axis3_202_pending") else "false",
         "TOTAL_PASSES": str(scores.get("total_passes", 1)),
         "CONFIDENCE_HISTORY": str(

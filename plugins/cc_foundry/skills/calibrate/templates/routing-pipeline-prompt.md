@@ -1,6 +1,6 @@
 You routing calibration pipeline runner. Complete all phases in sequence.
 
-<!-- Substitutions: TIMESTAMP=run timestamp (YYYY-MM-DDTHH-MM-SSZ), MODE=fast|full, N=problem count (fast=5, full=10) -->
+<!-- Substitutions: TIMESTAMP=run timestamp (YYYY-MM-DDTHH-MM-SSZ), MODE=fast|full, N=problem count (fast=5, full=10), CHILD_BATCH=maximum children per batch (caller supplies 1; unsubstituted defaults to 1) -->
 
 ```text
 Mode: `<MODE>`
@@ -11,22 +11,39 @@ Run dir: `.reports/calibrate/<TIMESTAMP>/routing/`
 
 ### Phase 1 — Collect agent descriptions
 
-Enumerate roster file set. Source tree (`plugins/*/agents/*.md`) is authoritative; installed cache is fallback when source tree carries no agents; project-local `.claude/agents/*.md` is an override tier empty in most setups — `/foundry:setup` never creates that directory, purges stale entries from it, so it must never be the sole source:
+Enumerate roster file set. Use installed plugins by default; `LOCAL_MODE=true` selects source-tree agents (`plugins/*/agents/*.md`) instead. Read the persisted mode below rather than assuming that the template's location selects the roster. Project-local `.claude/agents/*.md` is an override tier empty in most setups — `/foundry:setup` never creates that directory, purges stale entries from it, so it must never be the sole source:
 
 ```bash
 RUN_DIR=".reports/calibrate/<TIMESTAMP>/routing"
+case "$RUN_DIR" in *'<'*|*'>'*) echo "! BLOCKED — timestamp not substituted"; exit 1;; esac
 mkdir -p "$RUN_DIR"
-find plugins -mindepth 3 -maxdepth 3 -path "*/agents/*.md" 2>/dev/null | sort > "$RUN_DIR/roster-files.txt"
-if [ ! -s "$RUN_DIR/roster-files.txt" ]; then
+CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/calibrate-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
+if [ "$LOCAL_MODE" = "true" ]; then
+    find plugins -mindepth 3 -maxdepth 3 -path "*/agents/*.md" 2>/dev/null | sort > "$RUN_DIR/roster-files.txt"
+else
+    _FB="${CLAUDE_PLUGIN_ROOT:-}"
+    [ -n "$_FB" ] || _FB=$(ls -td ~/.claude/plugins/cache/borda-ai-rig/foundry/*/ 2>/dev/null | head -1)
+    [ -n "$_FB" ] || _FB=plugins/cc_foundry
+    [ -f "$_FB/bin/resolve_plugin_root.py" ] || {
+        echo "! BLOCKED — resolver unavailable"
+        printf '%s\n' '{"ts":"<TIMESTAMP>","target":"routing","mode":"<MODE>","routing_accuracy":null,"confusion_rate":null,"hard_accuracy":null,"auto_invoke_accuracy":null,"problems":0,"verdict":"incomplete","confused_pairs":[],"gaps":["resolver unavailable"]}' > "$RUN_DIR/result.jsonl"
+        exit 1
+    }
     # one version dir per plugin — the cache retains every prior version, so an unfiltered scan duplicates each agent
     for P in ~/.claude/plugins/cache/borda-ai-rig/*/; do
-        V=$(find "$P" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | grep -v '\.orphaned_at' | sort -Vr | head -1)
-        [ -n "$V" ] && find "$V/agents" -maxdepth 1 -name "*.md" 2>/dev/null
+        [ -d "$P" ] || continue
+        PLUGIN_NAME=${P%/}; PLUGIN_NAME=${PLUGIN_NAME##*/}
+        V=$(python "$_FB/bin/resolve_plugin_root.py" --plugin-name "$PLUGIN_NAME") || continue
+        [ -e "$V/.orphaned_at" ] && { echo "Skipping orphaned plugin version: $V" >&2; continue; }
+        find "$V/agents" -maxdepth 1 -name "*.md" 2>/dev/null
     done | sort > "$RUN_DIR/roster-files.txt"
 fi
 find .claude/agents -maxdepth 1 -name "*.md" 2>/dev/null >> "$RUN_DIR/roster-files.txt"
 grep -c . "$RUN_DIR/roster-files.txt"
 ```
+
+**Resolver stop** — `! BLOCKED — resolver unavailable`: return the `incomplete` result written to `.reports/calibrate/<TIMESTAMP>/routing/result.jsonl` by the block above, skip Phases 2–4. Do not report this as an empty agent roster.
 
 **Empty-roster hard stop** — zero lines: do NOT generate problems, do NOT score, do NOT reconstruct a roster from memory. A fabricated roster yields a measured-looking `routing_accuracy` for a run that measured nothing, and that number lands in `calibrations.jsonl` history. Write this line to `.reports/calibrate/<TIMESTAMP>/routing/result.jsonl`, return it as compact JSON, skip Phases 2–4:
 
@@ -55,10 +72,10 @@ Generate `<N>` synthetic task prompts across all agents. Per problem, produce JS
 - `confusion_pair`: most likely wrong agent for medium/hard; `null` for easy
 - `auto_invoke_test`: `true` if problem tests TRIGGER or SKIP-guard coverage; `false` otherwise
 
-Rules:
+Rules, in precedence order: exactly `<N>` problems, roster-valid dispatch names, and exactly one `general-purpose` answer are mandatory. Coverage goals below yield to those constraints; hard-problem and TRIGGER/SKIP coverage take precedence over the approximate difficulty distribution. A problem may satisfy both hard-pair and SKIP coverage. Record unavailable pairs, uncovered agents and unmet coverage goals in the report; never invent agents or increase N to meet a goal.
 
-- Cover every agent ≥1 in `expected_agent` (distribute evenly given N)
-- Include ≥2 hard problems testing high-overlap pairs: e.g., sw-engineer vs qa-specialist, doc-scribe vs oss:shepherd, linting-expert vs sw-engineer, solution-architect vs sw-engineer, web-explorer vs sw-engineer (look up docs to implement vs implement directly), challenger vs sw-engineer (critique plan vs implement), oss:analyse vs oss:review (analyze thread vs code review)
+- Cover every agent ≥1 in `expected_agent` only when N−1 is at least the roster size; otherwise choose a varied subset within the N−1 specialist answers
+- Include ≥2 hard problems testing high-overlap agent pairs present in the roster: e.g., foundry:sw-engineer vs foundry:qa-specialist, foundry:linting-expert vs foundry:sw-engineer, foundry:solution-architect vs foundry:sw-engineer, foundry:web-explorer vs foundry:sw-engineer (look up docs to implement vs implement directly), foundry:challenger vs foundry:sw-engineer (critique plan vs implement). Use only pairs whose two dispatch names occur in the collected roster
 - Include exactly 1 `expected_agent: "general-purpose"` problem (general question, no specialist)
 - Difficulty distribution: ~40% easy, ~40% medium, ~20% hard (adjust to cover all agents)
 - **Auto-invocation coverage**: include ≥3 problems where `task_prompt` uses exact TRIGGER phrasing for an agent with a TRIGGER block (e.g. "what does the requests docs say about retries", "write tests for the auth module", "add docstrings to utils.py") — these are easy/medium; the TRIGGER phrase is the signal
@@ -72,7 +89,14 @@ Write JSON array to `.reports/calibrate/<TIMESTAMP>/routing/problems.json`.
 
 Read roster from `.reports/calibrate/<TIMESTAMP>/routing/roster.txt`.
 
-Per problem in `problems.json`, spawn `general-purpose` selector subagent. Issue ALL spawns in **single response** — no waiting between spawns.
+Resolve the child batch size from the spawn prompt; an unsubstituted value defaults to 1 child at a time:
+
+```bash
+CHILD_BATCH='<CHILD_BATCH>'
+case "$CHILD_BATCH" in *'<'*|*'>'*|"") CHILD_BATCH=1;; [1-5]) ;; *) echo "! BLOCKED — child batch must be 1–5"; exit 1;; esac
+```
+
+Per problem in `problems.json`, spawn `general-purpose` selector subagent in batches of at most `$CHILD_BATCH` (never more than 5). Read `rules/agent-spawn.md` and budget by effective model: haiku 20, sonnet 8, opus 5 in flight. The orchestrator accounts for all active pipelines and their children within the shared tier ceiling; never independently claim the full ceiling. Dispatch within the child batch size, end the turn, and collect the batch through completion notifications before dispatching the next batch. These limits also cover any overlapping phase.
 
 Each selector gets this prompt (substitute `<ROSTER>`, `<TASK_PROMPT>`, `<PROBLEM_ID>`, `<RUN_DIR>`):
 

@@ -63,6 +63,9 @@ _SHA = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 _DISPOSITIONS = {"included", "already-released", "internal-only", "reverted", "superseded", "merge-only"}
 #: Allowed stated bases for excluding an item from the release notes.
 _EXCLUSION_BASES = {"legal-restriction", "privacy-request", "verified-duplicate"}
+_MARKDOWN_LINE_LIMIT = 4096
+_CREDIT_DESCRIPTION = re.compile(r"(?:[ \t]+[—–-][ \t]+|:[ \t]+)")
+_CREDIT_MARKERS = re.compile(r"\*+|_+")
 
 
 def _fail(reason: str) -> None:
@@ -183,8 +186,23 @@ def _changed_paths(repository: Path, sha: str) -> set[str]:
     return set(paths)
 
 
+def _release_atx_title(content: str) -> str | None:
+    """Read an ATX release heading with linear trimming and literal hash preservation."""
+    heading = re.match(r" {0,3}##[ \t]+(?=.)", content)
+    if heading is None:
+        return None
+    raw_title = content[heading.end() :]
+    title = raw_title.rstrip(" \t")
+    if not title:
+        return raw_title[:1]
+    without_hashes = title.rstrip("#")
+    if len(without_hashes) < len(title) and without_hashes.endswith((" ", "\t")):
+        return without_hashes.rstrip(" \t")
+    return title
+
+
 def release_sections(text: str) -> list[tuple[str, int, int, int]]:
-    """Locate level-two ATX or Setext sections outside fences with original character offsets."""
+    """Locate level-two sections with original offsets using a single-pass heading scan."""
     sections = []
     paragraph = []
     fence = None
@@ -199,9 +217,9 @@ def release_sections(text: str) -> list[tuple[str, int, int, int]]:
             fence = marker[1]
             paragraph = []
         else:
-            heading = re.fullmatch(r" {0,3}##[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*", content)
-            if heading:
-                sections.append((heading[1], offset, offset + len(line)))
+            title = _release_atx_title(content)
+            if title is not None:
+                sections.append((title, offset, offset + len(line)))
                 paragraph = []
             elif re.fullmatch(r" {0,3}(?:-+|=+)[ \t]*", content) and paragraph:
                 if content.lstrip().startswith("-"):
@@ -232,7 +250,7 @@ def _nonempty_section(text: str, heading: str) -> bool:
 
 
 def _credit_lines(text: str) -> list[str]:
-    """Read rendered credit lines outside fences without treating Unicode content as line endings."""
+    """Read bounded rendered credit lines outside fences, preserving Unicode separators as data."""
     lines = []
     fence = None
     # Markdown normalizes CR/LF and NUL for rendering. Receipt and excerpt bytes stay untouched;
@@ -246,7 +264,7 @@ def _credit_lines(text: str) -> list[str]:
             fence = marker[1]
             lines.append("")
         else:
-            lines.append(line)
+            lines.append(line if len(line) <= _MARKDOWN_LINE_LIMIT else "")
     return lines
 
 
@@ -364,6 +382,8 @@ def _credit_references(text: str) -> set[str]:
                 end += 1
                 if end == len(lines) or not lines[end].strip(" \t"):
                     break
+                if len(candidate) + len(lines[end]) + 1 > _MARKDOWN_LINE_LIMIT:
+                    break
                 candidate += "\n" + lines[end]
             if valid_end is not None:
                 references.add(" ".join(definition[1].split()).casefold())
@@ -378,11 +398,28 @@ def _credit_references(text: str) -> set[str]:
     return references
 
 
-def _credit_link_span(text: str, index: int, references: set[str]) -> tuple[str, int] | None:
+def _credit_bracket_pairs(text: str) -> dict[int, int]:
+    """Tokenize unescaped label brackets once so unmatched openers never rescan the suffix."""
+    pairs = {}
+    openers = []
+    index = 0
+    while index < len(text):
+        if text[index] == "\\":
+            index += 2
+            continue
+        if text[index] == "[":
+            openers.append(index)
+        elif text[index] == "]" and openers:
+            pairs[openers.pop()] = index
+        index += 1
+    return pairs
+
+
+def _credit_link_span(text: str, index: int, references: set[str], pairs: dict[int, int]) -> tuple[str, int] | None:
     """Recognize one complete supported link candidate before applying the no-nested-links rule."""
     if text[index] != "[" or (index and text[index - 1] == "!"):
         return None
-    close = _credit_closing(text, index, "[", "]")
+    close = pairs.get(index)
     if close is None:
         return None
     label = text[index + 1 : close]
@@ -394,86 +431,108 @@ def _credit_link_span(text: str, index: int, references: set[str]) -> tuple[str,
         linked = destination is not None
         end = destination - 1 if destination is not None else close
     elif text[close + 1 : close + 2] == "[":
-        reference = _credit_closing(text, close + 1, "[", "]")
+        reference = pairs.get(close + 1)
         reference_key = text[close + 2 : reference] if reference is not None else ""
         linked = reference is not None and " ".join((reference_key or label).split()).casefold() in references
         end = reference if reference is not None else close
     return (label, end) if linked else None
 
 
-def _credit_label_text(text: str, references: set[str], *, stop_at_description: bool = False) -> str:
-    """Read a complete visible label, resolving supported links and balanced emphasis before comparison."""
-    output = []
-    delimiters = []
-    index = 0
-    while index < len(text):
-        if stop_at_description and re.match(r"(?:[ \t]+[—–-][ \t]+|:[ \t]+)", text[index:]):
-            break
-        if stop_at_description and text[index : index + 2] == " (":
-            annotation = _credit_closing(text, index + 1, "(", ")")
-            if annotation is not None:
-                handle = _credit_label_text(text[index + 2 : annotation], references)
-                tail = text[annotation + 1 :]
-                if re.fullmatch(r"@[A-Za-z0-9_-]+", handle) and (
-                    not tail.strip() or re.match(r"(?:[ \t]+[—–-][ \t]+|:[ \t]+)", tail)
-                ):
-                    break
-        character = text[index]
-        if character == "\\" and index + 1 < len(text) and text[index + 1] in string.punctuation:
-            output.append(text[index + 1])
-            index += 2
-            continue
-        link = _credit_link_span(text, index, references)
-        if link is not None:
-            label, end = link
-            inner = 0
-            while inner < len(label):
-                if label[inner] == "\\":
-                    inner += 2
-                elif _credit_link_span(label, inner, references) is not None:
-                    break
-                else:
-                    inner += 1
+def _credit_description_start(text: str, index: int, references: set[str]) -> bool:
+    """Recognize a description separator or complete optional handle annotation."""
+    if _CREDIT_DESCRIPTION.match(text, index):
+        return True
+    if text[index : index + 2] != " (":
+        return False
+    annotation = _credit_closing(text, index + 1, "(", ")")
+    if annotation is None:
+        return False
+    handle = _credit_label_text(text[index + 2 : annotation], references)
+    tail = text[annotation + 1 :]
+    return bool(re.fullmatch(r"@[A-Za-z0-9_-]+", handle)) and (
+        not tail.strip() or bool(_CREDIT_DESCRIPTION.match(tail))
+    )
+
+
+def _credit_rendered_link(text: str, index: int, references: set[str], pairs: dict[int, int]) -> tuple[str, int] | None:
+    """Render one active link while leaving a deactivated outer link as literal text."""
+    link = _credit_link_span(text, index, references, pairs)
+    if link is None:
+        return None
+    label, end = link
+    label_pairs = _credit_bracket_pairs(label)
+    inner = 0
+    while inner < len(label):
+        if label[inner] == "\\":
+            inner += 2
+        elif _credit_link_span(label, inner, references, label_pairs) is not None:
             # An active inner link deactivates its outer link. Leave the outer syntax in the ordinary
             # text stream so its brackets and destination remain part of the complete visible identity.
-            if inner >= len(label):
-                output.append(_credit_label_text(label, references))
-                index = end + 1
-                continue
-        if character in "*_":
-            run = re.match(r"\*+|_+", text[index:])[0]
-            end = index + len(run)
-            before = text[index - 1] if index else "\n"
-            after = text[end] if end < len(text) else "\n"
-            before_punctuation = before in string.punctuation or unicodedata.category(before)[0] in "PS"
-            after_punctuation = after in string.punctuation or unicodedata.category(after)[0] in "PS"
-            left = not after.isspace() and (not after_punctuation or before.isspace() or before_punctuation)
-            right = not before.isspace() and (not before_punctuation or after.isspace() or after_punctuation)
-            can_open = left and (character == "*" or not right or before_punctuation)
-            can_close = right and (character == "*" or not left or after_punctuation)
-            delimiters.append((len(output), character, can_open, can_close))
-            output.append(run)
-            index = end
+            return None
+        else:
+            inner += 1
+    return _credit_label_text(label, references), end + 1
+
+
+def _credit_label_token(text: str, index: int, references: set[str], pairs: dict[int, int]) -> tuple[str, int, bool]:
+    """Consume one escape, active link, marker run, whitespace run, or literal character."""
+    character = text[index]
+    if character == "\\" and index + 1 < len(text) and text[index + 1] in string.punctuation:
+        return text[index + 1], index + 2, False
+    link = _credit_rendered_link(text, index, references, pairs)
+    if link is not None:
+        return link[0], link[1], False
+    if character in "*_":
+        run = _CREDIT_MARKERS.match(text, index)[0]
+        return run, index + len(run), True
+    end = index + 1
+    if character in " \t":
+        while end < len(text) and text[end] in " \t":
+            if text.startswith(" (", end):
+                break
+            end += 1
+    return text[index:end], end, False
+
+
+def _credit_emphasis_flags(text: str, index: int, end: int) -> tuple[bool, bool]:
+    """Classify a marker run by its surrounding whitespace and punctuation."""
+    before = text[index - 1] if index else "\n"
+    after = text[end] if end < len(text) else "\n"
+    before_punctuation = before in string.punctuation or unicodedata.category(before)[0] in "PS"
+    after_punctuation = after in string.punctuation or unicodedata.category(after)[0] in "PS"
+    left = not after.isspace() and (not after_punctuation or before.isspace() or before_punctuation)
+    right = not before.isspace() and (not before_punctuation or after.isspace() or after_punctuation)
+    return (
+        left and (text[index] == "*" or not right or before_punctuation),
+        right and (text[index] == "*" or not left or after_punctuation),
+    )
+
+
+def _credit_matching_opener(
+    output: list[str], openers: list[tuple[int, str, bool]], position: int, marker: str, can_open: bool
+) -> int | None:
+    """Find the last compatible emphasis opener without crossing delimiter pairs."""
+    for opener_index in range(len(openers) - 1, -1, -1):
+        opener, opener_marker, opener_closes = openers[opener_index]
+        if opener_marker != marker:
             continue
-        output.append(character)
-        index += 1
+        opening = len(output[opener])
+        closing = len(output[position])
+        if (opener_closes or can_open) and (opening + closing) % 3 == 0 and (opening % 3 or closing % 3):
+            continue
+        return opener_index
+    return None
+
+
+def _credit_strip_emphasis(output: list[str], delimiters: list[tuple[int, str, bool, bool]]) -> None:
+    """Remove paired emphasis markers while preserving unmatched and ambiguous runs."""
     # Shared closing runs can close inner emphasis and outer strong emphasis. Pair only flanking runs,
     # preserve every unmatched marker, and forbid crossing pairs or ambiguous multiples of three.
     openers = []
     for position, marker, can_open, can_close in delimiters:
         if can_close:
             while output[position]:
-                match = None
-                for opener_index in range(len(openers) - 1, -1, -1):
-                    opener, opener_marker, opener_closes = openers[opener_index]
-                    if opener_marker != marker:
-                        continue
-                    opening = len(output[opener])
-                    closing = len(output[position])
-                    if (opener_closes or can_open) and (opening + closing) % 3 == 0 and (opening % 3 or closing % 3):
-                        continue
-                    match = opener_index
-                    break
+                match = _credit_matching_opener(output, openers, position, marker, can_open)
                 if match is None:
                     break
                 opener = openers[match][0]
@@ -485,6 +544,24 @@ def _credit_label_text(text: str, references: set[str], *, stop_at_description: 
                     openers.pop()
         if can_open and output[position]:
             openers.append((position, marker, can_close))
+
+
+def _credit_label_text(text: str, references: set[str], *, stop_at_description: bool = False) -> str:
+    """Read a complete visible label with bounded tokens and indexed bracket pairs."""
+    output = []
+    delimiters = []
+    pairs = _credit_bracket_pairs(text)
+    index = 0
+    while index < len(text):
+        if stop_at_description and _credit_description_start(text, index, references):
+            break
+        token, end, marker = _credit_label_token(text, index, references, pairs)
+        if marker:
+            can_open, can_close = _credit_emphasis_flags(text, index, end)
+            delimiters.append((len(output), text[index], can_open, can_close))
+        output.append(token)
+        index = end
+    _credit_strip_emphasis(output, delimiters)
     return " ".join(html.unescape("".join(output)).split())
 
 
@@ -492,11 +569,12 @@ def _visible_credit_name(text: str, name: str, *, context: str | None = None) ->
     """Compare complete rendered credit labels with the verified identity, never marked substrings."""
     definition = re.compile(r"^ {0,3}\[(.+)\]:")
     references = _credit_references(context if context is not None else text)
+    normalized_name = " ".join(name.split())
     for line in _credit_lines(text):
         if definition.match(line):
             continue
         label = re.sub(r"^[ \t]*[-*+][ \t]+", "", line).strip()
-        if _credit_label_text(label, references, stop_at_description=True) == " ".join(name.split()):
+        if _credit_label_text(label, references, stop_at_description=True) == normalized_name:
             return True
     return False
 

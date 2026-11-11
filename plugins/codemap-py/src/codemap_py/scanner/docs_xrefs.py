@@ -31,7 +31,7 @@ _SPHINX_RESOLVABLE_ROLES: frozenset[str] = frozenset({"func", "class", "meth", "
 
 # MkDocs autorefs: [text][identifier] — identifier is a dotted Python path.
 #: Matches MkDocs autorefs links of the form [text][identifier], capturing the identifier.
-_MKDOCS_NAMED_RE = re.compile(r"\[(?:[^\]]+)\]\[([A-Za-z_][A-Za-z0-9_.]*)\]")
+_MKDOCS_NAMED_RE = re.compile(r"\[[^\[\]\n]{1,4096}\]\[([A-Za-z_][A-Za-z0-9_.]*)\]")
 
 
 # MkDocs autorefs backtick form: [`identifier`][]
@@ -315,6 +315,8 @@ def scan_mkdocs_xrefs(md_path: Path, root: Path) -> list[dict]:
     results: list[dict] = []
     seen: set[tuple[str, int]] = set()  # (target, line) — backtick form is also matched by named regex
     for lineno, line in enumerate(text.splitlines(), start=1):
+        if len(line) > 4096:
+            continue
         for match in _MKDOCS_BACKTICK_RE.finditer(line):
             identifier = match.group(1)
             target = _resolve_mkdocs_identifier(identifier)
@@ -361,7 +363,14 @@ def _raise_walk_error(error: OSError) -> None:
 
 def _iter_config_files(root: Path) -> list[Path]:
     """Discover the root configuration files consumed by reference and source-root scanning."""
-    return sorted({path for pattern in _CONFIG_SCAN_PATTERNS for path in root.glob(pattern) if path.is_file()})
+    return sorted(
+        {
+            path
+            for pattern in _CONFIG_SCAN_PATTERNS
+            for path in root.glob(pattern)
+            if not path.is_symlink() and path.is_file()
+        }
+    )
 
 
 def _iter_doc_files(root: Path) -> tuple[list[Path], list[Path]]:

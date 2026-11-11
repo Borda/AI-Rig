@@ -10,6 +10,12 @@ effort: medium
 
 # Set Up the Bridge
 
+<objective>
+Configure, authenticate, repair, and verify the bridge with separate operator approval for sensitive stages.
+</objective>
+
+<workflow>
+
 ## Bootstrap and plan
 
 - Treat a plain invocation as `action=all target=peer scope=auto live=prompt`.
@@ -45,11 +51,13 @@ For `check`, report the result and stop. For `all`, `configure`, or `repair`:
 
    Print that file once as the last reply text before the step-3 question. Never put operations or the digest in an option `preview`.
 
-3. Obtain explicit approval for exactly that digest via the `AskUserQuestion` tool — never a plain-text question. Question text: at most 6 plain lines (target 600 characters, hard cap 1,500), no table, pipe layout or code fence, carrying the action, operation count, full approval digest and `→ <operations file path>`. Reply text before a tool call can arrive as an empty progress update; the question text is always rendered, so it alone must identify what is approved — never ask approval for operations the user could not see. Options: a label plus a one-line effect each, no previews, recommended option second.
+3. Obtain explicit approval for exactly that digest via the `AskUserQuestion` tool — never a plain-text question. Question text: at most 6 plain lines (target 600 characters, hard cap 1,500), no table, pipe layout or code fence, carrying the action, operation count, full approval digest, `→ <operations file path>`, and the 300-second deadline measured from plan issuance, not from approval. Reply text before a tool call can arrive as an empty progress update; the question text is always rendered, so it alone must identify what is approved — never ask approval for operations the user could not see. Options: a label plus a one-line effect each, no previews, recommended option second.
 
-4. After approval, give the operator the identical command plus `--approve "<approval_digest>"` to run in their own terminal, with `${CLAUDE_PLUGIN_ROOT}` expanded to its absolute path (it is unset there; read it with `echo "${CLAUDE_PLUGIN_ROOT}"`). Then re-plan with `--action check` to report the outcome.
+4. After approval, give the operator the identical command plus `--approve "<approval_digest>"` to run in their own terminal, with `${CLAUDE_PLUGIN_ROOT}` expanded to its absolute path (it is unset there; read it with `echo "${CLAUDE_PLUGIN_ROOT}"`). End the turn after printing the operator command; only after the user reports the command finished, re-plan with `--action check` to report the outcome and decide whether the stages below can proceed.
 
-> Host-held HMAC makes digest tamper-evident but does not grant consent; explicit operator or host approval remains required. The digest is action-bound, expires, and is consumed by its first execution attempt; it lives 300 seconds. Never substitute `--approve` without its digest. Denial, changed or expired digest, replay, unsupported capability, failed probe, or failed native operation stops without retry.
+> Host-held HMAC makes digest tamper-evident but does not grant consent; explicit operator or host approval remains required. The digest is action-bound, expires, and is consumed by its first execution attempt; it lives 300 seconds. Never substitute `--approve` without its digest. Denial, changed digest, replay, unsupported capability, failed probe, or failed native operation stops without retry. An expired digest stops that execution attempt; only the bounded fresh-approval recovery below is allowed.
+
+On `approval-expired` reported by the operator, recovery is allowed once per stage. For live verification, first rerun its step-1 precondition plan and stop if its preconditions fail. Then re-plan the same action once with identical host, workspace, target, scope, and live values; never reuse the expired digest or its approval. Repeat that stage's operations-file and approval steps once for the new digest: a new operations file, the same question-text contract carrying the new digest and file path, and that stage's disclosures. After approval, give the replacement operator command and end the turn again. This recovery applies to configuration, authentication, and live verification. A second expiry stops that stage; report the remaining action without restarting setup or retrying automatically.
 
 > Operator proof: `--approve` executes only when stdin and stderr are the operator's terminal; otherwise the helper exits 2 with `operator-terminal-required` before inspecting, locking or mutating anything. Never run `--approve` through model-controlled Bash, a pipe, or an allocated TTY; run only the planning command (no `--approve`) there. The digest the model planned is not operator approval.
 
@@ -59,7 +67,7 @@ When `action=all` or `action=authenticate` and authentication remains (`configur
 
 1. Re-plan the provider-owned interactive login with identical host, workspace, target, scope, and live values but `--action authenticate`.
 2. Obtain separate approval for that action's digest via the `AskUserQuestion` tool, with the same question-text contract as step 3 above: the question text names the full authentication digest and the exact `authentication_argv`, and states it may open a browser and use network and account state. No previews.
-3. Give operator identical authenticate command plus `--approve "<authentication_digest>"` to run in their own terminal, with the absolute plugin path as in step 4 above.
+3. Give operator identical authenticate command plus `--approve "<authentication_digest>"` to run in their own terminal, with the absolute plugin path as in step 4 above. End the turn after printing the operator command; only after the user reports the command finished, re-plan with `--action check` to establish redacted authentication state before continuing.
 
 > Sensitive phase: never run through model-controlled Bash or another captured tool stream. Bridge then launches only native login command with terminal inherited. Never accept, request, pipe, echo, inspect, or store a token, API key, browser code, device code, email, or raw login output. Process exit means `auth-flow-launched`; only a later redacted status probe may establish `host-authenticated`.
 
@@ -71,7 +79,7 @@ When `action=all` or `action=verify-live`, `live=prompt` or `live=required`, and
 2. Re-plan with identical host, workspace, target, and scope but `--action verify-live`. Exit 2 with `status=manual` and `classification=live-verification-requires-separate-approval` is this plan's normal result, not a failure; its `approval_digest` is the live digest.
 3. Obtain a third approval for that action's digest via the `AskUserQuestion` tool and one paid provider call, with the same question-text contract as step 3 above: the question text names the full live digest and the one paid call. No previews.
 4. State network, installed-CLI-managed credential, quota/cost, workspace, and point-in-time semantics in that question text, or, when they do not fit its 6 lines, in a file printed once as the last reply text before the question, which the question text names as `→ <path>`.
-5. Give the operator that same verify-live command plus `--approve "<live_digest>"` to run in their own terminal, with the absolute plugin path as in step 4 above.
+5. Give the operator that same verify-live command plus `--approve "<live_digest>"` to run in their own terminal, with the absolute plugin path as in step 4 above. End the turn after printing the operator command; only after the user reports the command finished, re-plan with `--action check` to report current state, retaining the operator-reported live result and its point-in-time limits separately.
 
 > Never invoke the lower-level live doctor outside this approval path. Successful live CLI result remains partial until the applicable `bridge_status` session/workspace evidence named under Completion boundary is also present. `live=skip` remains `inference-unverified`; never call it ready. Denial under `live=required` is non-ready.
 
@@ -86,3 +94,5 @@ For Codex-to-Claude repository transfer consent, continue in a fresh Codex sessi
 - Report strongest verified level, exact remaining action, confidence, and limits.
 
 > Never equate static readiness, process exit, host authentication, session readiness, workspace readiness, or live verification.
+
+</workflow>

@@ -49,11 +49,11 @@ _TOOL_ASKS = [
 
 #: Asks the baseline phrased in prose, not as a tool call; kept in that form, never upgraded or dropped.
 _PROSE_ASKS = [
-    pytest.param("**Checkpoint init**", "## Fix Mode", "offer resume from last completed step", id="resume-offer"),
     pytest.param(
         "ASSUMPTIONS I'M MAKING", "## Challenger gate", "Correct me now or I'll proceed with these", id="assumptions"
     ),
 ]
+
 
 #: Shared docs whose own questions this skill reaches only by loading them.
 _SHARED_ASKS = [
@@ -75,6 +75,14 @@ def _flat_text(path: Path) -> str:
 def _section(start_marker: str, end_marker: str) -> str:
     """Return the text between two unique markers of the fix skill."""
     return between(_flat_text(_FIX / "SKILL.md"), start_marker, end_marker)
+
+
+def test_checkpoint_steps_do_not_authorize_cross_session_gate_skips() -> None:
+    """A prose checkpoint from any skill cannot substitute for fix's session-scoped reproduction evidence."""
+    lines = (_FIX / "SKILL.md").read_text(encoding="utf-8").splitlines()
+    checkpoint = next(line for line in lines if line.startswith("**Checkpoint init**"))
+    assert "resume" not in checkpoint
+    assert "step: N — completed" in checkpoint
 
 
 @pytest.mark.parametrize(("section_start", "section_end", "marker"), _TOOL_ASKS)

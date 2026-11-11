@@ -33,6 +33,9 @@ class PlannedReview(NamedTuple):
 
 def _command(script: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
     """Run the public helper without replacing its source or evidence checks."""
+    if script == CHUNKER and "--manifest" in arguments:
+        manifest = json.loads(Path(arguments[arguments.index("--manifest") + 1]).read_bytes())
+        arguments = (*arguments, "--repository", manifest["repository"])
     return subprocess.run([sys.executable, str(script), *arguments], capture_output=True, text=True, check=False)
 
 

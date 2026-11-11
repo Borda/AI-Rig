@@ -1,6 +1,6 @@
 ---
 name: audit
-description: Full-sweep quality audit of .claude/ config — cross-references, permissions, inventory drift, model tiers, docs freshness. Scope tokens select what to audit; --upgrade applies docs-sourced improvements; --adversarial runs foundry:challenger + Codex adversarial review; --efficiency sweeps model tiers, token bloat, spawn patterns, boilerplate duplication, and bin/ extraction candidates (extraction performed separately via /distill executables); --consolidate proposes merging overlapping narrow rules into fewer broader ones and sharpening overlapping skill notes and agent clauses (advisory, edits nothing). Fix level chosen via always-fire follow-up gate after report.
+description: Full-sweep quality audit of .claude/ config — cross-references, permissions, inventory drift, model tiers, docs freshness. Scope tokens select what to audit; --upgrade applies docs-sourced improvements; --adversarial runs foundry:challenger + Codex adversarial review; --efficiency sweeps model tiers, token bloat, spawn patterns, boilerplate duplication, and bin/ extraction candidates (extraction performed separately via /foundry:distill executables); --consolidate proposes merging overlapping narrow rules into fewer broader ones and sharpening overlapping skill notes and agent clauses (advisory, edits nothing). Fix level chosen via conditional follow-up gate after report.
 argument-hint: '[<scope>...] [--local] [--upgrade | --adversarial | --efficiency | --consolidate] [--measured] [--fast] [--skip-gate] [--keep "<items>"]'
 disable-model-invocation: true
 allowed-tools: Read, Write, Edit, Bash, Grep, Glob, Agent, WebFetch, Skill, TaskCreate, TaskUpdate, TaskList, AskUserQuestion
@@ -20,15 +20,15 @@ Full-sweep audit of `.claude/` config + all `plugins/*/` files: agents, skills, 
   **Flags** (order independent, any combination with scope):
 
   - `--local` — audit source tree (`plugins/*/`) not project setup (`.claude/`); plugin-dev workflows where local edits not yet installed; sets `LOCAL_MODE=true`
-  - `--upgrade` — fetch latest Claude Code docs, filter new features by genuine value, apply: **config** changes (apply + correctness check), **capability** changes (`--local` only: calibrate before → apply → calibrate after → accept if Δrecall ≥ 0 and ΔF1 ≥ 0 and at least one delta ≥ 0.05, the noise floor; without `--local` each is reported as skipped). Skip to **Mode: upgrade**. Mutually exclusive with `--adversarial`, `--efficiency` and `--consolidate` — error if combined with any.
-  - `--adversarial` (alias: `--challenge`) — adversarial review of all agents + skills in scope using `foundry:challenger` (Phase A) + Codex adversarial pass (Phase B); surfaces issues beyond standard per-file audit; see **Mode: adversarial**. Mutually exclusive with `--upgrade` only; combinable with `--efficiency`.
-  - `--efficiency` — cost and efficiency sweep: model tier validation, token bloat detection, unbounded spawn patterns, cross-file boilerplate duplication, missing model declarations, bin/ extraction candidates (Check 33), size against importance (E11). Generates prioritized cost-reduction plan with estimated savings. Detection only — run `/distill executables` to act on extraction candidates. Skip to **Mode: efficiency**. Mutually exclusive with `--upgrade` and `--consolidate`; combinable with `--adversarial`.
+  - `--upgrade` — fetch latest Claude Code docs, filter new features by genuine value, apply: **config** changes (apply + correctness check), **capability** changes (`--local` only: calibrate before → apply → calibrate after → accept if Δrecall ≥ 0 and ΔF1 ≥ 0 and at least one delta ≥ 0.05, the noise floor; without `--local` each is reported as skipped). Skip to **Mode: upgrade**. Among `--upgrade`, `--adversarial`, `--efficiency`, `--consolidate`: `--upgrade` and `--consolidate` each exclude all others; `--adversarial` and `--efficiency` may combine; error on all other mode combinations.
+  - `--adversarial` (alias: `--challenge`) — adversarial review of all agents + skills in scope using `foundry:challenger` (Phase A) + Codex adversarial pass (Phase B); surfaces issues beyond standard per-file audit; see **Mode: adversarial**. Among `--upgrade`, `--adversarial`, `--efficiency`, `--consolidate`: `--upgrade` and `--consolidate` each exclude all others; `--adversarial` and `--efficiency` may combine; error on all other mode combinations.
+  - `--efficiency` — cost and efficiency sweep: model tier validation, token bloat detection, unbounded spawn patterns, cross-file boilerplate duplication, missing model declarations, bin/ extraction candidates (Check 33), size against importance (E11). Generates prioritized cost-reduction plan with estimated savings. Detection only — run `/foundry:distill executables` to act on extraction candidates. Skip to **Mode: efficiency**. Mutually exclusive with `--upgrade` and `--consolidate`; combinable with `--adversarial`.
   - `--consolidate` — advisory consolidation sweep (Check 47): clusters rule, skill and agent sections that express one intent in different words, proposes fewer broader ones with an obligation map and an independent `foundry:challenger` review, and reports tokens saved per load class. Edits nothing; no fix gate. Skip to **Mode: consolidate**. Standalone — error if combined with `--upgrade`, `--adversarial` or `--efficiency`.
   - `--measured` — with `--efficiency` only: a question picks which of the projects whose sessions ran a flagged skill to measure, and the audit adds measured dollars from their transcripts (read-only, ids, counts and dollars only) and append the run to `.notes/efficiency/baselines.jsonl`, so a re-run prints the change against the first recorded baseline (Phase B3). Off by default: it reads transcripts and writes a ledger. Error without `--efficiency`
-  - `--skip-gate` — suppress follow-up gate (for automation pipelines)
+  - `--skip-gate` — suppress follow-up gate and record BREAKING acknowledgments without a question (for automation pipelines); does not authorize fixes or bypass fatal pre-flight errors
   - `--fast` — widen fan-out from `MAX_BATCHES` toward that phase's model-tier ceiling (`CAP_OPUS`/`CAP_SONNET`, see `<constants>` and claude-config.md §Parallel Spawn Ceilings), trading tokens for wall-clock. **Not free**: each extra agent costs ~120,851 tok of fixed overhead regardless of how little work it does. Curator-spawning phases (opus tier) have little headroom above `MAX_BATCHES=4` toward `CAP_OPUS=5`; Phase D's qa-specialist (sonnet tier) has more, toward `CAP_SONNET=8`. Use when latency matters more than cost; omit by default. Combinable with every other flag.
 
-  **Legacy positional tokens** (`fix`, `upgrade`, `adversarial`, `challenge`, `ab`, `apply`, `fast`, `full`) — **hard error**: print migration hint and stop. Example: "`fix medium` removed — run `/audit` and pick fix level from gate, or pass `--upgrade` / `--adversarial` as flags."
+  **Legacy positional tokens** (`fix`, `upgrade`, `adversarial`, `challenge`, `ab`, `apply`, `fast`, `full`) — **hard error**: print migration hint and stop. Example: "`fix medium` removed — run `/foundry:audit` and pick fix level from gate, or pass `--upgrade` / `--adversarial` as flags."
 
   **Scope tokens** (positional, space-separated — resolve each token before Step 2):
 
@@ -40,15 +40,15 @@ Full-sweep audit of `.claude/` config + all `plugins/*/` files: agents, skills, 
   - `setup` — restrict to system-config files: `settings.json`, `permissions-guide.md`, hooks, `MEMORY.md`, `README.md`, plugin integration, post-install user state (Checks 1–11, 30, I1, I2, I3); Step 3: `setup` SKILL.md only (one foundry:curator spawn); Checks I1–I3 read `~/.claude/` not `.claude/`
   - `plugin` — plugin integration only: codex plugin (Check 7), foundry plugin + init validation (Check 8, including 8g); Step 3: `setup` SKILL.md only (one foundry:curator spawn)
   - `plugins` — full audit of all plugins: per-file audit of every `plugins/*/agents/*.md` and `plugins/*/skills/*/SKILL.md` + integration checks (7, 8) per plugin
-  - `plugins <name>` — same as `plugins` scoped to one plugin: `plugins/<name>/agents/*.md` + `plugins/<name>/skills/*/SKILL.md` + integration checks; `<name>` must match dir under `plugins/` (e.g. `plugins foundry`, `plugins oss`, `plugins research`)
-  - `<plugin-name>` — **tier 2 shorthand**: bare plugin dir name (e.g. `oss`, `foundry`, `research`, `develop`, `codemap`) auto-resolved when token matches dir under `plugins/`; equivalent to `plugins <name>`; no `plugins` prefix needed
-  - `<agent-name>` — **tier 3**: name matches `plugins/*/agents/<name>.md` or `.claude/agents/<name>.md`; runs agent checks only (Checks 14a, 14b, 15, 19, 20, 17, 12, 13, 25, 22, 26, 29); one file in Step 3
-  - `<skill-name>` — **tier 3**: name matches `plugins/*/skills/<name>/SKILL.md` or `.claude/skills/<name>/SKILL.md`; runs skill checks only (Checks 14a, 14b, 15, 17, 12, 23, 22, 13, 24, 25, 26, 27, 28, 29); one file in Step 3
+  - `plugins <name>` — same as `plugins` scoped to one plugin: resolve `plugins/<name>/` first, then `plugins/cc_<name>/`, then a plugin root whose manifest `name` matches (e.g. `bridge` → `plugins/bridge_cc-codex/`); collect its manifest-declared agents and skills + integration checks (e.g. `plugins foundry`, `plugins oss`, `plugins research`)
+  - `<plugin-name>` — **tier 2 shorthand**: plugin name or directory name (e.g. `oss`, `foundry`, `research`, `develop`, `codemap-py`) resolved in the same order as `plugins <name>`; equivalent to that scope; no `plugins` prefix needed
+  - `<agent-name>` — **tier 3**: name matches `.claude/agents/<name>.md` in setup mode, or `plugins/*/agents/<name>.md` in local mode with `.claude/agents/<name>.md` as fallback; runs agent checks only (Checks 14a, 14b, 15, 19, 20, 17, 12, 13, 25, 22, 26, 29); one file in Step 3
+  - `<skill-name>` — **tier 3**: name matches `.claude/skills/<name>/SKILL.md` in setup mode, or `<skills-dir>/<name>/SKILL.md` under a plugin's `PLUGIN_LAYOUT:` root (from `plugin_layout.py`, Step 2) in local mode with `.claude/skills/<name>/SKILL.md` as fallback; runs skill checks only (Checks 14a, 14b, 15, 17, 12, 23, 22, 13, 24, 25, 26, 27, 28, 29); union all matches in the active source, never silently choose one plugin
   - Multiple scope tokens — space-separated, any combo; scope = union of resolved file sets: `agents skills`, `oss research`, `shepherd curator`, `review resolve`; check list = union (de-duplicated)
 
-  **Scope token resolution** (each remaining token after flag-strip, resolved before Step 2): (1) reserved keywords (`agents`, `skills`, `rules`, `communication`, `setup`, `plugin`, `plugins`) → use as-is; (2) matches dir under `plugins/<token>/` → tier 2; (3) matches agent file in `plugins/*/agents/<token>.md` or `.claude/agents/<token>.md` → tier 3 agent; (4) matches skill dir `plugins/*/skills/<token>/` or `.claude/skills/<token>/` → tier 3 skill; (5) no match → error and stop. **Out-of-scope target** — any path or pasted content that is not an agent, skill, rule, hook, settings, plugin-manifest, `permissions-guide.md`, `MEMORY.md`, or plugin/project-configuration `README.md` file (e.g. a plain application `.py` script or unrelated project docs): lead with `**! UNSUPPORTED — <target> is not .claude/ or plugin config**`, name the owner (`foundry:sw-engineer`/`foundry:qa-specialist` for code, `foundry:linting-expert` for lint/types, `foundry:doc-scribe` for docs), report `Total: 0`, stop. Never append best-effort review findings after the decline — findings printed under a decline still read as an audit result.
+  **Scope token resolution** (each remaining token after flag-strip): (1) reserved keywords (`agents`, `skills`, `rules`, `communication`, `setup`, `plugin`, `plugins`) → use as-is, resolving the name following `plugins` by tier 2; (2) matches `plugins/<token>/`, otherwise `plugins/cc_<token>/`, otherwise a plugin root with matching manifest `name` → tier 2, retaining the actual directory name; (3) matches agent file in the active source → tier 3 agent; (4) matches `<skills-dir>/<token>/SKILL.md` in the active source → tier 3 skill; union all matches in the active source, including same-named skills in different plugins; (5) no match → error and stop. Pre-flight resolves tier 2 deterministically and infers local mode; resolve tier 3 before filtering Step 2's inventory. With `LOCAL_MODE=false`, tier-3 lookup uses `.claude/agents/` and `.claude/skills/` only; with `LOCAL_MODE=true`, use Step 2's plugin layout discovery and project-local fallbacks. **Out-of-scope target** — any path or pasted content that is not an agent, skill, rule, hook, settings, plugin-manifest, `permissions-guide.md`, `MEMORY.md`, or plugin/project-configuration `README.md` file (e.g. a plain application `.py` script or unrelated project docs): lead with `**! UNSUPPORTED — <target> is not .claude/ or plugin config**`, name the owner (`foundry:sw-engineer`/`foundry:qa-specialist` for code, `foundry:linting-expert` for lint/types, `foundry:doc-scribe` for docs), report `Total: 0`, stop. Never append best-effort review findings after the decline — findings printed under a decline still read as an audit result.
 
-  **Valid combinations**: scope tokens + flags mix freely: `foundry --local`, `foundry --adversarial`, `agents skills --local`, `oss research --adversarial`, `foundry --efficiency`, `plugins --efficiency`, `foundry --adversarial --efficiency`, `plugins --local --adversarial --efficiency`. `--upgrade` mutually exclusive with `--adversarial` and `--efficiency` — error if combined with either. `--consolidate` is standalone — error if combined with `--upgrade`, `--adversarial` or `--efficiency`. `--local` compatible with all. When `--adversarial` and `--efficiency` both present: run adversarial Phases A–C then efficiency Phases A–C sequentially; merge findings; single follow-up gate.
+  **Valid combinations**: scope tokens + flags mix freely: `foundry --local`, `foundry --adversarial`, `agents skills --local`, `oss research --adversarial`, `foundry --efficiency`, `plugins --efficiency`, `foundry --adversarial --efficiency`, `plugins --local --adversarial --efficiency`. Among `--upgrade`, `--adversarial`, `--efficiency`, `--consolidate`: `--upgrade` and `--consolidate` each exclude all others; `--adversarial` and `--efficiency` may combine; error on all other mode combinations. `--local` compatible with all. When `--adversarial` and `--efficiency` both present: run adversarial Phases A–C then efficiency Phases A–C sequentially; merge findings; single conditional follow-up gate.
 
 </inputs>
 
@@ -86,19 +86,19 @@ WAVE_STEP=5            # growth toward a tier's ceiling happens this much at a t
 
 <workflow>
 
-**Task hygiene** — task tools may be deferred; load before first use: `ToolSearch(query="select:TaskList,TaskCreate,TaskUpdate,TaskGet", max_results=4)`. Call `TaskList` first and triage each task it returns: `completed` if work clearly done, `deleted` if orphaned, keep `in_progress` only if genuinely continuing. Never spend a turn on bookkeeping alone — every `TaskCreate`/`TaskUpdate` ships in the same response as the next substantive tool call; one exception, `TaskUpdate(completed)` immediately before a long output block (`rules/task-lifecycle.md`).
+**Task hygiene** — task tools may be deferred; load before first use: `ToolSearch(query="select:TaskList,TaskCreate,TaskUpdate,TaskGet", max_results=4)`. Call `TaskList` first and triage each task it returns: `completed` if work clearly done, `deleted` if orphaned, keep `in_progress` only if genuinely continuing. Never spend a turn on bookkeeping alone — every `TaskCreate`/`TaskUpdate` ships in the same response as the next substantive tool call; one exception, `TaskUpdate(completed)` immediately before a long output block, except report-print tasks complete immediately after their table is visible in the same response (`rules/task-lifecycle.md`).
 
-**Orchestration contract**: orchestrator is thin coordinator — issues Glob/Grep for inventory, spawns agents, reads JSON envelopes, aggregates findings. Must NOT read agent/skill/rule file bodies directly. Inline read of non-template file = protocol violation; causes context overflow at scale.
+**Orchestration contract**: orchestrator is thin coordinator — issues Glob/Grep for inventory, spawns agents, reads JSON envelopes, aggregates findings. Must NOT read agent/skill/rule file bodies directly, except the communication files listed in Step 2. Other inline reads of non-template files = protocol violation; causes context overflow at scale.
 
 **Task tracking**: TaskCreate for each major phase; mark status live — every status change rides in the response carrying that phase's spawns or checks, never a turn of its own (zero bookkeeping-only turns; profiled runs averaged 9 per run):
 
 - Phase 1: setup + collect (Pre-flight + Steps 1–2) → in_progress on start, completed when file list ready
 - Phase 2: per-file audit (Step 3) → in_progress on agent launch, completed when all reports received
 - Phase 3: system-wide checks (Step 4) → in_progress on start, completed when all checks done
-- **Phases 2 and 3 launch simultaneously** — mark both in_progress same update; independent, must not serialize
-- Phase 4: aggregate + fix (Steps 5–10) → in_progress, completed when fixes land; **do NOT mark completed until EITHER: (a) follow-up gate fires (Step 7) AND fixes applied or user chose skip; OR (b) `--skip-gate` active — gate suppressed, complete after Step 5 aggregation; Step 5 aggregation alone does NOT complete Phase 4 in normal mode**
+- **Phases 2 and 3 launch together subject to the global spawn wave cap** — mark both in_progress same update; independent checks run concurrently, curator spawns use the ordered waves below
+- Phase 4: aggregate + fix (Steps 5–10) → in_progress, completed when fixes land; **do NOT mark completed until EITHER: (a) follow-up gate fires (Step 7) AND fixes applied or user chose skip; OR (b) `--skip-gate` active — gate suppressed, complete after Step 5 aggregation; OR (c) the conditional gate needs no question — complete after Step 7 saves the report and any already-authorized fixes finish; Step 5 aggregation alone does NOT complete Phase 4 in normal mode**
 - Phase 5: write final report (Step 11a) → in_progress, completed only once `$RUN_DIR/report.md` exists on disk — assembling the report in context does not complete this phase
-- Phase 6: print report header (Step 11b) → `blockedBy` Phase 5; mark completed immediately BEFORE emitting the header block (task-lifecycle.md §TaskUpdate before long output), then print
+- Phase 6: print report header (Step 11b) → `blockedBy` Phase 5; mark completed immediately after the header table is visible, in the same response (task-lifecycle.md §Exception — report-print tasks)
 - On loop retry or scope change → new task; do not reuse completed task
 
 Surface progress at milestones: after system-wide checks ("✓ Checks 1-20 complete, N findings so far — spawning per-file audits"), after agent reports ("Agent reports received — N medium, N low findings"), before each fix batch ("Fixing N medium findings in parallel").
@@ -107,16 +107,22 @@ Surface progress at milestones: after system-wide checks ("✓ Checks 1-20 compl
 
 ## Pre-flight checks
 
-**Context budget**: full audit (12+ agents, 14+ skills, 12 system checks) runs close to context limits. File-based handoff mandatory — every sub-agent writes full output to file, returns only compact JSON envelope. Sub-agent echoing findings to context = compaction before audit done.
+**Context budget**: full audit runs close to context limits. File-based handoff mandatory — every sub-agent writes full output to file, returns only compact JSON envelope. Sub-agent echoing findings to context = compaction before audit done.
+
+The helper resolves tier-2 aliases to their actual directory names in `scope=` and persists `LOCAL_MODE=true` before any mode dispatch, preserving flags and the quoted `--keep` value. Pass `$ARGUMENTS` unchanged.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/audit_preflight.py" --arguments "$ARGUMENTS"  # timeout: 20000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/audit_preflight.py" --arguments "$ARGUMENTS" || exit $?  # timeout: 20000
+: > "${TMPDIR:-/tmp}/audit-state-${CSID}/run-dir"
+: > "${TMPDIR:-/tmp}/audit-state-${CSID}/unscanned-plugins"
 ```
 
-If `.claude/` missing, abort immediately (`--consolidate` needs `plugins/`, not `.claude/`). Missing `jq` is warning — audit continues with Check 4 skipped (fatal for `--consolidate`).
+Reset these sentinels only on a new invocation after successful pre-flight, never when resuming a phase or entering the second mode of a combined run.
 
-**`dispatch=mode:consolidate` printed → jump to `## Mode: consolidate` now and run no other step**: not Step 1 (its `pre-commit --all-files` rewrites sources), not Steps 1b–11, not the follow-up gate. Pre-flight already exits 1 on an unknown `--<token>` under `--consolidate`, so the unsupported-flag check below is not skipped by the jump.
+If `.claude/` is missing in setup mode, abort immediately; source scopes (`LOCAL_MODE=true`) and `--consolidate` need `plugins/`, not `.claude/`. Missing `jq` is warning — audit continues with Check 4 skipped (fatal for `--consolidate`).
+
+**`dispatch=mode:consolidate` printed → jump to `## Mode: consolidate` now and run no other step**: not Step 1, not Steps 1b–11, not the follow-up gate. Pre-flight already exits 1 on an unknown `--<token>` under `--consolidate`, so the unsupported-flag check below is not skipped by the jump.
 
 **State re-derivation across Bash blocks** — Claude Code spawns a fresh shell per Bash() call; variables set in pre-flight are LOST in Steps 2–11. Every Bash block in subsequent steps that uses `LOCAL_MODE` or `AUDIT_TPL` must re-read them from the persisted state files:
 
@@ -130,21 +136,23 @@ Place these three lines at the top of every Bash block in Steps 2–11 that refe
 
 **Unsupported flag check** — after extracting supported flags (`--local`, `--upgrade`, `--adversarial`, `--efficiency`, `--consolidate`, `--measured`, `--fast`, `--skip-gate`, `--keep`, plus the `--challenge` alias of `--adversarial`), scan `$ARGUMENTS` for remaining `--<token>` tokens. Found → invoke `AskUserQuestion` with question text `` ! Unknown flag(s): `--<token>`. Supported: `--local`, `--upgrade`, `--adversarial` (alias `--challenge`), `--efficiency`, `--consolidate`, `--measured`, `--fast`, `--skip-gate`, `--keep`. `` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
 
-## Step 1: Run pre-commit (if configured)
+## Step 1: Validate pre-commit configuration (if configured)
 
 Skip entirely when pre-flight printed `dispatch=mode:consolidate`.
 
 ```bash
-preflight_ok()   { local f=".temp/state/preflight/$1.ok"; [ -f "$f" ] && [ $(($(date +%s) - $(cat "$f"))) -lt 14400 ]; }
-preflight_pass() { mkdir -p .temp/state/preflight; date +%s >".temp/state/preflight/$1.ok"; }
-
-if (preflight_ok pre-commit || { command -v pre-commit &>/dev/null && preflight_pass pre-commit; }) &&
-[ -f .pre-commit-config.yaml ]; then
-    timeout 600 pre-commit run --all-files # timeout: 600000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+: > "${TMPDIR:-/tmp}/audit-state-${CSID}/precommit-validate.txt"
+if [ -f .pre-commit-config.yaml ]; then
+    if command -v pre-commit >/dev/null 2>&1; then
+        pre-commit validate-config .pre-commit-config.yaml > "${TMPDIR:-/tmp}/audit-state-${CSID}/precommit-validate.txt" 2>&1 # timeout: 15000
+    else
+        printf '⚠ pre-commit unavailable — config validation skipped\n'
+    fi
 fi
 ```
 
-Files auto-corrected by pre-commit hooks are clean before structural audit. Note modified files — include in audit scope even if not originally targeted.
+This validates configuration only; do not execute auto-fixing hooks in a report-first sweep. The output is persisted in `${TMPDIR:-/tmp}/audit-state-${CSID}/precommit-validate.txt` for the Step 5 consolidator. Report a nonzero validation result as a preflight finding, never cache it as success or claim files are clean. Step 1b supplies the deterministic structural checks. Run any source-changing hooks only as part of an authorized fix pass.
 
 If pre-commit not configured, skip silently.
 
@@ -255,21 +263,21 @@ cat "$_UNSCANNED"
 
 - `agents` scope — collect agents from active source (`.claude/agents/` or `plugins/*/agents/` per `LOCAL_MODE`); skip skills, rules, hooks
 - `skills` scope — collect skills from active source; skip agents, rules, hooks
-- `plugins` scope — always reads `plugins/*/agents/*.md` + `plugins/*/skills/*/SKILL.md` regardless of `LOCAL_MODE`; forces `LOCAL_MODE=true`
-- `plugins <name>` or `<plugin-name>` (tier 2) scope — collect `plugins/<name>/agents/*.md` + `plugins/<name>/skills/*/SKILL.md` only; forces `LOCAL_MODE=true`; also force `LOCAL_MODE=true` when any scope token matches `plugins` keyword or matches a `plugins/<name>/` directory even without explicit `--local` flag
+- `plugins` scope — always reads every plugin's manifest-declared agents and skills regardless of `LOCAL_MODE`; forces `LOCAL_MODE=true`
+- `plugins <name>` or `<plugin-name>` (tier 2) scope — use Pre-flight's resolved directory (`plugins/<name>/` first, then `plugins/cc_<name>/`, then a plugin root with matching manifest `name`) and collect only that root's manifest-declared agents and skills; Pre-flight forces `LOCAL_MODE=true` even without explicit `--local`
 - `<agent-name>` (tier 3) scope — single matching agent file; `LOCAL_MODE=false`: `.claude/agents/<name>.md`; `LOCAL_MODE=true`: `plugins/*/agents/<name>.md` first, then `.claude/agents/<name>.md`
-- `<skill-name>` (tier 3) scope — single matching skill file; same `LOCAL_MODE` resolution as agent above
+- `<skill-name>` (tier 3) scope — `LOCAL_MODE=false`: `.claude/skills/<name>/SKILL.md`; `LOCAL_MODE=true`: union every plugin's `<skills-dir>/<name>/SKILL.md` from `PLUGIN_LAYOUT:`, preferring plugin sources over `.claude/` duplicates; retain all same-named skills from different plugins
 - Multiple scope tokens — union of all resolved file sets
 - `setup`/`plugin` (bare) scope — no agent/skill collection from plugins; see setup/plugin notes below
 - Full sweep (no scope) — collect per `LOCAL_MODE` source selection above
 
 **Setup scope**: when `$SCOPE` is `setup`, also collect `${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/skills/setup/SKILL.md` for Step 3 foundry:curator spawn — only per-file spawn in setup scope. Checks I1–I3 (from `checks-install.md`) run in Step 4 against `~/.claude/` to validate post-install user state.
 
-**`plugins <name>` scope**: verify `plugins/<name>/` exists — abort `! BREAKING: plugins/<name>/ not found` if absent. Collect `plugins/<name>/skills/setup/SKILL.md` for Step 3 plus all agents/skills in that plugin. **`plugins` (no name)**: iterate every subdir under `plugins/` — do not filter by literal `agents/`/`skills/` dir presence; PLUGIN_LAYOUT resolution above already covers plugins declaring a non-standard skills/agents path via their own manifest.
+**`plugins <name>` scope**: resolve `plugins/<name>/` first, then `plugins/cc_<name>/`, then a plugin root with matching manifest `name` — abort `! BREAKING: no plugin directory resolved for <name>` only if none match. Collect the resolved root's `<skills-dir>/setup/SKILL.md` when present plus all its manifest-declared agents/skills. **`plugins` (no name)**: iterate every subdir under `plugins/` — do not filter by literal `agents/`/`skills/` dir presence; PLUGIN_LAYOUT resolution above already covers plugins declaring a non-standard skills/agents path via their own manifest.
 
 ## Step 3: Per-file audit via foundry:curator
 
-**Context management** — 12+ agents and 14+ skills: accumulating full foundry:curator responses in context causes overflow before aggregation. Use file-based findings to keep main context lean.
+**Context management** — accumulating full foundry:curator responses in context causes overflow before aggregation. Use file-based findings to keep main context lean.
 
 **Hard rule — no pre-reading**: Never call Read on agent/skill file before spawning foundry:curator. Spawned agent does the reading. Orchestrator reads only returned JSON envelope. Pre-reading 41 KB files into main context = defeats delegation + causes context overflow at scale.
 
@@ -294,14 +302,7 @@ Mechanical checks already done in Step 1b — spend this holistic pass on cross-
 
 (Very large plugins may still split, but keep agents + their dispatching skills in the same batch. This override deliberately accepts stall risk above the `AGENT_CALL_BUDGET` guidance in the Spawn-count gate above — the mitigation is the per-spawn budget line already required there ("stop cleanly, return `partial: true`"), not a hard file-count cap. A holistic batch that returns `partial: true` gets a second, narrower spawn covering only the files it didn't finish — never a full retry of the whole plugin.)
 
-For workflow-bearing targets, that holistic pass also traces the entrypoint through state changes, unchanged consumers, next ordinary user action.
-
-- Record each producer's guaranteed postcondition against the next consumer's required precondition.
-- Ask whether every local check can pass while the intended user outcome fails; distinguish value equality from identity, ownership, authority, destination, lifetime.
-- Question accepted design choices and tests that merely assert the chosen operation.
-- Use a source-backed counterexample or request a bounded parent-owned probe for the highest-impact unproven handoff, including supported resume/retry states and a valid positive case.
-- Keep unexecuted probes and missing consumer context explicit — zero findings on inspected files doesn't establish end-to-end safety.
-- Stay within the audit's existing scope and permissions.
+For workflow-bearing targets, the default holistic pass checks declared inputs and outputs at handoffs for contract mismatches within the audit's existing scope and permissions. Note the curator-depth handoff check and any missing consumer context or unexecuted probes in the report; zero findings does not establish end-to-end safety. Deep producer/consumer tracing, counterexamples and challenges to design choices belong to `--adversarial` (`modes/adversarial.md`).
 
 **Scope-restricted runs**: fewer than `EFFECTIVE_BATCH` files → one batch, ALL files in scope (single foundry:curator spawn). Read only relevant template file(s) for active scope, not all 4.
 
@@ -354,7 +355,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" audit modes 
 
 > loads: modes/steps-4-5-7.md (§Step 4–5b and §Step 7)
 
-Execute §Step 4–5b loaded above — system-wide checks (scope-dispatched), aggregate + classify findings, low-confidence remediation (conditional, skipped when no file scored \<0.80). State on disk in `summary.jsonl`, `$RUN_DIR`, `$AUDIT_TPL`. Returns here to Step 6.
+Execute §Step 4–5b loaded above — system-wide checks (scope-dispatched), aggregate + classify findings, low-confidence remediation (conditional, skipped when no file scored \<0.80). Include `${TMPDIR:-/tmp}/audit-state-${CSID}/precommit-validate.txt` as a Step 5 consolidator input alongside the Step 3/4 reports and `static-findings.jsonl`; pass its literal path in the consolidator prompt and classify any validation failure as a preflight finding. State on disk in `summary.jsonl`, `$RUN_DIR`, `$AUDIT_TPL`. Returns here to Step 6.
 
 ## Step 6: Cross-validate critical findings
 
@@ -368,11 +369,11 @@ Protocol text printed above: follow it. A `⚠ WARNING` line instead = doc missi
 
 ## Step 7: Report findings
 
-Execute §Step 7 of `steps-4-5-7.md` (loaded above in Steps 4–5b) — persists the full findings report, fires the follow-up gate with a plain question-text summary, and defers printing the full report to the final reply after the answer; on fix pick continues to Steps 8–10 (`modes/fix.md`); otherwise skip to Step 11.
+Execute §Step 7 of `steps-4-5-7.md` (loaded above in Steps 4–5b) — persists the full findings report, applies the conditional Follow-up gate below instead of an unconditional question, and defers printing the full report to the final reply after the answer (or no-question path); on fix pick or an already-authorized fix scope continues to Steps 8–10 (`modes/fix.md`); otherwise skip to Step 11.
 
 ## Steps 8–10: Fix dispatch, codex cross-file check, re-audit (mode: fix)
 
-Runs **only** when the user picked a fix option (a–c) from the Step 7 follow-up gate. Resolve the modes dir, load `fix.md`, then execute it inline — it carries Step 8 (delegate fixes to subagents), Step 9 (codex cross-file check), and Step 10 (re-audit + convergence loop), then returns here to Step 11:
+Runs **only** when the user picked a fix option (a–c) from the Step 7 follow-up gate or already authorized a concrete fix scope as defined under Follow-up gate. In the latter case, use that granted scope as the dispatch input without another question; do not broaden it or infer decisions for NON_AUTO_FIXABLE items. Resolve the modes dir, load `fix.md`, then execute it inline — it carries Step 8 (delegate fixes to subagents), Step 9 (codex cross-file check), and Step 10 (re-audit + convergence loop), then returns here to Step 11:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -380,7 +381,7 @@ IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/de
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" audit modes fix.md $( [ "$LOCAL_MODE" = true ] && echo "--local" )  # timeout: 5000
 ```
 
-> loads: modes/fix.md Execute Steps 8–10 loaded above inline (state on disk in `summary.jsonl`, `$RUN_DIR`, `$AUDIT_TPL`). On convergence (clean or 5-pass limit), continue to Step 11 below. If no fix option was picked, skip directly to Step 11.
+> loads: modes/fix.md Execute Steps 8–10 loaded above inline (state on disk in `summary.jsonl`, `$RUN_DIR`, `$AUDIT_TPL`). On convergence (clean or 5-pass limit), continue to Step 11 below. If no fix option was picked and no fix scope was already authorized, skip directly to Step 11.
 
 ## Step 11: Final report
 
@@ -397,7 +398,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" audit templa
 
 **Unscanned-plugin surfacing** (every scope with a Step 2 coverage check — `--local`/`plugins` reconciliation, tier-2 narrowed check, or default-scope coverage guard): before assembling, read `${TMPDIR:-/tmp}/audit-state-${CSID}/unscanned-plugins` (sentinel from Step 2). Non-empty → include an `### Unscanned Plugins` section in the report immediately after `### Files Audited`, listing every `⚠ UNSCANNED: <plugin>` line verbatim; this makes zero-coverage plugins visible in the durable artifact, not just the transient terminal output. Empty or missing → omit the section.
 
-**Step 11b — terminal output** — prepare this block for the final reply after the answer (or the no-question path), after the last tool call including the completion marker and cleanup below. Per quality-gates.md universal rule: read the `---` header block from the top of `$RUN_DIR/report.md` (all fields from opening `---` up to and including closing `---`) and render as a two-column Markdown table (`Field | Value`, one row per key, file order) as the FIRST content of that final reply — never print the raw `---`-delimited block. Then print `→ $RUN_DIR/report.md`, the full Step 7 Audit Report from `$RUN_DIR/audit-report.md` (heading, exact `Total: N`, every finding's `one_line`, rendered as normal Markdown), and the executive summary. The full findings report is printed once here, never before the question or in an option. Omit the `╔═╗` Re:Anchor box (communication.md exempts quality-gates `---` report headers — the table IS the reply header).
+**Step 11b — terminal output** — prepare this block for the final reply after the answer (or the no-question path), after the last tool call including the completion marker and cleanup below, except the report-print task completion update required immediately after the table in the same response. Per quality-gates.md universal rule: read the `---` header block from the top of `$RUN_DIR/report.md` (all fields from opening `---` up to and including closing `---`) and render as a two-column Markdown table (`Field | Value`, one row per key, file order) as the FIRST content of that final reply — never print the raw `---`-delimited block. Then print `→ $RUN_DIR/report.md`, the full Step 7 Audit Report from `$RUN_DIR/audit-report.md` (heading, exact `Total: N`, every finding's `one_line`, rendered as normal Markdown), and the executive summary. The full findings report is printed once here, never before the question or in an option. Omit the `╔═╗` Re:Anchor box (communication.md exempts quality-gates `---` report headers — the table IS the reply header).
 
 **Completion marker** — on successful completion, write `$RUN_DIR/result.jsonl` with one JSONL line summarising the run (severity totals, scope, pass count). On any abort/error path before completion, leave `result.jsonl` absent — the TTL cleanup hook (artifact-lifecycle.md) intentionally skips run directories without `result.jsonl`, preserving incomplete runs for post-mortem debugging. To force cleanup of a known-bad incomplete run, write `{"status":"incomplete","reason":"<one-line>"}` to `result.jsonl` so TTL can age it out.
 
@@ -407,7 +408,7 @@ rm -f .temp/state/skill-contract.md  # clear contract — skill complete (compac
 
 ## Mode: upgrade
 
-**Trigger**: `/audit --upgrade`
+**Trigger**: `/foundry:audit --upgrade`
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -419,7 +420,7 @@ Execute the mode loaded above.
 
 ## Mode: adversarial (alias: --challenge)
 
-**Trigger**: `/audit [<scope>...] --adversarial`
+**Trigger**: `/foundry:audit [<scope>...] --adversarial`
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -431,7 +432,7 @@ Execute the mode loaded above.
 
 ## Mode: efficiency
 
-**Trigger**: `/audit [<scope>...] --efficiency`
+**Trigger**: `/foundry:audit [<scope>...] --efficiency`
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -443,7 +444,7 @@ Execute the mode loaded above.
 
 ## Mode: consolidate
 
-**Trigger**: `/audit [<scope>...] --consolidate` — advisory, edits nothing, skips Step 1 (pre-commit auto-fix), Steps 1b–11 and the follow-up gate.
+**Trigger**: `/foundry:audit [<scope>...] --consolidate` — advisory, edits nothing, skips Step 1, Steps 1b–11 and the follow-up gate.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -454,17 +455,19 @@ Execute the mode loaded above.
 
 ## Combined-run output isolation
 
-When `--adversarial` and `--efficiency` both run in the same invocation: each mode writes finding files to its own subdirectory to prevent overwrite — `$RUN_DIR/adversarial/` for adversarial output, `$RUN_DIR/efficiency/` for efficiency output. Step 5 consolidator reads both subdirs. Follow-up gate fires once after both complete, merged finding counts.
+When `--adversarial` and `--efficiency` both run in the same invocation: mint the run directory once using Step 3's setup before either mode starts. Pass that literal parent RUN_DIR explicitly in each mode's execution context, retain its run-dir sentinel, and skip any second run-directory setup; never invoke Pre-flight again between modes. Each mode writes finding files to its own subdirectory to prevent overwrite — `$RUN_DIR/adversarial/` for adversarial output, `$RUN_DIR/efficiency/` for efficiency output. Step 5 consolidator reads both subdirs. Apply the Follow-up gate once after both complete, using merged finding counts.
 
 ## Follow-up gate
 
-**Always fires** unless `--skip-gate` passed (programmatic callers). Delivery is checked regardless: on `Stop`, `hooks/enforce-audit-header.js` keeps a turn going once per aggregate when it ends without the Step 7 findings report. Call `AskUserQuestion` — do NOT write options as plain text first. Map options directly into tool-call arguments.
+**Conditional gate**: fire only when a required decision or authorization is missing, such as a new fix scope; existing authorization continues within its granted scope (quality-gates.md §Follow-up precedence). `--skip-gate` suppresses this gate for programmatic callers. `Total: 0` → no fix options and no question; continue to Step 11. Delivery is checked regardless: on `Stop`, `hooks/enforce-audit-header.js` keeps a turn going once per aggregate when it ends without the Step 7 findings report. When a question is required, call `AskUserQuestion` — do NOT write options as plain text first. Map options directly into tool-call arguments.
 
-When user picks fix option (a–c): run Steps 8–10 inline via `modes/fix.md` (state on disk in `summary.jsonl`); no recursive `/audit` call.
+When user picks fix option (a–c): run Steps 8–10 inline via `modes/fix.md` (state on disk in `summary.jsonl`); no recursive `/foundry:audit` call.
+
+An already-authorized fix scope requires an explicit user instruction in this session naming a fix level, never inferred from findings or the invocation; NON_AUTO_FIXABLE items still ask through their owning gate. `Total > 0` with no `--skip-gate` and no such instruction → ask for the fix scope. When a concrete fix scope was already authorized and Total > 0, run Steps 8–10 with that scope as dispatch input instead of asking again; unresolved systemic decisions still require the owning gate. With `--skip-gate`, return the report without fix dispatch.
 
 **HARD RULE — Fixed option labels**: Use exactly the labels below verbatim. Do NOT rewrite, paraphrase, or substitute finding-specific alternatives. Finding context must NOT influence option labels. This rule has been violated repeatedly in past runs; enforce strictly.
 
-**Mandatory options (always present, never omit)**:
+**Mandatory options (when a fix-scope question is required, never omit)**:
 
 - (a) label: `Fix auto-fixable (Recommended)` — auto-fix critical, high, medium, and low findings (skip NON_AUTO_FIXABLE systemic issues)
 - (c) label: `Fix ALL` — collect all NON_AUTO_FIXABLE decisions upfront (max 4 `AskUserQuestion` calls), then run one integrated fix pass covering auto-fixable + resolved systemic items + lows; most thorough option
@@ -473,23 +476,23 @@ When user picks fix option (a–c): run Steps 8–10 inline via `modes/fix.md` (
 **Conditional options (include when condition met)**:
 
 - (b) label: `Fix SECURITY + CRITICAL + HIGH` — include only when security, critical, or high findings present; omit otherwise to stay within 4-option cap
-- `/distill executables` is never an option: `/distill` is `disable-model-invocation`, so a selected option could not run it. When `--efficiency` ran and `extract_count > 0` (HIGH or MEDIUM), print `/distill executables` (N HIGH, M MEDIUM candidates) as plain text in the Step 11 final report instead
+- `/foundry:distill executables` is never an option: `/foundry:distill` is `disable-model-invocation`, so a selected option could not run it. When `--efficiency` ran and `extract_count > 0` (HIGH or MEDIUM), print `/foundry:distill executables` (N HIGH, M MEDIUM candidates) as plain text in the Step 11 final report instead
 
 **Option slot budget** (`AskUserQuestion` hard cap = 4 options; "Other" always auto-appended as 5th free-text slot):
 
-- Typical: (a) + (b) + (c) + (d) = 4 ✓
+- Security, critical or high findings present: (b) → (a) → (c) → (d) = 4 ✓
 
-- No sec/crit/high findings: (a) + (c) + (d) = 3 ✓ — slot freed; do NOT fill with custom finding-specific option
+- No sec/crit/high findings, but Total > 0: (c) → (a) → (d) = 3 ✓ — slot freed; do NOT fill with custom finding-specific option
 
 - question: "What next?" The first question's text carries the `Audit Report` headline, exact `Total: N`, severity counts and `→ $RUN_DIR/summary.jsonl`; include `→ $RUN_DIR/audit-report.md` for the saved full findings. Keep the question text to at most 6 plain lines (target 600 characters, hard cap 1,500), with no table, no pipe layout and no code fence.
 
-- Every option: label plus a one-line action description, no `preview`. Display `Fix auto-fixable (Recommended)` second while preserving all labels and answer mapping. The full Step 7 findings report is printed once in the final reply after the answer, after the last tool call, below Step 11b's header table — never before the question (`steps-4-5-7.md` §Step 7).
+- Every option: label plus a one-line action description, no `preview`. Display `Fix auto-fixable (Recommended)` second in both layouts, preserving all labels and answer mapping. The full Step 7 findings report is printed once in the final reply after the answer, after the last tool call, below Step 11b's header table — never before the question (`steps-4-5-7.md` §Step 7).
 
 <!-- policy-sibling: plugins/cc_foundry/skills/audit/modes/steps-4-5-7.md (Step 7: same question-text cap, no preview, full findings report once in the final reply) -->
 
 `--consolidate` fires no gate: it is advisory, has no fix option, and prints its apply commands as plain text.
 
-After completing `--upgrade`, `--adversarial`, or `--efficiency`: also fire this gate. For (d) Skip: remove the mode just run from the "for other modes" list. When `--adversarial --efficiency` combined: fire gate once after both complete with merged finding counts; remove both from (d) hint. Efficiency distill: the user runs the printed `/distill executables` (→ `foundry:sw-engineer` extraction), then `/audit --efficiency` re-run confirms savings.
+After completing `--upgrade`, `--adversarial`, or `--efficiency`: apply the same conditional gate. For (d) Skip: remove the mode just run from the "for other modes" list. When `--adversarial --efficiency` combined: apply gate once after both complete with merged finding counts; remove both from (d) hint. Efficiency distill: the user runs the printed `/foundry:distill executables` (→ `foundry:sw-engineer` extraction), then `/foundry:audit --efficiency` re-run confirms savings.
 
 </workflow>
 
@@ -498,6 +501,10 @@ After completing `--upgrade`, `--adversarial`, or `--efficiency`: also fire this
 - **`!` Breaking findings**: when skill or agent completely non-functional (check 7, broken cross-refs, invalid hook events), prefix finding with `!`, state impact + fix in one place — don't bury in table row. Surfaces as **`! BREAKING`** in bash output and as prominent callout in final report.
 
   **`! BREAKING` findings require user acknowledgment before audit proceeds past that check**: call `AskUserQuestion` — state what's broken and impact; user must explicitly confirm awareness before continuing.
+
+  **Automation exception**: with `--skip-gate`, record each BREAKING finding with an `ack` value of `acknowledged-by-automation` in the Step 11 final report only; `AskUserQuestion` is not called for it. Preserve the BREAKING severity and impact; fatal pre-flight errors still abort and no fix is authorized by this acknowledgment.
+
+  Without `--skip-gate`:
 
   - One question per distinct breaking finding; group only when logically one atomic issue.
   - Batch up to 4 questions into a single `AskUserQuestion` call (communication.md per-call cap) — N breaking findings become `ceil(N/4)` calls, never N.
@@ -510,19 +517,19 @@ After completing `--upgrade`, `--adversarial`, or `--efficiency`: also fire this
 
 - **Convergence loop replaces cycle cap**: fix loop runs until zero fixable findings or 5-pass hard limit — see `modes/fix.md` Step 10 for full protocol
 
-- **Relationship to curator**: `foundry:curator` = single-file reactive audit; `/audit` = system-wide sweep running foundry:curator at scale + cross-file checks
+- **Relationship to curator**: `foundry:curator` = single-file reactive audit; `/foundry:audit` = system-wide sweep running foundry:curator at scale + cross-file checks
 
 - **Paths must be portable**: `.claude/` for project-relative, `~/` or `$HOME/` for home — never literal `/Users/<name>/` or `/home/<name>/` (anti-examples only); applies to ALL config files incl. `settings.json`
 
-- **Bash error logging**: if bash block in Pre-flight or Step 4 fails unexpectedly, append JSONL line to `.notes/logs/audit-errors.jsonl` (`{"ts":"<ISO>","check":"<N>","error":"<message>"}`) for post-mortem — never swallow errors silently.
+- **Bash error logging**: if bash block in Pre-flight or Step 4 fails unexpectedly, stage one JSONL record in `.notes/logs/audit-errors.jsonl.rec` with the Write tool (`{"ts":"<ISO>","check":"<N>","error":"<message>"}`), then run `python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/append_ledger.py" .notes/logs/audit-errors.jsonl` per Growing Ledgers for post-mortem — never swallow errors silently.
 
-- **Parallel execution rule**: after Step 2, launch Steps 3 and 4 in same response — all foundry:curator spawns AND system-wide bash checks issued together. Do NOT run Step 3 then Step 4. Aggregation (Step 5) waits for both. Docs-freshness web-explorer (within Step 4, sonnet tier) launches in same parallel batch. Bash checks in Step 4 aren't Agent() spawns, so they never count against any tier ceiling — only Step 3's curator batches (opus tier, `CAP_OPUS`) and the web-explorer spawn (sonnet tier, `CAP_SONNET`) do.
+- **Parallel execution rule**: after Step 2, launch Step 4's bash checks and docs-freshness web-explorer alongside the first curator wave. All opus spawns share `CAP_OPUS`, including Step 3 batches and Step 4 group curators: queue Step 3 first, then Step 4 group curators; dispatch at most `min(WAVE_STEP, CAP_OPUS)` per wave and wait for that wave to return before the next. Below that bound, launch all due curators together. Aggregation (Step 5) waits for both steps. Bash checks consume no agent slots; web-explorer uses the separate `CAP_SONNET` pool and may run concurrently.
 
-- **Global spawn wave cap**: `CAP_OPUS`/`CAP_SONNET` (constants block; canonical table in claude-config.md §Parallel Spawn Ceilings) bound Agent() calls of that model tier in flight at once, summed across every step/phase due in the same response — not just within one step's own batch count. Applies whenever `--adversarial` and/or `--efficiency` stack extra fan-out onto Steps 3-4 (see `modes/adversarial.md` §Spawn wave cap for the ordering). Growing toward a tier's ceiling happens in `WAVE_STEP`-sized waves, never one sudden burst — different tiers are separate pools, so an opus-tier wave and a sonnet-tier wave may run concurrently without summing against one shared number.
+- **Global spawn wave cap**: `CAP_OPUS`/`CAP_SONNET` (constants block; canonical table in claude-config.md §Parallel Spawn Ceilings) bound Agent() calls of that model tier in flight at once, summed across every step/phase due in the same response — not just within one step's own batch count. Applies to standard Steps 3–4 as well as stacked `--adversarial` and/or `--efficiency` fan-out (see `modes/adversarial.md` §Spawn wave cap for the additional phase ordering). Growing toward a tier's ceiling happens in `WAVE_STEP`-sized waves, never one sudden burst — different tiers are separate pools, so an opus-tier wave and a sonnet-tier wave may run concurrently without summing against one shared number.
 
-- **Token cost**: Step 3 (foundry:curator spawns) most expensive. For quick structural scan needing only cross-reference + inventory validation, Step 4 system-wide checks often sufficient. Run `/audit agents` or `/audit skills` to scope, or skip Step 3 for fast pass when per-file quality trusted.
+- **Token cost**: Step 3 (foundry:curator spawns) most expensive. For quick structural scan needing only cross-reference + inventory validation, Step 4 system-wide checks often sufficient. Run `/foundry:audit agents` or `/foundry:audit skills` to scope, or skip Step 3 for fast pass when per-file quality trusted.
 
-- **Routing calibration complement**: to test whether skill trigger descriptions fire correctly (trigger accuracy, A/B testing), use `/foundry:calibrate routing`. `/audit` checks structural quality; `/foundry:calibrate routing` validates right skill selected by Claude Code dispatcher.
+- **Routing calibration complement**: to test whether skill trigger descriptions fire correctly (trigger accuracy, A/B testing), use `/foundry:calibrate routing`. `/foundry:audit` checks structural quality; `/foundry:calibrate routing` validates right skill selected by Claude Code dispatcher.
 
 - Follow-up chains:
 
@@ -531,11 +538,11 @@ After completing `--upgrade`, `--adversarial`, or `--efficiency`: also fire this
   - Audit found many low items → pick "Fix all" from gate, or run `/develop:refactor` (requires `develop` plugin) for targeted cleanup
   - After fixing agent instructions (from audit gate) → `/foundry:calibrate <agent>` to verify fix improved recall and confidence calibration
   - Audit Check 20 found description overlap → `/foundry:calibrate routing` to verify behavioral routing impact; update descriptions for confused pairs based on routing report
-  - Audit surfaced upgrade proposals → run `/audit --upgrade` separately to apply (not a gate option — use Other slot or run the command directly after gate)
-  - `/audit --upgrade` reverted capability change → run `/foundry:calibrate <agent> --full` for deeper signal (N=10 vs N=3 used in upgrade mode)
+  - Audit surfaced upgrade proposals → run `/foundry:audit --upgrade` separately to apply (not a gate option — use Other slot or run the command directly after gate)
+  - `/foundry:audit --upgrade` reverted capability change → run `/foundry:calibrate <agent> --full` for deeper signal (N=10 vs N=3 used in upgrade mode)
   - Audit Check 22 found unregistered calibratable mode → update `calibrate/modes/skills.md` domain table and run `/foundry:calibrate skills` to verify new target works
   - Audit Check 22 found stale domain table entry → remove from `calibrate/modes/skills.md`
-  - `/audit --efficiency` found model over-provisioning → apply P1+P2 changes from efficiency report → re-run `/audit --efficiency` to confirm savings estimate; run `/foundry:calibrate routing --fast` to verify no routing regression from model changes
-  - `/audit --efficiency` found bin/ extraction candidates (HIGH or MEDIUM verdict) → run the `/distill executables` command printed in the final report to perform extraction; then re-run `/audit --efficiency` to confirm `extract_count == 0`
+  - `/foundry:audit --efficiency` found model over-provisioning → apply P1+P2 changes from efficiency report → re-run `/foundry:audit --efficiency` to confirm savings estimate; run `/foundry:calibrate routing --fast` to verify no routing regression from model changes
+  - `/foundry:audit --efficiency` found bin/ extraction candidates (HIGH or MEDIUM verdict) → run the `/foundry:distill executables` command printed in the final report to perform extraction; then re-run `/foundry:audit --efficiency` to confirm `extract_count == 0`
 
 </notes>

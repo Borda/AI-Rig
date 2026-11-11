@@ -127,7 +127,7 @@
       },
       {
         "head": "\u26a0 gh pr list reached its 500-item cap; recovering the complete",
-        "now": "\u26a0 gh pr list reached its 500-item cap; recovering the complete"
+        "now": "\u26a0 gh pr list reached its 500-item cap; retrying discovery within the release date window"
       },
       {
         "head": "\u26a0 shepherd output empty or missing \u2014 using original draft",

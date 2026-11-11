@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
 
 # Transitional seam: exclusion rules live in codemap_py.scanner, but this
@@ -182,52 +183,75 @@ def cmd_fixture_rdeps(index: dict, fixture_name: str) -> None:
 #: Recursion depth at which fixture dependency graph traversal stops.
 _FIXTURE_GRAPH_MAX_DEPTH = 10
 
+_FIXTURE_GRAPH_MAX_NODES = 1000
+
+
+@dataclass
+class _FixtureTraversal:
+    """Track expansion and the shared output budget across all fixture roots."""
+
+    expanded: set[str] = field(default_factory=set)
+    emitted: int = 0
+    truncated: bool = False
+
 
 def _build_fixture_subtree(
     fixture_name: str,
     fixture_defs: dict[str, dict],
     visited: set[str],
     depth: int,
-) -> dict:
+    traversal: _FixtureTraversal | None = None,
+) -> dict | None:
     """Recursively expand the dependency tree of *fixture_name*, bounded by depth and cycle guard.
 
     Returns a node dict with ``name``, ``scope``, ``defined_in``, and ``depends_on``
     (a list of further node dicts). Cycle detection: a fixture already in
     *visited* is emitted with empty ``depends_on`` and a ``cycle: True`` marker.
     Depth cap: at :data:`_FIXTURE_GRAPH_MAX_DEPTH` recursion stops and the node
-    is marked ``truncated: True``.
+    is marked ``truncated: True``. Repeated expansions emit reference nodes; the shared
+    node budget returns None when exhausted, and the caller marks its output truncated.
 
     Args:
         fixture_name: fixture to expand at this level.
         fixture_defs: global fixture lookup from :func:`_collect_fixture_definitions`.
         visited: names of fixtures already expanded on the current path (mutated).
         depth: current recursion depth.
+        traversal: expanded names for this root and a shared node budget across all roots.
     """
-    info = fixture_defs.get(fixture_name)
-    if info is None:
-        return {
-            "name": fixture_name,
-            "scope": None,
-            "defined_in": None,
-            "depends_on": [],
-        }
+    if traversal is None:
+        traversal = _FixtureTraversal()
+    if traversal.emitted >= _FIXTURE_GRAPH_MAX_NODES:
+        traversal.truncated = True
+        return None
+    traversal.emitted += 1
+    info = fixture_defs.get(fixture_name, {})
     node: dict = {
         "name": fixture_name,
         "scope": info.get("scope"),
         "defined_in": info.get("defined_in"),
+        "depends_on": [],
     }
     if fixture_name in visited:
         node["depends_on"] = []
         node["cycle"] = True
         return node
+    if fixture_name in traversal.expanded:
+        node["reference"] = True
+        return node
     if depth >= _FIXTURE_GRAPH_MAX_DEPTH:
+        traversal.truncated = True
         node["depends_on"] = []
         node["truncated"] = True
         return node
     visited.add(fixture_name)
+    traversal.expanded.add(fixture_name)
     children: list[dict] = []
     for dep in info.get("depends_on", []) or []:
-        children.append(_build_fixture_subtree(dep, fixture_defs, visited, depth + 1))
+        child = _build_fixture_subtree(dep, fixture_defs, visited, depth + 1, traversal)
+        if child is None:
+            node["truncated"] = True
+            break
+        children.append(child)
     visited.remove(fixture_name)
     node["depends_on"] = children
     return node
@@ -277,9 +301,14 @@ def cmd_fixture_graph(index: dict, test_file: str) -> None:
         _exit_target_not_found(f"Test module '{test_file}' not found in index.", test_file)
     fixture_defs = _collect_fixture_definitions(index)
     roots: list[dict] = []
+    traversal = _FixtureTraversal()
     for fix in module_entry.get("fixture_uses", []) or []:
+        traversal.expanded.clear()
         visited: set[str] = set()
-        roots.append(_build_fixture_subtree(fix["name"], fixture_defs, visited, 0))
+        node = _build_fixture_subtree(fix["name"], fixture_defs, visited, 0, traversal)
+        if node is None:
+            break
+        roots.append(node)
     _print(
         json.dumps(
             {
@@ -287,6 +316,7 @@ def cmd_fixture_graph(index: dict, test_file: str) -> None:
                 "path": module_entry.get("path", ""),
                 "fixtures": roots,
                 "count": len(roots),
+                **({"truncated": True} if traversal.truncated else {}),
                 "index": _cmd_coverage(index, method="ast-flags", scope="pytest-fixture-deps"),
             }
         )

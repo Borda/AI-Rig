@@ -508,6 +508,7 @@ def make_proof(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Callable[...,
         assert merged.returncode == 0, merged.stdout + merged.stderr
         _seed(tmp_path, {"report-file": bash_path(report)})
         _write_impl_file(tmp_path, "c1-item-now.txt", "1\n")
+        _write_impl_file(tmp_path, "bridge-approval.md", "Recorded user approval: Step 3d selected task set 1.\n")
         return ProofFiles(report, validation, source, verifier, items)
 
     return make
@@ -1138,6 +1139,39 @@ class TestC1:
         """C1 hands the bridge one item per call, so attribution of changed files never mixes two items."""
         assert "one item per C1 call" in _dispatch_text()
 
+    @_skip_no_fence_tools
+    def test_brief_carries_recorded_user_approval_as_file_data(self, tmp_path: Path, lineage: Lineage) -> None:
+        """A bridge brief carries the actual selection record without executing its shell-shaped text."""
+        approval = "Recorded user approval: Step 3d selected task set 7; $(touch approval-injection).\n"
+        _write_impl_file(tmp_path, "bridge-approval.md", approval)
+        _write_impl_file(tmp_path, "c1-item-now.txt", "7\n")
+        record = {"id": 7, "file": "a.py", "line": 1, "full_comment_text": "fix"}
+        _write_impl_file(tmp_path, "action-items.jsonl", json.dumps(record) + "\n")
+        block = _bash_block_containing(_dispatch_text(), '_C1_NOW="$IMPL_DIR/c1-item-now.txt"')
+
+        result = _run_resolve_block(block, tmp_path, lineage.repo, lineage.tip)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert approval in _read_impl_file(tmp_path, "c1-brief-7.md")
+        assert not (lineage.repo / "approval-injection").exists()
+
+    @_skip_no_fence_tools
+    def test_brief_without_recorded_approval_blocks_before_consuming_item(
+        self, tmp_path: Path, lineage: Lineage
+    ) -> None:
+        """Missing authority cannot create a dispatchable brief or consume the pending item."""
+        _write_impl_file(tmp_path, "c1-item-now.txt", "7\n")
+        record = {"id": 7, "file": "a.py", "line": 1, "full_comment_text": "fix"}
+        _write_impl_file(tmp_path, "action-items.jsonl", json.dumps(record) + "\n")
+        block = _bash_block_containing(_dispatch_text(), '_C1_NOW="$IMPL_DIR/c1-item-now.txt"')
+
+        result = _run_resolve_block(block, tmp_path, lineage.repo, lineage.tip)
+
+        assert result.returncode != 0
+        assert "recorded user approval" in result.stdout
+        assert _read_impl_file(tmp_path, "c1-item-now.txt") == "7\n"
+        assert not (tmp_path / "impl/c1-brief-7.md").exists()
+
     def test_reply_contract_uses_bridge_public_object(self) -> None:
         """The resolve brief and parser must accept the bridge's validated object shape.
 
@@ -1302,6 +1336,7 @@ class TestC1:
         record = {"id": 1, "file": "a.py", "line": 1, "full_comment_text": "fix"}
         _put(impl_dir / "action-items.jsonl", json.dumps(record) + "\n")
         _put(impl_dir / "c1-item-now.txt", "1\n")  # as the Write tool would
+        _put(impl_dir / "bridge-approval.md", "Recorded user approval: Step 3d selected task set 1.\n")
         block = bash_block_after(_dispatch_text(), "**SECURITY — never type a review comment")
 
         result = _run_shell(block, repo, _shell_env(tmp_path))
@@ -1319,6 +1354,7 @@ class TestC1:
         record = {"id": 7, "full_comment_text": "x", "file": "a.py", "line": 1}
         _write_impl_file(tmp_path, "action-items.jsonl", json.dumps(record) + "\n")
         _write_impl_file(tmp_path, "c1-item-now.txt", "7")
+        _write_impl_file(tmp_path, "bridge-approval.md", "Recorded user approval: Step 3d selected task set 7.\n")
         block = _bash_block_containing(_dispatch_text(), '_C1_NOW="$IMPL_DIR/c1-item-now.txt"')
 
         result = _run_resolve_block(block, tmp_path, lineage.repo, lineage.base)
@@ -2522,6 +2558,7 @@ class TestChallengeLog:
         )
         _write_impl_file(tmp_path, "selected-items.txt", "1 2 3\n")
         outcomes = {row["item_id"]: row for row in build_records(impl, "run", tmp_path)}
+        _seed(tmp_path, {"commit-mode": "each"})
         consumed = _run_resolve_block(gate, tmp_path, tmp_path, "a" * 40, shell)
 
         assert logged.returncode == 0, logged.stdout + logged.stderr

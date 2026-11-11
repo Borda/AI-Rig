@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
+import { sha256 } from "../../src/digest.ts"
 import { writeGrant } from "../../src/git-grant.ts"
 import { resolveGitCommonDir } from "../../src/paths.ts"
 import { Project, createHarness } from "../helpers/harness.ts"
@@ -125,7 +126,7 @@ describe("permission evaluate hook", () => {
 })
 
 describe("journal hooks", () => {
-  it("append redacted before/after records", async () => {
+  it("append content-free before/after records", async () => {
     const project = Project.withCommit()
     const harness = await createHarness(project)
     const before = harness.toolHooks.get("execute.before")?.[0]
@@ -149,8 +150,11 @@ describe("journal hooks", () => {
       .map((line) => JSON.parse(line))
     expect(lines).toHaveLength(2)
     expect(lines[0]).toMatchObject({ event: "tool.before", tool: "bash", call_id: "call-9" })
-    expect(lines[0].input.command).toContain("[redacted]")
-    expect(lines[0].input.token).toBe("[redacted]")
+    expect(lines[0].input).toEqual([
+      { key: "command", sha256: sha256(JSON.stringify("curl -H 'Authorization: Bearer abcdefghijklmnopqrstuvwxyz'")) },
+      { key: "token", value: "[redacted]" },
+    ])
+    expect(JSON.stringify(lines)).not.toContain("abcdefghijklmnopqrstuvwxyz")
     expect(lines[1]).toMatchObject({ event: "tool.after", status: "error" })
   })
 

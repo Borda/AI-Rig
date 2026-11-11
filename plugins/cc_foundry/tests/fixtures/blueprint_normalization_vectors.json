@@ -3,6 +3,36 @@
   "aliases_escaped_blank": [
     {
       "expected": true,
+      "id": "raw-carriage-return",
+      "input": "echo a\recho b"
+    },
+    {
+      "expected": true,
+      "id": "raw-crlf",
+      "input": "echo a\r\necho b"
+    },
+    {
+      "expected": true,
+      "id": "nonbreaking-space-line-end",
+      "input": "echo a\u00a0\necho b"
+    },
+    {
+      "expected": true,
+      "id": "nonbreaking-space-before-comment",
+      "input": "echo a\u00a0 # note"
+    },
+    {
+      "expected": false,
+      "id": "nonbreaking-space-in-word",
+      "input": "echo a\u00a0b"
+    },
+    {
+      "expected": false,
+      "id": "nonbreaking-space-in-quoted-comment-text",
+      "input": "echo 'a\u00a0 # literal'"
+    },
+    {
+      "expected": true,
       "id": "backslash-space-line-end",
       "input": "ls \\ \necho x"
     },
@@ -303,7 +333,7 @@
     {
       "expected": false,
       "id": "export-assignment-value-data",
-      "input": "export SAFE=\"$value\""
+      "input": "export CSID=\"$value\""
     },
     {
       "expected": true,

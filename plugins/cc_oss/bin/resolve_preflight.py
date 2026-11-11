@@ -2,7 +2,7 @@
 """resolve_preflight.py — preflight checks for /oss:resolve Step 1.
 
 Verifies tool availability (bridge@borda-ai-rig optional, gh required), authentication,
-and remote state. Pulls latest if remote is ahead. Caches positive
+and remote state. Fetches origin without changing the current branch. Caches positive
 results under ``.temp/state/preflight/`` with a 4-hour TTL so repeat
 invocations short-circuit.
 
@@ -12,8 +12,8 @@ Output:
 
 Exit codes:
     0 — all required checks passed (bridge absence or opt-out is non-fatal)
-    1 — required check failed (gh missing, gh unauthenticated, git pull
-        conflict, or other hard error)
+    1 — required check failed (gh missing, gh unauthenticated, git fetch
+        failure, or other hard error)
     2 — bad/missing required argument (argparse default)
 
 Caller pattern:
@@ -80,11 +80,13 @@ def _preflight_ok(name: str, state_dir: Path | None = None) -> bool:
         >>> _preflight_ok("nonexistent_key_xyz")
         False
     """
-    cache_file = (state_dir or _preflight_dir()) / f"{name}.ok"
+    state_dir = state_dir or _preflight_dir()
+    if any(component.is_symlink() for component in (state_dir, *state_dir.parents)):
+        return False
+    cache_file = state_dir / f"{name}.ok"
     if cache_file.is_symlink() or not cache_file.is_file():
         return False
     try:
-        # the cache lives in the working tree, so a checked-out repository can ship its own marker
         if hasattr(os, "getuid") and cache_file.stat().st_uid != os.getuid():
             return False
         ts = int(cache_file.read_text(encoding="utf-8").strip())
@@ -105,8 +107,11 @@ def _preflight_pass(name: str, state_dir: Path | None = None) -> None:
         No doctest — filesystem side effects; covered by pytest.
     """
     state_dir = state_dir or _preflight_dir()
+    if any(component.is_symlink() for component in (state_dir, *state_dir.parents)):
+        print(f"Preflight cache ignored: symlinked directory {state_dir}", file=sys.stderr)
+        return
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / f"{name}.ok").write_text(str(int(datetime.now(tz=timezone.utc).timestamp())), encoding="utf-8")
+    write_private_text(state_dir / f"{name}.ok", str(int(datetime.now(tz=timezone.utc).timestamp())))
 
 
 def _check_bridge() -> bool:
@@ -175,14 +180,14 @@ def _check_gh() -> int | None:
 
 
 def _sync_git_state(git: str) -> int | None:
-    """Fetch origin and pull when the remote is ahead, reporting status on stderr.
+    """Refresh origin refs without merging or changing the caller's branch.
 
     Args:
         git: Absolute path to the git binary (must be non-empty — caller only invokes
             this when ``which("git")`` resolved).
 
     Returns:
-        ``1`` when ``git pull`` hit conflicts (error already printed); ``None`` otherwise.
+        ``1`` when fetching origin failed (error already printed); ``None`` otherwise.
     """
     remote_proc = subprocess.run(  # noqa: S603
         [git, "remote", "-v"],
@@ -194,51 +199,23 @@ def _sync_git_state(git: str) -> int | None:
     if remote_proc.stdout:
         print(remote_proc.stdout, file=sys.stderr, end="")
 
-    # Always fetch all remotes so origin/$BASE_REF is current before Step 5 merges it.
+    # Always fetch origin so origin/$BASE_REF is current before Step 5 merges it.
     # Conditional fetch (gated on current branch having @{u}) left origin/$BASE_REF stale
     # when invoked from a branch with no upstream tracking ref.
-    subprocess.run(  # noqa: S603
-        [git, "fetch", "origin"],
-        capture_output=True,
-        check=False,
-        timeout=30,
-    )
-
-    upstream_proc = subprocess.run(  # noqa: S603
-        [git, "rev-parse", "--abbrev-ref", "@{u}"],
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=3,
-    )
-    if upstream_proc.returncode == 0 and upstream_proc.stdout.strip():
-        log_proc = subprocess.run(  # noqa: S603
-            [git, "log", "HEAD..@{u}", "--oneline"],
+    try:
+        fetch_proc = subprocess.run(  # noqa: S603
+            [git, "fetch", "origin"],
             capture_output=True,
-            text=True,
             check=False,
-            timeout=3,
+            timeout=30,
         )
-        remote_ahead = len([ln for ln in log_proc.stdout.splitlines() if ln.strip()])
-        if remote_ahead > 0:
-            print(f"Remote is {remote_ahead} commit(s) ahead — running git pull...", file=sys.stderr)
-            pull_proc = subprocess.run(  # noqa: S603
-                [git, "pull"],
-                check=False,
-                timeout=60,
-            )
-            if pull_proc.returncode == 0:
-                print("✓ git pull: merged", file=sys.stderr)
-            else:
-                print(
-                    "Pre-flight failed: git pull had conflicts — resolve manually before running /resolve",
-                    file=sys.stderr,
-                )
-                return 1
-        else:
-            print("✓ git: up to date", file=sys.stderr)
-    else:
-        print("✓ git: fetched origin (no upstream tracking on current branch — pull skipped)", file=sys.stderr)
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"Pre-flight failed: cannot fetch origin — {exc}", file=sys.stderr)
+        return 1
+    if fetch_proc.returncode:
+        print("Pre-flight failed: cannot fetch origin — base refs may be stale", file=sys.stderr)
+        return 1
+    print("✓ git: fetched origin (current branch unchanged)", file=sys.stderr)
     return None
 
 

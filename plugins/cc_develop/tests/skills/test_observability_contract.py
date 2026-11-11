@@ -86,6 +86,14 @@ _REVIEW_VISIBLE_EQUIVALENTS = {
 
 # The team-mode liveness probe and its 15-minute cutoff were removed as forbidden polling; the ⏱ marking survives.
 _DEBUG_VISIBLE_EQUIVALENTS = {
+    "# FAILING_TEST_NODE=$(echo \"$ARGUMENTS\" | grep -oE 'tests?/[^[:space:]]+::test_[^[:space:]]+' |": (
+        "Resolve the failing test node ID from `$ARGUMENTS`",
+        "# resolve FAILING_TEST_NODE first:",
+    ),
+    'echo "<candidate cause> :: open" >> ${TMPDIR:-/tmp}/dev-debug-hypotheses-${CSID}': (
+        'bin/append_ledger.py" "${TMPDIR:-/tmp}/dev-debug-hypotheses-${CSID}"',
+        "dev-debug-hypotheses-${CSID}.rec",
+    ),
     "Hard cutoff 15 min no-file-activity per agent; mark timed-out agents ⏱ in synthesis.": (
         "Mark timed-out agents ⏱ in synthesis.",
     ),
@@ -110,6 +118,26 @@ _DEBUG_VISIBLE_EQUIVALENTS = {
 # The plan slug is built from the flag-stripped goal (CLEAN_ARGS) instead of raw $ARGUMENTS, so flags and shell
 # metacharacters cannot reach the filename or the pipeline.
 _PLAN_VISIBLE_EQUIVALENTS = {
+    'cp "${TMPDIR:-/tmp}/dev-plan-max-depth-${CSID}"     "$PLAN_NS/max-depth"         2>/dev/null ||': (
+        "`--max-depth` remains accepted for compatibility but has no effect",
+    ),
+    'echo "! depth limit ($MAX_DEPTH) reached — stopping plan→debug→plan loop"': (
+        "when the cause is unknown, recommend `/develop:debug <goal>` directly",
+        "skip Steps 2–5; do not write or challenge an implementation plan",
+    ),
+    'echo "$NEXT_DEPTH" > "$DEPTH_FILE"': (
+        "does not drive a plan/debug loop",
+        "re-running `/develop:plan` afterwards is a user choice",
+    ),
+    "Derive filename slug from goal: first 4-5 meaningful words, lowercase, hyphen-separated (e.g.": (
+        "Derive filename slug from goal: first 4 meaningful words, lowercase, hyphen-separated",
+        "Use `.plans/active/plan-<slug>-<ts>.md`, matching `plan-inline.md`",
+    ),
+    'PLAN_FILE=".plans/active/plan_${SLUG}.md"': (
+        'PLAN_STEM=".plans/active/plan-${SLUG}-$(date -u +%Y-%m-%dT%H-%M-%SZ)"',
+        'PLAN_FILE="${PLAN_STEM}.md"',
+    ),
+    'PLAN_FILE=".plans/active/plan_${SLUG}-${N}.md"': ('PLAN_FILE="${PLAN_STEM}-${N}.md"',),
     "SLUG=$(printf '%s\\n' \"$ARGUMENTS\" | tr '[:upper:]' '[:lower:]' | grep -oE '[a-z0-9]+' | grep -vE": (
         "SLUG=$(printf '%s\\n' \"$CLEAN_ARGS\" | tr '[:upper:]' '[:lower:]' | grep -oE '[a-z0-9]+' | grep -vE",
     ),
@@ -122,7 +150,7 @@ _PLAN_VISIBLE_EQUIVALENTS = {
     ),
     # /develop:debug is disable-model-invocation: the plan recommends it for the user to run, it never invokes it.
     'echo "→ invoking /develop:debug (depth remaining: $NEXT_DEPTH)"': (
-        'echo "→ recommending /develop:debug (depth remaining: $NEXT_DEPTH)"',
+        "when the cause is unknown, recommend `/develop:debug <goal>` directly",
     ),
 }
 
@@ -219,6 +247,18 @@ _VISIBLE_EQUIVALENTS = {
     },
     "skills/feature/SKILL.md": {
         **_IMPLEMENT_BLOCKER_EQUIVALENTS,
+        'gh issue view "$ISSUE_REF" --repo "$REPO_NAME" 2>/dev/null || echo "⚠ Could not fetch issue': (
+            'bin/dev_issue_fetch_wrap.py" feature "$ISSUE_REF" || echo "⚠ Could not fetch issue $ISSUE_REF — proceeding without issue context"',
+        ),
+        'gh issue view "$ISSUE_REF" 2>/dev/null || echo "⚠ Could not fetch issue $ISSUE_REF — proceeding': (
+            'bin/dev_issue_fetch_wrap.py" feature "$ISSUE_REF" || echo "⚠ Could not fetch issue $ISSUE_REF — proceeding without issue context"',
+        ),
+        '[ "$TDD_CYCLE" -ge $MAX_INNER_CYCLES ] && echo "⚠ MAX_INNER_CYCLES ($MAX_INNER_CYCLES) reached —': (
+            'if [ "$TDD_CYCLE" -ge $MAX_INNER_CYCLES ]; then echo "⚠ MAX_INNER_CYCLES ($MAX_INNER_CYCLES) reached — stop TDD loop; surface state to user" exit 1 fi',
+        ),
+        '[ $(( $(date +%s) - TDD_START )) -ge 1800 ] && echo "⚠ wall-time cap reached (30 min) — stop TDD': (
+            'if [ $(( $(date +%s) - TDD_START )) -ge 1800 ]; then echo "⚠ wall-time cap reached (30 min) — stop TDD loop; surface state to user" exit 1 fi',
+        ),
         # Python helpers preserve the output/state artifacts of the retired shell commands.
         'echo "$TARGET_MODULE" > ${TMPDIR:-/tmp}/dev-feature-target-module-${CSID}   # persist — reloaded by': (
             'bin/derive_codemap_target.py" --keep-state dev-feature',
@@ -242,18 +282,47 @@ _VISIBLE_EQUIVALENTS = {
     },
     # The liveness sentinel touched before each spawn is retired: the armed `team` deadline is the only liveness check.
     "skills/refactor/modes/team-mode.md": {
+        "**Gate T1 — characterization tests must pass on unmodified code before spawning sw-engineer**. Run": (
+            "**Gate T1 — characterization tests must pass on unmodified code before spawning sw-engineer**.",
+            'bin/dev_run_tests.py" pytest -- "$CHAR_TEST_FILE" -v',
+            'case "$CHAR_TEST_FILE" in',
+        ),
+        "**Step T2 — Only after Gate T1 is green, spawn foundry:sw-engineer (model=opus) to apply the": (
+            "**Step T2 — Only after Gate T1 is green or its explicit risk-acceptance path is recorded, and the Pre-edit baseline passes, spawn foundry:sw-engineer",
+        ),
         "Apply to each teammate independently — create sentinel `touch": (
             "Apply to each teammate independently — arm batch `team` in each spawn response",
         ),
     },
     "skills/fix/SKILL.md": {
         **_IMPLEMENT_BLOCKER_EQUIVALENTS,
+        "DERIVED_FN=$(grep -oE '[A-Za-z_][A-Za-z0-9_.]*::[A-Za-z_][A-Za-z0-9_]*' \"$DEV_DIR/checkpoint.md\"": (
+            "DERIVED_FN=$(grep -E '^suspect: [A-Za-z_][A-Za-z0-9_.]*::[A-Za-z_][A-Za-z0-9_]*$' \"$DEV_DIR/checkpoint.md\"",
+            "| tail -1 | sed 's/^suspect: //')",
+        ),
+        "> Derived qualified name comes from the staged Step 1 record appended to `$DEV_DIR/checkpoint.md`": (
+            "> Stage the suspect as the tagged line `suspect: module::function`.",
+            "the last tagged line wins.",
+            "No tagged suspect recorded → skip silently; `central` baseline already ran.",
+        ),
+        'echo "${GATE_P1:-1}" > ${TMPDIR:-/tmp}/dev-fix-gate-p1-${CSID}  # 1 = failed as expected; a skipped': (
+            'echo "$GATE_P1" > "${TMPDIR:-/tmp}/dev-fix-gate-p1-${CSID}"',
+            'echo skipped > "${TMPDIR:-/tmp}/dev-fix-gate-p1-${CSID}"',
+            "a skipped Path 1 must not read as a pass",
+        ),
+        'echo "${GATE_P2:-1}" > ${TMPDIR:-/tmp}/dev-fix-gate-p2-${CSID}': (
+            'echo "$GATE_P2" > "${TMPDIR:-/tmp}/dev-fix-gate-p2-${CSID}"',
+            "GATE_P2=missing",
+        ),
+        'echo "→ diagnosis test-impact stale or index moved — re-querying live"': (
+            'echo "→ diagnosis test-impact freshness or scope check failed — re-querying live"',
+        ),
         # Python helpers preserve the output/state artifacts of the retired shell commands.
         'echo "! Cannot run reproduction: PYTEST_CMD or TEST_PATH unresolved — resolve TEST_PATH from': (
             'echo "! Cannot run reproduction: TEST_PATH unresolved — resolve TEST_PATH from',
         ),
         'eval "$PYTEST_CMD --tb=long \\"\\$TEST_PATH\\" -v" >"${TMPDIR:-/tmp}/pytest-out.txt-${CSID}" 2>&1;': (
-            'python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_tests.py" pytest -- --tb=long "$TEST_PATH" -v >"${TMPDIR:-/tmp}/pytest-out.txt-${CSID}" 2>&1;',
+            'python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_tests.py" pytest -- --tb=long "$TEST_PATH" -v >"${TMPDIR:-/tmp}/pytest-out.txt-${CSID}" 2>&1 PYTEST_EXIT=$?',
         ),
         **_run_dir_persist_equivalents("fix"),
         **_FIX_GATE_EQUIVALENTS,
@@ -261,6 +330,11 @@ _VISIBLE_EQUIVALENTS = {
         **_keep_sentinel_equivalents("fix"),
     },
     "skills/refactor/SKILL.md": {
+        '[ -f "$_DEV_SHARED/foundry--quality-stack.md" ] || echo "⚠ foundry--quality-stack.md missing from': (
+            'bin/dev_load_shared.py" foundry--quality-stack.md',
+            "absence means a broken install — stop when Step 5's shared loader fails visibly",
+            "Missing file → stop the skill",
+        ),
         **_IMPLEMENT_BLOCKER_EQUIVALENTS,
         **_run_dir_persist_equivalents("refactor"),
         **_batch_gate_equivalents("refactor"),
@@ -307,9 +381,7 @@ def test_head_visible_output_still_present(relative: str, marker: str) -> None:
             id="refactor-not-covered",
         ),
         pytest.param("skills/fix/SKILL.md", "regression test is sole verification", id="fix-no-suite-note"),
-        pytest.param(
-            "skills/refactor/SKILL.md", "note the message above in Final Report", id="refactor-stack-skipped-note"
-        ),
+        pytest.param("skills/refactor/SKILL.md", "Missing file → stop the skill", id="refactor-stack-missing-stop"),
         pytest.param(
             "skills/review/SKILL.md",
             "Mark agents that returned empty or error with ⏱ in final report",

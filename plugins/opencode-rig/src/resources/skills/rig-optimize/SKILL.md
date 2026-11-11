@@ -17,14 +17,14 @@ description: Improve a measured performance metric in guarded rounds, keeping on
 
 ## Workflow
 
-1. **Declare the contract.** Metric, unit, direction (lower or higher is better), target, minimum improvement (default 5%), rounds budget (default 3), and the exact gate id. Start the run with `rig_evidence` and bind the benchmark script and fixtures as `inputs`.
+1. **Declare the contract.** Metric, unit, direction (lower or higher is better), target, minimum improvement (default 5%), rounds budget (default 3), and the exact gate id. Start the run with `rig_evidence` (`action: "start"`, `skill: "rig-optimize"`, and the target paths), keep the returned `run_id`, then call `rig_evidence` with `action: "record"`, that `run_id`, and the benchmark script and fixtures as `inputs`.
 2. **Measure the baseline.** Run the benchmark gate at least three times from a clean start. Record every receipt, the median, the spread, and the environment (hardware, runtime version, cache state). Statistical noise is evidence, not an obstacle.
 3. **Profile before editing.** Use the project's profiler or timing instrumentation to name the hotspot. Profile output is an `output`, not a claim.
 4. **Change one variable.** State the hypothesis, the expected effect, the files to touch, and the rollback. Do not combine a refactor with a measurement round.
 5. **Re-measure the same way.** Rerun the benchmark gate at least three times under the same conditions. A win must exceed the baseline spread and the declared minimum improvement. Also run every non-benchmark gate: a faster build that breaks correctness is a regression.
-6. **Decide and record.** Keep the round when it wins and everything passes; otherwise restore the touched files exactly and record the failed hypothesis with `rig_evidence` `action: "record"` and a `decision`. Never rewrite or delete the measurement history.
+6. **Decide and record.** Keep the round when it wins and everything passes; otherwise restore the touched files exactly and record the failed hypothesis with `rig_evidence` `action: "record"` and a `decision`. After every kept or reverted round, call `rig_evidence` with `action: "refresh"`, the `run_id`, and a `message` explaining the round outcome so the scope matches the retained source before review. Never rewrite or delete the measurement history.
 7. **Stop honestly.** Stop on target reached, improvement below noise after the round budget, a correctness regression, or an exhausted budget. A non-improvement is a valid result.
-8. **Review independently.** Dispatch `rig-optimizer` to check the methodology: sample count, variance, warmup, environment, and whether the benchmark still measures the intended behavior. Record it with `reviewer`.
+8. **Review independently.** Dispatch `rig-optimizer` on the refreshed final scope to check the methodology: sample count, variance, warmup, environment, and whether the benchmark still measures the intended behavior. Record it with `reviewer`.
 9. **Finalize.** `rig_gate` for the full set, then `rig_evidence` with `action: "finalize"`.
 
 ## Rules

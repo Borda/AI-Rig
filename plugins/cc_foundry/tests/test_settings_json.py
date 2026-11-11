@@ -411,6 +411,11 @@ def test_setup_writer_failure_keeps_message_and_bytes(tmp_path: Path, step: int,
     config = tmp_path / ".claude/settings.json"
     config.parent.mkdir()
     config.write_bytes(b"{invalid")
+    registry = config.parent / "plugins/installed_plugins.json"
+    registry.parent.mkdir()
+    registry.write_text(
+        json.dumps({"plugins": {"bridge@borda-ai-rig": [{"installPath": tmp_path.as_posix()}]}}), encoding="utf-8"
+    )
     (tmp_path / "setup-plugin-root-settings-failure").write_text(PLUGIN.as_posix() + "\n", encoding="utf-8")
     (tmp_path / "foundry-setup-adv-settings-failure").write_text("chosen\n", encoding="utf-8")
     block = _setup_step_blocks(step)[index]
@@ -449,8 +454,14 @@ class _SetupRunner:
         self.installed = home / ".claude/plugins/cache/foundry"
         shutil.copytree(PLUGIN / ".claude-plugin", self.installed / ".claude-plugin")
         (self.installed / "bin").mkdir()
-        for script in ("settings_json.py", "merge_settings_permissions.py"):
+        for script in ("settings_json.py", "merge_settings_permissions.py", "get_plugin_install_path.py"):
             shutil.copy2(PLUGIN / "bin" / script, self.installed / "bin" / script)
+        shutil.copy2(PLUGIN / "permissions-guide.md", self.installed / "permissions-guide.md")
+        shutil.copytree(PLUGIN / "hooks", self.installed / "hooks")
+        (home / ".claude/plugins/installed_plugins.json").write_text(
+            json.dumps({"plugins": {"bridge@borda-ai-rig": [{"installPath": self.installed.as_posix()}]}}),
+            encoding="utf-8",
+        )
         self.project = tmp_path / "project"
         (self.project / ".git").mkdir(parents=True)
         (self.project / ".claude").mkdir()
@@ -493,7 +504,10 @@ class _SetupRunner:
     def first_run(self) -> dict:
         """Run setup on settings that need every change, then return the advisor probe flag and resulting settings."""
         self.run(3, 0)
-        self.run(3, 1)
+        assert self.run(3, 1).strip() == "foundry: 0, user: 0"
+        assert "hooks" in json.loads(self.settings.read_text(encoding="utf-8"))
+        self.run(3, 2)
+        assert self.run(3, 1).strip() == "removed: 0, kept: 0"
         self.run(4, 0, 1)
         self.run(4, 1)
         self.run(5, 0)

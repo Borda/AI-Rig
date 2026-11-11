@@ -191,7 +191,7 @@ Analyse GitHub threads + repo vitality + release evolution. Accepts issue/PR num
 - **Thread number:** fetches issue/PR, reads all comments, classifies thread type (bug report, feature request, question, duplicate, stale), produces a structured summary: what asked, current state, action needed from you, and — with `--reply` — a draft response.
   - With a codemap index, symbols/modules named in the thread are existence-checked; identifiers that no longer resolve flag the issue as referencing stale code (with a likely rename target when codemap suggests one).
   - PR mode reads review bodies and inline code comments, expands findings a bot collapsed into a `<details>` block, and merges the same finding when it recurs across review rounds.
-  - The duplicate search reads a 400-character body snippet of every candidate, so a duplicate call rests on the reported failure rather than title words, then fetches the full thread of the top 3 potential duplicates to confirm each; an unconfirmed one is marked `(snippet only)` with "verify, then close". The canonical is the item a maintainer named, else the strongest failure match, the analysed item included; when two or more potential duplicates are all unconfirmed, no canonical is named until the fetch confirms one. A number cited in the thread but absent from the search results is listed as related and unverified until its fetched body shows the same failure.
+  - The duplicate search reads a 400-character body snippet of every candidate, so a duplicate call rests on the reported failure rather than title words, then fetches the full thread of up to 3 candidates to confirm each: the potential duplicates first, then numbers cited in the thread, then the closest related candidates in the same component, which are promoted when their body or comments show the same failure or root cause; an unconfirmed one is marked `(snippet only)` with "verify, then close". The canonical is the item a maintainer named, else the strongest failure match, the analysed item included; candidates whose fetched bodies or comments establish the same root cause are an equal match, and closer symptom wording never makes one stronger. At an equal match a candidate that itself defers to another issue loses; when two or more potential duplicates are all unconfirmed, no canonical is named until the fetch confirms one. Once the canonical is determined and two or more potential duplicates remain, only the canonical (or the next-ranked candidate by the same order when the canonical is the analysed item) stays under Potential Duplicates; every other one, including a candidate whose fetched comments defer to another report, moves under Related as itself a duplicate of the canonical, with an action to close against it and `(snippet only)` where applicable. When the canonical is undetermined, every potential duplicate stays listed. A number cited in the thread but absent from the search results is listed as related and unverified until its fetched body shows the same failure.
 - **`vitality`:** pulls open issues + PRs, scores the repo across 9 axes (Axes 1–8 plus Axis 9 Trajectory), clusters duplicates, flags threads stale beyond the project threshold, and gives a prioritised triage list with a weighted Health Score % (🟢 ≥ 70%, 🟡 40–69.9%, 🔴 < 40%) and one Top Risk axis. All raw API data is saved to a JSONL file beside the report.
   - With a codemap index the report gains an Open-PR Overlap note (pairwise changed-file overlap plus tightly-coupled-module conflict candidates) and a Structural Constraints block (highest-blast-radius modules, collision/degraded/stale index signals).
   - Every codemap signal is optional — no index or plugin absent → GitHub-only behavior, gap flagged inline, never blocks.
@@ -657,16 +657,16 @@ ______________________________________________________________________
 
 ## 🤖 Agents reference
 
-| Agent                                        | Model  | Purpose                                                                                     |
-| -------------------------------------------- | ------ | ------------------------------------------------------------------------------------------- |
-| [`oss:shepherd`](agents/shepherd.md)         | sonnet | Public voice: contributor replies, issue triage, release notes, changelog, migration guides |
-| [`oss:cicd-steward`](agents/cicd-steward.md) | sonnet | GitHub Actions health: CI failures, build times, caching, SHA pinning, flaky tests          |
-| [`oss:gh-scraper`](agents/gh-scraper.md)     | haiku  | Internal: fetches raw GitHub data for `/oss:analyse vitality`                               |
-| [`oss:repo-warden`](agents/repo-warden.md)   | haiku  | Internal: scores vitality axis groups from the scraped data                                 |
+| Agent                                        | Model  | Purpose                                                                                                 |
+| -------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------- |
+| [`oss:shepherd`](agents/shepherd.md)         | sonnet | Contributor reply drafts, triage recommendations, release coordination; triage reports → `/oss:analyse` |
+| [`oss:cicd-steward`](agents/cicd-steward.md) | sonnet | GitHub Actions health: CI failures, build times, caching, SHA pinning, flaky tests                      |
+| [`oss:gh-scraper`](agents/gh-scraper.md)     | haiku  | Internal: fetches raw GitHub data for `/oss:analyse vitality`                                           |
+| [`oss:repo-warden`](agents/repo-warden.md)   | haiku  | Internal: scores vitality axis groups from the scraped data                                             |
 
 ### gh-scraper
 
-**Role:** Raw GitHub data fetcher for `/oss:analyse vitality`. Fetches all GitHub API data (REST + GraphQL) in two parallel groups and writes the raw JSONL consumed by `oss:repo-warden`. Internal — spawned by vitality Step 1 only.
+**Role:** Raw GitHub data fetcher for `/oss:analyse vitality`. Fetches all GitHub API data (REST + GraphQL) in two sequential groups with parallel calls inside each and writes the raw JSONL consumed by `oss:repo-warden`. Reads `GH_OWNER`, `GH_REPO` and `DATA_FILE` from the caller's `analyse-gh-owner`, `analyse-gh-repo` and `vitality-data-file` session sentinels, never prompt assignments. Internal — spawned by vitality Step 1 only.
 
 **Model:** `haiku` (mechanical data collection; every fetch, the assembly and the coverage check are `bin/` scripts it runs verbatim)
 
@@ -679,7 +679,7 @@ ______________________________________________________________________
 
 **What gh-scraper does NOT do:**
 
-- Off-shape requests (missing `GH_OWNER`, `GH_REPO` or `DATA_FILE`, or non-fetch requests) stop before any command and return only the error envelope
+- Non-fetch requests run no commands and return only the error envelope. Missing, empty or unsubstituted `GH_OWNER`, `GH_REPO` or `DATA_FILE` sentinel values return only the setup error envelope before authentication, API calls or output writes.
 - Axis scoring → `oss:repo-warden`
 - Report generation, terminal output, adversarial review → `oss:analyse vitality` Steps 4–7
 - Direct user invocation — always spawned by the vitality skill
@@ -694,7 +694,7 @@ ______________________________________________________________________
 
 **What repo-warden does:**
 
-- Scores one axis group (A: Axes 1,2,5,6 / B: Axes 4,7,8 / C: Axes 3,9) from `DATA_FILE`.
+- Scores one literal prompt `AXIS_GROUP` (A: Axes 1,2,5,6 / B: Axes 4,7,8 / C: Axes 3,9). Reads `DATA_FILE`, `GH_OWNER`, `GH_REPO` and the group's `PARTIAL_FILE` from the caller's `vitality-data-file`, `vitality-gh-owner`, `vitality-gh-repo` and `vitality-partial-a/b/c` session sentinels; prompt assignments never override these values.
 - Extracts metrics with `vitality_extract.py` (counts, dates, presence flags, ratios, bot filtering, and a met / unmet / indeterminate state per checkpoint). The extractor also computes each axis's band, in-band score and confidence, which repo-warden copies — two scorer models on the same data report the same numbers. It never opens the multi-megabyte JSONL directly.
 - Checkpoint axes score strictly: an unconfirmable checkpoint counts as unmet and its upper bound goes in the notes. Band-only axes put a boundary value in the better band, compared on unrounded metrics. Axis 9 (Trajectory) is capped at the band maximum in 🟡/🔴 (🟡 6, 🔴 3).
 - CI test-step and security-scan detection counts only recognised test runners/scanners (tox, nox, hatch, npm/yarn/pnpm test, `python -m unittest`, `make test`; zizmor, osv-scanner, gitleaks, trufflehog, pip-audit and similar) — never lint, docs, typing, build, publish or report environments.
@@ -704,7 +704,7 @@ ______________________________________________________________________
 
 **What repo-warden does NOT do:**
 
-- Off-shape requests (missing `AXIS_GROUP=A|B|C`, or `DATA_FILE` not an existing raw JSONL) stop with only a `declined` envelope and the reason; vitality surfaces it and stops before assembly
+- Off-shape requests (missing or unsubstituted literal `AXIS_GROUP=A|B|C`, missing/empty/unsubstituted session inputs, or the `vitality-data-file` sentinel not naming an existing raw JSONL) stop with only a `declined` envelope and the reason; vitality surfaces it and stops before assembly
 - Raw data fetching → `oss:gh-scraper`
 - Report generation, terminal output, adversarial review → `oss:analyse vitality` Steps 4–7
 - Direct user invocation — always spawned by the vitality skill
@@ -733,10 +733,10 @@ use shepherd to write a migration guide for the v3.0 breaking changes
 
 <!-- policy-sibling: plugins/cc_oss/agents/shepherd.md, plugins/cc_oss/skills/_shared/semver-rules.md, plugins/cc_oss/README.md -->
 
-- **Issue triage:** Classifies every issue into one of seven archetypes (bug confirmed, feature request, question/support, duplicate, stale, out of scope, breaking change), drafts a response fitting each
+- **Triage recommendations:** Classifies issues into seven archetypes (bug confirmed, feature request, question/support, duplicate, stale, out of scope, breaking change), drafts a response fitting each; thread triage reports and conversation analysis route to `/oss:analyse`
 - **Close-scenario replies:** Seven close archetypes — fixed in release, fixed on `develop`, superseded by architecture change, external/wrong repo, self-resolved/stale, keep open + relabel, superseded PR
-- **PR review response:** Two-part format — leads with what is genuinely good, then specific actionable asks with line references; never adversarial
-- **SemVer validation:** Reads the actual diff, flags an incorrect bump type and breaking changes in a report block — the invoking skill or human decides whether to act before release
+- **PR review response:** Drafts from a supplied `/oss:analyse` thread report or `/oss:review` report, preserving findings and uncertainty. Two-part format — leads with what is genuinely good, then specific actionable asks with line references; never adversarial. Without a report, returns only the normal envelope with `status: "blocked"` and a one-line reason naming the report needed; never asks a prose question or drafts code-level feedback.
+- **SemVer validation:** Uses the supplied report for PR feedback, flags an incorrect bump type and breaking changes in a report block — code diff review routes to `/oss:review`; the invoking skill or human decides whether to act before release
 - **Release pipeline:** Writes release notes, changelog entries, migration guides in consistent project voice
 - **Deprecation lifecycle:** Works with `pyDeprecate`; tracks deprecated APIs, writes migration guides, flags deprecation → warning → removal timeline violations
 

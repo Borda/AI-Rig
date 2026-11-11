@@ -10,9 +10,13 @@ answer that bypasses those validators; the host Stop event supplies that interce
 ## Scope
 
 Read only the bounded host transcript supplied with the Stop event. Bind successful direct packaged helper executions to
-the current session and turn, including run promotion and same-run completion. This is an advisory recovery prompt, not
+the current session and turn, including run promotion and same-run completion. Creation may precede a bounded literal
+read-only suffix batch; completion requires its own successful direct command. This is an advisory recovery prompt, not
 an authorization or security boundary. Unknown lifecycle shapes, visible controlling stops and already-continued turns
-produce no continuation. Transcript compatibility is deliberately narrow because the host format is unstable.
+produce no continuation. Known native Continue answers resolve only outstanding question invocations with distinct
+host receipts and matching decision/scope identities; discovery text is not a question. Occurrence accounting does not
+prove exact outer JavaScript call correlation. Transcript compatibility is deliberately narrow because the host format
+is unstable.
 
 ## Usage
 
@@ -57,6 +61,59 @@ CONTROLLING_STOP = re.compile(
     re.IGNORECASE,
 )
 QUESTION = re.compile(r"request_user_input|ask_user|interrupt_agent")
+NESTED_QUESTION = re.compile(
+    r"\btools\s*\.\s*(\w*(?:request_user_input(?:_async)?|ask_user|interrupt_agent))\b(\s*\()?"
+)
+NATIVE_QUESTION = "mcp__codex_rig_input__ask_user"
+QUESTION_DISCOVERY = re.compile(
+    r"\s*text\(ALL_TOOLS\.filter\(([A-Za-z_]\w*)\s*=>\s*/[A-Za-z_|]+/\.test\(\1\.name\)\)\);?\s*"
+)
+
+
+def _resolved_question(item: dict) -> bool:
+    """Recognize a bound Continue answer or the known scope error raised before opening a form."""
+    if (
+        item.get("server") != "codex-rig-input"
+        or item.get("tool") != "ask_user"
+        or item.get("pluginId") != "codex-rig@borda-ai-rig"
+    ):
+        return False
+    arguments = item.get("arguments")
+    if not isinstance(arguments, dict):
+        return False
+    scope = arguments.get("scope_digest")
+    valid_scope = isinstance(scope, str) and re.fullmatch(r"[0-9a-f]{64}", scope) is not None
+    if item.get("status") == "failed":
+        # This specific validation precedes form creation. Other failures can leave
+        # a decision pending, including the same error code for a conflicting ID.
+        error = item.get("error")
+        return (
+            not valid_scope
+            and isinstance(error, dict)
+            and isinstance(error.get("message"), str)
+            and error["message"].endswith("Mcp error: -32602: scope_digest must be 64 lowercase hexadecimal characters")
+        )
+    identity = arguments.get("decision_id")
+    options = arguments.get("options")
+    result = item.get("result")
+    if (
+        item.get("status") != "completed"
+        or not valid_scope
+        or not isinstance(identity, str)
+        or not identity.strip()
+        or len(identity) > 128
+        or not isinstance(options, list)
+        or "Continue" not in options
+        or not isinstance(result, dict)
+        or result.get("isError", False) is not False
+    ):
+        return False
+    return result.get("structuredContent") == {
+        "decision_id": identity,
+        "scope_digest": scope,
+        "status": "answered",
+        "answer": "Continue",
+    }
 
 
 def _coordinate(value: str, cwd: str) -> str:
@@ -118,6 +175,35 @@ def _argv(item: dict, plugin_root: str) -> list[str]:
     return args
 
 
+def _creation_batch(item: dict, plugin_root: str) -> tuple[list[str], str]:
+    """Read the creator's first path receipt before a bounded sequence of literal read-only commands."""
+    command = item.get("command")
+    output = item.get("aggregated_output")
+    if not isinstance(command, list) or len(command) != 3 or not isinstance(command[2], str):
+        return [], ""
+    lines = command[2].splitlines()
+    if len(lines) < 2 or not isinstance(output, str) or not output.splitlines():
+        return [], ""
+    first = _argv({"command": [*command[:2], lines[0]]}, plugin_root)
+    if not first or _coordinate(first[1], plugin_root) != _coordinate("shared/create_run.py", plugin_root):
+        return [], ""
+    for line in lines[1:]:
+        if line.strip() in {"rtk git status --short", "rtk git rev-parse HEAD"}:
+            continue
+        tail = _argv({"command": [*command[:2], line]}, plugin_root)
+        if (
+            len(tail) != 4
+            or _coordinate(tail[1], plugin_root) != _coordinate("shared/find-review-report.py", plugin_root)
+            or tail[2] != "--result"
+            or not tail[3]
+            or tail[3].startswith("-")
+        ):
+            return [], ""
+    # The batch exit code belongs to its tail. Only creation has a path-only
+    # success receipt; never use this route to infer completion of a finalizer.
+    return first, output.splitlines()[0]
+
+
 def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
     """Continue positively bound review or remediation work without overriding a controlling pause."""
     if payload.get("hook_event_name") != "Stop" or payload.get("stop_hook_active") is not False:
@@ -132,6 +218,8 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
         return {}
     active = False
     runs: dict[str, str] = {}
+    pending_questions = 0
+    question_receipts: set[str] = set()
     for record in records:
         data = record.get("payload", {})
         if not isinstance(data, dict):
@@ -140,6 +228,8 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
         if record.get("type") == "event_msg" and kind == "task_started":
             active = data.get("turn_id") == turn
             runs.clear()
+            pending_questions = 0
+            question_receipts.clear()
             continue
         if not active:
             continue
@@ -170,9 +260,26 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
                 ):
                     return {}
             elif kind in {"function_call", "custom_tool_call"}:
-                call = str(data.get("name", "")) + str(data.get("input", data.get("arguments", "")))
-                if QUESTION.search(call):
+                name = str(data.get("name", ""))
+                if name == NATIVE_QUESTION:
+                    pending_questions += 1
+                elif QUESTION.search(name):
                     return {}
+                else:
+                    # Mentions in tool discovery are not invocations. Recognize only
+                    # the literal nested tool route; aliases remain unsupported.
+                    source = str(data.get("input", data.get("arguments", "")))
+                    # Only this inert name-filter expression is known discovery. All
+                    # other unmatched question references retain the conservative pause,
+                    # including bracket calls, destructuring and optional chaining.
+                    if name == "exec" and QUESTION_DISCOVERY.fullmatch(source):
+                        continue
+                    if QUESTION.search(NESTED_QUESTION.sub("", source)):
+                        return {}
+                    for question in NESTED_QUESTION.finditer(source):
+                        if question[1] != NATIVE_QUESTION or not question[2] or name != "exec":
+                            return {}
+                        pending_questions += 1
             elif kind in {"function_call_output", "custom_tool_call_output"}:
                 output = data.get("output", "")
                 # Host rejections can have no CommandExecution receipt. Do not retry them.
@@ -213,6 +320,19 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
             if item.get("tool") not in {"spawn", "wait", "send_input", "resume"}:
                 return {}
             continue
+        if item_type == "McpToolCall":
+            receipt_id = item.get("id")
+            if (
+                pending_questions <= 0
+                or not isinstance(receipt_id, str)
+                or not receipt_id
+                or receipt_id in question_receipts
+                or not _resolved_question(item)
+            ):
+                return {}
+            question_receipts.add(receipt_id)
+            pending_questions -= 1
+            continue
         if item_type != "CommandExecution":
             return {}
         if item.get("status") not in {"completed", "failed"} or type(item.get("exit_code")) is not int:
@@ -223,10 +343,13 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
         if item.get("exit_code") != 0:
             if re.search(r"denied|not permitted|approval|retry.{0,30}exhaust", output, re.I):
                 return {}
-            continue
-        args = _argv(item, plugin_root)
+        args = _argv(item, plugin_root) if item.get("exit_code") == 0 else []
+        batched_creation = False
         if not args:
-            continue
+            args, output = _creation_batch(item, plugin_root)
+            if not args:
+                continue
+            batched_creation = True
         command_cwd = item.get("cwd")
         if not isinstance(command_cwd, str):
             return {}
@@ -273,6 +396,13 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
             root = _coordinate(f".reports/codex/{skill}", cwd) + "/"
             if not run.startswith(root):
                 return {}
+            if batched_creation:
+                relative = run.removeprefix(root)
+                if "--promote-pr-run" in creation:
+                    if re.fullmatch(r"pr-[1-9][0-9]*/run-[0-9]{3,}", relative) is None:
+                        return {}
+                elif "/" in relative or relative.endswith(".json"):
+                    return {}
             if "--promote-pr-run" in creation:
                 previous = _coordinate(creation["--promote-pr-run"], cwd)
                 if runs.get(previous) != skill:
@@ -313,7 +443,7 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
                     continue
             if runs.get(run) == "code-remediate":
                 del runs[run]
-    if not active or not runs:
+    if not active or not runs or pending_questions:
         return {}
     return {
         "decision": "block",
@@ -325,7 +455,9 @@ def evaluate(payload: dict, records: list[dict], plugin_root: str) -> dict:
             "the first unmet checkpoint now under existing authority. For +review, complete the needed review, "
             "admit its exact result, then return to remediation selection, selected fixes, verification and delivery. "
             "A missing selection requires its normal user question; an unstarted step does not require permission. "
-            "Prepare eligible dependencies and continue independent inspection despite failed tests. Do not end "
+            "Prepare eligible dependencies and continue independent inspection despite failed tests. Read-only review "
+            "does not waive configured checks: use disposable source copies for autofixing hooks. A missed blind "
+            "checkpoint stays disclosed; it does not replace an actual finalization attempt. Do not end "
             "with a list of work you can already perform or ask the user to repeat the request."
         ),
     }

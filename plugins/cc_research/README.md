@@ -64,6 +64,7 @@ Prerequisites:
 - `jq` on PATH. Setup, `run` and `fortify` use it, and each stops with `! MISSING` when it is absent.
 - Python 3.10+ available as the bare `python` command, which is the only interpreter setup probes.
 - Git for `/research:run`, which starts only from a clean worktree.
+- `curl`, permitted HTTPS network access to the source and its redirects, and Read support for PDF pages when `/research:verify` uses a remote PDF.
 - Datasets, project dependencies, compute, credentials, and optional companion plugins remain user-managed.
 
 ```bash
@@ -210,7 +211,7 @@ Notable checks:
 - C9b validates `metric_repeats` and `min_delta_pct`, and adds a low advisory when a `perf` or `ml` strategy measures one sample per iteration. The advisory never becomes a Required Change, because repeated runs are a cost you opt into.
 - A `{field}` token in the `## Config` block is flagged high, because `run` does not substitute it, and the dry run skips a command that contains one.
 
-A dry run checks that the metric emits a numeric value and the guard exits successfully; it is skipped with a medium finding on Colab compute.
+A dry run checks that the metric emits a numeric value and the guard exits successfully. Judge asks for per-command execution approval; each question carries the exact command, its directly invoked repository entry-point file, compute route, network setting and timeout. Docker compute uses `docker_sandbox_run.py --mode verify` with a read-only project mount, writable `.experiments` and the resolved network isolation; it never falls back to host execution. Local, absent or invalid compute uses the local route. Colab validation is skipped with a medium finding. Snapshots check Git-visible dirty paths and prior `.experiments/state/**` outside the current run dir; other ignored files are not checked. Metric drift is reported as medium and the separately approved guard still runs.
 
 | Verdict          | Meaning                                                       |
 | ---------------- | ------------------------------------------------------------- |
@@ -227,7 +228,7 @@ Finding: measurement validity — metric_cmd measures a proxy, not the stated me
 Required changes: (1) add `target:` under ## Metric  (2) replace metric_cmd
 ```
 
-`--skip-validation` is for cross-machine planning. It leaves metric and guard executability unverified and therefore prevents an `APPROVED` verdict. Checks that could not be verified appear separately from severity counts on an `Unverified checks:` line in both the report and terminal summary. Reports are written to `.reports/research/judge-<branch>-<date>.md`.
+`--skip-validation` is for cross-machine planning. It leaves metric and guard executability unverified, adds a medium disclosure excluded from Required Changes, and does not by itself prevent `APPROVED`. Snapshot errors, missing or malformed judge-side rating/Goodhart fields and unavailable Docker are also medium non-program unverified findings, excluded from Required Changes; unresolved Goodhart fields remain explicitly unreviewed. Real command failures and wrapper safety rejection remain critical. Checks that could not be verified appear separately from severity counts on an `Unverified checks:` line in both the report and terminal summary. Every unexecuted command is shown as `not run (<reason>)` in Dry-Run Results and terminal Validation. Reports are written to `.reports/research/judge-<branch>-<date>.md`.
 
 <a id="research-run"></a>
 
@@ -329,7 +330,7 @@ By default each iteration's metric is measured once and any measured gain is kep
 
 #### Plan → judge/refine → run pipeline
 
-Runs the non-interactive plan → judge/refine → run pipeline from a goal. It accepts the run's compute, team, Codex, researcher, architect, journal, and hypothesis options, plus `--skip-validation`, `--out <path>`, and `--keep "<items>"`. It asks before overwriting an existing contract.
+Runs the plan → judge/refine → run pipeline from a goal, accepting planning defaults and retaining J4 per-command execution approval. It accepts the run's compute, team, Codex, researcher, architect, journal, and hypothesis options, plus `--skip-validation`, `--out <path>`, and `--keep "<items>"`. It asks before overwriting an existing contract. Within one sweep run, approval is reused across refine iterations only while command text, compute route and network setting are byte-identical; any change asks again, as does a script change. A standalone judge invocation always asks anew.
 
 ```text
 /research:sweep "increase validation F1 to 0.87"
@@ -351,7 +352,7 @@ Sweep-specific options are `--skip-validation`, `--out <path>`, and `--keep "<it
 
 #### Paper-to-code fidelity audit
 
-Audits whether code matches a named paper; it does not judge whether the paper's claims are valid. Input may be a PDF path, arXiv/PDF URL, or pasted paper text.
+Audits whether code matches a named paper; it does not judge whether the paper's claims are valid. Input may be a PDF path, arXiv/PDF URL, DOI URL, or pasted full paper text. Remote PDFs require `curl`, permitted HTTPS network access to the source and its redirects, and Read support for PDF pages; downloads are capped at 100 MiB and checked for the PDF signature. DOI/HTML landing pages are used only to locate a full PDF. If no accessible full PDF is reachable, or download/Read fails, verify stops and requests a local PDF or pasted full text; it never substitutes a WebFetch summary.
 
 ```text
 /research:verify paper.pdf
@@ -362,7 +363,7 @@ Audits whether code matches a named paper; it does not judge whether the paper's
 
 The five dimensions are formula (`F`), hyperparameter (`H`), evaluation (`E`), notation (`N`), and citation chain (`C`).
 
-- The paper text is written to `paper.md` inside an untrusted-content fence by `bin/fence_untrusted.py`, and the scientist is told to treat it as data only.
+- The model transcribes paper text to `paper.raw.md`, marking unreadable equations or values UNVERIFIABLE. `bin/fence_untrusted.py` mechanically fences the paper, extracted metadata and claims, codebase scope, and non-empty codemap output as `paper.md`, `claims.md`, `scope.md` and `structural-context.md`; the scientist treats all four as data only. Paper- and agent-derived report bodies and terminal summaries are mechanically fenced too.
 - Fidelity is `(MATCH + 0.5 * PARTIAL) / total_verified_claims`; unverifiable claims are excluded from the denominator and documented.
 - A paper with no checkable claims reports `NO VERIFIABLE CLAIMS` with a null fidelity.
 - `--strict` stops on HIGH-severity formula or evaluation mismatches.
@@ -729,7 +730,7 @@ Existing settings keep these four allow entries after an upgrade: `/research:set
 
 ### Bin tools
 
-Helper scripts live in `bin/` and are invoked by the skills; they are not user commands. User-visible ones referenced above: `bin/check_iteration_scope.py` (per-iteration scope check), `bin/fortify_metric_stats.py` (fortify noise model), `bin/fence_untrusted.py` (untrusted paper-text fence for `verify`), and `bin/verify_blueprint_audit.py` (audit-log verify and prune).
+Helper scripts live in `bin/` and are invoked by the skills; they are not user commands. User-visible ones referenced above: `bin/check_iteration_scope.py` (per-iteration scope check), `bin/fortify_metric_stats.py` (fortify noise model), `bin/fence_untrusted.py` (untrusted-content fences for `verify` paper text, metadata and claims, scope, codemap output, audits, reports and summaries), and `bin/verify_blueprint_audit.py` (audit-log verify and prune).
 
 <a id="-current-boundaries"></a>
 
@@ -753,13 +754,13 @@ These are current constraints, not promises about future releases:
 
 **`No program.md found`**: run `/research:plan "<measurable goal>"` or pass an existing contract path to `/research:judge` and `/research:run`.
 
-**`APPROVED` is unavailable with `--skip-validation`**: this is intentional because metric and guard executability was not tested on the current machine.
+**Validation was skipped**: metric and guard executability remains unverified, disclosed as medium and excluded from Required Changes. An otherwise sound program can still receive `APPROVED`; each unexecuted command carries its reason in the report and terminal summary.
 
 **A topic question is blocked by the report gate**: ensure `.reports/research/topic-<branch>-<date>.md` exists and its `---` header is rendered before the follow-up question. The gate is scoped to an active topic run and expires after its resolution window.
 
 **Metric command failed or emitted no number**: run `metric_cmd` directly and make it print one parseable float, optionally with a label such as `F1: 0.82`. Wrap table or structured output in a command that extracts one number.
 
-**Guard command exited non-zero during judge**: fix the underlying current-code failure first, or use `--skip-validation` only when planning on one machine for execution on another; the resulting judge cannot be `APPROVED`.
+**Guard command exited non-zero during judge**: fix the underlying current-code failure first, then rerun judge. An executed failing guard is a critical finding.
 
 **`--colab` stops**: enable `colab-mcp`, connect a Colab runtime, execute its connection cell, and use only one of `--colab` or `--compute=docker`.
 

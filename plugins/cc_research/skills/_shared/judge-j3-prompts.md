@@ -26,10 +26,10 @@ Review the experimental protocol across seven dimensions:
 Also identify up to 3 **protocol gaps** — specific changes to `program.md` that would make the experiment more rigorous.
 
 Write your full review to `${RUN_DIR}/methodology.md` using the Write tool.
-Include a `## Verdict` section with a `methodology_rating`: `sound` (no significant design flaws), `needs-refinement` (fixable issues found), or `fundamentally-flawed` (a core design problem that would invalidate the experiment).
+Include a `## Verdict` section with exactly one standalone `methodology_rating: <sound|needs-refinement|fundamentally-flawed>` line and exactly one standalone `goodhart: <true|false>` line. Choose `sound` for no significant design flaws, `needs-refinement` for fixable issues, or `fundamentally-flawed` for a core design problem that would invalidate the experiment. Set `goodhart` to `true` only for a concrete proxy-gaming flaw, otherwise `false`; use the same boolean in the JSON envelope.
 Include a `## Confidence` block per quality-gates.md.
-Return ONLY a compact JSON envelope on your final line — nothing else after it:
-{"status":"done","review_dimensions":7,"methodology_rating":"sound|needs-refinement|fundamentally-flawed","protocol_gaps":N,"file":"${RUN_DIR}/methodology.md","confidence":0.N,"summary":"<one-line verdict>"}
+Return ONLY: a compact JSON envelope on your final line — nothing else after it:
+{"status":"done","review_dimensions":7,"methodology_rating":"sound|needs-refinement|fundamentally-flawed","goodhart":true|false,"protocol_gaps":N,"file":"${RUN_DIR}/methodology.md","confidence":0.N,"summary":"<one-line verdict>"}
 ```
 
 ## J3_SCI_PROMPT (research:scientist)
@@ -46,8 +46,9 @@ Review across four dimensions:
 4. **Reproducibility risks**: List concrete factors that could produce non-reproducible results (randomness seeds, dataset splits, flaky tests, environment dependencies).
 
 Write findings to `${RUN_DIR}/scientific-review.md`.
+Include a `## Verdict` section with exactly one standalone `scientific_rating: <sound|needs-refinement|fundamentally-flawed>` line and exactly one standalone `goodhart: <true|false>` line. Set `goodhart` to `true` only for a concrete proxy-gaming flaw, otherwise `false`; use the same boolean in the JSON envelope.
 Include a `## Confidence` block per quality-gates.md.
-Return ONLY: {"status":"done","scientific_rating":"sound|needs-refinement|fundamentally-flawed","issues":N,"file":"${RUN_DIR}/scientific-review.md","confidence":0.N,"summary":"<one-line>"}
+Return ONLY: {"status":"done","scientific_rating":"sound|needs-refinement|fundamentally-flawed","goodhart":true|false,"issues":N,"file":"${RUN_DIR}/scientific-review.md","confidence":0.N,"summary":"<one-line>"}
 ```
 
 ## Merged spawn — envelope override
@@ -56,10 +57,10 @@ Each template above ends with its own single-object `Return ONLY:` line, written
 
 ```markdown
 ---
-Both reviews above are yours to complete, in order. Write BOTH output files — `${RUN_DIR}/methodology.md` and `${RUN_DIR}/scientific-review.md` — each with its own full sections and its own `## Confidence` block. Never blend the two reviews into one file.
+Both reviews above are yours to complete, in order. Write BOTH output files — `${RUN_DIR}/methodology.md` and `${RUN_DIR}/scientific-review.md` — each with its own full sections, `## Verdict` section containing its exact rating line and `goodhart: <true|false>` line, and its own `## Confidence` block. Never blend the two reviews into one file. Each envelope must carry that dimension's boolean `goodhart` value.
 
 Return ONLY a JSON array of exactly two objects on your final line, architect first, scientist second, each keeping the schema its own template declared — nothing else after it:
-[{"status":"done","review_dimensions":7,"methodology_rating":"sound|needs-refinement|fundamentally-flawed","protocol_gaps":N,"file":"${RUN_DIR}/methodology.md","confidence":0.N,"summary":"<one-line verdict>"},{"status":"done","scientific_rating":"sound|needs-refinement|fundamentally-flawed","issues":N,"file":"${RUN_DIR}/scientific-review.md","confidence":0.N,"summary":"<one-line>"}]
+[{"status":"done","review_dimensions":7,"methodology_rating":"sound|needs-refinement|fundamentally-flawed","goodhart":true|false,"protocol_gaps":N,"file":"${RUN_DIR}/methodology.md","confidence":0.N,"summary":"<one-line verdict>"},{"status":"done","scientific_rating":"sound|needs-refinement|fundamentally-flawed","goodhart":true|false,"issues":N,"file":"${RUN_DIR}/scientific-review.md","confidence":0.N,"summary":"<one-line>"}]
 ```
 
 Gate-off path (scientist dimension alone) is unchanged: pass J3_SCI_PROMPT verbatim, its own `Return ONLY:` line included.

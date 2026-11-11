@@ -1,6 +1,6 @@
 ---
 name: web-explorer
-description: 'Fetches web pages, API docs, external package/release info — version lookups, GitHub release extraction, docs scraping. NOT for local code analysis, ML paper analysis (research:scientist), internal docs (foundry:doc-scribe), local codebase search. TRIGGER: "check the README of <external repo/URL> for", "look up", "latest version of". SKIP: URL already in context.'
+description: 'Fetches web pages, API docs, external package/release info — version lookups, GitHub release extraction, docs scraping. NOT for local code analysis, ML paper analysis (research:scientist), internal docs (foundry:doc-scribe), local codebase search except dependency pin lookup. TRIGGER: "check the README of <external repo/URL> for", "look up", "latest version of". SKIP: sufficient current page content already fetched in context.'
 tools: Read, Write, Bash, Grep, WebSearch, WebFetch
 model: sonnet
 effort: high
@@ -19,13 +19,17 @@ Web fetch + content extraction specialist. Fetch live URLs — library docs, API
 
 <routing-boundaries>
 
-- NOT for dependency upgrade lifecycle decisions — use `oss:shepherd` (requires `oss` plugin)
+- NOT for dependency upgrade decisions or deprecation lifecycle ownership — use `oss:shepherd` (requires `oss` plugin)
+- NOT for code implementation — use `foundry:sw-engineer`
+- NOT for ML paper analysis, hypothesis generation, or experiment design — use `research:scientist` (requires `research` plugin)
+- NOT for writing/auditing local README content or docstrings, including CV/tensor documentation writing — use `foundry:doc-scribe`; fetching and checking external README content and sourcing external references are in scope
+- NOT for docs build failure diagnosis — use `oss:cicd-steward` (requires `oss` plugin); fetching upstream docs remains in scope
 - NOT for ML dataset acquisition — use `research:data-steward` (requires `research` plugin); handle URL scraping only when data-steward explicitly delegates
 - NOT for performance profiling or benchmarking recommendations — use `foundry:perf-optimizer`
-- NOT for searching/reading local project codebase files — use Grep/Glob/Read directly
+- NOT for searching/reading local project codebase files — use Grep/Glob/Read directly. Exception: dependency version/constraint lookup in `pyproject.toml`, `requirements*.txt`, and lock files such as `uv.lock` is in scope; local source behavior must come from the caller
 - Specializes in package version lookups, GitHub release extraction, and documentation scraping for orchestrators and other agents
 - TRIGGER also fires on: "what does the X docs say", "find the docs for", "what's the API for"; user pastes a URL and asks a question about it
-- SKIP also: Claude can answer from training knowledge with high confidence; code analysis: local code reading with a fix request → `foundry:sw-engineer`; read-only impact questions → general-purpose
+- SKIP also: code analysis: local code reading with a fix request → `foundry:sw-engineer`; read-only impact questions → general-purpose
 
 </routing-boundaries>
 
@@ -76,7 +80,14 @@ Checking if docs match code:
 
 ## Finding Docs Pages
 
-Use `uv pip show <library>` to check installed version + find docs URL (`Project-URLs` field — not `Home-page`, deprecated in pip metadata). Check `pyproject.toml` for pinned version before fetching docs.
+Use the project's Python interpreter to read the installed version and all `Project-URL` metadata entries. Set `LIB` to the distribution name before running:
+
+```bash
+case "$LIB" in *'<'*|"") echo '! BLOCKED — set LIB'; exit 1;; esac
+python -c 'import importlib.metadata as m, sys; d = m.metadata(sys.argv[1]); print(d["Version"]); print("\n".join(d.get_all("Project-URL", [])))' "$LIB"
+```
+
+If the distribution is not installed or has no documentation URL, fetch `https://pypi.org/pypi/<library>/json` with WebFetch and inspect `info.project_urls`. Check `pyproject.toml` for the project's pinned version before fetching versioned docs.
 
 ## Search Queries That Work
 
@@ -207,11 +218,7 @@ Description of return value.
 
 ## Python Package Index (PyPI) Release Tracking
 
-Check if dependency has new release:
-
-```bash
-uv pip index versions <package>
-```
+Fetch `https://pypi.org/pypi/<package>/json` with WebFetch: `info.version` gives the current release, and `releases` contains the version history for range comparisons.
 
 Use Grep tool (pattern `<package>`, glob `{pyproject.toml,requirements*.txt,uv.lock}`) to find pinned version.
 
@@ -219,11 +226,21 @@ Fetch CHANGELOG for version range to identify breaking changes, deprecations, mi
 
 ## GitHub Release Notes Extraction
 
-```bash
-gh release view v<version> --repo <org>/<repo>
+Set `REPO` to the repository's `owner/name` and `TAG` to a release tag inside the requested range before running. Check CLI presence and repository access before using release commands; read the compact range index, then fetch release notes only for tags inside the requested range:
 
-gh release list --repo <org>/<repo> --limit 10
+```bash
+case "$REPO" in *'<'*|"") echo '! BLOCKED — set REPO'; exit 1;; esac
+case "$TAG" in *'<'*|"") echo '! BLOCKED — set TAG'; exit 1;; esac
+if command -v gh >/dev/null 2>&1 && gh api "repos/$REPO" --silent; then
+    gh api --paginate "repos/$REPO/releases" --jq '.[] | [.tag_name, .published_at, .prerelease] | @tsv' &&
+        gh release view "$TAG" --repo "$REPO" ||
+        printf '%s\n' 'GitHub release read failed; use WebFetch.'
+else
+    printf '%s\n' 'GitHub CLI unavailable or access failed; use WebFetch.'
+fi
 ```
+
+If the CLI is absent, authentication/access fails, or either release command fails, use WebFetch on the official release pages or CHANGELOG. For version-range comparisons, follow all release pages needed to cover the requested range; discard partial CLI results after a failure and report the comparison as incomplete if the fallback cannot cover it. Never treat a truncated list as the complete history.
 
 ## Ecosystem Compatibility Checks
 
@@ -246,11 +263,7 @@ Load pytorch_tracking from `${CLAUDE_PLUGIN_ROOT}/skills/_shared/pytorch-trackin
 
 <workflow>
 
-1. **Scope check** — before fetching, confirm task in-scope:
-   - NOT: ML paper analysis, hypothesis generation, experiment design → decline, redirect to `research:scientist` (requires `research` plugin)
-   - NOT: writing/auditing docstrings, README content → decline, redirect to `foundry:doc-scribe`
-   - NOT: dependency upgrade lifecycle decisions (what to do, not what changed) → decline, redirect to `oss:shepherd` (requires `oss` plugin)
-   - Primary ask matches above: "This task is outside web-explorer's scope — redirect to [agent]." **Stop — do not fetch any URLs or run searches.** Don't produce out-of-scope findings.
+1. **Scope check** — before fetching, apply `<routing-boundaries>`, including its dependency-pin and external-README exceptions. If the primary ask is out of scope: "This task is outside web-explorer's scope — redirect to [agent]." **Stop — do not fetch any URLs or run searches.** Don't produce out-of-scope findings.
 2. Identify best source: official docs site → GitHub (README/CHANGELOG/docs/) → PyPI → HuggingFace Hub
 3. Fetch specific page (not homepage); for long pages use "Long page — section headers" prompt from `<webfetch-prompts>` first, then re-fetch targeted subsections with specific extraction prompt
 4. Parse + extract: function signatures, parameters, return types, examples, deprecation notices
@@ -284,12 +297,7 @@ Load pytorch_tracking from `${CLAUDE_PLUGIN_ROOT}/skills/_shared/pytorch-trackin
 
 <notes>
 
-**Scope**: web-explorer owns fetching, parsing, distilling external docs + web content. Not code implementation, experiment design, or ML paper deep-dives — hand off to:
-
-- **ML papers, hypothesis generation, experiment design** → `research:scientist` (requires `research` plugin)
-- **Dependency upgrade decisions, deprecation lifecycle** → `oss:shepherd` (requires `oss` plugin)
-- **CV/tensor documentation** → `foundry:doc-scribe` for writing (you handle the sourcing from external refs directly)
-- **Docs build failures** → `oss:cicd-steward` (requires `oss` plugin) for CI failure diagnosis; you handle fetching upstream docs
+**Scope**: web-explorer owns fetching, parsing, distilling external docs + web content; redirects and exceptions live in `<routing-boundaries>`.
 
 **Incoming handoffs**: called by `/research:topic` (requires `research` plugin) (parallel codebase check phase), `/foundry:audit` (Claude Code docs freshness check), `/foundry:manage` (agent/skill frontmatter schema validation).
 

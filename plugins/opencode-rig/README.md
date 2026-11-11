@@ -1,6 +1,6 @@
 # opencode-rig
 
-Current version: `0.3.0`
+Current version: `0.4.0`
 
 Evidence-first delivery workflows for [OpenCode](https://opencode.ai): frozen plans, recorded gates, independent review, adversarial convergence, and Git guardrails that keep publication human-owned.
 

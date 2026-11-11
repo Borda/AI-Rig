@@ -2,7 +2,7 @@
 
 # Codemap-py structural-context contract — codex-rig
 
-Protocol: `codemap-py.integration.v1`. Codex Rig is **consumer**, never provider — it reads only public `codemap-py` CLI/JSON surface (`doctor --json`, `query <subcommand>`) via `../../shared/codemap_adapter.py`. It never imports `codemap_py`, never reads codemap-py cache internals or source-tree paths, and never depends on `codemap-py` being installed.
+Protocol: `codemap-py.integration.v1`. Codex Rig is **consumer**, never provider — it reads only public `codemap-py` CLI/JSON surface (`doctor --json`, `query <subcommand>`) via `codemap_adapter.py`. It never imports `codemap_py`, never reads codemap-py cache internals or source-tree paths, and never depends on `codemap-py` being installed.
 
 ## Launcher resolution
 
@@ -81,6 +81,7 @@ Required means adapter runs and persists `<run-directory>/codemap-context.json`;
 | `code-review` | collected `files.txt` lists case-sensitive `.py` path | standard `review` batch; `skipped` invalid, since category has no skip decision |
 | `code-remediate` | `target_scope` or normalized findings name `.py` path | standard `review` batch |
 | `implement` | target or planned files include `.py` path | adaptive route; `skip` still runs adapter and persists `skipped` artifact with its reason |
+| `challenge-resolve` | unresolved caller, dependency, or test-impact facts in Python review scope | reuse still-current caller evidence covering the same source and question; otherwise adaptive route before freezing reviewer context |
 
 Provider maps only case-sensitive `.py` post-image paths from diff file, and review `diff.patch` excludes untracked files, so stub-only (`.pyi`) or untracked-only Python changes do not require probe whose answer could only be empty.
 
@@ -163,13 +164,13 @@ Passing `--query-kind` is per-workflow decision, not migration every consumer ow
 | `audit` | `audit` | standard batch — no `--query-kind` | category's `undocumented --all` and `dead-modules` have no fact-kind equivalents |
 | `release` | `audit` | standard batch — no `--query-kind` | same category |
 
-The five not-applicable skills below select no category at all and are absent from this table by design.
+The six not-applicable skills below select no category at all and are absent from this table by design.
 
 `target` is dotted module or `module::symbol` qname when skill has resolved one at its decision point; it is optional for every consuming skill. In a `standard` batch with no target, queries marked `requires_target=True` in `codemap_adapter.CATEGORY_QUERIES` are dropped from plan instead of being run and failed, so `analysis` runs `central` alone and `implementation` runs `coupled` alone. The artifact then lists only queries actually attempted and `available` keeps its documented "exhaustive for the queries run" meaning; `degraded` stays reserved for real gap in provider evidence rather than for question caller never asked. A category whose every query requires target keeps its bounded error, because reporting `available` off zero executed queries would claim evidence never received. An explicit fact route still records bounded degraded outcome for missing or malformed required target — there target is caller's own required input, not optional refinement: `target required, none supplied` when none (or only whitespace) was given, `target malformed: …` when one was given with empty side around `::` or more than one `::`. Route normalization uses module portion of `module::symbol` for `dependencies`; `callers`, `blast`, and `test-impact` pass `module::symbol`, dotted `module.symbol`, or bare name unchanged, and provider resolves unique one (`normalized_from`) or rejects ambiguous one with `candidates`. A malformed or missing required target is never guessed or queried.
 
 ## Not-applicable skills (recorded reason, no forced query)
 
-Five skills have no Python structural-query subject and stay not-applicable rather than being forced to integrate:
+Six skills have no Python structural-query subject and stay not-applicable rather than being forced to integrate:
 
 | Skill | Reason |
 | -- | -- |
@@ -177,6 +178,7 @@ Five skills have no Python structural-query subject and stay not-applicable rath
 | `sync` | pure package-lifecycle (install/refresh via Codex CLI) — zero source analysis; must stay single-product owner, never circular installer |
 | `agent-shims` | manages authenticated agent shim lifecycle/filesystem state — no source-code subject |
 | `calibrate` | consumes fixed `runtime/calibration/*` fixtures — self-measurement of plugin, not consuming-project Python structure |
+| `profile` | reads sanitized session telemetry and usage measurements — no consuming-project Python structural-query subject |
 | `kaggle` | output is Jupytext notebook; `*.ipynb` is outside frozen `py311-ast-v1` module/package contract |
 
 ## Symmetric optionality

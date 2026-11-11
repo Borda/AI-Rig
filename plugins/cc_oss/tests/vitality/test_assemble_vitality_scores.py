@@ -239,8 +239,10 @@ class TestAssembleScores:
 
         assert result["health_score_pct"] == 100.0
 
-    def test_all_axes_unavailable_returns_zero_score_and_confidence(self, tmp_path: Path, scoring_file: Path) -> None:
-        """When no axis has a score, health and confidence are both zero instead of a division error.
+    def test_all_axes_unavailable_returns_unknown_health_and_zero_confidence(
+        self, tmp_path: Path, scoring_file: Path
+    ) -> None:
+        """When no axis has a score, health is unknown and confidence is zero instead of a division error.
 
         The renormalisation divides by the available weight, which is zero here; the result must degrade, not raise.
         """
@@ -250,12 +252,22 @@ class TestAssembleScores:
 
         result = assemble_scores(pa, pb, pc, scoring_file)
 
-        assert result["health_score_pct"] == 0.0
+        assert result["health_score_pct"] is None
         assert result["overall_confidence"] == 0.0
 
 
 class TestMain:
     """The command-line entry point and its documented five-positional call site."""
+
+    def test_unavailable_health_summary(
+        self, tmp_path: Path, scoring_file: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A run with no available axes prints unavailable health while preserving JSON null."""
+        partial = _write_partial(tmp_path, "partial.json", {"1": _UNAVAILABLE})
+        target = tmp_path / "scores.json"
+        assert main([str(partial)] * 3 + [str(scoring_file), str(target)]) == 0
+        assert json.loads(target.read_text())["health_score_pct"] is None
+        assert capsys.readouterr().out == "[vitality] assembled: health=n/a conf=0.00\n"
 
     def test_golden_invocation_five_positionals(
         self, partials: tuple, scoring_file: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]

@@ -495,7 +495,7 @@ def read_existing_records(data_file: Path) -> list[dict[str, Any]]:
         return []
     if len(text) > _MAX_INPUT_CHARS:
         raise ValueError(f"DATA_FILE {data_file} exceeds {_MAX_INPUT_CHARS} characters")
-    lines = text.splitlines()
+    lines = text.split("\n")
     kept: dict[str, dict[str, Any]] = {}
     for lineno, line in enumerate(lines, start=1):
         if not line.strip():
@@ -671,7 +671,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         help="Epoch seconds stamped as each record's timestamp (default: now).",
     )
     args = parser.parse_args(argv)
-    if not _REPO_RE.match(args.repo):
+    if not _REPO_RE.fullmatch(args.repo):
         parser.error(f"--repo must match 'owner/repo' (allowed chars: A-Za-z0-9._-), got: {args.repo!r}")
     return args
 

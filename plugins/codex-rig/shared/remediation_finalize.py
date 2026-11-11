@@ -309,6 +309,8 @@ def append_record(run: Path, ledger: str, record: Path | None = None) -> dict[st
         raise DeriveError(f"append-ledger-unsupported:{ledger}")
     target = run / ledger
     staged = record or run / f"{ledger}.rec"
+    if staged.is_symlink() or staged.resolve() != run.resolve() / f"{ledger}.rec":
+        raise DeriveError("append-record-path-invalid")
     try:
         text = staged.read_text(encoding="utf-8")
     except OSError as error:

@@ -21,7 +21,7 @@ test -f "$MERGE_HEAD_FILE" && echo "MERGING" || echo "clean"
 **Case A — MERGING** (`MERGE_HEAD` present — prior `git merge` left markers): work with existing markers, but first check the target branch has not moved since that merge started:
 
 ```bash
-# fresh shell (Check 41): reload the base Step 4 persisted unless the caller bound it
+# fresh shell (Check 43): reload the base Step 4 persisted unless the caller bound it
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 [ -n "${BASE_REF:-}" ] || { IFS= read -r BASE_REF < "${TMPDIR:-/tmp}/resolve-base-ref-${CSID}" 2>/dev/null || BASE_REF=""; }
 [ -n "$BASE_REF" ] || { echo "! BLOCKED — Step 5: BASE_REF unresolved — cannot judge the in-progress merge"; exit 1; }
@@ -41,7 +41,7 @@ The last line lists the conflicted files Step 7a needs. Skip to Step 7a.
 Pull latest state, both branches, before merging — the source (PR) branch **and** the target branch:
 
 ```bash
-# fresh shell (Check 41): reload refs Step 4 persisted unless the caller bound them; also re-run from Step 9.0
+# fresh shell (Check 43): reload refs Step 4 persisted unless the caller bound them; also re-run from Step 9.0
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 [ -n "${BASE_REF:-}" ] || { IFS= read -r BASE_REF < "${TMPDIR:-/tmp}/resolve-base-ref-${CSID}" 2>/dev/null || BASE_REF=""; }
 [ -n "${HEAD_REF:-}" ] || { IFS= read -r HEAD_REF < "${TMPDIR:-/tmp}/resolve-head-ref-${CSID}" 2>/dev/null || HEAD_REF=""; }
@@ -127,7 +127,7 @@ Use Step 3b motivation as primary lens — the 2–3 sentence synthesis `INTEL_A
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-# fresh shell (Check 41) — reload refs Step 4 persisted; bare $BASE_REF/$HEAD_REF are unbound in a new Bash call
+# fresh shell (Check 43) — reload refs Step 4 persisted; bare $BASE_REF/$HEAD_REF are unbound in a new Bash call
 IFS= read -r BASE_REF < "${TMPDIR:-/tmp}/resolve-base-ref-${CSID}" 2>/dev/null || BASE_REF=""
 IFS= read -r HEAD_REF < "${TMPDIR:-/tmp}/resolve-head-ref-${CSID}" 2>/dev/null || HEAD_REF=""
 [ -n "$BASE_REF" ] && [ -n "$HEAD_REF" ] || { echo "! BLOCKED — Step 6: BASE_REF/HEAD_REF sentinels missing — cannot distill conflict context"; exit 1; }

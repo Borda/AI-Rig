@@ -15,12 +15,14 @@ A manifest that is not valid JSON, or declares neither field, falls back to ``sk
 
 Exit codes:
     0 — success (including a plugins directory with no manifests)
+    1 — a present skills or agents field declares an invalid relative directory
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -29,9 +31,18 @@ _MANIFESTS: tuple[str, ...] = (".claude-plugin/plugin.json", ".codex-plugin/plug
 
 
 def declared_dir(manifest: dict, key: str, default: str) -> str:
-    """Return the directory a manifest declares for ``key``, without leading ``./`` or trailing ``/``."""
-    value = manifest.get(key)
-    return (value if isinstance(value, str) and value else f"./{default}/").strip("./")
+    """Normalize a declared relative directory, defaulting only when ``key`` is absent."""
+    if key not in manifest:
+        return default
+    value = manifest[key]
+    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9._/-]+", value):
+        raise ValueError(f"manifest {key} must name a relative directory: {value!r}")
+    if value.startswith("/") or ".." in value.split("/"):
+        raise ValueError(f"manifest {key} must name a relative directory without '..': {value!r}")
+    normalized = Path(value).as_posix()
+    if normalized == ".":
+        raise ValueError(f"manifest {key} must name a directory below the plugin root: {value!r}")
+    return normalized
 
 
 def layout_lines(plugins_dir: Path) -> list[str]:
@@ -60,7 +71,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("plugins_dir", nargs="?", default="plugins", type=Path)
     args = parser.parse_args(argv)
     if args.plugins_dir.is_dir():
-        for line in layout_lines(args.plugins_dir):
+        try:
+            lines = layout_lines(args.plugins_dir)
+        except ValueError as exc:
+            print(f"plugin_layout: {exc}", file=sys.stderr)
+            return 1
+        for line in lines:
             sys.stdout.write(line + "\n")
     return 0
 

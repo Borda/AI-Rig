@@ -40,6 +40,8 @@ In `prepare` and `audit` modes, delegate gather/explore/validate to subagent via
 
 Template (loaded above). Substitute `<REPO_ROOT>`, `<RANGE>`, `<GATHER_FILE>`, `<WAIVED_FILE>`, `<LAST_TAG>`, `<OSS_BIN>`, `<SHIPPED_TAGS>`, `<SHIPPED_FILE>` with literal values (`<LAST_TAG>` and `<SHIPPED_TAGS>` may substitute to an empty string — the template's own fallback covers that). Spawn:
 
+In the substituted prompt's gather phase, include SKILL.md's Gather changes PR-discovery commands from `TRUNK=` through the final `$PRS` print, with `RANGE` bound to the literal release range, plus the coverage-gap/body-fetch obligation immediately following that block; require execution before classification.
+
 > loads: gather-prompt.md `Agent(subagent_type="foundry:sw-engineer", name="gather-changes", description="Gather release range evidence", prompt=<substituted gather-prompt.md content>)`
 
 3. Validate envelope; every "abort" is a hard `exit 1`. Bind `ENVELOPE` first: with the Write tool, save the gather agent's returned one-line JSON envelope verbatim to `${TMPDIR:-/tmp}/release-envelope-${CSID}`; the block reloads it. Validated counts persist to `release-envelope-unconfirmed*` sentinels, which the ledger reconcile block below reloads, so the two blocks need not share one Bash call:
@@ -73,6 +75,7 @@ LEDGER_UNCONFIRMED=$(grep -Ec '^(REMOVED|NET-STATE-ADD):' "$WAIVED_FILE" || true
 LEDGER_BREAKING=$(grep -Ec '^(REMOVED|NET-STATE-ADD): ⚠️ Breaking Changes:' "$WAIVED_FILE" || true)
 [ "$LEDGER_BREAKING" -eq "$UNCONFIRMED_BREAKING" ] || { echo "Error: breaking waiver count disagrees with category ledger" >&2; exit 1; }
 printf '%s\n' "$UNCONFIRMED" > "${TMPDIR:-/tmp}/release-unconfirmed-${CSID}"
+printf '%s\n' "$UNCONFIRMED_BREAKING" > "${TMPDIR:-/tmp}/release-unconfirmed-breaking-${CSID}"
 ```
 
 > After the ledger reconcile above, apply SKILL.md's Delegation strategy gate (breaking-waiver review + unconfirmed notification), then continue with Phases 5–6 below (they run after phases 1–4 complete).

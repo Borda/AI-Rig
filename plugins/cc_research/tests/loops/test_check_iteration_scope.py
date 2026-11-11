@@ -149,6 +149,86 @@ class TestScopeCheck:
         assert result["checked"] is False
         assert result["changed"] == ["README.md"]
 
+    def test_program_edits_cannot_relax_saved_constraints(self, repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """Keep enforcing saved scope and both evaluators when the program empties its constraints."""
+        state = {
+            "program_file": str(repo / "program.md"),
+            "config": {
+                "scope_files": ["src/**/*.py", "tests/", "bench/measure.py"],
+                "metric_cmd": "python bench/measure.py",
+                "guard_cmd": "python tests/test_sort.py",
+            },
+        }
+        _write(repo, ".experiments/state/r1/state.json", json.dumps(state))
+        _write(
+            repo,
+            "program.md",
+            "## Config\n```\nscope_files:\n```\n## Metric\n```\ncommand:\n```\n## Guard\n```\ncommand:\n```\n",
+        )
+        _write(repo, "README.md")
+        _write(repo, "bench/measure.py", "changed\n")
+        _write(repo, "tests/test_sort.py", "changed\n")
+
+        code, result = _run(repo, capsys)
+
+        assert code == 3
+        assert result["checked"] is True
+        assert sorted(result["violations"]) == ["README.md", "bench/measure.py", "program.md", "tests/test_sort.py"]
+
+    @pytest.mark.parametrize("program", ["program.md", "./program.md"])
+    def test_program_is_protected_with_unrestricted_scope(
+        self, repo: Path, capsys: pytest.CaptureFixture[str], program: str
+    ) -> None:
+        """Protect the program itself even when unrestricted scope would otherwise permit its edit."""
+        state = {"program_file": program, "config": {"scope_files": [], "metric_cmd": "", "guard_cmd": ""}}
+        _write(repo, ".experiments/state/r1/state.json", json.dumps(state))
+        _write(repo, "program.md", _PROGRAM + "\nChanged constraints.\n")
+
+        code, result = _run(repo, capsys)
+
+        assert code == 3
+        assert result["checked"] is True
+        assert result["violations"] == ["program.md"]
+
+    @pytest.mark.parametrize(
+        ("config", "rel", "expected"),
+        [
+            pytest.param(
+                {"scope_files": [], "metric_cmd": "", "guard_cmd": ""},
+                "bench/measure.py",
+                0,
+                id="explicit-empty-values-do-not-fall-back",
+            ),
+            pytest.param({"scope_files": ["**"]}, "bench/measure.py", 3, id="missing-metric-uses-program"),
+            pytest.param({"metric_cmd": "", "guard_cmd": ""}, "README.md", 3, id="missing-scope-uses-program"),
+            pytest.param(
+                {"scope_files": ["**"], "metric_cmd": "python src/pkg/sort.py"},
+                "src/pkg/sort.py",
+                3,
+                id="saved-metric-overrides-program",
+            ),
+            pytest.param(
+                {"scope_files": ["**"], "guard_cmd": "python tests/test_sort.py"},
+                "tests/test_sort.py",
+                3,
+                id="saved-guard-overrides-program",
+            ),
+        ],
+    )
+    def test_saved_constraints_fall_back_only_for_absent_keys(
+        self, repo: Path, capsys: pytest.CaptureFixture[str], config: dict, rel: str, expected: int
+    ) -> None:
+        """Use legacy program fields only where the persisted config lacks that individual key."""
+        state = {"program_file": str(repo / "program.md"), "config": config}
+        _write(repo, ".experiments/state/r1/state.json", json.dumps(state))
+        _write(repo, rel, "changed\n")
+
+        code, result = _run(repo, capsys)
+
+        assert code == expected
+        assert result["checked"] is True
+        assert result["violations"] == ([rel] if expected == 3 else [])
+
     def test_unreadable_state_blocks(self, repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """An unreadable state file fails closed with exit 1.
 

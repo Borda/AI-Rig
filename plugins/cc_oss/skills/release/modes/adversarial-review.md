@@ -8,8 +8,22 @@ Challenge every factual claim in assembled draft against codebase, project docs.
 
 ```bash
 # expand to literal value before spawning
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+[ -n "$RANGE" ] || IFS= read -r RANGE < "${TMPDIR:-/tmp}/release-range-${CSID}" 2>/dev/null || RANGE=""
+[ -n "$RANGE" ] || { echo "Error: adversarial release range unresolved" >&2; exit 1; }
+IFS= read -r BRANCH < "${TMPDIR:-/tmp}/release-setup-${CSID}/BRANCH" 2>/dev/null || BRANCH=""
+IFS= read -r DATE < "${TMPDIR:-/tmp}/release-setup-${CSID}/DATE" 2>/dev/null || DATE=""
+if [ -z "$GATHER_FILE" ] && [ -n "$BRANCH" ] && [ -n "$DATE" ]; then
+    GATHER_FILE=".temp/release-gather-$BRANCH-$DATE.md"
+fi
 ADVERSARIAL_DIR=".temp/release-adversarial-$(git branch --show-current 2>/dev/null | tr '/' '-' || echo 'main')-$(date +%Y-%m-%d)"
 mkdir -p "$ADVERSARIAL_DIR"  # timeout: 5000
+if [ -n "$GATHER_FILE" ] && [ -f "$GATHER_FILE" ]; then
+    GATHER_CONTEXT="Commit classification (for dimension 2 COMPLETENESS only): $GATHER_FILE — read it to find commits the draft should cover. Do NOT use this file to verify factual accuracy — use HEAD git grep for dimension 1."
+else
+    GATHER_CONTEXT="Use the git range $RANGE directly: git log $RANGE --no-merges --oneline to get the change list."
+fi
+printf 'RANGE=%s\nADVERSARIAL_DIR=%s\nGATHER_CONTEXT=%s\n' "$RANGE" "$ADVERSARIAL_DIR" "$GATHER_CONTEXT"
 ```
 
 Write full assembled draft content to `$ADVERSARIAL_DIR/draft-to-review.md` using Write tool.
@@ -31,7 +45,7 @@ Challenge across 4 dimensions:
 4. DOCS ALIGNMENT — for each new API or behavior claimed in draft, confirm docs/ or README covers it. Missing doc = medium finding.
 
 <gather context>
-$([ -n \"<GATHER_FILE>\" ] && [ -f \"<GATHER_FILE>\" ] && echo 'Commit classification (for dimension 2 COMPLETENESS only): <GATHER_FILE> — read it to find commits the draft should cover. Do NOT use this file to verify factual accuracy — use HEAD git grep for dimension 1.' || echo 'Use the git range <RANGE> directly: git log <RANGE> --no-merges --oneline to get the change list.')
+<GATHER_CONTEXT>
 </gather context>
 
 For each finding: severity (critical=claim directly contradicts HEAD state | high=significant missing change or SemVer misclassification | medium=overstated claim or minor missing item | low=style/wording inaccuracy). For critical and high findings: quote exact draft text AND quote git grep output or codebase evidence.
@@ -40,7 +54,7 @@ Write full findings report to <$ADVERSARIAL_DIR/adversarial-review.md> using the
 Return ONLY on your final line: {\"status\":\"done\",\"file\":\"<$ADVERSARIAL_DIR/adversarial-review.md>\",\"critical\":N,\"high\":N,\"medium\":N,\"low\":N,\"confidence\":0.N}")
 ```
 
-Expand `<REPO_ROOT>`, `<RANGE>`, `<GATHER_FILE>`, `<$ADVERSARIAL_DIR>` to literal values before spawning — never pass variable names literally.
+Expand `<REPO_ROOT>`, `<RANGE>`, `<GATHER_CONTEXT>`, `<$ADVERSARIAL_DIR>` to literal values before spawning — use the printed gather-context text for `<GATHER_CONTEXT>`, never pass variable names literally.
 
 **Pre-handover truth check loop** — no output reaches user until all critical and high findings resolved:
 

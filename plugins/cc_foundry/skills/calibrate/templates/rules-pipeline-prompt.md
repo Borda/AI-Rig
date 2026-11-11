@@ -1,13 +1,13 @@
 Rules calibration pipeline runner for rule file `<RULE_BASENAME>`. Complete all phases in sequence.
 
-<!-- Substitutions before spawning: RULE_BASENAME=filename (e.g. commit-and-git.md), RULE_CONTENT=full rule file text verbatim, TIMESTAMP=YYYY-MM-DDTHH-MM-SSZ, MODE=fast|full, N=_tasks per directive (fast=3, full=5), IS_PATH_SCOPED=true|false (true if rule has a non-empty paths: frontmatter field) -->
-
-<!-- Derive RULE_DIR before spawning: RULE_DIR="${RULE_BASENAME%.md}" (strips .md extension — used as the run directory name to avoid permission-matcher conflicts with .md-suffixed paths) -->
+<!-- Substitutions before spawning: RULE_BASENAME=filename (e.g. commit-and-git.md), RULE_PATH=resolved input rule path selected by the caller (retain the selected symlink path for provenance), RULE_DIR=unique safe run-directory slug prefixed by tier and plugin identity where applicable (e.g. source-cc_develop-quality-gates-delta, project-quality-gates-delta, user-foundry-quality-gates-delta; no .md suffix), RULE_CONTENT=full rule file text verbatim, TIMESTAMP=YYYY-MM-DDTHH-MM-SSZ, MODE=fast|full, N=_tasks per directive (fast=3, full=5), CHILD_BATCH=maximum children per batch (caller supplies 1; unsubstituted defaults to 1) -->
 
 Mode: `<MODE>` Run dir: `.reports/calibrate/<TIMESTAMP>/rules/<RULE_DIR>/`
 
 ```bash
-mkdir -p .reports/calibrate/<TIMESTAMP>/rules/<RULE_DIR>/
+RUN_DIR='.reports/calibrate/<TIMESTAMP>/rules/<RULE_DIR>'
+case "$RUN_DIR" in *'<'*|*'>'*) echo "! BLOCKED — run identity not substituted"; exit 1;; esac
+mkdir -p "$RUN_DIR"
 ```
 
 **Rule under test** (loaded as context for all Phase 2 agents):
@@ -47,26 +47,20 @@ Problem format:
 }
 ```
 
-**Step 1c — Generate trigger problems** (only if `<IS_PATH_SCOPED>` is `true`): for each `paths:` glob pattern in rule frontmatter, generate 2 problems:
-
-- One with **matching** file context (`expected_trigger: true`) — rule should be active
-- One with **non-matching** file context (`expected_trigger: false`) — rule should stay silent
-
-```json
-{
-  "problem_id": "<rule-basename-without-extension>-trigger-1",
-  "type": "trigger",
-  "file_context": "<filename with extension, e.g. main.py>",
-  "expected_trigger": true,
-  "task_prompt": "Working on `<file_context>`: <generic task that the rule could apply to>"
-}
-```
+**Step 1c — Measurement boundary**: Trigger fidelity is not measured by this pipeline. Phase 2 explicitly injects the rule, which tests adherence when loaded rather than the host's `paths:` matching or loading behavior. Generate adherence problems only, including for path-scoped rules. Set `trigger_recall` and `trigger_precision` to `null` for every rule and report this limitation in `gaps`. Do not infer that a glob needs widening or tightening from these adherence responses.
 
 Write all problems to `.reports/calibrate/<TIMESTAMP>/rules/<RULE_DIR>/problems.json` as JSON array.
 
 ### Phase 2 — Run tasks (parallel)
 
-Spawn one `general-purpose` subagent per problem. **Issue ALL spawns in single response — no waiting between spawns.**
+Resolve the child batch size from the spawn prompt; an unsubstituted value defaults to 1 child at a time:
+
+```bash
+CHILD_BATCH='<CHILD_BATCH>'
+case "$CHILD_BATCH" in *'<'*|*'>'*|"") CHILD_BATCH=1;; [1-5]) ;; *) echo "! BLOCKED — child batch must be 1–5"; exit 1;; esac
+```
+
+Spawn one `general-purpose` subagent per problem in batches of at most `$CHILD_BATCH` (never more than 5). Read `rules/agent-spawn.md` and budget by effective model: haiku 20, sonnet 8, opus 5 in flight. The orchestrator accounts for all active pipelines and their children within the shared tier ceiling; never independently claim the full ceiling. Dispatch within the child batch size, end the turn, and collect the batch through completion notifications before dispatching the next batch. Apply the same batch limit to Phase 3 scorers and the Phase 5 curator; phases share the tier budget.
 
 Each subagent receives this prompt (substitute `<PROBLEM_ID>`, `<TASK_PROMPT>`, `<CONTEXT>`, `<RUN_DIR>` before spawning):
 
@@ -92,17 +86,15 @@ Write complete response to `<RUN_DIR>/response-<PROBLEM_ID>.md` using Write tool
 
 ### Phase 3 — Score (parallel scorer subagents)
 
-Spawn one `general-purpose` scorer per problem. **Issue ALL spawns in single response.**
+Spawn one `general-purpose` scorer per problem in batches under the Phase 2 child batch limit. Finish collecting the current batch before spawning the next; never exceed the shared tier ceiling.
 
-Each scorer receives this prompt (substitute `<PROBLEM_ID>`, `<PROBLEM_TYPE>`, `<DIRECTIVE_TEXT>`, `<EXPECTED_BEHAVIOR>`, `<EXPECTED_TRIGGER>`, `<RUN_DIR>` before spawning):
+Each scorer receives this prompt (substitute `<PROBLEM_ID>`, `<DIRECTIVE_TEXT>`, `<EXPECTED_BEHAVIOR>`, `<RUN_DIR>` before spawning):
 
 <!-- BEGIN SPAWN PROMPT -->
 
 Scoring rule compliance test. Read response from `<RUN_DIR>/response-<PROBLEM_ID>.md` using Read tool.
 
-**Problem type**: `<PROBLEM_TYPE>`
-
-**[For adherence problems]**
+**Problem type**: adherence
 
 Directive under test: `<DIRECTIVE_TEXT>` Expected behavior: `<EXPECTED_BEHAVIOR>`
 
@@ -121,17 +113,6 @@ Score on two dimensions:
 
 Return ONLY this JSON (no prose): `{"problem_id":"<PROBLEM_ID>","type":"adherence","outcome":"correct|missed|misapplied","outcome_correct":true|false,"reasoning":"<one sentence>"}`
 
-**[For trigger problems]**
-
-Expected trigger: `<EXPECTED_TRIGGER>`
-
-Determine whether rule's directives visible in response:
-
-- `triggered: true` — rule clearly active (response applies or references rule's constraints)
-- `triggered: false` — response shows no sign of rule being active
-
-Return ONLY this JSON (no prose): `{"problem_id":"<PROBLEM_ID>","type":"trigger","triggered":true|false,"expected_trigger":<EXPECTED_TRIGGER>,"correct":true|false,"reasoning":"<one sentence>"}`
-
 <!-- END SPAWN PROMPT -->
 
 Collect all scorer compact JSONs. Write to `.reports/calibrate/<TIMESTAMP>/rules/<RULE_DIR>/scores.json` as JSON array.
@@ -147,10 +128,7 @@ Compute aggregates from `scores.json`:
 - `outcome_correctness` = outcome_correct_count / correct_count (N/A if correct_count = 0)
 - `misapplied_rate` = misapplied_count / total adherence tasks
 
-**Trigger fidelity** (type == "trigger" problems, skip if none):
-
-- `trigger_recall` = (triggered=true AND expected=true) / total expected=true problems
-- `trigger_precision` = (triggered=false AND expected=false) / total expected=false problems
+**Trigger fidelity**: not measured; both trigger metrics are `null`, including for path-scoped rules. Keep this limitation separate from the adherence verdict.
 
 **Verdict**:
 
@@ -162,7 +140,7 @@ The Write tool refuses any file whose exact basename is `report.md` from a subag
 
 ```markdown
 ## Rules Benchmark — <RULE_BASENAME> — <date>
-Mode: <MODE> | Directives: D | Adherence tasks: D×N | Trigger tests: T (or 0 if global rule)
+Mode: <MODE> | Directives: D | Adherence tasks: D×N | Trigger fidelity: not measured
 
 ### Per-Directive Results
 | Directive (truncated) | Adherence Recall | Outcome Correct | Misapplied | Status    |
@@ -172,13 +150,8 @@ Mode: <MODE> | Directives: D | Adherence tasks: D×N | Trigger tests: T (or 0 if
 
 *Legend: Adherence Recall — directive followed / total tasks (0–1, higher is better, ≥0.8 target). Outcome Correct — fraction of "correct" scores where actual output also matched expected behavior, not just stated intent (0–1, higher is better, ≥0.8 target). Misapplied — tasks where wrong directive was applied (lower is better; ≥1 suggests ambiguous wording). Status: ✓ calibrated | ⚠ under-enforced.*
 
-### Trigger Fidelity (path-scoped rules only — omit section if global)
-| Metric            | Value | Status               |
-|-------------------|-------|----------------------|
-| Trigger recall    | 0.XX  | ≥0.95 ✓ / <0.95 ⚠   |
-| Trigger precision | 0.XX  | ≥0.95 ✓ / <0.95 ⚠   |
-
-*Legend: Trigger recall — rule fired on all matching-path contexts (0–1, higher is better, ≥0.95 target). Trigger precision — rule stayed silent on non-matching contexts (0–1, higher is better, ≥0.95 target).*
+### Trigger Fidelity
+Not measured: rule content was injected directly; host path matching and rule loading were not exercised. Trigger recall and precision are null. No glob changes can be justified from this run.
 
 ### Aggregate
 | Metric               | Value | Status                |
@@ -199,17 +172,25 @@ Mode: <MODE> | Directives: D | Adherence tasks: D×N | Trigger tests: T (or 0 if
 
 Write result JSONL to `.reports/calibrate/<TIMESTAMP>/rules/<RULE_DIR>/result.jsonl`:
 
-`{"ts":"<TIMESTAMP>","target":"rules/<RULE_BASENAME>","mode":"<MODE>","mean_adherence_recall":0.N,"outcome_correctness":0.N,"misapplied_rate":0.N,"trigger_recall":0.N,"trigger_precision":0.N,"problems":<N>,"verdict":"calibrated|outcome-gap|under-enforced","gaps":["..."]}`
+`{"ts":"<TIMESTAMP>","target":"rules/<RULE_BASENAME>","mode":"<MODE>","mean_adherence_recall":0.N,"outcome_correctness":0.N,"misapplied_rate":0.N,"trigger_recall":null,"trigger_precision":null,"problems":<N>,"verdict":"calibrated|outcome-gap|under-enforced","gaps":["trigger fidelity not measured: rule content injected directly","..."]}`
 
-Use `null` for `trigger_recall`/`trigger_precision` when `IS_PATH_SCOPED` is `false`.
+Use `null` for `trigger_recall`/`trigger_precision` for every rule.
 
 ### Phase 5 — Propose wording improvements
 
-Spawn **foundry:curator** subagent using Agent tool. Pass only file paths — do NOT paste file contents into prompt:
+```bash
+case '<RULE_PATH>' in *'<'*'>'*) echo "! BLOCKED — RULE_PATH not substituted"; exit 1;; esac
+```
+
+If this guard fails, record `caller did not supply RULE_PATH` in `gaps` in both the result and return envelope, skip the curator, and return the measured results with zero proposed changes. This caller omission is distinct from "No editable rule source available" after resolving a supplied path.
+
+Resolve `<RULE_PATH>` before spawning the curator: follow any symlink for reading. If its target is in an installed plugin, map the plugin's manifest `name` and the rule's relative path to the matching project plugin source; use that existing source file as `<RULE_SOURCE_PATH>`. A project-local or `--local` source rule uses its actual authored path. Never guess `.claude/rules/<RULE_BASENAME>` or designate a cache file as an editable source. If no matching source exists, write `proposal.md` with the resolved read path and "No editable rule source available", record the gap, and skip the curator.
+
+Spawn **foundry:curator** subagent using Agent tool within the shared tier ceiling and Phase 2 child batch limit. Pass only file paths — do NOT paste file contents into prompt:
 
 > Read these files using Read tool:
 >
-> 1. Rule file: `.claude/rules/<RULE_BASENAME>`
+> 1. Rule file: `<RULE_SOURCE_PATH>` (resolved from `<RULE_PATH>`)
 > 2. Benchmark report: `.reports/calibrate/<TIMESTAMP>/rules/<RULE_DIR>/benchmark-report.md` — focus on Systematic Gaps and Wording Improvement Opportunities sections
 >
 > For each under-enforced or outcome-gap directive, propose minimal rewording making directive more specific, action-prescribing, unambiguous. Keep surrounding context unchanged. If all directives calibrated, write: `## Proposed Changes — <RULE_BASENAME>\n\nNo changes needed — all directives calibrated.`
@@ -220,7 +201,7 @@ Spawn **foundry:curator** subagent using Agent tool. Pass only file paths — do
 > ## Proposed Changes — <RULE_BASENAME>
 >
 > ### Change N: <directive summary>
-> **File**: `.claude/rules/<RULE_BASENAME>`
+> **File**: `<RULE_SOURCE_PATH>`
 > **Current**: [exact verbatim text]
 > **Proposed**: [exact replacement]
 > **Rationale**: one sentence — what failure mode this prevents
@@ -232,6 +213,6 @@ Spawn **foundry:curator** subagent using Agent tool. Pass only file paths — do
 
 Return **only** this compact JSON (no prose before or after):
 
-`{"rule":"<RULE_BASENAME>","mean_adherence_recall":0.N,"outcome_correctness":0.N,"misapplied_rate":0.N,"trigger_recall":0.N,"trigger_precision":0.N,"problems":<N>,"verdict":"calibrated|outcome-gap|under-enforced","gaps":["..."],"proposed_changes":N}`
+`{"rule":"<RULE_BASENAME>","mean_adherence_recall":0.N,"outcome_correctness":0.N,"misapplied_rate":0.N,"trigger_recall":null,"trigger_precision":null,"problems":<N>,"verdict":"calibrated|outcome-gap|under-enforced","gaps":["trigger fidelity not measured: rule content injected directly","..."],"proposed_changes":N}`
 
-Use `null` for `trigger_recall`/`trigger_precision` when `IS_PATH_SCOPED` is `false`.
+Use `null` for `trigger_recall`/`trigger_precision` for every rule.

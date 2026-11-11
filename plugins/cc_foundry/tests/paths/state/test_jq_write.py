@@ -77,6 +77,7 @@ def _roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
     monkeypatch.setenv("TMPDIR", str(dirs["tmp"]))
     monkeypatch.setenv("HOME", str(dirs["home"]))
     monkeypatch.setenv("USERPROFILE", str(dirs["home"]))
+    monkeypatch.setattr(msp, "_PLUGIN_ROOT", tmp_path)
     return dirs
 
 

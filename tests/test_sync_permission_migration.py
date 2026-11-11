@@ -238,13 +238,12 @@ def _merge_call_flags(text: str, root: Path) -> dict[str, list[str]]:
     return flags
 
 
-def _guard_exit_code(command: str) -> tuple[int, str]:
-    """Return the gh-write guard's exit code and stderr for ``command`` sent as a Bash PreToolUse payload."""
+def _guard_result(command: str) -> subprocess.CompletedProcess[str]:
+    """Return the gh-write guard's full result for ``command`` sent as a Bash PreToolUse payload."""
     payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(ROOT)})
-    result = subprocess.run(
+    return subprocess.run(
         ["node", str(GH_WRITE_GUARD)], input=payload, capture_output=True, encoding="utf-8", check=False
     )
-    return result.returncode, result.stderr
 
 
 def _run_merge_script(
@@ -474,23 +473,25 @@ class TestSetupMergeGuard:
         root, _, blocks = _merge_blocks(plugin)
         command = blocks[0].replace("$PLUGIN_ROOT", expand(root))
 
-        code, stderr = _guard_exit_code(command)
+        result = _guard_result(command)
 
-        assert (code, stderr) == (0, "")
+        assert (result.returncode, result.stdout, result.stderr) == (0, "", "")
 
     @pytest.mark.integration
     @_requires_node
-    def test_guard_blocks_a_python_call_naming_gh_api(self) -> None:
-        """The guard still blocks a ``python`` call carrying ``gh api`` text, so the shipped-call test can fail.
+    def test_guard_asks_for_a_python_call_naming_gh_api(self) -> None:
+        """The guard requests permission for a Python call carrying gh text without an exact argv.
 
         Without this control a guard that stopped inspecting ``python`` arguments would make the shipped-call test pass
         for any command line and the retired-rule workaround would look verified when it is not needed.
         """
         command = f"python bin/merge_settings_permissions.py --allow a.json --drop-allow '{OLD_RULE}'"
 
-        code, _ = _guard_exit_code(command)
+        result = _guard_result(command)
 
-        assert code == 2
+        assert result.returncode == 0, result.stderr
+        assert result.stderr == ""
+        assert json.loads(result.stdout)["hookSpecificOutput"]["permissionDecision"] == "ask"
 
 
 class TestAllowMigration:

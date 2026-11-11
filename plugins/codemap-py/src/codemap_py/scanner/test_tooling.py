@@ -96,8 +96,7 @@ def extract_conftest_syspath(conftest_path: Path, root: Path) -> list[Path]:
 
     Args:
         conftest_path: filesystem path to the conftest.py file.
-        root: project root (unused today, reserved for future relative-to-root
-            anchoring; kept for API stability).
+        root: project root containing all accepted import directories.
 
     Returns:
         List of resolved absolute directory paths added to ``sys.path``.
@@ -124,11 +123,16 @@ def extract_conftest_syspath(conftest_path: Path, root: Path) -> list[Path]:
             continue
         arg = call.args[1]
         if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
-            results.append(conftest_dir / arg.value)
-            continue
-        resolved = _extract_path_file_parent_dir(arg, conftest_dir)
+            resolved = conftest_dir / arg.value
+        else:
+            resolved = _extract_path_file_parent_dir(arg, conftest_dir)
         if resolved is not None:
-            results.append(resolved)
+            try:
+                resolved = resolved.resolve()
+            except (OSError, RuntimeError):
+                continue
+            if resolved.is_relative_to(root.resolve()):
+                results.append(resolved)
             continue
         print(
             f"⚠ conftest: unsupported sys.path pattern at {conftest_path}:{call.lineno} — skipped",

@@ -31,6 +31,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 #: Directory of the check scripts, resolved from this file so registry script names map to real paths.
@@ -169,6 +170,29 @@ def run_checks(scope: Path) -> list[dict[str, object]]:
     return results
 
 
+def _write_jsonl(output: Path, results: list[dict[str, object]]) -> None:
+    """Replace the report atomically without following links in its output directory."""
+    current = output.absolute().parent
+    trusted = {Path.cwd(), Path(tempfile.gettempdir()).absolute()}
+    while current not in trusted:
+        if current.is_symlink():
+            raise OSError(f"refusing symlinked report directory: {current}")
+        parent = current.parent
+        if parent == current:
+            break
+        current = parent
+    fd, staging = tempfile.mkstemp(prefix=f".{output.name}.", suffix=".tmp", dir=output.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write("".join(json.dumps(r) + "\n" for r in results))
+        mask = os.umask(0)
+        os.umask(mask)
+        os.chmod(staging, 0o666 & ~mask)
+        os.replace(staging, output)
+    finally:
+        Path(staging).unlink(missing_ok=True)
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point."""
     parser = argparse.ArgumentParser(description="Deterministic Layer-1 static audit pass")
@@ -183,7 +207,11 @@ def main(argv: list[str] | None = None) -> int:
 
     results = run_checks(scope)
     if args.jsonl:
-        Path(args.jsonl).write_text("".join(json.dumps(r) + "\n" for r in results), encoding="utf-8")
+        try:
+            _write_jsonl(Path(args.jsonl), results)
+        except OSError as error:
+            print(f"audit_static: cannot write report: {error}", file=sys.stderr)
+            return 2
 
     failed = 0
     for r in results:

@@ -194,6 +194,88 @@ def _guard(
     return _run
 
 
+@pytest.mark.parametrize(
+    ("hook", "command", "site", "reason"),
+    [
+        pytest.param("commit-guard.js", "git push origin main", "main", "git push blocked", id="push-after-read"),
+        pytest.param(
+            "commit-guard.js", "git push origin main", "pushVerdict", "git push blocked", id="push-before-token"
+        ),
+        pytest.param("gh-write-guard.js", "gh issue create -t x -b y", "findWrite", "gh write blocked", id="gh-write"),
+    ],
+)
+def test_completed_reading_keeps_token_gate_after_deadline(
+    run_hook: Callable, git_repo: Path, tmp_path: Path, hook: str, command: str, site: str, reason: str
+) -> None:
+    """A clock expiring only at a finished reading cannot replace the write token gate with permission."""
+    clock = tmp_path / "clock.cjs"
+    clock.write_text(
+        f"const site = {json.dumps(site)}; let reads = 0;\n"
+        "Date.now = () => {\n"
+        "  const caller = new Error().stack.split('\\n')[2] || '';\n"
+        "  if (site === 'main') return caller.includes('at Socket.handlePayload (') && ++reads > 1 ? 2001 : 0;\n"
+        "  return caller.includes('at ' + site + ' (') ? 2001 : 0;\n"
+        "};\n",
+        encoding="utf-8",
+    )
+    result = run_hook(
+        hook,
+        _push_payload(command, git_repo),
+        cwd=git_repo,
+        home=tmp_path,
+        env_extra={"CLAUDE_PROJECT_DIR": str(git_repo), "NODE_OPTIONS": f"--require {json.dumps(clock.as_posix())}"},
+    )
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert reason in result.stderr
+    assert "deadline" not in result.stderr
+    assert result.stdout == ""
+
+
+@pytest.mark.parametrize(
+    ("expiry", "reason"),
+    [
+        pytest.param("remote", "cannot read for a directory change", id="after-git-subprocess"),
+        pytest.param("git-read", "cannot read for a git invocation", id="during-git-scope-read"),
+    ],
+)
+def test_completed_push_reading_blocks_when_scope_deadline_expires(
+    run_hook: Callable, git_repo: Path, tmp_path: Path, expiry: str, reason: str
+) -> None:
+    """A completed push remains blocked when Git discovery or later scope reading exhausts the read budget."""
+    clock = tmp_path / "clock.cjs"
+    observed = tmp_path / "expired.txt"
+    clock.write_text(
+        f"const expiry = {json.dumps(expiry)}; const observed = {json.dumps(str(observed))};\n"
+        "const fs = require('fs'); const cp = require('child_process');\n"
+        "const exec = cp.execFileSync; let expired = false; let reads = 0;\n"
+        "Error.stackTraceLimit = 30;\n"
+        "const expire = () => { expired = true; fs.writeFileSync(observed, 'expired'); };\n"
+        "cp.execFileSync = function(file, args, options) {\n"
+        "  const result = exec(file, args, options);\n"
+        "  if (expiry === 'remote' && file === 'git' && args[0] === 'remote') expire();\n"
+        "  return result;\n"
+        "};\n"
+        "Date.now = () => {\n"
+        "  const frames = new Error().stack.split('\\n');\n"
+        "  if (expiry === 'git-read' && frames[3]?.includes('at findInvocations (') &&\n"
+        "      frames.some(frame => frame.includes('at uncoveredProblem (')) && ++reads === 5) expire();\n"
+        "  return expired ? 2001 : 0;\n"
+        "};\n",
+        encoding="utf-8",
+    )
+    result = run_hook(
+        "commit-guard.js",
+        _push_payload(APPROVED, git_repo),
+        cwd=git_repo,
+        home=tmp_path,
+        env_extra={"CLAUDE_PROJECT_DIR": str(git_repo), "NODE_OPTIONS": f"--require {json.dumps(clock.as_posix())}"},
+    )
+    assert observed.read_text(encoding="utf-8") == "expired"
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert reason in result.stderr
+    assert result.stdout == ""
+
+
 class TestGitDiagnostics:
     """The ``git-subprocess-diagnostics.js`` preload keeps git failures intact while reporting what failed."""
 
@@ -361,34 +443,39 @@ class TestCommitGuard:
         assert "forbidden" in result.stderr
 
     @pytest.mark.parametrize(
-        "command",
+        ("command", "expected_exit"),
         [
-            pytest.param("git $'\\x{70}ush' -f origin main", id="hex-brace-escape-subcommand"),
-            pytest.param("$'\\x{67}it' push", id="hex-brace-escape-program"),
-            pytest.param('echo $"hello"', id="locale-string-without-git"),
-            pytest.param('echo "${ git push -f origin main; }"', id="bash-5-3-command-brace-in-double-quotes"),
-            pytest.param("cat <<EOF\n${ git push -f origin main; }\nEOF", id="bash-5-3-command-brace-in-heredoc"),
-            pytest.param('gh pr view "${|git push -f origin main;}"', id="bash-5-3-value-brace-as-an-argument"),
-            pytest.param("$\\\n'\\x67it' push -f origin main", id="continued-ansi-c-program"),
-            pytest.param("echo $\\\n'\\''; $'\\x67it' push -f origin main #'", id="continued-ansi-c-quote"),
-            pytest.param("cat <<EOF\nEO\\\nF\n$'\\x67it' push -f origin main\nEOF", id="continued-terminator-line"),
+            pytest.param("git $'\\x{70}ush' -f origin main", 0, id="hex-brace-escape-subcommand"),
+            pytest.param("$'\\x{67}it' push", 0, id="hex-brace-escape-program"),
+            pytest.param('echo "${ git push -f origin main; }"', 0, id="bash-5-3-command-brace-in-double-quotes"),
+            pytest.param("cat <<EOF\n${ git push -f origin main; }\nEOF", 0, id="bash-5-3-command-brace-in-heredoc"),
+            pytest.param('gh pr view "${|git push -f origin main;}"', 2, id="bash-5-3-value-brace-as-an-argument"),
+            pytest.param("$\\\n'\\x67it' push -f origin main", 0, id="continued-ansi-c-program"),
+            pytest.param("echo $\\\n'\\''; $'\\x67it' push -f origin main #'", 0, id="continued-ansi-c-quote"),
+            pytest.param("cat <<EOF\nEO\\\nF\n$'\\x67it' push -f origin main\nEOF", 0, id="continued-terminator-line"),
         ],
     )
     def test_shell_dependent_quoting_blocked_with_its_own_reason(
-        self, guard: Callable, git_repo: Path, push_token: Callable, command: str
+        self, guard: Callable, git_repo: Path, push_token: Callable, command: str, expected_exit: int
     ) -> None:
-        """Quoting bash and zsh read differently may hide a push, so it blocks even with a token.
+        """Visible force pushes block; other shell-dependent quoting requests permission and keeps the token.
 
-        The reason names the quoting, not a force push: ``echo $"hello"`` pushes nothing, and a message claiming a force
-        push would send the reader looking for one.
+        A plain token scan can identify a force push even when other quoting prevents an exact argv.
         """
-        push_token(git_repo)
+        token = push_token(git_repo)
 
         result = guard(command)
 
-        assert result.returncode == 2
-        assert "bash and zsh read differently" in result.stderr
-        assert "force-push" not in result.stderr
+        assert result.returncode == expected_exit, result.stderr
+        decision = json.loads(result.stdout or "{}").get("hookSpecificOutput", {})
+        assert decision.get("permissionDecision") == ("ask" if expected_exit == 0 else None)
+        assert ("cannot read this command exactly" in decision.get("permissionDecisionReason", "")) is (
+            expected_exit == 0
+        )
+        assert (result.stdout == "") is (expected_exit == 2)
+        assert ("force-push is forbidden" in result.stderr) is (expected_exit == 2)
+        assert (result.stderr == "") is (expected_exit == 0)
+        assert token.exists()
 
     @pytest.mark.parametrize(
         ("command", "construct"),
@@ -400,17 +487,17 @@ class TestCommitGuard:
         ],
     )
     def test_unreadable_syntax_block_names_the_construct(self, guard: Callable, command: str, construct: str) -> None:
-        """A command with no git at all, blocked for syntax the guards cannot read, is told which syntax — not a push.
+        """Unreadable syntax beside a git read asks permission and names the construct rather than a push.
 
-        The block itself stays (the syntax may hide a push), but a message opening with "git push blocked" and a force
-        ban sends the reader looking for a push that is not there.
+        A synthetic force reading must never become a force ban when inspection could not determine the argv.
         """
-        result = guard(command)
+        result = guard(command + "; git status")
 
-        assert result.returncode == 2
-        assert construct in result.stderr
-        assert not result.stderr.startswith("git push blocked")
-        assert "force" not in result.stderr
+        assert result.returncode == 0, result.stderr
+        decision = json.loads(result.stdout)["hookSpecificOutput"]
+        assert decision["permissionDecision"] == "ask"
+        assert construct in decision["permissionDecisionReason"]
+        assert result.stderr == ""
 
     @pytest.mark.parametrize(
         "command",
@@ -1309,7 +1396,6 @@ class TestForcePushSpelling:
             pytest.param('git -C "dir with space" push --force', id="quoted-dir-with-space"),
             pytest.param('git -C "a;b" push -f', id="quoted-dir-with-operator"),
             pytest.param("git --future-opt value push -f", id="unknown-global-option-with-value"),
-            pytest.param("git commit -m 'unbalanced; echo git push -f", id="unbalanced-quote-fails-closed"),
             pytest.param("echo run git push -f", id="unquoted-prose-fails-closed"),
             # S1: the program name ignores case, as macOS and Windows file systems do
             pytest.param("GIT push --force", id="upper-case-git"),
@@ -1320,7 +1406,6 @@ class TestForcePushSpelling:
             pytest.param("git -c alias.yolo='push --force' yolo", id="inline-alias-with-force"),
             pytest.param("git -c alias.p=push p -f", id="inline-alias"),
             pytest.param("git -c 'alias.x=!git push -f' x", id="inline-shell-alias"),
-            pytest.param("git --config-env=alias.q=FOO q", id="config-env-alias"),
             pytest.param("git send-pack --force origin main", id="send-pack-force"),
             pytest.param("git send-pack --mirror origin", id="send-pack-mirror"),
             pytest.param("git http-push --force https://example.invalid/repo main", id="http-push-force"),
@@ -1361,8 +1446,6 @@ class TestForcePushSpelling:
             # Scope D: an unquoted glob may expand to a planted file named like a flag or refspec
             pytest.param("git push origin -?", id="glob-flag"),
             pytest.param("git push origin ?main", id="glob-refspec"),
-            pytest.param('git push origin "?main', id="glob-on-unbalanced-quote-fails-closed"),
-            pytest.param("git push origin ?main {1..300}", id="glob-on-oversized-braces-fails-closed"),
             # A redirection is never an argument: one before the subcommand no longer reads as the subcommand
             pytest.param("git 2>/dev/null push -f origin main", id="redirection-before-subcommand"),
             pytest.param("git > x push -f origin main", id="separate-redirection-before-subcommand"),
@@ -1579,27 +1662,29 @@ class TestMissingLibrary:
         return bare_hook
 
     @pytest.mark.parametrize(
-        ("command", "expected"),
+        "command",
         [
-            pytest.param("git push origin main", 2, id="push-blocked"),
-            pytest.param("{ git push; }", 2, id="grouped-push-blocked"),
-            pytest.param("GIT PUSH origin main", 2, id="upper-case-push-blocked"),
-            pytest.param("git send-pack origin main", 2, id="send-pack-blocked"),
-            pytest.param("git remote-https origin https://example.invalid/r", 2, id="remote-helper-blocked"),
-            pytest.param("git status", 0, id="non-push-passes"),
-            pytest.param("git remote -v", 0, id="remote-listing-passes"),
+            "git push origin main",
+            "{ git push; }",
+            "GIT PUSH origin main",
+            "git send-pack origin main",
+            "git remote-https origin https://example.invalid/r",
+            "git status",
+            "git remote -v",
         ],
     )
-    def test_push_fails_closed(self, bare_hook: Path, git_repo: Path, command: str, expected: int) -> None:
-        """A crash would exit 1, which Claude Code treats as non-blocking; the guard exits 2 for a push instead.
+    def test_push_fails_closed(self, bare_hook: Path, git_repo: Path, command: str) -> None:
+        """A missing lexer requests permission for every named git command, including reads.
 
         Scenario: the hook runs from a directory with no `lib/`, so it cannot lex the command. Every push-looking
-        command blocks while unrelated commands pass.
+        command asks while unrelated commands pass.
         """
         result = _run_copied_hook(bare_hook, git_repo, _bash_event(command), bind_project=False)
 
-        assert result.returncode == expected, result.stderr
-        assert ("shell-git.js" in result.stderr) == (expected == 2)
+        assert result.returncode == 0, result.stderr
+        decision = json.loads(result.stdout)["hookSpecificOutput"]
+        assert decision["permissionDecision"] == "ask"
+        assert "shell-git.js" in decision["permissionDecisionReason"]
 
     @pytest.mark.parametrize(
         ("command", "expected"),

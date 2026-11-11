@@ -206,23 +206,24 @@ def read_transcript(path: Path) -> tuple[list[str], set[str]]:
     """
     commands: list[str] = []
     skills: set[str] = set()
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        for match in SKILL_CALL.finditer(line):
-            skills.add(f"{match.group(1)}:{match.group(2)}")
-        try:
-            record = json.loads(line)
-        except ValueError:
-            continue
-        content = (record.get("message") or {}).get("content")
-        if not isinstance(content, list):
-            continue
-        for item in content:
-            if not isinstance(item, dict):
+    with path.open(encoding="utf-8", errors="replace") as transcript:
+        for line in transcript:
+            for match in SKILL_CALL.finditer(line):
+                skills.add(f"{match.group(1)}:{match.group(2)}")
+            try:
+                record = json.loads(line)
+            except ValueError:
                 continue
-            if item.get("type") == "tool_use" and item.get("name") == "Bash":
-                command = (item.get("input") or {}).get("command")
-                if command:
-                    commands.append(command)
+            content = (record.get("message") or {}).get("content")
+            if not isinstance(content, list):
+                continue
+            for item in content:
+                if not isinstance(item, dict):
+                    continue
+                if item.get("type") == "tool_use" and item.get("name") == "Bash":
+                    command = (item.get("input") or {}).get("command")
+                    if command:
+                        commands.append(command)
     return commands, skills
 
 
@@ -245,13 +246,17 @@ class Classifier:
         if self._shape_hook is None:
             return False
         payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}})
-        result = subprocess.run(  # noqa: S603 - argv list, no shell; resolved node and fixed hook path
-            [self._resolve_node(), str(self._shape_hook)],
-            input=payload,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        try:
+            result = subprocess.run(  # noqa: S603 - argv list, no shell; resolved node and fixed hook path
+                [self._resolve_node(), str(self._shape_hook)],
+                input=payload,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=30.0,
+            )
+        except subprocess.TimeoutExpired:
+            return False
         return '"allow"' in result.stdout
 
     @staticmethod

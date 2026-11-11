@@ -9,6 +9,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import ModuleType
@@ -245,7 +246,8 @@ def _launches_for_plan(
 def _fake_public_processes(monkeypatch: pytest.MonkeyPatch, launches: list[list[dict[str, object]]]) -> _PopenFactory:
     """Install fake process and version boundaries while keeping public adapter paths intact."""
     adapter = _adapter()
-    factory = _PopenFactory(launches)
+    factory = _PopenFactory(launches[1:] if len(launches) > 1 else launches)
+    monkeypatch.setattr(adapter, "_discover_mcp_servers", lambda *args: ["local"])
     # Protocol tests supply synthetic source records; source-binding tests restore
     # the real checkout boundary and exercise it against a local Git repository.
     monkeypatch.setattr(adapter, "_live_source_unchanged", lambda *args: None)
@@ -289,8 +291,8 @@ def _fake_host_with_git(monkeypatch: pytest.MonkeyPatch, launches: list[list[dic
 
 
 def _requests(factory: _PopenFactory) -> list[dict[str, object]]:
-    """Return the JSON-RPC requests the adapter wrote to the fake reviewer host (second process)."""
-    return [json.loads(line) for line in factory.processes[1].stdin.getvalue().splitlines()]
+    """Return the JSON-RPC requests the adapter wrote to the single fake reviewer host."""
+    return [json.loads(line) for line in factory.processes[0].stdin.getvalue().splitlines()]
 
 
 def _request_methods(factory: _PopenFactory) -> list[str]:
@@ -961,14 +963,14 @@ class TestAdapterSurface:
         closed instead of buffering without bound.
         """
         adapter = _adapter()
-        client = adapter._JsonRpcStdio(_FakeProcess([]), 1.0)
-        frames = iter(_response(2, {}) for _ in range(adapter.MAX_BUFFERED_EVENTS + 1))
+        client = adapter._JsonRpcStdio(_FakeProcess([]), time.monotonic() + 5)
+        frames = iter(_response(2, {}) for _ in range(adapter.MAX_PENDING_EVENTS + 1))
         monkeypatch.setattr(client, "_read", lambda: next(frames))
 
         with pytest.raises(adapter.ReviewRouteError, match="app-server-pending-events-overflow"):
             client.request("initialize", {})
 
-        assert len(client._pending) == adapter.MAX_BUFFERED_EVENTS
+        assert len(client._pending) == adapter.MAX_PENDING_EVENTS
 
 
 class TestReviewOutput:
@@ -1070,7 +1072,7 @@ class TestReviewOutput:
         """Retain malformed output but never accept or repair it behind the reviewer's receipt.
 
         The first reviewer returns truncated JSON; the file is kept verbatim, evidence records the failure, and exactly
-        two host processes ran, so nothing was retried.
+        one host process ran, so nothing was retried.
         """
         plan_path, _ = review_evidence_files(tmp_path)
         malformed = '{"findings": ['
@@ -1081,7 +1083,7 @@ class TestReviewOutput:
         assert (output / "challenger.md").read_text(encoding="utf-8") == malformed
         evidence = json.loads((output / "evidence.json").read_text(encoding="utf-8"))
         assert evidence["status"] == "failed"
-        assert len(factory.processes) == 2
+        assert len(factory.processes) == 1
 
     def test_retains_valid_source_bound_finding(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """A schema-valid open finding bound to the frozen source and diff is accepted and retained verbatim.
@@ -1185,8 +1187,8 @@ class TestCheckHost:
         requests = _request_methods(factory)
         assert requests.count("thread/start") == 2
         assert "turn/start" not in requests
-        assert "mcp_servers={}" in factory.commands[1]
-        assert "mcp_servers.local.enabled=false" in factory.commands[1]
+        assert "mcp_servers={}" in factory.commands[0]
+        assert "mcp_servers.local.enabled=false" in factory.commands[0]
         request_payloads = _requests(factory)
         thread_starts = [request["params"] for request in request_payloads if request["method"] == "thread/start"]
         assert request_payloads[0]["params"]["capabilities"] == {"experimentalApi": True}
@@ -1878,9 +1880,9 @@ class TestDispatchAdmission:
         launch = subprocess.Popen
 
         def change_source_on_host_launch(*args: object, **kwargs: object) -> _FakeProcess:
-            """Change only the live leaf after the second external host process starts."""
+            """Change only the live leaf after the restricted host process starts."""
             process = launch(*args, **kwargs)
-            if len(factory.processes) == 2:
+            if len(factory.processes) == 1:
                 (repository / "widget.py").write_text("VALUE = 2\n", encoding="utf-8", newline="\n")
             return process
 
@@ -1918,7 +1920,7 @@ class TestDispatchAdmission:
         def launch_with_source_change(*args: object, **kwargs: object) -> _FakeProcess:
             """Attach the source-changing stdin to the reviewer host process only."""
             process = launch(*args, **kwargs)
-            if len(factory.processes) == 2:
+            if len(factory.processes) == 1:
                 process.stdin = SourceChangingStdin()
             return process
 
@@ -2305,7 +2307,7 @@ class TestRunReviewLifecycle:
         assert evidence["failure_code"] == "evidence-output-empty-or-secret"
         assert evidence["failure_phase"] == "evidence-validation"
         assert evidence["cleanup"] == "completed"
-        assert len(cleanup_calls) == 2
+        assert len(cleanup_calls) == 1
         assert (output / "cicd-steward.md").read_text(encoding="utf-8") == _review_answer(plan_path)
 
 

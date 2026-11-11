@@ -1,7 +1,7 @@
 """Tests for ``bin/parse_kaggle_args.py`` — kaggle competition name and mode flags.
 
 Covers:
-* Competition name from the first token, including a leading-dash argument string
+* Competition name from the first token, rejecting empty or leading-flag argument strings
 * Mode-flag precedence: inference forces offline, EDA overrides offline
 * ``--type``, ``--resume``, ``--keep`` extraction — the flags the zsh ``BASH_REMATCH`` twin dropped
 * Sentinel names, values, trailing newline, stale-contract clearing, and ``.experiments/kaggle/``
@@ -116,32 +116,21 @@ class TestMain:
         """A first run with no contract file to clear still exits 0."""
         assert main(["--", "titanic"]) == 0
 
-    @pytest.mark.parametrize(
-        ("arguments", "expected_out", "sentinel", "expected_sentinel"),
-        [
-            pytest.param("--eda-only", "Competition: --eda-only", "eda-only", "true\n", id="leading-dash-arguments"),
-            pytest.param("", "Competition: \n", "competition-name", "\n", id="empty-arguments"),
-        ],
-    )
+    @pytest.mark.parametrize("arguments", ["--eda-only", ""])
     def test_edge_case_arguments_parse(
         self,
         project: Path,
         capsys: pytest.CaptureFixture[str],
         arguments: str,
-        expected_out: str,
-        sentinel: str,
-        expected_sentinel: str,
     ) -> None:
-        """Unusual ``$ARGUMENTS`` strings parse without error.
+        """A missing competition or flag in its place fails before creating state."""
+        with pytest.raises(SystemExit) as exc:
+            main(["--", arguments])
 
-        ``$ARGUMENTS`` may start with a flag; the ``--`` separator must absorb it. An empty string yields an empty
-        competition name.
-        """
-        code = main(["--", arguments])
-
-        assert code == 0
-        assert expected_out in capsys.readouterr().out
-        assert _sentinel(project, sentinel) == expected_sentinel
+        assert exc.value.code == 2
+        assert "usage:" in capsys.readouterr().err
+        assert not (project / "work" / ".experiments").exists()
+        assert not (project / "sentinels" / "kaggle-competition-name-testsess").exists()
 
     def test_keep_flag_tolerates_multiple_spaces(self, project: Path) -> None:
         """``--keep`` followed by several spaces before its quoted value still extracts the value."""

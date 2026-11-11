@@ -115,11 +115,15 @@ def probe(ref: str, symbol: str, path: str) -> int:
     Returns:
         ``EXIT_FOUND`` when a candidate binding exists, otherwise ``EXIT_INCONCLUSIVE``.
     """
-    if not is_valid_path(path):
+    if not ref or ref.startswith("-") or not is_valid_path(path):
         return EXIT_INCONCLUSIVE
     try:
         # argv list, no shell; git resolved via PATH on purpose, ref/path are data after `show`
-        source = subprocess.run(["git", "show", f"{ref}:{path}"], capture_output=True, check=False)  # noqa: S603, S607
+        source = subprocess.run(  # noqa: S603
+            ["git", "show", "--end-of-options", f"{ref}:{path}"],  # noqa: S607
+            capture_output=True,
+            check=False,
+        )
     except OSError as error:
         print(f"Cannot run git: {error}", file=sys.stderr)
         return EXIT_INCONCLUSIVE
@@ -128,7 +132,7 @@ def probe(ref: str, symbol: str, path: str) -> int:
         return EXIT_INCONCLUSIVE
     try:
         tree = ast.parse(source.stdout)
-    except (SyntaxError, UnicodeError, ValueError) as error:
+    except (SyntaxError, UnicodeError, ValueError, RecursionError, MemoryError) as error:
         print(f"Cannot parse {ref}:{path}: {error}", file=sys.stderr)
         return EXIT_INCONCLUSIVE
     return EXIT_FOUND if declares_symbol(tree, symbol) else EXIT_INCONCLUSIVE

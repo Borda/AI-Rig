@@ -259,6 +259,21 @@ def _run_query(rest: Sequence[str], plugin_root: Path) -> int:
         query.main(argv)
     except SystemExit as exc:
         return exc.code if isinstance(exc.code, int) else _RUNTIME_ERROR_EXIT
+    except (KeyError, TypeError, ValueError) as exc:
+        detail = f"{type(exc).__name__}: {exc}"
+        sys.stderr.write(f"codemap: index failed self-check — {detail}\n")
+        sys.stdout.write(
+            json.dumps(
+                {
+                    "error": "index failed self-check",
+                    "reason": "invalid_entries",
+                    "detail": detail,
+                    "fix": "Re-run /codemap-py:scan-codebase to rebuild.",
+                }
+            )
+            + "\n"
+        )
+        return query._EXIT_NOT_INDEXED
     return 0
 
 

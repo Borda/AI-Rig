@@ -6,7 +6,7 @@
  * run is always backed by checked evidence.
  */
 
-import { appendFileSync, existsSync, writeFileSync } from "node:fs"
+import { appendFileSync, chmodSync, existsSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { sha256, type ScopeEntry } from "./digest.ts"
 import { PLUGIN_VERSION, SCHEMA_VERSION } from "./version.ts"
@@ -41,6 +41,7 @@ export interface GateReceipt {
   readonly stderr_sha256: string
   readonly tail: string
   readonly reason?: string
+  readonly source_digest?: string
 }
 
 export interface FindingsSummary {
@@ -148,7 +149,17 @@ export function appendJournal(paths: RigPaths, run: RunRecord, record: Record<st
   const directory = runDirectory(paths, run.skill, run.run_id)
   const path = join(directory, "journal.jsonl")
   ensureDir(directory)
-  appendFileSync(path, `${JSON.stringify({ schema: SCHEMA_VERSION, run_id: run.run_id, ...record })}\n`, "utf8")
+  appendFileSync(path, `${JSON.stringify({ schema: SCHEMA_VERSION, run_id: run.run_id, ...record })}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  })
+  chmodSync(path, 0o600)
+}
+
+/** Select the latest receipt per gate that still applies to the run's source. */
+export function currentGateReceipts(run: RunRecord): GateReceipt[] {
+  const latest = new Map(run.gates.map((receipt) => [receipt.id, receipt]))
+  return [...latest.values()].filter((receipt) => receipt.source_digest === run.scope.digest)
 }
 
 export interface SkillRequirements {
@@ -209,13 +220,17 @@ export function finalizeRun(run: RunRecord, input: FinalizeInput): FinalizeResul
     return {
       ok: false,
       problems: ["source drift: the scope digest no longer matches the recorded inventory"],
-      status: "stale",
+      status: requirements.loop && run.loop && run.loop.stop_reason !== "converged" ? "blocked" : "stale",
     }
   }
 
   if (requirements.gates) {
-    const failed = run.gates.filter((gate) => gate.status === "failed")
-    const passed = run.gates.filter((gate) => gate.status === "passed")
+    const current = currentGateReceipts(run)
+    const currentIds = new Set(current.map((gate) => gate.id))
+    const staleIds = [...new Set(run.gates.map((gate) => gate.id))].filter((id) => !currentIds.has(id))
+    if (staleIds.length > 0) problems.push(`gate receipts do not match the current scope: ${staleIds.join(", ")}`)
+    const failed = current.filter((gate) => gate.status === "failed")
+    const passed = current.filter((gate) => gate.status === "passed")
     if (failed.length > 0) problems.push(`failed gates: ${failed.map((gate) => gate.id).join(", ")}`)
     if (passed.length === 0 && !run.gate_exemption) {
       problems.push("no passing gate receipt; run rig_gate or record gate_exemption")
@@ -241,7 +256,6 @@ export function finalizeRun(run: RunRecord, input: FinalizeInput): FinalizeResul
   if (requirements.loop) {
     if (!run.loop) {
       problems.push("challenge loop ledger is missing; use rig_loop")
-      loopBlocked = true
     } else {
       if (run.loop.stop_reason !== "converged") {
         problems.push(`challenge loop stopped with '${run.loop.stop_reason}', not convergence`)
@@ -261,11 +275,16 @@ export function finalizeRun(run: RunRecord, input: FinalizeInput): FinalizeResul
 }
 
 export function renderReport(run: RunRecord): string {
+  const current = new Set(currentGateReceipts(run))
+  const latest = new Map(run.gates.map((gate) => [gate.id, gate]))
   const gates = run.gates.length
     ? run.gates
-        .map((gate) => `| \`${gate.id}\` | ${gate.status} | ${gate.exit_code ?? "-"} | \`${gate.command}\` |`)
+        .map((gate) => {
+          const currency = current.has(gate) ? "current" : latest.get(gate.id) === gate ? "stale" : "superseded"
+          return `| \`${gate.id}\` | ${gate.status} | ${gate.exit_code ?? "-"} | \`${gate.command}\` | ${currency} |`
+        })
         .join("\n")
-    : "| - | not-run | - | no gate receipts |"
+    : "| - | not-run | - | no gate receipts | - |"
 
   const findings = run.findings
     ? `| open | fixed | rejected | deferred | accepted-risk |\n| --- | --- | --- | --- | --- |\n| ${run.findings.open} | ${run.findings.fixed} | ${run.findings.rejected} | ${run.findings.deferred} | ${run.findings.accepted_risk} |`
@@ -295,8 +314,8 @@ ${run.plan ? `- Plan: \`${run.plan.path}\` (\`${run.plan.digest}\`)` : ""}
 
 ## Gates
 
-| Gate | Status | Exit | Command |
-| --- | --- | --- | --- |
+| Gate | Status | Exit | Command | Currency |
+| --- | --- | --- | --- | --- |
 ${gates}
 
 ## Findings

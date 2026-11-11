@@ -57,7 +57,16 @@
       "permissions": [
         { "action": "edit", "resource": "*", "effect": "deny" },
         { "action": "read", "resource": "*", "effect": "allow" },
-        { "action": "webfetch", "resource": "*", "effect": "allow" },
+        { "action": "read", "resource": ".env*", "effect": "deny" },
+        { "action": "read", "resource": "**/.env*", "effect": "deny" },
+        { "action": "read", "resource": "*.pem", "effect": "deny" },
+        { "action": "read", "resource": "*id_rsa*", "effect": "deny" },
+        { "action": "read", "resource": "~/.ssh/**", "effect": "deny" },
+        { "action": "read", "resource": "**/.ssh/**", "effect": "deny" },
+        { "action": "read", "resource": "~/.config/**", "effect": "deny" },
+        { "action": "read", "resource": "**/.config/**", "effect": "deny" },
+        { "action": "read", "resource": "*credentials*", "effect": "deny" },
+        { "action": "webfetch", "resource": "*", "effect": "ask" },
         { "action": "shell", "resource": "*", "effect": "ask" }
       ]
     },

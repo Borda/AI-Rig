@@ -43,6 +43,7 @@ import re
 import shlex
 import subprocess
 from datetime import datetime, timezone
+from glob import escape
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
@@ -200,10 +201,35 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
 
 def _find_rollout(codex_home: Path, thread_id: str) -> Path:
     """Find the unique rollout log for a Codex thread ID."""
-    matches = list((codex_home / "sessions").rglob(f"*{thread_id}*.jsonl"))
+    if not isinstance(thread_id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", thread_id):
+        raise SystemExit("provenance-thread-id-invalid")
+    matches = list((codex_home / "sessions").rglob(f"*{escape(thread_id)}*.jsonl"))
     if len(matches) != 1:
         raise SystemExit(f"provenance-rollout-count:{thread_id}:{len(matches)}")
     return matches[0]
+
+
+def _session_metadata(codex_home: Path) -> list[dict[str, Any]]:
+    """Index session lineage and retain unknown files so absence proofs fail closed."""
+    sessions = []
+    for path in (codex_home / "sessions").rglob("*.jsonl"):
+        try:
+            with path.open("rb") as stream:
+                line = stream.readline(8 * 1024 * 1024)
+            if len(line) == 8 * 1024 * 1024:
+                raise ValueError("provenance-session-unreadable")
+            row = json.loads(line.decode("utf-8"))
+        except (OSError, ValueError, RecursionError):
+            sessions.append({"error": "provenance-session-unreadable", "path": str(path)})
+            continue
+        if isinstance(row, dict) and row.get("type") == "session_meta" and isinstance(row.get("payload"), dict):
+            sessions.append(
+                {
+                    key: row["payload"].get(key)
+                    for key in ("id", "timestamp", "parent_thread_id", "agent_path", "source")
+                }
+            )
+    return sessions
 
 
 def _event_payloads(rows: list[dict[str, Any]], event_type: str) -> list[dict[str, Any]]:
@@ -248,6 +274,7 @@ def _validate_direct_review(
     parent_thread_id: str,
     *,
     original_role: str | None = None,
+    session_index: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Validate native role assignments and lifecycle without prescribing source-read commands.
 
@@ -257,6 +284,8 @@ def _validate_direct_review(
     as completed review evidence or recursively validating other roles' retry histories.
     """
     import review_prepare  # Resolve the existing circular producer/validator boundary after module initialization.
+
+    session_index = _session_metadata(codex_home) if session_index is None else session_index
 
     if manifest.get("manifest_kind") != "direct-review" or manifest.get("parent_thread_id") != parent_thread_id:
         raise SystemExit("review-direct-identity-mismatch")
@@ -506,6 +535,7 @@ def _validate_direct_review(
             direct_delivery=True,
             model=selected_model,
             effort=role_card["model_reasoning_effort"],
+            session_index=session_index,
         ):
             raise SystemExit(f"review-direct-lineage-mismatch:{role}")
         child_rows = _read_jsonl(_find_rollout(codex_home, thread))
@@ -1076,21 +1106,20 @@ def _inspection_child_called_tool(child_rows: list[dict[str, Any]]) -> bool:
 
 def _missing_reader_error_path(diagnostic: object) -> str | None:
     """Recognize Python's pre-source missing-script error without converting its serialized filename."""
-    missing = (
-        re.fullmatch(r"(.+?): can't open file '(.+)': \[Errno 2\] No such file or directory\r?\n?", diagnostic)
-        if isinstance(diagnostic, str)
-        else None
-    )
+    if not isinstance(diagnostic, str) or len(diagnostic) > 65536:
+        return None
+    executable, separator, remainder = diagnostic.partition(": can't open file '")
+    missing = re.fullmatch(r"(.+)': \[Errno 2\] No such file or directory\r?\n?", remainder) if separator else None
     if missing is None or not (
-        (PurePosixPath(missing[1]).is_absolute() or PureWindowsPath(missing[1]).is_absolute())
+        (PurePosixPath(executable).is_absolute() or PureWindowsPath(executable).is_absolute())
         and (
-            PurePosixPath(missing[1]).name.lower().startswith("python")
-            or PureWindowsPath(missing[1]).name.lower().startswith("python")
+            PurePosixPath(executable).name.lower().startswith("python")
+            or PureWindowsPath(executable).name.lower().startswith("python")
         )
     ):
         return None
     # Python quotes the filename with repr(), which doubles every backslash of a Windows coordinate.
-    return missing[2].replace("\\\\", "\\")
+    return missing[1].replace("\\\\", "\\")
 
 
 def _binary_source_diagnostic(diagnostic: object, executable: str) -> bool:
@@ -1593,6 +1622,7 @@ def _related_capacity_release(
     refusal: dict[str, Any],
     next_call_at: datetime,
     used_releases: set[tuple[str, str]],
+    session_index: list[dict[str, Any]] | None = None,
 ) -> tuple[str, str] | None:
     """Prove one active sibling turn released a shared immediate-parent slot and notified a blocking wait."""
     session = parent_rows[0].get("payload", {}) if parent_rows and parent_rows[0].get("type") == "session_meta" else {}
@@ -1722,15 +1752,7 @@ def _related_capacity_release(
     if not notifications:
         return None
     releases = []
-    for path in (codex_home / "sessions").rglob("*.jsonl"):
-        try:
-            with path.open(encoding="utf-8") as stream:
-                meta = json.loads(stream.readline())
-        except (OSError, ValueError):
-            continue
-        if not isinstance(meta, dict):
-            continue
-        ss = meta.get("payload", {}) if meta.get("type") == "session_meta" else {}
+    for ss in _session_metadata(codex_home) if session_index is None else session_index:
         source = ss.get("source")
         sp = source.get("subagent", {}).get("thread_spawn", {}) if isinstance(source, dict) else {}
         if sp.get("parent_thread_id") != ancestor_id or ss.get("id") == parent_thread_id:
@@ -1787,8 +1809,10 @@ def _validate_native_schedule(
     codex_home: Path,
     parent_thread_id: str,
     roles_dir: Path,
+    session_index: list[dict[str, Any]] | None = None,
 ) -> bool:
     """Bind native dispatch order, original and correction allocations, refusals, and waits to parent evidence."""
+    session_index = _session_metadata(codex_home) if session_index is None else session_index
     plan_path = _resolve_path(out_dir, manifest["inspection_execution"]["plan_path"])
     plan = _load_json(plan_path)
     ordered_roles = sorted(frozen_contexts, key=lambda role: (-len(frozen_contexts[role].read_bytes()), role))
@@ -1844,7 +1868,7 @@ def _validate_native_schedule(
             }
             recovered = next(item for item in passes if item["role"] == role)
             if recovered.get("recovery") is not None and number == 2:
-                expected = _recovery_arguments(out_dir, manifest, recovered, parent_rows, codex_home)
+                expected = _recovery_arguments(out_dir, manifest, recovered, parent_rows, codex_home, session_index)
                 expected["agent_type"] = "default"
             elif recovered.get("recovery") in ({"kind": "incomplete-dispatch"}, {"kind": "interrupted-dispatch"}):
                 expected["message"] = _original_dispatch_message(manifest, plan_path, role, attempt, parent_rows)
@@ -1870,6 +1894,7 @@ def _validate_native_schedule(
                         schema_version=6,
                         model=expected.get("model"),
                         effort=card["model_reasoning_effort"],
+                        session_index=session_index,
                     )
                 )
             if not arguments_match or receipt != {"task_name": attempt["agent_path"]}:
@@ -2020,11 +2045,10 @@ def _validate_native_schedule(
         returned_at = _parent_timestamp(matching[0])
         if called_at >= returned_at:
             raise SystemExit(f"review-inspection-capacity-refusal-invalid:{role}")
-        for path in (codex_home / "sessions").rglob("*.jsonl"):
+        for session in session_index:
+            if session.get("error") == "provenance-session-unreadable":
+                raise SystemExit("provenance-session-unreadable")
             try:
-                with path.open(encoding="utf-8") as stream:
-                    session_row = json.loads(stream.readline())
-                session = session_row.get("payload", {})
                 spawn = session.get("source", {}).get("subagent", {}).get("thread_spawn", {})
                 session_path = session.get("agent_path") or spawn.get("agent_path", "")
             except (OSError, AttributeError, TypeError, ValueError, json.JSONDecodeError):
@@ -2079,7 +2103,7 @@ def _validate_native_schedule(
         refusal["related_release"] = False
         if not local_release:
             release = _related_capacity_release(
-                codex_home, parent_thread_id, parent_rows, refusal, next_call_at, used_related_releases
+                codex_home, parent_thread_id, parent_rows, refusal, next_call_at, used_related_releases, session_index
             )
             if release is None:
                 raise SystemExit(f"review-inspection-capacity-refusal-no-state-change:{refusal['role']}")
@@ -2273,6 +2297,7 @@ def _validate_instruction_bounded_review(
     codex_home: Path,
     parent_thread_id: str,
     roles_dir: Path,
+    session_index: list[dict[str, Any]] | None = None,
 ) -> dict[str, object]:
     """Validate supplied-context inspection without claiming host-enforced isolation."""
     if manifest.get("runtime_execution") is not None or manifest.get("app_server_execution") is not None:
@@ -2292,6 +2317,7 @@ def _validate_instruction_bounded_review(
         }
 
     parent_rows = _runtime_parent_rows(_read_jsonl(_find_rollout(codex_home, parent_thread_id)))
+    session_index = _session_metadata(codex_home) if session_index is None else session_index
     capacity_limited = (
         _validate_native_schedule(
             out_dir,
@@ -2302,6 +2328,7 @@ def _validate_instruction_bounded_review(
             codex_home,
             parent_thread_id,
             roles_dir,
+            session_index,
         )
         if (
             manifest.get("schema_version") in {7, 8}
@@ -2366,7 +2393,7 @@ def _validate_instruction_bounded_review(
                         "finding-id-namespace",
                     } and _inspection_child_called_tool(child_rows):
                         raise SystemExit(f"review-repair-formatting-tool-use:{role}")
-                    _recovery_arguments(out_dir, manifest, item, parent_rows, codex_home)
+                    _recovery_arguments(out_dir, manifest, item, parent_rows, codex_home, session_index)
                 else:
                     _validate_context_read(child_rows, plan_path, role, attempt, manifest, context)
             elif _inspection_child_called_tool(child_rows):
@@ -2509,9 +2536,13 @@ def _reviewer_sections(content: str) -> list[tuple[str, int, int, int]]:
         elif marker:
             fence = marker[1]
         else:
-            heading = re.fullmatch(r" {0,3}##[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*", text)
+            heading = re.match(r" {0,3}##[ \t]+", text)
             if heading:
-                sections.append((heading[1], offset, offset + len(line)))
+                title = text[heading.end() :].strip(" \t")
+                unclosed = title.rstrip("#")
+                if unclosed != title and unclosed.endswith((" ", "\t")):
+                    title = unclosed.rstrip(" \t")
+                sections.append((title, offset, offset + len(line)))
         offset += len(line)
     return [
         (title, start, body, sections[index + 1][1] if index + 1 < len(sections) else len(content))
@@ -2547,6 +2578,7 @@ def _batch_response_parts(content: str, role: str) -> dict[str, tuple[int, int]]
 
 def _text_reviewer_assessment(body: str, *, batch_response: bool) -> tuple[int | None, str] | None:
     """Read unique judgment fields, retaining rationale text independently of its line wrapping."""
+    body = body.rstrip()
     line_break = r"[ \t]*(?:\r?\n[ \t]*)+"
     current = re.fullmatch(
         r"\s*Source rating version:[ \t]+1"
@@ -2555,7 +2587,7 @@ def _text_reviewer_assessment(body: str, *, batch_response: bool) -> tuple[int |
         + line_break
         + r"Verification readiness:[ \t]+(complete|blocked|incomplete)"
         + line_break
-        + r"Rationale:[ \t]*(\S[\s\S]*?)\s*",
+        + r"Rationale:[ \t]*(\S[\s\S]*)",
         body,
     )
     if current:
@@ -2588,7 +2620,7 @@ def _text_reviewer_assessment(body: str, *, batch_response: bool) -> tuple[int |
             return None
         body = "\n".join(lines[declarations[0] :])
     separator = r"(?:[ \t]*\r?\n\s*|[.;,—-]?[ \t]+)"
-    assessment = re.fullmatch(r"\s*Rating:[ \t]+([1-5])" + separator + r"Rationale:[ \t]*(\S[\s\S]*?)\s*", body)
+    assessment = re.fullmatch(r"\s*Rating:[ \t]+([1-5])" + separator + r"Rationale:[ \t]*(\S[\s\S]*)", body)
     if assessment is None or re.search(r"(?m)^[ \t]*(?:Rating|Rationale):", "\n".join(assessment[2].splitlines()[1:])):
         return None
     return int(assessment[1]), assessment[2]
@@ -2809,6 +2841,7 @@ def _receipt_binds_child(
     model: str | None = None,
     effort: str | None = None,
     direct_delivery: bool = False,
+    session_index: list[dict[str, Any]] | None = None,
 ) -> bool:
     """Bind a path-only native spawn receipt to one newly created runtime child session.
 
@@ -2866,13 +2899,8 @@ def _receipt_binds_child(
     # The host receipt contains no UUID. Require unique parent/path metadata as well
     # as creation inside this call's interval, never a guessed or synthesized event.
     matches: list[str] = []
-    for path in (codex_home / "sessions").rglob("*.jsonl"):
+    for session in _session_metadata(codex_home) if session_index is None else session_index:
         try:
-            with path.open(encoding="utf-8") as stream:
-                row = json.loads(stream.readline())
-            if not isinstance(row, dict) or row.get("type") != "session_meta":
-                return False
-            session = row["payload"]
             source = session.get("source")
             if not isinstance(source, dict):
                 continue
@@ -3265,6 +3293,7 @@ def _recovery_arguments(
     item: dict[str, Any],
     parent_rows: list[dict[str, Any]],
     codex_home: Path,
+    session_index: list[dict[str, Any]] | None = None,
 ) -> dict[str, str]:
     """Derive one correction from observed original provenance, never a parent-authored replacement finding."""
     # Resolve the existing producer/validator circular boundary only after both modules initialize.
@@ -3311,6 +3340,7 @@ def _recovery_arguments(
         set(),
         set(),
         original_dispatch_failure=kind == "incomplete-dispatch",
+        session_index=session_index,
         original_interruption=kind == "interrupted-dispatch",
     )
     rows = _read_jsonl(_find_rollout(codex_home, original["agent_thread_id"]))
@@ -3522,8 +3552,10 @@ def _validate_spawn_attempts(
     *,
     original_dispatch_failure: bool = False,
     original_interruption: bool = False,
+    session_index: list[dict[str, Any]] | None = None,
 ) -> None:
     """Bind a spawned specialist output to parent and child rollout evidence."""
+    session_index = _session_metadata(codex_home) if session_index is None else session_index
     role = str(item["role"])
     inspection = manifest.get("inspection_execution")
     plan = _load_json(_resolve_path(out_dir, inspection["plan_path"])) if isinstance(inspection, dict) else {}
@@ -3698,7 +3730,9 @@ def _validate_spawn_attempts(
                 else context_path.read_bytes().decode("utf-8")
             )
             if recovery is not None and attempt["attempt"] == 2:
-                sent_context = _recovery_arguments(out_dir, manifest, item, parent_rows, codex_home)["message"]
+                sent_context = _recovery_arguments(out_dir, manifest, item, parent_rows, codex_home, session_index)[
+                    "message"
+                ]
             elif (
                 original_dispatch_failure
                 or original_interruption
@@ -3723,6 +3757,7 @@ def _validate_spawn_attempts(
                 schema_version=6 if _paged_native_manifest(manifest) else manifest["schema_version"],
                 model=selected_model,
                 effort=role_card["model_reasoning_effort"],
+                session_index=session_index,
             )
             if manifest.get("schema_version") in {7, 8} and not _paged_native_manifest(manifest):
                 sent_calls = [
@@ -3826,7 +3861,9 @@ def _validate_spawn_attempts(
             if raw_path.read_bytes() != raw or _sha256(raw_path) != attempt.get("raw_output_sha256"):
                 raise SystemExit(f"provenance-raw-output-mismatch:{role}")
             if recovery is not None and attempt["attempt"] == 2:
-                expected_arguments = _recovery_arguments(out_dir, manifest, item, parent_rows, codex_home)
+                expected_arguments = _recovery_arguments(
+                    out_dir, manifest, item, parent_rows, codex_home, session_index
+                )
                 if recovery["kind"] in {"closure-evidence-shape", "assessment-format", "finding-id-namespace"}:
                     expected_output = expected_arguments["message"].split(
                         "Return exactly this validated correction:\n", 1

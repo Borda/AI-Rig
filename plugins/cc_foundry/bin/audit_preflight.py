@@ -42,6 +42,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import shutil
@@ -75,6 +76,9 @@ FLAGS: dict[str, str] = {
 #: Names of the boolean audit state flags, in the order they are printed as ``key=value`` pairs.
 STATE_KEYS = ("local-mode", "adversarial", "efficiency", "consolidate", "upgrade", "skip-gate", "fast", "measured")
 
+#: Built-in scopes take precedence over plugin directory and manifest names.
+_RESERVED_SCOPES = {"agents", "skills", "rules", "communication", "setup", "plugin", "plugins"}
+
 #: Characters a session token may use; it becomes part of a directory name under TMPDIR, so no separator or ``..``.
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_-]+")
 
@@ -104,8 +108,25 @@ def _private_dir(path: Path) -> Path:
     return path
 
 
+def _resolve_plugin_scope(token: str) -> str:
+    """Resolve a bare plugin scope to its source directory name, preserving other tokens."""
+    if token in _RESERVED_SCOPES or Path(token).name != token:
+        return token
+    for directory in (Path("plugins") / token, Path("plugins") / f"cc_{token}"):
+        if directory.is_dir():
+            return directory.name
+    for path in sorted(Path("plugins").glob("*/.claude-plugin/plugin.json")):
+        try:
+            manifest = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(manifest, dict) and manifest.get("name") == token:
+            return path.parents[1].name
+    return token
+
+
 def parse_arguments(raw: str) -> tuple[dict[str, bool], str, str]:
-    """Split a raw argument string into (flag state, keep items, scope tokens)."""
+    """Split raw arguments into flags, keep items and directory-resolved scope tokens."""
     keep_match = _KEEP.search(raw)
     keep_items = keep_match.group(1) if keep_match else ""
     without_keep = _KEEP.sub(" ", raw)
@@ -117,7 +138,13 @@ def parse_arguments(raw: str) -> tuple[dict[str, bool], str, str]:
         if key:
             state[key] = True
         else:
-            scope.append(token)
+            scope.append(_resolve_plugin_scope(token))
+    state["local-mode"] |= any(
+        scope_item == "plugins"
+        or (Path(scope_item).name == scope_item and (Path("plugins") / scope_item).is_dir())
+        or (Path(scope_item).parts[:1] == ("plugins",) and Path(scope_item).is_dir())
+        for scope_item in scope
+    )
     return state, keep_items, " ".join(scope)
 
 
@@ -153,7 +180,8 @@ def _state_dir_problem() -> str:
 
     ``.temp``, ``.reports`` and the directories below them may be links to somewhere else, but not to another place
     inside the tree: state files and run directories are created, replaced and removed there by name, and a link into
-    the instruction sources would let them reach one.
+    the instruction sources would let them reach one. Sentinels truncated by later shell blocks must not be symbolic
+    or hard links, because truncation would also erase their targets.
     """
     root = Path.cwd().resolve()
     for name in _STATE_PATHS:
@@ -166,6 +194,16 @@ def _state_dir_problem() -> str:
         return ""  # an unsafe session token is reported where the state is written
     if any(session.is_relative_to(root / top) for top in _SOURCE_TOPS):
         return f"the TMPDIR state directory resolves to {session}, inside the instruction sources"
+    for name in ("run-dir", "unscanned-plugins", "precommit-validate.txt"):
+        sentinel = session / name
+        try:
+            info = sentinel.lstat()
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            return f"cannot inspect {sentinel}: {exc}"
+        if stat.S_ISLNK(info.st_mode) or info.st_nlink > 1:
+            return f"{sentinel} is a linked sentinel; replace the link before rerunning"
     return ""
 
 
@@ -234,7 +272,7 @@ def main() -> int:
     if state["measured"] and not state["efficiency"]:
         print("! --measured only adds measured evidence to --efficiency; pass both")
         return 1
-    if not state["consolidate"] and not Path(args.claude_dir).is_dir():
+    if not (state["consolidate"] or state["local-mode"]) and not Path(args.claude_dir).is_dir():
         print("! BREAKING: .claude/ directory not found — nothing to audit")
         return 1
 
@@ -255,7 +293,7 @@ def main() -> int:
 
     templates = resolve_subdir("audit", "templates", local=state["local-mode"])
     if templates is None:
-        print("! BREAKING: audit/templates not found — run /foundry:setup first")
+        print("! BREAKING: audit/templates not found — reinstall the foundry plugin")
         return 1
 
     Path(".temp/state/skill-contract.md").unlink(missing_ok=True)

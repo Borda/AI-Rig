@@ -22,8 +22,8 @@ Tiers:
   neither a test nor a leaf module, or a changed main-path module with 5+ importers, or a
   module-level change with no mapped symbol in a main-path module.
 - ``LIGHT`` — every changed symbol and every transitive caller lives in tests or in leaf
-  modules (visualization, plotting, examples, docs, scripts, notebooks), or is private with
-  no caller outside them.
+  modules (visualization, plotting, examples, docs, notebooks), or is private with
+  no caller outside them. Test configuration and build/release entrypoints always receive ``FULL``.
 
 Fail-safe: unreadable or oversized input (over ``MAX_INPUT_CHARS``), no changed modules,
 unmapped ``.py`` files, a missing ``codemap-py`` binary, or a failed ``fn-blast`` query all
@@ -58,8 +58,6 @@ LEAF_SEGMENTS = frozenset(
         "examples",
         "doc",
         "docs",
-        "script",
-        "scripts",
         "notebook",
         "notebooks",
     }
@@ -95,7 +93,7 @@ def _segments(path: str) -> list[str]:
         ['pkg', 'tests', 'test_x']
     """
     posix = PurePosixPath(path.replace("\\", "/"))
-    parts = list(posix.parts) if "/" in path or "\\" in path else path.split(".")
+    parts = list(posix.parts) if "/" in path or "\\" in path or path.endswith(".py") else path.split(".")
     if parts and parts[-1].endswith(".py"):
         parts[-1] = parts[-1][:-3]
     return [p.lower() for p in parts if p]
@@ -139,6 +137,18 @@ def is_leaf_module(path: str) -> bool:
     return any(p in LEAF_SEGMENTS for p in _segments(path))
 
 
+def is_execution_module(path: str) -> bool:
+    """Identify test, build and release entrypoints whose execution needs full review."""
+    parts = _segments(path)
+    if not parts:
+        return False
+    return (
+        parts[-1] in {"conftest", "setup", "release", "hatch_build", "build_backend"}
+        or any(part in {"script", "scripts", "build", "build_hooks", "build_backend"} for part in parts)
+        or (parts[-1] == "conf" and any(part in {"doc", "docs"} for part in parts[:-1]))
+    )
+
+
 def is_public_function(qname: str) -> bool:
     """Return True when every name after ``::`` is public; dunder names count as public.
 
@@ -160,7 +170,7 @@ def is_public_function(qname: str) -> bool:
 
 
 def is_main_path(qname: str, module_path: str) -> bool:
-    """Return True when a function is public and lives outside tests and leaf modules.
+    """Identify public runtime functions and executable tooling entrypoints.
 
     Examples:
         >>> is_main_path("pkg.core::run", "src/pkg/core.py")
@@ -170,7 +180,9 @@ def is_main_path(qname: str, module_path: str) -> bool:
         >>> is_main_path("pkg.core::_prep", "src/pkg/core.py")
         False
     """
-    return is_public_function(qname) and not is_test_module(module_path) and not is_leaf_module(module_path)
+    return is_execution_module(module_path) or (
+        is_public_function(qname) and not is_test_module(module_path) and not is_leaf_module(module_path)
+    )
 
 
 def run_fn_blast(qname: str) -> dict | None:
@@ -218,6 +230,8 @@ def _module_verdict(module: dict, blast: BlastFn, budget: list[int]) -> str | No
     path = module.get("path") or module.get("module") or ""
     if not isinstance(path, str) or not path:
         return "impact unknown: changed module without a path"
+    if is_execution_module(path):
+        return f"executable test/build/release entrypoint {path}"
     off_path = is_test_module(path) or is_leaf_module(path)
     if not off_path and int(module.get("rdep_count") or 0) >= IMPORTER_THRESHOLD:
         return f"{path} has {module.get('rdep_count')} importers"

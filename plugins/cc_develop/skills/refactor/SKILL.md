@@ -19,7 +19,7 @@ NOT for:
 - non-Python projects (JS/TS/Go/Rust) — toolchain assumes pytest; use language-native toolchain instead
 - mixed refactor+feature tasks — run /develop:refactor first, then /develop:feature; never both in one run
 
-Quality stack (Branch Safety Guard, Codex Pre-pass, Progressive Review) ships in this plugin's own `_shared` (`foundry--quality-stack.md`); missing → Step 5 quality stack skipped with visible warning — lower output quality but workflow still completes.
+Quality stack (Branch Safety Guard, Codex Pre-pass, Progressive Review) ships in this plugin's own `_shared` (`foundry--quality-stack.md`); absence means a broken install — stop when Step 5's shared loader fails visibly.
 
 </objective>
 
@@ -292,7 +292,7 @@ Audit incomplete → re-examine before Step 3. Gaps found mid-refactoring (Step 
 
 <!-- Only active when --team flag passed (~10% of invocations) -->
 
-**Team mode branch** — if `TEAM_MODE=true`: Steps 1–2 complete solo (teammates need scope + coverage context). Spawn both teammates now; skip Steps 3–4 and Step 5's local review (sw-engineer runs them); parent runs Step 5's bounded independent implementation challenge; after results run Step 5's quality stack and final gate, then the Final Report.
+**Team mode branch** — if `TEAM_MODE=true`: Steps 1–2 complete solo (teammates need scope + coverage context). Follow the serialized teammate protocol now; skip Steps 3–4 and Step 5's local review (sw-engineer runs them); parent runs Step 5's bounded independent implementation challenge; after results run Step 5's quality stack and final gate, then the Final Report.
 
 > loads: team-mode.md — gated; ~90% of runs (`--team` absent) skip the load entirely
 
@@ -351,7 +351,50 @@ fi
 
 `GATE_EXIT -ne 0` (including exit 5) → characterization tests missing or wrong — **cannot proceed to Step 4 without a passing safety net**. Invoke `AskUserQuestion` — "Characterization test gate failed (exit `$GATE_EXIT`). How to proceed?" · (a) **Fix test collection path / fix test assertions** (recommended — re-spawn qa-specialist with corrected path or assertions) · (b) **Proceed without safety net** (accept risk — record decision in `$DEV_DIR/checkpoint.md`) · (c) **Abort**. On (b): document explicit acceptance in `checkpoint.md` (`step: 3 — gate exit $GATE_EXIT — proceed without safety net (user accepted)`) before continuing — stage the line in `$DEV_DIR/checkpoint.md.rec` (Write tool) and append it with `append_ledger.py` in the next real Bash block.
 
+On accepted (b) after a red characterization run, use the Write tool to save its exact repository-relative test path as one line in `$DEV_DIR/accepted-red-characterization.txt`. This file records only that explicitly accepted failing characterization file; exclude it from the Pre-edit baseline and Gate T2, and retain the missing safety net in the Final Report. A runner error is not a red characterization run; recover the runner first.
+
 ## Step 4: Refactor with safety net
+
+**Pre-edit baseline** — after characterization tests and before the first source edit, run the Step 4 selector once against the Python files identified in Step 1. Team mode's parent runs this same block after T1 and before spawning the implementation teammate. Replace the entire `'<scoped_python_files>'` token with the explicit, individually shell-quoted repository-relative paths from that scope, not the current dirty diff. Include newly added characterization test paths so an initially untested module has a runnable baseline; the accepted-red file, when recorded above, is filtered out of the selected tests before execution. A coverage run is not this baseline. A nonempty completed green run of the remaining scoped tests is required for both solo and team mode:
+
+```bash
+# timeout: 600000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r DEV_DIR < "${TMPDIR:-/tmp}/dev-refactor-dev-dir-${CSID}" 2>/dev/null || DEV_DIR=""
+[ -n "$DEV_DIR" ] || { echo "! BLOCKED — refactor run directory missing; re-run Checkpoint init"; exit 1; }
+set -- '<scoped_python_files>'
+case "$*" in *'<'*'>'*|"") echo "! BLOCKED — scoped file list contains an unresolved placeholder; substitute the Step 1 paths before running the baseline"; exit 1 ;; esac
+IFS= read -r CODEMAP_CURRENCY < "${TMPDIR:-/tmp}/dev-codemap-currency-${CSID}" 2>/dev/null || CODEMAP_CURRENCY="no_index"
+if [ "$CODEMAP_CURRENCY" = "stale" ]; then export SCAN_NO_AUTOBUILD=1; fi
+IFS= read -r ACCEPTED_RED_CHAR 2>/dev/null < "$DEV_DIR/accepted-red-characterization.txt" || ACCEPTED_RED_CHAR=""
+if [ -n "$ACCEPTED_RED_CHAR" ]; then
+    echo "BASELINE: accepted-red characterization test excluded: $ACCEPTED_RED_CHAR; remaining source tests must pass"
+    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_test_targets.py" --skill refactor --files "$@" > "$DEV_DIR/baseline-selection.json" || { echo "! BLOCKED — baseline selection failed; recover the runner before editing"; exit 1; }
+    python - "$DEV_DIR/baseline-selection.json" "$ACCEPTED_RED_CHAR" "$DEV_DIR/baseline-tests.json" <<'PY' || { echo "! BLOCKED — baseline filtering failed; recover test selection before editing"; exit 1; }
+import json
+import sys
+from pathlib import Path
+
+selection, excluded, output = sys.argv[1:]
+tests = json.loads(Path(selection).read_text(encoding="utf-8"))["tests"]
+remaining = [test for test in tests if Path(test).resolve() != Path(excluded).resolve()]
+Path(output).write_text(json.dumps(remaining) + "\n", encoding="utf-8")
+PY
+    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_test_targets.py" --skill refactor --tests-from "$DEV_DIR/baseline-tests.json" --record-dir "$DEV_DIR" --run
+else
+    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_test_targets.py" --skill refactor --files "$@" --record-dir "$DEV_DIR" --run
+fi
+BASELINE_EXIT=$?
+case "$BASELINE_EXIT" in
+    0) python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_test_targets.py" --check-record "$DEV_DIR/test-targets.jsonl" --expect-exit 0 || { echo "! BLOCKED — no completed nonempty baseline; resolve test selection before editing"; exit 1; } ;;
+    1) python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_test_targets.py" --check-record "$DEV_DIR/test-targets.jsonl" --expect-exit 1 || { echo "! BLOCKED — baseline runner failed without a completed red run; recover the runner before editing"; exit 1; }
+       echo "! BLOCKED — pre-existing test failure in the remaining scoped tests; stop refactoring and recommend /develop:fix before any source edit"; exit 1 ;;
+    *) echo "! BLOCKED — baseline runner or collection failed (exit $BASELINE_EXIT); recover the runner before editing"; exit "$BASELINE_EXIT" ;;
+esac
+echo "BASELINE OK: scoped tests pass before source edits"
+```
+
+Any `! BLOCKED` result → stop before source edits or the implementation teammate spawn, and do not revert pre-existing failures.
 
 **Test-run policy** — inside the Step 4 refactor loop and the Step 5 review loop, tests run targeted only, never widened to the full suite. The full suite runs at the final gate once the loops are clean, and again after any fix to a full-suite failure (§Final gate).
 
@@ -382,7 +425,7 @@ For each change (or, in batch mode, per non-overlapping batch member):
    - Selects per changed module via `codemap-py query test-impact` when available, path heuristics otherwise (name-matched tests plus tests importing the module); Step 3's characterization tests are selected as changed files. The first output line is the selection JSON — surface any `codemap.partial`/`codemap.fell_back` count and every `not_covered` entry (`⚠ not_covered — some changed code has no mapped test`) as a coverage caveat; the selection and full log are recorded under `$DEV_DIR/test-targets.jsonl`.
    - Empty selection (`note` set) → nothing ran; say so (Test-run policy).
 3. Tests pass: proceed to next change
-4. Tests fail: revert, try different approach
+4. Tests fail: reverse only your own Edit against the current file, preserving pre-existing and concurrent edits; never use `git checkout` or `git restore` to revert a Step 4 change. If the current region no longer matches your edit, stop and reconcile ownership before undoing anything. Then try a different approach.
 
 **Safety break**: track cycle count and wall time via temp files (bash resets between calls — `$INNER_CYCLE`/`$START_TIME` inline don't survive to later blocks; persistence mandatory). The Batch mode gate block above already initialised them (cycle `0` on every Step 4 pass, start time once per run, caps 5 cycles / 1800 s).
 
@@ -463,20 +506,15 @@ Review the refactored code once and resolve feasible gaps. Only an explicitly re
 
 **After 3 cycles**: substantive issues remain → stop, surface to user.
 
-**Foundry availability check** before quality stack:
+**Quality-stack load** — the shared loader resolves warm state or the installed cache and fails visibly when the required file is missing. Missing file → stop the skill; do not run the final gate or report completion until the installation is repaired.
 
 ```bash
 # timeout: 5000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _DEV_SHARED=""   # re-derive — bash resets between calls
-[ -z "$_DEV_SHARED" ] && _DEV_SHARED="plugins/cc_develop/skills/_shared"
-[ -f "$_DEV_SHARED/foundry--quality-stack.md" ] || echo "⚠ foundry--quality-stack.md missing from this plugin's _shared — broken install; quality stack skipped"
-```
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _DEV_SHARED=""
-[ -z "$_DEV_SHARED" ] && _DEV_SHARED="plugins/cc_develop/skills/_shared"
+if [ ! -d "$_DEV_SHARED" ]; then
+    _DEV_SHARED=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_shared_resolve.py") || { echo "! BLOCKED — shared directory unresolved; repair the installation before continuing"; exit 1; }
+fi
 _SHARED="$_DEV_SHARED"  # foundry--quality-stack.md loads its siblings from $_SHARED — this plugin's own _shared
 echo "$_SHARED" > "${TMPDIR:-/tmp}/qs-shared-dir-${CSID}"  # quality-stack fences reload it; missing = BLOCKED
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" foundry--quality-stack.md  # timeout: 5000
@@ -484,9 +522,9 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" foundr
 
 **Bounded independent implementation challenge**: After implementation and before the final gate, unless the user explicitly passed `--no-challenge`, dispatch one independent reviewer through the permitted `foundry:challenger` or available `bridge:review` route; never fork the implementation conversation. Supply only the current scoped diff, task acceptance and relevant evidence, allowing targeted source inspection. Reuse still-valid independent coverage for this exact result instead of dispatching again. Validate findings, apply feasible authorized fixes, rerun affected checks and report unresolved findings or missing independent coverage. Do not start another challenge or convergence loop automatically; after fixes, honestly report that the revised result lacks independent coverage. If no independent route is available, report the gap and do not claim the challenge passed.
 
-Not found → skip quality stack entirely and note the message above in Final Report; still run the bounded independent implementation challenge above unless explicitly waived, record missing independent coverage if no permitted route is available, and run the final gate below. Otherwise execute Branch Safety Guard, Quality Stack, the bounded implementation challenge above, and Codex Mechanical Delegation; use Codex Pre-pass as that challenge only when selected, and run Progressive Review Loop only when explicitly requested — the quality stack's directory-wide pytest run counts as the final gate's full-suite run only when `$TEST_CMD` is that same pytest invocation (`pytest`, `python -m pytest`, `uv run pytest`, `poetry run pytest`); a `tox -q` or `make test` repository never ran its own command in the stack, so run the final gate once even when no code changed. Otherwise do not run it again unless code changes after it (§Final gate).
+Execute Branch Safety Guard, Quality Stack, the bounded implementation challenge above, and Codex Mechanical Delegation; use Codex Pre-pass as that challenge only when selected, and run Progressive Review Loop only when explicitly requested — the quality stack's directory-wide pytest run counts as the final gate's full-suite run only when `$TEST_CMD` is that same pytest invocation (`pytest`, `python -m pytest`, `uv run pytest`, `poetry run pytest`); a `tox -q` or `make test` repository never ran its own command in the stack, so run the final gate once even when no code changed. Otherwise do not run it again unless code changes after it (§Final gate).
 
-**Final gate — full suite with the repository's own command.** Runs when the quality stack was skipped, when `$TEST_CMD` is not the stack's pytest invocation, and again after any code change that follows the quality stack's wide run — a Progressive Review fix, or any fix to a full-suite failure (the stack halting on a genuine failure, or this block failing) — a fix can break something outside the targeted set, and the stack's own re-checks are scoped. A suite that may outlive the ~10 min foreground cap runs as a background Bash call (`run_in_background: true`): end the turn, its exit re-invokes you, no polling. Non-zero → fix (rerun the failing node ids while fixing — never the verification), then rerun this block in full. Max 3 gate iterations; at the cap stop, surface the remaining failures, and never report the suite green. A green full suite is the last test evidence before the Final Report:
+**Final gate — full suite with the repository's own command.** Runs when `$TEST_CMD` is not the stack's pytest invocation, and again after any code change that follows the quality stack's wide run — a Progressive Review fix, or any fix to a full-suite failure (the stack halting on a genuine failure, or this block failing) — a fix can break something outside the targeted set, and the stack's own re-checks are scoped. A suite that may outlive the ~10 min foreground cap runs as a background Bash call (`run_in_background: true`): end the turn, its exit re-invokes you, no polling. Non-zero → fix (rerun the failing node ids while fixing — never the verification), then rerun this block in full. Max 3 gate iterations; at the cap stop, surface the remaining failures, and never report the suite green. A green full suite is the last test evidence before the Final Report:
 
 ```bash
 # timeout: 600000

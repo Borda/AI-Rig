@@ -18,7 +18,7 @@ echo "PUSH_STATUS=$PUSH_STATUS"
 case "$PUSH_STATUS" in blocked-guard|blocked-permission|blocked-needs-manual-push) echo "PUSH_UNBLOCK=$_IMPL_DIR/push-unblock.txt"; cat "$_IMPL_DIR/push-unblock.txt" 2>/dev/null || echo "⚠ push-unblock.txt missing" ;; esac
 IFS= read -r INTAKE_DEGRADED < "${TMPDIR:-/tmp}/resolve-intake-degraded-${CSID}" 2>/dev/null || INTAKE_DEGRADED=""
 [ -z "$INTAKE_DEGRADED" ] || { echo "INTAKE=degraded $INTAKE_DEGRADED"; cat "${TMPDIR:-/tmp}/resolve-intake-gaps-${CSID}" 2>/dev/null || echo "⚠ intake gap list missing"; }
-IFS= read -r _OSS_RESOLVE < "${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}" 2>/dev/null || _OSS_RESOLVE=""  # reload (Check 41)
+IFS= read -r _OSS_RESOLVE < "${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}" 2>/dev/null || _OSS_RESOLVE=""  # reload (Check 43)
 cat "$_OSS_RESOLVE/templates/resolve-report.md"  # timeout: 5000
 ```
 
@@ -69,16 +69,20 @@ Omit section when `--no-challenge`.
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r SAVED_BRANCH < "${TMPDIR:-/tmp}/resolve-saved-branch-${CSID}" 2>/dev/null || SAVED_BRANCH=""
-IFS= read -r COMMIT_MODE < "${TMPDIR:-/tmp}/resolve-commit-mode-${CSID}" 2>/dev/null || COMMIT_MODE="each"
+case "$SAVED_BRANCH" in HEAD) SAVED_BRANCH="" ;; esac
+IFS= read -r SAVED_SHA < "${TMPDIR:-/tmp}/resolve-saved-sha-${CSID}" 2>/dev/null || SAVED_SHA="unknown"
+IFS= read -r COMMIT_MODE < "${TMPDIR:-/tmp}/resolve-commit-mode-${CSID}" 2>/dev/null || COMMIT_MODE="unset"
 IFS= read -r PUSH_STATUS < "${TMPDIR:-/tmp}/resolve-push-status-${CSID}" 2>/dev/null || PUSH_STATUS="none"
 # stage mode: skip restore, else staged work lost
 if [ "$COMMIT_MODE" = "stage" ]; then
-    echo "⚠ COMMIT_MODE=stage: changes are staged on $(git branch --show-current) — restore to $SAVED_BRANCH skipped to preserve staged work. Run: git stash && git switch $SAVED_BRANCH && git stash pop (on PR branch) when ready."
+    echo "⚠ COMMIT_MODE=stage: changes are staged on $(git branch --show-current) — caller restore skipped to preserve staged work (saved HEAD=$SAVED_SHA). Commit on this PR branch first; then restore the caller's branch or detached HEAD."
 # unpushed work (declined, blocked, rejected or never attempted): stay on the branch holding it, for review or a manual push
 elif [ -n "$SAVED_BRANCH" ] && [ "$PUSH_STATUS" != "pushed" ]; then
     echo "→ Staying on $(git branch --show-current) — commits not pushed (PUSH_STATUS=$PUSH_STATUS). Return later with: git switch $SAVED_BRANCH"
 elif [ -n "$SAVED_BRANCH" ]; then
-    git switch "$SAVED_BRANCH" 2>/dev/null && echo "→ Restored to $SAVED_BRANCH"  # timeout: 5000
+    if git switch "$SAVED_BRANCH" 2>/dev/null; then echo "→ Restored to $SAVED_BRANCH"; else echo "⚠ Could not restore $SAVED_BRANCH — staying on $(git branch --show-current); saved caller HEAD=$SAVED_SHA"; fi  # timeout: 5000
+else
+    echo "⚠ Caller had detached HEAD at $SAVED_SHA — staying on $(git branch --show-current); restore that saved commit manually when ready"
 fi
 ```
 

@@ -29,7 +29,7 @@ _VISIBLE = [
     pytest.param("skills/investigate/SKILL.md", "which python && python --version", id="investigate-tool-versions"),
     pytest.param(
         "skills/investigate/SKILL.md",
-        "env | grep -E 'PATH|VIRTUAL_ENV|UV_|CLAUDE|HOME|SHELL|NODE'",
+        'print("\\n".join(sorted(os.environ)))',
         id="investigate-env",
     ),
     pytest.param("skills/investigate/SKILL.md", "git log --oneline -10", id="investigate-recent-commits"),

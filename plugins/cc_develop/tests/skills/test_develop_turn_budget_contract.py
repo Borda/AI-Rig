@@ -232,7 +232,7 @@ def test_call_batching_never_moves_a_question_later(skill: str) -> None:
     ("skill", "start", "end"),
     [
         pytest.param("refactor", "## Step 4", "**Safety break**", id="refactor-step-4"),
-        pytest.param("refactor", "## Step 5", "**Foundry availability check**", id="refactor-step-5"),
+        pytest.param("refactor", "## Step 5", "**Quality-stack load**", id="refactor-step-5"),
         pytest.param("fix", "## Step 3", "## Step 4", id="fix-step-3"),
         pytest.param("fix", "## Step 4", "## Final Report", id="fix-step-4"),
     ],
@@ -404,12 +404,11 @@ def test_standalone_plan_resolves_feasible_blockers_before_asking() -> None:
 def test_debug_classification_hands_off_before_plan_and_challenge() -> None:
     """Unknown causes route to diagnosis without creating a speculative implementation plan.
 
-    The handoff paragraph sends the user to ``/develop:debug`` and skips Steps 2-5, unless the depth checkpoint's "Write
-    the plan anyway" option was chosen.
+    The handoff sends the user to ``/develop:debug`` and skips Steps 2-5 without consuming a user-loop counter.
     """
     route = _section("plan/SKILL.md", "**Debug classification handoff**", "## Step 2: Structured plan")
-    assert "depth checkpoint" in route
-    assert "Write the plan anyway" in route
+    assert "when the cause is unknown" in route
+    assert "do not write or challenge an implementation plan" in route
     assert "skip Steps 2–5" in route
     assert "/develop:debug" in route
     assert "clear the skill contract" in route
@@ -432,10 +431,13 @@ def test_fix_diagnosis_uses_the_proportional_challenge_decision() -> None:
     assert "Do not repeat still-valid root-cause investigation" in diagnosis
 
 
-def test_refactor_missing_stack_keeps_independent_challenge() -> None:
-    """A broken quality-stack install cannot silently skip result review or the final suite."""
-    branch = _section("refactor/SKILL.md", "Not found → skip quality stack entirely", "**Final gate")
-    assert "still run the bounded independent implementation challenge" in branch
-    assert "unless explicitly waived" in branch
-    assert "record missing independent coverage" in branch
-    assert "run the final gate" in branch
+def test_refactor_missing_stack_blocks_before_acceptance() -> None:
+    """A broken quality-stack install must stop instead of silently skipping required checks."""
+    branch = _section("refactor/SKILL.md", "**Quality-stack load**", "**Final gate")
+    assert "the shared loader resolves warm state or the installed cache and fails visibly" in branch
+    assert "Missing file → stop the skill" in branch
+    assert "do not run the final gate or report completion" in branch
+    assert "Not found → skip quality stack entirely" not in branch
+    assert "**Bounded independent implementation challenge**" in branch
+    assert "unless the user explicitly passed `--no-challenge`" in branch
+    assert "If no independent route is available, report the gap" in branch

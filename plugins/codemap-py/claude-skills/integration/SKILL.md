@@ -3,9 +3,9 @@ name: integration
 description: |
   Adapter over `codemap-py integrate` — audit, plan, source-wire, locally sync, and demonstrate the
   codemap-py integration with its supported consumers. Trigger with `/codemap-py:integration
-  audit|plan|apply|sync|demo [--runtime {claude,codex,both}] ...`. Default (no args) is `audit`.
+  audit|plan|apply|sync|demo [--runtime {claude,codex,both}] ...`. Default (no args or flags only) is `audit`.
   Skip for: running a structural query (use `/codemap-py:query-code`); explicit standalone index
-  rebuild (use `/codemap-py:scan-codebase`).
+  rebuild (use `/codemap-py:scan-codebase`); usage/telemetry reports (use `/codemap-py:debrief-coding`).
 argument-hint: audit [--runtime {claude,codex,both}] [--json] [--since YYYY-MM-DD] | plan [--runtime ...] [--consumers <csv>] [--source {local-candidate,release}] [--out <artifact>] | apply --plan <artifact> --approve <sha256> | sync --source {local-candidate,release} --plan <artifact> --approve <sha256> [--runtime ...] | demo [--runtime ...]
 effort: medium
 allowed-tools: Bash, Read, AskUserQuestion
@@ -40,7 +40,7 @@ Shared-engine safety invariants:
 
 Active consumer guidance is separate from provider metadata. For Codex, `codex-rig`'s shipped `shared/codemap-contract.md` (requires `codex-rig` plugin) is the active consumer contract: its adapter validates `CODEMAP_BIN` first or PATH fallback once, runs provider-owned probe/query surface, persists one context artifact, lets specialists reuse it. Provider-managed `codemap-py-integration.md` block is metadata-only; identity/protocol/timestamp fields don't wire a launcher or prove active guidance. Audit checks provider identity and reachable active consumer guidance separately, reports missing/unreachable/outdated guidance as bounded source maintenance (or `remediation_kind: plan_sync`, when the existing approved target map permits it). Never borrow another plugin's shared script or edit installed caches. Installed-byte/hash evidence is separate from current-session activation; native listing without session provenance is not proof, and matching source hashes alone don't prove semantic currency.
 
-NOT for: structural queries (use `/codemap-py:query-code`); standalone index rebuilds (use `/codemap-py:scan-codebase`).
+NOT for: structural queries (use `/codemap-py:query-code`); standalone index rebuilds (use `/codemap-py:scan-codebase`); usage/telemetry reports (use `/codemap-py:debrief-coding`).
 
 </objective>
 
@@ -59,7 +59,7 @@ NOT for: structural queries (use `/codemap-py:query-code`); standalone index reb
 
 ## Step 1: Resolve mode
 
-First, if the request is a structural query (callers, callees, imports, symbol lookup) or a standalone index rebuild, print one line naming the owning skill (`/codemap-py:query-code` or `/codemap-py:scan-codebase`) and stop — never answer, investigate, or run the query here; `demo`'s own smoke query is the only structural query this skill runs. Otherwise parse `$ARGUMENTS` case-insensitively: empty or starts `audit` → audit; `plan` → plan; `apply` → apply; `sync` → sync; `demo` → demo. Otherwise print `! Unknown mode '<first token>'. Modes: audit, plan, apply, sync, demo — re-invoke with one of them.` and stop. Never AskUserQuestion here: five modes exceed the four-option cap.
+First, if the request is a structural query (callers, callees, imports, symbol lookup), a standalone index rebuild, or a usage/telemetry report, print one line naming the owning skill (`/codemap-py:query-code`, `/codemap-py:scan-codebase`, or `/codemap-py:debrief-coding`, respectively) and stop — never answer, investigate, or run the query here; `demo`'s own smoke query is the only structural query this skill runs. Otherwise parse `$ARGUMENTS` case-insensitively: empty or starts `audit` → audit; first token starts with `--` → audit (preserve all flags); `plan` → plan; `apply` → apply; `sync` → sync; `demo` → demo. Otherwise print `! Unknown mode '<first token>'. Modes: audit, plan, apply, sync, demo — re-invoke with one of them.` and stop. Never AskUserQuestion here: five modes exceed the four-option cap.
 
 ## Step 2: Run the mode
 
@@ -119,6 +119,6 @@ Optional: `--runtime <r>`.
 
 ## Step 3: Report
 
-Report exit meaning per mode (see table): `0` success (`audit`: pass or warn); `1` for `audit`/`demo` = a `fail` verdict — report the findings, not a crash; `1` for `apply` = drift or filesystem failure, for `sync` = partial failure or journal state; `2` bad syntax or approval. For `apply` or `sync` exit `1`, report journal state (`planned → approved → applying:<t> → verified:<t> → complete`, or `rollback-started → rollback-succeeded|rollback-failed → recovery-required`). For `recovery-required`, relay only engine-reported bounded manual recovery commands; invent none.
+Report exit meaning per mode (see table): `0` success (`audit`: pass or warn); `1` for `audit`/`demo` = a `fail` verdict — report the findings, not a crash; `1` for `apply` = drift or filesystem failure, for `sync` = partial failure or journal state; `2` bad syntax or approval; `127` no eligible CPython — relay its stderr line and stop, no retry. For `apply` or `sync` exit `1`, report journal state (`planned → approved → applying:<t> → verified:<t> → complete`, or `rollback-started → rollback-succeeded|rollback-failed → recovery-required`). For `recovery-required`, relay only engine-reported bounded manual recovery commands; invent none.
 
 </workflow>

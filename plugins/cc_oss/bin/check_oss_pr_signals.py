@@ -23,8 +23,8 @@ Usage:
 
 Default ``--timeout`` is 30 s — the per-subprocess cap (``gh pr diff`` slices and
 the single ``git show`` of the release tag). When ``--latest-tag`` is omitted the
-script resolves it via ``git describe --tags --abbrev=0``; empty result is
-treated as "no release tag".
+script resolves it via ``git describe --tags --abbrev=0``; a successful empty result or a confirmed empty tag list is
+treated as "no release tag", while an unresolved read failure marks the deprecation check failed.
 
 When ``--diff-file`` points at a readable full ``gh pr diff`` snapshot, the
 three per-pathspec ``gh pr diff`` subprocesses are skipped and the deps/py/
@@ -67,7 +67,7 @@ _SECRET_RE = re.compile(
     r"(?:(?P<key>password|secret|api_key|token|private_key|auth_token)\s*[=:]\s*['\"]?[A-Za-z0-9+/._\-]{8,}['\"]?"
     r"|(?P<aws>AKIA[0-9A-Z]{16})"
     r"|(?P<pem>-----BEGIN [A-Z ]*PRIVATE KEY-----)"
-    r"|(?P<jwt>eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+))",
+    r"|(?P<jwt>(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+))",
     re.IGNORECASE,
 )
 
@@ -97,6 +97,7 @@ class OssSignals:
         deprecation_findings: Per-symbol verdict for removed exports.
         latest_tag: Tag used for the deprecation check (``""`` if unresolved).
         changelog_diff: Raw diff for ``CHANGELOG.md`` / ``CHANGES.md``.
+        check_status: Per-slice ``ok`` or ``failed`` read status; failed reads also carry explicit output markers.
     """
 
     deps_diff: str = ""
@@ -105,6 +106,7 @@ class OssSignals:
     deprecation_findings: list[str] = field(default_factory=list)
     latest_tag: str = ""
     changelog_diff: str = ""
+    check_status: dict[str, str] = field(default_factory=dict)
 
 
 def _resolve(cmd: str) -> str:
@@ -130,15 +132,15 @@ def _resolve(cmd: str) -> str:
     return p
 
 
-def _run(cmd: list[str], timeout: int) -> str:
-    """Run a subprocess, return stdout — never raises on non-zero.
+def _run(cmd: list[str], timeout: int) -> str | None:
+    """Read subprocess output while distinguishing failure from successful empty output.
 
     Args:
         cmd: Command argv (first element is absolute path).
         timeout: Per-call timeout in seconds.
 
     Returns:
-        Stdout (decoded). Empty string on non-zero exit or timeout.
+        Stdout (decoded), or ``None`` on non-zero exit, timeout, or an unavailable executable.
 
     Examples:
         No doctest — subprocess-dependent; covered by pytest.
@@ -151,9 +153,9 @@ def _run(cmd: list[str], timeout: int) -> str:
             check=False,
             timeout=timeout,
         )
-    except subprocess.TimeoutExpired:
-        return ""
-    return proc.stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return proc.stdout if proc.returncode == 0 else None
 
 
 def _split_diff_sections(diff_text: str) -> list[tuple[str, str]]:
@@ -214,20 +216,24 @@ def _filter_diff(sections: list[tuple[str, str]], patterns: list[str]) -> str:
     return "".join(text for path, text in sections if any(fnmatch(path, pat) for pat in patterns))
 
 
-def _resolve_latest_tag(git: str, timeout: int) -> str:
-    """Return latest tag via ``git describe --tags --abbrev=0`` — ``""`` if none.
+def _resolve_latest_tag(git: str, timeout: int) -> str | None:
+    """Resolve the latest release tag without confusing read failure with an empty result.
 
     Args:
         git: Absolute path to git.
         timeout: Subprocess timeout in seconds.
 
     Returns:
-        Tag string (stripped) or ``""``.
+        Stripped tag string, ``""`` for a successful empty result, or ``None`` on read failure.
 
     Examples:
         No doctest — subprocess-dependent; covered by pytest.
     """
-    return _run([git, "describe", "--tags", "--abbrev=0"], timeout=timeout).strip()
+    tag = _run([git, "describe", "--tags", "--abbrev=0"], timeout=timeout)
+    if tag is not None:
+        return tag.strip()
+    tags = _run([git, "tag", "--list"], timeout=timeout)
+    return "" if tags is not None and not tags.strip() else None
 
 
 def _grep_secrets(diff_text: str) -> list[str]:
@@ -342,6 +348,8 @@ def _check_deprecations(
     findings: list[str] = []
     # Constant output per tag: run git once and tokenise once, not per removed identifier.
     show = _run([git, "show", "--end-of-options", latest_tag, "--", ":(glob)src/**/__init__.py"], timeout=timeout)
+    if show is None:
+        return ["DEPRECATION_CHECK=failed"]
     prior = set(_IDENT_RE.findall(show))
     for export in removed_exports[:_MAX_EXPORTS_CHECKED]:
         if export in prior:
@@ -403,17 +411,27 @@ def collect_signals(
             [gh, "pr", "diff", clean_args, "--", "CHANGELOG.md", "CHANGES.md"],
             timeout=timeout,
         )
-    secrets = _grep_secrets(py_diff)
-    removed = _extract_removed_exports(init_diff)
+    secrets = _grep_secrets(py_diff) if py_diff is not None else []
+    removed = _extract_removed_exports(init_diff or "")
     effective_tag = latest_tag or _resolve_latest_tag(git, timeout=timeout)
-    deprecations = _check_deprecations(git, effective_tag, removed, timeout=timeout)
+    deprecations = (
+        ["DEPRECATION_CHECK=failed"]
+        if init_diff is None or effective_tag is None
+        else _check_deprecations(git, effective_tag, removed, timeout=timeout)
+    )
     return OssSignals(
-        deps_diff=deps_diff,
+        deps_diff=deps_diff if deps_diff is not None else "DEPENDENCY_CHECK=failed",
         secret_matches=secrets,
         removed_exports=removed,
         deprecation_findings=deprecations,
-        latest_tag=effective_tag,
-        changelog_diff=changelog_diff,
+        latest_tag=effective_tag or "",
+        changelog_diff=changelog_diff if changelog_diff is not None else "CHANGELOG_CHECK=failed",
+        check_status={
+            "DEPENDENCY_CHECK": "failed" if deps_diff is None else "ok",
+            "SECRETS_SCAN": "failed" if py_diff is None else "ok",
+            "DEPRECATION_CHECK": "failed" if "DEPRECATION_CHECK=failed" in deprecations else "ok",
+            "CHANGELOG_CHECK": "failed" if changelog_diff is None else "ok",
+        },
     )
 
 
@@ -485,7 +503,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    if not _PR_NUMBER_RE.match(args.clean_args):
+    if not _PR_NUMBER_RE.fullmatch(args.clean_args):
         print(
             f"check_oss_pr_signals: --clean-args must be a numeric PR number, got {args.clean_args!r}",
             file=sys.stderr,

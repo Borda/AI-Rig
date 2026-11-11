@@ -658,3 +658,261 @@ def test_invalid_identity_command_does_not_start_workflow(review_state, identity
         ".reports/codex/code-review/run-a\n",
     )
     assert HOOK.evaluate(payload, records, "/plugin") == {}
+
+
+@pytest.fixture
+def answered_question() -> list[dict]:
+    """Provide a nested native question and its host-owned, identity-bound answer receipt."""
+    arguments = {
+        "decision_id": "review-recovery",
+        "scope_digest": "a" * 64,
+        "question": "Continue this review?",
+        "options": ["Continue", "Skip"],
+    }
+    return [
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "custom_tool_call",
+                "name": "exec",
+                "input": "await tools.mcp__codex_rig_input__ask_user({});",
+            },
+        },
+        {
+            "type": "event_msg",
+            "payload": {
+                "type": "item_completed",
+                "thread_id": "session",
+                "turn_id": "turn",
+                "item": {
+                    "type": "McpToolCall",
+                    "id": "question-call",
+                    "server": "codex-rig-input",
+                    "tool": "ask_user",
+                    "pluginId": "codex-rig@borda-ai-rig",
+                    "arguments": arguments,
+                    "status": "completed",
+                    "result": {
+                        "structuredContent": {
+                            "decision_id": "review-recovery",
+                            "scope_digest": "a" * 64,
+                            "status": "answered",
+                            "answer": "Continue",
+                        }
+                    },
+                },
+            },
+        },
+    ]
+
+
+def test_question_discovery_does_not_pause_review(review_state) -> None:
+    """Looking up available question tools must not suppress unfinished-work recovery."""
+    payload, records = review_state
+    records.append(
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "custom_tool_call",
+                "name": "exec",
+                "input": "text(ALL_TOOLS.filter(x=>/ask_user/.test(x.name)));",
+            },
+        }
+    )
+    assert HOOK.evaluate(payload, records, "/plugin")["decision"] == "block"
+
+
+def test_answered_continue_restores_review_recovery(review_state, answered_question) -> None:
+    """A completed native Continue answer leaves unfinished review work eligible for recovery."""
+    payload, records = review_state
+    records.extend(answered_question)
+    assert HOOK.evaluate(payload, records, "/plugin")["decision"] == "block"
+
+
+@pytest.mark.parametrize("answer", ["Skip", "Stop", "Deny", "", "continue"])
+def test_other_answers_preserve_pause(review_state, answered_question, answer: str) -> None:
+    """Only the exact offered continuation answer can release this advisory question pause."""
+    payload, records = review_state
+    answered_question[1]["payload"]["item"]["result"]["structuredContent"]["answer"] = answer
+    records.extend(answered_question)
+    assert HOOK.evaluate(payload, records, "/plugin") == {}
+
+
+@pytest.mark.parametrize("field", ["decision_id", "scope_digest", "status"])
+def test_mismatched_question_receipt_preserves_pause(review_state, answered_question, field: str) -> None:
+    """An unrelated or incomplete receipt cannot clear a pending question."""
+    payload, records = review_state
+    answered_question[1]["payload"]["item"]["result"]["structuredContent"][field] = "unrelated"
+    records.extend(answered_question)
+    assert HOOK.evaluate(payload, records, "/plugin") == {}
+
+
+def test_unanswered_nested_question_preserves_pause(review_state, answered_question) -> None:
+    """No host completion receipt means the native question is still unresolved."""
+    payload, records = review_state
+    records.append(answered_question[0])
+    assert HOOK.evaluate(payload, records, "/plugin") == {}
+
+
+def test_one_answer_cannot_close_two_questions(review_state, answered_question) -> None:
+    """One completed answer cannot stand for another still-pending invocation."""
+    payload, records = review_state
+    records.extend([answered_question[0], *answered_question])
+    assert HOOK.evaluate(payload, records, "/plugin") == {}
+
+
+def test_duplicate_answer_cannot_close_pending_question(review_state, answered_question) -> None:
+    """Replayed receipt IDs must not consume a second outstanding question."""
+    payload, records = review_state
+    records.extend([*answered_question, *answered_question])
+    assert HOOK.evaluate(payload, records, "/plugin") == {}
+
+
+def test_continue_must_be_an_offered_choice(review_state, answered_question) -> None:
+    """A free-text answer or changed choices cannot claim the supported Continue decision."""
+    payload, records = review_state
+    answered_question[1]["payload"]["item"]["arguments"]["options"] = ["Stop"]
+    records.extend(answered_question)
+    assert HOOK.evaluate(payload, records, "/plugin") == {}
+
+
+@pytest.mark.parametrize("scope", ["invalid", "a" * 64])
+def test_scope_error_is_recoverable_only_before_form_creation(review_state, answered_question, scope: str) -> None:
+    """Only independently invalid scope plus its exact validation error proves no form opened."""
+    payload, records = review_state
+    item = answered_question[1]["payload"]["item"]
+    item.update(
+        status="failed",
+        error={"message": "Mcp error: -32602: scope_digest must be 64 lowercase hexadecimal characters"},
+    )
+    item.pop("result")
+    item["arguments"]["scope_digest"] = scope
+    records.extend(answered_question)
+    assert (HOOK.evaluate(payload, records, "/plugin").get("decision") == "block") is (scope == "invalid")
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        pytest.param("server", "other", id="other-server"),
+        pytest.param("pluginId", "other", id="other-plugin"),
+        pytest.param("tool", "other", id="other-tool"),
+        pytest.param("id", "", id="missing-receipt-id"),
+        pytest.param("status", "pending", id="pending"),
+    ],
+)
+def test_unknown_question_receipt_preserves_pause(review_state, answered_question, field: str, value: str) -> None:
+    """Only the supported host tool and completed receipt can clear its outstanding invocation."""
+    payload, records = review_state
+    answered_question[1]["payload"]["item"][field] = value
+    records.extend(answered_question)
+    assert HOOK.evaluate(payload, records, "/plugin") == {}
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "const ask = tools.mcp__codex_rig_input__ask_user; ask({});",
+        "await tools.mcp__other__ask_user({});",
+        "await tools.request_user_input({});",
+        'await tools["mcp__codex_rig_input__ask_user"]({});',
+        "await tools?.mcp__codex_rig_input__ask_user({});",
+        "const {mcp__codex_rig_input__ask_user: ask} = tools; await ask({});",
+        "const ask = tools . mcp__codex_rig_input__ask_user; ask({});",
+    ],
+)
+def test_unknown_nested_question_routes_preserve_pause(review_state, source: str) -> None:
+    """Aliased or other question routes cannot be mistaken for a completed supported question."""
+    payload, records = review_state
+    records.append({"type": "response_item", "payload": {"type": "custom_tool_call", "name": "exec", "input": source}})
+    assert HOOK.evaluate(payload, records, "/plugin") == {}
+
+
+@pytest.mark.parametrize("platform", PLATFORM_CASES)
+@pytest.mark.parametrize("tail_exit", [0, 1])
+def test_batched_creation_and_promotion_remain_active(review_state, platform: dict, tail_exit: int) -> None:
+    """Read-only suffix commands cannot hide an unfinished promoted remediation run."""
+    payload, records = review_state
+    payload["cwd"] = platform["cwd"]
+    launcher = f'{platform["prefix"]}"{platform["root"]}/bin/{platform["launcher"]}"'
+    helper = f'{launcher} "{platform["root"]}/shared/create_run.py" --skill code-remediate'
+    creation = command_record("")
+    creation["payload"]["item"].update(
+        command=[
+            *platform["shell"],
+            helper
+            + f'\n{launcher} "{platform["root"]}/shared/find-review-report.py" --result "{platform["cwd"]}/.reports/codex/code-review/pr-7/run-001/result.json"',
+        ],
+        cwd=platform["item_cwd"],
+        aggregated_output=".reports/codex/code-remediate/run-a\n.reports/codex/code-review/pr-7/run-001/result.json\n",
+    )
+    promotion = command_record("")
+    promotion["payload"]["item"].update(
+        command=[
+            *platform["shell"],
+            helper
+            + " --promote-pr-run .reports/codex/code-remediate/run-a\nrtk git status --short\nrtk git rev-parse HEAD",
+        ],
+        cwd=platform["item_cwd"],
+        aggregated_output=".reports/codex/code-remediate/pr-7/run-001\n?? untouched.txt\n" + "a" * 40 + "\n",
+    )
+    creation["payload"]["item"]["exit_code"] = tail_exit
+    promotion["payload"]["item"]["exit_code"] = tail_exit
+    records[2:] = [creation, promotion]
+    assert HOOK.evaluate(payload, records, platform["root"])["decision"] == "block"
+    completion = command_record("")
+    completion["payload"]["item"].update(
+        command=[
+            *platform["shell"],
+            f'{launcher} "{platform["root"]}/shared/remediation_finalize.py" finalize --run .reports/codex/code-remediate/pr-7/run-001 --promote',
+        ],
+        cwd=platform["item_cwd"],
+    )
+    records.append(completion)
+    assert HOOK.evaluate(payload, records, platform["root"]) == {}
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        "printf .reports/codex/code-review/run-a",
+        "echo forged",
+        "rtk git status --short; true",
+        "rtk git status --short && true",
+        "rtk git rev-parse $REF",
+        "rtk git status --short | cat",
+    ],
+)
+def test_unknown_creation_suffix_cannot_activate_review(review_state, suffix: str) -> None:
+    """Only the bounded literal read-only suffix vocabulary can accompany run creation."""
+    payload, records = review_state
+    records[-1]["payload"]["item"]["command"][-1] += "\n" + suffix
+    assert HOOK.evaluate(payload, records, "/plugin") == {}
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        "creation failed\n",
+        ".reports/codex/code-review/pr-7/run-001/result.json\n",
+        "?? .reports/codex/code-review/run-a\n",
+        "",
+    ],
+)
+def test_failed_creation_cannot_borrow_tail_success(review_state, output: str) -> None:
+    """A successful tail command without the creator's path receipt proves no new run."""
+    payload, records = review_state
+    item = records[-1]["payload"]["item"]
+    item["command"][-1] += (
+        '\n"/plugin/bin/python" "/plugin/shared/find-review-report.py" --result .reports/codex/code-review/pr-7/run-001/result.json'
+    )
+    item["aggregated_output"] = output
+    assert HOOK.evaluate(payload, records, "/plugin") == {}
+
+
+def test_creation_after_another_command_is_not_admitted(review_state) -> None:
+    """Output position cannot prove run creation when the helper is not the first command."""
+    payload, records = review_state
+    item = records[-1]["payload"]["item"]
+    item["command"][-1] = "rtk git status --short\n" + item["command"][-1]
+    assert HOOK.evaluate(payload, records, "/plugin") == {}

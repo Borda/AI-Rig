@@ -90,6 +90,8 @@ def read_batch(state_file: Path, now: float) -> list[AgentVerdict]:
         state_file: ``agent-watch-<batch>.tsv`` file; its modification time is the spawn time.
         now: Current time in epoch seconds.
 
+    Deadlines accept ASCII decimal seconds from zero through one year.
+
     Returns:
         One verdict per well-formed row; a malformed row, or a batch file that cannot be read, is reported as
         ``timed_out`` so it is never silently lost.
@@ -105,13 +107,21 @@ def read_batch(state_file: Path, now: float) -> list[AgentVerdict]:
         if not line.strip():
             continue
         parts = line.split("\t")
-        if len(parts) != 3 or not parts[2].strip().isdigit():
+        try:
+            if len(parts) != 3:
+                raise ValueError("expected three fields")
+            name, deliverable, seconds = (part.strip() for part in parts)
+            if not seconds.isascii() or not seconds.isdecimal() or len(seconds) > 8:
+                raise ValueError("invalid deadline")
+            duration = int(seconds)
+            if duration > 31_536_000:
+                raise ValueError("deadline exceeds one year")
+        except ValueError:
             verdicts.append(
                 AgentVerdict(batch, parts[0].strip() or "?", "", "timed_out", max(0, int(now - spawned)), 0)
             )
             continue
-        name, deliverable, seconds = (part.strip() for part in parts)
-        deadline = spawned + int(seconds)
+        deadline = spawned + duration
         status = classify(deliverable, deadline, now, spawned)
         verdicts.append(
             AgentVerdict(batch, name, deliverable, status, max(0, int(now - spawned)), max(0, int(deadline - now)))

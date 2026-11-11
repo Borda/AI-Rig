@@ -6,7 +6,7 @@
 
 Skill `<notes>` and `<workflow>` sections often document multi-skill chains (e.g., `→ /audit`, `suggested next: /brainstorm breakdown <file>`). Check verifies documented sequences internally consistent:
 
-- **24a (target existence)**: every skill referenced in documented chain exists on disk — root skills under `.claude/skills/<name>/`, plugin skills under `plugins/<plugin>/skills/<skill>/`
+- **24a (target existence)**: every skill referenced in documented chain exists on disk — root skills under `.claude/skills/<name>/`, plugin skills under the root whose `.claude-plugin/plugin.json` declares the routing name (in `skills/` or `claude-skills/`)
 - **24b (argument plausibility)**: when suggestion includes explicit argument (e.g., `→ /audit fix`), that argument must appear as substring in target skill's `argument-hint:` frontmatter (case-insensitive)
 
 **Step 1 — Extract sequence references**:
@@ -30,7 +30,7 @@ Collect all unique (source-file, skill-reference, trailing-argument) triples. RE
 | Reference form | Resolution |
 | -- | -- |
 | `/name` | Glob `.claude/skills/name/SKILL.md` — must exist |
-| `/plugin:name` | Glob `plugins/plugin/skills/name/SKILL.md` — must exist; if no `plugins/` dir, note "installed plugin — cannot verify statically" and skip |
+| `/plugin:name` | In local mode, parse `plugins/*/.claude-plugin/plugin.json` and match its JSON `name` to `plugin`; inspect that root's `skills/name/SKILL.md` and `claude-skills/name/SKILL.md`. Directory names are not routing names. Otherwise read the marketplace/plugin identity from `~/.claude/plugins/installed_plugins.json`, then resolve its active install with the audit plugin's own `bin/get_plugin_install_path.py <marketplace> <plugin-name>`, then inspect those same subdirectories. An unavailable install record is unverified, not a missing target. |
 
 Missing target → **[high]**: `Sequence reference /<name> in <file> resolves to no installed skill`
 
@@ -57,7 +57,7 @@ Build directed graph from (source-file, skill-reference) pairs collected in Step
 
 ## Check 31 — Skill tool call vs allowed-tools consistency
 
-For each SKILL.md, verify every **gating or dispatch tool** called in workflow body is declared in `allowed-tools:` frontmatter. Runtime enforces `allowed-tools` — undeclared tool calls blocked silently; entire workflow phase fails with no error message.
+For each Claude skill, scan its `SKILL.md` and child Markdown executed by that owner, excluding spawn-prompt templates (`templates/*prompt*.md`) and the audit skill's `templates/checks-*.md`. Verify every **gating or dispatch tool** called in workflow body is declared in `allowed-tools:` frontmatter. Runtime enforces `allowed-tools` — undeclared tool calls blocked silently; entire workflow phase fails with no error message.
 
 **High-risk tools** (absence breaks entire workflow phases, not just individual steps):
 
@@ -70,7 +70,6 @@ For each SKILL.md, verify every **gating or dispatch tool** called in workflow b
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
-[ "$LOCAL_MODE" = "true" ] && _ROOT="plugins" || _ROOT=".claude"
 found=0
 # process substitution, not pipe — piped while runs in subshell, found wouldn't survive
 while IFS= read -r f; do  # timeout: 5000
@@ -78,36 +77,55 @@ while IFS= read -r f; do  # timeout: 5000
     skill_name=$(basename "$(dirname "$f")")
     allowed=$(awk '/^---$/{c++} c==1{print} c==2{exit}' "$f" 2>/dev/null | grep '^allowed-tools:' | sed 's/allowed-tools:[[:space:]]*//')
     [ -z "$allowed" ] && continue
-    body=$(awk '/^---$/{c++} c>=2{print}' "$f" 2>/dev/null)
+    owner_body=$(awk '/^---$/{c++} c>=2{print}' "$f" 2>/dev/null)
+    body="$owner_body"
+    while IFS= read -r child; do
+        [ "$child" = "$f" ] && continue
+        body="$body
+$(cat "$child")"
+    done < <(find "$(dirname "$f")" -type f -name '*.md' ! -path '*/templates/*prompt*.md' ! -path '*/audit/templates/checks-*.md' 2>/dev/null | sort)
     for tool in Skill AskUserQuestion Agent; do
         if echo "$body" | grep -qE "\b${tool}\(" 2>/dev/null; then
             if ! echo "$allowed" | grep -qw "$tool"; then
                 printf "! BREAKING skills/%s: body calls %s() but '%s' absent from allowed-tools\n" "$skill_name" "$tool" "$tool"
-                printf "  fix: add '%s' to allowed-tools: in %s\n" "$tool" "$f"
+                if echo "$owner_body" | grep -qE "\b${tool}\("; then
+                    printf "  fix: add '%s' to allowed-tools: in %s\n" "$tool" "$f"
+                else
+                    printf "  review: child-only call; verify execution under owner before changing %s (auto-fix: no)\n" "$f"
+                fi
                 found=1
             fi
         fi
     done
-done < <(find "$_ROOT" -path "*skills/*/SKILL.md" 2>/dev/null | sort)
+done < <(
+if [ "$LOCAL_MODE" = "true" ]; then
+    while IFS= read -r manifest; do
+        [ -f "$manifest" ] || continue
+        plugin_root=$(dirname "$(dirname "$manifest")")
+        find "$plugin_root/skills" "$plugin_root/claude-skills" -mindepth 2 -maxdepth 2 -name SKILL.md -type f 2>/dev/null
+    done < <(find plugins -mindepth 3 -maxdepth 3 -type f -path '*/.claude-plugin/plugin.json' 2>/dev/null | sort)
+else
+    find .claude/skills -mindepth 2 -maxdepth 2 -name SKILL.md -type f 2>/dev/null
+fi | sort
+)
 [ "$found" -eq 0 ] && printf "✓: Check 31 — all gating tool calls covered by allowed-tools\n"  # timeout: 5000
 ```
 
 Severity: **critical** — blocked gating tool = entire workflow phase silently broken at runtime.
 
-Auto-fix: append missing tool name to `allowed-tools:` frontmatter line.
+Auto-fix: append missing tool name to `allowed-tools:` frontmatter line only for calls in the owner's `SKILL.md` body. Child-only hits require execution-context review; auto-fix **no**.
 
 | Sub-check | Condition | Severity | Auto-fix |
 | -- | -- | -- | -- |
-| 31 — tool-body mismatch | body calls `Skill()`, `AskUserQuestion()`, or `Agent()` but tool absent from `allowed-tools` | critical | yes — add to frontmatter |
+| 31 — tool-body mismatch | body calls `Skill()`, `AskUserQuestion()`, or `Agent()` but tool absent from `allowed-tools` | critical | yes for owner-body calls; no for child-only hits |
 
 ### Sub-check 31a — Skill frontmatter completeness
 
-Verify required frontmatter fields present in every SKILL.md. Missing fields cause undocumented default behavior or miscategorized routing.
+Review frontmatter in Claude skills only. Missing `effort:` is advisory: the effective default depends on the selected model and runtime configuration; verify that default before recommending an explicit override. Never auto-insert an effort value.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
-[ "$LOCAL_MODE" = "true" ] && _ROOT="plugins" || _ROOT=".claude"
 printf "=== Check 31a: Frontmatter completeness ===\n"
 found=0
 while IFS= read -r f; do  # timeout: 5000
@@ -115,7 +133,7 @@ while IFS= read -r f; do  # timeout: 5000
     skill=$(basename "$(dirname "$f")")
     fm=$(awk '/^---$/{c++} c==1{print} c==2{exit}' "$f" 2>/dev/null)
     echo "$fm" | grep -q '^effort:' || {
-        printf "⚠ 31a: %s — missing effort: field (required; no default)\n" "$skill"
+        printf "31a-INFO: %s — effort omitted; verify selected model/runtime default before recommending an override\n" "$skill"
         found=1
     }
     # when_to_use: is valid (appended to description in the listing; both share one 1,536-char cap)
@@ -129,39 +147,79 @@ while IFS= read -r f; do  # timeout: 5000
         printf "⚠ 31a: %s — when_to_use repeats TRIGGER/SKIP text already in description\n" "$skill"
         found=1
     }
-done < <(find "$_ROOT" -path "*skills/*/SKILL.md" 2>/dev/null | sort)
+done < <(
+if [ "$LOCAL_MODE" = "true" ]; then
+    while IFS= read -r manifest; do
+        [ -f "$manifest" ] || continue
+        plugin_root=$(dirname "$(dirname "$manifest")")
+        find "$plugin_root/skills" "$plugin_root/claude-skills" -mindepth 2 -maxdepth 2 -name SKILL.md -type f 2>/dev/null
+    done < <(find plugins -mindepth 3 -maxdepth 3 -type f -path '*/.claude-plugin/plugin.json' 2>/dev/null | sort)
+else
+    find .claude/skills -mindepth 2 -maxdepth 2 -name SKILL.md -type f 2>/dev/null
+fi | sort
+)
 [ "$found" -eq 0 ] && printf "✓: Check 31a — frontmatter complete across all skills\n"
 ```
 
-Severity: **medium** for `effort:` (no default documented); **low** for `when_to_use:` cap overflow or TRIGGER/SKIP duplication (the field itself is valid).
+Severity: **advisory** for omitted `effort:` (model/runtime default applies); **low** for `when_to_use:` cap overflow or TRIGGER/SKIP duplication (the field itself is valid).
 
 | Sub-check | Field | Condition | Severity | Auto-fix |
 | -- | -- | -- | -- | -- |
-| 31 — tool-body mismatch | `allowed-tools` | body calls Skill/AskUserQuestion/Agent, not in frontmatter | critical | yes |
-| 31a — effort missing | `effort:` | always required | medium | yes |
+| 31 — tool-body mismatch | `allowed-tools` | body calls Skill/AskUserQuestion/Agent, not in frontmatter | critical | yes for owner-body calls; no for child-only hits |
+| 31a — effort omitted | `effort:` | verify selected model/runtime default | advisory | no |
 | 31a — when_to_use overflow/dup | `when_to_use:` | combined with `description:` over 1,536 chars, or repeats its TRIGGER/SKIP text | low | no |
 
-## Check 38 — AskUserQuestion cap violation
+## Check 38 — Interactive question limits
 
-`communication.md` §Interactive Questions hard-caps `AskUserQuestion` at 4 questions per call, and skills must not ask >4 questions across a single decision branch. Violations cause UX breakage (silent truncation or tool error).
-
-Scan all SKILL.md files in scope. For each file, count the total number of `AskUserQuestion` occurrences. Apply the following heuristic:
-
-- ≤4 calls → `✓` (likely safe; one branch per call is typical)
-- 5–8 calls → flag **medium** — review that no single decision branch asks >4 sequentially
-- > 8 calls → flag **high** — almost certainly some branch exceeds the cap
+`communication.md` §Interactive Questions limits each `AskUserQuestion` call to **4 questions** and asks related sub-questions to be grouped into one option set. It does not cap total calls per skill or decision branch. Count actual questions within each call; inspect each reachable branch separately, including mode files, and distinguish mutually exclusive gates from sequential calls. A skill-wide occurrence count cannot establish a violation.
 
 ```bash
-printf "=== Check 38: AskUserQuestion cap ===\n"
-for f in $(find . -path "*skills/*/SKILL.md" 2>/dev/null | sort); do
-    # grep -c prints 0 AND exits 1 on no match — || echo 0 double-fires; most files have none, so this hit the majority
-    count=$(grep -c "AskUserQuestion" "$f" 2>/dev/null) || count=0
-    if [ "$count" -gt 8 ]; then
-        printf "C38-HIGH: %s AskUserQuestion calls in %s — review for >4-per-branch\n" "$count" "$f"
-    elif [ "$count" -gt 4 ]; then
-        printf "C38-MEDIUM: %s AskUserQuestion calls in %s — review for >4-per-branch\n" "$count" "$f"
-    fi
-done  # timeout: 5000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
+printf "=== Check 38: Interactive question review candidates ===\n"
+while IFS= read -r owner; do  # timeout: 5000
+    while IFS= read -r f; do
+        awk '
+          BEGIN { tick = sprintf("%c", 96); open = "^(" tick tick tick tick "*|~~~~*)" }
+          FNR == 1 { fence = ""; front = ($0 == "---") }
+          front && FNR > 1 && /^---$/ { front = 0; next }
+          front || /^allowed-tools:/ { next }
+          {
+            run = match($0, open) ? substr($0, 1, RLENGTH) : ""
+            if (fence == "" && run != "") { fence = run; next }
+            if (fence != "" && run != "" && substr(run, 1, 1) == substr(fence, 1, 1) && length(run) >= length(fence) && substr($0, length(run) + 1) ~ /^[[:space:]]*$/) { fence = ""; next }
+            call = "AskUserQuestion[[:space:]]*\\("
+            if (fence != "") {
+              if ($0 !~ /^[[:space:]]*#/ && $0 ~ call) print FNR ":" $0
+              next
+            }
+            rest = $0; delimiter = ""; span = ""; inline_call = 0
+            while (match(rest, tick tick "*")) {
+              if (delimiter != "") span = span substr(rest, 1, RSTART - 1)
+              marker = substr(rest, RSTART, RLENGTH)
+              if (delimiter == "") delimiter = marker
+              else if (marker == delimiter) {
+                if (span ~ call) inline_call = 1
+                delimiter = ""; span = ""
+              } else span = span marker
+              rest = substr(rest, RSTART + RLENGTH)
+            }
+            if (inline_call) print FNR ":" $0
+          }' "$f" 2>/dev/null | while IFS= read -r hit; do
+            printf "38-REVIEW: owner=%s source=%s:%s — inspect questions per call and reachable branch\n" "$owner" "$f" "$hit"
+        done
+    done < <(find "$(dirname "$owner")" -type f -name '*.md' 2>/dev/null | sort)
+done < <(
+if [ "$LOCAL_MODE" = "true" ]; then
+    while IFS= read -r manifest; do
+        [ -f "$manifest" ] || continue
+        plugin_root=$(dirname "$(dirname "$manifest")")
+        find "$plugin_root/skills" "$plugin_root/claude-skills" -mindepth 2 -maxdepth 2 -name SKILL.md -type f 2>/dev/null
+    done < <(find plugins -mindepth 3 -maxdepth 3 -type f -path '*/.claude-plugin/plugin.json' 2>/dev/null | sort)
+else
+    find .claude/skills -mindepth 2 -maxdepth 2 -name SKILL.md -type f 2>/dev/null
+fi | sort
+)
 ```
 
-**Severity**: high (>8 calls) / medium (5–8 calls) — functional regression; gate prompts that exceed cap silently drop later questions. Fix: collapse related sub-questions into one `AskUserQuestion` call (max 4 options per call, max 4 calls per skill workflow branch).
+The snippet collects fenced and inline call candidates, excluding frontmatter declarations and prose-only mentions; model review identifies real calls, counts each call's question objects and reports the source line, branch and observed count. Flag **medium** only when a real call contains more than 4 questions. Split that call into focused gates while retaining every required decision. Repeated calls alone are not findings.

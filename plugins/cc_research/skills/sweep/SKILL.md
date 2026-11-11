@@ -1,6 +1,6 @@
 ---
 name: sweep
-description: Non-interactive end-to-end pipeline — auto-configure program.md (accept defaults), run judge+refine loop (up to 3 iterations), then run the campaign. Single command from goal to result.
+description: End-to-end pipeline with J4 per-command execution approval — auto-configure program.md (accept defaults), run judge+refine loop (up to 3 iterations), then run the campaign. Single command from goal to result.
 argument-hint: '"<goal>" [--team] [--compute=local|colab|docker] [--colab[=H100|L4|T4|A100]] [--codex] [--researcher] [--architect] [--journal] [--hypothesis <path>] [--skip-validation] [--out <path>] [--keep "<items>"]'
 allowed-tools: Read, Write, Edit, Bash, Grep, Glob, Agent, Skill, TaskCreate, TaskUpdate, AskUserQuestion
 effort: medium
@@ -9,7 +9,7 @@ disable-model-invocation: true
 
 <objective>
 
-Non-interactive end-to-end research pipeline: auto-plan → judge gate → run. Single command from goal to result. Accepts goal string, passes all run/colab/team flags.
+End-to-end research pipeline: auto-plan → judge gate with J4 per-command execution approval → run. Single command from goal to result. Accepts goal string, passes all run/colab/team flags.
 
 NOT for: interactive planning (use `/research:plan`); methodology review only (use `/research:judge`); running already-approved plan (use `/research:run`).
 
@@ -43,7 +43,7 @@ Sweep delegates to plan (S2), judge (S3), run (S5) — see each skill's Agent Re
 
 ## Steps S1–S5
 
-Triggered by `sweep "goal" [--flags]`. Non-interactive end-to-end: auto-plan → judge gate → run.
+Triggered by `sweep "goal" [--flags]`. Auto-plan → judge gate with J4 per-command execution approval → run.
 
 **Shared path resolution** (always runs before S1):
 
@@ -141,9 +141,12 @@ IFS= read -r _OUT < "${TMPDIR:-/tmp}/sweep-out-path-${CSID}" 2>/dev/null || _OUT
 echo "$_OUT" > "${TMPDIR:-/tmp}/research-plan-out-arg-${CSID}"  # empty = P-P2b default program.md, same as P-P0
 ```
 
-**Gates overridden in sweep** — the inlined plan steps ask these questions; sweep is non-interactive and S1 owns the single overwrite decision:
+**Gates overridden in sweep** — the inlined plan steps ask these questions; sweep accepts planning defaults and S1 owns the single overwrite decision. J4 execution approval is not overridden:
+
+- **J4 execution approval**: ask separately for metric and guard execution unless explicitly skipped. Within one sweep run, reuse approval across refine iterations only while command text, compute route and network setting are byte-identical; any change asks again. Script changes also require renewed approval per judge J4. Never reuse approval from another sweep or standalone judge invocation.
 
 - **P-P1 scope guard**: goal not an optimization goal → stop with `! sweep: goal does not look like an optimization goal (expects "Reduce X" / "Increase Y"). Rephrase and re-run.` — no question. Stop is terminal: print that line plus at most one redirect line naming the better-fit skill or agent, then end the reply — never answer, review, or list findings for the off-domain request inline, not even labelled "for reference" or "not sweep output".
+
 - **P-P2b overwrite and advisor questions**: treat `OUTPUT_EXISTS` as false. An advisor `ok: false` → print `sweep: advisor note → <headline>` with the suggestions path and continue to P-P3; the S3 judge gate checks the written program.
 
 > Include P-P2b analysis in S2 synthesis — P-P2b findings are scoped hypotheses needing consolidation into program.md written by P-P3; skipping P-P2b drops hypothesis context from generated program.
@@ -206,7 +209,7 @@ Repeat up to `MAX_REFINE` times:
 
 1. Increment `REFINE_ITER`. Run judge mode (J1–J6 from the `judge/SKILL.md` loaded above) against program file.
 
-   - Pass `--skip-validation` if user provided it; else include validation (J4).
+   - Pass `--skip-validation` if user provided it; else include validation (J4), preserving its per-command approval gate and the reuse rule above.
    - Capture J6 verdict and judge report path (`JUDGE_REPORT`).
 
 2. Print: `` sweep: judge iteration `REFINE_ITER`/`MAX_REFINE` → `VERDICT`  ``
@@ -324,7 +327,7 @@ rm -f .temp/state/skill-contract.md "${TMPDIR:-/tmp}/sweep-run-args-${CSID}"  # 
 
 - **Overwrite gate** (S1): output path exists → resolved once via S1's AskUserQuestion — P-P3's own overwrite gate is bypassed for sweep to avoid double-prompting; no silent `.bak` rename + overwrite. Pipeline exemption applies to non-interactive CI pipelines only, not user-initiated sweeps. Use git to recover prior file if needed.
 - **`--journal` and `--hypothesis` forwarded when present**: both flags pass through to S5 verbatim; sweep never strips them. `--journal` requires `--researcher` or `--architect` (validated at run R2). `--hypothesis <path>` preloads hypothesis queue.
-- **`--team` and interactivity**: sweep non-interactive except when `--team` active. Team mode Phase B presents user confirmation gate before Phase C — sweep pauses and waits. Expected; sweep cannot bypass Phase B gate. In automated/CI contexts where interaction impossible, avoid `--team` flag or pre-confirm via gate prompt manually; no `--auto` flag to suppress Phase B — by design (Phase B reviews potentially risky parallel agent decisions).
+- **Interactivity**: J4 requires per-command execution approval unless validation is skipped; overwrite and unresolved-judge gates also remain. With `--team`, Team mode Phase B presents an additional user confirmation gate before Phase C — sweep pauses and waits. Expected; sweep cannot bypass Phase B gate. In automated/CI contexts where interaction impossible, avoid `--team` flag or pre-confirm via gate prompt manually; no `--auto` flag to suppress Phase B — by design (Phase B reviews potentially risky parallel agent decisions).
 - **`--skip-validation`**: passes through to judge step (S3). Useful for cross-machine workflows where metric/guard commands run only on target machine.
 - **Metric direction conventions** (S2 auto-config): `direction: lower` for loss/error/latency metrics (loss, error_rate, mse, mae, latency, time); `direction: higher` for quality metrics (accuracy, f1, precision, recall, auc, throughput). Goal string ambiguous → default `direction: lower`, note assumption in config comment.
 

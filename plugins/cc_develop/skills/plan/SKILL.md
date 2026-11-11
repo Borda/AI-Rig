@@ -52,10 +52,11 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_parse_args.py" --skill
 # written to ${TMPDIR:-/tmp}/dev-plan-<flag>-${CSID} (legacy paths: SKILL_SPECS["plan"])
 cp "${TMPDIR:-/tmp}/dev-challenge-enabled-${CSID}"  "$PLAN_NS/challenge-enabled" 2>/dev/null || echo "true"  > "$PLAN_NS/challenge-enabled"
 cp "${TMPDIR:-/tmp}/dev-codemap-raw-${CSID}"        "$PLAN_NS/codemap-raw"       2>/dev/null || echo "auto"  > "$PLAN_NS/codemap-raw"
-cp "${TMPDIR:-/tmp}/dev-plan-max-depth-${CSID}"     "$PLAN_NS/max-depth"         2>/dev/null || echo "3"     > "$PLAN_NS/max-depth"
 ```
 
 Downstream blocks recover namespace then read back, e.g. `IFS= read -r PLAN_NS < "${TMPDIR:-/tmp}/dev-plan-ns-current-${CSID}" 2>/dev/null || PLAN_NS=""; IFS= read -r CODEMAP_ENABLED  2>/dev/null < "$PLAN_NS/codemap-enabled" || CODEMAP_ENABLED=false`.
+
+`--max-depth` remains accepted for compatibility but has no effect: this skill recommends a user-invoked diagnostic handoff and does not drive a plan/debug loop.
 
 **Unsupported flag check** — after all supported flags extracted, scan `$ARGUMENTS` for remaining `--<token>` tokens not in the supported list below. If found: invoke `AskUserQuestion` with question text `` ! Unknown flag(s): `--<token>`. Supported: `--no-challenge`, `--codemap`, `--no-codemap`, `--max-depth`. `` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
 
@@ -137,31 +138,11 @@ Arm batch `scope` in the spawn response (`agent-resolution.md` §Agent waits —
 
 - Classify task as `feature`, `fix`, `refactor`, or `debug`
   - `debug`: root cause unknown — symptoms present, cause unclear, investigation needed before fix scoped; classified `debug` → recommend `/develop:debug` first
-  - **WARNING**: `/develop:debug` hands off directly to `/develop:fix --diagnosis <path>`, never back here; re-running `/develop:plan` afterwards is a user choice, worth it only when the fix needs its own scoped plan; because that repeat is user-driven and unbounded, cap it via the depth checkpoint below. Caller tracks cycle depth via shared checkpoint file to cap repeated cycles (not a CLI flag — `/develop:debug` has no `--max-depth`). Max depth = `$MAX_DEPTH` (default 3, CLAUDE.md safety break). Before invoking `/develop:debug`, execute depth-checkpoint bash block below:
-
-```bash
-# anti-loop guard  # timeout: 3000
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r PLAN_NS < "${TMPDIR:-/tmp}/dev-plan-ns-current-${CSID}" 2>/dev/null || PLAN_NS=""
-[ -n "$PLAN_NS" ] || { echo "! BLOCKED — plan namespace sentinel missing; re-run Flag parsing"; exit 1; }
-IFS= read -r MAX_DEPTH < "$PLAN_NS/max-depth" 2>/dev/null || MAX_DEPTH=3
-IFS= read -r CLEAN_ARGS < "$PLAN_NS/clean-args" 2>/dev/null || CLEAN_ARGS=""
-GOAL_KEY=$(printf '%s' "$CLEAN_ARGS" | cksum | cut -d' ' -f1)  # per-goal cap — an unrelated goal in the same session starts at full depth
-DEPTH_FILE="${TMPDIR:-/tmp}/dev-plan-depth-checkpoint-${GOAL_KEY}-${CSID}"
-IFS= read -r CURRENT_DEPTH < "$DEPTH_FILE" 2>/dev/null || CURRENT_DEPTH="$MAX_DEPTH"
-if [ "$CURRENT_DEPTH" -le 0 ]; then
-    echo "! depth limit ($MAX_DEPTH) reached — stopping plan→debug→plan loop"
-    # don't invoke /develop:debug — proceed to AskUserQuestion below
-else
-    NEXT_DEPTH=$(( CURRENT_DEPTH - 1 ))
-    echo "$NEXT_DEPTH" > "$DEPTH_FILE"
-    echo "→ recommending /develop:debug (depth remaining: $NEXT_DEPTH)"
-fi
-```
+  - `/develop:debug` hands off directly to `/develop:fix --diagnosis <path>`, never back here; re-running `/develop:plan` afterwards is a user choice, worth it only when the fix needs its own scoped plan.
 
 `/develop:debug` is user-invocable only (`disable-model-invocation`): recommend it in the plan output and Final report for the user to run — never call it via `Skill()`.
 
-**Idle-gate contract** — every `AskUserQuestion` gate below that waits on a decision (depth cap, breaking change, Step 4 blockers, Step 5 final) first runs this block, so a `/compact` during the wait resumes losslessly (compaction-contract.md §Lifecycle). It prints `STATE=<path>`: before Step 2 that is the scope file — Write the Step 1 findings (classification, complexity, affected files, `breaking_changes`, `risks`) there with the Write tool before asking; from Step 2 on it is `PLAN_FILE`, already saved. Each such question's text ends with the hint line `` Long wait? `/compact` now — plan state saved at <STATE>, resume lossless. `` (`<STATE>` = the printed path) — in the question text, never as reply prose before the call. Every **Abort** at these gates runs the Step 5 contract-clear block before stopping.
+**Idle-gate contract** — every `AskUserQuestion` gate below that waits on a decision (breaking change, Step 4 blockers, Step 5 final) first runs this block, so a `/compact` during the wait resumes losslessly (compaction-contract.md §Lifecycle). It prints `STATE=<path>`: before Step 2 that is the scope file — Write the Step 1 findings (classification, complexity, affected files, `breaking_changes`, `risks`) there with the Write tool before asking; from Step 2 on it is `PLAN_FILE`, already saved. Each such question's text ends with the hint line `` Long wait? `/compact` now — plan state saved at <STATE>, resume lossless. `` (`<STATE>` = the printed path) — in the question text, never as reply prose before the call. Every **Abort** at these gates runs the Step 5 contract-clear block before stopping.
 
 ```bash
 # compaction boundary — before an idle AskUserQuestion gate
@@ -171,24 +152,8 @@ IFS= read -r PLAN_NS < "${TMPDIR:-/tmp}/dev-plan-ns-current-${CSID}" 2>/dev/null
 IFS= read -r CLEAN_ARGS < "$PLAN_NS/clean-args" 2>/dev/null || CLEAN_ARGS=""
 IFS= read -r PLAN_FILE < "$PLAN_NS/plan-file" 2>/dev/null || PLAN_FILE=""  # empty before Step 2 — namespace is per invocation
 SCOPE_FILE=".temp/develop/plan-scope-${CSID}.md"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" "develop:plan" "idle gate" ".plans/active/" "goal=$CLEAN_ARGS; scope-findings=$SCOPE_FILE; plan-file=${PLAN_FILE:-not written yet}" "resume: re-read plan-file when written, else scope-findings; re-issue the pending AskUserQuestion (depth cap, breaking change, Step 4 blockers or Step 5 Proceed/Revise); Revise edits plan-file in place"  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" "develop:plan" "idle gate" ".plans/active/" "goal=$CLEAN_ARGS; scope-findings=$SCOPE_FILE; plan-file=${PLAN_FILE:-not written yet}" "resume: re-read plan-file when written, else scope-findings; re-issue the pending AskUserQuestion (breaking change, Step 4 blockers or Step 5 Proceed/Revise); Revise edits plan-file in place"  # timeout: 5000
 echo "STATE=${PLAN_FILE:-$SCOPE_FILE}"
-```
-
-At depth 0: stop, report current plan state, run the Idle-gate contract block, invoke `AskUserQuestion` — "Debug-cycle cap ($MAX_DEPTH) reached for this goal; root cause still unconfirmed. How to proceed?" + the `/compact` hint line · (a) **Write the plan anyway** — continue to Step 2 flagging "root cause unconfirmed" under Risks · (b) **Reset the cap for this goal** — run the reset block below, then recommend `/develop:debug` once more · (c) **Abort**.
-
-Reset block (option b only; rewrites this goal's checkpoint to full depth):
-
-```bash
-# timeout: 3000
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r PLAN_NS < "${TMPDIR:-/tmp}/dev-plan-ns-current-${CSID}" 2>/dev/null || PLAN_NS=""
-[ -n "$PLAN_NS" ] || { echo "! BLOCKED — plan namespace sentinel missing; re-run Flag parsing"; exit 1; }
-IFS= read -r MAX_DEPTH < "$PLAN_NS/max-depth" 2>/dev/null || MAX_DEPTH=3
-IFS= read -r CLEAN_ARGS < "$PLAN_NS/clean-args" 2>/dev/null || CLEAN_ARGS=""
-GOAL_KEY=$(printf '%s' "$CLEAN_ARGS" | cksum | cut -d' ' -f1)
-echo "$MAX_DEPTH" > "${TMPDIR:-/tmp}/dev-plan-depth-checkpoint-${GOAL_KEY}-${CSID}"
-echo "→ depth cap reset to $MAX_DEPTH for this goal"
 ```
 
 - Identify affected files and modules (search codebase — no guessing)
@@ -204,11 +169,11 @@ Agent returns findings inline (no file handoff — output short).
 
 Breaking change criteria — change is breaking when it affects **public API** (exported from `__init__.py`, documented in README, or stable interface used by external consumers) and any of these apply: removed public API (function, class, method, or module), changed function signatures (parameter names, types, order, or defaults), changed config key names or schema, changed output format (return type, serialization structure, CLI output shape). Internal/private signature changes (functions prefixed `_`, classes not exported) do NOT count as breaking — list under `risks` instead.
 
-**Debug classification handoff**: After the depth checkpoint and any applicable breaking change gate, when the cause is unknown, recommend `/develop:debug <goal>` directly, clear the skill contract using Step 5's contract-clear block, and skip Steps 2–5; do not write or challenge an implementation plan. If the user chose **Write the plan anyway** at the depth cap, continue to Step 2 with the unconfirmed root cause recorded as a risk. If the user resets the cap, make the direct debug recommendation; on Abort, stop.
+**Debug classification handoff**: After any applicable breaking change gate, when the cause is unknown, recommend `/develop:debug <goal>` directly, clear the skill contract using Step 5's contract-clear block, and skip Steps 2–5; do not write or challenge an implementation plan.
 
 ## Step 2: Structured plan
 
-Derive filename slug from goal: first 4-5 meaningful words, lowercase, hyphen-separated (e.g. `"improve caching in data loader"` -> `plan_improve-caching-data-loader.md`). If `.plans/active/<slug>` already exists, append counter suffix (`-2`, `-3`, etc.) before writing — never silently overwrite. Run this block once per plan: a Revise (breaking-gate (b), Step 4 blocker fix) edits the existing `PLAN_FILE` in place and does not re-run it — a second run would mint `plan_<slug>-2.md` and leave Step 3's reviewer reading the superseded plan. Store full path as `PLAN_FILE` — used in Steps 3 and Final output.
+Derive filename slug from goal: first 4 meaningful words, lowercase, hyphen-separated (e.g. `"improve caching in data loader"` -> `plan-improve-caching-data-loader-<ts>.md`). Use `.plans/active/plan-<slug>-<ts>.md`, matching `plan-inline.md`, with the UTC timestamp format `%Y-%m-%dT%H-%M-%SZ`. If that path already exists, append counter suffix (`-2`, `-3`, etc.) before writing — never silently overwrite. Run this block once per plan: a Revise (breaking-gate (b), Step 4 blocker fix or Step 5 user edits) edits the existing `PLAN_FILE` in place and does not re-run it — a second run would mint another file and leave Step 3's reviewer reading the superseded plan. Store full path as `PLAN_FILE` — used in Steps 3 and Final output.
 
 ```bash
 # persist — bash resets between calls  # timeout: 3000
@@ -217,12 +182,13 @@ IFS= read -r PLAN_NS < "${TMPDIR:-/tmp}/dev-plan-ns-current-${CSID}" 2>/dev/null
 [ -n "$PLAN_NS" ] || { echo "! BLOCKED — plan namespace sentinel missing; re-run Flag parsing"; exit 1; }
 IFS= read -r CLEAN_ARGS < "$PLAN_NS/clean-args" 2>/dev/null || CLEAN_ARGS=""
 mkdir -p ".plans/active"
-SLUG=$(printf '%s\n' "$CLEAN_ARGS" | tr '[:upper:]' '[:lower:]' | grep -oE '[a-z0-9]+' | grep -vE '^(a|an|the|in|on|of|to|for|and|or|is|with|at|by|from)$' | head -5 | paste -sd- -)
-[ -n "$SLUG" ] || SLUG="unnamed-$(date -u +%Y-%m-%dT%H-%M-%SZ)"  # stopword-only / non-ASCII goal would otherwise yield plan_.md
-PLAN_FILE=".plans/active/plan_${SLUG}.md"
+SLUG=$(printf '%s\n' "$CLEAN_ARGS" | tr '[:upper:]' '[:lower:]' | grep -oE '[a-z0-9]+' | grep -vE '^(a|an|the|in|on|of|to|for|and|or|is|with|at|by|from)$' | head -4 | paste -sd- -)
+[ -n "$SLUG" ] || SLUG="unnamed"  # stopword-only / non-ASCII goal would otherwise yield an empty slug
+PLAN_STEM=".plans/active/plan-${SLUG}-$(date -u +%Y-%m-%dT%H-%M-%SZ)"
+PLAN_FILE="${PLAN_STEM}.md"
 N=2
 while [ -e "$PLAN_FILE" ]; do
-    PLAN_FILE=".plans/active/plan_${SLUG}-${N}.md"
+    PLAN_FILE="${PLAN_STEM}-${N}.md"
     N=$((N+1))
 done
 echo "$PLAN_FILE" > "$PLAN_NS/plan-file"
@@ -369,7 +335,7 @@ Do not escalate: items resolvable from codebase, items that are risks (not block
 
 Resolve feasible plan findings. If material uncertainty remains, seek one bounded higher-capability advisory pass when a permitted route exists; record its evidence and remaining limits.
 
-**Two states** (plan has no diff yet — no small-diff auto-skip, no `--challenge` flag, unlike fix/feature/refactor/debug): by **default** challenger always reviews plan design; `--no-challenge` (`CHALLENGE_ENABLED=false`) **skips gate entirely**.
+**Two states**: by **default** challenger always reviews plan design; `--no-challenge` (`CHALLENGE_ENABLED=false`) **skips gate entirely**.
 
 ```bash
 # re-hydrate PLAN_FILE + CHALLENGE_ENABLED — bash resets between calls  # timeout: 3000
@@ -430,12 +396,15 @@ Co-review corrections applied ([agent count] agents, omit table if none):
 
 **Build terminal brief** (the brief is already saved in `<PLAN_FILE>`):
 
+For refactor classification, derive `<target>` from `Affected files`: use the sole affected Python file when there is one, otherwise the common parent directory of the affected Python files, relative to the repository root (`.` when they span top-level directories). Confirm the path exists. Print the refactor-specific handoff below instead of the generic classification line; quote paths and the goal when they contain spaces.
+
 ```text
 Plan -> <PLAN_FILE>
 
 [brief content exactly as written to the file]
 
 -> /develop:<classification> <goal> --plan <PLAN_FILE> when ready  [debug: -> /develop:debug <goal> first — it hands off to /develop:fix --diagnosis <path>]
+-> /develop:refactor <target> <goal> --plan <PLAN_FILE> when ready
 ```
 
 If unresolved items escalated, include each after brief and save them in `<PLAN_FILE>`:
@@ -446,7 +415,7 @@ If unresolved items escalated, include each after brief and save them in `<PLAN_
   Recommendation: [recommended option] — [reason]
 ```
 
-Before invoking `AskUserQuestion`, print the saved brief and any unresolved items once as the last reply text before the question, as normal Markdown; omit the handoff line until the answer. Run the Idle-gate contract block (Step 1) before the question. The question text carries a short plain summary: classification, counts, headline, `→ <PLAN_FILE>` and the `/compact` hint line last, at most 6 plain lines (target 600 characters, hard cap 1,500), no table, pipe layout or code fence. Options carry a label and a one-line description, no `preview`: (a) Proceed — print handoff line, continue · (b) Revise plan — return to Step 2 with user edits. Don't print handoff line until user selects (a).
+Before invoking `AskUserQuestion`, print the saved brief and any unresolved items once as the last reply text before the question, as normal Markdown; omit the handoff line until the answer. Run the Idle-gate contract block (Step 1) before the question. The question text carries a short plain summary: classification, counts, headline, `→ <PLAN_FILE>` and the `/compact` hint line last, at most 6 plain lines (target 600 characters, hard cap 1,500), no table, pipe layout or code fence. Options carry a label and a one-line description, no `preview`: (a) Proceed — print handoff line, continue · (b) Revise plan — edit `PLAN_FILE` in place with user edits, then Step 5 again to rebuild and save the brief and handoff; no Step 4 re-run unless requested. Preserve previous review findings and identify coverage made stale by the revision instead of claiming the revised content was reviewed. Don't print handoff line until user selects (a).
 
 Skill complete — after the handoff line on (a), and on **Abort** at any gate — clear the contract; Revise keeps it, the next gate refreshes it:
 

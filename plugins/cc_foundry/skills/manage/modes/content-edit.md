@@ -9,11 +9,10 @@ Before executing type-specific content-edit mode, determine approach:
 | File extension | Agent |
 | -- | -- |
 | `.md` (agents, skills, SKILL.md) | `foundry:curator` |
-| `.py`; hook `.js` under `hooks/` | `foundry:sw-engineer` |
-| `.ts`, non-hook `.js`, `.sh` | no owning agent (sw-engineer NOT-for) — inline Edit, flagged as unowned in Step 10 |
+| Hook `.js` under `hooks/` | `foundry:sw-engineer` (always, including short directives) |
 | Rule `.md` (under `rules/`) | inline Edit — no agent |
 
-**If `EDIT_TRIVIAL=true`** (classified in Step 1):
+**If `EDIT_TRIVIAL=true` and the entity is not a hook** (classified in Step 1):
 
 1. Read file using Read tool
 2. Apply directive directly using Edit tool — no agent spawn
@@ -36,7 +35,7 @@ echo "Shared dir for curator prompt: $_FS_VAL"
 3. Spawn **foundry:curator** subagent — substitute `<_FS_VAL>` with the path from above when emitting the prompt:
 
 ```markdown
-Read `.claude/agents/<name>.md`.
+Read `<ENTITY_PATH>` (substitute the concrete agent path resolved in Step 1; project default `.claude/agents/<name>.md`).
 Apply this change: <directive>
 Rules:
 - Preserve frontmatter fields (name, description, tools, model, color) unless the change explicitly targets them
@@ -45,7 +44,7 @@ Rules:
 - Fenced code block added → run `cat "<_FS_VAL>/bin-authoring-guide.md"` (Bash tool), apply extraction gate (verdict MEDIUM/HIGH → bin/ script instead), §Prose over Code check, §Script Output Routing for multi-value bin/ scripts (all in guide just loaded)
 - After editing: verify XML tag balance, step numbering, cross-ref validity
 Write all changes using the Edit tool.
-Return ONLY: {"status":"done","file":".claude/agents/<name>.md","edits":N,"description_changed":true|false,"confidence":0.N}
+Return ONLY: {"status":"done","file":"<ENTITY_PATH>","edits":N,"description_changed":true|false,"confidence":0.N}
 ```
 
 Use `description_changed` from returned JSON to decide whether Steps 5–7 need cross-ref propagation.
@@ -63,23 +62,24 @@ echo "Shared dir for curator prompt: $_FS_VAL"
 3. Spawn **foundry:curator** subagent — substitute `<_FS_VAL>` with the path from above:
 
 ```markdown
-Read `.claude/skills/<name>/SKILL.md`.
+Read `<ENTITY_PATH>` (substitute the concrete SKILL.md path resolved in Step 1). Inspect its skill directory and read the supporting Markdown relevant to the directive, including `modes/` and `templates/`; edit only the relevant Markdown in that directory, never executable code or unrelated files.
 Apply this change: <directive>
 Rules:
 - Preserve frontmatter fields (name, description, argument-hint, disable-model-invocation, allowed-tools)
+- Supporting Markdown edits preserve that file's existing structure; XML/frontmatter checks apply only where present
 - Preserve XML tags (<objective>, <inputs>, <workflow>, <notes>) — targeted edits only; do not rewrite unchanged sections
 - If the change modifies the skill's purpose: update the description: frontmatter field
 - Fenced code block added → run `cat "<_FS_VAL>/bin-authoring-guide.md"` (Bash tool), apply extraction gate (verdict MEDIUM/HIGH → bin/ script instead), §Prose over Code check, §Script Output Routing for multi-value bin/ scripts (all in guide just loaded)
 - After editing: verify XML tag balance, step numbering, workflow gate completeness
 Write all changes using the Edit tool.
-Return ONLY: {"status":"done","file":".claude/skills/<name>/SKILL.md","edits":N,"description_changed":true|false,"confidence":0.N}
+Return ONLY: {"status":"done","file":"<ENTITY_PATH>","files_changed":["<concrete edited Markdown paths>"],"edits":N,"description_changed":true|false,"confidence":0.N}
 ```
 
 Use `description_changed` from returned JSON to decide whether Steps 5–7 need cross-ref propagation.
 
 ### Mode: Content-Edit Rule
 
-1. Read `.claude/rules/<name>.md` using the Read tool.
+1. Read the concrete `ENTITY_PATH` from Step 1 using the Read tool (project default `.claude/rules/<name>.md`).
 2. Determine change directive (same as Content-Edit Agent).
 3. Apply changes directly using the Edit tool:
    - Preserve YAML frontmatter (description, paths) unless change explicitly targets them

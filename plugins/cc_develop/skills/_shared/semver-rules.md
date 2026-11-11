@@ -12,7 +12,7 @@ Corollary: API deprecated in a prior release (with warning + forwarding shim) an
 
 Every detected breaking change needs explicit handling before proceeding — never pass silently. What that handling is depends on whether the reader has a foreground mode:
 
-- **Interactive/foreground-capable callers** (e.g. `plan`, `fix`, direct skill invocation): call `AskUserQuestion`, require explicit "yes, intentional" confirmation — prose question in response body does NOT count (see `communication.md`)
+- **Interactive/foreground-capable callers** (e.g. `plan`, `fix`, direct skill invocation): load these rules before public-surface edits, call `AskUserQuestion` for a breaking change and require explicit "yes, intentional" confirmation before editing — prose question in response body does NOT count (see `communication.md`)
 - **Callers with no foreground mode** (any agent always invoked via `Agent()`, e.g. `shepherd`): `AskUserQuestion` blocks indefinitely with no parent able to respond — instead always emit a `⚠ BREAKING CHANGE DETECTED` block; the caller is responsible for acting on it
 - State: what worked before, what will break, why change needed
 - Never batch-approve multiple breaking changes in one question/block unless they are logically one atomic change
@@ -48,4 +48,4 @@ Use [pyDeprecate](https://pypi.org/project/pyDeprecate/) (Borda's package) — h
 
 - **Deprecation lifecycle**: deprecate in minor → keep ≥1 minor cycle → remove in next major
 - **Also**: add `.. deprecated:: X.Y.Z` Sphinx directive in docstring so docs generators render deprecation notice
-- Anti-patterns: see shepherd's `<antipatterns-to-flag>` section (deprecation category)
+- Anti-patterns: see shepherd's `<antipatterns-to-flag>` section (deprecation category; requires `oss` plugin)

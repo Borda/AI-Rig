@@ -17,6 +17,15 @@ _REAL_READ_TEXT = Path.read_text
 _ALL_MODES_TEXT = "<objective></objective>\n<workflow>\nProse with \\<notes> escaped.\n"
 
 
+@pytest.mark.timeout(3)
+@pytest.mark.parametrize("fragment", ["<!--", "<notes x"])
+def test_incomplete_markup_is_scanned_without_repeated_suffix_searches(tmp_path: Path, fragment: str) -> None:
+    """A large run of unmatched comments or attributed tags cannot stall the structural scan."""
+    path = tmp_path / "incomplete.md"
+    path.write_text("<role>\ncontent\n</role>\n" + fragment * 20000, encoding="utf-8")
+    assert cts.check_file(path) == []
+
+
 def _messages(findings: list[cts.Finding]) -> list[str]:
     """Return the message text of each finding, for substring assertions.
 

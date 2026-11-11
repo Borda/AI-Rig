@@ -37,6 +37,8 @@ Checks — every text comparison is case-insensitive on stripped text:
     7. ``--open-shape`` (thread runs): an open candidate pool — see :func:`open_shape_reasons`
     8. ``--boundary`` (vitality runs, with ``--derived-gt``): enough axes near a band line — see
        :func:`boundary_reasons`
+    9. token-shaped ``decisive``: more than 4 words, or 3 or more words ending in ``.``, ``!`` or ``?``, is a
+       sentence, and no answer restates a sentence verbatim — see :func:`_decisive_shape_reasons`
 
 Merge: valid problems sorted by source then problem_id, each carrying its ``source``. A problem_id used by more than
 one source is prefixed ``<source>-`` on every problem carrying it; a problem_id repeated within one source keeps only
@@ -59,8 +61,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
+import tempfile
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass
 from enum import Enum
@@ -103,11 +107,17 @@ _PROBLEM_FILE = re.compile(r"^problems-(" + "|".join(source.value for source in 
 #: Kebab-case problem id: lowercase alphanumeric words joined by single hyphens.
 _KEBAB = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 #: Labelled input line (``Type: pull_request``); its value is free to read, so a decisive equal to it is leaked.
-_LABELLED_LINE = re.compile(r"^\s*[A-Za-z][A-Za-z _-]{0,30}:\s*(.+?)\s*$")
+_LABELLED_LINE = re.compile(r"^[A-Za-z][A-Za-z _-]{0,30}:(.*)$")
 #: Decisive marking a no-answer item; it has no text to find in ``input``.
 _NO_ANSWER = "none"
 #: Ground-truth fields that must be non-empty strings; an empty ``decisive`` would occur in every input.
 _GT_REQUIRED_TEXT = ("claim", "decisive", "role")
+#: Most words a ``decisive`` may hold; the longest token-shaped answers seen are four-word commands.
+_DECISIVE_MAX_WORDS = 4
+#: Fewest words at which closing sentence punctuation marks a ``decisive`` as a sentence (``v2.7.2.`` stays a token).
+_DECISIVE_SENTENCE_WORDS = 3
+#: Closing punctuation of a sentence.
+_SENTENCE_END = (".", "!", "?")
 #: Near-miss fields that must be non-empty strings.
 _NEAR_MISS_REQUIRED_TEXT = ("ref", "wrong_role")
 #: Merged output with every valid problem.
@@ -116,9 +126,9 @@ MERGED_NAME = "problems.json"
 REJECTED_NAME = "problems-rejected.json"
 
 #: One candidate of a rendered pool, the row format real thread fixtures use:
-#: ``#<N> | state: <s> | title: <t> | body: <b>``. The title is non-greedy so the first ``| body:`` ends it; the body
-#: runs to the end of the line, since real bodies may contain ``|``.
-_CANDIDATE_ROW = re.compile(r"^\s*#(\d+)\s*\|\s*state:\s*(.*?)\s*\|\s*title:\s*(.*?)\s*\|\s*body:\s*(.*?)\s*$")
+#: ``#<N> | state: <s> | title: <t> | body: <b>``. The title ends at ``| body:``; both title
+#: and body may contain other pipes.
+_CANDIDATE_ROW = re.compile(r"^#(\d+)\s*\|\s*state:([^|]*)\|\s*title:")
 #: Fewest candidate rows an open pool must render.
 _OPEN_SHAPE_MIN_ROWS = 5
 #: Longest candidate body, in characters; a longer body tends to restate the item and give the link away.
@@ -364,12 +374,36 @@ def _occurrence_reasons(problem: dict[str, Any]) -> list[str]:
     return reasons
 
 
+def _decisive_shape_reasons(problem: dict[str, Any]) -> list[str]:
+    """Reject a ``decisive`` written as a sentence instead of the token an answer must state (check 9).
+
+    A scorer marks an item found when the response states its ``decisive`` in its ``role``. A whole sentence, such as a
+    quoted maintainer claim, is never restated verbatim, so the item is scored on topic overlap instead. The token the
+    claim hinges on (a version, an issue number, a symbol) is the answer key.
+    """
+    reasons = []
+    for index, item in _dict_items(problem, "ground_truth"):
+        decisive = item.get("decisive")
+        if not isinstance(decisive, str):
+            continue
+        words = len(decisive.split())
+        ends_like_sentence = words >= _DECISIVE_SENTENCE_WORDS and decisive.rstrip().endswith(_SENTENCE_END)
+        if words > _DECISIVE_MAX_WORDS or ends_like_sentence:
+            reasons.append(
+                f"ground_truth[{index}].decisive {decisive!r} is a sentence ({words} words); "
+                f"name the token it hinges on, at most {_DECISIVE_MAX_WORDS} words"
+            )
+    return reasons
+
+
 def _leak_reasons(problem: dict[str, Any]) -> list[str]:
     """Reject a ``decisive`` readable verbatim as the value of a labelled input line (check 3)."""
     text = problem.get("input")
     if not isinstance(text, str):
         return []
-    labelled = {match.group(1).casefold() for line in text.splitlines() if (match := _LABELLED_LINE.match(line))}
+    labelled = {
+        match.group(1).strip().casefold() for line in text.splitlines() if (match := _LABELLED_LINE.match(line.strip()))
+    }
     return [
         f"ground_truth[{index}].decisive {item['decisive']!r} is the value of a labelled input line (free-recall leak)"
         for index, item in _dict_items(problem, "ground_truth")
@@ -406,9 +440,17 @@ def _candidate_rows(lines: list[str]) -> list[_CandidateRow]:
     """Parse every line of ``input`` that is a candidate row in the open-pool format."""
     rows = []
     for index, line in enumerate(lines):
+        line = line.strip()
         match = _CANDIDATE_ROW.match(line)
-        if match is not None:
-            rows.append(_CandidateRow(index, int(match.group(1)), match.group(3), match.group(4)))
+        if match is None:
+            continue
+        boundary = line.find("| body:", match.end())
+        if boundary >= 0:
+            rows.append(
+                _CandidateRow(
+                    index, int(match.group(1)), line[match.end() : boundary].strip(), line[boundary + 7 :].strip()
+                )
+            )
     return rows
 
 
@@ -671,7 +713,7 @@ def validate_problem(
 ) -> list[str]:
     """List every reason one problem must be rejected; an empty list means the problem is valid.
 
-    Covers the per-problem checks 1–5, 7 and 8 of the module docstring. Each check reads only the fields it can trust,
+    Covers the per-problem checks 1–5 and 7–9 of the module docstring. Each check reads only the fields it can trust,
     so a schema failure does not hide an independent content failure in the same problem.
 
     Args:
@@ -704,6 +746,7 @@ def validate_problem(
         *_near_miss_conflict_reasons(problem),
         *(open_shape_reasons(problem, source) if open_shape else []),
         *([] if derived is None else boundary_reasons(problem, derived)),
+        *_decisive_shape_reasons(problem),
     ]
 
 
@@ -802,8 +845,26 @@ def _summary(records: list[dict[str, Any]], rejections: list[Rejection]) -> dict
 
 
 def _write_json(path: Path, data: object) -> None:
-    """Write ``data`` as indented UTF-8 JSON with LF line endings and a trailing newline."""
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
+    """Replace the output with fresh UTF-8 JSON without writing through an existing link."""
+    current = path.absolute().parent
+    trusted = {Path.cwd(), Path(tempfile.gettempdir()).absolute()}
+    while current not in trusted:
+        if current.is_symlink():
+            raise OSError(f"refusing symlinked report directory: {current}")
+        parent = current.parent
+        if parent == current:
+            break
+        current = parent
+    fd, staging = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+        mask = os.umask(0)
+        os.umask(mask)
+        os.chmod(staging, 0o666 & ~mask)
+        os.replace(staging, path)
+    finally:
+        Path(staging).unlink(missing_ok=True)
 
 
 def run(

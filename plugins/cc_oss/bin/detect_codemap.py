@@ -5,8 +5,8 @@ consumers: resolve/SKILL.md, review/SKILL.md, analyse/modes/codemap-signals.md
 
 Determines whether the codemap plugin is installed and an index exists for the
 current project.  Writes result to ${TMPDIR:-/tmp}/<prefix>-codemap-enabled-<CSID>.
-When check-index-currency is on PATH, also writes currency status to
-${TMPDIR:-/tmp}/<prefix>-codemap-currency-<CSID> ("current", "stale", or "no_index").
+Writes verified currency status to ${TMPDIR:-/tmp}/<prefix>-codemap-currency-<CSID>
+("current", "stale", "no_index", or "unknown"). Unverified currency disables index use.
 
 Usage:
     python detect_codemap.py --prefix resolve [--arguments "$ARGUMENTS"] [--force-off]
@@ -20,7 +20,7 @@ Flags:
                       hand over one argv slot instead of interpolating $ARGUMENTS into
                       shell tests, where an embedded quote breaks the block at parse time.
     --force-off       CODEMAP_FORCE_OFF=true — always write false.
-    --strict          CODEMAP_STRICT=true — exit 1 when codemap absent/index missing.
+    --strict          CODEMAP_STRICT=true — exit 1 when codemap absent/index missing or unverified.
     --proj <name>     Project name override (default: basename of git toplevel). Must be a bare
                       name, not a path — a value containing "/", "\\", or equal to "." or ".."
                       is rejected.
@@ -28,12 +28,12 @@ Flags:
 
 Temp files written, each created fresh with mode 0600 (``_sentinel_io.py``):
     ${TMPDIR:-/tmp}/<prefix>-codemap-enabled-<CSID>   → "true" or "false"
-    ${TMPDIR:-/tmp}/<prefix>-codemap-currency-<CSID>  → "current", "stale", or "no_index"
+    ${TMPDIR:-/tmp}/<prefix>-codemap-currency-<CSID>  → "current", "stale", "no_index", "unknown", or "off"
 
 Exit codes:
     0   success (CODEMAP_ENABLED written)
-    1   ``--strict`` mode: codemap not installed or index missing (error printed)
-    2   bad argv: missing ``--prefix``, or ``--proj`` containing a path separator
+    1   ``--strict`` mode: codemap not installed or index missing/unverified
+    2   bad argv: missing/unsafe ``--prefix``, or ``--proj`` containing a path separator
 """
 
 from __future__ import annotations
@@ -41,6 +41,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -58,25 +59,25 @@ from _sentinel_io import write_private_text  # noqa: E402
 
 
 def _check_currency(index_path: Path) -> tuple[str, str]:
-    """Return ``(status, reason)`` for an existing index, failing open to ``current``.
+    """Return verified currency or unknown when the probe cannot establish it.
 
-    ``check-index-currency`` is optional; when it is absent, times out, or emits
-    unparsable output the gate deliberately fails **open** — a staleness probe must
-    never block a skill that already has a usable index. The coercion is announced on
-    stderr rather than applied silently, so "current" that was assumed is
-    distinguishable from "current" that was measured.
+    An absent, failed, or malformed probe leaves the index disabled. Only provider statuses ``current``, ``stale``,
+    and ``no_index`` are accepted.
 
     Args:
         index_path: Path to the codemap index JSON that was already found.
 
     Returns:
-        ``(status, reason)`` — status is one of the probe's own values, or
-        ``"current"`` when the probe could not be consulted.
+        ``(status, reason)`` with ``unknown`` when the probe could not verify currency.
     """
-    currency_bin = shutil.which("check-index-currency")
-    if not currency_bin:
-        return "current", ""
     try:
+        launcher = shutil.which("codemap-py")
+        sibling = Path(launcher).parent / "check-index-currency" if launcher else None
+        currency_bin = (
+            str(sibling) if sibling is not None and sibling.is_file() else shutil.which("check-index-currency")
+        )
+        if not currency_bin:
+            raise FileNotFoundError("currency probe unavailable")
         result = subprocess.run(  # noqa: S603 - argv list, no shell
             [sys.executable, currency_bin, "--index-path", str(index_path)],
             capture_output=True,
@@ -84,14 +85,19 @@ def _check_currency(index_path: Path) -> tuple[str, str]:
             timeout=15,
         )
         data = json.loads(result.stdout.strip())
-        return str(data.get("status", "current")), str(data.get("reason", ""))
+        if not isinstance(data, dict):
+            raise ValueError("currency probe response must be an object")
+        status = data.get("status")
+        if not isinstance(status, str) or status != {0: "current", 1: "stale", 2: "no_index"}.get(result.returncode):
+            raise ValueError("invalid currency status")
+        return status, str(data.get("reason", ""))
     except (OSError, subprocess.SubprocessError, ValueError) as exc:
         print(
-            f"⚠ codemap-py: currency probe failed ({type(exc).__name__}) — assuming 'current'; "
+            f"⚠ codemap-py: currency probe failed ({type(exc).__name__}) — index disabled; "
             "index staleness was NOT verified.",
             file=sys.stderr,
         )
-        return "current", ""
+        return "unknown", str(exc)
 
 
 def _project_root() -> Path:
@@ -324,6 +330,10 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", prefix) is None:
+        print("detect_codemap: --prefix must be a simple name of at most 64 characters", file=sys.stderr)
+        return 2
+
     force_off, strict = _apply_arguments_flags(arguments, force_off, strict)
 
     csid = os.environ.get("CSID") or os.environ.get("CLAUDE_CODE_SESSION_ID") or "shared"
@@ -359,6 +369,9 @@ def main(argv: list[str] | None = None) -> int:
 
     currency, currency_reason = _check_currency(index_path)
     write_private_text(currency_file, f"{currency}\n")
+    if currency not in {"current", "stale"}:
+        write_private_text(out_file, "false\n")
+        return 1 if strict else 0
 
     if currency == "stale":
         print(

@@ -33,6 +33,18 @@ _OBSOLETE_PREVIEW_ROUTING = (
 )
 
 
+def _question_rule(text: str, section: str) -> str:
+    """Resolve the named shared rule when a gate references it instead of repeating its limits."""
+    if "§Tree summary format — Question text rule" not in section:
+        return section
+    if "### Tree summary format" not in text.splitlines():
+        text = (_SKILLS / "brainstorm/SKILL.md").read_text(encoding="utf-8")
+    lines = text.splitlines()
+    start = next(index for index, line in enumerate(lines) if line == "### Tree summary format")
+    end = next(index for index in range(start + 1, len(lines)) if lines[index].startswith("### "))
+    return next(line for line in lines[start:end] if line.startswith("**Question text rule**:"))
+
+
 @pytest.mark.parametrize(
     ("relative", "start", "end", "artifact"),
     [
@@ -151,13 +163,35 @@ def test_rich_decision_content_is_saved_printed_once_and_summarized(
 ) -> None:
     """Each gate saves its rich content, prints it once before asking, and keeps a bounded plain question summary.
 
-    The section between the two markers must name the saved artifact, the print-once delivery, the plain question text
-    limits and the recommended-option placement.
+    Each section must name its own artifact and delivery. Limits and option placement must be stated locally or
+    resolved through its explicit reference to the named shared rule.
     """
     text = (_SKILLS / relative).read_text(encoding="utf-8")
     section = text.split(start, 1)[1].split(end, 1)[0]
-    assert missing(section, [artifact, *_PRINT_ONCE, "question text", *_QUESTION_LIMITS]) == []
-    assert "recommended option second" in section or "display recommended (a) second" in section
+    assert missing(section, [artifact, *_PRINT_ONCE, "question text"]) == []
+    rule = _question_rule(text, section)
+    assert missing(rule, _QUESTION_LIMITS) == []
+    assert "recommended option second" in rule or "display recommended (a) second" in rule
+
+
+def test_breakdown_gates_reference_the_canonical_question_text_rule() -> None:
+    """All three breakdown gates inherit the same limits and option order from the parent skill."""
+    text = (_SKILLS / "brainstorm/modes/breakdown.md").read_text(encoding="utf-8")
+    references = [
+        line for line in text.splitlines() if "apply SKILL.md §Tree summary format — Question text rule" in line
+    ]
+    assert len(references) == 3
+    assert missing(_question_rule(text, references[0]), _QUESTION_LIMITS) == []
+    assert "6 plain lines" not in text
+    assert "hard cap 1,500" not in text
+
+
+def test_clarifying_question_example_places_recommendation_second() -> None:
+    """The Step 2 example agrees with the rule used by actual question delivery gates."""
+    lines = (_SKILLS / "brainstorm/SKILL.md").read_text(encoding="utf-8").splitlines()
+    rule = next(line for line in lines if line.startswith("- Always use **multiple-choice**"))
+    assert "`a) Option A`, `b) Option B ★ recommended`" in rule
+    assert "§Tree summary format — Question text rule" in rule
 
 
 _FOLLOW_UP_FRAGMENTS = (

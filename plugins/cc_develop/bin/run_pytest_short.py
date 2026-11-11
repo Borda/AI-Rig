@@ -1,5 +1,8 @@
 #!/usr/bin/env python
-"""run_pytest_short.py — run ``pytest --tb=short -v`` and emit only the last N lines of output.
+"""Run pytest and emit only the last requested lines of output.
+
+Purpose: Execute allowlisted pytest commands with bounded output and a ten-minute deadline.
+Scope: Local pytest runs selected by Develop skills; no arbitrary shell commands.
 
 Validates ``pytest_cmd`` against an allowlist
 (``pytest``, ``uv run pytest``, ``python -m pytest``, ``poetry run pytest``,
@@ -12,8 +15,7 @@ Bad/non-integer ``tail_n`` silently falls back to 20.
 argparse, which is present only to supply ``-h/--help`` — both carry embedded spaces or
 ``::`` node-id tokens argparse would otherwise split. ``--tail-n`` is a named flag, extracted
 from anywhere in argv before positional slicing. This keeps the allowlist-rejection contract
-(exit 2), the target-containment guard (exit 1), and the silent ``tail_n`` fallback exactly as
-the legacy bash script defined them.
+(exit 2), the target-containment guard (exit 64), and the silent ``tail_n`` fallback.
 
 Usage:
     run_pytest_short.py [pytest_cmd] [target ...] [--tail-n N] [--log PATH]
@@ -21,11 +23,17 @@ Usage:
 Every target is containment-checked; several targets run as one pytest process (``dev_test_targets.py --run``
 passes its whole selection this way). ``--log PATH`` also writes the full, untruncated-by-tail output there.
 
+Outputs: The output tail on stdout and optionally the full bounded log at ``--log``.
+Failure: Runner failures remain distinct from pytest-reported failures.
+Used by: Develop targeted verification, batch isolation, and baseline callers.
+
 Exit codes:
     0 — pytest passed.
-    1 — target option-shaped or resolved outside the project directory, or ``--log`` outside it and the temp dir.
     1-5 — pytest reported failure/collection error (propagated unchanged).
     2 — pytest_cmd not in the allowlist (before pytest runs); also argparse's bad-argument exit.
+    64 — target or log path rejected before pytest runs.
+    124 — runner deadline expired.
+    127 — executable missing; 70 — other runner or log I/O error.
 """
 
 from __future__ import annotations
@@ -33,9 +41,11 @@ from __future__ import annotations
 import argparse
 import os
 import shlex
+import signal
 import subprocess
 import sys
 import tempfile
+import threading
 from pathlib import Path
 from shutil import which
 
@@ -63,12 +73,12 @@ def _validate_target_in_cwd(target: str) -> None:
         target: Raw target string from argv (file/dir path or pytest node id).
 
     Raises:
-        SystemExit: With exit code 1 if the target starts with ``-`` or its resolved path escapes ``Path.cwd()``.
+        SystemExit: With exit code 64 if the target starts with ``-`` or its resolved path escapes ``Path.cwd()``.
             Pytest node ids (``path::nodeid``) have the path portion validated.
     """
     if target.startswith("-"):
         print(f"run-pytest-short: rejected option-shaped target: {target}", file=sys.stderr)
-        sys.exit(1)
+        sys.exit(64)
     path_part = target.split("::", 1)[0]
     if not path_part:
         return
@@ -81,7 +91,7 @@ def _validate_target_in_cwd(target: str) -> None:
             f"run-pytest-short: rejected target outside project directory: {target_path}",
             file=sys.stderr,
         )
-        sys.exit(1)
+        sys.exit(64)
 
 
 def is_allowed_pytest_cmd(cmd: str) -> bool:
@@ -190,6 +200,67 @@ def _extract_named_flags(args: list[str]) -> tuple[list[str], str, str]:
     return positional, named["--tail-n"], named["--log"]
 
 
+_TIMEOUT_SECONDS = 600
+
+
+def _stop_runner(proc: subprocess.Popen[str]) -> None:
+    """Stop the runner's process tree so inherited output pipes cannot delay the deadline."""
+    try:
+        if os.name == "nt" and hasattr(proc, "pid"):
+            subprocess.run(  # noqa: S603 - Windows native process-tree termination, fixed arguments
+                [_resolve("taskkill"), "/PID", str(proc.pid), "/T", "/F"],
+                capture_output=True,
+                timeout=5,
+                check=False,
+            )
+        elif hasattr(proc, "pid"):
+            os.killpg(proc.pid, signal.SIGKILL)
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"run-pytest-short: process-tree cleanup unavailable: {exc}", file=sys.stderr)
+    proc.kill()
+
+
+def _capture(proc: subprocess.Popen[str]) -> tuple[int, str]:
+    """Drain capped output while enforcing the deadline even during a blocking read."""
+    expired = threading.Event()
+
+    def expire() -> None:
+        """Release a blocked read by stopping the expired runner."""
+        expired.set()
+        _stop_runner(proc)
+
+    timer = threading.Timer(_TIMEOUT_SECONDS, expire)
+    timer.daemon = True
+    timer.start()
+    chunks: list[str] = []
+    total = 0
+    truncated = False
+    try:
+        if proc.stdout is None:
+            raise RuntimeError("proc.stdout must not be None")
+        # Keep draining after the cap so output backpressure cannot prevent exit.
+        with proc.stdout:
+            for chunk in iter(lambda: proc.stdout.read(64 * 1024), ""):
+                remaining = max(0, _MAX_OUTPUT_BYTES - total)
+                if remaining:
+                    chunks.append(chunk[:remaining])
+                total += min(len(chunk), remaining)
+                truncated = truncated or len(chunk) > remaining
+        try:
+            code = proc.wait(timeout=_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            expire()
+            code = 124
+    finally:
+        timer.cancel()
+    output = "".join(chunks)
+    if truncated:
+        output += f"\n[run-pytest-short: output truncated at {_MAX_OUTPUT_BYTES} bytes]"
+    if expired.is_set():
+        output += "\n[run-pytest-short: runner deadline expired]"
+    return (124 if expired.is_set() else code), output
+
+
 def main(argv: list[str] | None = None) -> int:
     """Entry point — mirrors ``run-pytest-short.sh`` behaviour.
 
@@ -197,7 +268,7 @@ def main(argv: list[str] | None = None) -> int:
         argv: Optional argument list (defaults to ``sys.argv[1:]``).
 
     Returns:
-        Pytest's exit code, or 2 when ``pytest_cmd`` is rejected by the allowlist.
+        Pytest's exit code or a distinct runner error (see module docstring).
 
     No doctest — spawns pytest via subprocess and reads argv; covered by pytest.
     """
@@ -238,10 +309,22 @@ def main(argv: list[str] | None = None) -> int:
         _validate_target_in_cwd(target)
     if log_path and not within_workspace(log_path):
         print(f"run-pytest-short: rejected --log outside project and temp directories: {log_path}", file=sys.stderr)
-        return 1
+        return 64
 
     parts = shlex.split(pytest_cmd)
-    parts[0] = _resolve(parts[0])
+    try:
+        parts[0] = _resolve(parts[0])
+        return _execute(parts, targets, tail_n, log_path)
+    except FileNotFoundError as exc:
+        print(f"run-pytest-short: {exc}", file=sys.stderr)
+        return 127
+    except OSError as exc:
+        print(f"run-pytest-short: runner I/O error: {exc}", file=sys.stderr)
+        return 70
+
+
+def _execute(parts: list[str], targets: list[str], tail_n: int, log_path: str) -> int:
+    """Launch pytest, preserve its bounded log, and print the requested tail."""
     # Capture combined stdout+stderr so we can tail it; mirrors `2>&1 | tail -N`.
     # Read incrementally with a byte cap so adversarial test output cannot exhaust memory
     # before tail_n truncation is applied.
@@ -250,36 +333,9 @@ def main(argv: list[str] | None = None) -> int:
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
+        start_new_session=os.name != "nt",
     )
-    chunks: list[str] = []
-    total = 0
-    truncated = False
-    # PIPE guarantees a stream.
-    if proc.stdout is None:
-        raise RuntimeError("proc.stdout must not be None")
-    # The reader owns the pipe, including when output is truncated or reading raises.
-    with proc.stdout:
-        for chunk in iter(lambda: proc.stdout.read(64 * 1024), ""):
-            remaining = _MAX_OUTPUT_BYTES - total
-            if remaining <= 0:
-                truncated = True
-                # Drain remaining output without buffering so the child can exit cleanly.
-                for _ in iter(lambda: proc.stdout.read(64 * 1024), ""):
-                    pass
-                break
-            if len(chunk) > remaining:
-                chunks.append(chunk[:remaining])
-                total += remaining
-                truncated = True
-                for _ in iter(lambda: proc.stdout.read(64 * 1024), ""):
-                    pass
-                break
-            chunks.append(chunk)
-            total += len(chunk)
-    returncode = proc.wait(timeout=600)  # 10-min hard cap; pytest_cmd callers set # timeout: 600000 in bash
-    output = "".join(chunks)
-    if truncated:
-        output += f"\n[run-pytest-short: output truncated at {_MAX_OUTPUT_BYTES} bytes]"
+    returncode, output = _capture(proc)  # 10-min hard cap; pytest_cmd callers set # timeout: 600000 in bash
     if log_path:
         # full output stays inspectable on disk while the terminal shows only the tail
         Path(log_path).parent.mkdir(parents=True, exist_ok=True)

@@ -69,6 +69,8 @@ def parse_repository_url(raw_url: str) -> RepositoryIdentity:
     else:
         parsed = urlparse(value)
         host = parsed.hostname or ""
+        if parsed.port is not None:
+            host = f"{host}:{parsed.port}"
         path = parsed.path
     parts = [part for part in path.strip("/").split("/") if part]
     if "pull" in parts:
@@ -93,7 +95,7 @@ def read_remotes(cwd: Path) -> dict[str, list[str]]:
     remotes: dict[str, list[str]] = {}
     for name in names:
         urls = subprocess.run(  # noqa: S603 - argv list, no shell
-            ["git", "remote", "get-url", "--all", name],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
+            ["git", "remote", "get-url", "--all", "--", name],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
             cwd=cwd,
             check=True,
             capture_output=True,

@@ -32,17 +32,37 @@ class TestDeclaredDir:
             pytest.param({}, "skills", id="absent-defaults"),
             pytest.param({"skills": "./claude-skills/"}, "claude-skills", id="override"),
             pytest.param({"skills": "skills"}, "skills", id="bare-name"),
-            pytest.param({"skills": ""}, "skills", id="empty-falls-back"),
-            pytest.param({"skills": ["a", "b"]}, "skills", id="non-string-falls-back"),
+            pytest.param({"skills": "./skills/"}, "skills", id="explicit-default"),
+            pytest.param({"skills": "./codex-skills/"}, "codex-skills", id="codex-override"),
+            pytest.param({"skills": "./nested/./skills/"}, "nested/skills", id="dot-segments"),
         ],
     )
     def test_normalizes_declared_value_or_falls_back(self, manifest: dict, expected: str) -> None:
         """The declared directory loses its ``./`` prefix and trailing slash, else the default is used.
 
         A manifest may omit the key, spell the path in several ways, or hold a value of the wrong type. Every spelling
-        of a real override resolves to one bare name, and anything unusable resolves to the default instead of raising.
+        of a real override resolves to one normalized path; only an absent field uses the default.
         """
         assert pl.declared_dir(manifest, "skills", "skills") == expected
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "",
+            None,
+            pytest.param(["a", "b"], id="array"),
+            ".",
+            "./",
+            "../skills",
+            "a/../skills",
+            "/skills",
+            "x | agents=forged",
+        ],
+    )
+    def test_rejects_present_invalid_directory(self, value: object) -> None:
+        """A rejected field identifies its manifest key instead of silently selecting the default."""
+        with pytest.raises(ValueError, match="skills"):
+            pl.declared_dir({"skills": value}, "skills", "skills")
 
 
 class TestLayoutLines:
@@ -84,3 +104,14 @@ class TestMain:
         """
         assert pl.main([str(tmp_path / "absent")]) == 0
         assert capsys.readouterr().out == ""
+
+    @pytest.mark.parametrize("key", ["skills", "agents"])
+    def test_invalid_manifest_directory_exits_nonzero(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], key: str
+    ) -> None:
+        """Invalid explicit directory declarations stop the CLI with the rejected key in its diagnostic."""
+        _manifest(tmp_path, "cc_alpha", json.dumps({key: "../escape"}))
+        assert pl.main([str(tmp_path)]) == 1
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert key in captured.err

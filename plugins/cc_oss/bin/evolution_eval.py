@@ -43,7 +43,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
-from _evolution_common import RESIDUE_COLUMNS, column_kind, last_by_key, read_jsonl
+from _evolution_common import RESIDUE_COLUMNS, column_kind, last_by_key, read_bounded_text, read_jsonl
 
 #: Phase 0 bars, fixed before any real-repo run.
 PRECISION_BAR: Final = 0.70
@@ -53,6 +53,7 @@ CI_LOWER_BAR: Final = 0.55
 
 #: Bootstrap defaults from the evaluation protocol.
 DEFAULT_RESAMPLES: Final = 2000
+MAX_RESAMPLES: Final = 10000
 DEFAULT_SEED: Final = 0
 
 #: Label value for a fix that repairs nothing tracked.
@@ -116,7 +117,7 @@ def _label_values(fields: list[str], positions: dict[str, int]) -> dict[str, str
 
 def read_labels(path: Path) -> Labels:
     """Read a labels CSV file (see :func:`parse_labels`)."""
-    return parse_labels(path.read_text(encoding="utf-8"))
+    return parse_labels(read_bounded_text(path))
 
 
 def _labels_of(labels: Labels | Path | str) -> Labels:
@@ -259,8 +260,8 @@ def _bootstrap(stats: list[_FixStat], seed: int, resamples: int) -> dict[str, li
 
 def _result(stats: list[_FixStat], repos: list[str], seed: int, resamples: int) -> dict[str, Any]:
     """Assemble one evaluation result: point estimates, intervals and bootstrap settings."""
-    if resamples < 1:
-        raise ValueError(f"resamples must be >= 1, got {resamples}")
+    if not 1 <= resamples <= MAX_RESAMPLES:
+        raise ValueError(f"resamples must be between 1 and {MAX_RESAMPLES}, got {resamples}")
     result = _metrics(stats)
     result.update(
         {
@@ -299,7 +300,7 @@ def evaluate(
         resamples, missing_rows}``; ``ci`` holds ``[low, high]`` for precision, recall and residue.
 
     Raises:
-        ValueError: no usable labels, several repos without ``repo``, or ``resamples < 1``.
+        ValueError: no usable labels, several repos without ``repo``, or ``resamples`` outside 1–10000.
 
     Examples:
         >>> labels = [{"repo": "B", "fix_id": "f", "column_id": "a"}]
@@ -327,7 +328,7 @@ def pooled(
     ``ignored_repos``.
 
     Raises:
-        ValueError: ``rows_by_repo`` is empty, a repo in it has no labels, or ``resamples < 1``.
+        ValueError: ``rows_by_repo`` is empty, a repo in it has no labels, or ``resamples`` outside 1–10000.
 
     Examples:
         >>> labels = [{"repo": r, "fix_id": "f", "column_id": "a"} for r in ("B", "C")]
@@ -449,7 +450,7 @@ def _read_records(path: Path) -> list[dict[str, Any]]:
     if path.suffix == ".jsonl":
         records, _ = read_jsonl(path)
         return records
-    data = json.loads(path.read_text(encoding="utf-8"))
+    data = json.loads(read_bounded_text(path))
     if not isinstance(data, list):
         raise ValueError(f"{path}: expected a JSON list of records")
     return [item for item in data if isinstance(item, dict)]
@@ -474,6 +475,8 @@ def _repo_rows(specs: list[str]) -> dict[str, list[dict[str, Any]]]:
 
 def _run(args: argparse.Namespace) -> dict[str, Any]:
     """Run the selected subcommand and return its JSON payload."""
+    if not 1 <= args.resamples <= MAX_RESAMPLES:
+        raise ValueError(f"resamples must be between 1 and {MAX_RESAMPLES}, got {args.resamples}")
     labels = read_labels(args.labels)
     if args.command == "pooled":
         result = pooled(labels, _repo_rows(args.rows), seed=args.seed, resamples=args.resamples)
@@ -506,7 +509,7 @@ def _build_parser() -> argparse.ArgumentParser:
     for command in (single, tune, group):
         command.add_argument("--labels", type=Path, required=True, help="labels CSV: repo,fix_id,column_id")
         command.add_argument("--seed", type=int, default=DEFAULT_SEED, help="bootstrap seed")
-        command.add_argument("--resamples", type=int, default=DEFAULT_RESAMPLES, help="bootstrap resamples")
+        command.add_argument("--resamples", type=int, default=DEFAULT_RESAMPLES, help="bootstrap resamples (1-10000)")
     return parser
 
 
@@ -515,7 +518,7 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     try:
         payload = _run(args)
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, csv.Error) as exc:
         print(f"evolution_eval.py: error: {exc}", file=sys.stderr)
         return 2
     print(json.dumps(payload, sort_keys=True, separators=(",", ":")))

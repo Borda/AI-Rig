@@ -69,7 +69,7 @@ _ASSIGN_RE = re.compile(r"^[ \t]*(?:export[ \t]+)?([A-Za-z_][A-Za-z0-9_]*)=")
 _READ_RE = re.compile(r"^[ \t]*IFS=\s*read\s+-r\s+([A-Za-z_][A-Za-z0-9_]*)(?=\s|<|$)")
 # `while IFS= read -r VAR; do` (reading a piped stream, not a sentinel file — no trailing `<`). Not
 # anchored to line start: the common shape is `VAR=$(... | while IFS= read -r _x; do`.
-_WHILE_READ_RE = re.compile(r"while\s+IFS=\s*read\s+-r\s+([A-Za-z_][A-Za-z0-9_]*)\b")
+_WHILE_READ_RE = re.compile(r"while\s+IFS=\s*read\s+-r\s+(?:-d\s+''\s+)?([A-Za-z_][A-Za-z0-9_]*)\b")
 _FOR_RE = re.compile(r"^[ \t]*for\s+([A-Za-z_][A-Za-z0-9_]*)\s+in\b")
 _VAR_REF_RE = re.compile(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)")
 # One-line `if ...; then VAR=x; else VAR=y; fi` — the `then`/`else` keyword sits before VAR= on the
@@ -219,6 +219,12 @@ def test_fence_checker_still_rejects_unassigned_references(block: str, unassigne
     assert _fence_unassigned_var_refs(block) == {unassigned}
 
 
+def test_fence_checker_recognizes_null_delimited_read() -> None:
+    """A null-delimited path reader assigns its destination, rather than its delimiter option."""
+    block = 'while IFS= read -r -d \'\' EDIT_PATH; do\nprintf "%s" "$EDIT_PATH"\ndone < paths'
+    assert _fence_unassigned_var_refs(block) == set()
+
+
 class TestBatchModeDesign:
     """Pins the per-edit snapshot/bisect mechanism — see plan blocker 5."""
 
@@ -351,14 +357,12 @@ class TestBatchModeDesign:
     def test_snapshot_and_bisect_fences_read_back_batch_id(self) -> None:
         """Derivation, snapshot, bisect, and both post-bisect fences each re-read ``BATCH_ID`` from its sentinel.
 
-        Shell state does not survive across Bash() calls — a fence consuming ``$BATCH_ID`` bare, derived only in an
-        earlier fence, always expands empty, colliding every snapshot in a batch onto one path (``dev-batch-
-        pre---${CSID}``). Five independent fences now read it back: derivation's own emptiness check, per-edit snapshot,
-        bisect's patch loop, and the post-bisect size-write and identity-clear fences (split into two by round-4's N9
-        fix, each needing its own ``BATCH_ID`` read-back).
+        Shell state does not survive across Bash() calls — every consuming fence must reload the identity, including
+        recovery and restart operations.
         """
         text = _batch_text()
-        assert text.count('IFS= read -r BATCH_ID < "${TMPDIR:-/tmp}/dev-batch-id-${CSID}"') == 5
+        consumers = [block for block in nested_bash_fences(text) if "${BATCH_ID}" in block]
+        assert all('IFS= read -r BATCH_ID < "${TMPDIR:-/tmp}/dev-batch-id-${CSID}"' in block for block in consumers)
 
     def test_bisect_n_is_a_real_loop_variable_not_prose(self) -> None:
         """The bisect fence assigns ``N`` via a shipped ``for`` loop — never left to "the calling procedure".

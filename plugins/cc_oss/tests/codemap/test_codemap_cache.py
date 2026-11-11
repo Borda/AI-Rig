@@ -332,3 +332,46 @@ def test_bad_args_exit_1(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> 
     rc = codemap_cache.main([*argv, "--cache-dir", str(tmp_path)])
     assert rc == 1
     assert "error" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("payload", ["not json", "null", "[]", '{"prefix": null}', '{"prefix": {"answers": []}}'])
+def test_malformed_artifact_is_a_miss(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], seeded_cache: Path, payload: str
+) -> None:
+    """A damaged artifact returns a usable miss verdict instead of aborting the consumer."""
+    (seeded_cache / "pkg.mod.json").write_text(payload, encoding="utf-8")
+    verdict = _read_verdict(tmp_path, capsys, seeded_cache)
+    assert verdict == {"reuse": False, "reason": "invalid_artifact", "answers": {}}
+
+
+def test_report_retains_valid_artifacts_after_a_bad_one(capsys: pytest.CaptureFixture[str], seeded_cache: Path) -> None:
+    """One malformed cache entry cannot hide the valid answers in the aggregate report."""
+    (seeded_cache / "aaa-broken.json").write_text('{"delta": null}', encoding="utf-8")
+    assert codemap_cache.main(["report", "--cache-dir", str(seeded_cache)]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["answers_total"] == 3
+    assert report["artifacts_invalid"] == 1
+
+
+def test_module_rejects_trailing_newline(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """A newline in a module identifier cannot select an artifact pathname."""
+    verdict = _read_verdict(tmp_path, capsys, tmp_path, module="pkg.mod\n")
+    assert verdict["reason"] == "invalid_module"
+
+
+def _deny_replace(source: object, destination: object) -> None:
+    """Simulate a filesystem failure before an atomic artifact replacement."""
+    raise OSError("replacement denied")
+
+
+def test_failed_atomic_write_preserves_existing_artifact(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], seeded_cache: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed replacement leaves the old artifact intact and removes the temporary file."""
+    target = seeded_cache / "pkg.mod.json"
+    target.write_text("original", encoding="utf-8")
+    monkeypatch.setattr(os, "replace", _deny_replace)
+    args = ["write", "--batch", str(_write_batch(tmp_path)), "--index", str(_write_index(tmp_path))]
+    assert codemap_cache.main([*args, "--cache-dir", str(seeded_cache)]) == 1
+    assert target.read_text(encoding="utf-8") == "original"
+    assert sorted(path.name for path in seeded_cache.iterdir()) == ["pkg.mod.json", "pkg.other.json"]

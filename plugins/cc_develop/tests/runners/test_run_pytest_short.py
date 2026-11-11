@@ -9,8 +9,10 @@ autospecced fakes so no real pytest runs: the wrapper's argv checks and tailing 
 from __future__ import annotations
 
 import io
+import os
 import subprocess
 import sys
+import time
 from collections.abc import Callable
 from pathlib import Path
 from shutil import which
@@ -242,25 +244,25 @@ class TestTargetContainment:
     def test_rejects_option_shaped_target(
         self, fake_popen: Callable[..., mock.MagicMock], capsys: pytest.CaptureFixture[str], target: str
     ) -> None:
-        """A target starting with ``-`` exits 1 before pytest starts, though it resolves under the working directory.
+        """A target starting with ``-`` exits 64 before pytest starts, though it resolves under the working directory.
 
         ``Path("-p")`` resolves to ``<cwd>/-p``, so the containment check alone passed it straight into pytest's argv.
         """
         popen = fake_popen()
         with pytest.raises(SystemExit) as exc:
             run_pytest_short.main(["pytest", "tests/test_a.py", target])
-        assert exc.value.code == 1
+        assert exc.value.code == 64
         popen.assert_not_called()
         assert "option-shaped target" in capsys.readouterr().err
 
     def test_any_target_outside_cwd_rejects_the_run(
         self, fake_popen: Callable[..., mock.MagicMock], capsys: pytest.CaptureFixture[str], workspace: _Workspace
     ) -> None:
-        """One escaping target among several still exits 1 before pytest starts."""
+        """One escaping target among several still exits 64 before pytest starts."""
         popen = fake_popen()
         with pytest.raises(SystemExit) as exc:
             run_pytest_short.main(["pytest", "tests/test_a.py", str(workspace.project.parent)])
-        assert exc.value.code == 1
+        assert exc.value.code == 64
         popen.assert_not_called()
         assert "rejected target" in capsys.readouterr().err
 
@@ -275,11 +277,11 @@ class TestTargetContainment:
         workspace: _Workspace,
         target_template: str,
     ) -> None:
-        """A target that resolves outside ``Path.cwd()``, absolute or via ``..``, exits 1 and never starts pytest."""
+        """A target outside ``Path.cwd()``, absolute or via ``..``, exits 64 and never starts pytest."""
         popen = fake_popen()
         with pytest.raises(SystemExit) as exc:
             run_pytest_short.main(["pytest", target_template.format(outside=workspace.outside)])
-        assert exc.value.code == 1
+        assert exc.value.code == 64
         popen.assert_not_called()
         assert "outside project directory" in capsys.readouterr().err
 
@@ -291,7 +293,7 @@ class TestTargetContainment:
         popen = fake_popen()
         with pytest.raises(SystemExit) as exc:
             run_pytest_short.main(["pytest", "linked"])
-        assert exc.value.code == 1
+        assert exc.value.code == 64
         popen.assert_not_called()
         assert "outside project directory" in capsys.readouterr().err
 
@@ -315,10 +317,10 @@ class TestLogFile:
     def test_rejects_log_outside_project_and_temp(
         self, fake_popen: Callable[..., mock.MagicMock], capsys: pytest.CaptureFixture[str], workspace: _Workspace
     ) -> None:
-        """``--log`` outside both the working directory and ``$TMPDIR`` exits 1; nothing is created or run."""
+        """``--log`` outside both the working directory and ``$TMPDIR`` exits 64; nothing is created or run."""
         popen = fake_popen(stdout="x")
         elsewhere = workspace.outside / "run.log"
-        assert run_pytest_short.main(["pytest", "--log", str(elsewhere)]) == 1
+        assert run_pytest_short.main(["pytest", "--log", str(elsewhere)]) == 64
         popen.assert_not_called()
         assert not elsewhere.exists()
         assert "rejected --log" in capsys.readouterr().err
@@ -338,3 +340,61 @@ class TestLogFile:
         log = workspace.project.parent / where
         assert run_pytest_short.main(["pytest", "--log", str(log)]) == 0
         assert log.read_text(encoding="utf-8") == "line-1"
+
+
+def test_missing_runner_has_distinct_exit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A missing allowlisted executable is a runner error rather than a red test."""
+    monkeypatch.setattr(run_pytest_short, "which", mock.create_autospec(which, return_value=None))
+    assert run_pytest_short.main(["pytest"]) == 127
+
+
+def test_timeout_has_distinct_exit(fake_popen: Callable[..., mock.MagicMock], monkeypatch: pytest.MonkeyPatch) -> None:
+    """An expired subprocess wait cannot be reported as pytest failure."""
+    fake_popen()
+    monkeypatch.setattr(
+        _FakePopen, "wait", mock.create_autospec(_FakePopen.wait, side_effect=subprocess.TimeoutExpired("pytest", 600))
+    )
+    monkeypatch.setattr(_FakePopen, "kill", lambda self: None, raising=False)
+    assert run_pytest_short.main(["pytest"]) == 124
+
+
+@pytest.mark.integration
+def test_deadline_stops_silent_process_during_pipe_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The runner deadline fires before a silent child produces EOF, not only during wait."""
+    monkeypatch.setattr(run_pytest_short, "_TIMEOUT_SECONDS", 0.05)
+    child = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(20)"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    try:
+        code, output = run_pytest_short._capture(child)
+        assert code == 124
+        assert "runner deadline expired" in output
+        assert child.poll() is not None
+    finally:
+        child.kill() if child.poll() is None else None
+        child.wait()
+
+
+@pytest.mark.integration
+def test_deadline_stops_descendants_holding_pipe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A launcher cannot extend the deadline by handing its stdout pipe to a child."""
+    monkeypatch.setattr(run_pytest_short, "_TIMEOUT_SECONDS", 0.1)
+    script = "import subprocess, sys, time; subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(2)']); time.sleep(5)"
+    child = subprocess.Popen(
+        [sys.executable, "-c", script],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        start_new_session=os.name != "nt",
+    )
+    started = time.monotonic()
+    try:
+        code, _ = run_pytest_short._capture(child)
+        assert code == 124
+        assert time.monotonic() - started < 1.5
+    finally:
+        child.kill() if child.poll() is None else None
+        child.wait()

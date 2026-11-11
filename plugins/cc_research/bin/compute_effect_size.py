@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from typing import Any
 
@@ -50,7 +51,7 @@ def rank_biserial_r(statistic: float, n: int) -> float:
         Rank-biserial correlation in ``[-1, 1]``.
 
     Raises:
-        ValueError: if ``n <= 0``.
+        ValueError: If ``n <= 0``, the statistic is nonfinite or out of range, or the result is nonfinite.
 
     Examples:
         >>> rank_biserial_r(0.0, 8)
@@ -62,7 +63,12 @@ def rank_biserial_r(statistic: float, n: int) -> float:
     """
     if n <= 0:
         raise ValueError(f"n must be positive, got: {n}")
-    return 4 * statistic / (n * (n + 1)) - 1
+    if not math.isfinite(statistic) or not 0 <= statistic <= n * (n + 1) // 2:
+        raise ValueError("statistic must be finite and between 0 and n * (n + 1) / 2")
+    result = 4 * statistic / (n * (n + 1)) - 1
+    if not math.isfinite(result):
+        raise ValueError("statistic is too large to compute a finite effect size")
+    return result
 
 
 def compute_from_payload(payload: dict[str, Any]) -> str:
@@ -117,7 +123,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.parse_args(argv)  # no positional/flag args — enables -h/--help, rejects stray tokens (exit 2)
     # bounded read: one extra char tells an oversized input from one that exactly fills the cap
-    raw = sys.stdin.read(MAX_STDIN_CHARS + 1)
+    try:
+        raw = sys.stdin.read(MAX_STDIN_CHARS + 1)
+    except (OSError, ValueError) as exc:
+        print(f"error: cannot read stdin: {exc}", file=sys.stderr)
+        return 2
     if len(raw) > MAX_STDIN_CHARS:
         print(
             f"error: stdin exceeds {MAX_STDIN_CHARS} characters — expected one retro_analyze JSON line", file=sys.stderr
@@ -125,15 +135,15 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     try:
         payload = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        print(f"error: malformed JSON on stdin: {exc.msg}", file=sys.stderr)
+    except (ValueError, ArithmeticError, RecursionError) as exc:
+        print(f"error: malformed JSON on stdin: {exc}", file=sys.stderr)
         return 2
     if not isinstance(payload, dict):
         print(f"error: expected JSON object on stdin, got: {type(payload).__name__}", file=sys.stderr)
         return 2
     try:
         line = compute_from_payload(payload)
-    except ValueError as exc:
+    except (ValueError, ArithmeticError, RecursionError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     print(line)

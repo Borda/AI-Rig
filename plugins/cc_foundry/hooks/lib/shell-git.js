@@ -134,14 +134,14 @@
 //
 // LIMITS (accepted)
 //   Text the shell or git builds at run time is beyond any string inspection: a variable used as a
-//   word (`$GIT push`, `git push "$REMOTE"`, `${X:-git}`), configuration read from a file (`git ci`
+//   argument (`git push "$REMOTE"`), configuration read from a file (`git ci`
 //   aliased in ~/.gitconfig, `include.path`), a shell alias or function defined in an rc file, a
 //   pre-existing script on disk, and an interpreter assembling the git words from fragments. Code consumers
 //   fail closed on unknown generated output reaching them, matching modeled file writes, and modeled commands
 //   shadowed by functions or aliases. Unknown programs are not inferred to write files. Literal print output and
-//   literal cat/tee input written to a script are followed. Aliases are not
-//   resolved through `git config`: running git inside the hook on every Bash call is not worth a
-//   rare spelling. These string-visible spellings are not followed either, by decision — the
+//   literal cat/tee input written to a script are followed. Runtime executable words are unreadable when the text
+//   names git or gh. Aliases configured earlier in the same command are followed; pre-existing aliases in git config
+//   remain outside inspection, which never runs git. These string-visible spellings are not followed either, by decision — the
 //   finder stays scoped to the review findings it fixes:
 //     * zsh SH_WORD_SPLIT and `$=x`/`${=x}`/`${==x}` change only field splitting of expanded values
 //       (zshoptions SH_WORD_SPLIT; zshexpn `${=spec}`), not which literal words execute. They are admitted
@@ -172,10 +172,11 @@
 //       runs as plain git (`…/git-core/GIT-STATUS push -f`).
 //     * third-party `git-<name>` programs on PATH that push under their own subcommand
 //       (`git town sync`, `git machete traverse`): an unbounded set.
+//     * the `hub` wrapper, which can perform git and GitHub writes under its own program name.
 //     * GitHub API force updates (`gh repo sync --force`, `gh api -X PATCH …/git/refs/…`) run no git
 //       push; gh-write-guard.js denies them as gh writes.
-//     * interpreter code arriving on stdin or in a heredoc (`python3 <<'EOF'`), and interpreters
-//       outside INTERPRETERS (`php -r`, `osascript -e`, `awk 'BEGIN{system(…)}'`, `lua -e`).
+//     * interpreter code arriving on stdin or in a heredoc (`python3 <<'EOF'`), or positional code outside INTERPRETERS
+//       (`awk 'BEGIN{system(…)}'`). Unknown executables' eval/-e/-c style options naming git or gh are unreadable.
 //     * a `!` shell alias re-lexes the arguments appended to it, so a quoted glob character there
 //       reads as unquoted: a false force reading only, never a missed one.
 //   Unquoted prose naming git in another command's arguments (`echo run git push -f`) is detected
@@ -345,6 +346,11 @@ const CODE_PUSH = /(?<![\w.])(?:push|send-pack|http-push)(?!\w)/i;
 const CODE_SEPARATORS = /[\s'"`,;()[\]{}]+/;
 // Shell source nested in shell source (`bash -c "sh -c '…'"`) is followed this deep, then refused.
 const MAX_NESTING = 4;
+const MAX_COMMAND_CHARS = 16384;
+const MAX_COMMANDS = 256;
+const MAX_WORDS = 2048;
+const MAX_LEX_DEPTH = 32;
+const INSPECTION_MS = 1000;
 const SHELL_SYNTAX = /[\s;&|`$()<>]/;
 // Value-taking git global options must consume their argument, or the value would read as the
 // subcommand. Options in neither set are read both ways.
@@ -506,7 +512,8 @@ function arrayAssignmentPosition(words, facts) {
  * when `acc.redirections` is set; otherwise `<` and `>` are ordinary characters.
  * Returns the index after the lexed text, or -1 when quoting or a substitution is unterminated.
  */
-function lexFrom(src, start, inSubst, acc, parentPipeline = null, parentFed = false) {
+function lexFrom(src, start, inSubst, acc, parentPipeline = null, parentFed = false, nesting = 0) {
+  if (nesting > MAX_LEX_DEPTH) return unreadable(acc, "shell nesting limit exceeded");
   let words = [];
   let facts = []; // WORD_ASSIGNS / WORD_BARE per entry of `words`
   let texts = []; // original word spellings, before quote removal
@@ -604,8 +611,15 @@ function lexFrom(src, start, inSubst, acc, parentPipeline = null, parentFed = fa
       hereString = false;
     } else if (word !== null) {
       const expanded = expandBraces(word);
-      if (expanded === null) acc.overflow = true;
-      else {
+      if (expanded === null) {
+        acc.overflow = true;
+        markUnreadable(acc, "brace expansion limit exceeded");
+      } else {
+        acc.wordCount += expanded.length;
+        if (acc.wordCount > MAX_WORDS) {
+          broken = "shell word limit exceeded";
+          return;
+        }
         const prefix = ASSIGNMENT_WORD.exec(unmarkGlobs(word));
         const fact =
           (prefix !== null && (quotedFrom < 0 || prefix[0].length <= quotedFrom) ? WORD_ASSIGNS : 0) |
@@ -698,6 +712,7 @@ function lexFrom(src, start, inSubst, acc, parentPipeline = null, parentFed = fa
     redirectTarget = false;
     groupClosed = false;
     if (words.length) {
+      if (broken || acc.overflow) acc.incomplete.add(words);
       acc.commands.push(words);
       if (inputGroups.some((group) => group.functionBody)) acc.functionCommands.add(words);
       acc.wordFacts.set(words, facts);
@@ -711,13 +726,24 @@ function lexFrom(src, start, inSubst, acc, parentPipeline = null, parentFed = fa
     texts = [];
     closedGroup = [];
   };
+  const refuseWord = (reason) => {
+    const position = words.length;
+    if (executablePrograms([...words, word || ""]).includes(position)) acc.unreadableExecutable = true;
+    return unreadable(acc, reason);
+  };
   let i = start;
   while (i < src.length) {
     if (broken) return unreadable(acc, broken);
+    if (acc.unreadable) return -1;
+    if (acc.commands.length > MAX_COMMANDS) return unreadable(acc, "simple command limit exceeded");
+    if (Date.now() > acc.deadline) return unreadable(acc, "command inspection deadline exceeded");
     if (word === null) wordStart = i;
     const c = src[i];
     const next = src[i + 1];
-    if (c === "\\") {
+    if (parameter > 0 && !["\\", "'", '"', "$", "`"].includes(c) && !((c === "<" || c === ">") && next === "(")) {
+      appendUnquoted(c);
+      i += 1;
+    } else if (c === "\\") {
       if (next !== "\n") appendQuoted(next === undefined ? "" : next); // backslash-newline joins lines
       i += 2;
     } else if (c === "'") {
@@ -729,24 +755,30 @@ function lexFrom(src, start, inSubst, acc, parentPipeline = null, parentFed = fa
       // `$$'…'`: bash reads `$$` then a plain quote, zsh `$` then `$'…'`
       return unreadable(acc, UNREADABLE_SYNTAX.dollars);
     } else if (c === "$" && unreadableExpansion(src, i)) {
-      return unreadable(acc, unreadableExpansion(src, i));
+      return refuseWord(unreadableExpansion(src, i));
     } else if (c === "$" && next === "'") {
       const read = readAnsiC(src, i + 2);
       if (read === null) return -1;
-      if (read.unreadable) return unreadable(acc, UNREADABLE_SYNTAX.ansiC);
+      if (read.unreadable) return refuseWord(UNREADABLE_SYNTAX.ansiC);
       appendQuoted(read.text);
       i = read.end;
     } else if (c === "$" && next === '"') {
       // A locale string: bash reads `$"git"` as `git`, zsh as `$git`.
-      return unreadable(acc, UNREADABLE_SYNTAX.locale);
+      return refuseWord(UNREADABLE_SYNTAX.locale);
     } else if (c === '"') {
       const before = acc.commands.length;
-      const read = readExpanding(src, i + 1, '"', acc, pipeline, feedsStdin || pipeline.fed.has(words));
+      const read = readExpanding(src, i + 1, '"', acc, pipeline, feedsStdin || pipeline.fed.has(words), nesting + 1);
       if (read === null) return -1;
       wordSubstitutions.push(...acc.commands.slice(before));
       appendQuoted(read.text);
       if (!read.literal) literal = false;
       i = read.end;
+    } else if (c === "$" && next === "(" && src[i + 2] === "(") {
+      const end = readArithmetic(src, i + 3, acc, pipeline, nesting + 1);
+      if (end < 0) return -1;
+      literal = false;
+      append(src.slice(i, end));
+      i = end;
     } else if ((c === "$" || c === "<" || c === ">") && next === "(") {
       literal = false;
       if (c !== "$") pipeline.piped = true;
@@ -760,6 +792,7 @@ function lexFrom(src, start, inSubst, acc, parentPipeline = null, parentFed = fa
         acc,
         pipeline,
         c === ">" || feedsStdin || (c === "$" && pipeline.fed.has(words)),
+        nesting + 1,
       );
       if (end < 0) return -1;
       if (c === "$") wordSubstitutions.push(...acc.commands.slice(before));
@@ -768,7 +801,7 @@ function lexFrom(src, start, inSubst, acc, parentPipeline = null, parentFed = fa
     } else if (c === "`") {
       literal = false;
       const before = acc.commands.length;
-      const end = readBackticks(src, i + 1, acc, false, pipeline, feedsStdin || pipeline.fed.has(words));
+      const end = readBackticks(src, i + 1, acc, false, pipeline, feedsStdin || pipeline.fed.has(words), nesting + 1);
       if (end < 0) return -1;
       wordSubstitutions.push(...acc.commands.slice(before));
       append(src.slice(i, end));
@@ -782,14 +815,19 @@ function lexFrom(src, start, inSubst, acc, parentPipeline = null, parentFed = fa
     } else if (acc.redirections && (c === "<" || c === ">") && next === "\\" && src[i + 2] === "\n") {
       // `<\⏎<EOF`: the shells splice the line first and read `<<`, the lexer would read two `<`
       return unreadable(acc, UNREADABLE_SYNTAX.continued);
-    } else if (c === "<" && next === "<" && src[i + 2] === "<") {
+    } else if (c === "(" && next === "(" && word === null && groupingPosition(words, facts, next)) {
+      const read = readArithmetic(src, i + 2, acc, pipeline, nesting + 1);
+      if (read < 0) return -1;
+      endCommand();
+      i = read;
+    } else if (parameter === 0 && c === "<" && next === "<" && src[i + 2] === "<") {
       redirectAt = i;
       redirectFd = endWordBeforeRedirection() || "0";
       hereString = true;
       if (redirectFd === "0") feedInput();
       redirectTarget = false;
       i += 3;
-    } else if (c === "<" && next === "<") {
+    } else if (parameter === 0 && c === "<" && next === "<") {
       redirectAt = i;
       redirectFd = endWordBeforeRedirection() || "0";
       const read = readHeredocStart(src, i + 2);
@@ -814,7 +852,7 @@ function lexFrom(src, start, inSubst, acc, parentPipeline = null, parentFed = fa
       redirectTarget = true;
     } else if (c === "\n") {
       endCommand();
-      i = readHeredocBodies(src, i + 1, pending.splice(0), acc, inSubst);
+      i = readHeredocBodies(src, i + 1, pending.splice(0), acc, inSubst, nesting + 1);
       if (i < 0) return -1;
       if (!awaitingPipeCommand) {
         feedsStdin = inputGroups.length ? inputGroups[inputGroups.length - 1].fed : parentFed;
@@ -915,8 +953,30 @@ function lexFrom(src, start, inSubst, acc, parentPipeline = null, parentFed = fa
     }
   }
   if (inSubst) return -1;
+  if (parameter > 0) return unreadable(acc, "unterminated parameter expansion");
   endCommand();
+  if (pending.length) return unreadable(acc, "unterminated heredoc");
+  if (acc.commands.length > MAX_COMMANDS) return unreadable(acc, "simple command limit exceeded");
   return broken ? unreadable(acc, broken) : i;
+}
+
+/** Read an arithmetic command as data, following only its live shell substitutions. */
+function readArithmetic(src, start, acc, pipeline, nesting) {
+  let depth = 0;
+  for (let i = start; i < src.length; i += 1) {
+    if (src[i] === "$" && src[i + 1] === "(") {
+      const end = lexFrom(src, i + 2, true, acc, pipeline, false, nesting + 1);
+      if (end < 0) return -1;
+      i = end - 1;
+    } else if (src[i] === "`") {
+      const end = readBackticks(src, i + 1, acc, false, pipeline, false, nesting + 1);
+      if (end < 0) return -1;
+      i = end - 1;
+    } else if (src[i] === "(") depth += 1;
+    else if (src[i] === ")" && depth > 0) depth -= 1;
+    else if (src[i] === ")" && src[i + 1] === ")") return i + 2;
+  }
+  return unreadable(acc, "unterminated arithmetic command");
 }
 
 /** Index after the unquoted redirection operator at `i`: `>` `>>` `>|` `>&` `<` `<>` `<&` `&>` `&>>`. */
@@ -932,7 +992,11 @@ function redirectionEnd(src, i) {
  * Text of a double-quoted string (`terminator` '"') or of a heredoc body (`terminator` null), with
  * every `$(…)` and backtick body inside lexed as commands. Null when unterminated.
  */
-function readExpanding(src, start, terminator, acc, pipeline = null, feedsStdin = false) {
+function readExpanding(src, start, terminator, acc, pipeline = null, feedsStdin = false, nesting = 0) {
+  if (nesting > MAX_LEX_DEPTH) {
+    markUnreadable(acc, "shell nesting limit exceeded");
+    return null;
+  }
   let text = "";
   let literal = true;
   let parameter = 0; // `${…}` depth inside a double-quoted string
@@ -964,7 +1028,7 @@ function readExpanding(src, start, terminator, acc, pipeline = null, feedsStdin 
       return null;
     } else if (parameter > 0 && c === '"') {
       // `"${x%"$y"}"`: both shells nest the inner double quotes inside the expansion
-      const read = readExpanding(src, i + 1, '"', acc, pipeline, feedsStdin);
+      const read = readExpanding(src, i + 1, '"', acc, pipeline, feedsStdin, nesting + 1);
       if (read === null) return null;
       text += src.slice(i, read.end);
       i = read.end;
@@ -979,15 +1043,21 @@ function readExpanding(src, start, terminator, acc, pipeline = null, feedsStdin 
       parameter -= 1;
       text += c;
       i += 1;
+    } else if (c === "$" && next === "(" && src[i + 2] === "(") {
+      const end = readArithmetic(src, i + 3, acc, pipeline, nesting + 1);
+      if (end < 0) return null;
+      literal = false;
+      text += src.slice(i, end);
+      i = end;
     } else if (c === "$" && next === "(") {
       literal = false;
-      const end = lexFrom(src, i + 2, true, acc, pipeline, feedsStdin);
+      const end = lexFrom(src, i + 2, true, acc, pipeline, feedsStdin, nesting + 1);
       if (end < 0) return null;
       text += src.slice(i, end);
       i = end;
     } else if (c === "`") {
       literal = false;
-      const end = readBackticks(src, i + 1, acc, terminator === '"', pipeline, feedsStdin);
+      const end = readBackticks(src, i + 1, acc, terminator === '"', pipeline, feedsStdin, nesting + 1);
       if (end < 0) return null;
       text += src.slice(i, end);
       i = end;
@@ -1004,7 +1074,7 @@ function readExpanding(src, start, terminator, acc, pipeline = null, feedsStdin 
  * Lex a backtick substitution's body; returns the index after the closing backtick, or -1. Inside
  * double quotes the shells also unescape `\"` in the body.
  */
-function readBackticks(src, start, acc, inDoubleQuotes = false, pipeline = null, feedsStdin = false) {
+function readBackticks(src, start, acc, inDoubleQuotes = false, pipeline = null, feedsStdin = false, nesting = 0) {
   const escapable = inDoubleQuotes ? '`\\$"' : "`\\$";
   let body = "";
   let i = start;
@@ -1018,7 +1088,7 @@ function readBackticks(src, start, acc, inDoubleQuotes = false, pipeline = null,
     }
   }
   if (i >= src.length) return -1;
-  return lexFrom(body, 0, false, acc, pipeline, feedsStdin) < 0 ? -1 : i + 1;
+  return lexFrom(body, 0, false, acc, pipeline, feedsStdin, nesting + 1) < 0 ? -1 : i + 1;
 }
 
 // `$'…'` escapes that bash (3.2 on) and zsh decode to the same character. Every other escape — `\u`,
@@ -1181,11 +1251,12 @@ function readHeredocStart(src, start) {
  * Consume the bodies of `docs`, in order, from `start` (the line after the `<<` line). A quoted-delimiter
  * body is recorded in `acc.quotedBodies` as its span of `src`, delimiter line included.
  */
-function readHeredocBodies(src, start, docs, acc, inSubst = false) {
+function readHeredocBodies(src, start, docs, acc, inSubst = false, nesting = 0) {
   let i = start;
   for (const doc of docs) {
     const bodyStart = i;
     let body = "";
+    let terminated = false;
     while (i < src.length) {
       const newline = src.indexOf("\n", i);
       const lineEnd = newline < 0 ? src.length : newline;
@@ -1194,9 +1265,13 @@ function readHeredocBodies(src, start, docs, acc, inSubst = false) {
       // An unquoted delimiter's body joins a line ending in an odd backslash run with the next one
       // before the shells compare it to the delimiter (`EO\⏎F` ends the body, `x\⏎EOF` does not).
       if (!doc.quoted && /(?:^|[^\\])(?:\\\\)*\\$/.test(line)) return unreadable(acc, UNREADABLE_SYNTAX.continued);
-      if ((doc.strip ? line.replace(/^\t+/, "") : line) === doc.delim) break;
+      if ((doc.strip ? line.replace(/^\t+/, "") : line) === doc.delim) {
+        terminated = true;
+        break;
+      }
       body += `${line}\n`;
     }
+    if (!terminated) return unreadable(acc, "unterminated heredoc");
     // bash 3.2 (macOS /bin/bash) ends a `$(` by scanning for its `)` before it reads the heredoc, so a body
     // that closes the substitution early runs its tail as commands there, while zsh and bash ≥ 4 read data.
     if (inSubst && closesSubstitution(body)) return unreadable(acc, UNREADABLE_SYNTAX.heredocInSubstitution);
@@ -1214,7 +1289,7 @@ function readHeredocBodies(src, start, docs, acc, inSubst = false) {
     // An unquoted delimiter leaves `$(…)` and backticks in the body live.
     if (!doc.quoted) {
       const before = acc.commands.length;
-      if (readExpanding(body, 0, null, acc, doc.pipeline) === null) return -1;
+      if (readExpanding(body, 0, null, acc, doc.pipeline, false, nesting + 1) === null) return -1;
       for (const nested of acc.commands.slice(before)) acc.substitutionOutputs.add(nested);
     }
   }
@@ -1254,8 +1329,16 @@ function closesSubstitution(body) {
  * shell's own script, with the options at their defaults.
  */
 function lexShell(src, redirections = true, failure = {}) {
+  if (src.length > MAX_COMMAND_CHARS) {
+    failure.unreadable = true;
+    failure.reason = "command size limit exceeded";
+    return null;
+  }
   const acc = {
+    wordCount: 0,
+    deadline: failure.deadline ?? Date.now() + INSPECTION_MS,
     commands: [],
+    incomplete: new Set(),
     wordFacts: new Map(),
     wordTexts: new Map(),
     substitutionOutputs: new Set(),
@@ -1282,8 +1365,10 @@ function lexShell(src, redirections = true, failure = {}) {
     if (!starting && (switching < 0 || switching === commands.length - 1)) return acc;
     markUnreadable(acc, UNREADABLE_SYNTAX.runtimeOptions);
   }
+  markUnreadable(acc, "unterminated or unsupported shell syntax");
   failure.unreadable = acc.unreadable;
   failure.reason = acc.unreadableReason;
+  failure.partial = acc;
   return null;
 }
 
@@ -1430,14 +1515,15 @@ function expandBraces(word) {
 }
 
 /** Expand the leftmost valid brace expression of `word` into `out`, recursively; false on overflow. */
-function expandBracesInto(word, out) {
+function expandBracesInto(word, out, nesting = 0) {
+  if (nesting > MAX_LEX_DEPTH) return false;
   for (let open = word.indexOf(BRACE_OPEN); open >= 0; open = word.indexOf(BRACE_OPEN, open + 1)) {
     const close = matchingBrace(word, open);
     const items = close < 0 ? null : braceItems(word.slice(open + 1, close));
     if (items !== null) {
       const head = word.slice(0, open);
       const tail = word.slice(close + 1);
-      return items.every((item) => expandBracesInto(head + item + tail, out));
+      return items.every((item) => expandBracesInto(head + item + tail, out, nesting + 1));
     }
   }
   out.push(word);
@@ -1526,6 +1612,113 @@ function coarseCommandTokens(segment) {
   return tokens.slice(i);
 }
 
+/** Stop inspection when the caller's wall-clock budget has elapsed. */
+function checkInspectionDeadline(deadline) {
+  if (Date.now() > deadline) throw new Error("command inspection deadline exceeded");
+}
+
+/** Find a shell source candidate's boundary without splitting its quoted options or descriptor redirections. */
+function coarseSourceEnd(text, start) {
+  let quote = "";
+  for (let at = start; at < text.length; at += 1) {
+    const c = text[at];
+    if (c === "\\" && quote !== "'") at += 1;
+    else if (quote) {
+      if (c === quote) quote = "";
+    } else if (c === "'" || c === '"') quote = c;
+    else if (/[;&|\n]/.test(c)) {
+      if (c === "&" && (text[at + 1] === ">" || /[<>]/.test(text[at - 1] || ""))) continue;
+      return at;
+    }
+  }
+  return text.length;
+}
+
+/** Extract the literal source operand of a directly named shell without interpreting shell expansions. */
+function coarseShellSource(text, start, limit) {
+  const head = /^\s*(?:command\s+)?([^\s<>&]+)/.exec(text.slice(start, limit));
+  if (!head || !/^(?:bash|sh|dash|zsh|ksh)$/.test(programName(head[1]))) return null;
+  let at = start + head[0].length;
+  const rawEnd = limit;
+  limit = coarseSourceEnd(text, at);
+  while (at < limit) {
+    while (at < limit && /\s/.test(text[at])) at += 1;
+    let source = text.startsWith("<<<", at);
+    if (source) at += 3;
+    else {
+      const word = at;
+      while (at < limit && !/\s/.test(text[at]) && !text.startsWith("<<<", at)) at += 1;
+      source = /^(?:-[a-z]*c[a-z]*|--command)$/i.test(text.slice(word, at));
+    }
+    if (!source) continue;
+    while (at < limit && /\s/.test(text[at])) at += 1;
+    while (at < limit && text[at] === "-") {
+      while (at < limit && !/\s/.test(text[at])) at += 1;
+      while (at < limit && /\s/.test(text[at])) at += 1;
+    }
+    if (text[at] !== "'" && text[at] !== '"') return { source: null, end: rawEnd };
+    const quote = text[at++];
+    const body = at;
+    while (at < text.length) {
+      if (quote === '"' && text[at] === "\\") at += 2;
+      else if (text[at++] === quote) return { source: text.slice(body, at - 1), end: at };
+    }
+    return { source: null, end: rawEnd };
+  }
+  return { source: null, end: rawEnd };
+}
+
+/** Read plain program segments and literal shell source without consulting the bounded lexer. */
+function coarseProgramInvocations(command, name, depth = 0, deadline = Date.now() + INSPECTION_MS) {
+  if (typeof command !== "string" || depth >= MAX_NESTING) return [];
+  checkInspectionDeadline(deadline);
+  const prefix = command.slice(0, MAX_COMMAND_CHARS);
+  // A raw scan cannot place a heredoc terminator reliably; stop before any possible body starts.
+  const opener = /(?<!<)<<(?!<)/.exec(prefix);
+  let text = opener ? prefix.slice(0, opener.index) : prefix;
+  const found = [];
+  // Modeled: raw ;, |, &&, || and newline, existing exec wrappers, and directly named shells' quoted
+  // -c/-…c…/--command or <<< source (also after &). Unmodeled here: direct & commands, subshells, command
+  // substitution, backticks, leading redirections, eval, env bash -c, $'…' and heredoc bodies; the exact lexer
+  // handles these where possible, otherwise the guards ask because a push or GitHub write may be hidden.
+  if (command.length > MAX_COMMAND_CHARS && !opener && !/[\s;&|<>()]/.test(command[MAX_COMMAND_CHARS])) {
+    let cut = text.length;
+    while (cut > 0 && !/[\s;&|<>()]/.test(text[cut - 1])) cut -= 1;
+    text = text.slice(0, cut);
+  }
+  const segments = text.split(/(?:&&|\|\||[;|\n])/);
+  for (const segment of segments) {
+    checkInspectionDeadline(deadline);
+    const tokens = coarseCommandTokens(segment.replace(/["'\\]/g, ""));
+    if (!tokens.length) continue;
+    for (const at of executablePrograms(tokens)) {
+      if (programName(tokens[at]) === name) found.push(tokens.slice(at));
+    }
+  }
+  for (let start = 0; start < text.length;) {
+    checkInspectionDeadline(deadline);
+    let end = start;
+    while (end < text.length && !/[;&|\n]/.test(text[end])) end += 1;
+    const source = coarseShellSource(text, start, end);
+    if (source) {
+      if (source.source !== null) found.push(...coarseProgramInvocations(source.source, name, depth + 1, deadline));
+      end = source.end;
+      while (end < text.length && !/[;&|\n]/.test(text[end])) end += 1;
+    }
+    start = end + 1;
+  }
+  return found;
+}
+
+/** Read git's global-option alternatives before any invocation or alias budget is spent. */
+function coarseGitSubcommandArgs(command, info = {}) {
+  info.coarseInvocations ??= coarseProgramInvocations(command, "git", 0, info.deadline);
+  return info.coarseInvocations.flatMap((tokens) => [
+    stripGitGlobalFlags(tokens, false, []),
+    stripGitGlobalFlags(tokens, true, []),
+  ]);
+}
+
 // --- invocation finding ---
 
 function basename(word) {
@@ -1545,6 +1738,7 @@ function programName(word) {
  * command and pipeline; the presence of a runner alone never makes every heredoc on the line executable.
  */
 function collectWords(words, found, depth, target, scripts = new Set(), facts = [], bindings = new Map(), texts = []) {
+  checkInspectionDeadline(target.deadline);
   words = literalPathCommands(words, facts, bindings);
   const runners = [];
   let interpreter = -1;
@@ -1562,6 +1756,25 @@ function collectWords(words, found, depth, target, scripts = new Set(), facts = 
     else if (subscript < 0 && SUBSCRIPT_BUILTINS.has(unmarkGlobs(name))) subscript = j;
   });
   if (interpreter >= 0) target.scanCode(words.slice(interpreter + 1).join(" "), found);
+  for (const at of executablePrograms(words)) {
+    const name = programName(words[at]);
+    if (
+      SOURCE_RUNNERS.has(name) ||
+      INTERPRETERS.test(name) ||
+      PRINT_PROGRAMS.has(name) ||
+      name === "git" ||
+      name === "gh"
+    )
+      continue;
+    const args = words.slice(at + 1);
+    if (
+      args.some((arg) => /^(?:-[ecEr]|--(?:eval|execute|expression|command|code)(?:=|$)|eval$)/.test(arg)) &&
+      namesProgram(args.join(" "), target.name)
+    ) {
+      markTargetUnreadable(target, "code option of an unmodeled executable");
+      target.unlexable("", found, true);
+    }
+  }
   if (subscript >= 0 && depth < MAX_NESTING) {
     for (const arg of words.slice(subscript + 1).map(unmarkGlobs)) {
       if (arg.includes("[") && /[$`]/.test(arg)) collect(arg, found, depth + 1, target, scripts);
@@ -2311,14 +2524,24 @@ function scanGitCode(code, found) {
  * itself (`$'\x{67}it'`), so it also adds a `push --force` invocation.
  */
 function scanRawSegments(command, found, unreadable) {
-  for (const segment of coarseSegments(command)) {
-    const words = segment
-      .replace(/["'\\{},]/g, " ")
-      .trim()
-      .split(/\s+/)
-      .filter(Boolean)
-      .map(markGlobs);
-    collectWords(words, found, MAX_NESTING, GIT);
+  if (command.length > MAX_COMMAND_CHARS) {
+    found.push(["git", "push", "--force"]);
+    return;
+  }
+  for (const segment of coarseSegments(command.slice(0, MAX_COMMAND_CHARS))) {
+    for (const variant of [segment, segment.replace(/["'\\]/g, "")]) {
+      const words = variant
+        .replace(/["'\\{},]/g, " ")
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean)
+        .map(markGlobs);
+      if (words.length > MAX_WORDS) {
+        found.push(["git", "push", "--force"]);
+        return;
+      }
+      collectWords(words, found, MAX_NESTING, GIT);
+    }
   }
   if (unreadable) found.push(["git", "push", "--force"]);
 }
@@ -2438,7 +2661,7 @@ function hasRuntimeCommand(lexed, bindings) {
     if (lexed.substitutionOutputs.has(words) || lexed.caseData.has(words)) return false;
     const facts = lexed.wordFacts.get(words);
     return executablePrograms(words).some((r) => {
-      if (unmarkGlobs(words[r]) === "[") return false;
+      if (["[", "[["].includes(unmarkGlobs(words[r]))) return false;
       if (facts[r] & WORD_LITERAL) return false;
       const paths = boundPaths(words[r], false, bindings.get(words));
       return paths.length !== 1 || paths.some((file) => !["L", "T"].includes(file[0]) || !file.includes("/"));
@@ -2562,18 +2785,49 @@ function descriptorInputs(lexed) {
   return true;
 }
 
+/** Retain literal argv independently of synthetic readings used for unreadable source. */
+function retainInvocations(lexed, target, depth = 0) {
+  if (!lexed || !target.readable) return;
+  for (const words of lexed.commands) {
+    if (lexed.incomplete.has(words)) continue;
+    for (let at = 0; at < words.length; at += 1) {
+      if (programName(words[at]) === target.name) target.readable.push(withXargsTail(words, at));
+    }
+    if (depth >= MAX_NESTING || !lexed.wordFacts.get(words).every((fact) => fact & WORD_LITERAL)) continue;
+    for (const at of executablePrograms(words)) {
+      if (!SOURCE_RUNNERS.has(programName(words[at]))) continue;
+      for (const source of sourceArguments(words, at, {}) || []) {
+        const failure = { deadline: target.deadline };
+        const nested = lexShell(source, true, failure);
+        retainInvocations(nested || failure.partial, target, depth + 1);
+      }
+    }
+  }
+}
+
+/** Retain only complete plain prefix segments when an oversized command cannot enter the lexer. */
+function retainPrefix(command, target) {
+  const retained = command === target.command ? target.coarseInvocations : null;
+  target.prefix.push(...(retained || coarseProgramInvocations(command, target.name, 0, target.deadline)));
+}
+
 /**
  * Push every invocation of `target` in `command` onto `found`. Returns the lexed command when the lexer read all
  * of it, or null when it fell back to the raw scan.
  */
 function collect(command, found, depth, target, scripts = new Set(), bindings = new Map(), codeContext = false) {
-  const failure = {};
+  checkInspectionDeadline(target.deadline);
+  const failure = { deadline: target.deadline };
   const lexed = lexShell(command, true, failure);
   if (lexed === null) {
+    if (failure.partial?.unreadableExecutable) target.unreadableExecutable = true;
+    retainInvocations(failure.partial, target);
+    if (command.length > MAX_COMMAND_CHARS) retainPrefix(command, target);
     if (failure.unreadable) markTargetUnreadable(target, failure.reason);
     target.unlexable(command, found, failure.unreadable);
     return null;
   }
+  retainInvocations(lexed, target);
   if (depth >= MAX_NESTING) {
     markTargetUnreadable(target, UNREADABLE_SYNTAX.sourceLimit);
     target.unlexable(command, found, true);
@@ -2595,9 +2849,11 @@ function collect(command, found, depth, target, scripts = new Set(), bindings = 
       facts[k] |= WORD_LITERAL;
     });
   }
-  if (
-    hasRuntimeCommand(codeContext ? lexed : { ...lexed, commands: [...lexed.functionCommands] }, lexed.pathBindings)
-  ) {
+  const runtimeSource =
+    codeContext || (depth === 0 && (namesProgram(command, "git") || namesProgram(command, "gh")))
+      ? lexed
+      : { ...lexed, commands: [...lexed.functionCommands] };
+  if (hasRuntimeCommand(runtimeSource, lexed.pathBindings)) {
     markTargetUnreadable(target, UNREADABLE_SYNTAX.printedSource);
     target.unlexable(command, found, true);
     return null;
@@ -2899,20 +3155,34 @@ function coarseText(command, lexed) {
  * `info.unreadable` is set when the command holds quoting bash and zsh read differently, and
  * `info.unreadableReason` names that syntax (empty otherwise).
  */
-function findInvocations(command, target, info = {}) {
+function findInvocations(command, target, info = {}, exact = null) {
   info.unreadable = false;
   info.unreadableReason = "";
   if (typeof command !== "string") return [];
   const found = [];
   const run = Object.create(target); // per-call state: GIT is shared across calls
+  run.deadline = info.deadline ?? Date.now() + INSPECTION_MS;
+  run.command = command;
+  run.coarseInvocations = info.coarseInvocations;
   run.unreadable = false;
   run.unreadableReason = "";
+  run.readable = [];
+  run.prefix = [];
   const scripts = new Set();
   let lexed;
   for (let pass = 0; pass < MAX_NESTING; pass += 1) {
+    checkInspectionDeadline(run.deadline);
     const previous = scripts.size;
     found.length = 0;
+    run.readable.length = 0;
+    run.prefix.length = 0;
     lexed = collect(command, found, 0, run, scripts);
+    if (found.length > MAX_COMMANDS) {
+      markTargetUnreadable(run, "program invocation limit exceeded");
+      found.length = 0;
+      run.unlexable("", found, true);
+      break;
+    }
     if (scripts.size === previous) break;
     // A newly discovered script can make an earlier write executable; rescan until all contexts agree.
     if (pass === MAX_NESTING - 1) {
@@ -2922,7 +3192,11 @@ function findInvocations(command, target, info = {}) {
   }
   info.unreadable = run.unreadable;
   info.unreadableReason = run.unreadableReason;
-  if (target.coarse) {
+  info.unreadableExecutable = !!run.unreadableExecutable;
+  info.exactInvocations = run.readable;
+  info.prefixInvocations = run.prefix;
+  if (exact) run.readable.forEach((tokens) => exact.add(tokens));
+  if (target.coarse && command.length <= MAX_COMMAND_CHARS) {
     for (const segment of coarseSegments(run.unreadable ? command : coarseText(command, lexed))) {
       const tokens = coarseCommandTokens(segment);
       if (tokens.length && programName(tokens[0]) === target.name) found.push(tokens);
@@ -2988,39 +3262,120 @@ function readArguments(args, readings) {
  * an inline alias of that subcommand expands to, and `push --force` under an enabling inline
  * help.autocorrect.
  */
-function readInvocation(tokens, unknownTakesValue, inherited, depth, readings) {
+function readInvocation(tokens, unknownTakesValue, inherited, depth, readings, budget, exact = true) {
+  checkInspectionDeadline(budget.deadline);
+  const identity = JSON.stringify(tokens);
+  if (!budget.seen.has(identity)) {
+    budget.seen.add(identity);
+    budget.remaining -= 1;
+  }
+  if (budget.remaining < 0 || Date.now() > budget.deadline) {
+    budget.info.unreadable = true;
+    budget.info.unreadableReason = depth ? "git alias inspection limit exceeded" : "git invocation limit exceeded";
+    return;
+  }
   const config = [...inherited];
   const args = stripGitGlobalFlags(tokens, unknownTakesValue, config);
+  configuredAlias(args, budget.configured, budget.info);
   readArguments(args, readings);
+  if (exact) readArguments(args, budget.exactReadings);
   // xargs appends words the text does not show: a hidden or push-family subcommand may force-push.
   if (tokens.includes(XARGS_TAIL) && (!args.length || args[0] === XARGS_TAIL || PUSH_FAMILY.test(args[0]))) {
     readings.push([...UNRESOLVED_READING]);
   }
   // git runs its guess for a mistyped subcommand, so any subcommand may run as push (`pus -f`).
   if (args.length && autocorrects(config)) readings.push([...UNRESOLVED_READING]);
-  const alias = args.length ? configValue(config, `alias.${args[0].toLowerCase()}`) : undefined;
-  if (typeof alias !== "string" && alias !== RUNTIME_VALUE) return;
-  if (alias === RUNTIME_VALUE || depth >= MAX_ALIAS_DEPTH) {
-    readings.push([...UNRESOLVED_READING]);
-  } else if (alias.startsWith("!")) {
-    // A shell alias runs its text through the shell with the remaining arguments appended.
-    const nested = [];
-    collect(`${alias.slice(1)} ${args.slice(1).join(" ")}`, nested, 0, GIT);
-    for (const nestedTokens of nested) readInvocation(nestedTokens, unknownTakesValue, config, depth + 1, readings);
-  } else {
-    // git splits a plain alias itself and never expands a glob in it; `<` and `>` there are
-    // arguments, not redirections (`alias.p='push > -f'` runs `push -f` with a `>` remote).
-    const lexed = lexShell(alias, false);
-    if (lexed === null) readings.push([...UNRESOLVED_READING]);
-    else
-      readInvocation(
-        [tokens[0], ...lexed.commands.flat().map(unmarkGlobs), ...args.slice(1)],
-        unknownTakesValue,
-        config,
-        depth + 1,
-        readings,
-      );
+  const aliases = new Set(
+    args.length
+      ? config.filter((entry) => entry.key === `alias.${args[0].toLowerCase()}`).map((entry) => entry.value)
+      : [],
+  );
+  for (const alias of aliases) {
+    if (typeof alias !== "string" && alias !== RUNTIME_VALUE) continue;
+    if (alias === RUNTIME_VALUE || depth >= MAX_ALIAS_DEPTH) {
+      if (exact) {
+        budget.info.unreadable = true;
+        budget.info.unreadableReason = "git alias value or expansion cannot be read exactly";
+      }
+      readings.push([...UNRESOLVED_READING]);
+    } else if (alias.startsWith("!")) {
+      // A shell alias runs its text through the shell with the remaining arguments appended.
+      const info = { deadline: budget.deadline };
+      const exactNested = new Set();
+      const nested = findInvocations(`${alias.slice(1)} ${args.slice(1).join(" ")}`, GIT, info, exactNested);
+      if (exact && info.unreadable) {
+        budget.info.unreadable = true;
+        budget.info.unreadableReason = info.unreadableReason;
+      }
+      for (const nestedTokens of new Set([...exactNested, ...nested]))
+        readInvocation(
+          nestedTokens,
+          unknownTakesValue,
+          config,
+          depth + 1,
+          readings,
+          budget,
+          exact && exactNested.has(nestedTokens),
+        );
+    } else {
+      // git splits a plain alias itself and never expands a glob in it; `<` and `>` there are
+      // arguments, not redirections (`alias.p='push > -f'` runs `push -f` with a `>` remote).
+      const failure = { deadline: budget.deadline };
+      const lexed = lexShell(alias, false, failure);
+      if (lexed === null) {
+        if (exact) {
+          budget.info.unreadable = true;
+          budget.info.unreadableReason = failure.reason;
+        }
+        readings.push([...UNRESOLVED_READING]);
+      } else
+        readInvocation(
+          [tokens[0], ...lexed.commands.flat().map(unmarkGlobs), ...args.slice(1)],
+          unknownTakesValue,
+          config,
+          depth + 1,
+          readings,
+          budget,
+          exact,
+        );
+    }
   }
+}
+
+/** Record modeled alias assignments and require inspection for unsupported config sources or options. */
+function configuredAlias(args, configured, info) {
+  if (args[0] !== "config" || !args.some((arg) => /^alias(?:\.|$)/i.test(arg))) return;
+  const operands = [];
+  let action = "set";
+  for (let i = 1; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg === "--") {
+      operands.push(...args.slice(i + 1));
+      break;
+    } else if (/^(?:--(?:get|get-all|get-regexp|get-urlmatch|list|unset|unset-all)|-l)$/.test(arg)) action = "read";
+    else if (
+      /^--(?:add|replace-all|append|all|local|global|system|worktree|includes|no-includes|bool|int|path|fixed-value|null|name-only|show-origin|show-scope)$/.test(
+        arg,
+      )
+    )
+      continue;
+    else if (/^--(?:type|value|default)=/.test(arg)) continue;
+    else if (["--type", "--value", "--default"].includes(arg)) i += 1;
+    else if (!operands.length && ["get", "list", "unset", "set"].includes(arg)) action = arg === "set" ? "set" : "read";
+    else if (arg.startsWith("-")) {
+      info.unreadable = true;
+      info.unreadableReason ||= "git config alias form cannot be read exactly";
+      return;
+    } else operands.push(arg);
+  }
+  if (action === "read" || operands.length === 1 || !operands.some((arg) => /^alias(?:\.|$)/i.test(arg))) return;
+  if (operands.length >= 2 && operands.length <= 3 && /^alias\./i.test(operands[0])) {
+    const entry = configEntry(`${operands[0]}=${operands[1]}`, false);
+    if (!configured.some((known) => known.key === entry.key && known.value === entry.value)) configured.push(entry);
+    return;
+  }
+  info.unreadable = true;
+  info.unreadableReason ||= "git config alias form cannot be read exactly";
 }
 
 /**
@@ -3029,13 +3384,84 @@ function readInvocation(tokens, unknownTakesValue, inherited, depth, readings) {
  * global options, once per expansion of an inline alias and once more per glob reading, and may
  * repeat across passes; callers test with `some`/`filter`, never count.
  */
-function gitSubcommandArgs(command) {
+function gitSubcommandArgs(command, info = {}) {
   const readings = [];
-  for (const tokens of findInvocations(command, GIT)) {
-    readInvocation(tokens, false, [], 0, readings);
-    readInvocation(tokens, true, [], 0, readings);
+  const configured = [];
+  const budget = {
+    remaining: MAX_COMMANDS,
+    deadline: info.deadline ?? Date.now() + INSPECTION_MS,
+    info,
+    configured,
+    seen: new Set(),
+    exactReadings: [],
+  };
+  const exact = new Set();
+  info.deadline = budget.deadline;
+  info.coarseReadings ??= coarseGitSubcommandArgs(command, info);
+  const found = findInvocations(command, GIT, info, exact);
+  // Every discovered source contributes before any invocation is resolved, regardless of execution order.
+  for (const tokens of new Set([...exact, ...found])) {
+    for (const unknownTakesValue of [false, true]) {
+      const inline = [];
+      const args = stripGitGlobalFlags(tokens, unknownTakesValue, inline);
+      configured.push(...inline.filter((entry) => entry.key.startsWith("alias.")));
+      configuredAlias(args, configured, info);
+    }
   }
+  for (let pass = 0; pass < MAX_ALIAS_DEPTH; pass += 1) {
+    const previous = configured.length;
+    const seen = new Set();
+    for (const tokens of [...exact, ...found]) {
+      const identity = JSON.stringify(tokens);
+      if (!exact.has(tokens) && seen.has(identity)) continue;
+      seen.add(identity);
+      readInvocation(tokens, false, configured, 0, readings, budget, exact.has(tokens));
+      readInvocation(tokens, true, configured, 0, readings, budget, exact.has(tokens));
+      if (budget.remaining < 0) break;
+    }
+    if (configured.length === previous || budget.remaining < 0) break;
+    if (pass === MAX_ALIAS_DEPTH - 1) {
+      info.unreadable = true;
+      info.unreadableReason = "git alias inspection limit exceeded";
+    }
+  }
+  info.exactReadings = budget.exactReadings;
+  info.prefixReadings = (info.prefixInvocations || []).flatMap((tokens) => [
+    stripGitGlobalFlags(tokens, false, []),
+    stripGitGlobalFlags(tokens, true, []),
+  ]);
+  if (info.unreadable) readings.push([...UNRESOLVED_READING]);
   return readings;
+}
+
+/** Recognize a named program conservatively when exact shell arguments are unavailable. */
+function namesProgram(command, name) {
+  const decoded = command
+    .replace(/\\\r?\n/g, "")
+    .replace(
+      /\\(?:[xu]\{([\da-f]{1,6})\}|x([\da-f]{1,2})|([0-7]{1,3})|u([\da-f]{4})|U([\da-f]{8}))/g,
+      (_, braced, hex, octal, unicode, wide) =>
+        String.fromCharCode(parseInt(braced || hex || octal || unicode || wide, octal ? 8 : 16)),
+    );
+  const plain = decoded
+    .replace(/\$'([^']*)'/g, (_, body) => body.replace(/\\(?:c.|.)/g, ""))
+    .replace(/\$\([^]*\)|`[^]*`|\$\{[^}]*\}+|\$[A-Za-z_][A-Za-z0-9_]*|\$[0-9@*?#$!-]/g, "\u0000")
+    .replace(/\$(?=['"])/g, "")
+    .replace(/["'\\]/g, "")
+    .replace(/\([A-Za-z]*e[^\s]/g, "( ");
+  const pattern = new RegExp(`(?<![\\w.-])${name}(?:\\.exe)?(?![\\w.-])`, "i");
+  if (pattern.test(command) || pattern.test(plain.replace(/\u0000/g, ""))) return true;
+  return coarseSegments(plain).some((segment) => {
+    const words = coarseCommandTokens(segment);
+    return executablePrograms(words).some((at) => {
+      const word = words[at];
+      if (!word.includes("\u0000")) return false;
+      const fragments = basename(word).split("\u0000");
+      if (!fragments.some(Boolean)) return false;
+      const possible = fragments.map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*");
+      return new RegExp(`^${possible}$`, "i").test(name);
+    });
+  });
 }
 
 /**
@@ -3055,12 +3481,20 @@ function programInvocations(command, name, info = {}) {
     const program = String(name).toLowerCase();
     const target = program === GIT.name ? GIT : programTarget(program);
     const found = findInvocations(command, target, info);
+    info.exactInvocations = (info.exactInvocations || []).map((tokens) => tokens.map(unmarkGlobs));
     return target.approximate ? null : found.map((tokens) => tokens.map(unmarkGlobs));
-  } catch {
+  } catch (error) {
     info.unreadable = true;
-    info.unreadableReason = "lexer error";
+    info.unreadableReason = error.message === "command inspection deadline exceeded" ? error.message : "lexer error";
     return null;
   }
 }
 
-module.exports = { gitSubcommandArgs, programInvocations, XARGS_TAIL };
+module.exports = {
+  gitSubcommandArgs,
+  programInvocations,
+  coarseProgramInvocations,
+  coarseGitSubcommandArgs,
+  namesProgram,
+  XARGS_TAIL,
+};

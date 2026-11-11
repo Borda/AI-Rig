@@ -1,10 +1,10 @@
 """Subprocess tests for ``hooks/rtk-rewrite.js``.
 
 The hook is a ``PreToolUse`` gate that rewrites read-heavy Bash commands to
-their ``rtk <cmd>`` equivalents and auto-approves them. Its security contract:
+their ``rtk <cmd>`` equivalents without approving execution. Its security contract:
 
-* **Read-only rewrite** — only commands the hook can prove read-only are
-  rewritten with ``permissionDecision:"allow"``; everything else passes
+* **Permission-preserving rewrite** — eligible commands are
+  rewritten without any ``permissionDecision``; everything else passes
   through unchanged (empty stdout, exit 0) so the real allow/deny matcher sees
   the original string.
 * **No deny bypass** — because a rewrite mutates the command string (and thus
@@ -22,13 +22,16 @@ the suite is skipped.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
+from fnmatch import fnmatchcase
 from pathlib import Path
 
 import pytest
 
 HOOK = Path(__file__).resolve().parent.parent.parent / "hooks" / "rtk-rewrite.js"
+PERMISSIONS = HOOK.parent.parent / ".claude-plugin" / "permissions-allow.json"
 
 _skip_node_unavailable = pytest.mark.skipif(shutil.which("node") is None, reason="requires node to execute the hook")
 _skip_rtk_unavailable = pytest.mark.skipif(
@@ -64,10 +67,132 @@ def _rewritten_to(result: dict) -> str | None:
         return None
 
 
+def _expand_guard_prefixes(pattern: str) -> set[str]:
+    """Expand the hook's finite alternatives while retaining exact-command anchors."""
+    group = re.search(r"\((?:\?:)?([^()]*)\)(\?)?", pattern)
+    if group is not None:
+        choices = group[1].split("|") + ([""] if group[2] else [])
+        return {
+            prefix
+            for choice in choices
+            for prefix in _expand_guard_prefixes(pattern[: group.start()] + choice + pattern[group.end() :])
+        }
+    assert re.fullmatch(r"[\w *-]+\$?", pattern), f"Unsupported guard syntax: {pattern!r}"
+    return {pattern.strip()}
+
+
+def _rewritable_prefixes() -> set[str]:
+    """Read command families from the hook tables instead of maintaining a second allowlist."""
+    source = HOOK.read_text(encoding="utf-8")
+    safe = json.loads(re.search(r"const SAFE_PREFIXES = (\[[\s\S]*?\]);", source)[1])
+    guarded = json.loads(re.search(r"const GUARDED_PREFIXES = (\[[\s\S]*?\]);", source)[1])
+    guards = source.split("const READ_ONLY_GUARDS = [", 1)[1].split("\n];", 1)[0]
+    prefixes = set(safe)
+    for line in guards.splitlines():
+        if not line.strip().startswith("/^"):
+            continue
+        # Lookaheads constrain API arguments; wildcards retain the AWS service and verb families.
+        pattern = line.strip()[2:-2].split("(?!", 1)[0]
+        pattern = pattern.replace(r"\s+", " ").replace(r"\b", "")
+        pattern = pattern.replace(r"\S+", "*").replace(r"[\w-]*", "*")
+        expanded = _expand_guard_prefixes(pattern)
+        assert all(prefix.split()[0] in guarded for prefix in expanded)
+        prefixes.update(expanded)
+    return {prefix for prefix in prefixes if not prefix.endswith("$") or prefix[:-1] not in prefixes}
+
+
+def test_permissions_match_exactly_the_rewritable_prefixes() -> None:
+    """Mirror entries cover eligible prefixes only within existing Bash permissions."""
+    shipped = json.loads(PERMISSIONS.read_text(encoding="utf-8"))
+    originals = {rule for rule in shipped if rule.startswith("Bash(") and not rule.startswith("Bash(rtk ")}
+    rewritable = _rewritable_prefixes()
+    allowed = {
+        prefix for prefix in rewritable if any(_matches_bash_rule(prefix.removesuffix("$"), rule) for rule in originals)
+    }
+    # A family ending in a wildcard already covers bare verbs; adding :* would require more arguments.
+    expected = {
+        f"Bash(rtk {prefix.removesuffix('$')}{'' if prefix.endswith(('$', '*')) else ':*'})" for prefix in allowed
+    }
+    # A broad hook family such as gh api must retain the original rule's narrower argument shape.
+    narrowed = {
+        rule
+        for rule in originals
+        if any(
+            _matches_bash_rule(rule.removeprefix("Bash(").removesuffix(")").removesuffix(":*"), f"Bash({prefix}:*)")
+            for prefix in rewritable - allowed
+            if not prefix.endswith(("$", "*"))
+        )
+    }
+    expected.update(f"Bash(rtk {rule.removeprefix('Bash(')}" for rule in narrowed)
+    mirrors = {rule for rule in shipped if rule.startswith("Bash(rtk ")}
+    assert mirrors == expected
+
+
+@_skip_rtk_unavailable
+@_skip_node_unavailable
+@pytest.mark.parametrize("prefix", sorted(_rewritable_prefixes()))
+def test_derived_prefix_is_rewritten_without_allow(prefix: str) -> None:
+    """Each table-derived permission family represents a command the real hook still rewrites."""
+    command = prefix.rstrip("$").replace("*", "example") + ("" if prefix.endswith("$") else " example")
+    result = _run(command)
+    assert _rewritten_to(result) == f"rtk {command}"
+    assert "permissionDecision" not in result["hookSpecificOutput"]
+
+
+def _matches_bash_rule(command: str, rule: str) -> bool:
+    """Apply Bash glob rules, including the documented single-wildcard bare-command exception."""
+    pattern = rule.removeprefix("Bash(").removesuffix(")")
+    if pattern.endswith(":*"):
+        pattern = pattern[:-2] + " *"
+    if pattern.endswith(" *") and pattern.count("*") == 1 and command == pattern[:-2]:
+        return True
+    return fnmatchcase(command, pattern)
+
+
+def test_mirrors_require_an_allowed_original() -> None:
+    """No RTK allow entry grants execution beyond an existing original Bash rule."""
+    shipped = json.loads(PERMISSIONS.read_text(encoding="utf-8"))
+    originals = {rule for rule in shipped if rule.startswith("Bash(") and not rule.startswith("Bash(rtk ")}
+    uncovered = {
+        mirror
+        for mirror in shipped
+        if mirror.startswith("Bash(rtk ")
+        and not any(
+            _matches_bash_rule(mirror.removeprefix("Bash(rtk ").removesuffix(")").replace(":*", " *"), rule)
+            for rule in originals
+        )
+    }
+    assert uncovered == set()
+
+
+@_skip_rtk_unavailable
+@_skip_node_unavailable
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param("aws ec2 describe-regions", id="aws-describe"),
+        pytest.param("aws iam get-account-summary", id="aws-get"),
+        pytest.param("aws s3api list-buckets", id="aws-list"),
+        pytest.param("kubectl get secrets", id="kubectl-get-secrets"),
+        pytest.param("docker ps", id="docker-ps"),
+    ],
+)
+def test_rewritable_command_without_allowed_original_has_no_mirror(command: str) -> None:
+    """Rewriting AWS, Kubernetes and Docker inspection commands does not authorize them."""
+    result = _run(command)
+    rewritten = _rewritten_to(result)
+    assert rewritten == f"rtk {command}"
+    shipped = json.loads(PERMISSIONS.read_text(encoding="utf-8"))
+    originals = [rule for rule in shipped if rule.startswith("Bash(") and not rule.startswith("Bash(rtk ")]
+    assert not any(_matches_bash_rule(command, rule) for rule in originals)
+    mirrors = [rule for rule in shipped if rule.startswith("Bash(rtk ")]
+    assert not any(_matches_bash_rule(rewritten, rule) for rule in mirrors)
+
+
 @_skip_rtk_unavailable
 @_skip_node_unavailable
 class TestRewrite:
-    """Provably read-only commands get an ``rtk`` prefix and an allow decision."""
+    """Eligible commands get an ``rtk`` prefix while retaining normal permission checks."""
 
     @pytest.mark.parametrize(
         "command",
@@ -83,8 +208,10 @@ class TestRewrite:
             pytest.param("kubectl get pods", id="kubectl-get"),
             pytest.param("aws ec2 describe-instances", id="aws-describe"),
             pytest.param("aws s3 ls", id="aws-s3-ls"),
-            pytest.param("pytest tests/", id="pytest"),
-            pytest.param("ruff check .", id="ruff-check"),
+            pytest.param("tree -a", id="tree"),
+            pytest.param("git reflog", id="git-reflog"),
+            pytest.param("git reflog show -5", id="git-reflog-show"),
+            pytest.param("git grep foo", id="git-grep"),
             pytest.param("grep -r foo .", id="grep"),
             pytest.param("ls -la", id="ls"),
             pytest.param("cargo tree", id="cargo-tree"),
@@ -92,17 +219,57 @@ class TestRewrite:
             pytest.param("next info", id="next-info"),
         ],
     )
-    def test_readonly_command_is_rewritten_and_allowed(self, command: str) -> None:
-        """A provably read-only command is rewritten to ``rtk <command>`` with an allow decision.
+    def test_command_is_rewritten_without_allow(self, command: str) -> None:
+        """An eligible command is rewritten to ``rtk <command>`` without an allow decision.
 
-        Plain read verbs of mixed CLIs and the inspection subcommands of cargo/next (whose execution subcommands pass
-        through) earn the rewrite; the decision and the exact rewritten string are both part of the contract.
+        Read verbs of mixed CLIs and file inspection tools earn the rewrite. The exact rewritten string and the
+        absence of a permission decision are both part of the contract.
         """
         result = _run(command)
-        assert (result["hookSpecificOutput"]["permissionDecision"], _rewritten_to(result)) == (
-            "allow",
-            f"rtk {command}",
-        )
+        assert _rewritten_to(result) == f"rtk {command}"
+        assert "permissionDecision" not in result["hookSpecificOutput"]
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "git reflog expire --expire=now --all",
+            "git reflog expire --all",
+            "git reflog delete HEAD@{0}",
+            "git reflog write HEAD a b",
+            "git grep -Otouch needle",
+            "git grep -Oless foo",
+            "git grep -O foo",
+            "git grep --open-files-in-pager=less foo",
+            "git grep --open-files-in-pager foo",
+            "git diff --output=result.txt",
+            "git diff --output=x",
+            "git diff --output x",
+            'git diff "--output=x"',
+            "git log --output=x",
+            "tree --output=out",
+            "tree -o result.txt",
+            "tree -o out",
+            "tree -oout",
+            "tree -ao out",
+            "pytest tests/",
+            "ruff check .",
+            "ruff check --fix .",
+            "prettier --write .",
+            "tsc",
+            "lint --fix",
+            "format .",
+            "jest",
+            "vitest",
+            "rspec",
+            "rubocop",
+            "golangci-lint run",
+            "mypy .",
+        ],
+    )
+    def test_argument_side_effects_pass_through(self, command: str) -> None:
+        """Commands whose arguments execute code or write files reach permission matching unchanged."""
+        result = _run(command)
+        assert result == {}
 
 
 @_skip_rtk_unavailable

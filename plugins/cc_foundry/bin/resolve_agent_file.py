@@ -18,12 +18,14 @@ a fallback:
 stdout is two lines the caller reads back:
 
     agent-file=plugins/cc_foundry/agents/curator.md
-    proposal-path=.reports/calibrate/<timestamp>/curator/proposal.md
+    proposal-path=.reports/calibrate/<timestamp>/foundry-curator/proposal.md
 
 ``agent-file=`` is empty when nothing resolved, and the reason is printed above it.
-``--run-slug`` names the run directory when it differs from the target — a mode-level
-calibration domain such as ``oss:analyse-vitality`` resolves the ``/oss:analyse`` skill
-file but keeps its proposal in its own directory.
+Callers always supply the canonical safe directory with ``--run-slug``, such as
+``foundry-curator`` for ``foundry:curator``. A mode-level calibration domain such as
+``oss-analyse-vitality`` resolves the ``/oss:analyse`` skill file but keeps its proposal
+in its own directory. Without the flag, the historical default remains the target name
+without its leading ``/``, including any colon.
 
 Usage:
     resolve_agent_file.py --name <target> [--timestamp <ts>] [--run-slug <slug>] [--local]
@@ -86,7 +88,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--name", required=True, help="agent name, plugin:agent, or /skill")
     parser.add_argument("--timestamp", default="", help="calibrate run timestamp for the proposal path")
-    parser.add_argument("--run-slug", default="", help="run directory name when it differs from the target")
+    parser.add_argument(
+        "--run-slug", default="", help="canonical run directory, e.g. foundry-curator (omitted: historical target name)"
+    )
     parser.add_argument("--local", action="store_true", help="label failures as --local for the caller")
     args = parser.parse_args()
 

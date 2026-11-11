@@ -20,6 +20,11 @@ import pytest
 from extract_vitality_vars import emit, extract_vars, main
 
 
+def test_null_health_uses_unavailable_sentinel() -> None:
+    """Unknown health reaches shell consumers as the existing numeric unavailable sentinel."""
+    assert extract_vars({"health_score_pct": None})["HEALTH_SCORE_PCT"] == "-1"
+
+
 def _scores(overrides: dict | None = None) -> dict:
     """Build complete vitality-score input with optional top-level overrides.
 

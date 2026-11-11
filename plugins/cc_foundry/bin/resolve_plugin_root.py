@@ -110,7 +110,7 @@ def lookup_registry(registry: Path, marketplace: str, plugin_name: str) -> str |
     candidates = [e for e in entries if isinstance(e, dict) and e.get("installPath")]
     if not candidates:
         return None
-    candidates.sort(key=lambda e: e.get("installedAt", ""), reverse=True)
+    candidates.sort(key=lambda e: e["installedAt"] if isinstance(e.get("installedAt"), str) else "", reverse=True)
     return str(candidates[0]["installPath"])
 
 

@@ -198,6 +198,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--rc", type=int, required=True, help="Exit status of the test-impact query")
     parser.add_argument("--stderr-file", default=None, help="File holding the query's captured stderr")
     parser.add_argument("--output-prefix", required=True, help="Sentinel name prefix, e.g. codemap-<project>")
+    parser.add_argument("--diff-impact", action="store_true", help="Print compact whole-change JSON without sentinels")
     return parser
 
 
@@ -209,6 +210,40 @@ def _read_stderr(path: str | None) -> str:
         return Path(path).read_text(encoding="utf-8", errors="replace")
     except OSError:
         return ""
+
+
+def diff_summary(payload: dict) -> dict:
+    """Retain the whole-change test union and coverage gaps without bulky dependency graphs.
+
+    Args:
+        payload: Successful diff-impact response, including changed modules and test selection.
+
+    Returns:
+        Report fields with only module names, errors and index completeness metadata.
+
+    Raises:
+        ValueError: When the response lacks the required diff-impact result fields.
+    """
+    modules = payload.get("changed_modules")
+    impact = payload.get("test_impact")
+    unmapped = payload.get("unmapped_files")
+    if not isinstance(modules, list) or not isinstance(unmapped, list) or not isinstance(impact, dict):
+        raise ValueError("diff-impact response is missing changed modules, unmapped files or test impact")
+    if not isinstance(impact.get("test_files"), list):
+        raise ValueError("diff-impact response is missing the test file list")
+    if any(not isinstance(module, dict) or not isinstance(module.get("module"), str) for module in modules):
+        raise ValueError("diff-impact response has malformed changed modules")
+    index = payload.get("index") or {}
+    return {
+        "test_impact": impact,
+        "unmapped_files": unmapped,
+        "changed_modules": [{"module": module["module"], "errors": module.get("errors", [])} for module in modules],
+        "index": {
+            key: index[key]
+            for key in ("query_complete", "stale", "completeness_reason", "not_covered", "hint")
+            if key in index
+        },
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -230,7 +265,17 @@ def main(argv: list[str] | None = None) -> int:
             "! test-impact returned non-JSON output — NOT an empty result; " + REBUILD_ADVICE,
             file=sys.stderr,
         )
+        if args.diff_impact:
+            print(_read_stderr(args.stderr_file).strip(), file=sys.stderr)
         return 1
+    if args.diff_impact:
+        try:
+            summary = diff_summary(payload)
+        except ValueError as exc:
+            print(f"! {exc} — NOT an empty result", file=sys.stderr)
+            return 1
+        print(json.dumps(summary))
+        return 0
     fields = result_fields(payload)
     try:
         _write_sentinels(args.output_prefix, fields)

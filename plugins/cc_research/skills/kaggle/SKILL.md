@@ -81,8 +81,11 @@ COMPETITORS_DIR:  resources/competitors/  # optional user-project path, not ship
 ```bash
 # loads: compaction-contract.md
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/resolve_shared.py" --persist research-shared --emit agent-resolution.md || exit 1  # timeout: 5000
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/parse_kaggle_args.py" -- "$ARGUMENTS"  # timeout: 5000 — mode flags + keep-items; persists sentinels for Steps 3+4, clears a stale contract
 ```
+
+Follow `agent-resolution.md`'s **Agent waits** section for generation deadlines. Kaggle still requires `foundry:sw-engineer`, with no fallback; the shared fallback table does not override that requirement.
 
 **Flag mutual-exclusion check** — if `EDA_ONLY` and `INFERENCE_ONLY` are both `true` (both `--eda-only` and `--inference-only` passed): invoke `AskUserQuestion` with question text `` ! Conflicting flags: `--eda-only` and `--inference-only` are mutually exclusive (`--eda-only` is always-online with no training; `--inference-only` is always-offline/frozen-package with no EDA — see `foundation.md`). Pick one. `` — (a) **Abort** · (b) **Continue ignoring both** (falls back to full mode: neither eda-only nor inference-only applied). On Abort: stop. On (b): run this fixed block so Step 3 reloads `false` for both modes (the sentinels still hold `true`, and inference-only would win) and the offline sentinel follows only an explicit `--offline-setup`:
 
@@ -105,7 +108,7 @@ case " $ARGUMENTS " in *" --offline-setup "*) echo true > "${TMPDIR:-/tmp}/kaggl
 
 ### Kaggle CLI grounding
 
-Competition pages are login-walled; `WebFetch` returns partial or blocked content on many. Anyone requesting a competition notebook has a Kaggle account, so the CLI is the reliable path — real file names, sizes, actual `sample_submission.csv` header, no guessed schema.
+Competition pages are login-walled; `WebFetch` returns partial or blocked content on many. Anyone requesting a competition notebook has a Kaggle account, so the CLI is the reliable path — real file names, sizes, the listed sample submission's header, no guessed schema.
 
 Probe availability and auth in one block. CLI absence never aborts the skill — degrade to WebFetch/user facts:
 
@@ -143,31 +146,57 @@ Branch on `$KAGGLE_CLI`:
 > 2. `mkdir -p ~/.kaggle && mv ~/Downloads/kaggle.json ~/.kaggle/ && chmod 600 ~/.kaggle/kaggle.json`
 > 3. Env-var alternative: `export KAGGLE_USERNAME=<user> KAGGLE_KEY=<key>` (newer CLI builds also accept `KAGGLE_API_TOKEN`; `kaggle --version` tells which build is installed).
 
-**Grounding queries** — cheap, run when `ready`; the block lists files and the leaderboard (read-only), then downloads the sample submission. Competition slug is positional; `-v` is CSV output, not verbose. Anything beyond the commands below: read `kaggle competitions --help` / `kaggle datasets --help` rather than guessing flags — the surface shifts between CLI releases.
+**Grounding queries** — cheap, run when `ready`; the block lists files and the leaderboard (read-only); the next block downloads the selected sample. Competition slug is positional; `-v` is CSV output, not verbose. Anything beyond the commands below: read `kaggle competitions --help` / `kaggle datasets --help` rather than guessing flags — the surface shifts between CLI releases.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r COMPETITION_NAME < "${TMPDIR:-/tmp}/kaggle-competition-name-${CSID}" 2>/dev/null || COMPETITION_NAME=""
 KAGGLE_SLUG="${KAGGLE_SLUG:-$COMPETITION_NAME}"   # override when notebook slug differs from competition slug
 case "$KAGGLE_SLUG" in ""|*[!A-Za-z0-9_-]*) echo "! BLOCKED — competition slug '$KAGGLE_SLUG' is empty or not a bare slug"; exit 1 ;; esac
+echo "$KAGGLE_SLUG" > "${TMPDIR:-/tmp}/kaggle-slug-${CSID}"
 mkdir -p .temp/kaggle
 echo "=== files ==="; kaggle competitions files "$KAGGLE_SLUG" -v --page-size 200 > ".temp/kaggle/${KAGGLE_SLUG}-files.csv" || { echo "! BLOCKED — file listing failed: 403/accept-rules or 404/malformed slug (see below)"; exit 1; }  # timeout: 60000
 cat ".temp/kaggle/${KAGGLE_SLUG}-files.csv"
 # a full page means more files may follow: counts and totals below would be partial
 awk 'END { if (NR >= 200) print "! PARTIAL — listing filled the 200-row page; do not trust file counts or sizes, page further (kaggle competitions files --help)" }' ".temp/kaggle/${KAGGLE_SLUG}-files.csv"
 echo "=== leaderboard head ==="; kaggle competitions leaderboard "$KAGGLE_SLUG" -s -v 2>/dev/null | head -10  # timeout: 60000
+```
+
+The next block selects the sample submission from the listing's name column with a case-insensitive `sample.*submission` match, preserving its exact listed filename and casing (for example, `SampleSubmission.csv`), never assuming `sample_submission.csv`. Multiple matches print the candidates and leave the submission format ungrounded for the required-facts question below. Only on ambiguity, after identifying the correct listed sample, use the Write tool to save its exact filename to `.temp/kaggle/<slug>-sample-file.txt` (`<slug>` is the competition slug used for the listing), then rerun the block; this project-relative override takes precedence over automatic selection.
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r COMPETITION_NAME < "${TMPDIR:-/tmp}/kaggle-competition-name-${CSID}" 2>/dev/null || COMPETITION_NAME=""
+IFS= read -r KAGGLE_SLUG < "${TMPDIR:-/tmp}/kaggle-slug-${CSID}" 2>/dev/null || KAGGLE_SLUG="$COMPETITION_NAME"
+case "$KAGGLE_SLUG" in ""|*[!A-Za-z0-9_-]*) echo "! BLOCKED — competition slug '$KAGGLE_SLUG' is empty or not a bare slug"; exit 1 ;; esac
 KAGGLE_DATA=".experiments/kaggle/data/${COMPETITION_NAME}"
-mkdir -p "$KAGGLE_DATA"
-kaggle competitions download "$KAGGLE_SLUG" -f sample_submission.csv -p "$KAGGLE_DATA" -q || { echo "! BLOCKED — sample_submission download failed: 403 = rules not accepted, 404 = malformed slug; treat submission format as ungrounded"; exit 1; }  # timeout: 120000
-[ -f "$KAGGLE_DATA/sample_submission.csv.zip" ] && python -m zipfile -e "$KAGGLE_DATA/sample_submission.csv.zip" "$KAGGLE_DATA"
-head -3 "$KAGGLE_DATA"/sample_submission.csv 2>/dev/null || echo "no sample_submission.csv in this competition"
+if [ -f ".temp/kaggle/${KAGGLE_SLUG}-sample-file.txt" ]; then
+    IFS= read -r SAMPLE_FILE < ".temp/kaggle/${KAGGLE_SLUG}-sample-file.txt" || [ -n "$SAMPLE_FILE" ]
+else
+    SAMPLE_CANDIDATES=$(awk -F, 'NR > 1 && tolower($1) ~ /sample.*submission/ { name=$1; sub(/^"/, "", name); sub(/"$/, "", name); print name }' ".temp/kaggle/${KAGGLE_SLUG}-files.csv")
+    SAMPLE_COUNT=$(printf '%s\n' "$SAMPLE_CANDIDATES" | awk 'NF { count++ } END { print count+0 }')
+    case "$SAMPLE_COUNT" in
+        0) SAMPLE_FILE="" ;;
+        1) SAMPLE_FILE="$SAMPLE_CANDIDATES" ;;
+        *) printf '%s\n' "$SAMPLE_CANDIDATES"; echo "! AMBIGUOUS — submission format ungrounded"; exit 0 ;;
+    esac
+fi
+if [ -n "$SAMPLE_FILE" ]; then
+    mkdir -p "$KAGGLE_DATA"
+    kaggle competitions download "$KAGGLE_SLUG" -f "$SAMPLE_FILE" -p "$KAGGLE_DATA" -q || { echo "! BLOCKED — sample download failed; inspect the CLI error, treat submission format as ungrounded"; exit 1; }  # timeout: 120000
+    SAMPLE_LOCAL="$KAGGLE_DATA/${SAMPLE_FILE##*/}"
+    [ -f "$SAMPLE_LOCAL.zip" ] && python -m zipfile -e "$SAMPLE_LOCAL.zip" "$KAGGLE_DATA"
+    head -3 "$SAMPLE_LOCAL" || { echo "! BLOCKED — downloaded sample unreadable; treat submission format as ungrounded"; exit 1; }
+else
+    echo "no sample submission identified in the file listing — submission format remains ungrounded"
+fi
 ```
 
 File listing works without joining the competition (verified against a competition with `userHasEntered=False`); rules acceptance gates **downloads**. A `403` or any "accept the rules" error means the user must open `https://www.kaggle.com/competitions/<slug>/rules` and click **I Understand and Accept** — the CLI cannot accept them. Treat the affected facts as ungrounded until they confirm.
 
 A `404` here almost always means a malformed slug, not a missing competition: `kaggle competitions list -v` returns full URLs in the `ref` column, so take the last path segment (`arc-prize-2026-arc-agi-2`, never `https://www.kaggle.com/competitions/...`). Confirm with `kaggle competitions list -s "<search term>" -v`.
 
-**Grounding download** (the block's last step) — sample submission and any small metadata file only. Size threshold: `sample_submission.csv` plus files under ~10 MB from the listing.
+**Grounding download** (the second block) — the selected sample submission and any small metadata file only. Size threshold: sample submission plus files under ~10 MB from the listing.
 
 Single-file downloads may arrive zipped — the block extracts into `$KAGGLE_DATA` before reading the header. A non-zero download exit is a failure, never "no sample submission": ground the submission format from the user or mark it unknown.
 
@@ -200,7 +229,7 @@ After building fact table, count facts still marked `?` or `[inferred]` without 
 - `eval_metric` — cannot choose torchmetric
 - `submission format` — cannot generate Submission section
 
-When the CLI is `ready`, resolve `data schema`, `submission format`, and often `input_modality` from the file listing and the downloaded `sample_submission.csv` header before asking anything — questions are for what the CLI cannot answer.
+When the CLI is `ready`, resolve `data schema`, `submission format`, and often `input_modality` from the file listing and the selected sample submission's header before asking anything — questions are for what the CLI cannot answer.
 
 Invoke `AskUserQuestion` with up to 4 questions covering all unknown required facts. Never guess or hallucinate competition-specific details (column names, file paths, data schema). State "unknown — will use placeholder" if user skips.
 
@@ -284,7 +313,7 @@ cat "$_KAGGLE_MODES/modality-dispatch.md"  # timeout: 5000
 
 Do not load unselected section contracts. Pass the selected row and resolved contract contents to `foundry:sw-engineer` after the problem profile block below.
 
-Spawn **foundry:sw-engineer** with this prompt preamble (inline, then continue with the resolved composition contracts):
+Spawn **foundry:sw-engineer** with `name="generate-kaggle-notebook"`, `description="Write the grounded <competition-name> notebook"` and this prompt preamble (inline, then continue with the resolved composition contracts):
 
 ```markdown
 Write a complete Kaggle competition notebook script to `<OUTFILE>` (substitute expanded path from bash block above).
@@ -313,7 +342,7 @@ Write `<OUTFILE>`. Return only:
 {"status":"done","file":"<OUTFILE>","lines":N,"sections":N,"problem_type":"<type>","mode":"<MODE>","confidence":0.N}
 ```
 
-**Spawn note**: `foundry:sw-engineer` runs in the background — spawn, then end the turn; no filler call, no "waiting" line, no sleep, and never a `ScheduleWakeup`, `ListAgents`, or `Monitor` loop (CLAUDE.md §6). On the completion notification, check the agent's output under `.experiments/kaggle/`; missing or empty → treat as timed out, surface with ⏱ marker — never silently omit.
+**Spawn note**: follow `agent-resolution.md` §Agent waits before spawning `foundry:sw-engineer`: arm the watch directory and write an `other` batch row for `generate-kaggle-notebook`, `<OUTFILE>` and the 900-second deadline in the spawn response. The agent runs in the background — spawn, then end the turn with its name and output path; no filler call, no sleep, and never a `ScheduleWakeup`, `ListAgents`, or `Monitor` loop (CLAUDE.md §6). On every wake-up, run the shared check before consuming output; missing or empty output on completion, or an expired deadline → treat as timed out, surface with ⏱ marker — never silently omit.
 
 ```bash
 # boundary: after Step 3 notebook generated (compaction-contract.md)
@@ -363,12 +392,27 @@ Build this summary — one line per item, Write the full summary to `.temp/kaggl
 
 Invoke `AskUserQuestion` as follow-up gate:
 
-- (a) Open in editor — `code $OUTFILE`
+- (a) Open in editor — launch VS Code when available, otherwise print the notebook path
 - (b) Extend with additional sections — add sections to this notebook
 - (c) Regenerate with different model/approach — rebuild using the requested changes
 - (d) Done — accept the current notebook
 
-On (a): run `code "$OUTFILE"` via Bash. On (b): run the fixed block below so Step 3's reload sees the generated script as the resume target, then re-enter Step 3 with the requested sections added to the `## Resume` directive — the agent extends `$OUTFILE` in place. On (c): re-enter Step 2 with user-specified changes.
+On (a): run this fixed block in a fresh Bash call:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r COMPETITION_NAME < "${TMPDIR:-/tmp}/kaggle-competition-name-${CSID}" 2>/dev/null || COMPETITION_NAME=""
+IFS= read -r INFERENCE_ONLY < "${TMPDIR:-/tmp}/kaggle-inference-only-${CSID}" 2>/dev/null || INFERENCE_ONLY="false"
+OUTPUT_SUFFIX=""; [ "$INFERENCE_ONLY" = "true" ] && OUTPUT_SUFFIX="-inference"
+OUTFILE=".experiments/kaggle/${COMPETITION_NAME}${OUTPUT_SUFFIX}.py"
+if command -v code >/dev/null 2>&1; then
+    code "$OUTFILE"
+else
+    printf 'Notebook: %s\n' "$OUTFILE"
+fi
+```
+
+On (b): run the fixed block below so Step 3's reload sees the generated script as the resume target, then re-enter Step 3 with the requested sections added to the `## Resume` directive — the agent extends `$OUTFILE` in place. On (c): re-enter Step 2 with user-specified changes.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"

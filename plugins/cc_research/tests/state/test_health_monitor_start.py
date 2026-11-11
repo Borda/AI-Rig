@@ -2,7 +2,7 @@
 
 Covers:
 * Happy-path: ``LAUNCH_AT`` + ``SENTINEL`` printed; sentinel file created
-* Sentinel path format: ``research-<skill-id>-check-<ts>``
+* Sentinel path format: ``research-<skill-id>-check-<ts>-<session>``
 * ``LAUNCH_AT`` value embedded in sentinel path
 * Missing skill-id → exit 1
 * Invalid skill-id (unsafe chars) → exit 2
@@ -11,8 +11,8 @@ Covers:
 
 from __future__ import annotations
 
+import os
 import re
-import sys
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
@@ -42,6 +42,7 @@ def sentinel_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     target = tmp_path / "sentinels"
     target.mkdir()
     monkeypatch.setattr(health_monitor_start, "_sentinel_dir", lambda: target)
+    monkeypatch.setenv("CSID", "health-test")
     return target
 
 
@@ -61,11 +62,9 @@ class TestSentinelDir:
     """Platform-conditional location of the sentinel directory."""
 
     def test_matches_hook_sentinel_dir(self) -> None:
-        """The sentinel dir is ``/tmp`` on POSIX and the platform temp dir on Windows, as the JS hooks expect.
-
-        Hooks look sentinels up in the same place, so a drift here silently hides every health check from them.
-        """
-        expected = Path(tempfile.gettempdir()) if sys.platform == "win32" else Path("/tmp")
+        """The sentinel directory follows TMPDIR or the platform's temp fallback."""
+        fallback = tempfile.gettempdir() if os.name == "nt" else "/tmp"
+        expected = Path(os.environ.get("TMPDIR") or fallback)
 
         assert health_monitor_start._sentinel_dir() == expected
 
@@ -140,11 +139,11 @@ class TestLaunch:
         assert sentinel.parent == sentinel_dir
         assert sentinel.name.startswith("research-test-skill-file-check-")
 
-    def test_launch_at_is_sentinel_suffix(self, launch: Callable[[str], tuple[int, dict[str, str], str]]) -> None:
-        """The sentinel path ends in ``-check-<LAUNCH_AT>`` so the monitor can derive the launch time from it."""
+    def test_launch_at_is_before_session_suffix(self, launch: Callable[[str], tuple[int, dict[str, str], str]]) -> None:
+        """The sentinel embeds the launch timestamp before the active session suffix."""
         _rc, kv, _out = launch("test-skill-tsmatch")
 
-        match = re.search(r"-check-(\d+)$", kv["SENTINEL"])
+        match = re.search(r"-check-(\d+)-health-test$", kv["SENTINEL"])
         assert match is not None
         assert match.group(1) == kv["LAUNCH_AT"]
 

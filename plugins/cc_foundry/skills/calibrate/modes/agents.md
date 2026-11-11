@@ -29,7 +29,7 @@ All agents support `ceiling` difficulty tier. Ceiling patterns by domain: `found
 
 Mark "Calibrate agents" in_progress. **Availability check** (vars set in SKILL.md Step 2): skip `oss:*` agents if `$OSS_AVAILABLE` empty; skip `research:*` agents if `$RESEARCH_AVAILABLE` empty. Log: "<plugin> plugin not installed — skipping <agent> calibration" per excluded agent.
 
-Per agent in domain table (after exclusions), spawn one `general-purpose` pipeline subagent. **Spawn in batches of `$PIPELINE_BATCH_SIZE` (5 when this category runs alone, 2 while two categories in flight — see constants)**: issue up to that many agent pipeline spawns per response, collect every result in the batch via completion notifications and the SKILL.md Step 2 batch deadline (never a waiting tool), spawn next batch. Agents within a batch run concurrently; batches sequential. Do NOT spawn all agents in one response — 14+ agents spikes context and resource usage.
+Per agent in domain table (after exclusions), spawn one `general-purpose` pipeline subagent with `model="sonnet"` within SKILL.md's session-wide spawn budget. **Spawn in batches of `$PIPELINE_BATCH_SIZE` (4 when this category runs alone, 2 while two categories in flight — see constants)**: issue up to that many agent pipeline spawns per response, collect every result in the batch via completion notifications and the SKILL.md Step 2 batch deadline (never a waiting tool), spawn next batch. Agents within a batch run concurrently; batches sequential. Do NOT spawn all agents in one response — 14+ agents spikes context and resource usage.
 
 Load the pipeline template first — no `~/.claude/skills/` copy exists (setup symlinks only `rules/*.md` and `TEAM_PROTOCOL.md`):
 
@@ -48,7 +48,7 @@ Each subagent gets the pipeline template printed above, substitutions:
 - `<MODE>` = `fast` or `full`
 - `<AB_MODE>` = `true` or `false` — whether to run A/B variant scoring against `general-purpose` baseline (see pipeline-prompt.md Phase 2b)
 - `<LOCAL_MODE>` = `true` or `false` — from `--local` flag; when true pipeline resolves target file from source tree
-- `<TARGET_LABEL>` = `<TARGET>`; `<RUN_SLUG>` = `<TARGET>` (agent run dirs keep the agent name)
+- `<TARGET_LABEL>` = `<TARGET>`; `<RUN_SLUG>` = SKILL.md Step 1's safe-slug conversion (e.g. `foundry:sw-engineer` → `foundry-sw-engineer`)
 - `<PROBLEM_SET_VERSION>` = SKILL.md constant `PROBLEM_SET_VERSION`
 - `<FLOORS_ARG>`, `<TEMPLATE_SECTIONS_NOT_FP>`, `<SEV_LABEL>` = empty unless the agent's domain entry sets `scale_chars:`, `template_sections_not_fp:` or `sev_label:` (keys as in `skills.md`)
 

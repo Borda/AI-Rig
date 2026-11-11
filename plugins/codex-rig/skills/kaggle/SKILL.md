@@ -26,7 +26,7 @@ Build public-readable Kaggle notebook with evidence-backed problem profile, visu
 }
 ```
 
-Default `mode` to `full`. Resolve mode behavior and output paths only through `references/composition.md`.
+Default `mode` to `full`. Resolve mode behavior and output paths only through `references/composition.md`. For `full`, `offline_setup=true` requests the frozen offline packages in `references/foundation.md`; false or omitted keeps the online default. Other modes retain that foundation contract's variant-specific setup; record an overridden `offline_setup` value as an ignored input in the result.
 
 ## Workflow
 
@@ -51,7 +51,7 @@ Apply full networked CLI approval and denial contract in [Networked CLI Approval
 - `absent` — do not install it. Continue with page or user-supplied evidence when the requested mode can tolerate degraded grounding, and ask the user to install and authenticate the Kaggle CLI as an optional next step for full grounding; otherwise ask for the missing facts under fail-fast rule 03.
 - `unauthorized` — instruct user to create token at `https://www.kaggle.com/settings` (API → Create New Token), place it at `~/.kaggle/kaggle.json` with `chmod 600` on POSIX or at `%USERPROFILE%\.kaggle\kaggle.json` readable only by the current user on native Windows, or export `KAGGLE_USERNAME`/`KAGGLE_KEY`. Never fabricate or request pasted token.
 
-**Credential secrecy — hard constraint.** The token value never enters this run's context, any artifact, or any delegated agent's prompt. Forbidden regardless of who asks: reading `~/.kaggle/kaggle.json` (`%USERPROFILE%\.kaggle\kaggle.json` on Windows) by any tool, `cat`/`head`/`grep`/`jq` on it, `kaggle config view`, `env | grep KAGGLE`, echoing `$KAGGLE_KEY`/`$KAGGLE_API_TOKEN`, quoting pasted token back, or writing any of it into notebook cell, `profile.md`, gate log, or result artifact. The `kaggle` binary reads credentials from environment on its own — workflow needs CLI to work, never secret's value. Verify auth by exit code alone (run `kaggle competitions list -p 1` as an argv command and discard its output through the runner, not a shell redirect), never by inspecting file. A token pasted into chat is compromised: do not repeat it, and tell user to rotate it.
+**Credential secrecy — hard constraint.** The token value never enters this run's context, any artifact, or any delegated agent's prompt. Forbidden regardless of who asks: reading `~/.kaggle/kaggle.json` (`%USERPROFILE%\.kaggle\kaggle.json` on Windows) by any tool, `cat`/`head`/`grep`/`jq` on it, `kaggle config view`, `env | grep KAGGLE`, echoing `$KAGGLE_KEY`/`$KAGGLE_API_TOKEN`, quoting pasted token back, or writing any of it into notebook cell, `profile.md`, gate log, or result artifact. The `kaggle` binary reads credentials from environment on its own — workflow needs CLI to work, never secret's value. Verify auth by exit code alone (run `kaggle competitions list -p 1` as an argv command without shell redirection; do not quote or retain the listing), never by inspecting file. A token pasted into chat is compromised: do not repeat it, and tell user to rotate it.
 
 **CLI queries.** Competition slug is positional; `-v` means CSV output, not verbose. Read `kaggle competitions --help` or `kaggle datasets --help` for anything beyond these — flag surface shifts between CLI releases, so never invent one.
 
@@ -66,10 +66,10 @@ Never download full competition or dataset archive unprompted — list files wit
 
 Inspect in parallel where available:
 
-- `.temp/kaggle-style-distill.md` for local notebook style.
+- Project-supplied notebook-style notes, when present, alongside the canonical `../../shared/notebook-style.md`.
 - The requested competition page for problem narrative and metric definition — parts CLI does not expose. Browse exact page when URL is supplied; quote only short supporting text and record access failures.
 - The resume file and `.experiments/kaggle/*.py` for established local structure.
-- `resources/competitors/**/*.{ipynb,py}` for comparable preprocessing, model, augmentation, and submission patterns.
+- Comparable local notebooks, when present, for preprocessing, model, augmentation, and submission patterns.
 - Local data dictionaries, sample submission files, schemas, and directory listings supplied by user.
 
 Write source-backed table under `profile.md` `Grounded Facts`:
@@ -127,15 +127,15 @@ Record verification under `profile.md` `Verification` and in gate logs; record u
 4. Confirm every grounded field used in code matches `profile.md` and sample submission/schema evidence.
 5. If `jupytext` is installed, convert to temporary notebook and fail on conversion errors. Otherwise record missing optional conversion check as residual limit.
 6. Run executable smoke checks that do not require unavailable Kaggle data. Never claim model training, inference, or submission execution unless it actually ran.
-7. Review focused diff and run `git diff --check` without modifying unrelated changes.
-8. Mechanically scan every `# %% [markdown]` cell for bare `#`/`##`/... heading-spacer line (`../../shared/notebook-style.md` §Markdown blank lines) — prose compliance alone proved insufficient in practice; clear each hit to true blank line before recording verification.
+7. Review focused diff and run the scoped whitespace check from `../../shared/quality-gates.md` §review (`git diff --check -- <owned-paths>`, or scan owned files by path for trailing whitespace and conflict markers outside a Git repository) without modifying unrelated changes.
+8. Mechanically scan every `# %% [markdown]` cell for bare `#`/`##`/... heading-spacer line (`../../shared/notebook-style.md` §Markdown blank lines); clear each hit to true blank line before recording verification.
 
 ### 07: Run gates and publish the result artifact
 
 Follow `../../shared/helper-cli-contract.md` and inspect helper `--help` before invocation.
 
 - `tests`: structural/content checks plus Jupytext conversion when available.
-- `review`: request conformance, evidence/profile consistency, focused diff, and `git diff --check`.
+- `review`: request conformance, evidence/profile consistency, focused diff, and the scoped whitespace check from `../../shared/quality-gates.md` §review (`git diff --check -- <owned-paths>`, or the by-path scan outside a Git repository).
 - `lint`, `format`, and `types`: use applicable project/notebook commands; otherwise provide precise not-applicable reasons because Jupytext magics are not ordinary Python syntax.
 - Set `KAGGLE_METADATA` with mode, output path, grounded sources, unresolved placeholders, confidence recovery, and confidence gap closures.
 - Write candidate from `result-template.json`, validate it with shared validator as `kaggle`, and promote only validated candidate to `result.json`.
@@ -158,7 +158,7 @@ Follow `../../shared/helper-cli-contract.md` and inspect helper `--help` before 
 Required:
 
 - `tests`: composition integrity, notebook structure, mode sections, placeholder disclosure, and optional Jupytext conversion.
-- `review`: grounding table, output/schema consistency, request constraints, focused diff, and clean `git diff --check`.
+- `review`: grounding table, output/schema consistency, request constraints, focused diff, and the scoped whitespace check from `../../shared/quality-gates.md` §review (`git diff --check -- <owned-paths>`, or the by-path scan outside a Git repository).
 - `artifact`: `profile.md`, gate logs, and result JSON pass shared `kaggle` validator.
 
 Conditional:

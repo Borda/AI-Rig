@@ -282,6 +282,63 @@ def test_scope_answer_file_drives_run(evo_repo: RepoBuilder, tmp_sentinels: Path
     assert (manifest["scope"]["kind"], manifest["scope"]["from"]) == ("last", "0.2.0")
 
 
+class TestAdjudicationPlan:
+    """Only a row whose blame can reach a feature column is sent to the adjudicator."""
+
+    @pytest.mark.parametrize(
+        ("blamed", "requested"),
+        [
+            pytest.param({"p1": 8}, [], id="blame-only-on-pre-window"),
+            pytest.param({"p1": 18, "a1": 1}, ["1.3/F"], id="blame-reaches-feature"),
+        ],
+    )
+    def test_requests_follow_blame_reach(
+        self, monkeypatch: pytest.MonkeyPatch, blamed: dict[str, int], requested: list[str]
+    ) -> None:
+        """A weakly scored row is requested only when some blamed line belongs to a feature.
+
+        Both rows score feature A below the threshold: the first through file overlap alone, with every blamed line
+        on a pre-window commit, the second with one blamed line in nineteen in A's footprint. An adjudicator could
+        only answer ``unknown`` for the first, which would move it out of its pre-window bucket.
+        """
+        releases = [
+            {"tag": f"v{v}", "version": v, "sha": f"t{i}", "date": "", "line": "1", "is_prerelease": False, "order": i}
+            for i, v in enumerate(["1.0", "1.1", "1.2", "1.3"])
+        ]
+        index = {
+            "schema_version": 1,
+            "releases": releases,
+            "unparsable_tags": [],
+            "lines": {"1": ["1.0", "1.1", "1.2", "1.3"]},
+            "predecessor": {},
+            "commit_releases": {"a1": {"1": "1.2"}, "p1": {"1": "1.0"}},
+            "head": {"sha": "head", "unreleased": []},
+            "fingerprint": "index-fp",
+        }
+        feature = {"entry_id": "1.2/A", "kind": "feature", "release": "1.2", "line": "1", "text": "Add A"}
+        fix = {"entry_id": "1.3/F", "kind": "fix", "release": "1.3", "line": "1", "text": "Fix F", "commits": ["f"]}
+        columns = evolution_scan.build_columns([{**feature, "commits": ["a1"], "files": ["src/a.py"]}], index)
+        sha_map = evolution_scan.build_sha_map(columns, index, [fix])
+        record = {"fix_id": "1.3/F", "status": "ok", "blamed": blamed, "context_blamed": {}, "files": ["src/a.py"]}
+        evidence = {"1.3/F": {"schema_version": 1, "fingerprint": "ev", "symbols": [], **record}}
+        rows = evolution_scan.score_rows([fix], evidence, columns, sha_map, index)
+        ctx = {
+            "paths": None,
+            "columns": columns,
+            "sha_map": sha_map,
+            "threshold": evolution_scan.DEFAULT_THRESHOLD,
+            "adjudicate": True,
+            "fixes": {"1.3/F": fix},
+            "evidence": evidence,
+            "score_kw": {"weights": dict(evolution_scan.DEFAULT_WEIGHTS)},
+        }
+        monkeypatch.setattr(evolution_scan, "load_adjudications", lambda paths: {})
+
+        verdicts, requests = evolution_scan._adjudication_plan(rows, ctx)
+
+        assert (verdicts, [item["fix_id"] for item in requests]) == ({}, requested)
+
+
 class TestRenderRequest:
     """``render-request`` writes request items equal to what a run writes, without a store or a clone."""
 
@@ -324,7 +381,10 @@ class TestRenderRequest:
         ],
     )
     def test_bad_spec_blocks(self, tmp_path: Path, capsys: pytest.CaptureFixture[str], spec: object) -> None:
-        """A malformed spec stops with a ``! BLOCKED`` line and writes no request file."""
+        """A malformed spec stops with a ``!
+
+        BLOCKED`` line and writes no request file.
+        """
         path, out = tmp_path / "spec.json", tmp_path / "request.json"
         path.write_text(json.dumps(spec), encoding="utf-8")
         assert evolution_scan.main(["render-request", "--spec", str(path), "--out", str(out)]) == _BLOCKED
@@ -332,7 +392,10 @@ class TestRenderRequest:
         assert not out.exists()
 
     def test_malformed_json_blocks(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """A spec file that is not JSON stops with a ``! BLOCKED`` line, not a traceback."""
+        """A spec file that is not JSON stops with a ``!
+
+        BLOCKED`` line, not a traceback.
+        """
         path, out = tmp_path / "spec.json", tmp_path / "request.json"
         path.write_text("{not json", encoding="utf-8")
         assert evolution_scan.main(["render-request", "--spec", str(path), "--out", str(out)]) == _BLOCKED
@@ -340,7 +403,10 @@ class TestRenderRequest:
         assert not out.exists()
 
     def test_missing_spec_blocks(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """A spec path that does not exist stops with a ``! BLOCKED`` line, not a traceback."""
+        """A spec path that does not exist stops with a ``!
+
+        BLOCKED`` line, not a traceback.
+        """
         path, out = tmp_path / "absent.json", tmp_path / "request.json"
         assert evolution_scan.main(["render-request", "--spec", str(path), "--out", str(out)]) == _BLOCKED
         assert "! BLOCKED" in capsys.readouterr().out

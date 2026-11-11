@@ -1,7 +1,7 @@
 ---
 name: manage
-description: 'Create, update, or delete agents, skills, and rules; update or delete hooks (hook creation not yet implemented — edit `hooks/<name>.js` directly). Full cross-reference propagation. Trivial edits (typos, small fixes ≤10 words) applied inline without agent; `.md` content-edits delegated to foundry:curator; `.py` and hook `.js` (under `hooks/`) edits delegated to foundry:sw-engineer, other code files (`.ts`, non-hook `.js`, `.sh`) edited inline and flagged as having no owning agent; large cross-ref fan-outs (> 3 files) also delegate. The parent orchestrates MEMORY.md, README, audit, calibration, and the final report. Also manages settings.json permissions atomically with permissions-guide.md. NOT for: validation/quality audit of existing agents/skills (use /foundry:audit); implementing application source code changes outside `.claude/` (use develop:feature or develop:fix — requires `develop` plugin).'
-argument-hint: create <agent|skill|rule> <name> "desc" | update <name> [new-name|"change"|spec.md] | delete <name> | add perm <rule> "desc" "use-case" | remove perm <rule>
+description: 'Create, update, or delete agents, skills, and rules; content-edit or delete hooks (hook creation and rename not implemented). Full cross-reference propagation. Trivial Markdown edits (typos, small fixes ≤10 words) applied inline without agent; agent/skill Markdown content-edits delegated to foundry:curator; hook JavaScript edits always delegated to foundry:sw-engineer; large cross-ref fan-outs (> 3 files) also delegate. Use --local for plugin-source Markdown content-edits. The parent orchestrates MEMORY.md, README, audit, calibration, and the final report. Also manages settings.json permissions atomically with permissions-guide.md. NOT for: validation/quality audit of existing agents/skills (use /foundry:audit); implementing application source code changes (use develop:feature or develop:fix — requires `develop` plugin).'
+argument-hint: create <agent|skill|rule> <name> "desc" | update <name> [new-name|"change"|spec.md] [--local] | delete <name> | add perm <rule> "desc" "use-case" | remove perm <rule>
 effort: medium
 disable-model-invocation: true
 allowed-tools: Read, Write, Edit, Bash, Grep, Glob, Agent, TaskList, TaskCreate, TaskUpdate, AskUserQuestion
@@ -11,7 +11,7 @@ allowed-tools: Read, Write, Edit, Bash, Grep, Glob, Agent, TaskList, TaskCreate,
 
 <objective>
 
-Manage lifecycle of agents, skills, rules, hooks in `.claude/`. Handles creation with rich domain content, atomic renames with cross-ref propagation, content editing (routed by file type — Step 4), clean deletion with broken-ref cleanup. Keeps MEMORY.md inventory in sync with disk.
+Manage lifecycle of agents, skills, rules, hooks in `.claude/`; plugin-source Markdown content-edits with `--local`. Handles creation with rich domain content, atomic renames with cross-ref propagation, content editing (routed by file type — Step 4), clean deletion with broken-ref cleanup. Keeps MEMORY.md inventory in sync with disk.
 
 </objective>
 
@@ -37,12 +37,14 @@ Manage lifecycle of agents, skills, rules, hooks in `.claude/`. Handles creation
 
 - `--skip-audit` — optional flag: skip Step 9 `/audit` validation (use inside `audit fix` loop to avoid recursion)
 
+- `--local` — resolve plugin-source agents, skills or rules for `update` content-edit only; use a quoted directive or spec file. Creation, rename, deletion, hooks and permission operations reject this flag. `foundry:curator` owns source agent/skill Markdown edits; the parent owns rule Markdown edits. The installed cache is never an edit target.
+
 - **Spec-file paths must be quoted** — `update <name> <spec-file.md>` requires spec path quoted if it contains any whitespace (e.g. `update my-agent "docs/My Spec.md"`); unquoted paths with spaces split into multiple arguments, trigger argument-shape mismatch. Recommended: keep spec filenames free of spaces.
 
-**Update/delete mode** — name looked up across agents, skills, rules automatically:
+**Update/delete mode** — name looked up across agents, skills, rules and hooks automatically:
 
 - One match on disk → proceed with that type
-- Multiple matches → `AskUserQuestion`: (a) agent, (b) skill, (c) rule
+- Multiple matches → use the single type-selection `AskUserQuestion` in Step 1
 - No match → report error and stop
 
 **Update second-argument discrimination**:
@@ -102,12 +104,16 @@ Extract operation, type, name, optional arguments from `$ARGUMENTS`.
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # --keep-state: no eval, persists manage-skip-audit-${CSID} (Check 43) + clean-args; --inlined: manage keeps no compaction contract, so it clears none
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/parse-skill-flags.py" --flags skip-audit --keep-state manage --inlined "$ARGUMENTS" >/dev/null  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/parse-skill-flags.py" --flags skip-audit,local --keep-state manage --inlined "$ARGUMENTS" >/dev/null  # timeout: 5000
 IFS= read -r ARGUMENTS < "${TMPDIR:-/tmp}/manage-clean-args-${CSID}" 2>/dev/null || ARGUMENTS=""
+IFS= read -r LOCAL < "${TMPDIR:-/tmp}/manage-local-${CSID}" 2>/dev/null || LOCAL="false"
+printf "Local source mode: %s\n" "$LOCAL"
 echo "${TMPDIR:-/tmp}/manage-skip-audit-${CSID}" > "${TMPDIR:-/tmp}/manage-skip-audit-path-${CSID}"
 ```
 
-**Unsupported flag check** — after all supported flags extracted (`--skip-audit`), scan `$ARGUMENTS` for remaining `--<token>` tokens. Found: invoke `AskUserQuestion` with question text `` ! Unknown flag(s): `--<token>`. Supported: `--skip-audit`. `` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
+**Local operation check** — when `LOCAL=true`, require `update` with a quoted directive or a spec path. Any other operation or argument shape: report `! UNSUPPORTED — --local supports update content-edits only` and stop before permission validation or entity resolution.
+
+**Unsupported flag check** — after all supported flags extracted (`--skip-audit`, `--local`), scan `$ARGUMENTS` for remaining `--<token>` tokens. Found: invoke `AskUserQuestion` with question text `` ! Unknown flag(s): `--<token>`. Supported: `--skip-audit`, `--local`. `` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
 
 **Out-of-scope guard** — fires before validation when either holds: (a) first command word(s) in `$ARGUMENTS` are not `create`, `update`, `delete`, `add perm`, or `remove perm` (shape errors on recognized command words go to validation, not here); (b) request targets application source, a bug, or a feature outside agents/skills/rules/hooks/permissions. Deliver per Decline delivery below: `**! UNSUPPORTED — /foundry:manage manages agents, skills, rules, hooks, permissions only**` plus one redirect line (`/develop:fix` or `/develop:feature` (requires `develop` plugin)), then stop. Block + redirect = entire decline content: no diagnosis, root cause, patch, code snippet, test, or Step 2 onward. Decline delivery: when the spawn prompt names a deliverable or output file, first write the bold line, any required redirect, and `status: unsupported`, `reason` and `owner` to that file — never skip a mandated file; when it demands an envelope (`Return ONLY:`), return only `"status": "unsupported"`, `"reason"` and `"owner"` (agent/skill or `"none"`), plus `"file"` when a deliverable was written; a demanded fixed closing line (e.g. `Wrote: <id>`) takes precedence over an envelope and is the whole reply. With neither envelope nor fixed closing line required, reply only with the bold line and any required redirect. A decline is not an analysis, so it carries no Confidence block. <!-- policy-sibling: plugins/cc_foundry/agents/challenger.md, plugins/cc_foundry/agents/doc-scribe.md, plugins/cc_foundry/agents/linting-expert.md, plugins/cc_foundry/agents/creator.md, plugins/cc_foundry/skills/manage/SKILL.md — decline delivery -->
 
@@ -120,7 +126,11 @@ echo "${TMPDIR:-/tmp}/manage-skip-audit-${CSID}" > "${TMPDIR:-/tmp}/manage-skip-
 - For `add perm`: rule must NOT already exist in settings.json allow list; description and use case required
 - For `remove perm`: rule MUST already exist in settings.json allow list
 
-**Type auto-detection** (for `update` and `delete`): first verify post-install context exists:
+For permission operations, run `perm.md` §Permission validation (add/remove) before either mutation mode; its lookup distinguishes an absent rule from an unavailable tool or invalid settings. Do not run the entity-resolution checks for permissions.
+
+**Type auto-detection** (for `update` and `delete`): with `--local`, first require `update` with a quoted directive or a spec path; reject other operation shapes before any write. If the working directory contains `.claude-plugin/plugin.json`, Glob `agents/<name>.md`, `skills/<name>/SKILL.md`, `claude-skills/<name>/SKILL.md`, and `rules/<name>.md` there. Otherwise Glob `plugins/*/agents/<name>.md`, `plugins/*/skills/<name>/SKILL.md`, `plugins/*/claude-skills/<name>/SKILL.md`, and `plugins/*/rules/<name>.md` from the project root. Keep only candidates under a source plugin root containing `.claude-plugin/plugin.json`; never search or edit an installed cache. No matches: report the missing source entity and stop. Multiple plugin roots: ask which concrete plugin path to use, then apply the type-selection gate below if needed. Set model-context `ENTITY_PATH` to the selected concrete file and `SOURCE_ROOT` to its plugin root; substitute these literal paths in content-edit prompts. Skip the `.claude/` guard and project Globs below for this branch.
+
+Without `--local`, first verify post-install context exists:
 
 ```bash
 [ -d .claude ] || { printf "! .claude/ not found — confirm working directory is project root\n"; exit 1; }  # timeout: 3000
@@ -137,17 +147,17 @@ Results:
 
 - One non-empty result: resolved type; proceed
 - Multiple non-empty results: `AskUserQuestion`: "Multiple entities named `<name>` found. Which one? (a) agent (b) skill (c) rule (d) hook" — note: (d) hook valid for `update` and `delete` only; `create hook` not yet implemented (use Edit tool on `hooks/<name>.js` directly until create-hook mode added)
-- All empty: report "No agent, skill, rule, or hook named `<name>` found", stop
+- All empty: report "No agent, skill, rule, or hook named `<name>` found; for plugin-source Markdown content-edits use --local", stop
+
+For a project match set model-context `ENTITY_PATH` to its concrete file and `SOURCE_ROOT` to `.claude/`. Use the selected source root for subsequent scoped reads, references and integrity checks.
 
 For `create`, check only relevant type's path.
 
 **Delete confirmation gate** — when `$MODE` is `delete`, immediately after type resolution invoke `AskUserQuestion`: "Delete `<name>` (`<type>`)? This cannot be undone. (a) Confirm · (b) Abort". On Abort: stop. On Confirm: proceed to Step 4.
 
-**Rename confirmation gate** — when the argument shape resolves to `rename`, the second token is ambiguous by construction: `update my-agent add-error-handling` and `update my-agent new-agent-name` parse identically, and rename deletes the old file. Immediately after type resolution, before any write, invoke `AskUserQuestion`: "`<name>` → `<second-arg>`: rename the file, or apply `<second-arg>` as an edit directive?" — (a) **Rename** (write `<second-arg>`, delete `<name>`, propagate cross-refs) · (b) **Content-edit** (keep the name; set `MODE=content-edit` and `DIRECTIVE=<second-arg>`, continue from the edit-complexity classifier) · (c) **Abort** (stop, nothing written). Place (b) second — it is the recommended reading whenever the second token is not a plausible entity name.
+**Hook rename guard** — when the resolved type is hook and the argument shape is rename, stop before the rename confirmation or any write: "Hook rename is unsupported; use a quoted directive for content-edit, or explicitly deregister and recreate the hook registration." Never route a hook into `rename.md` or rely on Step 5 to repair its registration.
 
-```bash
-jq -e --arg rule '<rule>' '.permissions.allow | index($rule) != null' .claude/settings.json >/dev/null 2>&1  # timeout: 5000
-```
+**Rename confirmation gate** — when the argument shape resolves to `rename`, the second token is ambiguous by construction: `update my-agent add-error-handling` and `update my-agent new-agent-name` parse identically, and rename deletes the old file. Immediately after type resolution, before any write, invoke `AskUserQuestion`: "`<name>` → `<second-arg>`: rename the file, or apply `<second-arg>` as an edit directive?" — (a) **Rename** (write `<second-arg>`, delete `<name>`, propagate cross-refs) · (b) **Content-edit** (keep the name; set `MODE=content-edit` and `DIRECTIVE=<second-arg>`, continue from the edit-complexity classifier) · (c) **Abort** (stop, nothing written). Place (b) second — it is the recommended reading whenever the second token is not a plausible entity name.
 
 **Update second-argument discrimination** — apply after type resolved. Set `MODE` from parsed operation — a model-context value, not a shell variable (shell state does not persist across Bash calls); consumed by delete confirmation gate above, edit-complexity classifier below, and per-mode workflow branches in Step 4. Recognised values: `create`, `rename`, `content-edit`, `delete`, `add-perm`, `remove-perm`.
 
@@ -165,6 +175,8 @@ Validation fails: report error, stop.
 
 **Edit complexity classification** (content-edit mode only):
 
+For a hook, always set `EDIT_TRIVIAL=false` and route to `foundry:sw-engineer`, regardless of directive length or wording. Apply the classifier below only to Markdown entities.
+
 Classify `$DIRECTIVE` as **trivial** (`EDIT_TRIVIAL=true`; otherwise `false` — model-context value, like `MODE`) when ALL conditions hold:
 
 | Condition | Required |
@@ -177,6 +189,7 @@ Both must hold — either failing: **substantive**. Trivial edits: apply inline 
 **Step skip rules**:
 
 - **Perm operations**: skip Steps 2, 3, 5, 6, 7, 8, 9 — go Step 1 → Step 4 → Step 10
+- **Plugin-source content-edits (`--local`)**: skip Steps 2, 3 and 6; Steps 5 and 8 use `SOURCE_ROOT` and its README, Step 7 updates only that plugin README when description/model changed. Never update the project's auto-memory roster for a source edit.
 - **Hook operations**: skip Steps 2, 3, 6 (no color inventory, no MEMORY.md roster entry, no README table row); in Steps 5 and 7 skip cross-ref propagation (hook filenames not referenced from agent/skill markdown) — go Step 1 → Step 4 → Step 9 → Step 10
 - **Content-edit operations**: skip Step 2 (entity already exists); skip Step 3 color inventory (no create); in Steps 5–7 only update cross-refs and README if name or description changed. Step 6 count: only update if name added or removed — content-only edits do not change agent/skill count.
 - **Trivial content-edits**: additionally skip Steps 6–7 (no roster/description change possible); proceed Step 1 → Step 4 → Step 8 → Step 10
@@ -222,22 +235,24 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" manage modes
 
 ## Step 5: Propagate cross-references
 
-Search all `.claude/` markdown files for changed name and update references:
+Search Markdown under the resolved `SOURCE_ROOT` plus its README for changed name and update references. Default project scope is `.claude/` plus project `README.md`; with `--local` use only the selected source plugin and its README. Include supporting skill Markdown (`skills/**/*.md`), not only SKILL.md.
+
+For rename, skip directly to **Rename occurrence validation** below before any reference edit; it classifies all occurrences against the entity's canonical forms and is the only rename propagation path. The generic searches below apply to delete and content-edit operations. Substitute concrete `SOURCE_ROOT` paths before searching; its README is project `README.md` when `SOURCE_ROOT=.claude/`, otherwise `<SOURCE_ROOT>/README.md`.
 
 Use Grep to find all references:
 
-- Pattern `<name>`, glob `agents/*.md`, path `.claude/`, output mode `content`
-- Pattern `<name>`, glob `skills/*/SKILL.md`, path `.claude/`, output mode `content`
-- Pattern `<name>`, glob `rules/*.md`, path `.claude/`, output mode `content`
-- Pattern `<name>`, file `.claude/CLAUDE.md`, output mode `content`
-- Pattern `<name>`, file `README.md`, output mode `content`
+- Pattern `<name>`, glob `agents/*.md`, path `<SOURCE_ROOT>`, output mode `content`
+- Pattern `<name>`, glob `skills/**/*.md`, path `<SOURCE_ROOT>`, output mode `content`
+- Pattern `<name>`, glob `rules/*.md`, path `<SOURCE_ROOT>`, output mode `content`
+- Pattern `<name>`, file `<SOURCE_ROOT>/CLAUDE.md`, output mode `content`
+- Pattern `<name>`, file the README selected from `SOURCE_ROOT` above, output mode `content`
 
-**For update (rename):** Count files grep returns. **≤3 files**: apply inline with Edit tool. **>3 files**: spawn **foundry:curator** subagent. For hook renames: also update hook entry in `.claude/settings.json` `hooks` array if hook filename referenced there by path.
+**For update (rename):** The validation mode handles confirmed genuine references only: **≤3 files** inline, **>3 files** through **foundry:curator**, with exact classified occurrences. Hook renames were rejected in Step 1.
 
 ```text
 Apply these cross-reference updates (<old-name> → <new-name>):
-<list each file path with the required substitution>
-Use the Edit tool for each file (replace_all: true where appropriate).
+<list each classified genuine file:line, exact old token and required substitution>
+Use the Edit tool for only the listed occurrences; do not replace all bare-name matches in a file.
 Return ONLY: {"status":"done","files_updated":N}
 ```
 
@@ -287,15 +302,17 @@ Use Edit tool with **absolute auto-memory path** to update these roster lines in
 
 **`README.md` (project root):**
 
+Every README rename uses only classified genuine occurrences from Step 5; preserve its false positives and user decisions. If Step 5 already updated the row, leave it unchanged; classify any newly discovered occurrence before editing.
+
 - **create agent**: add row to `### Agents` table — columns: `| **name** | Short tagline | Key capabilities |`
 - **create skill**: add row to `### Skills` table — columns: `` | **name** | `/name` | Description | ``
-- **update (rename)**: find and replace old name in table row
+- **update (rename)**: update only the classified row for this entity
 - **delete**: remove row for deleted name
 
 **`.claude/README.md` (config README) — Rules table only:**
 
 - **create rule**: add row to Rules reference table — columns: `| rule-file | Applies to | What it governs |`
-- **update rule (rename)**: replace old name in Rules table row
+- **update rule (rename)**: update only the classified Rules table row for this entity
 - **update rule (content-edit)**: update "What it governs" column if rule's description changed
 - **delete rule**: remove row for deleted rule
 
@@ -307,7 +324,7 @@ Keep descriptions concise (one line), consistent in tone with surrounding rows. 
 
 Confirm no broken references remain:
 
-Use Grep (pattern `[a-z]+:[a-z]+(-[a-z]+)*` to find cross-plugin references, or `See [a-z-]+ agent` for cross-references, glob `{agents/*.md,skills/*/SKILL.md}`, path `.claude/`, output mode `content`). Avoid broad kebab-case patterns — they match code examples, produce false positives.
+Use Grep (pattern `[a-z]+:[a-z]+(-[a-z]+)*` to find cross-plugin references, or `See [a-z-]+ agent` for cross-references, glob `{agents/*.md,skills/**/*.md}`, path `SOURCE_ROOT`, output mode `content`). Avoid broad kebab-case patterns — they match code examples, produce false positives. Inventory Globs below use `SOURCE_ROOT` in place of `.claude/` for `--local`.
 
 Use Glob (`agents/*.md`, path `.claude/`) and Glob (`skills/*/`, path `.claude/`) for on-disk inventory; extract names inline. Use Grep to search for changed name and confirm:
 
@@ -322,7 +339,7 @@ For **create** and **update (rename)**: verify tool efficiency — cross-check a
 
 ## Step 9: Audit and calibrate
 
-`/foundry:audit` and `/foundry:calibrate` are `disable-model-invocation: true` — this skill cannot invoke them. Validation runs through the direct `foundry:curator` spawn below; both skills are printed as user-run commands. **Skip the curator spawn and the printed audit command if invoked with `--skip-audit` or if current `manage` operation runs inside audit-initiated fix session** — outer audit covers it.
+`/foundry:audit` and `/foundry:calibrate` are `disable-model-invocation: true` — this skill cannot invoke them. Validation runs through the direct owner spawn below; both skills are printed as user-run commands. **Skip the targeted spawn and the printed audit command only if invoked with `--skip-audit`** — outer audit covers it.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -333,11 +350,19 @@ IFS= read -r SKIP_AUDIT < "$_SKIP_FILE" 2>/dev/null || SKIP_AUDIT="false"  # rel
 
 For targeted check of only affected file, spawn **foundry:curator** directly:
 
+**Hook operations:** use `subagent_type="foundry:sw-engineer"` with the same read-only prompt, artifact, envelope and deadline below; curator excludes hooks. Include hook exit-code and registration integrity checks in its operation-specific checks.
+
 - For `create`: audit new file for structural completeness, cross-ref validity, content quality
-- For `update`: audit renamed file, verify no stale references remain
+- For `update` rename: audit renamed file, verify no stale references remain; for content-edit: audit every concrete file in the returned changed-file list (or `ENTITY_PATH` for a single-file edit)
 - For `delete`: audit remaining files for broken references to deleted name
 
-Include audit findings in final report. Don't proceed to sync if any `critical` findings remain. Then print as a REQUIRED user-run step: `/foundry:audit --skip-gate` (requires `foundry` plugin) — full-sweep validation without the interactive follow-up gate.
+Substitute the concrete affected paths and requested checks from the operation list above. Spawn sequentially with the normal deadline protocol; in the spawn response Write `.temp/manage/agent-watch-manage.tsv` = `manage-targeted-audit\t.temp/manage/targeted-audit.md\t900`.
+
+```text
+Agent(subagent_type="foundry:curator", name="manage-targeted-audit", description="Audit affected manage configuration", prompt="Read-only validation of <affected concrete paths> within <SOURCE_ROOT>. Check <operation-specific checks above>, structural completeness, cross-reference validity and content quality. Do not edit files or invoke manage. Write full findings with severity, file:line and suggested action to .temp/manage/targeted-audit.md. Return ONLY: {\"status\":\"done\",\"file\":\".temp/manage/targeted-audit.md\",\"findings\":N,\"critical\":N,\"confidence\":0.N}")
+```
+
+Include audit findings in Step 10. If any `critical` findings remain, mark the operation incomplete and stop after the Step 10 report, before the challenger gate. Otherwise print as a REQUIRED user-run step: `/foundry:audit --skip-gate` (requires `foundry` plugin; add `--local` for a plugin-source edit) — full-sweep validation without the interactive follow-up gate.
 
 **Calibration** — after audit passes, print `/foundry:calibrate <name>` as a user-run command (requires `foundry` plugin), never run it here. **Mandatory only when the edit changes the routing surface** — an agent/skill `description:` field, or a `TRIGGER`/`SKIP`/`NOT-for` line. For pure body/prose edits leaving routing surface untouched (workflow steps, examples, `<notes>`, wording polish), calibration is **optional** — suggest it, don't force it. Routing accuracy is unaffected by non-routing edits, so the 10–30 min run rarely pays off; skipping keeps small polishes cheap.
 
@@ -354,9 +379,9 @@ Report outcome fields below only — no Step 1…Step 10 execution trace; skippe
 - **Cross-References**: count of files updated, broken refs cleaned (n/a for perm operations)
 - **Rename Occurrence Validation** (rename mode only): three buckets — **Fixed** (N genuine references updated, list files) · **False positives** (N skipped, list file + one-line reason each) · **User-resolved** (N ambiguous, list file + user decision); if any genuine references could not be cleanly resolved, flag explicitly as requiring manual review
 - **Current Roster**: agents (N) and skills (N) with comma-separated names (n/a for perm operations)
-- **Audit Result**: audit findings (pass / issues found) (n/a for perm operations)
+- **Audit Result**: audit findings (pass / issues found) (n/a for perm operations); unresolved `critical` findings mean incomplete — end after this report and Confidence block, before the challenger gate
 - **Calibration Result**: suggested command(s) printed in Step 9, not run here (n/a for trivial edits, renames, deletes, perms, and pure body/prose edits that left the routing surface untouched — note calibration was suggested-but-skipped in that case)
-- **Follow-up**: perm ops → confirm both `settings.json` and `permissions-guide.md` updated; project `.claude/settings.json` applies at once, the plugin's `permissions-allow.json` source edit reaches `~/.claude/` only after plugin update/reinstall followed by `/foundry:setup`
+- **Follow-up**: perm ops → confirm both `settings.json` and `permissions-guide.md` updated and report the selected scope. Project-only leaves the shipped allow list unchanged; an explicitly selected plugin `permissions-allow.json` source edit reaches `~/.claude/` only after plugin update/reinstall followed by `/foundry:setup`
 
 End response with `## Confidence` block per CLAUDE.md output standards.
 
@@ -385,13 +410,13 @@ Print challenger's `findings` count and confidence; note any HIGH findings warra
 - **Atomic updates**: write-before-delete prevents data loss on interruption; perm ops must update both `settings.json` and `permissions-guide.md`
 - **settings.json format**: atomic jq edit via `bin/jq_write.py` (`perm.md`) — avoids fragile sed/awk on JSON
 - **README.md tables**: agent/skill tables in project `README.md`; rules table in `.claude/README.md` — keep row format consistent with existing rows
-- **No auto-edit for agent/skill/rule operations**: skill doesn't mutate settings.json for non-perm operations
+- **No auto-edit for agent/skill/rule operations**: skill doesn't mutate settings.json for these operations; hook deletion deregisters its project path before removing the script
 - **Color pool**: AVAILABLE_COLORS is the candidate pool (in-use colors read live in Step 3); all in use → reuse the least-used color with a note
 - **Inline bash / extraction gate + prose compression**: before writing any fenced bash block directly into a `.md` file (agent, skill, rule) via Edit/Write, apply two checks from `bin-authoring-guide.md`: (1) extraction gate — verdict MEDIUM or HIGH: write a `bin/` script instead; verdict LOW: inline is acceptable; (2) Prose over Code — `tokens(block) > tokens(equivalent prose/table/schema)` at identical precision: write prose/table instead. Exempt: examples, templates, exact-syntax blocks. Same rules enforced in spawn prompts to foundry:curator and foundry:sw-engineer (see `content-edit.md`). This note applies to orchestrator-level inline edits.
 - **Cycle detection**: sub-tasks spawned by manage (foundry:sw-engineer, foundry:curator) must not invoke manage again. Circular dispatch — manage→sw-engineer→curator→manage — causes infinite loops. A sub-task needs manage capabilities: surface the need back to orchestrator; never chain manage from inside a manage-spawned sub-agent.
 - Follow-up chains:
   - create or non-trivial update of agent/skill → print user-run `/foundry:audit --skip-gate` → `/foundry:calibrate <name>` (mandatory when routing surface changed) → `/foundry:calibrate routing --fast`
   - trivial update or rename or delete → print user-run `/foundry:audit --skip-gate` → `/foundry:calibrate routing --fast` (if description changed)
-  - add/remove perm → confirm both files updated; plugin source `permissions-allow.json` edit reaches `~/.claude/` after plugin update/reinstall plus `/foundry:setup`
+  - add/remove perm → confirm both files updated and report scope; only an explicitly selected plugin source `permissions-allow.json` edit reaches `~/.claude/` after plugin update/reinstall plus `/foundry:setup`
 
 </notes>

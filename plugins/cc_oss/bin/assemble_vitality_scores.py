@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import sys
 from pathlib import Path
@@ -141,6 +142,20 @@ def load_weights(scoring_file: Path) -> dict[int, float]:
     return _DEFAULT_WEIGHTS.copy()
 
 
+def _validate_axis(axis: object) -> None:
+    """Reject malformed axis results before calculating or serializing health."""
+    if not isinstance(axis, dict):
+        raise ValueError("Axis result must be an object")
+    for field, maximum in (("score", 10), ("conf", 1)):
+        value = axis.get(field)
+        if field == "score" and value is None:
+            continue
+        if type(value) not in (int, float) or not 0 <= value <= maximum or not math.isfinite(value):
+            raise ValueError(f"Axis {field} must be a finite number between 0 and {maximum}")
+    if axis.get("unavailable_reason") is not None and not isinstance(axis["unavailable_reason"], str):
+        raise ValueError("Axis unavailable_reason must be text or null")
+
+
 def assemble_scores(
     partial_a: Path,
     partial_b: Path,
@@ -172,9 +187,13 @@ def assemble_scores(
         d = json.loads(_read_text_guarded(path))
         axes.update(d["axes"])
 
+    for key, axis in axes.items():
+        if key not in {str(k) for k in weights}:
+            raise ValueError(f"Unknown axis: {key!r}")
+        _validate_axis(axis)
     available = {k: v for k, v in axes.items() if v.get("label") != "⚪" and v.get("score") is not None}
     total_w = sum(weights[int(k)] for k in available)
-    health = sum(weights[int(k)] * v["score"] / 10.0 for k, v in available.items()) / total_w * 100 if total_w else 0.0
+    health = sum(weights[int(k)] * v["score"] / 10.0 for k, v in available.items()) / total_w * 100 if total_w else None
 
     conf_vals = [v["conf"] for v in available.values() if v.get("conf", 0) > 0]
     overall_conf = sum(conf_vals) / len(conf_vals) if conf_vals else 0.0
@@ -184,13 +203,14 @@ def assemble_scores(
 
     return {
         "analysis_now": partial_a_data["scored_at"],
-        "health_score_pct": round(health, 1),
+        "health_score_pct": round(health, 1) if health is not None else None,
         "overall_confidence": round(overall_conf, 2),
         "axes": {str(k): v for k, v in axes.items()},
         "weights": {str(k): v for k, v in weights.items()},
         "axis3_weeks": partial_c_data.get("axis3_weeks"),
         "axis3_202_pending": any(
-            axes.get(str(k), {}).get("label") == "⚪" and "stats" in axes.get(str(k), {}).get("unavailable_reason", "")
+            axes.get(str(k), {}).get("label") == "⚪"
+            and "stats" in (axes.get(str(k), {}).get("unavailable_reason") or "")
             for k in [3]
         ),
         "total_passes": 1,
@@ -230,12 +250,13 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         result = assemble_scores(partial_a, partial_b, partial_c, scoring_file)
-        scores_file.write_text(json.dumps(result, indent=2))
-    except (OSError, ValueError, json.JSONDecodeError, KeyError) as e:
+        scores_file.write_text(json.dumps(result, indent=2, allow_nan=False))
+    except (OSError, ValueError, TypeError, AttributeError, KeyError) as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
 
-    print(f"[vitality] assembled: health={result['health_score_pct']}% conf={result['overall_confidence']:.2f}")
+    health = f"{result['health_score_pct']}%" if result["health_score_pct"] is not None else "n/a"
+    print(f"[vitality] assembled: health={health} conf={result['overall_confidence']:.2f}")
     return 0
 
 

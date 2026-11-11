@@ -153,9 +153,21 @@ def main(argv: list[str] | None = None) -> int:
     raw = args.arguments
 
     competition = _first_token(raw)
+    if (
+        not re.fullmatch(r"[A-Za-z0-9._-]+", competition)
+        or competition.startswith("-")
+        or competition == "."
+        or ".." in competition
+    ):
+        parser.error("competition must be a name using letters, digits, '.', '_' or '-' without '..'")
     eda_only, inference_only, offline_setup = parse_modes(raw)
     problem_type = _search(_TYPE_RE, raw)
     resume = _search(_RESUME_RE, raw)
+    if resume:
+        try:
+            resume = Path(resume).expanduser().resolve().relative_to(Path.cwd().resolve()).as_posix()
+        except (OSError, ValueError, RuntimeError):
+            parser.error("--resume must stay within the project tree")
     keep_items = _search(_KEEP_RE, raw)
 
     print(

@@ -121,6 +121,13 @@ def test_gate_build_and_skip_reach_next_process(tmp_path: Path, wire: Callable[[
         newline="\n",
     )
     provider.chmod(0o700)
+    # The oss gate no longer assumes a missing probe means "current": the real provider ships this probe beside itself.
+    probe = bin_dir / "check-index-currency"
+    probe.write_text(
+        "import json\nprint(json.dumps({'status': 'current', 'reason': ''}))\n",
+        encoding="utf-8",
+        newline="\n",
+    )
     env = {
         **os.environ,
         "PATH": str(bin_dir),

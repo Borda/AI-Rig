@@ -2,16 +2,28 @@
 
 <workflow>
 
-Replace `mypackage` in commands below with actual package name (e.g. from `gh repo view --json name --jq .name`).
+Bind `PACKAGE_NAME` to the actual import/package name before running the commands below (e.g. verify it against `gh repo view --json name --jq .name` and the package metadata). Substitute the verified value once in this binding block:
 
 ```bash
-gh api search/code --method GET --field "q=from mypackage import language:python" \
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+PACKAGE_NAME="<package-name>"
+case "$PACKAGE_NAME" in *'<'*|""|mypackage) echo "! Set PACKAGE_NAME to the actual package before searching"; exit 1 ;; esac
+printf '%s\n' "$PACKAGE_NAME" > "${TMPDIR:-/tmp}/analyse-package-name-${CSID}"
+```
+
+Search downstream consumers — run this block unchanged in a fresh shell:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r PACKAGE_NAME < "${TMPDIR:-/tmp}/analyse-package-name-${CSID}" 2>/dev/null || PACKAGE_NAME=""
+case "$PACKAGE_NAME" in ""|mypackage) echo "! Set PACKAGE_NAME to the actual package before searching"; exit 1 ;; esac
+gh api search/code --method GET --field "q=from $PACKAGE_NAME import language:python" \
     --jq '[.items[].repository.full_name] | unique | .[]'
 
 # Requires johnnydep: pip install johnnydep (not installed by default — skip if unavailable)
-# johnnydep mypackage --fields=name --reverse 2>/dev/null || echo "johnnydep not available — skipping PyPI reverse deps"
+# johnnydep "$PACKAGE_NAME" --fields=name --reverse 2>/dev/null || echo "johnnydep not available — skipping PyPI reverse deps"
 
-gh api search/code --method GET --field "q=mypackage repo:conda-forge/*-feedstock filename:meta.yaml" \
+gh api search/code --method GET --field "q=$PACKAGE_NAME repo:conda-forge/*-feedstock filename:meta.yaml" \
     --jq '[.items[].repository.full_name] | .[]'
 ```
 

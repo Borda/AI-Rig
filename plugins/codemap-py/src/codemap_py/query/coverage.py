@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
-import re
+import os
+import stat
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -432,7 +435,8 @@ def _valid_session_id(data: object) -> str | None:
         return None
     if not isinstance(ts, (int, float)):
         return None
-    if (time.time() * 1000) - ts > _SESSION_MARKER_TTL_MS:
+    now = time.time() * 1000
+    if not 0 <= ts <= now or now - ts > _SESSION_MARKER_TTL_MS:
         return None
     return sid
 
@@ -440,7 +444,7 @@ def _valid_session_id(data: object) -> str | None:
 def _coverage_already_emitted(session_id: str) -> bool:
     """Return True if the full coverage block was already emitted this session.
 
-    Uses a per-session sentinel file in the OS temp dir (NOT the git-root marker,
+    Uses a per-session sentinel file in a private user directory under the OS temp dir (NOT the git-root marker,
     which the hook owns) keyed on *session_id*. Absent → this is the session's first
     query: create the sentinel and return False (caller emits the full block).
     Present → a prior query in the same session already emitted it: return True
@@ -450,15 +454,29 @@ def _coverage_already_emitted(session_id: str) -> bool:
     Args:
         session_id: the fresh session id from :func:`_read_session_marker`.
     """
-    import tempfile
-
-    safe = re.sub(r"[^A-Za-z0-9_-]", "-", session_id)
-    sentinel = Path(tempfile.gettempdir()) / f"codemap-coverage-{safe}"
+    identity = str(os.getuid()) if hasattr(os, "getuid") else str(Path.home())
+    user_key = hashlib.sha256(identity.encode()).hexdigest()[:16]
+    directory = Path(tempfile.gettempdir()) / f"codemap-coverage-{user_key}"
+    sentinel = directory / hashlib.sha256(session_id.encode()).hexdigest()
     try:
-        if sentinel.exists():
-            return True
-        sentinel.touch()
+        directory.mkdir(mode=0o700, exist_ok=True)
+        info = directory.lstat()
+        if not stat.S_ISDIR(info.st_mode):
+            return False
+        if hasattr(os, "getuid"):
+            if info.st_uid != os.getuid():
+                print(f"codemap: coverage directory has a foreign owner: {directory}", file=sys.stderr)
+                return False
+            if info.st_mode & 0o077:
+                directory.chmod(0o700)
+        fd = os.open(sentinel, os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        os.close(fd)
         return False
+    except FileExistsError:
+        try:
+            return stat.S_ISREG(sentinel.lstat().st_mode)
+        except OSError:
+            return False
     except OSError:
         return False
 

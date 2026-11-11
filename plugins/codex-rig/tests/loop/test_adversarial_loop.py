@@ -742,7 +742,12 @@ class TestCliSummary:
         exits 0 under the flag.
         """
         ledger_path = tmp_path / "ledger.json"
-        write_json(ledger_path, ledger)
+        write_json(
+            ledger_path, {key: value for key, value in ledger.items() if key != "rounds"} | {"schema_version": 2}
+        )
+        ledger_path.with_name("rounds.jsonl").write_text(
+            "".join(json.dumps(record) + "\n" for record in ledger["rounds"]), encoding="utf-8", newline="\n"
+        )
 
         result = _cli(ledger_path, *flags)
 
@@ -880,7 +885,12 @@ class TestCliProgress:
             _round(2, [_finding("prior", disposition="verified-fixed")], independent=independent),
         )
         ledger_path = tmp_path / "ledger.json"
-        write_json(ledger_path, ledger)
+        write_json(
+            ledger_path, {key: value for key, value in ledger.items() if key != "rounds"} | {"schema_version": 2}
+        )
+        ledger_path.with_name("rounds.jsonl").write_text(
+            "".join(json.dumps(record) + "\n" for record in ledger["rounds"]), encoding="utf-8", newline="\n"
+        )
 
         result = _cli(ledger_path, "--progress", "--require-clean")
 

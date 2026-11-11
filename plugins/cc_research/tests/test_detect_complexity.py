@@ -31,11 +31,11 @@ class TestVerdict:
     @pytest.mark.parametrize(
         ("text", "expected"),
         [
-            pytest.param("goal: speed up\nscope:\n- src/a.py\n", "false", id="one-scope-file"),
-            pytest.param("scope:\n- src/a.py\n- src/b.py\n", "true", id="two-scope-files"),
-            pytest.param("scope:\n- src/a.py\nagent_strategy: arch\n", "true", id="arch-strategy"),
-            pytest.param("scope:\n- src/a.py\nagent_strategy: perf\n", "false", id="other-strategy"),
-            pytest.param("scope:\n- src/a.py\nA distributed training run\n", "true", id="cross-domain-keyword"),
+            pytest.param("goal: speed up\nscope_files:\n- src/a.py\n", "false", id="one-scope-file"),
+            pytest.param("scope_files:\n- src/a.py\n- src/b.py\n", "true", id="two-scope-files"),
+            pytest.param("scope_files:\n- src/a.py\nagent_strategy: arch\n", "true", id="arch-strategy"),
+            pytest.param("scope_files:\n- src/a.py\nagent_strategy: perf\n", "false", id="other-strategy"),
+            pytest.param("scope_files:\n- src/a.py\nA distributed training run\n", "true", id="cross-domain-keyword"),
             pytest.param("", "false", id="empty-program"),
         ],
     )

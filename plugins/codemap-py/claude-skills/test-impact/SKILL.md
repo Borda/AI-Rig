@@ -26,13 +26,15 @@ NOT for: finding all callers of a function (use `/codemap-py:query-code fn-rdeps
 - **$ARGUMENTS**: `<qname> [--no-mocks]`
   - `qname` — `module::symbol` (function-level; a dotted `module.symbol` or a bare name defined once also resolves, while a module-name suffix or bare method name exits with candidates) or bare dotted module (module-level; an indexed module name always wins)
   - `--no-mocks` — exclude mock-only test files (no call/import path)
-  - Omitted → AskUserQuestion in Step 1
+  - Omitted → inspect the working-tree change set in Step 1; use its union when multiple Python files changed (including unmapped files), otherwise AskUserQuestion
 
 </inputs>
 
 <workflow>
 
 ## Step 0 — Ensure index
+
+**Text substitution guard**: `$ARGUMENTS` and any `AskUserQuestion` answer are pasted into double-quoted Bash words below. If either contains a double quote (`"`), backtick (`` ` ``), backslash (`\`), or `$`, do not run any block that substitutes that text: print `! Unsafe argument text — use a plain module::symbol or dotted module, with single quotes if quoting is needed. Re-invoke.` and stop. Check each answer before substituting it into `QNAME`.
 
 ```bash
 # timeout: 10000
@@ -48,7 +50,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/resolve_index_env.py" --ou
 IFS= read -r INDEX < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-resolve-index-${CSID}" 2>/dev/null || INDEX=""
 [ -n "$INDEX" ] || { echo "! resolve_index_env.py failed — check Python availability and CLAUDE_PLUGIN_ROOT"; exit 1; }
 
-[ -f "$INDEX" ] || echo "No index found — will build via codemap-py index"
+[ -f "$INDEX" ] || echo "No index found — build requires SCAN_NO_AUTOBUILD != 1"
 ```
 
 `SCAN_NO_AUTOBUILD=1` opts out: use index unchanged; no refresh/full build. Echo build wall-time when run, separating build/query cost.
@@ -60,6 +62,7 @@ If `$INDEX` missing:
 
 ```bash
 # timeout: 400000
+[ "${SCAN_NO_AUTOBUILD:-0}" = "1" ] && { echo "! codemap index missing and SCAN_NO_AUTOBUILD=1 — refusing to auto-build. Build it manually first: /codemap-py:scan-codebase"; exit 1; }
 _CM_BUILD_T0=$(date +%s)
 # forward only when user already overrode CODEMAP_INDEX_DIR — an unconditional export turns the
 # engine's own git-root default into a flat-convention override (index_paths.py), same trap fixed
@@ -105,10 +108,36 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/parse_test_impact_args.py"
 
 Extract `QNAME` + `NO_MOCKS` from `$ARGUMENTS` — the parse ran as the last command of the Step 0 re-verify block above. Exit `1` → index not found (its `!` line printed); stop. Exit `0` → target recorded (`ti-qname`/`ti-mocks` sentinels). Exit `2` → relay its `!` line (unknown flag, unbalanced quote, flag-shaped target); stop. Exit `3` → no target given:
 
+First run `codemap-py query diff-impact` to inspect tracked staged and unstaged Python changes against `HEAD` (untracked files are excluded). If more than one Python file changed (`len(changed_modules) + len(unmapped_files) > 1`), use its `test_impact` union (`test_files`, `total`, `pytest_cmd`) and top-level `index` metadata for Step 3; label the scope `working-tree changes`, skip the single-target question and Step 2. Do not invent `via_call`/`via_mock` counts: omit that breakdown for the union.
+
+```bash
+# timeout: 120000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+_CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || basename "$PWD")
+_TI_DIFF="${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-ti-diff-${CSID}"
+_TI_DIFF_ERR="${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-ti-diff-stderr-${CSID}"
+codemap-py query diff-impact >"$_TI_DIFF" 2>"$_TI_DIFF_ERR"
+_TI_RC=$?
+python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/summarize_test_impact.py" --diff-impact --rc "$_TI_RC" --stderr-file "$_TI_DIFF_ERR" --output-prefix "codemap-${_CM_PROJ}" <"$_TI_DIFF" || printf 'whole-change analysis unavailable\n'
+```
+
+Nonzero exit or unparsable JSON → report the diagnostic plus `whole-change analysis unavailable` and continue with the question route below; never render an empty test set from that failure or reuse the captured file for a union. Surface `unmapped_files` and every `changed_modules[].errors` entry as coverage gaps, including when continuing with the question route. The union can omit failed test-impact subqueries without listing their errors: always label it a static selection, never proof of complete coverage, and retain the dynamic-dispatch/hook/string-dispatch caveat even when `index.not_covered` is absent.
+
+For the whole-change route with `--no-mocks`, do not use the default diff union (it includes mocks): the helper queries each changed module and each of its `changed_symbols` targets in one batch, then prints the deduplicated test union and a pytest command quoted for POSIX shells or native Windows PowerShell. Run this fixed block only after a successful parsed diff-impact result; stop on any failed query. Carry the diff's coverage gaps and `diff_index`, the batch `index` and every `target_caveats` entry into Step 3. Never narrow this request to one selected module or silently include mock-only tests.
+
+```bash
+# timeout: 120000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+_CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || basename "$PWD")
+python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/test_impact_union.py" "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-ti-diff-${CSID}" || exit 1
+```
+
+With zero or one changed Python file, or when whole-change analysis is unavailable, continue with the existing question route:
+
 - Use `AskUserQuestion`: "Which function or module changed? Type `module::symbol` (function-level) or a bare dotted module (module-level) in the free-text field." Options: up to 3 concrete targets grounded in changed `.py` files (`git diff --name-only HEAD`, as bare dotted modules), plus `Cancel — exit without analysis`. Never offer a format name as an option — choosing one yields no target.
 - No grounded target → skip the question; print `Usage: /codemap-py:test-impact <module::symbol | module> [--no-mocks]`; stop.
 
-After an answer, record it before Step 2:
+After an answer, record the target before Step 2; the text substitution guard applies:
 
 ```bash
 # timeout: 5000
@@ -158,15 +187,48 @@ On success the helper prints a summary — Step 3 renders from it only:
 - Exit `2` without it → rejected argument; no rebuild advice.
 - Anything else (missing/oversized/corrupt index, self-check failure) → rebuild advice.
 
-**haiku JSON guard**: output may include log/warning prefix/suffix; helper tolerates it — never assume raw valid JSON. Never add per-field `|| echo "0"` / `|| echo "[]"`: failed parse must not manufacture benign defaults — `query_complete`/`stale` may legitimately read `null` when the engine omits them; treat `null` as "signal absent", never as false/true.
+**JSON guard**: output may include log/warning prefix/suffix; helper tolerates it — never assume raw valid JSON. Never add per-field `|| echo "0"` / `|| echo "[]"`: failed parse must not manufacture benign defaults — `query_complete`/`stale` may legitimately read `null` when the engine omits them; treat `null` as "signal absent", never as false/true.
 
 ## Step 3 — Output
 
-Render every value from Step 2's printed summary — never estimate counts or re-run the query.
+Render every value from Step 2's printed summary, or Step 1's whole-change result — never estimate counts or re-run the query. For the whole-change route read completeness from the top-level `index` object and use `working-tree changes` for `<qname>` and report scope.
+
+For a single-target result, prepend `Scope: covers <qname> only; N other changed modules not analysed.` before either output branch and include it in any written report. Run the fixed block below to count tracked staged and unstaged Python changes against `HEAD`, excluding the selected module; if those files cannot be mapped reliably, it prints `other changed modules not analysed; count unknown` instead of inventing a count. Never describe a single-target pytest command as covering the entire change.
+
+```bash
+# timeout: 15000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+_CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || basename "$PWD")
+python - "$_CM_PROJ" <<'PY'
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+qname = "<unrecorded>"
+try:
+    state = Path(os.environ.get("TMPDIR") or tempfile.gettempdir()) / f"codemap-{sys.argv[1]}-ti-qname-{os.environ['CSID']}"
+    qname = state.read_text(encoding="utf-8").strip()
+    diff = subprocess.run(["git", "diff", "--name-only", "HEAD", "--", "*.py"], capture_output=True, text=True, timeout=10)
+    if diff.returncode or not qname:
+        raise ValueError("change count unavailable")
+    paths = diff.stdout.splitlines()
+    if any(path.startswith('"') for path in paths):
+        raise ValueError("quoted paths cannot be mapped")
+    module = qname.split("::", 1)[0].replace(".", "/")
+    selected = [path for path in paths if any(path == suffix or path.endswith("/" + suffix) for suffix in (module + ".py", module + "/__init__.py"))]
+    if len(selected) > 1:
+        raise ValueError("selected module is ambiguous")
+    print(f"Scope: covers {qname} only; {len(paths) - len(selected)} other changed modules not analysed.")
+except (OSError, ValueError, subprocess.TimeoutExpired):
+    print(f"Scope: covers {qname} only; other changed modules not analysed; count unknown")
+PY
+```
 
 **Completeness caveat (both branches below)**: read `query_complete` and `stale` from that summary first. `query_complete` reads `false` or `stale` reads `true` → prepend `⚠ Index completeness: <completeness_reason, or "index incomplete/stale — see Step 0 refresh output above" when reason is empty>` before the branch's own message. This fires independently of `not_covered` — a soft-failed `--incremental` refresh (Step 0) produces exactly this with a clean query exit.
 
-**When `total == 0`**: reachable only after Step 2 exit `0` + parsed payload. Genuine empty only when the completeness caveat above is also absent — with the caveat present, "no affected tests" means "the index couldn't prove it", not "there are none". Report "No tests found via static analysis. Try full suite or check with `grep -rn <symbol_name> tests/`." — prefixed with the completeness caveat when present.
+**When `total == 0`**: reachable only after Step 2 exit `0` + parsed payload, or a successful parsed Step 1 whole-change result. Retain the selected route's scope, static-selection and coverage-gap caveats, including `unmapped_files` and per-module errors. Genuine empty only when the completeness caveat above is also absent — with the caveat present, "no affected tests" means "the index couldn't prove it", not "there are none". Report "No tests found via static analysis. Try full suite or check with `grep -rn <symbol_name> tests/`." — prefixed with the completeness caveat when present.
 
 **When `total > 0`**:
 

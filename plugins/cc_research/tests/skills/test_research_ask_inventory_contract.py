@@ -105,7 +105,7 @@ _ASKS = [
     pytest.param(
         "skills/verify/SKILL.md",
         # V6 ask removed on purpose: neither option was an action verify can take, so `Next:` text replaces it
-        'No follow-up question after V6: neither "fix and re-run" nor `/develop:fix` is an action',
+        'No follow-up question after V6: neither "fix and re-run" nor `/develop:fix` (requires `develop` plugin; `disable-model-invocation: true`) is an action',
         id="verify-6",
     ),
     pytest.param(

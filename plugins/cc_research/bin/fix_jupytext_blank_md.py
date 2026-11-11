@@ -41,7 +41,7 @@ BARE_HASH_LINE = re.compile(r"^#+\s*$")
 
 def fix_text(text: str) -> tuple[str, int]:
     """Clear bare '#' heading-spacer lines inside markdown cells; return (text, count)."""
-    lines = text.split("\n")
+    lines = text.splitlines(keepends=True)
     in_markdown = False
     fixed = 0
     for i, line in enumerate(lines):
@@ -49,20 +49,20 @@ def fix_text(text: str) -> tuple[str, int]:
             in_markdown = bool(MARKDOWN_MARKER.match(line))
             continue
         if in_markdown and BARE_HASH_LINE.match(line):
-            lines[i] = ""
+            lines[i] = line[len(line.rstrip("\r\n")) :]
             fixed += 1
-    return "\n".join(lines), fixed
+    return "".join(lines), fixed
 
 
 def _write_atomic(path: Path, text: str) -> None:
     """Replace ``path`` with ``text`` via a sibling temp file and ``os.replace``.
 
-    An interrupted write never leaves a truncated notebook behind. Newline translation and file mode match the
-    ``Path.write_text`` rewrite this replaces (``mkstemp`` creates 0600, so the original mode is copied over).
+    An interrupted write never leaves a truncated notebook behind. Preserve source line terminators and file mode
+    (``mkstemp`` creates 0600, so the original mode is copied over).
     """
     fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
             handle.write(text)
         shutil.copymode(path, tmp_name)
         os.replace(tmp_name, path)
@@ -83,6 +83,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     total_fixed = 0
+    examined = 0
+    errors = False
     cwd = Path.cwd().resolve()
     for path in args.files:
         # Only jupytext percent-format scripts, never through a symlink: an in-place rewrite of
@@ -95,7 +97,14 @@ def main(argv: list[str] | None = None) -> int:
         if not path.resolve().is_relative_to(cwd):
             print(f"{path}: skipped — outside the working directory {cwd}", file=sys.stderr)
             continue
-        text = path.read_text(encoding="utf-8")
+        try:
+            with path.open(encoding="utf-8", newline="") as handle:
+                text = handle.read()
+        except (OSError, ValueError) as exc:
+            print(f"{path}: cannot read: {exc}", file=sys.stderr)
+            errors = True
+            continue
+        examined += 1
         new_text, fixed = fix_text(text)
         if not fixed:
             continue
@@ -106,7 +115,7 @@ def main(argv: list[str] | None = None) -> int:
             _write_atomic(path, new_text)
             print(f"{path}: cleared {fixed} bare '#' heading-spacer line(s)")
 
-    if args.check and total_fixed:
+    if errors or (args.check and (total_fixed or not examined)):
         return 1
     return 0
 

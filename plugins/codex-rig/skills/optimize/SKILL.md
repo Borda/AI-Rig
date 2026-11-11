@@ -23,7 +23,7 @@ Metric-driven optimization with explicit guards, rollback criteria, experiment l
   "metric_cmd": "required for single and campaign; for resume, ablation and retrospective recovered from source_run: command that emits or validates the target metric",
   "metric_direction": "higher|lower",
   "guard_cmd": "required for single and campaign; recovered from source_run otherwise: command that must continue to pass",
-  "max_iterations": "optional integer, default 1",
+  "max_iterations": "explicit bounded integer required for campaign; optional for single, default 1; recovered from source_run otherwise",
   "min_delta": "optional practical significance threshold",
   "scope_files": [
     "paths the optimization may edit"
@@ -62,7 +62,7 @@ Require:
 
 Dry-run both before edit:
 
-Execute configured `metric_cmd` and `guard_cmd` separately with host-native command runner. Write complete combined output to `<run-directory>/metric-baseline.txt` and `<run-directory>/guard-baseline.txt`; retain both exit codes. If a missing declared project dependency prevents a command from running, apply [Project Dependency Preparation](../../shared/native-skill-contract.md#project-dependency-preparation), preserve the earlier attempts separately, and rerun both baseline commands in the resulting environment before accepting the baseline or editing source. Stop before editing while either baseline remains unavailable.
+Execute configured `metric_cmd` and `guard_cmd` separately with the available command-execution tool, preserving the project's shell and interpreter. Write complete combined output to `<run-directory>/metric-baseline.txt` and `<run-directory>/guard-baseline.txt`; retain both exit codes. If a missing declared project dependency prevents a command from running, apply [Project Dependency Preparation](../../shared/native-skill-contract.md#project-dependency-preparation), preserve the earlier attempts separately, and rerun both baseline commands in the resulting environment before accepting the baseline or editing source. Stop before editing while either baseline remains unavailable.
 
 Dependency preparation changes a measurement input: invalidate earlier measurements from the previous environment, including when preparation occurs during an iteration or resume. Recapture the baseline on its original source under the owning workflow's source-state and measurement-integrity rules before comparing results. If equivalent recapture is unavailable, retain an inconclusive result with no improvement claim; never attribute an environment change to a source optimization.
 
@@ -92,11 +92,11 @@ Machine-readable iteration log, `single` and non-checkpointed `campaign` only: `
 
 ### 04: Apply one minimal optimization change per iteration
 
-One independent hypothesis per iteration. Never optimize unmeasured paths. Before each, write `<run-directory>/iteration-<n>-before.patch` with scoped-file diff; after the change, write `<run-directory>/iteration-<n>-after.patch` the same way. The iteration's own change is after minus before, so earlier kept iterations and unrelated user edits stay out of it. If iteration fails and only its own change is present, reverse exactly that change, as in [campaign.md](campaign.md) restore rule; otherwise fail run when clean reversal cannot be proven. Never use `git reset --hard`.
+One independent hypothesis per iteration. Never optimize unmeasured paths. Before each, write `<run-directory>/iteration-<n>-before.patch` with `git diff --binary --no-ext-diff --no-textconv HEAD -- <scope_files>`; after the change, write `<run-directory>/iteration-<n>-after.patch` the same way. At both points, separately record every scoped path not present in the index, regardless of its HEAD state, including each path's presence or absence, SHA-256, executable mode, and a byte-exact copy when present; the diff omits these untracked additions. The iteration's own change is after minus before, including those added-file records, so earlier kept iterations and unrelated user edits stay out of it. If iteration fails and only its own change is present, reverse exactly that change, as in [campaign.md](campaign.md) restore rule; remove a newly created file only when its retained hash and mode still match, and verify that paths absent before are absent again. Otherwise fail run when clean reversal cannot be proven. Never use `git reset --hard`.
 
 ### 05: Re-measure
 
-Re-run same retained `metric_cmd` and `guard_cmd` separately with host-native command runner. Write complete combined output to `<run-directory>/iteration-<n>-metric-after.txt` and `<run-directory>/iteration-<n>-guard-after.txt`; retain both exit codes.
+Re-run same retained `metric_cmd` and `guard_cmd` separately with the available command-execution tool, preserving the project's shell and interpreter. Write complete combined output to `<run-directory>/iteration-<n>-metric-after.txt` and `<run-directory>/iteration-<n>-guard-after.txt`; retain both exit codes.
 
 ### 06: Compare baseline and after results in `<run-directory>/comparison.md`
 

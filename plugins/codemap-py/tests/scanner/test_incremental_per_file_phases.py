@@ -158,11 +158,16 @@ class TestIncrementalPerFilePhases:
     def test_full_scan_parses_each_test_file_once_in_per_file_phases(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A full scan no longer re-parses a test module separately for subprocess, exports and uses."""
+        """A full scan no longer re-parses a test module separately for subprocess, exports and uses.
+
+        The three per-file phases share one parse. The bound is two, not one, because the module-extraction parse is
+        also counted when it runs in this process (no fork context, or a refused process pool) and is invisible when a
+        worker does it. Three separate phase parses would give three or four.
+        """
         _write(tmp_path, _SOURCES)
 
         with _parsed_files(monkeypatch) as parsed:
             scan(tmp_path)
 
         per_file = [name for name in parsed if name.endswith("test_a.py")]
-        assert len(per_file) <= 2, per_file
+        assert 1 <= len(per_file) <= 2, per_file

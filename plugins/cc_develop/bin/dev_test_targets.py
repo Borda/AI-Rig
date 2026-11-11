@@ -53,8 +53,13 @@ Used by: Develop feature, fix, refactor and shared batch test loops.
 Exit codes:
     0 — plan printed (an empty ``tests`` list is a valid result and says so in ``note``); with ``--run``, the selected
         tests passed, or nothing was selected so nothing ran
-    1 — not inside a git work tree, ``--pytest-cmd`` empty, or a ref/file argument starts with '-'
-    other — with ``--run``, pytest's own exit code, or 2 when ``--pytest-cmd`` is not an allowlisted runner
+    1 — pytest reported failing tests only
+    2 — helper input, selection, or completed-record validation error
+    other — with ``--run``, pytest's own exit code or the runner's distinct error code
+
+``--check-record PATH --expect-exit N`` validates the last nonempty completed run without selecting tests.
+With ``--save-failures PATH`` it saves failed node IDs from that run's full log as a fixed JSON list;
+``--tests-from PATH`` reuses that list without selecting from the currently applied edits.
 """
 
 from __future__ import annotations
@@ -383,36 +388,104 @@ def _repo_root() -> Path | None:
 def _error(message: str) -> int:
     """Print one JSON error line and return the failure exit code."""
     print(json.dumps({"error": message}))
-    return 1
+    return 2
 
 
-def main(argv: list[str] | None = None) -> int:
-    """Print the targeted test plan as one JSON line.
+def _read_targets(path: str) -> list[str]:
+    """Load a nonempty fixed selection without dropping missing test paths."""
+    tests = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(tests, list) or not tests or not all(isinstance(test, str) and test for test in tests):
+        raise ValueError("fixed targets must be a nonempty JSON list of strings")
+    for test in tests:
+        try:
+            run_pytest_short._validate_target_in_cwd(test)
+        except SystemExit as exc:
+            raise ValueError("fixed target rejected by the runner's containment guard") from exc
+    return tests
 
-    Args:
-        argv: Command-line arguments; ``None`` reads ``sys.argv``.
 
-    Returns:
-        Process exit code (see module docstring).
-    """
+def _failure_node(line: str) -> str:
+    """Separate a failed node from its message without consuming bracketed assertions."""
+    match = re.match(r"\S+?::[^\s\[]+", line)
+    if match is None:
+        raise ValueError("FAILED summary contains an invalid node")
+    node = match[0]
+    suffix = line[len(node) :]
+    if suffix.startswith("["):
+        depth = 0
+        for end, char in enumerate(suffix):
+            depth += (char == "[") - (char == "]")
+            if depth == 0:
+                node += suffix[: end + 1]
+                suffix = suffix[end + 1 :]
+                break
+        else:
+            raise ValueError("ambiguous parameter brackets in FAILED summary")
+    if suffix and not suffix.startswith(" - "):
+        raise ValueError("FAILED summary contains an invalid node suffix")
+    return node
+
+
+def _failed_nodes(log_path: str) -> list[str]:
+    """Extract complete failed node IDs, retaining parameter text and rejecting truncated logs."""
+    log = Path(log_path).read_text(encoding="utf-8")
+    if "[run-pytest-short: output truncated" in log:
+        raise ValueError("failure log was truncated; cannot freeze complete evidence")
+    log = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", log)
+    lines = [line.removeprefix("FAILED ") for line in log.splitlines() if line.startswith("FAILED ")]
+    if not lines:
+        raise ValueError("no complete FAILED node summary; rerun the complete batch with a failure summary")
+    return list(dict.fromkeys(_failure_node(line) for line in lines))
+
+
+def _check_record(path: str, expected: int | None, save_failures: str | None) -> int:
+    """Validate the latest completed record and optionally freeze its failed targets."""
+    try:
+        entry = json.loads(Path(path).read_text(encoding="utf-8").splitlines()[-1])
+        tests = entry.get("tests")
+        if expected not in (0, 1) or not isinstance(tests, list) or not tests or entry.get("exit") != expected:
+            raise ValueError("last record is not a nonempty completed run with the expected exit")
+        if save_failures:
+            if expected != 1 or not run_pytest_short.within_workspace(save_failures):
+                raise ValueError("saving failed targets requires exit 1 and a project or temp output path")
+            nodes = _failed_nodes(entry["log"])
+            Path(save_failures).write_text(json.dumps(nodes) + "\n", encoding="utf-8", newline="\n")
+    except (OSError, ValueError, IndexError, KeyError, TypeError, AttributeError) as exc:
+        return _error(f"invalid run evidence: {exc}")
+    return 0
+
+
+def _parse_args(argv: list[str] | None) -> argparse.Namespace:
+    """Parse selection and completed-record operations without conflating their inputs."""
     parser = argparse.ArgumentParser(description="Targeted tests for the current change.")
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--pytest-cmd", help="repository pytest invocation ($PYTEST_CMD)")
     source.add_argument("--skill", choices=SKILLS, help="read the pytest command and run directory from sentinels")
+    source.add_argument("--check-record", help="validate the last completed run in this JSONL file")
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--base", help="git revision whose later commits also count as changed")
     group.add_argument("--files", nargs="+", help="explicit changed files, relative to the repository root")
+    group.add_argument("--tests-from", help="fixed JSON test list; do not reselect from changed files")
+    parser.add_argument("--expect-exit", type=int, choices=(0, 1), help="required completed-run exit")
+    parser.add_argument("--save-failures", help="save failed node IDs from the checked record's full log")
     parser.add_argument("--run", action="store_true", help="run the selected tests after printing the plan")
     parser.add_argument("--record-dir", help="append a selection record (and keep the full run log) in this dir")
-    args = parser.parse_args(argv)
+    return parser.parse_args(argv)
+
+
+def _configure_skill(args: argparse.Namespace) -> bool:
+    """Resolve skill sentinels and optional Codemap lookup for a selection operation."""
     codemap_enabled = os.environ.get("CODEMAP_ENABLED") != "false"
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8", newline="\n")  # type: ignore[union-attr]
     if args.skill:
         args.pytest_cmd = read_sentinel("dev-pytest-cmd")
         args.record_dir = args.record_dir or read_sentinel(f"dev-{args.skill}-dev-dir") or _DEFAULT_RECORD_DIR
         # A skill's optional structural lookup may be disabled; the required test selector must still run.
         codemap_enabled = codemap_enabled and read_sentinel(f"dev-{args.skill}-codemap-enabled") == "true"
+    return codemap_enabled
+
+
+def _validate_inputs(args: argparse.Namespace) -> int:
+    """Reject helper inputs before selecting tests or creating artifacts."""
     if not args.pytest_cmd.strip():
         return _error(
             "! PYTEST_CMD unresolved — re-run §Project Detection (runner-detection.md); "
@@ -428,11 +501,40 @@ def main(argv: list[str] | None = None) -> int:
     values = [args.base] if args.base else list(args.files or [])
     if any(value.startswith("-") for value in values):
         return _error("a ref or file argument starts with '-'")
+    return 0
+
+
+def _select_plan(args: argparse.Namespace, repo: Path, codemap_enabled: bool) -> TargetPlan:
+    """Reuse frozen bisect nodes or select tests for the current changed files."""
+    if args.tests_from:
+        return TargetPlan(changed=[], sources=dict.fromkeys(_read_targets(args.tests_from), "fixed"))
+    files = sorted({Path(f).as_posix() for f in args.files}) if args.files else changed_files(repo, args.base)
+    return plan_targeted(repo, files, codemap_enabled=codemap_enabled)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Check completed evidence or print and optionally execute the targeted plan."""
+    args = _parse_args(argv)
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", newline="\n")  # type: ignore[union-attr]
+    if args.check_record:
+        return _check_record(args.check_record, args.expect_exit, args.save_failures)
+    codemap_enabled = _configure_skill(args)
+    if _validate_inputs(args):
+        return 2
     repo = _repo_root()
     if repo is None:
         return _error("not inside a git work tree")
-    files = sorted({Path(f).as_posix() for f in args.files}) if args.files else changed_files(repo, args.base)
-    payload = render(plan_targeted(repo, files, codemap_enabled=codemap_enabled), args.pytest_cmd.strip())
+    try:
+        plan = _select_plan(args, repo, codemap_enabled)
+        return _run_plan(args, plan)
+    except (OSError, ValueError) as exc:
+        return _error(f"selection failed: {exc}")
+
+
+def _run_plan(args: argparse.Namespace, plan: TargetPlan) -> int:
+    """Print the selection and append its execution outcome and full-log location."""
+    payload = render(plan, args.pytest_cmd.strip())
     record_dir = Path(args.record_dir) if args.record_dir else None
     log = record_dir / f"test-targets-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}.log" if record_dir else None
     if log:

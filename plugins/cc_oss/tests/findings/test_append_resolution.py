@@ -314,6 +314,21 @@ class TestFoldedFindings:
 class TestCommitFor:
     """The commit lookup that maps an item id to the commit tagged with it."""
 
+    def test_option_shaped_base_stops_ledger_write(self, run_dirs: tuple[Path, Path]) -> None:
+        """Invalid command-line revision input never produces resolution records."""
+        impl, review = run_dirs
+
+        result = ar.main(["--impl-dir", str(impl), "--review-dir", str(review), "--base-sha=--output=unexpected"])
+
+        assert result == 1
+        assert not (review / "resolution.jsonl").exists()
+
+    @mock.patch("append_resolution.subprocess.run", autospec=True)
+    def test_option_shaped_base_is_rejected(self, mock_run: mock.Mock, tmp_path: Path) -> None:
+        """An option-shaped base never reaches the Git command line."""
+        assert ar.commit_for(3, tmp_path, "--output=unexpected") == ""
+        mock_run.assert_not_called()
+
     @mock.patch("append_resolution.subprocess.run", autospec=True)
     def test_lookup_is_scoped_to_this_run(self, mock_run: mock.Mock, tmp_path: Path) -> None:
         """Item ids restart every run, so the tag search starts at the run's base head when it is known.

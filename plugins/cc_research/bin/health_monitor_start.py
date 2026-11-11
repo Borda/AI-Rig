@@ -4,8 +4,7 @@
 Prints ``LAUNCH_AT`` (epoch seconds) and ``SENTINEL`` (path, forward-slash
 separated for bash compatibility) to stdout.
 
-Sentinel dir mirrors JS getSentinelDir(): ``/tmp`` on POSIX,
-``tempfile.gettempdir()`` on Windows — matches task-log.js and commit-guard.js.
+Sentinels use ``TMPDIR`` or the hook's platform fallback and carry the active session identity.
 
 Usage:
     health_monitor_start.py <skill-id>
@@ -15,8 +14,8 @@ Output (stdout):
 
 Exit codes:
     0 — success
-    1 — missing skill-id argument
-    2 — invalid skill-id (unsafe characters), or bad argparse usage (argparse default)
+    1 — missing skill-id argument or sentinel creation failure
+    2 — invalid skill-id or session identity (unsafe characters), or bad argparse usage (argparse default)
 """
 
 from __future__ import annotations
@@ -34,12 +33,9 @@ _SKILL_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
 def _sentinel_dir() -> Path:
-    """Return ``/tmp`` on POSIX or ``tempfile.gettempdir()`` on Windows.
-
-    Mirrors JS ``getSentinelDir()`` so sentinel paths match hook expectations on all platforms while preserving the
-    existing ``/tmp`` path on POSIX.
-    """
-    return Path(tempfile.gettempdir()) if sys.platform == "win32" else Path("/tmp")  # noqa: S108 - POSIX temp root; sentinels are session-scoped
+    """Return the configured session temp directory, falling back to the hook's platform root."""
+    tmp_fallback = tempfile.gettempdir() if os.name == "nt" else "/tmp"  # noqa: S108 - shell default of ${TMPDIR:-/tmp}
+    return Path(os.environ.get("TMPDIR") or tmp_fallback)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -49,8 +45,8 @@ def main(argv: list[str] | None = None) -> int:
         argv: Optional argument list (defaults to ``sys.argv[1:]``).
 
     Returns:
-        ``0`` on success, ``1`` on missing skill-id; ``2`` on invalid skill-id or
-        bad argparse usage.
+        ``0`` on success, ``1`` on missing skill-id or sentinel creation failure;
+        ``2`` on invalid skill-id, invalid session identity or bad argparse usage.
 
     Examples:
         No doctest — argv-dependent and touches the filesystem; covered by pytest
@@ -65,7 +61,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "skill_id",
         nargs="?",
-        help="Skill identifier ([a-zA-Z0-9_-]); names the sentinel research-<skill-id>-check-<ts>.",
+        help="Skill identifier ([a-zA-Z0-9_-]); names the sentinel research-<skill-id>-check-<ts>-<session>.",
     )
     # argparse exits with code 2 on unknown flags or extra positionals — matches legacy bash contract.
     args = parser.parse_args(argv)
@@ -81,14 +77,19 @@ def main(argv: list[str] | None = None) -> int:
         print(f"health_monitor_start: invalid SKILL_ID: {skill_id!r}", file=sys.stderr)
         return 2
 
+    csid = os.environ.get("CSID") or os.environ.get("CLAUDE_CODE_SESSION_ID") or "shared"
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", csid) or ".." in csid:
+        print("health_monitor_start: invalid session identity", file=sys.stderr)
+        return 2
     launch_at = int(time.time())
-    sentinel = _sentinel_dir() / f"research-{skill_id}-check-{launch_at}"
+    sentinel = _sentinel_dir() / f"research-{skill_id}-check-{launch_at}-{csid}"
     # Exclusive create, not Path.touch(): touch() follows a symlink pre-planted at this predictable
-    # path in world-writable /tmp. O_NOFOLLOW absent on win32 (hence getattr); EEXIST is benign.
+    # path in world-writable /tmp. O_NOFOLLOW absent on win32 (hence getattr).
     try:
         fd = os.open(sentinel, os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
-    except FileExistsError:
-        pass
+    except OSError as exc:
+        print(f"health_monitor_start: cannot create sentinel: {exc}", file=sys.stderr)
+        return 1
     else:
         os.close(fd)
 

@@ -4,7 +4,7 @@ Use across codex-native skills. Classify the demonstrated consequence and realis
 
 ## Critical
 
-- security issue with exploit path
+- security issue with exploit path; normalize a `security` result-count label to `critical`
 - data loss or corruption risk
 - confirmed severe release regression
 
@@ -22,12 +22,13 @@ Use across codex-native skills. Classify the demonstrated consequence and realis
 
 ## Low
 
-- style/nit issues
+- style/nit issues; normalize a `nit` result-count label to `low`
 - wording improvements
 - non-blocking cleanup
 
 ## Gate Rule
 
+- gate timeout => `status=timeout`
 - `critical > 0` => `status=fail`
 - `checks_failed` non-empty => `status=fail`
-- otherwise `status=pass`
+- otherwise `status=pass` only when the confidence, evidence, artifact, and required-check conditions in [Quality Gates](quality-gates.md#fail-rules) are satisfied; confidence below `0.85` cannot pass, and `0.85 <= confidence < 0.9` needs recorded recovery and remaining limits

@@ -173,7 +173,7 @@ word, followed to its innermost command (:func:`_command_texts`), so ``case x in
 and ``f() { rm -rf x; }`` are dangerous; the rebind check and the allowlist gate read the same
 texts, the JS twin mirrors this and the shared vector fixture pins both.
 
-Known gaps, deliberate: ``git``, ``gh`` and ``sed`` are listed whole and rely on the denylist
+Known gaps, deliberate: ``git`` and ``gh`` are listed whole and rely on the denylist
 for their destructive forms, so ``gh`` write subcommands other than ``api -X DELETE`` pass
 here (``gh-write-guard.js`` gates them at runtime); output redirections and ``tee``/``cp``
 targets are not judged, since every sentinel write relies on them; a no-argument command closing a subshell
@@ -221,7 +221,9 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import sys
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePath
@@ -505,13 +507,14 @@ _ESCAPED_BLANK_BEFORE_COMMENT = re.compile(r"(?<!\\)(?:\\\\)*\\[ \t]#")
 
 
 def aliases_escaped_blank(text: str) -> bool:
-    """Report whether normalization would erase a blank the shell reads as escaped.
+    """Refuse raw whitespace that normalization could erase or reinterpret.
 
     The shell reads a backslash followed by a blank as a quoted blank. At the end of a line that means the newline
     still ends the command, so the next line runs on its own; normalization strips the blank first and sees a
     continuation. Before ``#`` it means the blank and the rest of the line are one more argument; normalization sees a
     comment and drops them. Either way the raw text and its normalized form are different commands that share a digest,
-    so the raw text is refused before any lookup. No shipped block contains either shape.
+    so the raw text is refused before any lookup. Raw carriage returns and discarded whitespace other than shell
+    space and tab are also refused, matching the runtime hook.
 
     Args:
         text: Raw block or command text, before normalization.
@@ -531,8 +534,16 @@ def aliases_escaped_blank(text: str) -> bool:
         >>> aliases_escaped_blank("echo a  # note")
         False
     """
-    for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+    if "\r" in text:
+        return True
+    quote = None
+    for line in text.split("\n"):
         trimmed = line.rstrip()
+        uncommented, quote = strip_line_comment(trimmed, quote)
+        suffix = line[len(uncommented) :]
+        discarded = suffix[: len(suffix) - len(suffix.lstrip())]
+        if (line[len(trimmed) :] + discarded).strip(" \t"):
+            return True
         if len(trimmed) < len(line) and _trailing_backslashes(trimmed) % 2 == 1:
             return True
         if _ESCAPED_BLANK_BEFORE_COMMENT.search(line):
@@ -658,7 +669,7 @@ def _python_code_heredoc(line: str) -> bool:
 # ---------------------------------------------------------------------------
 
 #: Command words an entry may run with any arguments: shell builtins and keywords, utilities that only read, and
-#: tools that create or check without destroying. ``git``, ``gh`` and ``sed`` are listed because
+#: tools that create or check without destroying. ``git`` and ``gh`` are listed because
 #: :func:`is_dangerous` already drops their destructive uses before this gate is asked.
 SAFE_COMMANDS: frozenset[str] = frozenset(
     {
@@ -673,7 +684,7 @@ SAFE_COMMANDS: frozenset[str] = frozenset(
         *("cksum", "sha256sum", "shasum", "md5sum", "md5", "file", "du", "df", "column", "fold", "nl", "rev"),
         *("tac", "seq", "sleep", "uname", "whoami", "hostname", "id", "printenv", "od", "xxd", "tree", "expr", "bc"),
         # tools that create or check without destroying
-        *("mkdir", "mktemp", "touch", "git", "gh", "sed", "codemap-py", "pre-commit", "ruff", "mypy", "pytest"),
+        *("mkdir", "mktemp", "touch", "git", "gh", "codemap-py", "pre-commit", "ruff", "mypy", "pytest"),
         # writers shipped blocks use to append or log state files they name
         "tee",
     }
@@ -691,7 +702,7 @@ _BARE_REDIRECTION = re.compile(r"\d*(?:>>?|<<?|>\||<>|&>>?)")
 #: A ``NAME+=value`` append assignment, which :func:`_command_words` does not recognise.
 _APPEND_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\+=")
 #: Awk constructs that run a command or write a file: ``system(``, ``"cmd" | getline``, ``print > f``/``print | c``.
-_AWK_ESCAPE = re.compile(r"\bsystem\s*\(|\|\s*getline|\bprintf?\b[^;}]*[|>]")
+_AWK_ESCAPE = re.compile(r"\bsystem\s*\(|\|\s*getline|\|&|\bprintf?\b[^;}]*[|>]")
 #: ``find`` actions that delete or write files.
 _FIND_WRITE_ACTIONS: frozenset[str] = frozenset({"-delete", "-fprint", "-fprint0", "-fprintf", "-fls"})
 #: ``find`` actions that run a command; the command is judged like any other.
@@ -716,6 +727,7 @@ _MKTEMP_CALL = re.compile(r"\$\(mktemp(?:[ \t][^()$`]*)?\)")
 _VARIABLE_PREFIX = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))(?:/|$|\.[A-Za-z0-9_-]+$)")
 #: Any ``$NAME`` or ``${NAME…}`` reference in a path word, capturing the name.
 _VARIABLE_NAME = re.compile(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)")
+_PLUGIN_ROOT_DEFAULT = re.compile(r"\$\{CLAUDE_PLUGIN_ROOT:-plugins/[A-Za-z0-9_-]+\}")
 #: Variables a session state path may name without the entry having set them: the temp root and the session token.
 _STATE_PATH_VARIABLES = frozenset({"$TMPDIR", "$CSID"})
 #: Operands ``cp`` may never take: the filesystem root or the home directory itself.
@@ -807,13 +819,13 @@ def _python_use(args: list[str], known: frozenset[str]) -> str | None:
 
     Args:
         args: Raw words after the command word.
-        known: Names known to the entry (unused; uniform check signature).
+        known: Names known to the entry, including plugin-owned script variables.
 
     Returns:
         The offending use, or None when allowed.
 
     Examples:
-        >>> _python_use(['"$ROOT/bin/x.py"', "--flag"], frozenset()) is None
+        >>> _python_use(['"$ROOT/bin/x.py"', "--flag"], frozenset({"@python:ROOT"})) is None
         True
         >>> _python_use(["-m", "pytest", "-q"], frozenset()) is None
         True
@@ -829,9 +841,9 @@ def _python_use(args: list[str], known: frozenset[str]) -> str | None:
         'python -m pip'
         >>> _python_use([], frozenset())
         'python'
-        >>> _python_use(['"$ROOT/bin/purge_plugin_cache.py"', "--apply"], frozenset()) is None
+        >>> _python_use(['"$ROOT/bin/purge_plugin_cache.py"', "--apply"], frozenset({"@python:ROOT"})) is None
         True
-        >>> _python_use(['"$ROOT/bin/delete_reports.py"'], frozenset())
+        >>> _python_use(['"$ROOT/bin/delete_reports.py"'], frozenset({"@python:ROOT"}))
         'mutating helper delete_reports.py'
     """
     index = 0
@@ -841,6 +853,8 @@ def _python_use(args: list[str], known: frozenset[str]) -> str | None:
             return None
         if word == "-m":
             module = args[index + 1].strip("'\"") if index + 1 < len(args) else ""
+            if module in {"cProfile", "doctest"} and any("$" in arg or "`" in arg for arg in args[index + 2 :]):
+                return f"python -m {module} dynamic script"
             return None if module in SAFE_PYTHON_MODULES else f"python -m {module}".rstrip()
         if word == "-":
             heredocs = _heredoc_operators(" ".join(args))
@@ -848,7 +862,7 @@ def _python_use(args: list[str], known: frozenset[str]) -> str | None:
         if _has_short_flag([word], "c"):
             return None if _is_literal_code(args[index + 1 :]) else f"python {word}"
         if not word.startswith("-"):
-            return _helper_use(word)
+            return _helper_use(word, known)
         index += 2 if word in ("-W", "-X") else 1
     return "python"
 
@@ -884,18 +898,27 @@ _MUTATING_HELPERS = {
 }
 
 
-def _helper_use(script: str) -> str | None:
-    """Judge a Python script operand: a mutating helper must be listed in :data:`_MUTATING_HELPERS`.
+def _helper_use(script: str, known: frozenset[str] = frozenset()) -> str | None:
+    """Judge a Python script operand, requiring provenance for variable filenames and listing mutating helpers.
 
     Examples:
-        >>> _helper_use("$ROOT/bin/agent_watch.py") is None
+        >>> _helper_use("$ROOT/bin/agent_watch.py", frozenset({"@python:ROOT"})) is None
         True
-        >>> _helper_use("$ROOT/bin/symlink_with_guard.py") is None
+        >>> _helper_use("$ROOT/bin/symlink_with_guard.py", frozenset({"@python:ROOT"})) is None
         True
-        >>> _helper_use("$ROOT/bin/remove_cache.py")
+        >>> _helper_use("$ROOT/bin/remove_cache.py", frozenset({"@python:ROOT"}))
         'mutating helper remove_cache.py'
     """
     name = PurePath(script).name
+    variable = re.fullmatch(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))", script)
+    if variable and f"@python:{variable.group(1) or variable.group(2)}" not in known:
+        return f"python script {script}"
+    if not variable and any(mark in script for mark in "$`"):
+        path = _PLUGIN_ROOT_DEFAULT.sub("$CLAUDE_PLUGIN_ROOT", script)
+        fixed_path = re.fullmatch(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))/[^$`]+", path)
+        root = (fixed_path.group(1) or fixed_path.group(2)) if fixed_path else ""
+        if fixed_path is None or f"@python:{root}" not in known or ".." in path:
+            return f"python script {script}"
     if _MUTATING_HELPER.search(name) and name not in _MUTATING_HELPERS:
         return f"mutating helper {name}"
     return None
@@ -954,7 +977,113 @@ def _awk_use(args: list[str], known: frozenset[str]) -> str | None:
         >>> _awk_use(["'{print $1 > \\"out\\"}'"], frozenset())
         'awk system/pipe/write'
     """
+    if any(_has_short_flag([arg], flag) for arg in args for flag in "ilEf"):
+        return "awk program file"
+    if any(arg.startswith(("--file", "--include", "--exec", "--load")) for arg in args):
+        return "awk program file"
     return "awk system/pipe/write" if _AWK_ESCAPE.search(" ".join(args)) else None
+
+
+def _sed_delimiter_end(program: str, index: int) -> int:
+    """Find the end of a sed delimited expression, skipping escaped characters."""
+    delimiter = program[index]
+    index += 1
+    while index < len(program):
+        if program[index] == "\\":
+            index += 2
+        elif program[index] == delimiter:
+            return index + 1
+        else:
+            index += 1
+    return len(program)
+
+
+def _sed_program_safe(program: str) -> bool:
+    """Admit fixed sed commands while refusing execution, writes and unknown syntax."""
+    index = 0
+    while index < len(program):
+        char = program[index]
+        if char in " \t\r\n;{},!$" or char.isdigit():
+            index += 1
+        elif char == "/":
+            index = _sed_delimiter_end(program, index)
+        elif char in "sy" and index + 1 < len(program):
+            command = char
+            delimiter = program[index + 1]
+            index = _sed_delimiter_end(program, index + 1)
+            index = _sed_delimiter_end(delimiter + program[index:], 0) + index - 1
+            if command == "y":
+                continue
+            while index < len(program) and program[index] not in ";\n}":
+                if program[index] not in "gpIMim0123456789 \t\r":
+                    return False
+                index += 1
+        elif char in "pPdDnNhHgGx=lqQ":
+            index += 1
+        elif char in ":btT":
+            match = re.search(r"[;\n]", program[index:])
+            index = len(program) if match is None else index + match.end()
+        elif char in "#aicrR":
+            end = program.find("\n", index)
+            index = len(program) if end < 0 else end + 1
+        else:
+            return False
+    return True
+
+
+def _sed_use(args: list[str], known: frozenset[str]) -> str | None:
+    """Judge sed expressions without allowing external scripts, execution or file writes."""
+    programs: list[str] = []
+    index = 0
+    options = True
+    while index < len(args):
+        token = args[index]
+        if options and token in {"--"}:
+            options = False
+        elif options and token.startswith("-"):
+            program, consumed, error = _sed_options(token, args[index + 1 : index + 2])
+            if error:
+                return error
+            programs.extend(program)
+            index += consumed
+        elif not programs:
+            programs.append(token)
+        index += 1
+    return None if programs and all(_sed_program_safe(program) for program in programs) else "sed program"
+
+
+_SED_READ_OPTIONS = frozenset(
+    {"--posix", "--quiet", "--silent", "--sandbox", "--regexp-extended", "--null-data", "--separate", "--unbuffered"}
+)
+
+
+def _sed_options(word: str, following: list[str]) -> tuple[list[str], int, str | None]:
+    """Read sed long options or delegate a short-option cluster."""
+    if word.startswith(("--file", "--in-place")):
+        return [], 0, "sed program file/write"
+    if word.startswith("--expression="):
+        return [word.partition("=")[2]], 0, None
+    if word in {"--expression"}:
+        return following, 1, None
+    if word in _SED_READ_OPTIONS:
+        return [], 0, None
+    if word.startswith("--"):
+        return [], 0, "sed option"
+    return _sed_short_options(word, following)
+
+
+def _sed_short_options(token: str, following: list[str]) -> tuple[list[str], int, str | None]:
+    """Read clustered sed flags and their expression or line-length operands."""
+    for index, flag in enumerate(token[1:], 2):
+        if flag in "fi":
+            return [], 0, "sed program file/write"
+        if flag in "el":
+            operand = token[index:] or (following[0] if following else "")
+            consumed = int(index == len(token))
+            return ([operand] if flag == "e" else []), consumed, None
+        if flag not in "nErsuz":
+            return [], 0, "sed option"
+    return [], 0, None
 
 
 def _curl_method(tokens: list[str], index: int) -> str | None:
@@ -990,12 +1119,20 @@ def _curl_use(args: list[str], known: frozenset[str]) -> str | None:
         'curl -o'
     """
     tokens = [arg.strip("'\"") for arg in args]
+    if any("$(" in token or "`" in token for token in tokens):
+        return "curl substituted argument"
     for index, token in enumerate(tokens):
         method = _curl_method(tokens, index)
         if method is not None and method.upper() != "GET":
             return f"curl -X {method}"
-        if token.startswith(_CURL_WRITE_PREFIXES) or any(_has_short_flag([token], flag) for flag in "dFToO"):
+        if token.startswith((*_CURL_WRITE_PREFIXES, "--trace", "--dump-header", "--config")) or any(
+            _has_short_flag([token], flag) for flag in "dDFToOK"
+        ):
             return f"curl {token}"
+        if token in {"--url-query"} or token.startswith("--url-query="):
+            operand = token.partition("=")[2] if "=" in token else next(iter(tokens[index + 1 : index + 2]), "")
+            if "@" in operand:
+                return "curl --url-query file"
     return None
 
 
@@ -1353,6 +1490,7 @@ _ALLOWLIST_CHECKS: dict[str, Callable[[list[str], frozenset[str]], str | None]] 
     "python3": _python_use,
     "node": _node_use,
     "awk": _awk_use,
+    "sed": _sed_use,
     "curl": _curl_use,
     "find": _find_use,
     "xargs": _xargs_use,
@@ -1415,6 +1553,11 @@ def _words_unlisted(words: list[str], known: frozenset[str]) -> str | None:
     if not head or head in SAFE_COMMANDS or head in known:
         return None
     check = _ALLOWLIST_CHECKS.get(head)
+    if head in {"sed", "awk", "curl"}:
+        try:
+            return check(shlex.split(" ".join(words[1:])), known)
+        except ValueError:
+            return f"{head} unparsed arguments"
     return head if check is None else check(words[1:], known)
 
 
@@ -1641,6 +1784,37 @@ def _trusted_variables(text: str) -> frozenset[str]:
     return frozenset(trusted)
 
 
+def _python_script_variables(text: str) -> frozenset[str]:
+    """Identify script operands assigned exclusively from plugin-owned paths."""
+    assignments = _ASSIGNMENT_WORD.findall(text)
+    forbidden = set(_FOR_VARIABLE.findall(text))
+    for match in _READ_TARGETS.finditer(text):
+        forbidden.update(match.group(1).split())
+    anchors = {"CLAUDE_PLUGIN_ROOT"} - forbidden - {name for name, _ in assignments}
+    trusted = anchors
+    for _ in range(len(assignments) + 1):
+        good: set[str] = set()
+        bad = set(forbidden)
+        for name, value in assignments:
+            path = _PLUGIN_ROOT_DEFAULT.sub("$CLAUDE_PLUGIN_ROOT", value.strip('"'))
+            prefix = _VARIABLE_PREFIX.match(path)
+            root = next((part for part in prefix.groups() if part), "") if prefix else ""
+            named = set(_VARIABLE_NAME.findall(path))
+            valid = (
+                root in trusted
+                and named <= trusted
+                and ".." not in path
+                and not any(char in path for char in "`('")
+                and _helper_use(path, frozenset(f"@python:{item}" for item in trusted)) is None
+            )
+            (good if valid else bad).add(name)
+        updated = anchors | (good - bad)
+        if updated == trusted:
+            break
+        trusted = updated
+    return frozenset(f"@python:{name}" for name in trusted)
+
+
 def unlisted_command(command: str) -> str | None:
     """Return the first command in ``command`` that the allowlist does not admit, or None.
 
@@ -1652,7 +1826,7 @@ def unlisted_command(command: str) -> str | None:
         including those inside substitutions, ``sh -c`` strings and ``find -exec``, is allowed.
 
     Examples:
-        >>> unlisted_command('V=$(python "$ROOT/bin/x.py") && echo "$V"') is None
+        >>> unlisted_command('V=$(python "$CLAUDE_PLUGIN_ROOT/bin/x.py") && echo "$V"') is None
         True
         >>> unlisted_command("echo a && ln -sf a b")
         'ln'
@@ -1666,7 +1840,8 @@ def unlisted_command(command: str) -> str | None:
         ...                  'bash -c "$RUNNER pytest -q"')
         '$RUNNER'
     """
-    return _unlisted(command, frozenset(f"${name}" for name in _trusted_variables(command)))
+    known = frozenset(f"${name}" for name in _trusted_variables(command)) | _python_script_variables(command)
+    return _unlisted(command, known)
 
 
 def is_excluded(command: str) -> bool:
@@ -1775,7 +1950,8 @@ def _read_markdown(filepath: str) -> str | None:
         if Path(filepath).stat().st_size > _MAX_FILE_SIZE:
             print(f"warning: skipping oversized file: {filepath}", file=sys.stderr)
             return None
-        return Path(filepath).read_text(encoding="utf-8", errors="replace")
+        with Path(filepath).open(encoding="utf-8", errors="replace", newline="") as stream:
+            return stream.read()
     except OSError as exc:
         print(f"warning: could not read {filepath}: {exc}", file=sys.stderr)
         return None
@@ -1865,13 +2041,15 @@ def build_plugin(plugin_dir: Path) -> tuple[dict[str, object], int]:
         if text is None:
             continue
         relative = PurePath(filepath).relative_to(PurePath(plugin_dir))
+        raw_lines = text.splitlines(keepends=True)
         for block in parse_blocks(text, filepath):
             if block.lang_detected != "bash":
                 continue
             normalized = normalize(block.content)
             if not normalized:
                 continue
-            if aliases_escaped_blank(block.content):
+            raw_content = "".join(raw_lines[block.line_start : block.line_end - 1])
+            if aliases_escaped_blank(raw_content):
                 dropped += 1
                 continue
             found, block_dropped = block_entries(normalized, posix_src(relative, block.line_start))
@@ -1905,9 +2083,16 @@ def write_manifest(path: Path, payload: bytes) -> None:
         path: Destination manifest path.
         payload: Encoded manifest bytes.
     """
-    temporary = path.with_suffix(".json.tmp")
-    temporary.write_bytes(payload)
-    os.replace(temporary, path)
+    fd, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(payload)
+        mask = os.umask(0)
+        os.umask(mask)
+        os.chmod(temporary, 0o666 & ~mask)
+        os.replace(temporary, path)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1984,7 +2169,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    builds, missing = build_all(Path(args.scan_dir))
+    try:
+        builds, missing = build_all(Path(args.scan_dir))
+    except RecursionError:
+        print("error: unreadable shell block: nesting exceeds the parser limit", file=sys.stderr)
+        return 1
     for name in missing:
         print(f"error: plugin directory not found: {Path(args.scan_dir) / name}", file=sys.stderr)
 

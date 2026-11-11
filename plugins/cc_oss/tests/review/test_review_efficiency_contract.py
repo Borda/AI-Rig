@@ -119,7 +119,7 @@ class TestNoPolling:
         """Every spawn site names its watch batch, and the rule forbids every waiting tool."""
         skill = _skill()
         assert f"`{batch}`" in skill[: skill.index("</constants>")]
-        assert "never `ScheduleWakeup`, `ListAgents` or a `Monitor` loop" in skill
+        assert "never call `ScheduleWakeup`, `ListAgents`, or a `Monitor` loop" in skill
 
     @_skip_no_bash
     def test_wake_up_check_reports_agents(self, tmp_path: Path) -> None:
@@ -219,3 +219,68 @@ def test_fix_scope_trim_is_gated_on_impact_tier() -> None:
     assert 'echo "FULL · impact unknown: codemap unavailable"' in skill
     assert 'IFS= read -r IMPACT_LINE < "${TMPDIR:-/tmp}/oss-review-impact-' in skill
     assert "review_impact_tier.py" in (_REVIEW / "modes" / "codemap-context.md").read_text(encoding="utf-8")
+
+
+@_skip_no_bash
+def test_worktree_entry_precedes_codemap_preparation(tmp_path: Path) -> None:
+    """Executing preparation fences in document order detects codemap inside the reviewed checkout."""
+    head = "a" * 40
+    snapshot = tmp_path / "snap"
+    snapshot.mkdir()
+    (snapshot / "pr-meta.json").write_text(json.dumps({"headRefOid": head}), encoding="utf-8", newline="\n")
+    (tmp_path / "oss-review-pr-tag-order").write_text("7\n", encoding="utf-8", newline="\n")
+    (tmp_path / "oss-review-snap-dir-order").write_text(bash_path(snapshot) + "\n", encoding="utf-8", newline="\n")
+    (tmp_path / "oss-review-flags-order").write_text(
+        "DIRECT_PATH_MODE=false\nWT_ENABLED=true\n", encoding="utf-8", newline="\n"
+    )
+    (tmp_path / "review-codemap-forced-off-order").write_text("true\n", encoding="utf-8", newline="\n")
+    script = """
+git() {
+  case "$*" in
+    'rev-parse --show-toplevel') echo "$TMPDIR" ;;
+    'rev-parse HEAD') [ ! -f reviewed-head ] || { echo "$HEAD_SHA"; return 0; }; echo base ;;
+    'status --porcelain') return 0 ;;
+    'worktree add --detach '*) touch "$4/reviewed-head" ;;
+    *) return 91 ;;
+  esac
+}
+python() { printf '%s\\n' "$*" > "$TMPDIR/detected"; }
+"""
+    section = _skill().split("## Step 1:", 1)[1].split("### File scope detection", 1)[0]
+    script += _preparation_fences(section)
+    result = subprocess.run(
+        [_BASH, "-c", script],
+        cwd=tmp_path,
+        env=os.environ
+        | {
+            "TMPDIR": bash_path(tmp_path),
+            "CLAUDE_CODE_SESSION_ID": "order",
+            "HEAD_SHA": head,
+            "ARGUMENTS": "7 --worktree",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "--arguments 7 --worktree" in (tmp_path / "detected").read_text()
+
+
+def _preparation_fences(section: str) -> str:
+    """Compose preparation recipes in source order, emulating the host's worktree entry after each call."""
+    scripts = []
+    active: list[str] | None = None
+    for line in section.splitlines():
+        if line == "```bash":
+            active = []
+        elif line == "```" and active is not None:
+            block = "\n".join(active)
+            if "_DETECT_CODEMAP=" in block or "git worktree add --detach" in block:
+                scripts.append(
+                    block
+                    + '\nif [ -f "$TMPDIR/oss-review-wt-order" ]; then IFS= read -r WT < "$TMPDIR/oss-review-wt-order"; cd "$WT" || exit 1; fi\n'
+                )
+            active = None
+        elif active is not None:
+            active.append(line)
+    return "\n".join(scripts)

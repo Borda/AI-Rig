@@ -80,7 +80,7 @@ which uv 2>/dev/null && uv --version 2>/dev/null || echo "uv: not found"        
 node --version 2>/dev/null || echo "node: not found"                                                 # timeout: 5000
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_bridge.py" --status > "${TMPDIR:-/tmp}/investigate-codex-${CSID}" 2>/dev/null || echo "absent" > "${TMPDIR:-/tmp}/investigate-codex-${CSID}"  # timeout: 5000
 printf 'bridge@borda-ai-rig: '; cat "${TMPDIR:-/tmp}/investigate-codex-${CSID}"
-env | grep -E 'PATH|VIRTUAL_ENV|UV_|CLAUDE|HOME|SHELL|NODE' | grep -v -E '(_TOKEN|_KEY|_SECRET|_PASSWORD|_PASS)=' | sort # timeout: 5000
+python -c 'import os; print("\n".join(sorted(os.environ)))' # timeout: 5000
 git log --oneline -10        # timeout: 3000
 git diff HEAD~3..HEAD --stat # timeout: 3000
 ```
@@ -89,21 +89,22 @@ Issue the **Config state** and **Logs** calls below in the same response as this
 
 **Config state** (when symptom involves Claude Code, hooks, or skills):
 
-Use Read to check `.claude/settings.json` — look for hook registrations, allow entries relevant to failing command, and `enabledMcpjsonServers`. For `~/.claude/settings.json` (outside allowed Read paths), use Bash (same response as the block above):
+Print environment variable names only, never their values. Inspect configuration through the projection below rather than raw Read or dumps: it retains permission and hook structure, enabled plugins, and environment key names, excludes MCP definitions, and masks all permission and hook string values, including command arguments and URL userinfo. Run it once per existing settings file, substituting `.claude/settings.json` for the project file and using `~/.claude/settings.json` for the user file (same response as the block above). For command-specific hypotheses, query exact registrations locally and print only match/no-match results, never command text. Before printing any additional config detail, redact credential-bearing fields and command arguments locally; never emit raw tokens or passwords.
 
 ```bash
-jq . ~/.claude/settings.json  # timeout: 5000
+_CONFIG_FILTER='{permissions, hooks, enabledPlugins, env: ((.env // {}) | keys)} | (.permissions, .hooks) |= ((.. | strings) = "[REDACTED]")'
+jq "$_CONFIG_FILTER" ~/.claude/settings.json  # timeout: 5000
 ```
 
 **Logs** (when symptom involves skill run, background agent, or hook):
 
-Use Grep with pattern `ERROR|WARN|failed|not found|exit` across `.notes/logs/`, `.claude/logs/` (legacy fallback), `/tmp/`, or relevant `.reports/<skill>/` run dirs. Read last 50 lines of any relevant log file.
+Use Grep with pattern `ERROR|WARN|failed|not found|exit` across `.notes/logs/`, `.claude/logs/` (legacy fallback), `/tmp/`, or relevant `.reports/<skill>/` run dirs to return file paths only, never raw matching lines. Inspect at most the last 50 relevant lines through local credential redaction before emitting excerpts; redact URL userinfo, tokens, passwords, authorization headers, and credential-bearing command arguments.
 
-Capture all output before Step 3.
+Capture all sanitized output before Step 3. Never write credentials to `signals.md`, `symptom.txt`, `hypotheses.md`, review prompts, probe ledgers, contracts, or reports; redact sensitive portions of user-supplied symptoms before persisting them. Keep diagnostic names and presence indicators instead of secret values. Before Step 4, check the persisted evidence for credentials and sanitize it before either review route reads it.
 
 After gathering evidence, capture top signals as working notes for Step 4 spawn prompts, persist to disk so values survive bash-state reset between Steps 2 → 3 → 4. The two Writes below and the contract block after them go in **one** response:
 
-- `SYMPTOM_DESCRIPTION` — verbatim from `$ARGUMENTS`
+- `SYMPTOM_DESCRIPTION` — verbatim from `$ARGUMENTS` except credentials replaced with `[REDACTED]`
 - `KEY_SIGNALS` — write 3–5 bullet-point sentences summarizing the most diagnostic signals found above (tool versions, missing binaries, config anomalies, recent changes)
 
 Use Write tool (NOT `echo > $INVESTIGATE_RUN/...` heredoc, which loses bash variable state across tool calls) to write captured values to disk so Step 4 spawn prompts can instruct subagents to Read them rather than relying on inline interpolation:
@@ -223,22 +224,25 @@ One targeted test per hypothesis — clear confirm/rule-out signal. Run independ
 python --version  # timeout: 3000
 
 # Missing allow entry
-jq -r '.permissions.allow[]' ~/.claude/settings.json
+jq '(.permissions.allow // []) | index("Read") != null' ~/.claude/settings.json
 
 # Hook path wrong
-ls -la ~/.claude/hooks/
+ls -la "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/hooks/"
 
 # Sync drift
-diff <(jq -S . .claude/settings.json) <(jq -S . ~/.claude/settings.json) | head -40
+jq -n --slurpfile project .claude/settings.json --slurpfile user ~/.claude/settings.json '$project == $user'
 ```
 
-Per probe: mark **Confirmed**, **Ruled out**, or **Inconclusive**. Append verdicts to probe ledger, refresh contract — so a mid-loop compaction doesn't re-probe an already-decided hypothesis. One block per probe batch: one `echo` line per verdict from that batch, then the refresh once:
+Per probe: mark **Confirmed**, **Ruled out**, or **Inconclusive**. Append verdicts to probe ledger, refresh contract — so a mid-loop compaction doesn't re-probe an already-decided hypothesis. One block per probe batch: one guarded `printf` per verdict from that batch, then the refresh once. Substitute the verdict as a single-quoted shell literal, escaping embedded apostrophes as `'\''`; never put hypothesis text in double quotes or executable shell syntax. Resolve every placeholder before running; unresolved placeholders or a missing run directory block the append and refresh.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # WHY: probe verdicts live only in-context; a post-compact resume without this would re-probe ruled-out hypotheses (loop)
-echo "<hypothesis> :: <Confirmed|Ruled-out|Inconclusive>" >> ${TMPDIR:-/tmp}/investigate-verdicts-${CSID}
 IFS= read -r _IR < "${TMPDIR:-/tmp}/investigate-run-path-${CSID}" 2>/dev/null || _IR=""
+[ -n "$_IR" ] && [ -d "$_IR" ] || { printf '%s\n' '! BLOCKED — investigate run directory missing'; exit 1; }
+_VERDICT='<hypothesis> :: <Confirmed|Ruled-out|Inconclusive>'
+case "$_VERDICT" in *'<hypothesis>'*|*'<Confirmed|Ruled-out|Inconclusive>'*) printf '%s\n' '! BLOCKED — substitute probe verdict placeholders'; exit 1 ;; esac
+printf '%s\n' "$_VERDICT" >> "${TMPDIR:-/tmp}/investigate-verdicts-${CSID}"
 _VERDICTS=$(tail -8 "${TMPDIR:-/tmp}/investigate-verdicts-${CSID}" 2>/dev/null)  # cap keeps contract compact; tail keeps most-recent verdicts
 _REVIEW=""; [ -f "$_IR/codex-review.md" ] && _REVIEW="$_IR/codex-review.md"; [ -f "$_IR/challenger-review.md" ] && _REVIEW="$_IR/challenger-review.md"
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/write_skill_contract.py" --keep-sentinel investigate-keep-items "foundry:investigate" "probe (Step 5)" "$_IR" "hypotheses=$_IR/hypotheses.md${_REVIEW:+, review=$_REVIEW}" "probe remaining pending hypotheses → confirm root cause → report (Step 6). Skip Confirmed/Ruled-out in the probed list below." "probed (do NOT re-probe)" "$_VERDICTS"  # timeout: 5000

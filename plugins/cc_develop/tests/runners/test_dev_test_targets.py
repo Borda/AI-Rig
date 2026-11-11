@@ -232,6 +232,15 @@ class TestRunFlag:
         assert (rc, "final gate" in json.loads(capsys.readouterr().out)["note"]) == (0, True)
         mock_main.assert_not_called()
 
+    @mock.patch("run_pytest_short.main", autospec=True, return_value=1)
+    def test_fixed_nodes_bypass_current_change_selection(self, mock_main, repo: Path, no_codemap: None) -> None:
+        """Frozen nodes run verbatim even when their source edit is absent from the current prefix."""
+        targets = repo / "fixed.json"
+        targets.write_text(json.dumps(["tests/test_other.py::test_g"]))
+        rc = dtt.main(["--pytest-cmd", "pytest", "--tests-from", str(targets), "--run"])
+        assert rc == 1
+        mock_main.assert_called_once_with(["pytest", "tests/test_other.py::test_g"])
+
 
 @_skip_no_git
 class TestRecordDir:
@@ -275,18 +284,18 @@ class TestArgumentFences:
         ],
     )
     def test_rejects_unusable_arguments(self, argv: list[str], capsys: pytest.CaptureFixture[str]) -> None:
-        """An empty, non-allowlisted or shell-shaped runner, or a dash-prefixed ref, exits 1 with a JSON error.
+        """An empty, non-allowlisted or shell-shaped runner, or a dash-prefixed ref, exits 2 with a JSON error.
 
         Plan mode only prints ``command``, but a caller may run it verbatim, so the runner faces the same allowlist the
         ``--run`` path applies.
         """
         rc = dtt.main(argv)
-        assert (rc, "error" in json.loads(capsys.readouterr().out)) == (1, True)
+        assert (rc, "error" in json.loads(capsys.readouterr().out)) == (2, True)
 
     def test_rejects_record_dir_outside_project_and_temp(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """``--record-dir`` outside the working directory and ``$TMPDIR`` exits 1 and creates nothing there."""
+        """``--record-dir`` outside the working directory and ``$TMPDIR`` exits 2 and creates nothing there."""
         project, scratch, elsewhere = tmp_path / "project", tmp_path / "scratch", tmp_path / "elsewhere"
         project.mkdir()
         scratch.mkdir()
@@ -296,10 +305,20 @@ class TestArgumentFences:
         rc = dtt.main(["--pytest-cmd", "pytest", "--record-dir", str(elsewhere)])
 
         assert (rc, "--record-dir" in json.loads(capsys.readouterr().out)["error"], elsewhere.exists()) == (
-            1,
+            2,
             True,
             False,
         )
+
+    @pytest.mark.parametrize("target", ["--help", "../test_outside.py"])
+    def test_invalid_fixed_target_is_helper_error(
+        self, repo: Path, no_codemap: None, target: str, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Rejected frozen inputs return helper status 2 before any pytest run."""
+        targets = repo / "targets.json"
+        targets.write_text(json.dumps([target]))
+        assert dtt.main(["--pytest-cmd", "pytest", "--tests-from", str(targets), "--run"]) == 2
+        assert "selection failed" in json.loads(capsys.readouterr().out)["error"]
 
 
 @_skip_no_git
@@ -357,10 +376,10 @@ class TestSkillSentinels:
     def test_empty_pytest_sentinel_points_at_project_detection(
         self, repo: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """An unresolved runner exits 1 naming the step that sets it, instead of running an empty command."""
+        """An unresolved runner exits 2 naming the step that sets it, instead of running an empty command."""
         rc = dtt.main(["--skill", "fix", "--run"])
 
-        assert rc == 1
+        assert rc == 2
         assert "! PYTEST_CMD unresolved — re-run §Project Detection" in json.loads(capsys.readouterr().out)["error"]
 
     def test_skill_and_pytest_cmd_are_mutually_exclusive(self) -> None:

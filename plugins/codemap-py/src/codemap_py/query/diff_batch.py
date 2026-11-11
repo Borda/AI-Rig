@@ -108,6 +108,8 @@ def _git_diff_paths(base: str) -> list[str] | dict:
     Args:
         base: git ref or range to diff against; ``"HEAD"`` for the working tree.
     """
+    if base.startswith("-"):
+        return {"error": "invalid base", "base": base, "detail": "base must not start with '-'"}
     cmd = ["git", "diff", "--name-only", "-z", base, "--", "*.py"]
     try:
         out = subprocess.check_output(  # noqa: S603 - argv list, no shell; tool resolved via PATH on purpose
@@ -134,6 +136,8 @@ def _git_diff_line_ranges(base: str, path: str) -> list[tuple[int, int]]:
         base: git ref or range to diff against.
         path: repo-relative file path to inspect.
     """
+    if base.startswith("-"):
+        return []
     cmd = ["git", "diff", "--unified=0", base, "--", path]
     try:
         out = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL, timeout=_GIT_TIMEOUT_S)  # noqa: S603 - argv list, no shell; tool resolved via PATH on purpose

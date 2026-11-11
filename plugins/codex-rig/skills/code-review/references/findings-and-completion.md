@@ -234,7 +234,7 @@ Resume the first unmet checkpoint under existing authorization; reuse only still
 
 Required checks:
 
-- `review`: T0 files, risk tier, either validated terminal close evidence or local changed-file inspection, simplicity/readability/reproducibility inspection, project docstring-style detection, docstring/comment policy inspection for changed code, PR body/target/checkout/local-diff evidence when relevant, specialist manifest/notes when detailed review proceeds, structured assessed decision summary or terminal unavailable/closed result, non-approval PR findings/action table for assessed reviews, plain terminal diagnostics, explicit supplemental-thread degradation, confidence calibration/recovery, PR online-review triage when assessed, severity map when assessed, `git diff --check`.
+- `review`: T0 files, risk tier, either validated terminal close evidence or local changed-file inspection, simplicity/readability/reproducibility inspection, project docstring-style detection, docstring/comment policy inspection for changed code, PR body/target/checkout/local-diff evidence when relevant, specialist manifest/notes when detailed review proceeds, structured assessed decision summary or terminal unavailable/closed result, findings/action table for every new assessed review with findings or operational blockers, regardless of scope or recommendation, plain terminal diagnostics, explicit supplemental-thread degradation, confidence calibration/recovery, PR online-review triage when assessed, severity map when assessed, `git diff --check`.
 
 Conditional checks:
 
@@ -243,10 +243,9 @@ Conditional checks:
 
 ## Calibration Hooks
 
-- regression scenario: every package-dependent behavioral claim, including favorable claims and refutations, prepares eligible declared dependencies and performs affected execution before disposition; unavailable preparation retains its concrete failure rather than package absence alone
-
 Update calibration when review routing, severity discipline, decision vocabulary, or output shape changes:
 
+- regression scenario: every package-dependent behavioral claim, including favorable claims and refutations, prepares eligible declared dependencies and performs affected execution before disposition; unavailable preparation retains its concrete failure rather than package absence alone
 - benchmark patterns: `code-review`
 - behavioral cases: false blocker, target-advance false blocker, unrelated invoking-worktree edits preserved, isolated review-worktree obstruction diagnosed, supplemental-thread degradation, sandboxed collector network approval, each terminal close code plus its false-positive fall-through, close-versus-reject separation, closed-report remediation rejection, non-approval PR findings/action table missing reported finding, missing `needs-more-work` table, T0 PR collection failure with merge recommendation/assessed findings table or without process diagnostic/display-only status table/source findings `not assessed`/merge decision `not made`, malformed finding-table row, missing specialist pass, no-finding residual risk, substituted fan-out confidence, PR online review triage, missing project docstring-style detection, missing code self-documentation, long code blocks, deep branching, docstrings masking poor structure, low-confidence recovery loop, objective confidence evidence, review-only conflict handoff without finish or abort, prior remediation feedback confirmed or re-reported with new evidence
 - PR routing cases: target-branch refresh required, isolated exact-head detached review worktree, verified local diff required, raw-file snapshot rejection, remediation attached checkout, same-repository fallback and fork-recovery route separation

@@ -112,6 +112,7 @@ def _scoped_fixture(
         )
         assert collected.returncode == 0, collected.stderr
         repository = Path(json.loads((receipt / "review-worktree.json").read_bytes())["review_worktree"])
+    monkeypatch.chdir(repository)
     chunks = tmp_path / "chunks"
     request = {"goal": "Review the value", "specification": "The value remains one", "done_when": "Review is clean"}
     planned = subprocess.run(

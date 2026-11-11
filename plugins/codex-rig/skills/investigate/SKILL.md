@@ -11,7 +11,7 @@ description: Investigate code debugging and root-cause narrowing; use measurable
 
 See the [fixed recurrence and root-cause policy](../../shared/native-skill-contract.md#recurrence-and-root-cause-policy) and [reasoning-progress escalation policy](../../shared/native-skill-contract.md#reasoning-progress-escalation) for repeated-obstacle handling; record and validate `reasoning-progress.json` before another cycle after escalation trigger.
 
-Diagnosis-first loop for unclear failures: failing tests, tracebacks, regressions, surprising runtime behavior. Produce root-cause claim with evidence, falsification, rejected alternatives before any fix. Use `investigate` until root cause established; then hand off to `implement` or `code-remediate`.
+Diagnosis-first loop for unclear failures: failing tests, tracebacks, regressions, surprising runtime behavior. Produce root-cause claim with evidence, falsification, rejected alternatives before any fix. Use `investigate` until root cause established; then hand off to `implement` with `mode=fix`.
 
 ## Input Schema
 
@@ -19,7 +19,6 @@ Diagnosis-first loop for unclear failures: failing tests, tracebacks, regression
 {
   "symptom": "required failing command, traceback, runtime bug, CI failure, flaky behavior, or tool anomaly",
   "scope": "optional path/module/tool/CI run",
-  "pace": "fast|full",
   "done_when": "one root cause is confirmed or the remaining uncertainty is explicit"
 }
 ```

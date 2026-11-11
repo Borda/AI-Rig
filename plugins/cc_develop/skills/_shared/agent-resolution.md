@@ -1,6 +1,13 @@
 ## Agent Resolution
 
-> **Foundry plugin check**: run `{ find ~/.claude/plugins/cache -maxdepth 5 -path "*/foundry/*/agents/sw-engineer.md" 2>/dev/null; ls plugins/cc_foundry/agents/sw-engineer.md 2>/dev/null; } | head -1` — non-empty output = foundry available (installed cache or local source tree). Two prior forms WRONG: `ls ~/.claude/plugins/cache/ | grep -q foundry` (cache lists marketplace dirs like `borda-ai-rig/`, not plugin names → always misses); hardcoding marketplace slug `cache/borda-ai-rig/foundry/*` (re-breaks under non-standard marketplace name). `find … -path "*/foundry/*"` form is marketplace-agnostic. Uncertain → proceed as if foundry available — common case; fall back only if agent dispatch explicitly fails.
+> **Foundry plugin check**: run the block below — exit 0 = foundry available through its active install record. This probe accepts the `borda-ai-rig` marketplace slug only; a different marketplace slug or a `--plugin-dir` session without a registry entry uses the fallback. Cache directories or a local source tree alone do not establish availability. Missing install record or agent file → use the fallback below; an explicit foundry dispatch failure also uses that fallback.
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/get_plugin_install_path.py" borda-ai-rig foundry > "${TMPDIR:-/tmp}/dev-foundry-path-${CSID}" 2>/dev/null || exit 1
+IFS= read -r FOUNDRY_PATH < "${TMPDIR:-/tmp}/dev-foundry-path-${CSID}" || exit 1
+[ -f "$FOUNDRY_PATH/agents/sw-engineer.md" ]
+```
 
 Foundry **not** installed → substitute `foundry:X` with `general-purpose`, prepend role + `model: <model>` to spawn call:
 
@@ -16,7 +23,9 @@ Foundry **not** installed → substitute `foundry:X` with `general-purpose`, pre
 
 Skills with `--team` mode: team spawning works with fallback agents, output quality lower. Apply fallback only for agents skill actually dispatches.
 
-**Model aliases on fallback**: challenger + solution-architect → `opus`; qa-specialist + doc-scribe + linting-expert → `sonnet`. Substituting `general-purpose`: prepend role + target model to spawn prompt: `"Act as <role>. Use <model> quality reasoning."` — else inherits session model.
+Substituting `general-purpose`: prepend the role and target model from the table to the spawn prompt: `"Act as <role>. Use <model> quality reasoning."` — else inherits session model.
+
+A separately spawned `general-purpose` challenger satisfies the independent plan or implementation challenge when it receives only the scoped plan/diff, acceptance criteria and relevant evidence, never the implementation conversation. Apply the same challenge criteria and finding validation as `foundry:challenger`. Label the Final Report `Independent challenge: general-purpose (foundry:challenger fallback)` with its actual result and coverage limits; missing, timed-out or incomplete output remains a coverage gap, never a passed challenge.
 
 ## Agent waits — no polling, per-agent deadlines
 

@@ -4,9 +4,11 @@
 
 Triggered after cross-reference propagation (Step 5, rename mode only). Scan for remaining occurrences with word-boundary matching to cut noise from short/common names:
 
+Derive scope and canonical forms from the entity's actual location. For project-local entities, use `/<old-name>` for a skill, `<old-name>` as an agent's `subagent_type`, and its `.claude/` file path; never infer `/foundry:<old-name>` or `foundry:<old-name>` from a same-named local entity. Scan only `.claude/`, project `README.md`, and project `docs/`; classify documentation hits under the same rules below before any edit. If the actual entity lives under `plugins/`, use that plugin's declared namespace and restrict the scan to its `SOURCE_ROOT` plus its README; do not scan sibling plugins or project `docs/`. Source renames are currently rejected by Step 1's `--local` guard. The blocks below use project scope; for a plugin-source scan, substitute only its `SOURCE_ROOT` and README as the search targets in both commands.
+
 ```bash
-rg -n -w --fixed-strings '<old-name>' plugins/ .claude/ README.md docs/ 2>/dev/null \
-  || grep -rn "\b<old-name>\b" plugins/ .claude/ README.md docs/ 2>/dev/null \
+rg -n -w --fixed-strings '<old-name>' .claude/ README.md docs/ 2>/dev/null \
+  || grep -rn "\b<old-name>\b" .claude/ README.md docs/ 2>/dev/null \
   | grep -v ".git/" | grep -v "__pycache__"  # timeout: 10000
 ```
 
@@ -14,7 +16,7 @@ Grep returns **zero hits**: report "✓ No remaining occurrences of `<old-name>`
 
 **Large hit set gate** — hits exceed 50: invoke `AskUserQuestion` before classifying: "Found N occurrences of `<old-name>` — this name may be too generic for safe automated classification. Proceed with classification or abort?" Options: (a) Proceed · (b) Abort. On abort: stop, report to user.
 
-Hits within limit: read a 5-line context window (2 lines before + matched line + 2 lines after) per hit with Read tool, assign each hit a stable integer `id` (1…N). Spawn a **`haiku`-model** `Agent` to classify in batches of ≤30 hits — pass `model="haiku"` explicitly. Before spawning, resolve entity's canonical surface forms from rename context: slash-command form (`` `/foundry:<old-name>` `` or `` `/<old-name>` ``), `subagent_type` value, file-path pattern (`.claude/agents/<old-name>.md`, `.claude/skills/<old-name>/`). Include as `<entity_context>` in prompt.
+Hits within limit: read a 5-line context window (2 lines before + matched line + 2 lines after) per hit with Read tool, assign each hit a stable integer `id` (1…N). Spawn `Agent(subagent_type="general-purpose", model="haiku", name="rename-hits-<batch>", description="Classify scoped rename references", prompt="<batch prompt below>")` for batches of ≤30 hits. Run batches sequentially, one in flight; overwrite `.temp/manage/agent-watch-manage.tsv` with `rename-hits-<batch>\t-\t900` in each spawn response and apply the constants deadline check before consuming that batch. Pass the location-derived canonical forms above as `<entity_context>`; include explicitly excluded same-named plugin/local entities.
 
 Haiku agent prompt (one spawn per batch of ≤30 hits):
 
@@ -46,15 +48,15 @@ context:
 
 Collect all batch results. Classify each hit:
 
-- **Genuine reference** → Apply Edit tool fix targeting exact token at classified line — do NOT use `replace_all: true` on whole file; replace only that line's occurrence.
+- **Genuine reference** → Count files containing confirmed genuine references. **≤3 files**: apply Edit tool fixes targeting exact tokens at classified lines. **>3 files**: spawn `foundry:curator` sequentially with the Step 5 prompt listing only classified genuine file:line occurrences, exact tokens and substitutions; track its normal 900 s deadline. Never replace all bare-name matches in a file. Re-read each target line before editing and require its classified context to remain unchanged; otherwise reclassify it. The curator must leave false positives and ambiguous hits untouched.
 - **False positive** → Skip; log haiku's reason.
 - **Ambiguous** → Collect for user escalation.
 
 After all haiku fixes and user-resolved fixes applied, run one final grep to confirm:
 
 ```bash
-rg -n -w --fixed-strings '<old-name>' plugins/ .claude/ README.md docs/ 2>/dev/null \
-  || grep -rn "\b<old-name>\b" plugins/ .claude/ README.md docs/ 2>/dev/null \
+rg -n -w --fixed-strings '<old-name>' .claude/ README.md docs/ 2>/dev/null \
+  || grep -rn "\b<old-name>\b" .claude/ README.md docs/ 2>/dev/null \
   | grep -v ".git/" | grep -v "__pycache__"  # timeout: 10000
 ```
 

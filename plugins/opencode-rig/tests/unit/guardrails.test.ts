@@ -40,6 +40,36 @@ describe("classifyCommand", () => {
     expect(classifyCommand("git commit -m 'feat: add gate runner'").kind).toBe("plain-commit")
   })
 
+  it.each([
+    "sudo -D ../repo git commit -m x",
+    "sudo -D../repo git commit -m x",
+    "sudo --chdir ../repo git commit -m x",
+    "sudo --chdir=../repo git commit -m x",
+    "sudo -R ../root git commit -m x",
+    "sudo -R../root git commit -m x",
+    "sudo --chroot ../root git commit -m x",
+    "sudo --chroot=../root git commit -m x",
+    "env -C ../repo git commit -m x",
+    "env -C../repo git commit -m x",
+    "env --chdir ../repo git commit -m x",
+    "env --chdir=../repo git commit -m x",
+    "git -C ../repo commit -m x",
+    "git --git-dir=../repo/.git commit -m x",
+    "git --work-tree ../repo commit -m x",
+    "cd ../repo && git commit -m x",
+    "sl ../repo; git commit -m x",
+    "bash -c 'cd ../repo && git commit -m x'",
+  ])("reports a directory or repository change in %s", (command) => {
+    expect(classifyCommand(command).changesDirectory).toBe(true)
+  })
+
+  it.each(["git commit -m x", "grep -C 3 needle file; git commit -m x", "echo sl; git commit -m x"])(
+    "does not mistake data arguments for directory changes in %s",
+    (command) => {
+      expect(classifyCommand(command).changesDirectory).toBe(false)
+    },
+  )
+
   it("classifies read-only Git", () => {
     expect(classifyCommand("git status --short").kind).toBe("read-only-git")
     expect(classifyCommand("git diff HEAD~1").kind).toBe("read-only-git")
@@ -51,13 +81,13 @@ describe("classifyCommand", () => {
     expect(classifyCommand("git commit -m x; git reset --hard").kind).toBe("destructive-local")
   })
 
-  it("ignores environment assignments and sudo prefixes", () => {
-    expect(classifyCommand("GIT_AUTHOR_NAME=x git commit -m msg").kind).toBe("plain-commit")
+  it("asks for Git environment assignments and reads ordinary sudo prefixes", () => {
+    expect(classifyCommand("GIT_AUTHOR_NAME=x git commit -m msg").kind).toBe("unparsed-git")
     expect(classifyCommand("FF=1 sudo git push").kind).toBe("remote-mutation")
   })
 
-  it("treats merge and cherry-pick as guarded only in strict mode", () => {
-    expect(classifyCommand("git merge feature").kind).toBe("other")
+  it("asks for integration and keeps destructive severity in strict mode", () => {
+    expect(classifyCommand("git merge feature").kind).toBe("unparsed-git")
     expect(classifyCommand("git merge feature", "strict").kind).toBe("destructive-local")
     expect(classifyCommand("git cherry-pick abc123", "strict").kind).toBe("destructive-local")
   })

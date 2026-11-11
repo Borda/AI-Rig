@@ -9,7 +9,7 @@ disable-model-invocation: true
 
 <objective>
 
-Research-supervisor review of `program.md` — validates experimental methodology, emits APPROVED / NEEDS-REVISION / BLOCKED verdict before expensive run loop. Read-only apart from its own run dir and report; J4 executes the program's own metric/guard commands, so working-tree drift is checked and reported.
+Research-supervisor review of `program.md` — validates experimental methodology, emits APPROVED / NEEDS-REVISION / BLOCKED verdict before expensive run loop. Review writes only its own run dir and report; J4 executes the program's metric/guard commands only after explicit approval, through the declared compute route, with snapshots of Git-visible dirty paths and prior experiment state and drift reporting.
 
 NOT for: running experiments (use `/research:run`); designing hypotheses (use `research:scientist` agent); config quality (`/foundry:audit` (requires `foundry` plugin)). </objective>
 
@@ -166,7 +166,7 @@ cat "$_RESEARCH_SHARED/judge-j3-prompts.md"
 
 **Complexity gate** (`SPAWN_ARCHITECT` above) — mirrors P-P2b; skips the architect for narrow single-scope experiments (saves a full opus pass). `SKIP_VALIDATION_NOTE` goes into the prompt.
 
-**Spawn note**: J3 agents run in the background — issue the batch, then end the turn; no filler call, no "waiting" line, no sleep (CLAUDE.md §6). Timeout handled post-hoc — on each completion notification, check that agent's output file; if missing/empty mark it timed out (⏱). See J3 post-call checks below.
+**Spawn note**: follow `agent-resolution.md` §Agent waits — no polling for every J3 spawn, including its arm block, `agent-watch-<batch>.tsv` deadline write (900 seconds for this batch), end-turn status and check-on-notification protocol. On completion notification, check that agent's output file; if missing/empty mark it timed out (⏱). See J3 post-call checks below.
 
 Dispatch — scientist dimension always; architect dimension only when the complexity gate fires. When BOTH dimensions are active, J3 is ONE merged spawn covering both (two opus spawns for a single-file review pay 2× ~120,851 tok fixed overhead for a workload far under the §Agent budget breakeven below); when only the scientist dimension is active, it's a single scientist spawn as before. Per-dimension output files and Confidence blocks are unchanged either way.
 
@@ -178,17 +178,19 @@ When `SPAWN_ARCHITECT=false`: skip architect spawn; J5b precedence step 0 sets `
 
 > **Agent budget** — every spawn prompt must require an envelope even on exhaustion — `partial: true` plus what was finished.
 
+Reviews are static: do not execute program commands or repository hooks; execution is reserved for J4 after user approval.
+
 When `SPAWN_ARCHITECT=true`: spawn ONE merged reviewer via `Agent(subagent_type="research:scientist", prompt=<merged prompt>)` (opus) — build the merged prompt exactly per `judge-j3-prompts.md` §Merged spawn — envelope override (both templates with individual `Return ONLY:` lines stripped, joined by `---`, closed with the override's single array-envelope instruction). The single spawn executes BOTH templates in order, writes `${RUN_DIR}/methodology.md` AND `${RUN_DIR}/scientific-review.md`, each with its own Confidence block. Full prompt templates (expand `${PROGRAM_PATH}` and `${RUN_DIR}` before passing):
 
 > `$J3_ARCH_PROMPT` template externalized — follow `judge-j3-prompts.md` § J3_ARCH_PROMPT, printed by the J3 pre-spawn block above (one load supplies both J3 templates).
 
 > **Substitution requirement**: every `${RUN_DIR}` and `${PROGRAM_PATH}` token in template above MUST be replaced with concrete bash-expanded value (e.g. `.experiments/judge-2026-05-13T10-00-00Z`) before string passed to `Agent(...)`. Passing literal `${RUN_DIR}` to agent causes agent to write to directory named `${RUN_DIR}`.
 
-When `SPAWN_ARCHITECT=true` — after the merged Agent() returns, check `$RUN_DIR/methodology.md`: if missing or empty, set `methodology_rating = "timed_out"`, continue to J6; surface with ⏱ in report (J6 reports methodology as unreviewed, not NEEDS-REVISION, when the scientist review completed).
+When `SPAWN_ARCHITECT=true` — on the merged agent's completion notification, follow `agent-resolution.md` §Agent waits, then check `$RUN_DIR/methodology.md`: if missing or empty, set `methodology_rating = "timed_out"`; surface with ⏱ in report (J6 reports methodology as unreviewed, not NEEDS-REVISION, when the scientist review completed). Continue through J4 and J5 before J6.
 
-After the spawn returns (merged or scientist-only), check `$RUN_DIR/scientific-review.md`: if missing or empty, set `scientific_rating = "timed_out"`, continue to J6; surface with ⏱ in Scientific Rigor section.
+On completion notification (merged or scientist-only), follow `agent-resolution.md` §Agent waits, then check `$RUN_DIR/scientific-review.md`: if missing or empty, set `scientific_rating = "timed_out"`; surface with ⏱ in Scientific Rigor section. Continue through J4 and J5 before J6.
 
-Use `methodology_rating` from returned envelope for verdict computation in J6:
+Use `methodology_rating` resolved by J5b (file first, envelope fallback) for verdict computation in J6:
 
 - `sound` → supports APPROVED
 - `needs-refinement` → supports NEEDS-REVISION
@@ -214,51 +216,80 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/compaction_boundary.py"  
 
 ## Step J4: Local validation
 
-> Skip if `$SKIP_VALIDATION` is `true` (parsed in J1). Print: `→ Validation skipped (--skip-validation passed)` and continue to J5. Add `high` finding: "Executability unverified — metric_cmd and guard_cmd not tested on local machine." This finding persists into J6 — APPROVED not achievable when `--skip-validation` set (high > 0 → NEEDS-REVISION at best).
+> Skip if `$SKIP_VALIDATION` is `true` (parsed in J1). Print: `→ Validation skipped (--skip-validation passed)` and continue to J5. Add a `medium` finding: "Executability unverified — metric_cmd and guard_cmd not tested (--skip-validation)." Disclose it in J6 findings, Dry-Run Results and terminal Validation; exclude this explicit skip from Required Changes. It does not by itself prevent APPROVED.
 
-> Skip also when `compute` in `## Config` is `colab`: the commands target the Colab runtime and cannot run here. Print `→ Validation skipped (compute: colab — commands run only on the Colab runtime)`, continue to J5, add a `medium` finding "Executability unverified — compute: colab; first Colab run is the first test". Medium (not `high`) keeps a remote-compute program APPROVED-able; `compute: docker` is still validated on this machine.
+> Skip also when `compute` in `## Config` is `colab`: the commands target the Colab runtime and cannot run here. Print `→ Validation skipped (compute: colab — commands run only on the Colab runtime)`, continue to J5, add a `medium` finding "Executability unverified — compute: colab; first Colab run is the first test". Medium (not `high`) keeps a remote-compute program APPROVED-able; Docker commands use the sandbox route below.
 
-Execute each command once. **Non-blocking** — failures become `critical` findings, not hard stops.
+Execute each command once. **Non-blocking** — program failures become `critical` findings, not hard stops.
+
+**Non-program failures** — snapshot errors, missing or malformed judge-side structured rating or `goodhart` fields, and an unavailable Docker binary or daemon (including wrapper exit 127) are `medium` unverified findings. Disclose the reason in findings, Dry-Run Results and the terminal block; exclude these non-program failures from Required Changes. They do not by themselves prevent APPROVED. Do not treat them as defects to repair in program.md. Keep wrapper metacharacter or destructive-token rejection, metric or guard failure (including missing program dependencies or timeout), and guard non-zero as `critical` program defects. Classify Docker unavailability from its diagnostic, not an exit code alone; a command's own exit 127 is still a program failure.
+
+**Unexecuted commands** — when either command does not run for any reason, add a `medium` executability-unverified finding naming that command and show `not run (<reason>)` for it in the Dry-Run Results table and terminal `Validation:` line. Reasons include drift stop after guard, snapshot failure, user skip or abort, unresolved placeholders, unavailable Docker and wrapper rejection. Preserve any separate `critical` program finding for rejection. A command that ran but lacks side-effect evidence is `unverified (<reason>)`, retaining its exit/output evidence. Explicit skips and non-program failures are excluded from Required Changes; real program defects remain required.
 
 **Literal-command invariant** — `metric_cmd` and `guard_cmd` run exactly as written in program.md, as run will execute them. A `{field_name}` token naming a Config field was already flagged `high` at J2: skip executing that command.
 
-Snapshot the working tree first — the commands are the program's own and may write files:
+**Execution approval** — before the first execution of each command in each judge run, print the resolved program path, both exact commands as inert text, the compute route, network setting and timeout. Read and display only the directly invoked entry-point file for a repository script before requesting approval with `AskUserQuestion` for each command: (a) execute the displayed command through the displayed route, (b) skip this command, or (c) abort validation. A standalone judge invocation always asks; never infer approval from auto-detection, a prior standalone judge run, or approval of the other command. Within one sweep run, reuse an explicit approval across refine iterations only while the command text, compute route and network setting are byte-identical. If a command, script, route or network setting changes, show it and ask again. Keep repository and PR-supplied hooks disabled; running any such hook requires separate explicit approval. Judge never commits. Approval does not grant unavailable host capabilities or relax sandbox restrictions. Skipping one command leaves the other eligible for its own approval; abort skips all remaining commands. Record the user's decision and continue to J5 after the eligible commands are handled.
+
+**Timeout** — use run's local/Docker default and environment override. Run this preparation before displaying the approval request; use the printed milliseconds as the Bash tool `timeout: $VERIFY_TIMEOUT_MS` for each local command separately (not shell `timeout`). For Docker use `timeout: $DOCKER_TOOL_TIMEOUT_MS`, which is `(VERIFY_TIMEOUT_SEC + 30) * 1000`, leaving cleanup time beyond the wrapper's cap. Substitute the printed seconds into the Docker backstop below; its fixed timeout marker is a floor, and the actual tool timeout must use the printed Docker value:
+
+```bash
+VERIFY_TIMEOUT_SEC="${VERIFY_TIMEOUT_SEC:-120}"
+VERIFY_TIMEOUT_MS=$((VERIFY_TIMEOUT_SEC * 1000))
+DOCKER_TOOL_TIMEOUT_MS=$(((VERIFY_TIMEOUT_SEC + 30) * 1000))
+echo "VERIFY_TIMEOUT_SEC=$VERIFY_TIMEOUT_SEC VERIFY_TIMEOUT_MS=$VERIFY_TIMEOUT_MS DOCKER_TOOL_TIMEOUT_MS=$DOCKER_TOOL_TIMEOUT_MS"  # timeout: 5000
+```
+
+Snapshot the working tree first — the commands are the program's own and may write files. After approval and immediately before execution, run this fixed `before` block once. It saves status, index object IDs/modes and content hashes for staged, unstaged and untracked dirty files, nested repository HEAD/status, and `.experiments/state/**` outside this run dir, excluding this judge run's artifacts; other ignored files are not checked. Files are hashed in chunks. An existing `dirty-before.json` is an error, never overwritten. A snapshot error means execute neither command: record the non-program failure and each command as not run, then continue to J5.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/judge-run-dir-${CSID}" 2>/dev/null || RUN_DIR=""
 [ -n "$RUN_DIR" ] || { echo "! BLOCKED — judge-run-dir sentinel missing; J3 run dir not persisted"; exit 1; }
-git status --porcelain > "$RUN_DIR/porcelain-before.txt"  # timeout: 10000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/judge_tree_snapshot.py" "$RUN_DIR" before || exit 1
+# timeout: 10000
 ```
 
-Fill both command lines below with the program's command text. Each aborts when the token survives unsubstituted — an empty guard would otherwise exit 0 and pass. Write embedded single quotes as `'\''`:
+**Compute route** — `compute: docker` must use `docker_sandbox_run.py --mode verify`, exactly as run R2/Phase 5. Resolve network before approval as in `run/modes/phase5-metric.md`: honour ambient `SANDBOX_NETWORK` over parsed `sandbox_network`, default `none`; accept only the closed set `none|bridge`, mapping any unknown value to `none`. Substitute the approved command, resolved network and printed timeout seconds, quoting embedded single quotes as `'\''`. Preserve the command as one literal argument; never interpolate its contents as host shell code:
+
+```bash
+COMMAND='<command>'
+SANDBOX_NETWORK='<resolved sandbox_network>'
+SECONDS_CAP='<VERIFY_TIMEOUT_SEC>'
+case "$COMMAND|$SANDBOX_NETWORK|$SECONDS_CAP" in *'<'*'>'*|'') echo "! BLOCKED — Docker placeholders not substituted"; exit 1;; esac
+SANDBOX_NETWORK="$SANDBOX_NETWORK" SANDBOX_TIMEOUT_SEC="$SECONDS_CAP" python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/docker_sandbox_run.py" --mode verify "$COMMAND"  # timeout: 120000
+```
+
+Run that block once for the approved metric and once for the approved guard, each in its own call. The wrapper uses `python:3.11-slim` without project dependencies, a read-only project mount and writable `.experiments`, preserving the configured network isolation. Apply the failure classes above to wrapper rejection, unavailable Docker, missing dependencies or timeout; never fall back to host execution. Parse only the command's stdout as the metric, retaining stderr separately for diagnostics.
+
+For compute local, absent or invalid, use the local route (matching C10) and fill both command lines below with the approved program text. Each aborts when the token survives unsubstituted — an empty guard would otherwise exit 0 and pass. Write embedded single quotes as `'\''`. The markers show the default; use the printed `VERIFY_TIMEOUT_MS` override as the actual tool timeout:
 
 ```bash
 case '${metric_cmd}' in '${'*|'') echo "! BLOCKED — metric_cmd not substituted"; exit 1;; esac
-${metric_cmd} 2>&1  # timeout: 360000
+${metric_cmd}  # timeout: 120000
 ```
 
-Parse stdout for float. If found, record as `baseline_value`. If not found or non-zero exit: add critical finding: "Metric command failed or produced no numeric output".
+For a metric that actually started, parse stdout for float. If found, record as `baseline_value`. If not found or non-zero exit: add critical finding: "Metric command failed or produced no numeric output". A later snapshot failure never cancels this critical finding. Never apply this program-failure rule to a command that did not run or to unavailable Docker.
 
 ```bash
 case '${guard_cmd}' in '${'*|'') echo "! BLOCKED — guard_cmd not substituted"; exit 1;; esac
-${guard_cmd}  # timeout: 360000
+${guard_cmd}  # timeout: 120000
 ```
 
-If guard exits non-zero: add critical finding: "Guard command exited non-zero (exit <code>): \<first 3 lines of output>".
+If the executed guard exits non-zero: add critical finding: "Guard command exited non-zero (exit <code>): \<first 3 lines of output>". A later snapshot failure never cancels this critical finding. Never treat unavailable Docker or a command that did not run as guard failure.
 
-Drift check — a changed tree means the metric/guard are not read-only; add a `medium` finding naming the diff:
+Drift check — after each executed command, including failure or timeout, run this fixed `after` block. Compare against the original baseline; never overwrite `dirty-before.json`. A status or content change adds a `medium` finding naming affected paths, even when Git's dirty status is unchanged. On metric drift, keep running the separately approved guard, then stop further command execution after the guard's drift check. A snapshot failure stops remaining commands and adds a `medium` non-program finding because side effects remain unverified; report each remaining command as not run. Preserve all files and report what changed; never restore or discard user content.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/judge-run-dir-${CSID}" 2>/dev/null || RUN_DIR=""
 [ -n "$RUN_DIR" ] || { echo "! BLOCKED — judge-run-dir sentinel missing; J3 run dir not persisted"; exit 1; }
-git status --porcelain | diff - "$RUN_DIR/porcelain-before.txt" || echo "⚠ J4 changed the working tree (diff above)"  # timeout: 10000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/judge_tree_snapshot.py" "$RUN_DIR" after || exit 1
+# timeout: 10000
 ```
 
 Record validation results for J6 report.
 
-**Note**: J4 executes on current machine. For cross-machine workflows, pass `--skip-validation`.
+**Note**: J4 uses the declared local or Docker route after approval. For other cross-machine workflows, pass `--skip-validation`.
 
 ## Step J5a: Codex adversarial review
 
@@ -275,12 +306,10 @@ echo "J5A_COMPLEX=$J5A_COMPLEX"
 
 `J5A_COMPLEX=false` → print `note: simple program (single scope file, single-phase strategy) — Codex adversarial pass skipped by complexity gate`, record `codex: skipped (complexity gate)` in J6 summary, continue to J5b. `J5A_COMPLEX=true` → proceed below.
 
-Check Codex availability. Distinguish two failure modes — CLI missing vs plugin missing:
+Check Codex availability through the installed-and-enabled bridge probe; the `claude` CLI is not required:
 
 ```bash
-if ! command -v claude >/dev/null 2>&1; then
-    CODEX_STATUS="cli-missing"
-elif [ "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/check_bridge.py" --status 2>/dev/null || echo absent)" = "available" ]; then
+if [ "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/check_bridge.py" --status 2>/dev/null || echo absent)" = "available" ]; then
     CODEX_STATUS="available"
 else
     CODEX_STATUS="plugin-missing"
@@ -302,12 +331,6 @@ Incorporate Codex findings into overall findings list with `source: "codex"`; a 
 note: bridge@borda-ai-rig not installed or disabled — skipping adversarial review (Claude-only judge)
 ```
 
-**`CODEX_STATUS=cli-missing`**: print diagnostic and continue (distinguish from plugin-absent so user with Codex installed but `claude` CLI not in PATH isn't silently denied review):
-
-```text
-note: `claude` CLI not in PATH — Codex availability cannot be verified; skipping adversarial review. To enable: ensure `claude` binary is on PATH and Codex plugin installed.
-```
-
 ## Step J5b: Resolve rating source
 
 Apply rating source precedence before J6 verdict computation — fixes ambiguity when envelope and file-parsed ratings disagree. For `methodology_rating`:
@@ -323,7 +346,9 @@ For `scientific_rating`:
 2. Else use envelope value from the agent's returned JSON — fallback.
 3. Log source used: print `→ scientific_rating source: file | envelope`.
 
-Resolved rating values feed directly into J6 verdict table — no further source disambiguation in J6.
+Parse only exact standalone rating lines under `## Verdict`; missing, duplicate or unrecognized values are unparsable, never inferred from narrative. Preserve J3's `timed_out` for missing/empty output files; do not replace it with an envelope claiming completion. If neither a present file nor its fallback envelope yields a recognized rating, record `unrecognized` and a `medium` non-program unverified-review finding for J6; disclose that dimension as unreviewed, excluded from Required Changes.
+
+Resolve each dimension's `goodhart` boolean with the same file-first, envelope-fallback precedence and log its source. Accept only an exact `goodhart: true` or `goodhart: false` line under `## Verdict` in the file, or a JSON boolean in its envelope; no prose keyword matching. A skipped methodology dimension has `goodhart=false`; a timed-out dimension has `goodhart=null` and is disclosed as unreviewed. Missing, duplicate or malformed Goodhart data in a completed review, with no valid envelope fallback, adds a `medium` non-program finding; set `goodhart=null`, never silently `false`, and disclose Goodhart as unreviewed in findings, Dry-Run Results and the terminal block. Exclude it from Required Changes. Resolved rating values and Goodhart fields feed directly into J6 verdict computation — no further source disambiguation in J6.
 
 ## Step J6: Verdict and report
 
@@ -339,12 +364,14 @@ Top-to-bottom; **first match wins**. BLOCKED takes precedence — stop at first 
 | `methodology_rating == "fundamentally-flawed"` (exact string match, J3) | BLOCKED |
 | `scientific_rating == "fundamentally-flawed"` (exact string match, J3) | BLOCKED |
 | `scientific_rating == "timed_out"` (exact match — scientist review did not complete; adversarial review absent → APPROVED not safe) | NEEDS-REVISION |
+| `scientific_rating == "unrecognized"` (exact match — scientist review completed but its rating cannot be read; re-running judge can resolve it, editing program.md cannot) | NEEDS-REVISION — state in the verdict line that the scientific rating is unreadable and that a judge re-run, not a program change, is the remedy |
 | 0 critical AND (high > 0 OR `methodology_rating == "needs-refinement"`) | NEEDS-REVISION |
-| 0 critical AND 0 high AND `methodology_rating` in {`sound`, `timed_out`, null} AND `scientific_rating != "timed_out"` | APPROVED — when methodology was `timed_out` or null, report it as **unreviewed ⏱** in the verdict line and Methodology section; the scientist review still ran, so the missing methodology pass is disclosed rather than forced into NEEDS-REVISION (a retry would time out the same way) |
+| 0 critical AND 0 high AND `methodology_rating` in {`sound`, `timed_out`, null, `unrecognized`} AND `scientific_rating` in {`sound`, `needs-refinement`} | APPROVED — report an `unrecognized` methodology rating as **unreviewed** with its non-program finding; when methodology was `timed_out` or null, report it as **unreviewed ⏱** in the verdict line and Methodology section. Missing structured fields alone do not require a program revision; a scientist review that never completed remains governed by the `timed_out` row above |
+| Otherwise (including missing or unrecognized ratings not explicitly allowed above) | NEEDS-REVISION |
 
 **Verdict matching rules**: all `*_rating` comparisons require exact string match. Reject partial/substring matches — e.g., `timed_out_partial` does NOT match `timed_out`; `flawed` does NOT match `fundamentally-flawed`. Use `==` equality only; never `=~`, `startswith`, or pattern matching.
 
-**Goodhart consolidation rule**: Goodhart's Law findings surface via two paths — J2 C2b (static, produces `critical` finding) and J3 agents (dynamic review, produces `methodology_rating` or `scientific_rating`). Before applying verdict table: if J3 architect or scientist explicitly flags Goodhart's Law as issue AND J2 didn't already flag it `critical`, promote to `critical` finding in J2 list (source: "J3-Goodhart"). Ensures both paths produce BLOCKED for Goodhart issues. Architect/scientist prompts already instruct `fundamentally-flawed` for Goodhart — this consolidation handles edge cases where rating falls below `fundamentally-flawed` but Goodhart still mentioned.
+**Goodhart consolidation rule**: before applying the verdict table, if either dimension's resolved `goodhart == true` AND J2 C2b did not already flag it `critical`, add a `critical` finding to the J2 list (source: "J3-Goodhart"). A `false` or null field never triggers promotion; mentioning Goodhart in prose never triggers promotion. Ratings still apply independently through the table.
 
 **Write full report** (never overwrite — the helper appends a counter suffix when the file exists):
 
@@ -368,7 +395,7 @@ Scope:         [path to program.md]
 Focus:         experimental protocol validation
 Agents:        [resolved per J3 gate — see prose above]
 Outcome:       APPROVED | NEEDS-REVISION | BLOCKED
-Methodology:   sound | needs-refinement | fundamentally-flawed
+Methodology:   sound | needs-refinement | fundamentally-flawed | timed-out (unreviewed) | unrecognized (unreviewed)
 Findings:      [N] critical · [N] high · [N] medium · [N] low
 Protocol gaps: [N]
 Confidence:    [score] — [key gaps]
@@ -389,7 +416,7 @@ Path:          → .reports/research/judge-<branch>-<date>.md
 Unverified checks: <id> — <reason> | none
 
 ### Methodology Review
-**Rating**: sound | needs-refinement | fundamentally-flawed | timed-out
+**Rating**: sound | needs-refinement | fundamentally-flawed | timed-out | unrecognized (unreviewed)
 Read full review: <RUN_DIR>/methodology.md
 
 - Hypothesis clarity: <one-line finding>
@@ -405,7 +432,7 @@ Read full review: <RUN_DIR>/methodology.md
 2. <gap>
 
 ### Scientific Rigor (advisory)
-**Rating**: sound | needs-refinement | fundamentally-flawed | timed-out
+**Rating**: sound | needs-refinement | fundamentally-flawed | timed-out | unrecognized (unreviewed)
 Read full review: `<RUN_DIR>/scientific-review.md`
 
 - Hypothesis falsifiability: <one-line finding>
@@ -416,17 +443,21 @@ Read full review: `<RUN_DIR>/scientific-review.md`
 ### Dry-Run Results
 | Command | Status | Output |
 |---------|--------|--------|
-| metric_cmd | pass/fail | <baseline value or first error line> |
-| guard_cmd | pass/fail | exit 0 or exit N: <first error line> |
+| metric_cmd | pass/fail/not run (<reason>)/unverified (<reason>) | <baseline value or first error line; reason when not run or unverified> |
+| guard_cmd | pass/fail/not run (<reason>)/unverified (<reason>) | exit 0 or exit N: <first error line; reason when not run or unverified> |
+
+Non-program evidence: <snapshot failures, unavailable Docker, missing/malformed rating or goodhart fields with reasons, or none>
+Review fields: <each dimension's rating and goodhart value/source; unreviewed with reason for unresolved fields>
+Snapshot coverage: Git-visible dirty file contents and index, nested repository HEAD/status, and `.experiments/state/**` outside this run dir; other ignored files are not checked.
 
 (Skipped — `--skip-validation`) [if applicable]
 
 ### Codex Review
 <findings from Codex adversarial review, annotated with source: "codex">
-(Skipped — codex plugin not installed) [if unavailable]
+(Skipped — bridge plugin not installed or disabled) [if unavailable]
 
 ### Required Changes
-<ordered list of specific fixes for each non-pass finding, critical first; include exact edits to program.md>
+<ordered list of specific fixes for each non-pass program finding, critical first; include exact edits to program.md; omit the C9b repeat advisory, explicit validation-skip advisories and all non-program unverified findings from Required Changes>
 
 ### Supervisor Decision
 [APPROVED] Experimental protocol is sound. Proceed: `/research:run <path>`
@@ -445,11 +476,12 @@ Read full review: `<RUN_DIR>/scientific-review.md`
 ---
 Judge — <program_title>
 Verdict:      APPROVED | NEEDS-REVISION | BLOCKED
-Methodology:  sound | needs-refinement | fundamentally-flawed
-Scientific:   sound | needs-refinement | fundamentally-flawed | timed-out  (advisory)
+Methodology:  sound | needs-refinement | fundamentally-flawed | timed-out (unreviewed) | unrecognized (unreviewed)
+Scientific:   sound | needs-refinement | fundamentally-flawed | timed-out | unrecognized (unreviewed)  (advisory)
+Review fields: <rating/goodhart value and source per dimension; unreviewed with reason for unresolved fields>
 Findings:     <N> critical · <N> high · <N> medium · <N> low | Unverified checks: <id> — <reason> | none
 Protocol gaps: <N>
-Validation:   metric=<value> guard=pass|fail  (or "skipped — --skip-validation")
+Validation:   metric=<value>|fail|not run (<reason>)|unverified (<reason>); guard=pass|fail|not run (<reason>)|unverified (<reason>); evidence=<non-program reasons or none>
 Codex:        reviewed | skipped
 → saved to .reports/research/judge-<branch>-<date>.md
 ---
@@ -465,9 +497,9 @@ rm -f .temp/state/skill-contract.md  # clear contract — judge verdict complete
 
 <notes>
 
-- Judge read-only — never modifies code, commits, or writes to `.experiments/state/`
+- Judge never edits code or commits; approved J4 commands may write files, so snapshot and report their side effects. Snapshots cover Git-visible dirty files and `.experiments/state/**` outside this run dir; other ignored files are not checked.
 - `.experiments/judge-<timestamp>/` stores methodology agent's full output
-- Validation executes on current machine — use `--skip-validation` for cross-machine workflows
+- Validation uses the declared local or Docker route with per-command user approval — use `--skip-validation` for other cross-machine workflows
 - Verdict deterministic (finding counts + methodology_rating); not inferred from prose
 - Re-run judge after editing `program.md` to confirm fixes
 - Judge run dirs don't write `result.jsonl` — exempt from automated 30-day TTL cleanup (per `.claude/rules/foundry-artifact-lifecycle.md` TTL policy, installed via `/foundry:setup` — requires `foundry` plugin; no `result.jsonl` = cleanup skipped); remove manually (`rm -rf .experiments/judge-*/`) <!-- policy-sibling: plugins/cc_research/skills/fortify/SKILL.md, plugins/cc_research/skills/plan/SKILL.md, plugins/cc_research/skills/retro/SKILL.md, plugins/cc_research/skills/verify/SKILL.md — TTL-exemption note (no result.jsonl → skip 30-day cleanup) restated in each; keep in sync (plugins/CLAUDE.md §Policy Duplication Marker). -->

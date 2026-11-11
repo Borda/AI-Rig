@@ -61,7 +61,7 @@
 //     documented settings only (CONFIG_KEYS: `gh config get oauth_token -h <host>` prints the token from
 //     the keyring), each with an optional `-h/--host`. They print, set, install and run nothing else.
 //   * Their options and values are free — any option, any spelling (`--name=value`, `-L50`, a cluster,
-//     `--`), `--web` and `--watch` included — except two things, found without knowing which option
+//     `--`) — except browser/watch flags (`--web`, `--watch`, `-w`) and two things, found without knowing which option
 //     takes a value, so every word that may be a value is checked:
 //       - another host: `--hostname`; a `-R/--repo` value naming a host other than github.com (a
 //         HOST/OWNER/REPO, a URL or `git@…`, go-gh `repository.Parse`); any word that is an `http(s)`
@@ -541,11 +541,31 @@ function optionValues(args, long, short) {
   return values.filter((value) => value !== undefined);
 }
 
+/** Exclude browser and watch options, consuming values only for modeled long options. */
+function browserOrWatch(args) {
+  const longValues = new Set(["--search", "--jq", "--limit", "--repo", "--json", "--template"]);
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg === "--") break;
+    if (/^--(?:web|watch)(?:=|$)/.test(arg)) return true;
+    if (longValues.has(arg)) {
+      i += 1;
+      continue;
+    }
+    if (!/^-[^-]/.test(arg)) continue;
+    if (arg.includes("w")) return true;
+  }
+  return false;
+}
+
 /**
  * Why the words after a read verb reach another host or print a secret, or null; every other option and value is
  * free. `command` is `<group> <verb>`, whose `repo view` argument is held to the `-R` rule.
  */
 function argumentsProblem(command, args) {
+  if (browserOrWatch(args)) {
+    return "a browser or watch option";
+  }
   if (args.some((arg) => arg === "--hostname" || arg.startsWith("--hostname="))) return "--hostname names a host";
   if (optionValues(args, "--repo", "R").some(repositoryOnOtherHost)) {
     return "-R/--repo naming a host other than github.com";

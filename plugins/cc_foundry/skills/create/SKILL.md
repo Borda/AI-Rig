@@ -3,7 +3,7 @@ name: create
 description: 'Interactive outline co-creation for developer advocacy content — collects format, audience profile, story arc (Problem→Journey→Insight→Action), and voice/tone; detects out-of-scope requests (FAQs, comparison tables); surfaces conflicts between user brief and audience needs. Writes approved outline to .plans/content/<slug>-outline.md for foundry:creator to execute. Use when starting a blog post, Marp slide deck, social thread, talk abstract, lightning talk, animated SVG, or short video (HyperFrames HTML composition; render stays user-run). SKIP: idea generation before an outline exists (use foundry:brainstorm — brainstorm explores directions into a tree; create co-creates the outline, foundry:creator writes the finished artifact).'
 argument-hint: '[topic]'
 disable-model-invocation: true
-allowed-tools: Write, Bash, TaskCreate, TaskUpdate, TaskList, AskUserQuestion, Agent
+allowed-tools: Read, Write, Bash, TaskCreate, TaskUpdate, TaskList, AskUserQuestion, Agent
 effort: medium
 ---
 
@@ -61,7 +61,7 @@ Propose four-beat arc from topic + audience:
 
 > "Your brief suggests [X] but audience profile is [Y] — recommend adjusting [Z]. Proceed as-is or adjust?"
 
-**Arc approval + voice** (single AskUserQuestion call): derive a topic slug (kebab-case, max 5 words, per Step 4), Write the proposed arc (Hook · Journey · Insight · Action) to `.temp/create/<slug>-arc.md` first, keeping each beat to one or two lines. The full arc is printed once, rendered as normal Markdown, as the last reply text before the question call. The question text carries the arc headline, four-beat count and `→ .temp/create/<slug>-arc.md`, then asks the voice choice — option (d) redirects to arc adjustment. Keep the question text to at most 6 plain lines (target 600 characters, hard cap 1,500), with no table, no pipe layout and no code fence. Options carry labels and one-line action descriptions, no `preview`; place the recommended option second without changing labels or answer mapping.
+**Arc approval + voice** (single AskUserQuestion call): derive a topic slug (kebab-case, max 5 words, per Step 4), Read `.temp/create/<slug>-arc.md` first if it exists, then Write the proposed arc (Hook · Journey · Insight · Action) there, keeping each beat to one or two lines. The full arc is printed once, rendered as normal Markdown, as the last reply text before the question call. The question text carries the arc headline, four-beat count and `→ .temp/create/<slug>-arc.md`, then asks the voice choice — option (d) redirects to arc adjustment. Keep the question text to at most 6 plain lines (target 600 characters, hard cap 1,500), with no table, no pipe layout and no code fence. Options carry labels and one-line action descriptions, no `preview`; place the recommended option second without changing labels or answer mapping.
 
 Options:
 
@@ -70,13 +70,22 @@ Options:
 - (c) Approve arc — conversational / approachable, informal
 - (d) Adjust the arc first (free text — describe what to change)
 
-On (d): revise arc, rewrite `.temp/create/<slug>-arc.md`, print the revised arc once immediately before re-invoking this question and refresh its plain summary. After (a)/(b)/(c): restate confirmed arc and voice in two sentences.
+On (d): Read `.temp/create/<slug>-arc.md`, revise arc, rewrite that file, print the revised arc once immediately before re-invoking this question and refresh its plain summary. After (a)/(b)/(c): restate confirmed arc and voice in two sentences.
 
 ## Step 4 — Write outline file
 
 - Derive slug from topic: kebab-case, max 5 words (e.g. `tracing-python-services-otel`).
+
 - Write creates `.plans/content/` if absent — no separate mkdir needed.
-- **Anti-overwrite check before writing outline**: list existing files matching `.plans/content/<slug>-outline*.md` (Bash `ls -1 .plans/content/<slug>-outline*.md 2>/dev/null || true`). If `.plans/content/<slug>-outline.md` already exists, append smallest available counter suffix (`-2`, `-3`, …) per quality-gates.md output routing convention. Resulting path becomes new `<outline-path>`; use in Write call AND in Step 4 gate spawn prompt below. Print resolved path before writing.
+
+- **Anti-overwrite check before writing outline**: substitute the derived slug in the guarded Bash block below, then list existing files matching `.plans/content/<slug>-outline*.md`. If `.plans/content/<slug>-outline.md` already exists, append smallest available counter suffix (`-2`, `-3`, …) per quality-gates.md output routing convention. Resulting path becomes new `<outline-path>`; use in Write call AND in Step 4 gate spawn prompt below. Print resolved path before writing.
+
+  ```bash
+  SLUG='<slug>'
+  case "$SLUG" in *'<'*|*'>'*|""|*[!a-z0-9-]*) echo "! BLOCKED — slug not substituted or invalid"; exit 1;; esac
+  ls -1 .plans/content/"$SLUG"-outline*.md 2>/dev/null || true
+  ```
+
 - Write `<outline-path>` with this structure:
 
 ```md
@@ -118,8 +127,18 @@ created: YYYY-MM-DD
 
   - text formats (blog post, Marp deck, social thread, talk abstract, lightning talk) → `md`: `.plans/content/<slug>.md`
   - animated SVG → `svg`: `.plans/content/<slug>.svg`
-  - short video → project directory `.plans/content/<slug>-video/` (creator writes `index.html` + `compositions/*.html` inside). Skill resolves the anti-overwrite counter for the directory before scaffolding (`ls -d .plans/content/<slug>-video*/ 2>/dev/null || true`; taken → smallest free `<slug>-video-2/`, `-3/`, …); resolved path = `<video-dir>`.
+  - short video → project directory `.plans/content/<slug>-video/` (creator writes `index.html` + `compositions/*.html` inside). Skill resolves the anti-overwrite counter using the guarded listing below before scaffolding (taken → smallest free `<slug>-video-2/`, `-3/`, …); resolved path = `<video-dir>`.
   - A future format with a different extension must add its own mapping here.
+
+- **Short video directory listing**: substitute the derived slug before running:
+
+  ```bash
+  SLUG='<slug>'
+  case "$SLUG" in *'<'*|*'>'*|""|*[!a-z0-9-]*) echo "! BLOCKED — slug not substituted or invalid"; exit 1;; esac
+  ls -d .plans/content/"$SLUG"-video*/ 2>/dev/null || true
+  ```
+
+- **Short video prerequisites**: Node ≥22 with npm and npx installed by the user, plus network access to the npm registry and scaffold dependency sources. HyperFrames uses deliberate latest-tracking (`npx hyperframes@latest init`) so new projects receive the current scaffold; repeat runs may use a different CLI version. Before the generation gate, disclose that generation will download and execute the latest npm package and install project dependencies under `<video-dir>`; include this effect in option (a)'s description. If network access is unavailable, retain the outline and print the resume commands; never retry with broader permissions. Existing project scripts retain the CLI version selected at scaffold time.
 
 - **Short video prerequisite probe** (short video only, main thread, before the generation gate; read-only), one block each:
 
@@ -128,26 +147,37 @@ created: YYYY-MM-DD
   ```
 
   ```bash
+  npm --version  # timeout: 5000
+  ```
+
+  ```bash
+  npx --version  # timeout: 5000
+  ```
+
+  ```bash
   ffmpeg -version  # timeout: 5000
   ```
 
   - Node missing or major < 22 → print `**! MISSING — short video needs Node ≥22**`, keep the outline, print the resume lines below, end at (b) **Stop here** — no question asked.
+  - npm or npx missing → print `**! MISSING — short video needs npm and npx**`, keep the outline, print the resume lines below, end at (b) **Stop here** — no question asked; the user installs prerequisites.
   - ffmpeg missing → warn only (`⚠ ffmpeg missing — needed later for the user-run render`); authoring proceeds.
-  - **Resume lines** (Node missing, or user picks (b)): after installing prerequisites, run `/foundry:create`'s scaffold block with `<video-dir>` + resolution, then `@foundry:creator <outline-path>` — creator defaults to `<video-dir>` when it holds a scaffolded `index.html`. Print with values substituted.
+  - **Resume lines** (a prerequisite missing, or user picks (b)): print a standalone fenced Bash block containing the scaffold commands below, wrapped in a subshell `( ... )`, including the `npx hyperframes@latest init` line, telemetry opt-out and vendor-instruction renames, with `<video-dir>` and resolution substituted with their resolved values. Tell the user the subshell keeps a failed command from exiting their interactive shell; run that block after installing prerequisites, then print `@foundry:creator <outline-path>` with the actual outline path substituted — creator defaults to `<video-dir>` when it holds a scaffolded `index.html`. Do not execute the resume commands.
 
 - **Short video scaffold** — runs only after the user picks (a) at the generation gate (never before consent), as its own response; on success, spawn creator in the next response; non-zero exit → stop, report, keep outline, no spawn. Substitute `<video-dir>` and the outline's preset word. Telemetry off via env opt-out; `--skip-skills` (never install skills, never sign in). Vendor `CLAUDE.md`/`AGENTS.md` that `init` copies into the project are renamed to non-instruction `.txt` files so no agent loads them as instructions:
 
   ```bash
+  (
   VIDEO_DIR='<video-dir>'; RES='<resolution>'
   case "$VIDEO_DIR" in *'<'*'>'*|"") echo "! BLOCKED — <video-dir> not substituted"; exit 1;; .plans/content/*-video*) ;; *) echo "! BLOCKED — video dir must be under .plans/content/"; exit 1;; esac
   case "$RES" in landscape|portrait|square) ;; *) echo "! BLOCKED — resolution must be landscape|portrait|square"; exit 1;; esac
-  HYPERFRAMES_NO_TELEMETRY=1 DO_NOT_TRACK=1 npx hyperframes init "$VIDEO_DIR" --skip-skills --non-interactive --resolution "$RES" || exit 1  # timeout: 180000
+  HYPERFRAMES_NO_TELEMETRY=1 DO_NOT_TRACK=1 npx hyperframes@latest init "$VIDEO_DIR" --skip-skills --non-interactive --resolution "$RES" || exit 1  # timeout: 180000
   for F in CLAUDE.md AGENTS.md; do [ -f "$VIDEO_DIR/$F" ] && mv "$VIDEO_DIR/$F" "$VIDEO_DIR/HYPERFRAMES-$F.txt"; done; true
+  )
   ```
 
 > Creator spawn prompt must require an envelope even on exhaustion — `partial: true` plus what was finished.
 
-- End with `AskUserQuestion` gate, two options: (a) **Generate the full artifact now** — spawn `foundry:creator` via `Agent(subagent_type='foundry:creator', name='creator-<slug>', description='write <format> artifact', prompt='Read <outline-path> and generate the complete <format> artifact. Output file path: <output-path>. Return ONLY a JSON envelope: status, file (path actually written, counter suffix included), partial (true on exhaustion, plus what was finished), confidence (your Confidence score).')` where `<outline-path>` is resolved path from anti-overwrite step above, and `<slug>`, `<format>`, `<output-path>` substituted from generated outline (`<output-path>` per the output path mapping above — file, or `<video-dir>` for short video) before the call — never pass literal angle-bracket placeholders to spawned agent. Short video: append to the prompt "Project scaffolded by `hyperframes init` at <video-dir>; Read its index.html first, keep its head/script tags and take width/height from it. Envelope also carries `assets`: list of {dest: assets/<name>, src: <source path>} for every media file the composition references." (b) **Stop here** — I'll invoke `foundry:creator` manually when ready (short video: print the resume lines above).
+- End with `AskUserQuestion` gate, two options: (a) **Generate the full artifact now** — for short video, download and execute the latest npm package and install project dependencies under `<video-dir>`, then spawn `foundry:creator` via `Agent(subagent_type='foundry:creator', name='creator-<slug>', description='write <format> artifact', prompt='Read <outline-path> and generate the complete <format> artifact. Output file path: <output-path>. Return ONLY a JSON envelope: status, file (path actually written, counter suffix included), partial (true on exhaustion, plus what was finished), confidence (your Confidence score).')` where `<outline-path>` is resolved path from anti-overwrite step above, and `<slug>`, `<format>`, `<output-path>` substituted from generated outline (`<output-path>` per the output path mapping above — file, or `<video-dir>` for short video) before the call — never pass literal angle-bracket placeholders to spawned agent. Short video: append to the prompt "Project scaffolded by `hyperframes init` at <video-dir>; Read its index.html first, keep its head/script tags and take width/height from it. Envelope also carries `assets`: list of {dest: assets/<name>, src: <source path>} for every media file the composition references." (b) **Stop here** — I'll invoke `foundry:creator` manually when ready (short video: print the resume lines above).
 
   **Substitution verification before issuing Agent call (mandatory)**:
 
@@ -157,7 +187,7 @@ created: YYYY-MM-DD
 
   Short video exception: on (a), run the scaffold block first as its own response; the Agent() call goes in the next response, only after the scaffold succeeded.
 
-  If user selects (a), issue Agent() call in same response turn AFTER verification above passes. Do not narrate intent — call the tool. Same response: Write `.temp/create/agent-watch-creator.tsv` = `creator-<slug>\t-\t900` (`_shared/agent-spawn-protocol.md` §Deadlines) — envelope-only row: creator's anti-overwrite may write `<slug>-2.md`, so a fixed deliverable path could match a stale prior artifact and mark `done` at once. End the turn — never `ScheduleWakeup`, `ListAgents`, `Monitor`, a filler call, a "waiting" line, or a sleep. On its notification run `python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/agent_watch.py" --state-dir ".temp/create"` once; notification carried the envelope → done, report its `file` path; no envelope → report the artifact as ⏱ `timed_out`.
+  If user selects (a), issue Agent() call in same response turn AFTER verification above passes. Do not narrate intent — call the tool. Same response: Read `.temp/create/agent-watch-creator.tsv` first if it exists, then Write it = `creator-<slug>\t-\t900` (`_shared/agent-spawn-protocol.md` §Deadlines) — envelope-only row: creator's anti-overwrite may write `<slug>-2.md`, so a fixed deliverable path could match a stale prior artifact and mark `done` at once. End the turn — never `ScheduleWakeup`, `ListAgents`, `Monitor`, a filler call, a "waiting" line, or a sleep. On its notification run `python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/agent_watch.py" --state-dir ".temp/create"` once; notification carried the envelope → done, report its `file` path; no envelope → report the artifact as ⏱ `timed_out`.
 
 - After a `done` envelope, print user-run next steps for the format — never run them:
 

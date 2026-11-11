@@ -104,7 +104,7 @@ cat "$_RESEARCH_SHARED/unsupported-flag-protocol.md"
    fortify: out of scope — expects a completed /research:run campaign (run-id or program.md). Route: /research:run → /research:judge → /research:fortify
    ```
    Never review, correct, summarise or comment on the out-of-scope input's content. Return zero findings and no edits or incidental review.
-2. Explicit `<run-id>` argument → read `$STATE_DIR_BASE/<run-id>/state.json`
+2. Explicit `<run-id>` argument → read `$STATE_DIR_BASE/<run-id>/state.json`; require `status: completed` or `status: goal-achieved`
 3. Explicit `<program.md>` argument → scan `$STATE_DIR_BASE/*/state.json` for matching `program_file`, pick latest with `status: completed` or `status: goal-achieved`
 4. No argument → scan `$STATE_DIR_BASE/`, pick latest with `status: completed` or `status: goal-achieved`
 5. None found → stop:
@@ -150,6 +150,11 @@ fi
 [ -z "$RUN_ID" ] && { echo "fortify: No completed run found. Run /research:run first."; exit 1; }
 echo "$RUN_ID" > "${TMPDIR:-/tmp}/fortify-run-id-${CSID}"  # for later blocks (Check 41)
 STATE_JSON="$STATE_DIR_BASE/$RUN_ID/state.json"
+_SOURCE_STATUS=$(jq -r '.status // empty' "$STATE_JSON" 2>/dev/null)
+case "$_SOURCE_STATUS" in completed|goal-achieved) ;; *) echo "fortify: run $RUN_ID status '${_SOURCE_STATUS:-missing}' — fortify needs a completed or goal-achieved campaign. Finish it with /research:run first."; exit 1;; esac
+_COMPUTE=$(jq -r '.config.compute // "local"' "$STATE_JSON" 2>/dev/null)
+IFS= read -r _SKIP_RUN < "${TMPDIR:-/tmp}/fortify-args-skip-run-${CSID}" 2>/dev/null || _SKIP_RUN=false
+[ "$_COMPUTE" = local ] || [ "$_SKIP_RUN" = true ] || { echo "! UNSUPPORTED — fortify supports local compute only (the source campaign used compute=$_COMPUTE)"; exit 1; }
 METRIC_CMD="${METRIC_CMD:-$(jq -r '.config.metric_cmd // empty' "$STATE_JSON" 2>/dev/null)}"
 GUARD_CMD="${GUARD_CMD:-$(jq -r '.config.guard_cmd // empty' "$STATE_JSON" 2>/dev/null)}"
 if [ -z "$METRIC_CMD" ] || [ -z "$GUARD_CMD" ]; then
@@ -245,7 +250,7 @@ Pass the printed `$F2_PROMPT` text (fully expanded) as the `prompt=` argument to
 
 **Spawn note**: the F2 scientist runs in the background — spawn, then end the turn; no filler call, no "waiting" line, no sleep (CLAUDE.md §6). Timeout is handled post-hoc — on the completion notification, check `$FORTIFY_DIR/ablation-candidates.jsonl`; if missing or empty, stop with `"fortify: Scientist timed out. Check $FORTIFY_DIR/ for partial output."` and surface with ⏱.
 
-Read `ablation-candidates.jsonl` after scientist completes. If `--max-ablations <M>` specified and component count + 1 (for full variant) exceeds M: sort by `expected_importance` (HIGH first, then MEDIUM, then LOW), keep top M-1 components plus always include `full` sanity-check variant. **Log dropped components**: list each dropped component by `component_id` and `expected_importance` in the Step F7 report's Skipped Variants section and the Step F8 terminal summary (text written before a tool call can arrive as an empty progress update) so users can verify the scientist's importance estimates before proceeding. Include this list in the F7 report under `## Dropped Variants`.
+Read `ablation-candidates.jsonl` after scientist completes. If `--max-ablations <M>` specified and component count + 1 (for full variant) exceeds M: sort by `expected_importance` (HIGH first, then MEDIUM, then LOW), keep top M-1 components plus always include `full` sanity-check variant. **Log dropped components**: list each dropped component by `component_id` and `expected_importance` in the Step F7 report's Skipped Variants section and the Step F8 terminal summary (text written before a tool call can arrive as an empty progress update) so users can verify the scientist's importance estimates before proceeding.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -327,18 +332,18 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/fortify_next_variant.py" 
 
 ```bash
 # inline: `git` stays first token (allow-list match); CSID inlined, same reason (Check 41)
-git worktree add "$(cat "${TMPDIR:-/tmp}/fortify-dir-${CLAUDE_CODE_SESSION_ID:-$PPID}" 2>/dev/null)/worktrees/$(cat "${TMPDIR:-/tmp}/fortify-variant-name-${CLAUDE_CODE_SESSION_ID:-$PPID}" 2>/dev/null)" "$(cat "${TMPDIR:-/tmp}/fortify-best-commit-${CLAUDE_CODE_SESSION_ID:-$PPID}" 2>/dev/null)"  # timeout: 15000
+git worktree add "$(IFS= read -r _FDIR < "${TMPDIR:-/tmp}/fortify-dir-${CLAUDE_CODE_SESSION_ID:-$PPID}" && printf '%s' "$_FDIR")/worktrees/$(IFS= read -r _VNAME < "${TMPDIR:-/tmp}/fortify-variant-name-${CLAUDE_CODE_SESSION_ID:-$PPID}" && printf '%s' "$_VNAME")" "$(IFS= read -r _BEST < "${TMPDIR:-/tmp}/fortify-best-commit-${CLAUDE_CODE_SESSION_ID:-$PPID}" && printf '%s' "$_BEST")"  # timeout: 15000
 ```
 
 (Cleanup registration already happened in 4a-init — the path was appended to the accumulator BEFORE creation, so an interrupt right after `worktree add` is still covered.)
 
-**No `trap` here — deliberate.** A `trap ... EXIT` registered in this fence fires when *this block* ends, moments after `git worktree add` created the worktree: it would delete the worktree the loop is about to use, 4b's `cd` would fail, and 4c's `git revert` would then execute in the **main working tree** — the exact outcome the worktree-isolation invariant exists to prevent. Trap disposition is per-process and cannot outlive its own Bash call, so it can neither cover a later interrupt nor survive to the next block. Cleanup is therefore explicit: 4f per variant (happy path), plus the post-loop sweep and `git worktree prune` below (interrupted or skipped variants). The accumulator is pre-created via `mktemp` before the loop; `mktemp` ensures collision-free naming across concurrent invocations.
+**No `trap` here — deliberate.** A `trap ... EXIT` registered in this fence fires when *this block* ends, moments after `git worktree add` created the worktree: it would delete the worktree the loop is about to use, 4b's `cd` would fail, and 4c's `git revert` would then execute in the **main working tree** — the exact outcome the worktree-isolation invariant exists to prevent. Trap disposition is per-process and cannot outlive its own Bash call, so it can neither cover a later interrupt nor survive to the next block. Cleanup is therefore explicit: 4f per variant (happy path), plus the post-loop sweep and `git worktree prune` below (interrupted or skipped variants). The accumulator is pre-created at the fixed name `worktree-paths.txt` inside this run's directory before the loop.
 
 **4b. Navigate into worktree** (two separate Bash calls — cd first, then command; CWD persists between calls):
 
 ```bash
 # inline: `cd` stays first token; CSID inlined, same reason (Check 41)
-cd "$(cat "${TMPDIR:-/tmp}/fortify-dir-${CLAUDE_CODE_SESSION_ID:-$PPID}" 2>/dev/null)/worktrees/$(cat "${TMPDIR:-/tmp}/fortify-variant-name-${CLAUDE_CODE_SESSION_ID:-$PPID}" 2>/dev/null)"  # timeout: 3000
+cd "$(IFS= read -r _FDIR < "${TMPDIR:-/tmp}/fortify-dir-${CLAUDE_CODE_SESSION_ID:-$PPID}" && printf '%s' "$_FDIR")/worktrees/$(IFS= read -r _VNAME < "${TMPDIR:-/tmp}/fortify-variant-name-${CLAUDE_CODE_SESSION_ID:-$PPID}" && printf '%s' "$_VNAME")"  # timeout: 3000
 ```
 
 **4b-assert. Confirm the `cd` actually landed inside a worktree** — run before 4c, in its own Bash call so CWD carries over:
@@ -370,16 +375,19 @@ For `no-<component>` variant: revert component's commits.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r ORIG_DIR < "${TMPDIR:-/tmp}/fortify-orig-dir-${CSID}" 2>/dev/null || ORIG_DIR=""
 IFS= read -r FORTIFY_DIR < "${TMPDIR:-/tmp}/fortify-dir-${CSID}" 2>/dev/null || FORTIFY_DIR=""  # reload (Check 41)
 IFS= read -r VARIANT_NAME < "${TMPDIR:-/tmp}/fortify-variant-name-${CSID}" 2>/dev/null || VARIANT_NAME=""  # reload (Check 41)
+[ -n "$ORIG_DIR" ] && [ -n "$FORTIFY_DIR" ] || { echo "! BLOCKED — orig-dir/fortify-dir sentinel missing; cannot read revert commits"; exit 1; }
+case "$FORTIFY_DIR" in /*) ;; *) FORTIFY_DIR="$ORIG_DIR/$FORTIFY_DIR";; esac
 # full has nothing to revert; empty the sorted sentinel so a stray Bash call 2 cannot replay the previous variant's SHAs
 case "$VARIANT_NAME" in variant-full) : > "${TMPDIR:-/tmp}/fortify-revert-sorted-${CSID}"; echo "full variant — no revert; skip Bash call 2, run 4d"; exit 0;; esac
 # mirror normalise_variant_name (spaces→hyphens, lowercase, strip `variant-`); non-string name never matches
-REVERT_COMMITS_RAW=$(jq -r --arg vn "$VARIANT_NAME" 'def n: if type=="string" then gsub(" ";"-")|ascii_downcase|ltrimstr("variant-") else null end; ($vn|n) as $k | select($k != "" and (.variant_name|n)==$k) | .revert_commits[]' "$FORTIFY_DIR/variants.jsonl" 2>/dev/null | tr '\n' ' ')  # timeout: 5000
+REVERT_COMMITS_RAW=$(jq -r --arg vn "$VARIANT_NAME" 'def n: if type=="string" then gsub(" ";"-")|ascii_downcase|ltrimstr("variant-") else null end; ($vn|n) as $k | select($k != "" and (.variant_name|n)==$k) | .revert_commits[]' "$FORTIFY_DIR/variants.jsonl" 2>/dev/null)  # timeout: 5000
 # no shell loop — emit skip token so 4d/4e are genuinely bypassed
 [ -z "$REVERT_COMMITS_RAW" ] && { echo "⚠ No revert_commits for $VARIANT_NAME — skipping"; echo '{"variant":"'$VARIANT_NAME'","status":"revert-missing"}' >> "$FORTIFY_DIR/results.jsonl"; echo "FORTIFY_SKIP_VARIANT=1"; exit 0; }
 # topo-order newest-first, independent of input order; one unresolvable SHA fails the whole call → empty → skip
-REVERT_COMMITS_SORTED=$(git rev-list --topo-order --no-walk $REVERT_COMMITS_RAW 2>/dev/null | tr '\n' ' ')
+REVERT_COMMITS_SORTED=$(printf '%s\n' "$REVERT_COMMITS_RAW" | git rev-list --topo-order --no-walk --stdin 2>/dev/null | tr '\n' ' ')
 [ -z "$REVERT_COMMITS_SORTED" ] && { echo "⚠ revert_commits do not resolve for $VARIANT_NAME — skipping"; echo '{"variant":"'$VARIANT_NAME'","status":"revert-missing"}' >> "$FORTIFY_DIR/results.jsonl"; echo "FORTIFY_SKIP_VARIANT=1"; exit 0; }
 echo "$REVERT_COMMITS_SORTED" > "${TMPDIR:-/tmp}/fortify-revert-sorted-${CSID}"  # for git-revert (Check 41)
 ```
@@ -388,7 +396,7 @@ echo "$REVERT_COMMITS_SORTED" > "${TMPDIR:-/tmp}/fortify-revert-sorted-${CSID}" 
 
 ```bash
 # inline, unquoted (multi-SHA word-split); `git` stays first token (Check 41)
-git revert $(cat "${TMPDIR:-/tmp}/fortify-revert-sorted-${CLAUDE_CODE_SESSION_ID:-$PPID}" 2>/dev/null) --no-edit  # timeout: 15000
+git revert $(IFS= read -r _REVERT < "${TMPDIR:-/tmp}/fortify-revert-sorted-${CLAUDE_CODE_SESSION_ID:-$PPID}" && printf '%s' "$_REVERT") --no-edit  # timeout: 15000
 ```
 
 `FORTIFY_SKIP_VARIANT=1` printed by the block above → the worktree exists and must still be removed: jump to 4f (cleanup), skipping 4d/4e. The block already wrote this variant's `results.jsonl` line, so 4g has nothing to add — but still run 4g-advance, or the loop re-runs this variant forever.
@@ -397,11 +405,31 @@ If revert produces merge conflicts: Write `{"variant":"<name>","status":"revert-
 
 **4d. Run metric_cmd in worktree:**
 
+Before measuring, check only that project scripts and modules executed by `metric_cmd` resolve inside the variant worktree, including any absolute code paths or internal directory changes that select code. Absolute data paths into the original repository are allowed and must never trigger this stop. Use a variant-relative command through the existing `METRIC_CMD` override when needed; if the executed project code cannot be established as belonging to the variant worktree, stop with `! BLOCKED — metric source checkout unverified`. Baseline equality alone cannot establish this. Every call below checks the variant's physical cwd and HEAD, saves a checkout snapshot before execution, and verifies HEAD again afterward; 4d-record binds that evidence to the numeric sample. Any `! BLOCKED` from 4d or 4d-record halts measurement and ranking; run 4f cleanup and report the blocker.
+
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r ORIG_DIR < "${TMPDIR:-/tmp}/fortify-orig-dir-${CSID}" 2>/dev/null || ORIG_DIR=""
+IFS= read -r _FDIR < "${TMPDIR:-/tmp}/fortify-dir-${CSID}" 2>/dev/null || _FDIR=""
+IFS= read -r VARIANT_NAME < "${TMPDIR:-/tmp}/fortify-variant-name-${CSID}" 2>/dev/null || VARIANT_NAME=""
+[ -n "$ORIG_DIR" ] && [ -n "$_FDIR" ] && [ -n "$VARIANT_NAME" ] || { echo "! BLOCKED — metric checkout sentinels missing"; exit 1; }
+case "$_FDIR" in /*) ;; *) _FDIR="$ORIG_DIR/$_FDIR";; esac
+: > "$_FDIR/metric-checkout.json" || exit 1
+: > "$_FDIR/metric-checkout-verified.json" || exit 1
+_CHECKOUT_CWD=$(realpath "$_FDIR/worktrees/$VARIANT_NAME" 2>/dev/null)
+[ -n "$_CHECKOUT_CWD" ] && [ "$(pwd -P)" = "$_CHECKOUT_CWD" ] || { echo "! BLOCKED — metric cwd does not match variant checkout"; exit 1; }
+_CHECKOUT_HEAD=$(git rev-parse --verify HEAD) || exit 1
+IFS= read -r _BEST < "${TMPDIR:-/tmp}/fortify-best-commit-${CSID}" 2>/dev/null || _BEST=""
+IFS= read -r _REVERTS < "${TMPDIR:-/tmp}/fortify-revert-sorted-${CSID}" 2>/dev/null || _REVERTS=""
+case "$VARIANT_NAME" in variant-full) _REVERTS="";; *) [ -n "$_REVERTS" ] || { echo "! BLOCKED — variant checkout is not best_commit plus its reverts"; exit 1; };; esac
+[ -n "$_BEST" ] && git merge-base --is-ancestor "$_BEST" HEAD && [ "$(git rev-list --count "$_BEST..HEAD")" -eq "$(printf '%s' "$_REVERTS" | wc -w)" ] || { echo "! BLOCKED — variant checkout is not best_commit plus its reverts"; exit 1; }
+jq -cn --arg variant "$VARIANT_NAME" --arg cwd "$_CHECKOUT_CWD" --arg head "$_CHECKOUT_HEAD" '{variant:$variant,cwd:$cwd,head:$head}' > "$_FDIR/metric-checkout.json" || exit 1
+jq -c . "$_FDIR/metric-checkout.json" >> "$_FDIR/checkouts.jsonl" || exit 1
 IFS= read -r METRIC_CMD < "${TMPDIR:-/tmp}/fortify-metric-cmd-${CSID}" 2>/dev/null || METRIC_CMD=""  # reload (Check 41)
 [ -z "$METRIC_CMD" ] && { echo "fortify: BLOCKED — metric_cmd not initialized in F1"; exit 1; }
 bash -c "$METRIC_CMD"; METRIC_EXIT=$?  # timeout: 360000 (state.json .config.metric_cmd) — bash -c parses operators/pipes; bare expansion only word-splits, so `true && false` would exit 0
+[ "$(pwd -P)" = "$_CHECKOUT_CWD" ] && [ "$(git rev-parse --verify HEAD)" = "$_CHECKOUT_HEAD" ] || { echo "! BLOCKED — metric changed variant checkout"; exit 1; }
+jq --argjson exit "$METRIC_EXIT" '. + {exit:$exit,verified:true}' "$_FDIR/metric-checkout.json" > "$_FDIR/metric-checkout-verified.json" || exit 1
 echo "METRIC_EXIT=$METRIC_EXIT"
 exit "$METRIC_EXIT"  # a trailing assignment would make the block exit 0 and hide the status
 ```
@@ -425,7 +453,13 @@ IFS= read -r _RUN_ID < "${TMPDIR:-/tmp}/fortify-run-id-${CSID}" 2>/dev/null || _
 # CWD is the variant worktree (4b); relative run-dir and state paths resolve from ORIG_DIR
 case "$_FDIR" in /*) ;; *) _FDIR="$ORIG_DIR/$_FDIR";; esac
 _STATE_BASE="${STATE_DIR_BASE:-.experiments/state}"; case "$_STATE_BASE" in /*) ;; *) _STATE_BASE="$ORIG_DIR/$_STATE_BASE";; esac
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/append_ledger.py" "$_FDIR/metric-runs.jsonl"  # timeout: 5000
+jq -e -s --arg variant "$VARIANT_NAME" --arg cwd "$(pwd -P)" --arg head "$(git rev-parse --verify HEAD)" '
+  if length==2 and .[0].variant==$variant and .[1].variant==$variant and .[1].cwd==$cwd and .[1].head==$head and .[1].verified==true and .[0].exit==.[1].exit
+  then .[0] + {checkout:.[1]} else error("metric checkout evidence missing or mismatched") end
+' "$_FDIR/metric-runs.jsonl.rec" "$_FDIR/metric-checkout-verified.json" > "$_FDIR/metric-run-bound.json" || { echo "! BLOCKED — metric checkout evidence missing or mismatched"; exit 1; }
+jq -c . "$_FDIR/metric-run-bound.json" > "$_FDIR/metric-runs.jsonl.rec" || exit 1
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/append_ledger.py" "$_FDIR/metric-runs.jsonl" || exit 1  # timeout: 5000
+: > "$_FDIR/metric-checkout-verified.json" || exit 1
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/fortify_metric_stats.py" status "$_FDIR" --variant "$VARIANT_NAME" --runs "$FORTIFY_RUNS" --state-json "$_STATE_BASE/$_RUN_ID/state.json" --divergence-pct "${SANITY_DIVERGENCE_PCT:-2.0}"  # timeout: 5000 — full variant: divergence gate vs best_metric
 ```
 
@@ -465,7 +499,7 @@ cd "$(grep -m1 . "${TMPDIR:-/tmp}/fortify-orig-dir-${CLAUDE_CODE_SESSION_ID:-$PP
 
 ```bash
 # inline: `git` stays first token; CSID inlined, same reason (Check 41)
-git worktree remove --force "$(cat "${TMPDIR:-/tmp}/fortify-dir-${CLAUDE_CODE_SESSION_ID:-$PPID}" 2>/dev/null)/worktrees/$(cat "${TMPDIR:-/tmp}/fortify-variant-name-${CLAUDE_CODE_SESSION_ID:-$PPID}" 2>/dev/null)"  # timeout: 15000
+git worktree remove --force "$(IFS= read -r _FDIR < "${TMPDIR:-/tmp}/fortify-dir-${CLAUDE_CODE_SESSION_ID:-$PPID}" && printf '%s' "$_FDIR")/worktrees/$(IFS= read -r _VNAME < "${TMPDIR:-/tmp}/fortify-variant-name-${CLAUDE_CODE_SESSION_ID:-$PPID}" && printf '%s' "$_VNAME")"  # timeout: 15000
 ```
 
 > **These two stay separate, and the cursor advance stays out of both — deliberate.** Chaining `git worktree remove --force` behind the `cd` puts navigation and a command in one call (`claude-config.md` §Directory Navigation Commands) and lets a `cd` allow-rule carry a force-remove. Advancing the cursor here would move it *before* 4g writes the result: an interrupt in that window leaves a variant with an advanced cursor and no `results.jsonl` line, so the resume guard has nothing to match on and 4a-init skips the ablation entirely — a silently dropped variant, which is worse than the re-run that the un-advanced cursor produces today.
@@ -481,7 +515,9 @@ git worktree remove --force "$(cat "${TMPDIR:-/tmp}/fortify-dir-${CLAUDE_CODE_SE
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _FDIR < "${TMPDIR:-/tmp}/fortify-dir-${CSID}" 2>/dev/null || _FDIR=""
-[ -n "$_FDIR" ] || { echo "! fortify: BLOCKED — FORTIFY_DIR sentinel missing; results.jsonl.rec left in place"; exit 1; }
+IFS= read -r ORIG_DIR < "${TMPDIR:-/tmp}/fortify-orig-dir-${CSID}" 2>/dev/null || ORIG_DIR=""
+[ -n "$_FDIR" ] && [ -n "$ORIG_DIR" ] || { echo "! fortify: BLOCKED — orig-dir/fortify-dir sentinel missing; results.jsonl.rec left in place"; exit 1; }
+case "$_FDIR" in /*) ;; *) _FDIR="$ORIG_DIR/$_FDIR";; esac
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/append_ledger.py" "$_FDIR/results.jsonl"  # timeout: 5000
 ```
 
@@ -497,7 +533,7 @@ echo "$((_VIDX + 1))" > "${TMPDIR:-/tmp}/fortify-variant-idx-${CSID}"
 
 Then return to 4a-init.
 
-**Full-first gate** — `full` is `variants.jsonl` line 1, so its 4g record exists before any ablation ran. A worktree holds tracked files only: gitignored inputs (data, venv, `.env`) are absent, and absolute paths in `metric_cmd` measure the main tree instead. The `full` mean over its N runs must reproduce `best_metric` within `max(SANITY_DIVERGENCE_PCT, 2σ_full)` — the 2σ term (not σ/√N: `best_metric` is one draw) keeps a legitimately noisy metric from aborting. 4d-record decides it in code: `FORTIFY_FULL_DIVERGED=1` → record `diverged`. Any full status but `completed` → print `⚠ fortify: full variant <status> — worktree does not reproduce the source run`, halt the loop at once and continue at the post-loop step (its guard reports `full-variant-failed`); no ablation compute is spent on an unreproduced baseline. 4a-init enforces the same gate if the loop is resumed past line 1.
+**Full-first gate** — `full` is `variants.jsonl` line 1, so its 4g record exists before any ablation ran. A worktree holds tracked files only: gitignored inputs (data, venv, `.env`) are absent. Absolute paths in `metric_cmd` can still measure the main tree even when the baseline matches; 4d's source inspection and per-run checkout evidence are separate requirements. The `full` mean over its N runs must reproduce `best_metric` within `max(SANITY_DIVERGENCE_PCT, 2σ_full)` — the 2σ term (not σ/√N: `best_metric` is one draw) keeps a legitimately noisy metric from aborting. 4d-record decides it in code: `FORTIFY_FULL_DIVERGED=1` → record `diverged`. Any full status but `completed` → print `⚠ fortify: full variant <status> — worktree does not reproduce the source run`, halt the loop at once and continue at the post-loop step (its guard reports `full-variant-failed`); no ablation compute is spent on an unreproduced baseline. 4a-init enforces the same gate if the loop is resumed past line 1.
 
 After all variants processed (4a-init printed `FORTIFY_LOOP_DONE=1`) — sweep any worktree the per-variant 4f missed, then prune:
 
@@ -552,6 +588,10 @@ IFS= read -r _FDIR < "${TMPDIR:-/tmp}/fortify-dir-${CSID}" 2>/dev/null || _FDIR=
 IFS= read -r FORTIFY_RUNS < "${TMPDIR:-/tmp}/fortify-runs-${CSID}" 2>/dev/null || FORTIFY_RUNS=3
 IFS= read -r PROGRAM_FILE < "${TMPDIR:-/tmp}/fortify-program-file-${CSID}" 2>/dev/null || PROGRAM_FILE=""
 [ -n "$_FDIR" ] || { echo "! fortify: BLOCKED — FORTIFY_DIR sentinel missing; cannot rank ablations"; exit 1; }
+_WORKTREE_ROOT="$(realpath "$_FDIR")/worktrees/"
+jq -e -s --arg root "$_WORKTREE_ROOT" --slurpfile checkouts "$_FDIR/checkouts.jsonl" '
+  length>0 and all(.[]; (.) as $run | .checkout.verified==true and .checkout.variant==.variant and .checkout.cwd==($root+.variant) and .checkout.exit==.exit and any($checkouts[]; .==($run.checkout|del(.exit,.verified))))
+' "$_FDIR/metric-runs.jsonl" >/dev/null || { echo "! BLOCKED — metric checkout evidence missing or mismatched; cannot rank ablations"; exit 1; }
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/fortify_metric_stats.py" rank "$_FDIR" --runs "$FORTIFY_RUNS" --program-file "$PROGRAM_FILE" --noise-floor-pct "${NOISE_FLOOR_PCT:-2.0}"  # timeout: 5000
 ```
 
@@ -717,7 +757,7 @@ Metric (mean ± σ over N runs), Guard, Status from `results.jsonl`; Delta from 
 | no-component2 | ...    | n/a   | revert-conflict  | n/a             |
 
 ### Skipped Variants
-<list any revert-conflict, metric-failed, or timeout variants with reason>
+<list any revert-conflict, metric-failed, or timeout variants with reason; include dropped components with component_id and expected_importance>
 
 ### Reviewer Q&A
 <section from F6 if --venue was specified; otherwise omit this section entirely>
@@ -795,13 +835,13 @@ See the domain table entry for `/research:fortify` for the full ground-truth che
 - **Main repo never modified** — all ablation work in worktrees. Main working tree stays clean.
 - **Sequential execution** — variants run one at a time. Parallel worktrees would require separate detached HEADs and complicate cleanup.
 - **Repeated runs cost compute** — each variant's metric runs N times (`--runs`, default 3, 1–10), so a study costs about `(components + 1) × N` metric runs plus one guard run per variant. `--runs 1` restores single-run cost, but σ is unavailable and every classification rests on the noise floor alone.
-- **Worktrees hold tracked files only** — gitignored inputs (data, venv, `.env`) are absent and absolute paths in `metric_cmd` measure the main tree; the full-first gate aborts the study when either makes `full` miss `best_metric`.
+- **Worktrees hold tracked files only** — gitignored inputs (data, venv, `.env`) are absent. The full-first gate aborts when `full` misses `best_metric`; it cannot detect a command measuring the main tree when the baseline matches. 4d requires source inspection and records each run's cwd/HEAD, and the post-loop checkout gate rejects missing or mismatched evidence before ranking.
 - **Bash tool `timeout` parameter** — never shell `timeout` wrapper. Pass `timeout: <ms>` on Bash tool call.
 - **Judge prerequisite** — fortify refuses without APPROVED judge verdict. Prevents ablation on unapproved methodologies.
 - **`--skip-run` for planning** — generates candidate list without running ablations. Useful for reviewing what would be ablated before committing compute.
 - **`--skip-run` scope**: flag skips ablation *execution* only — source run (`research:run`) must already be complete. Does not affect source run.
 - **Fortify run directories** don't write `result.jsonl` — exempt from 30-day TTL cleanup (per `.claude/rules/foundry-artifact-lifecycle.md`, installed via `/foundry:setup` — requires `foundry` plugin: no `result.jsonl` = cleanup skipped); remove manually when done (`rm -rf .experiments/fortify-*/`) <!-- policy-sibling: plugins/cc_research/skills/judge/SKILL.md, plugins/cc_research/skills/plan/SKILL.md, plugins/cc_research/skills/retro/SKILL.md, plugins/cc_research/skills/verify/SKILL.md — TTL-exemption note (no result.jsonl → skip 30-day cleanup) restated in each; keep in sync (plugins/CLAUDE.md §Policy Duplication Marker). -->
-- **Compute mode**: local execution only. `--compute` and `--colab` passthrough not implemented — contributions welcome. Until then, fortify runs `metric_cmd`/`guard_cmd` directly in each worktree on local machine.
+- **Compute mode**: local execution only. F1 stops with `! UNSUPPORTED` when the source campaign's `config.compute` is not `local` (absent → `local`, matching run's default), except for `--skip-run` candidate listing, which also accepts docker/colab campaigns. `--compute` and `--colab` passthrough not implemented — contributions welcome. Until then, fortify runs `metric_cmd`/`guard_cmd` directly in each worktree on local machine.
 - **Revert conflicts expected** — when commits interleave (component A's commit touches same lines as B's), revert may conflict. Recorded as `revert-conflict`, not treated as error.
 - **One finding per root defect** — applies to every finding list fortify emits: F5 sign anomalies and coupling warnings, F7 Skipped Variants, dry-run reviews of an ablation plan or ranking. A consequence of a defect already reported (an affected report field or header, a downstream ranking or class shift, a variant made unreliable by it) is still recorded, inside the root finding's entry, never as its own row. A variant already marked `[COUPLED]` gets no further separate "not a clean ablation" finding — the coupling warning covers it. A limit on what could be checked ("unable to verify X") goes in Confidence **Gaps**, not the findings list.
 

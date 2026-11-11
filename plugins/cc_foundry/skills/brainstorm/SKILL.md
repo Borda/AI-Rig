@@ -49,10 +49,12 @@ Turn unformed idea into branching exploration tree, then distill into spec. Idea
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/parse-skill-flags.py" --flags tight,deep --value-flags type --keep-state brainstorm-state "$ARGUMENTS" >/dev/null  # timeout: 5000 — no eval; brainstorm-state-<flag>-${CSID} sentinels + keep-items, clears stale contract
 IFS= read -r ARGUMENTS < "${TMPDIR:-/tmp}/brainstorm-state-clean-args-${CSID}" 2>/dev/null || ARGUMENTS=""
-echo "report dir: .reports/brainstorm/$(date -u +%Y-%m-%dT%H-%M-%SZ)/"
+REPORT_DIR=".reports/brainstorm/$(date -u +%Y-%m-%dT%H-%M-%SZ)"
+echo "$REPORT_DIR" > "${TMPDIR:-/tmp}/brainstorm-state-report-dir-${CSID}"
+echo "report dir: $REPORT_DIR/"
 ```
 
-**Report run dir**: every `.reports/brainstorm/<ts>/` artifact below (breakdown mode included) uses the one `<ts>` printed above for this invocation — rounds within a run replace their copy; a later run never overwrites an earlier run's files.
+**Report run dir**: every `.reports/brainstorm/<ts>/` artifact below (breakdown mode included) uses the one `<ts>` persisted above for this invocation — rounds within a run replace their copy; a later run never overwrites an earlier run's files. Before a later Bash block uses the report directory, re-read it with `IFS= read -r REPORT_DIR < "${TMPDIR:-/tmp}/brainstorm-state-report-dir-${CSID}"`; if missing or empty, stop rather than derive a new timestamp, unless Step 4 recovers the existing run directory from this run's branch report as described below.
 
 ## Step 1: Context scan
 
@@ -86,17 +88,28 @@ Goal: understand constraints so questions targeted, not generic. If idea already
 - (a) label: `Yes — create viewer` — description: create JSON sidecar and serve tree viewer in browser
 - (b) label: `No — skip viewer` — description: proceed without viewer; tree still saved to disk at Step 4
 
-On **(b)**: skip viewer creation and the print launch note below; set `SIDECAR=""` and skip all Write-to-sidecar steps throughout (Steps 3–4).
+On **(b)**: skip viewer creation and the print launch note below; set `SIDECAR=""`, write an empty line to `${TMPDIR:-/tmp}/brainstorm-state-sidecar-${CSID}`, and skip all Write-to-sidecar steps throughout (Steps 3–4).
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+echo "" > "${TMPDIR:-/tmp}/brainstorm-state-sidecar-${CSID}"
+```
 
 On **(a)**:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # timeout: 3000
-mkdir -p .plans/blueprint
-SIDECAR=".plans/blueprint/brainstorm-$(date -u +%Y-%m-%dT%H-%M-%SZ).json"
+IFS= read -r REPORT_DIR < "${TMPDIR:-/tmp}/brainstorm-state-report-dir-${CSID}" 2>/dev/null || REPORT_DIR=""
+[ -n "$REPORT_DIR" ] || { printf "! BLOCKED — report directory sentinel missing or empty; recover Step 0 run identity\n"; exit 1; }
+VIEWER_DIR="$(pwd -P)/.temp/brainstorm/${REPORT_DIR##*/}/viewer"
+mkdir -p "${VIEWER_DIR%/*}" || exit 1
+mkdir "$VIEWER_DIR" || exit 1
+cp "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/skills/brainstorm/scripts/tree-viewer.html" "$VIEWER_DIR/tree-viewer.html" || exit 1
+SIDECAR="$VIEWER_DIR/tree.json"
 echo "$SIDECAR" > "${TMPDIR:-/tmp}/brainstorm-state-sidecar-${CSID}"
 echo "$SIDECAR"
+printf 'python -m http.server 8080 --bind 127.0.0.1 --directory %q\n' "$VIEWER_DIR"
 ```
 
 **Persistence note**: shell variables do NOT persist across separate Bash calls. The `echo "$SIDECAR" > "${TMPDIR:-/tmp}/brainstorm-state-sidecar-${CSID}"` step above writes the path to a state file. At the top of every subsequent Bash block that references `$SIDECAR` (Steps 3–4), re-read it:
@@ -123,16 +136,16 @@ Record `$SIDECAR` path — referenced in Steps 3 and 4. Write initial JSON to th
 
 On write failure: log `> Viewer write failed: <reason>` inline and continue.
 
-Print launch note:
+Print launch note: replace the placeholder below with the resolved command printed by the setup block.
 
-> **Live tree viewer**: resolve scripts dir (works both pre- and post-install — `$CLAUDE_PLUGIN_ROOT` points at the installed cache when the plugin is installed; the fallback supports development against the source tree):
+> **Live tree viewer**: serve the isolated directory prepared above (viewer HTML is copied from the installed plugin or the source-tree fallback):
 >
-> ```bash
-> _BRAINSTORM_SCRIPTS="${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/skills/brainstorm/scripts"
-> echo "Viewer HTML: $_BRAINSTORM_SCRIPTS/tree-viewer.html"
+> ```text
+> <printed python -m http.server command with the absolute viewer directory>
+> http://127.0.0.1:8080/tree-viewer.html?state=tree.json
 > ```
 >
-> Because the viewer lives under the plugin cache (read-only) while `$SIDECAR` lives under the project's `.plans/blueprint/`, the static server's document root must cover both paths. Easiest reliable option: serve from `$HOME` with `python -m http.server 8080 --bind 127.0.0.1 --directory "$HOME"` (or `npx serve -l tcp://127.0.0.1:8080 "$HOME"`) — loopback-only bind; the default `0.0.0.0` bind would expose `$HOME` to the entire local network for as long as the server runs — then open `http://localhost:8080/<relative-path-from-HOME-to-tree-viewer.html>?state=<absolute-or-HOME-relative-sidecar-path>`. Prefer serving from the project root? Copy or symlink the viewer HTML into a project-local directory first so the URL path resolves under the same document root as `$SIDECAR`.
+> Run the printed command in a separate terminal. Serve only the fresh directory containing the copied `tree-viewer.html` and live `tree.json` sidecar, never the home directory or the project root; do not add symlinks or other files. Open the URL above. Keep writing viewer updates to `$SIDECAR` in this directory throughout the session, and stop the server when finished.
 
 ## Step 2: Clarifying questions
 
@@ -140,10 +153,10 @@ Use `AskUserQuestion` for every clarifying question — renders interactive prom
 
 Rules:
 
-- **Hybrid pacing**: the FIRST `AskUserQuestion` call batches the 2–3 orientation questions whose framing does not depend on any prior answer — the type-aware openers below when `--type` is declared, otherwise the broadest scoping questions. Same batching pattern as `modes/breakdown.md` Step D2. Every question after that first call is asked **one at a time** — call `AskUserQuestion` once, wait for the answer, then decide whether another question is needed; those later questions are the ones that must adapt to what was just said, and batching them would forfeit that adaptation
-- Always use **multiple-choice** options in `AskUserQuestion`: list lettered choices so user can reply with just "a", "b", or "c"; mark recommended option with **★** (e.g., `a) Option A ★ recommended`) so user has sensible default
+- **Hybrid pacing**: the FIRST `AskUserQuestion` call batches the 2–3 orientation questions whose framing does not depend on any prior answer — the type-aware openers below when `--type` is declared, otherwise the broadest scoping questions. Every question after that first call is asked **one at a time** — call `AskUserQuestion` once, wait for the answer, then decide whether another question is needed; those later questions are the ones that must adapt to what was just said, and batching them would forfeit that adaptation
+- Always use **multiple-choice** options in `AskUserQuestion`: list lettered choices so user can reply with just "a", "b", or "c"; mark recommended option with **★** (e.g., `a) Option A`, `b) Option B ★ recommended`) so user has sensible default; apply §Tree summary format — Question text rule
 - Maximum **10 questions** (5 in `--tight` mode, 15 in `--deep` mode) — after limit, proceed to Step 3 with what you have
-- After question 3 (and every subsequent question), always include **escape hatch option**: `x) Enough questions — let's start building the tree` so user can move on if problem already well-defined
+- After question 3 (and every subsequent question), always include **escape hatch option**: `x) Enough questions — let's start building the tree` so user can move on if problem already well-defined. Keep at most 4 options total, including the escape hatch — at most 3 substantive choices plus `x)`.
 - No solution proposals during this step — only gather information
 - After each answer — for the batched first call, once after its whole answer set returns — briefly restate updated problem understanding in 1–2 sentences before asking next question or proceeding — simple acknowledgment ("Got it", "Understood") does not count; restatement must name what is now known about problem (e.g., "So the goal is X and the constraint is Y.")
 - After restatement, add skill's own perspective in blockquote labelled **Skill's read:** — 1–2 sentences on what directions this answer opens up, what it makes more or less likely, or what tension it surfaces. Active hypothesis, not neutral summary (e.g., `> **Skill's read:** This makes me think the core challenge is X, which points toward approaches like Y`). Write as skill speaking.
@@ -162,13 +175,15 @@ Rules:
 
 Full creative session — grow, deepen, and prune tree of directions. Tree is output; convergence happens later in `breakdown`. Runs as loop of **tree operations**.
 
+At Step 3 entry, derive `<slug>` from the current title (kebab-case, max 5 words) before writing any report artifact. Keep this slug for the run and reuse it in Step 4.
+
 ### Pre-seeding exchange
 
 Before presenting formal branches, run brief free-form idea exchange — 2–3 rapid rounds. Goal: surface intuitions about direction before committing to structure. Like tennis rally — Claude serves first, user returns, branches emerge from what lands.
 
 1. State skill's opening hypothesis: 1–2 sentences on where problem looks most interesting or tricky. Not a branch — just a read.
 2. Immediately build **3–5 initial branches** (see Seeding the tree below) for the same call — no separate round-trip. Each branch is numbered (1, 2, 3, …) and ★ on the most promising one.
-3. Call a single `AskUserQuestion` for the **reaction choice** (≤4 options per call per AQQ cap): "How does this look?" with exactly four options: (a) ★ recommended — pick branches to focus on (reply naming 1–3 branch numbers in free text) · (b) Not quite — let me redirect (reply describing the redirect) · (c) add more branches first · (d) skip focus selection — start tree ops with all branches open. Write the opening hypothesis, Opening framing and full branch list (Seeding the tree format) to `.reports/brainstorm/<ts>/<slug>-branches.md` first; they are printed once, rendered as normal Markdown, as the last reply text before the call. The question text carries the hypothesis headline, numbered branch names and `→ .reports/brainstorm/<ts>/<slug>-branches.md` per §Tree summary format: at most 6 plain lines (target 600 characters, hard cap 1,500), no table, no pipe layout, no code fence. Options have labels and one-line action descriptions, no `preview`; display recommended (a) second, retaining its label and answer mapping. Users name branches by number rather than by sub-option letter so the AQQ stays at 4 options regardless of branch count.
+3. Call a single `AskUserQuestion` for the **reaction choice** (≤4 options per call per AQQ cap): "How does this look?" with exactly four options: (a) ★ recommended — pick branches to focus on (reply naming 1–3 branch numbers in free text) · (b) Not quite — let me redirect (reply describing the redirect) · (c) add more branches first · (d) skip focus selection — start tree ops with all branches open. Write the opening hypothesis, Opening framing and full branch list (Seeding the tree format) to `.reports/brainstorm/<ts>/<slug>-branches.md` first; they are printed once, rendered as normal Markdown, as the last reply text before the call. The question text carries the hypothesis headline, numbered branch names and `→ .reports/brainstorm/<ts>/<slug>-branches.md`; apply §Tree summary format — Question text rule. Users name branches by number rather than by sub-option letter so the AQQ stays at 4 options regardless of branch count.
 4. Proceed to **Tree operations loop**:
    - (a) picked: user's free-text reply names 1–3 branches → set those as `▶️` focus; others remain `💭` open. If the reply doesn't parse into 1–3 valid branch numbers from the branches just shown (non-numeric, out of range, or none named), re-ask the same reaction question once, restating the valid branch number range; a second unparsable reply falls back to (d) — all branches `💭` open, no initial focus.
    - (b) picked: regenerate 2–3 fresh branches reflecting the redirect and re-enter step 3 (one re-entry allowed; second redirect proceeds with whatever branches exist)
@@ -228,18 +243,22 @@ After seeding, enter operations loop. Each iteration:
 
 **Operations**:
 
-- **Deepen (a)**: generate 2–3 sub-branches under named branch. Sub-branches use same format as top-level branches. Ask which one(s) to focus on. After executing, write 1–2 sentences reacting to what deepening this branch opens up — what new tensions or opportunities sub-branches reveal.
-- **Reject (b)**: mark named branch as ⛔ (rejected) with user's reason shown after `—`. Add one-line entry to pruning log. Ask if reason captures it correctly before proceeding. After executing, write 1–2 sentences reacting to what rejecting this branch reveals — what it tells us about where exploration is headed.
-- **Accept (c)**: mark named branch as ✅ (resolved) with note explaining why chosen as direction. Do NOT add to pruning log (accepted, not pruned). After executing, write 1–2 sentences on what this choice commits to — what it confirms and implicitly rules out.
-- **Merge (d)**: synthesise two named branches into single hybrid branch; present merged description; mark originals as 🔗 with `[merged -> <number>: <new-branch-name>]` immediately in tree summary shown after merge, and in all subsequent tree summaries. When writing merged branch state to sidecar, use field name `merged_into_id` with value equal to target branch's `id` field (e.g. `"b6"`), not a label string. After executing, write 1–2 sentences on what merge suggests about where idea is heading — what synthesis makes clearer or harder.
-- **Add (e)**: generate 1–2 fresh top-level branches with directions not yet represented in tree. After executing, write 1–2 sentences on why new angle matters — what gap it fills or challenges in existing branches.
-- **Reopen (f)**: change ⛔ (rejected) or ✅ (resolved) back to 💭 (open) on named branch; note re-opening reason. After executing, write 1–2 sentences on what reopening this branch might change — what it puts back on the table.
-- **Idea stacking (g)**: pause tree operations and enter brief free-form exchange — same format as pre-seeding exchange (2–3 rounds max). Useful when exploration feels stuck or a new angle just surfaced but isn't fully formed yet. After exchange, return to tree operations loop with any new angles incorporated as branches or sub-branches. Does NOT consume operation slot — counter unchanged.
-- **Ready (h)**: exit loop, proceed to Step 4.
+- **Deepen**: generate 2–3 sub-branches under named branch. Sub-branches use same format as top-level branches. Ask which one(s) to focus on. After executing, write 1–2 sentences reacting to what deepening this branch opens up — what new tensions or opportunities sub-branches reveal.
+- **Reject**: mark named branch as ⛔ (rejected) with user's reason shown after `—`. Add one-line entry to pruning log. Ask if reason captures it correctly before proceeding. After executing, write 1–2 sentences reacting to what rejecting this branch reveals — what it tells us about where exploration is headed.
+- **Accept**: mark named branch as ✅ (resolved) with note explaining why chosen as direction. Do NOT add to pruning log (accepted, not pruned). After executing, write 1–2 sentences on what this choice commits to — what it confirms and implicitly rules out.
+- **Merge**: synthesise two named branches into single hybrid branch; present merged description; mark originals as 🔗 with `[merged -> <number>: <new-branch-name>]` immediately in tree summary shown after merge, and in all subsequent tree summaries. When writing merged branch state to sidecar, use field name `merged_into_id` with value equal to target branch's `id` field (e.g. `"b6"`), not a label string. After executing, write 1–2 sentences on what merge suggests about where idea is heading — what synthesis makes clearer or harder.
+- **Add**: generate 1–2 fresh top-level branches with directions not yet represented in tree. After executing, write 1–2 sentences on why new angle matters — what gap it fills or challenges in existing branches.
+- **Reopen**: change ⛔ (rejected) or ✅ (resolved) back to 💭 (open) on named branch; note re-opening reason. After executing, write 1–2 sentences on what reopening this branch might change — what it puts back on the table.
+- **Idea stacking**: pause tree operations and enter brief free-form exchange — same format as pre-seeding exchange (2–3 rounds max). Useful when exploration feels stuck or a new angle just surfaced but isn't fully formed yet. After exchange, return to tree operations loop with any new angles incorporated as branches or sub-branches. Does NOT consume operation slot — counter unchanged.
+- **Ready**: exit loop, proceed to Step 4.
 
 ### Tree summary format
 
-Every `AskUserQuestion` that follows a tree summary: Write the full summary to `.reports/brainstorm/<ts>/<slug>-tree.md` first (slug per Step 4), replacing the previous round's copy; it is printed once, rendered as normal Markdown, as the last reply text before the question call. Include the current **Skill's moment** in that saved and printed block when present. For the pre-seeding reaction question, use the opening hypothesis, **Opening framing** and numbered branches in Seeding-the-tree format instead, saved first to `.reports/brainstorm/<ts>/<slug>-branches.md`. The question text still carries the headline, branch names/numbers needed for the choice, status counts and `→ <file path>` as a fallback if pre-call text is hidden. Keep the question text to at most 6 plain lines (target 600 characters, hard cap 1,500), with no table, no pipe layout and no code fence. Options carry labels and one-line action descriptions, no `preview`; place the recommended option second without changing labels or answer mapping. Tree rendering in the reply:
+Every `AskUserQuestion` that follows a tree summary: Write the full summary to `.reports/brainstorm/<ts>/<slug>-tree.md` first (slug per Step 3 entry), replacing the previous round's copy; it is printed once, rendered as normal Markdown, as the last reply text before the question call. Include the current **Skill's moment** in that saved and printed block when present. For the pre-seeding reaction question, use the opening hypothesis, **Opening framing** and numbered branches in Seeding-the-tree format instead, saved first to `.reports/brainstorm/<ts>/<slug>-branches.md`. The question text still carries the headline, branch names/numbers needed for the choice, status counts and `→ <file path>` as a fallback if pre-call text is hidden.
+
+**Question text rule**: Keep the question text to at most 6 plain lines (target 600 characters, hard cap 1,500), with no table, no pipe layout and no code fence. Options carry labels and one-line action descriptions, no `preview`; place the recommended option second without changing labels or answer mapping.
+
+Tree rendering in the reply:
 
 ```text
 Tree: <title>
@@ -261,13 +280,13 @@ Use `├─`, `│  ├─`, `└─` for tree rendering. Show sub-branches inde
 
 ### Loop bounds
 
-- Maximum **10 operations** (5 in `--tight` mode, 15 in `--deep` mode) (round = one operation; idea stacking (g) does not count)
-- After limit: Write the current tree summary to `.reports/brainstorm/<ts>/<slug>-tree.md` first; it is printed once, rendered as normal Markdown, as the last reply text before `AskUserQuestion`, whose question text carries the tree headline, status counts and `→ .reports/brainstorm/<ts>/<slug>-tree.md`. Keep the question text to at most 6 plain lines (target 600 characters, hard cap 1,500), with no table, no pipe layout and no code fence. Options carry labels and one-line action descriptions, no `preview`; place the recommended option second without changing labels or answer mapping. Choices: a) Save tree as-is ★ recommended / b) Do 2 more operations then save.
-- **Gate**: do not proceed to Step 4 until user selects "Ready" or max reached with at least 2 rejected branches (1 in `--tight`, 3 in `--deep`); resolved/accepted branches do not count toward this minimum (they are the goal, not waste); if fewer than required rejected branches exist, prompt: "The tree has few rejected branches — consider rejecting 1–2 that are clearly not the right direction before saving."
+- Maximum **10 operations** (5 in `--tight` mode, 15 in `--deep` mode) (round = one operation; idea stacking does not count)
+- After limit: Write the current tree summary to `.reports/brainstorm/<ts>/<slug>-tree.md` first; it is printed once, rendered as normal Markdown, as the last reply text before `AskUserQuestion`, whose question text carries the tree headline, status counts and `→ .reports/brainstorm/<ts>/<slug>-tree.md`. Apply §Tree summary format — Question text rule. Choices: a) Save tree as-is ★ recommended / b) Do 2 more operations then save.
+- **Gate**: do not proceed to Step 4 until user selects "Ready" or max reached with at least 2 rejected branches (1 in `--tight`, 3 in `--deep`); selecting "Save tree as-is" at the operation limit overrides the minimum rejected-branch count and proceeds directly to Step 4. Resolved/accepted branches do not count toward this minimum (they are the goal, not waste); if fewer than required rejected branches exist, prompt: "The tree has few rejected branches — consider rejecting 1–2 that are clearly not the right direction before saving."
 
 ## Step 4: Save tree
 
-Assemble tree state and write to `.plans/blueprint/YYYY-MM-DD-<slug>.md` using Write tool (creates directory if absent). Slug derived from title (kebab-case, max 5 words). If file already exists at target path (e.g., same day, same slug after restart), append counter suffix (`-2`, `-3`, etc.) rather than overwriting.
+Assemble tree state and write to `.plans/blueprint/YYYY-MM-DD-<slug>.md` using Write tool (creates directory if absent). Reuse the slug derived at Step 3 entry. If file already exists at target path (e.g., same day, same slug after restart), append counter suffix (`-2`, `-3`, etc.) rather than overwriting.
 
 ```markdown
 # <title>
@@ -313,7 +332,7 @@ Assemble tree state and write to `.plans/blueprint/YYYY-MM-DD-<slug>.md` using W
 [Unanswered questions, untested combinations, and constraints that surfaced during Step 3. Each thread is a one-line bullet.]
 ```
 
-Record the path just written so later steps identify this session's tree by identity, not by recency. Substitute the real path into `TREE_FILE` before running — the guard aborts if the placeholder survives:
+Record the path just written so later steps identify this session's tree by identity, not by recency. Substitute the real path into `TREE_FILE` and this run's Step 3 slug into `RUN_SLUG` before running — the guards abort if a required placeholder survives. If the report-directory sentinel is missing or empty, recover it only when exactly one `.reports/brainstorm/<ts>/` directory holds this run's `<slug>-branches.md`; rewrite the sentinel with that directory and continue. Otherwise block with the recovery explanation below:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -323,9 +342,23 @@ case "$TREE_FILE" in *'<'*'>'*|"") printf "! BLOCKED — tree file path not subs
 echo "$TREE_FILE" > "${TMPDIR:-/tmp}/brainstorm-state-tree-file-${CSID}"
 IFS= read -r _TREE_FILE < "${TMPDIR:-/tmp}/brainstorm-state-tree-file-${CSID}" 2>/dev/null || _TREE_FILE=""
 IFS= read -r _SIDECAR < "${TMPDIR:-/tmp}/brainstorm-state-sidecar-${CSID}" 2>/dev/null || _SIDECAR=""
-_PRESERVE="tree-file=$_TREE_FILE"
+IFS= read -r _REPORT_DIR < "${TMPDIR:-/tmp}/brainstorm-state-report-dir-${CSID}" 2>/dev/null || _REPORT_DIR=""
+if [ -z "$_REPORT_DIR" ]; then
+  RUN_SLUG="<run-slug>"
+  case "$RUN_SLUG" in *'<'*'>'*|""|*/*) printf "! BLOCKED — run slug not substituted for report-directory recovery\n"; exit 1;; esac
+  _MATCH_COUNT=0
+  for _BRANCHES in .reports/brainstorm/*/"${RUN_SLUG}-branches.md"; do
+    [ -f "$_BRANCHES" ] || continue
+    _MATCH_COUNT=$((_MATCH_COUNT + 1))
+    _REPORT_DIR="${_BRANCHES%/*}"
+  done
+  [ "$_MATCH_COUNT" -eq 1 ] || { printf "! BLOCKED — report directory sentinel missing or empty; recovery requires exactly one directory holding this run's %s-branches.md, found %s\n" "$RUN_SLUG" "$_MATCH_COUNT"; exit 1; }
+  echo "$_REPORT_DIR" > "${TMPDIR:-/tmp}/brainstorm-state-report-dir-${CSID}"
+  printf 'Recovered report directory: %s\n' "$_REPORT_DIR"
+fi
+_PRESERVE="tree-file=$_TREE_FILE, report-dir=$_REPORT_DIR"
 [ -n "$_SIDECAR" ] && _PRESERVE="$_PRESERVE, sidecar=$_SIDECAR"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/write_skill_contract.py" --keep-sentinel brainstorm-state-keep-items "foundry:brainstorm" "tree-review (after tree saved to disk)" "n/a" "$_PRESERVE" "challenger tree review (Step 5) → approval gate (Step 6)"  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/write_skill_contract.py" --keep-sentinel brainstorm-state-keep-items "foundry:brainstorm" "tree-review (after tree saved to disk)" "$_REPORT_DIR" "$_PRESERVE" "challenger tree review (Step 5) → approval gate (Step 6)"  # timeout: 5000
 TS=$(date -u +%Y-%m-%dT%H-%M-%SZ)
 mkdir -p ".temp/brainstorm/$TS"
 OUTPUT_PATH=".temp/brainstorm/$TS/tree-review.md"
@@ -334,7 +367,7 @@ echo "TS=$TS OUTPUT_PATH=$OUTPUT_PATH"  # shell vars die at block end; the Step 
 
 **Gate**: do not proceed to Step 5 until file written, path confirmed, and contract refreshed (all three enforced in the block above — `exit 1` on either guard blocks the contract write too).
 
-**Sidecar finalise** (skip if `$SIDECAR` is empty — viewer opt-out): using Write tool, write full current JSON content (same as `$SIDECAR`) with `session_status: "complete"` to `.plans/blueprint/<final-slug>.json` (same slug as `.md` file, `.json` extension). Then also overwrite `$SIDECAR` with `session_status: "complete"`. Do NOT move or rename `$SIDECAR` — open browser tabs keep polling original timestamp-slug path.
+**Sidecar finalise** (skip if `$SIDECAR` is empty — viewer opt-out): using Write tool, write full current JSON content (same as `$SIDECAR`) with `session_status: "complete"` to `.plans/blueprint/<final-slug>.json` (same slug as `.md` file, `.json` extension). Then also overwrite `$SIDECAR` with `session_status: "complete"`. Do NOT move or rename `$SIDECAR` — open browser tabs keep polling its original live path.
 
 ## Step 5: Tree review
 
@@ -361,7 +394,7 @@ If `findings > 0`: add missing details, improve closure reasons, or add open thr
 
 ## Step 6: Present and gate
 
-Write the compact tree summary (same format as Step 3) to `.reports/brainstorm/<ts>/<slug>-tree.md` first, naming the saved tree file; it is printed once, rendered as normal Markdown, as the last reply text before the question call. The question text carries the tree headline, status counts and `→ <tree file path>`. Keep the question text to at most 6 plain lines (target 600 characters, hard cap 1,500), with no table, no pipe layout and no code fence. Options carry labels and one-line action descriptions, no `preview`; place the recommended option second without changing labels or answer mapping. Then call `AskUserQuestion` tool — do NOT write options as plain text first. Map options directly into tool call arguments:
+Write the compact tree summary (same format as Step 3) to `.reports/brainstorm/<ts>/<slug>-tree.md` first, naming the saved tree file; it is printed once, rendered as normal Markdown, as the last reply text before the question call. The question text carries the tree headline, status counts and `→ <tree file path>`. Apply §Tree summary format — Question text rule. Then call `AskUserQuestion` tool — do NOT write options as plain text first. Map options directly into tool call arguments:
 
 - question: "How does the exploration tree look?"
 - (a) label: `Tree looks good — ready to distill` — description: proceed to distillation (★ recommended)
@@ -379,6 +412,8 @@ rm -f .temp/state/skill-contract.md  # clear contract — skill complete (compac
 ```
 
 > Tree file is durable record of exploration. Share with teammates or use as context for future `/brainstorm` sessions on related ideas.
+
+When finished, stop the viewer server if you started it; its directory under `.temp/` expires with normal artifact cleanup.
 
 ## Mode: Breakdown
 
@@ -403,11 +438,11 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" brainstorm m
 - **Status field**: tree documents use `Status: tree`; spec documents use `Status: draft`; breakdown auto-detects which path to take
 - **Breakdown heading convention**: distillation mode uses D-prefix steps (D1–D4); action plan mode uses B-prefix steps (B1–B3)
 - **Exploration notes in spec**: Section 6 derived from tree's Pruning log — intentional context for future readers; do not remove in the Step 5 tree review
-- **Interaction budget**: idea mode — worst case: 10 (`--tight`) / 20 (default) / 30 (`--deep`) (pre-seeding+branch selection merged to 1 call, saves ~1; Step-2 hybrid pacing batches the first 3 orientation questions into 1 call, saving 2 more); breakdown distillation — max 2 calls (D2 batched) + 1 call (D3 full-spec approval) ≈ 3–5; typical sessions use ~6–12 total AskUserQuestion calls across both. <!-- Branch-path audit: confirm no single branch through the workflow asks more than 4 AskUserQuestion calls in one response — communication.md 4-question-per-call cap is per invocation, not per branch; multiple sequential AskUserQuestion calls in one branch path are permitted but should be reviewed for batching opportunities. -->
+- **Interaction budget**: idea mode — worst case: 10 (`--tight`) / 20 (default) / 30 (`--deep`) (pre-seeding+branch selection merged to 1 call, saves ~1; Step-2 hybrid pacing batches the first 3 orientation questions into 1 call, saving 2 more); breakdown distillation — max 5 calls (D2, question 1 alone and dependent questions sequenced) + 1 call (D3 full-spec approval), excluding revisions; typical sessions use ~6–12 total AskUserQuestion calls across both. <!-- Branch-path audit: confirm no single branch through the workflow asks more than 4 AskUserQuestion calls in one response — communication.md 4-question-per-call cap is per invocation, not per branch; multiple sequential AskUserQuestion calls in one branch path are permitted but should be reviewed for batching opportunities. -->
 - **Flag modes**: `--tight` / `--deep` scale question and operation caps (5/15 vs default 10); `--type` enables type-aware scan and question framing in Steps 1–2; flags apply to idea mode only, ignored in breakdown
 - **Follow-up**: after spec approval in distillation mode → if targeting `.claude/` config: `/foundry:manage update <name> <spec-file>`; for application or mixed changes: `/brainstorm breakdown .plans/blueprint/<spec-file>` for action plan
 - **Rejected vs resolved distinction**: ⛔ marks branches dismissed as wrong direction; ✅ marks branch explicitly chosen as direction. Resolved branches don't count toward minimum-rejected-branches gate — they're the goal. Pruning log captures rejected only; resolved branches go in separate "Resolved branches" section.
-- **Idea stacking (g) vs pre-seeding exchange**: both are free-form tennis rallies but serve different purposes — pre-seeding runs once before branches exist to seed directions; idea stacking can be invoked at any point during tree ops when exploration feels stuck or a half-formed thought needs batting around before committing to a branch. Neither consumes an operation slot.
+- **Idea stacking vs pre-seeding exchange**: both are free-form tennis rallies but serve different purposes — pre-seeding runs once before branches exist to seed directions; idea stacking can be invoked at any point during tree ops when exploration feels stuck or a half-formed thought needs batting around before committing to a branch. Neither consumes an operation slot.
 - **Confidence block**: idea mode is a conversational session producing a file (not an inline report) — Confidence block requirement from CLAUDE.md output standards applies to analysis responses only; omitted by design for Steps 1–6. foundry:challenger spawn in Step 5 returns its own Confidence block, surfaced in review but not re-emitted to user.
 
 </notes>

@@ -47,8 +47,8 @@ import fetch_alert_context
 
 #: Matches lines that declare a package version (``__version__`` or ``version =``).
 _VERSION_RE: re.Pattern[str] = re.compile(r"__version__|^version\s*=", re.MULTILINE)
-#: Matches leftover release-blocking markers such as ``TODO ... release``, FIXME, HACK and XXX.
-_SIGNALS_RE: re.Pattern[str] = re.compile(r"TODO.*release|FIXME|HACK|XXX")
+#: Matches unconditional release-blocking markers; TODO/release order is checked separately.
+_SIGNALS_RE: re.Pattern[str] = re.compile(r"FIXME|HACK|XXX")
 #: Matches changed file paths that count as documentation (README, Markdown files, ``docs/``).
 _DOCS_RE: re.Pattern[str] = re.compile(r"readme|\.md$|docs/", re.IGNORECASE)
 #: Allowlist for LAST_TAG / discovered tag: either a SemVer-style version tag
@@ -222,7 +222,7 @@ def _grep_code_signals() -> list[str]:
         except OSError:
             continue
         for lineno, line in enumerate(content.splitlines(), 1):
-            if _SIGNALS_RE.search(line):
+            if _SIGNALS_RE.search(line) or ("TODO" in line and line.find("release", line.index("TODO") + 4) >= 0):
                 results.append(f"{path}:{lineno}:{line}")
                 if len(results) >= _MAX_SIGNAL_LINES:
                     return results
@@ -391,8 +391,8 @@ def _check_version_consistency(tag: str) -> None:
 _DEP_MANIFESTS = ("pyproject.toml", "uv.lock", "poetry.lock", "requirements*.txt", "requirements/*.txt", "setup.cfg")
 _LOCK_NAME = re.compile(r'^\s*name = "([^"]+)"')
 _LOCK_CHANGE = re.compile(r"^\s*(?:name|version) = ")
-_QUOTED_REQ = re.compile(r'^\s*"([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:\[[^\]]*\])?\s*(?:[=<>!~@;]|")')
-_PLAIN_REQ = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:\[[^\]]*\])?\s*(?:[=<>!~@;]|$)")
+_QUOTED_REQ = re.compile(r'^\s*"([A-Za-z0-9][A-Za-z0-9._-]*)(?:\s*\[[^\]]*\])?\s*(?:[=<>!~@;]|")')
+_PLAIN_REQ = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)(?:\s*\[[^\]]*\])?\s*(?:[=<>!~@;]|$)")
 
 
 def _introduced_dependencies(diff_text: str) -> set[str]:
@@ -421,6 +421,8 @@ def _introduced_dependencies(diff_text: str) -> set[str]:
     path = ""
     block = ""
     for line in diff_text.splitlines():
+        if len(line) > 16_384:
+            continue
         if line.startswith("+++ "):
             path = line[4:].removeprefix("b/")
             block = ""

@@ -53,9 +53,12 @@ def test_detached_job_state_stays_inspectable(skill: str, command: str) -> None:
 
 
 def test_detached_dispatch_returns_the_job_identifier() -> None:
-    """A detached implement call still hands back the job identifier the lifecycle skills need.
+    """A detached implement call hands back the job identifier and workspace the lifecycle skills need.
 
     Without the identifier the caller cannot name the job to `/bridge:status`, `/bridge:result` or cancel.
     """
     text = read_prose(_PLUGIN / "claude-skills" / "implement" / "SKILL.md")
-    assert "If detached, return job identifier; direct caller to `/bridge:status`, `/bridge:result`" in text
+    assert (
+        "If detached, return the job identifier together with that absolute workspace; "
+        "direct caller to `/bridge:status`, `/bridge:result`"
+    ) in text

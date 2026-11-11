@@ -1,11 +1,11 @@
 ---
 name: integration
-description: 'Codemap integration: audit|plan|apply|sync|demo; skip query/index rebuilds.'
+description: 'Codemap integration: audit|plan|apply|sync|demo; default audit with no args or flags only; skip query/index rebuilds and telemetry reports (use debrief-coding).'
 ---
 
 > Before asking, read [User Questions](../../shared/codex-user-questions.md).
 
-NOT for: structural queries (`$codemap-py:query-code`) or index rebuilds (`$codemap-py:scan-codebase`).
+NOT for: structural queries (`$codemap-py:query-code`), index rebuilds (`$codemap-py:scan-codebase`), or usage/telemetry reports (`$codemap-py:debrief-coding`).
 
 # Integration
 
@@ -50,7 +50,7 @@ If installed Codex lacks documented `--json`, use text output and mark structure
 
 ### 1. Resolve mode
 
-Case-insensitive: empty or starting with `audit` → audit; otherwise `plan`, `apply`, `sync`, or `demo`. Any other input: ask through User Questions which of those five modes and wait. Use the packaged native `ask_user` form when the synchronous menu cannot fit all five; offer every mode as a separate option and retain each mode's later input and approval requirements. Intentional difference: the Claude skill prints the mode list and stops, because its question tool caps at four options; Codex's `ask_user` form fits all five.
+First, if the request is for usage/telemetry analysis, route to `$codemap-py:debrief-coding` and stop before integration runs. Otherwise parse case-insensitively: empty or starting with `audit` → audit; first token starts with `--` → audit (preserve all flags); otherwise `plan`, `apply`, `sync`, or `demo`. Any other input: ask through User Questions which of those five modes and wait. Use the packaged native `ask_user` form when the synchronous menu cannot fit all five; offer every mode as a separate option and retain each mode's later input and approval requirements. Intentional difference: the Claude skill prints the mode list and stops, because its question tool caps at four options; Codex's `ask_user` form fits all five.
 
 ### 2. Run it
 
@@ -70,4 +70,4 @@ These lines are a synopsis: run one composed command for the chosen mode, add op
 
 ### 3. Report
 
-Explain `0` success, `1` runtime/filesystem failure or partial-sync journal, and `2` syntax/approval failure. On `sync` exit `1`, report state (`planned → approved → applying:<t> → verified:<t> → complete`, or `rollback-started → rollback-succeeded|rollback-failed → recovery-required`); for `recovery-required`, give only engine-reported bounded recovery commands.
+Explain `0` success (`audit`: pass/warn); `1` for `audit`/`demo` is a fail verdict — report findings, not a crash; `1` for `apply` is drift/filesystem failure, for `sync` partial failure or journal state; `2` syntax/approval failure; `127` no eligible CPython — relay its stderr line and stop, never retry with another interpreter. On `apply` or `sync` exit `1`, report state (`planned → approved → applying:<t> → verified:<t> → complete`, or `rollback-started → rollback-succeeded|rollback-failed → recovery-required`); for `recovery-required`, give only engine-reported bounded recovery commands.

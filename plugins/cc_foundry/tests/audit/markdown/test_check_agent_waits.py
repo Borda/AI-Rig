@@ -12,6 +12,14 @@ from pathlib import Path
 import check_agent_waits
 import pytest
 
+
+@pytest.mark.timeout(3)
+@pytest.mark.parametrize("prefix", ["every 1 min ", "-newer "])
+def test_repeated_poll_prefixes_have_bounded_classification_time(prefix: str) -> None:
+    """Repeated incomplete polling clauses cannot force a fresh suffix scan at every prefix."""
+    assert check_agent_waits.classify(prefix * 20000) is None
+
+
 REPO_ROOT = Path(__file__).resolve().parents[5]
 FOUNDRY = REPO_ROOT / "plugins" / "cc_foundry"
 

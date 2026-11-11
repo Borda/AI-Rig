@@ -12,7 +12,27 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from resolve_plugin_root import main
+from resolve_plugin_root import lookup_registry, main
+
+
+@pytest.mark.parametrize("timestamp", [None, 7, False, pytest.param([], id="list"), pytest.param({}, id="object")])
+def test_registry_non_string_timestamp_sorts_as_undated(tmp_path: Path, timestamp: object) -> None:
+    """Malformed timestamps are empty sort keys, leaving the dated installation authoritative."""
+    registry = tmp_path / "installed_plugins.json"
+    registry.write_text(
+        json.dumps(
+            {
+                "plugins": {
+                    "foundry@market": [
+                        {"installPath": "undated", "installedAt": timestamp},
+                        {"installPath": "dated", "installedAt": "2026-01-01"},
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert lookup_registry(registry, "market", "foundry") == "dated"
 
 
 def _make_install(home: Path, version: str, *, name: str = "foundry") -> Path:

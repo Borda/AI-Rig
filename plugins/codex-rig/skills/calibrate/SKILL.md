@@ -66,7 +66,7 @@ Use `--require-live-routes` only for strict-live gate. Default offline scoring r
 
 ### 10: Write the validated skill-level artifact when this skill wraps the runner
 
-Follow `../../shared/helper-cli-contract.md`/authoritative help. Gate intent: ruff lint/format calibration+skills, explicit no-typed-target reason, calibration tests, clean diff. The validator's `calibrate` entry lists no required files, so runner evidence under `.reports/codex/calibration/<timestamp>/` is reviewer-checked: confirm it yourself before promotion. Write `CALIBRATE_METADATA`, validate `calibrate`, promote only validated candidate.
+Follow `../../shared/helper-cli-contract.md`/authoritative help. Gate intent: ruff lint/format calibration+skills, explicit no-typed-target reason, calibration tests when calibration code changes, else explicit skip reason, clean diff. The validator's `calibrate` entry lists no required files, so runner evidence under `.reports/codex/calibration/<timestamp>/` is reviewer-checked: confirm it yourself before promotion. Write `CALIBRATE_METADATA`, validate `calibrate`, promote only validated candidate.
 
 ## Native Contract Checks
 
@@ -77,7 +77,7 @@ Skill checks:
 - configured skill file exists; frontmatter has unindented `---`, `name:`, `description:`; required sections exist; artifact path `.reports/codex/<skill>/`; examples include `status`, `checks_run`, `checks_failed`, `findings`, `confidence`, `artifact_path`; no external runner-only metadata/cache.
 - CLI checks find every shebang `*.py` entry point in calibration, shared helpers, `code-review`, and `challenge-resolve` (source layout adds shared and `.github` shell helpers and the offline harness); other skill-local executables are outside this roster; each executable, fixed-help-roster registered, authoritative `--help`.
 - every skill references `helper-cli-contract.md`, not complete local CLI invocations.
-- a source checkout compares the shipped `../../runtime/calibration/behavioral-cases.json` integer `schema_version` to that file in `HEAD`: same or exactly one commit-relative version step; a new family starts at 1. Installed plugin layout records an immutable-fixture skip; source layout with no `.codex/calibration/behavioral-cases.json` records a missing-source-fixture skip.
+- apply `behavioral-version-policy` under Quality Gates and Fail-Fast Rule 7 to `../../runtime/calibration/behavioral-cases.json`.
 
 Role checks:
 
@@ -100,7 +100,7 @@ Role checks:
 - Each live task names canonical role. Plugin layout prepends exact packaged role card to both prompts; source layout preserves project-instruction plus source-agent prompt construction. Tool pairs can accept candidate passing executable gate when successfully invoked baseline fails; infrastructure timeout is never candidate win.
 - Archived paired evidence and `live-route-policy.json` retain their original quality rule; that legacy campaign does not establish quality or cost acceptance for a different route. Define a new model-and-effort paired campaign before making such a claim.
 - Never claim currency savings from `normalized-token-v1`; need dated authoritative model-specific price.
-- Fixture `schema_version` is a committed-history marker: compare the actual shipped path with `git show HEAD:<path>`; dirty tree stays committed or one-next version until commit. An absent source-layout fixture records a skip, not a completed check.
+- Fixture `schema_version` is a committed-history marker; apply `behavioral-version-policy` under Quality Gates and Fail-Fast Rule 7.
 - Missing registration/pattern mismatch: inspect named file and expected registration or pattern first; record observed mismatch. Apply smallest evidenced correction only within authorized edit scope, then rerun that failed check before widening. Otherwise ask for exact missing file, scope approval, or owner decision; never offer only "fix configuration and retry".
 
 ## Fail-Fast Rules
@@ -120,7 +120,7 @@ Role checks:
 Required checks:
 
 - `calibration`: `../../runtime/calibration/run.py --layout plugin --root <consuming-project>`.
-- `behavioral-version-policy`: compare the shipped case-set integer `schema_version` to its own `HEAD` path in a source checkout; record explicit installed-cache or missing-source-fixture skips.
+- `behavioral-version-policy`: compare the shipped case-set integer `schema_version` with `git show HEAD:<path>` for its own path in a source checkout: same or exactly one commit-relative version step; a new family starts at 1. The dirty tree stays committed or one-next version until commit. Installed plugin layout records an explicit immutable-fixture installed-cache skip; source layout with no `.codex/calibration/behavioral-cases.json` records an explicit missing-source-fixture skip, not a completed check.
 - `review`: inspect failed patterns, leaks, behavioral gaps, stale fixtures before recommendations.
 
 Conditional checks:

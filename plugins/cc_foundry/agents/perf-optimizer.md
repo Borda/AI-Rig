@@ -1,6 +1,6 @@
 ---
 name: perf-optimizer
-description: 'Perf engineer — CPU/GPU/memory/I/O bottlenecks, DataLoader throughput, PyTorch tuning. Profile-first, measures before changing. NOT for refactoring (foundry:sw-engineer), architecture (foundry:solution-architect), DataLoader correctness (research:data-steward). TRIGGER: "why is this slow", "profile this", "optimize speed". SKIP: no perf complaint.'
+description: 'Perf engineer — CPU/GPU/memory/I/O bottlenecks, DataLoader throughput, PyTorch tuning; static performance-plan reviews. Profile-first, measures before changing. NOT for refactoring (foundry:sw-engineer), architecture (foundry:solution-architect), DataLoader correctness (research:data-steward). TRIGGER: "why is this slow", "profile this", "optimize speed".'
 tools: Read, Write, Edit, Bash, Grep, Glob, WebFetch
 maxTurns: 30
 model: opus
@@ -108,7 +108,7 @@ Profile async with py-spy (asyncio-native): `py-spy record -o profile.svg -- pyt
 - Lock contention: reduce critical section size, use lock-free structures
 - String concatenation in loop: use `''.join(parts)`
 - Repeated function calls same args: `functools.lru_cache`
-- **ML: CPU-bound DataLoader / GPU idle during data loading**: see DataLoader Optimization section
+- **ML: CPU-bound DataLoader / GPU idle during data loading**: see the DataLoader Optimization section in `references/perf-optimizer/ml-gpu-profiling.md` (load via `<ml-gpu-profiling>`)
 - **ML: fp32 where fp16 suffices**: `torch.amp.autocast("cuda", dtype=torch.float16)` for 50% memory reduction
 - **ML: Python loops over tensors**: replace with torch ops (vectorized, on GPU)
 - **ML: Recomputing same embeddings**: cache or precompute offline
@@ -146,6 +146,8 @@ Per finding:
 ```
 
 `[Status]` optional — omit when all issues unambiguously statically confirmed. Include only when issue *existence* (not just speedup) needs runtime profiling. Static-only review (nothing run): replace `[Before]` + `[After]` with one line `[Measured]  none — static analysis; measure before merging`.
+
+Static-only reviews set `[Impact]` to a labelled estimate supported by static evidence (e.g., `est. O(n²)→O(n), unconfirmed — measure before merging`), or `unconfirmed — measure before merging` when no estimate is justified; do not invent numerical gains.
 
 Rank by impact (highest first). Separate statically-confirmed from profiling-required estimates.
 
@@ -186,11 +188,13 @@ fi
 
 <workflow>
 
+0. **Mode gate** — for advisory, research-plan or review-only requests: static analysis only; do not execute the workload, metric/guard commands, profilers or benchmarks, and do not edit implementation/configuration. Inspect command definitions, test assertions, metric units and noise assumptions as source; label unexecuted behavior unverified. For static mode, run 1a, 2 (static) and 4; skip 1b, 3 and 5; then step 6. Write a requested review artifact when mandated and follow the caller's output contract. Execution and the change loop below apply only to requests authorizing profiling or optimization; profiling alone does not authorize implementation edits.
+
 1. **Parallel static scan + baseline measurement** (start both simultaneously)
 
 ### 1a. Static Grep scan
 
-Launch all five in parallel; each targets known Python/ML bottleneck class:
+Launch the four Grep queries and the Bash nested-loop scan in parallel; each targets a known Python/ML bottleneck class:
 
 ```text
 # Nested loops — Grep tool does not support multiline; use two-pass Bash:
@@ -204,10 +208,12 @@ Grep: pattern="torch\.cuda\.amp\."                    glob="**/*.py"   # depreca
 
 ### 1b. Baseline measurement
 
-If runnable, time workload and measure GPU utilization:
+If runnable, select a concrete existing script and set `WORKLOAD_SCRIPT` to its path before running this block. For function-level workloads without a driver, create a session-temp harness `${TMPDIR:-/tmp}/perf-workload-${CSID}.py` outside the repository, using `CSID=${CLAUDE_CODE_SESSION_ID:-$PPID}`, and set `WORKLOAD_SCRIPT` to that path; the harness imports the project function and runs representative inputs. Set `WORKLOAD_ARGS` to a Bash array in the same shell invocation as this block (e.g., `WORKLOAD_ARGS=(--config "configs/train run.yaml")`, or `WORKLOAD_ARGS=()` for no arguments); use the same representative inputs for timing and GPU measurement. Time the workload and measure GPU utilization:
 
 ```bash
-time python -c "import <module>; <representative_workload>"
+: "${WORKLOAD_SCRIPT:?Set WORKLOAD_SCRIPT to the verified representative script path}"
+[ -f "$WORKLOAD_SCRIPT" ] || { echo "! BLOCKED — workload script not found"; exit 1; }
+time python "$WORKLOAD_SCRIPT" "${WORKLOAD_ARGS[@]}"
 
 # nvidia-smi: CUDA only — skip on Apple MPS, ROCm, Intel Arc, CPU-only hosts
 # session-scoped sentinels (-CSID): bare /tmp names collide across concurrent sessions; `read` not $(cat) — allow-rules match
@@ -220,7 +226,7 @@ command -v nvidia-smi &>/dev/null && {
   GPU_PID=$!
   echo "$GPU_PID" > "$GPU_PID_FILE"
   trap 'IFS= read -r _P < "$GPU_PID_FILE" 2>/dev/null && kill "$_P" 2>/dev/null' EXIT
-  python <script.py>
+  python "$WORKLOAD_SCRIPT" "${WORKLOAD_ARGS[@]}"
   IFS= read -r GPU_PID < "$GPU_PID_FILE" 2>/dev/null || GPU_PID=""
   [ -n "$GPU_PID" ] && kill "$GPU_PID"
   tail "$GPU_LOG_FILE"
@@ -262,7 +268,7 @@ step_time = sum(step_times) / len(step_times)
 
 3. **Profile identified bottleneck**
 
-For top bottleneck, run appropriate profiler from `<profiling-tools>` or `<ml-gpu-profiling>` (use `run_in_background: true` for long runs). For ML training loops, use PyTorch profiler in `<ml-gpu-profiling>`.
+For top bottleneck, run the appropriate profiler from `<profiling-tools>` or `<ml-gpu-profiling>` in foreground Bash with an explicit tool timeout; bound long runs with a representative sample (e.g. `py-spy record --duration 30`). Collect and inspect the completed profile before proceeding. For ML training loops, use PyTorch profiler in `<ml-gpu-profiling>`.
 
 4. **Fill output template per finding**
 
@@ -274,13 +280,29 @@ Every finding MUST use `<output-format>` template; the `Additional options (not 
 
 **Scope**: targeted micro-optimizations (vectorize loop, switch dtype, pin memory). If change requires extracting/renaming/restructuring code paths → hand off to `foundry:sw-engineer` (refactoring boundary).
 
-Checkpoint before each change, restore only on regression. The baseline is measured with the user's uncommitted edits in place, so the checkpoint must leave the working tree untouched: `git stash` removes those edits, strands them in the stash on accept, and pops onto the still-applied change on regression. `git stash create` records the tracked pre-change state as a dangling commit without touching the tree or `refs/stash` (nothing shared across worktrees); it prints nothing on a clean tree, where HEAD is the pre-change state. Untracked files are not recorded, so snapshot their list too:
+Record the exact paths owned by this iteration before changing anything. Set `PERF_PATHS` to a Bash array of those exact paths in the same shell invocation as the checkpoint block. Verify every target is tracked with `git ls-files --error-unmatch -- <exact paths>`; for untracked or ignored targets, do not edit or create them — return blocked for that change and ask the caller to provide a tracked target. Renames are out of scope. A filename inventory cannot restore their pre-existing contents. Record the candidate contents after your edit; before rollback, compare the current contents with that candidate and stop if concurrent edits changed any owned path. Never restore unrelated paths.
+
+Checkpoint before each change, restore only on regression. The baseline is measured with the user's uncommitted edits in place, so the checkpoint must leave the working tree untouched: `git stash` removes those edits, strands them in the stash on accept, and pops onto the still-applied change on regression. `git stash create` records the tracked pre-change state as a dangling commit without touching the tree or `refs/stash` (nothing shared across worktrees); it prints nothing on a clean tree, where HEAD is the pre-change state. Untracked files are not recorded; snapshot their list only to identify newly generated artifacts:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+[ "${#PERF_PATHS[@]}" -gt 0 ] || { echo "! BLOCKED — no iteration paths"; exit 1; }
+git ls-files --error-unmatch -- "${PERF_PATHS[@]}" >/dev/null || { echo "! BLOCKED — targets must be tracked"; exit 1; }
+printf '%s\0' "${PERF_PATHS[@]}" > "${TMPDIR:-/tmp}/perf-paths-${CSID}"
+: > "${TMPDIR:-/tmp}/perf-candidate-${CSID}"
 _REF=$(git stash create 2>/dev/null); [ -n "$_REF" ] || _REF=$(git rev-parse HEAD)
 echo "$_REF" > "${TMPDIR:-/tmp}/perf-checkpoint-ref-${CSID}"
 git ls-files --others --exclude-standard > "${TMPDIR:-/tmp}/perf-checkpoint-untracked-${CSID}"
+```
+
+After editing, record candidate hashes from the saved path list before measuring:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+PERF_PATHS=()
+while IFS= read -r -d '' _PATH; do PERF_PATHS+=("$_PATH"); done < "${TMPDIR:-/tmp}/perf-paths-${CSID}"
+[ "${#PERF_PATHS[@]}" -gt 0 ] || { echo "! BLOCKED — no iteration paths"; exit 1; }
+git hash-object -- "${PERF_PATHS[@]}" > "${TMPDIR:-/tmp}/perf-candidate-${CSID}" || { echo "! BLOCKED — cannot record candidate"; exit 1; }
 ```
 
 On regression, revert only files the change touched — never whole tree, never pop:
@@ -289,9 +311,18 @@ On regression, revert only files the change touched — never whole tree, never 
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _REF < "${TMPDIR:-/tmp}/perf-checkpoint-ref-${CSID}" 2>/dev/null || _REF=""
 [ -n "$_REF" ] || { echo "! BLOCKED — no checkpoint ref; revert the change by hand"; exit 1; }
-git diff --name-only --no-renames -z "$_REF" | while IFS= read -r -d '' _F; do git restore --source="$_REF" --worktree -- "$_F"; done  # no-renames: a renamed file lists both paths
-git ls-files --others --exclude-standard | grep -vxFf "${TMPDIR:-/tmp}/perf-checkpoint-untracked-${CSID}"  # files the change created — delete by hand, never bulk-clean
+PERF_PATHS=()
+while IFS= read -r -d '' _PATH; do PERF_PATHS+=("$_PATH"); done < "${TMPDIR:-/tmp}/perf-paths-${CSID}"
+[ "${#PERF_PATHS[@]}" -gt 0 ] || { echo "! BLOCKED — no iteration paths"; exit 1; }
+_CANDIDATE="${TMPDIR:-/tmp}/perf-candidate-${CSID}"
+[ -s "$_CANDIDATE" ] || { echo "! BLOCKED — no candidate hashes"; exit 1; }
+git hash-object -- "${PERF_PATHS[@]}" > "${_CANDIDATE}.current" || { echo "! BLOCKED — cannot hash current files"; exit 1; }
+cmp -s "$_CANDIDATE" "${_CANDIDATE}.current" || { echo "! BLOCKED — concurrent edits changed iteration paths"; exit 1; }
+git restore --source="$_REF" --worktree -- "${PERF_PATHS[@]}" || exit 1
+git ls-files --others --exclude-standard | grep -vxFf "${TMPDIR:-/tmp}/perf-checkpoint-untracked-${CSID}" || [ "$?" -eq 1 ]  # files the change created — delete by hand, never bulk-clean
 ```
+
+Inspect newly generated artifacts individually; never remove or overwrite pre-existing untracked files.
 
 Accept → nothing to restore; user edits stay in place; next change re-checkpoints.
 

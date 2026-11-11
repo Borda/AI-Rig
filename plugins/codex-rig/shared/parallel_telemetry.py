@@ -49,7 +49,7 @@ import re
 import stat
 import unicodedata
 from collections.abc import Iterable, Mapping, Sequence
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -428,6 +428,14 @@ def _retention_timestamp(value: str, label: str) -> datetime:
     return parsed
 
 
+def _retention_expiry(anchor: datetime | None) -> datetime | None:
+    """Calculate the thirty-day retention boundary or reject an unrepresentable date."""
+    try:
+        return anchor + timedelta(days=30) if anchor is not None else None
+    except OverflowError as error:
+        raise TelemetryError("retention-expiry-invalid") from error
+
+
 def build_retained_wave_evidence(
     wave: Mapping[str, Any],
     *,
@@ -494,7 +502,8 @@ def build_retained_wave_evidence(
     if resolved is not None and resolved < observed:
         raise TelemetryError("retention-resolution-before-observation")
     expiry_base = observed if status == "passed" else resolved
-    diagnostic_expires_at = (expiry_base + timedelta(days=30)).isoformat() if expiry_base is not None else None
+    expiry = _retention_expiry(expiry_base)
+    diagnostic_expires_at = expiry.isoformat() if expiry is not None else None
     diagnostic_retention = (
         "expire-30d-after-success-or-resolution" if diagnostic_expires_at is not None else "retain-until-resolution"
     )
@@ -586,7 +595,7 @@ def _validated_retained_expiry(record: Mapping[str, Any]) -> tuple[str, str, dat
     ):
         raise TelemetryError("retained-record-contract-invalid")
     expiry_base = observed if status == "passed" else resolved
-    expiry = expiry_base + timedelta(days=30) if expiry_base is not None else None
+    expiry = _retention_expiry(expiry_base)
     expected_retention = "expire-30d-after-success-or-resolution" if expiry is not None else "retain-until-resolution"
     expected_expiry = expiry.isoformat() if expiry is not None else None
     if (
@@ -688,17 +697,23 @@ def _record_diagnostic_audit(
     return evidence
 
 
-def enforce_diagnostic_expiry(record: Mapping[str, Any], *, diagnostics_directory: Path, now: str) -> dict[str, Any]:
+def enforce_diagnostic_expiry(
+    record: Mapping[str, Any], *, diagnostics_directory: Path, now: str | None = None
+) -> dict[str, Any]:
     """Audit expiry policy and delete at most one expired sanitized diagnostic.
 
     Only exact records returned by :func:`build_retained_wave_evidence` are accepted. Every outcome is appended to the
     fixed durable audit before return. Eligible deletion records an intent before unlinking and a completion afterward,
     so an interrupted completion retains evidence for a later idempotent check. The sole allowed deletion target is the
     direct child named ``<wave_id_hmac>.diagnostic.json`` of a diagnostics directory that is not a symlink; symlinks and
-    targets that are not regular files fail closed.
+    targets that are not regular files fail closed. The system UTC clock controls deletion; the optional historical
+    ``now`` argument is validated for compatibility but cannot advance time. The declared expiry is authoritative;
+    copying or modifying a diagnostic does not extend its retention.
     """
     wave_id_hmac, status, expiry = _validated_retained_expiry(record)
-    checked_at = _retention_timestamp(now, "now")
+    if now is not None:
+        _retention_timestamp(now, "now")
+    checked_at = datetime.now(timezone.utc)
     directory = _diagnostic_directory_root(diagnostics_directory)
     if expiry is None:
         return _record_diagnostic_audit(
@@ -720,7 +735,6 @@ def enforce_diagnostic_expiry(record: Mapping[str, Any], *, diagnostics_director
         raise TelemetryError("diagnostic-target-symlink-invalid")
     if not stat.S_ISREG(metadata.st_mode):
         raise TelemetryError("diagnostic-target-not-regular-file")
-
     _record_diagnostic_audit(directory, wave_id_hmac, status, checked_at, expiry, "delete-intent", deleted=False)
     try:
         target.unlink()

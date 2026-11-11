@@ -65,10 +65,11 @@ _ALLOW = "wait-check: allow"
 #: Matches tools that must not be used to wait on spawned agents (ScheduleWakeup, ListAgents, Monitor).
 _WAIT_TOOL = re.compile(r"\b(?:ScheduleWakeup|ListAgents)\b|\bMonitor\(|`Monitor`")
 #: Matches fixed-interval polling wording, such as ``poll every`` or ``MONITOR_INTERVAL``.
-_FIXED_POLL = re.compile(
-    r"(?i)poll every|\bevery \d+\s*(?:s|sec|secs|seconds|min|mins|minutes)\b.*\b(?:wait|waiting|poll|probe|check)"
-    r"|MONITOR_INTERVAL|health_sentinel|-newer\b.*\bwc -l"
-)
+_FIXED_POLL = re.compile(r"(?i)poll every|MONITOR_INTERVAL|health_sentinel")
+_POLL_INTERVAL = re.compile(r"(?i)\bevery \d+\s*(?:s|sec|secs|seconds|min|mins|minutes)\b")
+_POLL_ACTION = re.compile(r"(?i)\b(?:wait|waiting|poll|probe|check)")
+_NEWER = re.compile(r"(?i)-newer\b")
+_COUNT = re.compile(r"(?i)\bwc -l")
 #: Matches mentions of the TaskCreate, TaskUpdate and TaskList tools.
 _TASK_TOOL = re.compile(r"\bTask(?:Create|Update|List)\b")
 #: Matches wording that gives a task update its own separate turn or response.
@@ -111,6 +112,17 @@ class Finding:
     text: str
 
 
+def _fixed_poll(line: str) -> bool:
+    """Recognize polling clauses with at most one suffix search for each kind of prefix."""
+    interval = _POLL_INTERVAL.search(line)
+    newer = _NEWER.search(line)
+    return bool(
+        _FIXED_POLL.search(line)
+        or (interval and _POLL_ACTION.search(line, interval.end()))
+        or (newer and _COUNT.search(line, newer.end()))
+    )
+
+
 def classify(line: str) -> str | None:
     """Return the finding kind an instruction line represents, or None when it is clean or a prohibition.
 
@@ -136,7 +148,7 @@ def classify(line: str) -> str | None:
         return None
     if _WAIT_TOOL.search(line):
         return "wait-tool"
-    if _FIXED_POLL.search(line):
+    if _fixed_poll(line):
         return "fixed-poll"
     if _TASK_TOOL.search(line) and _OWN_TURN.search(line) and not _LONG_OUTPUT.search(line):
         return "bookkeeping-turn"

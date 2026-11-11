@@ -60,9 +60,15 @@ SIGNIFICANT_PCT = 10.0
 HARMFUL_PCT = -5.0
 #: Ceiling on runs per variant — each run may take the full 4d timeout.
 MAX_RUNS = 10
+#: Maximum bytes accepted from one metric ledger.
+MAX_JSONL_BYTES = 64 * 1024 * 1024
 
 _METRIC_SECTION_RE = re.compile(r"^##\s+Metric\b(.*?)(?=^##\s|\Z)", re.MULTILINE | re.DOTALL)
 _DIRECTION_RE = re.compile(r"^\s*[-*]?\s*direction\s*:\s*(higher|lower)\b", re.MULTILINE | re.IGNORECASE)
+
+
+class LedgerTooLarge(ValueError):
+    """Signal that a metric ledger exceeds the bounded reader's byte ceiling."""
 
 
 @dataclass(frozen=True)
@@ -115,11 +121,15 @@ def summarise(values: list[float]) -> RunStats:
 
 
 def _read_jsonl(path: Path) -> list[dict]:
-    """Return every JSON object line of ``path``; unreadable files and malformed lines are skipped."""
+    """Read a bounded JSONL ledger, skipping unreadable files and malformed lines; reject oversized files."""
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        with path.open("rb") as handle:
+            raw = handle.read(MAX_JSONL_BYTES + 1)
     except OSError:
         return []
+    if len(raw) > MAX_JSONL_BYTES:
+        raise LedgerTooLarge(f"{path} exceeds {MAX_JSONL_BYTES} bytes — not a metric ledger")
+    lines = raw.decode("utf-8").splitlines()
     records = []
     for line in lines:
         try:
@@ -401,7 +411,11 @@ def main(argv: list[str] | None = None) -> int:
     rank.add_argument("--noise-floor-pct", type=float, default=DEFAULT_NOISE_FLOOR_PCT)
     rank.set_defaults(handler=cmd_rank)
     args = parser.parse_args(argv)
-    return args.handler(args)
+    try:
+        return args.handler(args)
+    except (LedgerTooLarge, UnicodeDecodeError) as exc:
+        print(f"! BLOCKED — {exc}")
+        return 1
 
 
 if __name__ == "__main__":

@@ -101,6 +101,19 @@ function getSentinelDir() {
   return process.platform === "win32" ? os.tmpdir() : "/tmp";
 }
 
+/** Remove terminal controls from labels while preserving renderer-owned ANSI codes. */
+function stripControl(value) {
+  return String(value ?? "")
+    .replace(/[\u0000-\u001f\u007f-\u009f\u061c\u202a-\u202e\u2066-\u2069]/g, " ")
+    .replace(/[\u200b\ufeff]/g, "");
+}
+
+/** Reject linked or foreign-owned state directories before destructive operations. */
+function ownedDirectory(dir) {
+  const stat = fs.lstatSync(dir);
+  return stat.isDirectory() && (typeof process.getuid !== "function" || stat.uid === process.getuid());
+}
+
 let raw = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (d) => (raw += d));
@@ -173,8 +186,8 @@ process.stdin.on("end", () => {
     const parts = [];
     let agentsPart = "";
 
-    if (modelName) parts.push(`\x1b[2m${modelDisplay}\x1b[0m`);
-    if (dir) parts.push(`\x1b[2m${dir}\x1b[0m`);
+    if (modelName) parts.push(`\x1b[2m${stripControl(modelDisplay)}\x1b[0m`);
+    if (dir) parts.push(`\x1b[2m${stripControl(dir)}\x1b[0m`);
 
     if (isApiKey) {
       // API key billing — every token costs real money, show actual spend
@@ -183,7 +196,7 @@ process.stdin.on("end", () => {
       // OAuth subscription (Pro / Max) — cost.total_cost_usd is theoretical API-rate
       // cost (tokens × published rates), NOT actual subscription charge or quota consumption.
       // Use /status for actual monthly quota.
-      parts.push(`\x1b[36m${planName} ~$${usd.toFixed(2)}\x1b[0m`); // cyan plan + tilde
+      parts.push(`\x1b[36m${stripControl(planName)} ~$${usd.toFixed(2)}\x1b[0m`); // cyan plan + tilde
     }
 
     if (remaining !== null) {
@@ -204,6 +217,7 @@ process.stdin.on("end", () => {
     if (remaining === 0) {
       try {
         const d = path.join(tmpDir, "agents");
+        if (!ownedDirectory(tmpDir) || !ownedDirectory(d)) throw new Error("unsafe state directory");
         for (const f of fs.readdirSync(d)) {
           try {
             fs.unlinkSync(path.join(d, f));
@@ -314,7 +328,7 @@ process.stdin.on("end", () => {
         const items = [...groups.values()]
           .sort((a, b) => b.count - a.count)
           .map(({ label, isGray, ansiColor, count }) => {
-            const displayLabel = count > 1 ? `${label}(${count})` : label;
+            const displayLabel = count > 1 ? `${stripControl(label)}(${count})` : stripControl(label);
             return isGray ? `\x1b[2m${displayLabel}\x1b[0m` : `${ansiColor}${displayLabel}\x1b[0m`;
           });
         const robotPrefix = isSingleGroup ? `\x1b[35m🤖\x1b[0m` : `\x1b[35m🤖 ${agents.length}\x1b[0m \x1b[2m·\x1b[0m`;
@@ -354,7 +368,7 @@ process.stdin.on("end", () => {
         .sort((a, b) => a.tool.localeCompare(b.tool));
       if (activeTools.length > 0) {
         const colored = activeTools.map(({ tool: t, count: n }) => {
-          const label = `${t}:${n}x`;
+          const label = `${stripControl(t)}:${n}x`;
           return `${TOOL_COLORS[t] || TOOL_DEFAULT_COLOR}${label}\x1b[0m`;
         });
         toolLine = `\x1b[2m🛠️\x1b[0m ${colored.join(" \x1b[2m·\x1b[0m ")}`;
@@ -386,7 +400,7 @@ process.stdin.on("end", () => {
         const names = activeSkills.map((s) => {
           // Strip plugin: prefix for brevity (e.g. "foundry:audit" → "audit")
           const name = (s.skill || "?").replace(/^[^:]+:/, "");
-          return `\x1b[93m${name}\x1b[0m`; // bright yellow
+          return `\x1b[93m${stripControl(name)}\x1b[0m`; // bright yellow
         });
         skillsPart = `\x1b[93m⚡\x1b[0m ${names.join(", ")}`;
       }
@@ -397,7 +411,7 @@ process.stdin.on("end", () => {
         const cs = JSON.parse(fs.readFileSync(path.join(tmpDir, "current-skill.json"), "utf8"));
         if (cs.skill) {
           const name = cs.skill.replace(/^[^:]+:/, "");
-          skillsPart = `\x1b[93m⚡\x1b[0m \x1b[93m${name}\x1b[0m`;
+          skillsPart = `\x1b[93m⚡\x1b[0m \x1b[93m${stripControl(name)}\x1b[0m`;
         }
       } catch (_) {}
     }

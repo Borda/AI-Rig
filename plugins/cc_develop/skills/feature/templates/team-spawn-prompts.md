@@ -19,12 +19,13 @@ Prompt template:
 > You are a foundry:sw-engineer teammate implementing: [feature description]. Read ~/.claude/TEAM_PROTOCOL.md — use AgentSpeak v2 for inter-agent messages.
 >
 > - Task: implement the feature (Steps 2-3: demo test, TDD loop).
+> - Capture the Step 2 demo's failing exit code before implementing; report it in the output file as `"demo_red_exit": N` and in the return envelope as `demo_red_exit:N`. If the demo already passes pre-implementation, return `status: blocked` instead of proceeding.
 > - Scope: edit files in the source package directory and non-test Python files. Common layouts: `src/<module>/`, `<module>/`, or root-level `.py` files — use whichever exists; check `src/` first, fall back to project root. You own the primary red-green tests: create new test files under `tests/` for them (and promote the demo example script to pytest there). Do NOT edit existing test files — those belong to the qa-specialist teammate.
 > - Compact Instructions: preserve file paths, test results, API signatures. Discard verbose tool output.
 > - Task tracking: do NOT call TaskCreate or TaskUpdate — lead owns all task state.
 > - Signal completion in final delta message: 'Status: complete | blocked — <reason>'.
 > - Write full analysis to `.temp/develop/$_SPAWN_TS/feature-sw-engineer-$_SPAWN_TS.md` using the Write tool.
-> - Return ONLY compact JSON: {"status":"done","file":"<path>","summary":"<one-line>","findings":N,"confidence":0.N}."
+> - Return ONLY compact JSON: {"status":"done","file":"<path>","summary":"<one-line>","findings":N,"confidence":0.N,"demo_red_exit":N}; use `"status":"blocked"` when the demo already passes."
 
 ## Teammate 2 — foundry:qa-specialist (model=sonnet)
 

@@ -13,10 +13,16 @@ Covers:
 from __future__ import annotations
 
 import ctypes
+import hashlib
 import importlib.util
+import json
 import os
+import shlex
+import struct
+import subprocess
 import sys
 import time
+import zlib
 from pathlib import Path
 from typing import ClassVar
 from unittest import mock
@@ -79,6 +85,76 @@ def _write_lock(directory: Path, name: str, body: str, age_minutes: float = 0.0)
         past = time.time() - age_minutes * 60
         os.utime(path, (past, past))
     return path
+
+
+def _empty_git_dir(path: Path) -> None:
+    """Create the minimal repository metadata needed for read-only Git fixture commands."""
+    (path / "objects").mkdir(parents=True)
+    (path / "refs" / "heads").mkdir(parents=True)
+    (path / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+    (path / "config").write_text("[core]\nrepositoryformatversion = 0\nbare = false\n", encoding="utf-8")
+
+
+def _tracked_filter_payload(git_dir: Path) -> None:
+    """Write one index entry and its blob without running a Git mutation command."""
+    blob = b"blob 9\0original\n"
+    digest = hashlib.sha1(blob, usedforsecurity=False).digest()
+    object_path = git_dir / "objects" / digest.hex()[:2] / digest.hex()[2:]
+    object_path.parent.mkdir()
+    object_path.write_bytes(zlib.compress(blob))
+    entry = struct.pack("!10I20sH", 0, 0, 0, 0, 0, 0, 0o100644, 0, 0, 9, digest, len(b"payload")) + b"payload\0"
+    entry += b"\0" * (-len(entry) % 8)
+    index = struct.pack("!4sII", b"DIRC", 2, 1) + entry
+    (git_dir / "index").write_bytes(index + hashlib.sha1(index, usedforsecurity=False).digest())
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("name", ["agent-foreign", "human-foreign"])
+@pytest.mark.parametrize(
+    "flags", [pytest.param([], id="report-only"), pytest.param(["--include-orphans", "--apply"], id="apply-orphans")]
+)
+def test_foreign_orphan_filter_never_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str, flags: list[str]
+) -> None:
+    """Foreign gitdir clean filters cannot execute during any worktree sweep, managed name or otherwise."""
+    repo = tmp_path / "repo"
+    _empty_git_dir(repo / ".git")
+    child = repo / ".claude" / "worktrees" / name
+    child.mkdir(parents=True)
+    foreign = tmp_path / "foreign"
+    _empty_git_dir(foreign)
+    _tracked_filter_payload(foreign)
+    (child / ".git").write_text(f"gitdir: {foreign.as_posix()}\n", encoding="utf-8")
+    (child / "payload").write_bytes(b"modified\n")
+    (child / ".gitattributes").write_text("payload filter=external\n", encoding="utf-8")
+    marker = tmp_path / "filter-ran"
+    filter_script = tmp_path / "filter.py"
+    filter_script.write_text(
+        f"from pathlib import Path\nimport sys\nPath({str(marker)!r}).touch()\nsys.stdout.buffer.write(sys.stdin.buffer.read())\n",
+        encoding="utf-8",
+    )
+    command = f"{shlex.quote(sys.executable)} {shlex.quote(str(filter_script))}"
+    with (foreign / "config").open("a", encoding="utf-8") as handle:
+        handle.write(f'[filter "external"]\nclean = {json.dumps(command)}\n')
+    control = subprocess.run(
+        ["git", "status", "--porcelain"], cwd=child, capture_output=True, text=True, check=False, timeout=30
+    )
+    assert control.returncode == 0, control.stderr
+    assert marker.exists(), "negative control must execute the clean filter"
+    marker.unlink()
+    _backdate(child)
+    monkeypatch.chdir(repo)
+    assert _mod.main(["worktrees", *flags]) == 0
+    assert not marker.exists()
+    assert (child / "payload").read_text(encoding="utf-8") == "modified\n"
+
+
+def test_lock_recheck_treats_brackets_literally(tmp_path: Path) -> None:
+    """The final recheck selects the swept lock even when its filename contains glob syntax."""
+    lock = _write_lock(tmp_path, "agent-[one].lock", "0 abandoned", age_minutes=120)
+    state = _mod.sweep_locks(tmp_path, "*.lock", 30, time.time())[0]
+    assert _mod._remove_lock(state, 30) is True
+    assert not lock.exists()
 
 
 _skip_no_symlinks = pytest.mark.skipif(not _symlinks_supported(), reason="host cannot create symlinks")
@@ -475,9 +551,11 @@ class TestCli:
         ("extra_args", "rc", "output"),
         [
             pytest.param(
-                ["--managed-prefix", "lr-", "--include-orphans"], 1, "removable", id="named-prefix-with-orphans"
+                ["--managed-prefix", "variant-", "--include-orphans"], 1, "removable", id="named-prefix-with-orphans"
             ),
-            pytest.param(["--managed-prefix", "lr-"], 0, "--include-orphans", id="named-prefix-orphan-reported-only"),
+            pytest.param(
+                ["--managed-prefix", "variant-"], 0, "--include-orphans", id="named-prefix-orphan-reported-only"
+            ),
             pytest.param([], 0, "protected", id="unmanaged-name-untouched-by-default"),
         ],
     )
@@ -488,24 +566,24 @@ class TestCli:
         stays protected, and without the opt-in an orphan is reported but never counted as reclaimable.
         """
         root = tmp_path / "variants"
-        _aged_dir(root / "lr-1e-4", days=5)
+        _aged_dir(root / "variant-lr-1e-4", days=5)
         monkeypatch.setattr(_mod, "_git", _fake_repo_git(tmp_path, f"worktree {tmp_path}"))
         assert _mod.main(["worktrees", "--root", str(root), *extra_args, "--min-age-days", "1"]) == rc
         assert output in capsys.readouterr().out
 
-    @pytest.mark.parametrize("prefix", ["*", "agent-,*", "lr-*"])
+    @pytest.mark.parametrize("prefix", ["*", "agent-,*", "variant-*"])
     def test_wildcard_prefix_rejected(self, tmp_path, monkeypatch, capsys, prefix):
         """A ``*`` in --managed-prefix exits 2 before any sweep, so nothing is removed even under --apply.
 
         The wildcard turned every child of the root into a removal candidate; skills now name the prefix they create.
         """
         root = tmp_path / "variants"
-        _aged_dir(root / "lr-1e-4", days=5)
+        _aged_dir(root / "variant-lr-1e-4", days=5)
         monkeypatch.setattr(_mod, "_git", _fake_repo_git(tmp_path, f"worktree {tmp_path}"))
         argv = ["worktrees", "--root", str(root), "--managed-prefix", prefix, "--include-orphans", "--apply"]
         assert _mod.main(argv) == 2
         assert "! SECURITY" in capsys.readouterr().err
-        assert (root / "lr-1e-4").is_dir()
+        assert (root / "variant-lr-1e-4").is_dir()
 
     @pytest.mark.parametrize(
         ("extra_args", "kept", "output"),
@@ -541,15 +619,15 @@ class TestCli:
         finds there.
         """
         outside = tmp_path_factory.mktemp("outside")
-        _aged_dir(outside / "lr-1e-4", days=5)
+        _aged_dir(outside / "variant-lr-1e-4", days=5)
         monkeypatch.setattr(_mod, "_git", _fake_repo_git(tmp_path, ""))
 
-        argv = ["worktrees", "--root", str(outside), "--managed-prefix", "lr-", "--include-orphans"]
+        argv = ["worktrees", "--root", str(outside), "--managed-prefix", "variant-", "--include-orphans"]
         rc = _mod.main([*argv, "--min-age-days", "1", "--apply"])
 
         assert rc == 2
         assert "! SECURITY" in capsys.readouterr().err
-        assert (outside / "lr-1e-4").is_dir(), "must fail closed — nothing removed"
+        assert (outside / "variant-lr-1e-4").is_dir(), "must fail closed — nothing removed"
 
     @pytest.mark.parametrize(
         "argv",
@@ -720,7 +798,7 @@ class TestDeletionGuards:
         Such a directory is a checkout git can still inspect; its uncommitted work outranks the orphan heuristic.
         """
         orphan = _aged_dir(tmp_path / "agent-clone")
-        (orphan / ".git").mkdir()
+        (orphan / ".git").write_text("gitdir: unused\n", encoding="utf-8")
         _backdate(orphan)
         state = _mod.WorktreeState(path=orphan, registered=False, dirty_files=0, age_days=1.0, tier=WorktreeTier.ORPHAN)
         fake = _fake_repo_git(tmp_path, f"worktree {tmp_path.resolve()}")
@@ -729,3 +807,177 @@ class TestDeletionGuards:
         )
         assert _mod._remove_worktree(state, tmp_path) is False
         assert orphan.is_dir()
+
+
+class TestReclamationBounds:
+    """Keep child repository configuration and non-worktree data outside cleanup authority."""
+
+    @pytest.mark.integration
+    def test_report_does_not_execute_child_fsmonitor(self, tmp_path, monkeypatch):
+        """A report-only sweep never executes a monitor configured by a child repository."""
+        root = tmp_path / "worktrees"
+        child = root / "agent-child"
+        git_dir = child / ".git"
+        (git_dir / "objects").mkdir(parents=True)
+        (git_dir / "refs").mkdir()
+        (git_dir / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+        marker = tmp_path / "monitor-ran"
+        monitor = tmp_path / "monitor.py"
+        monitor.write_text(f"from pathlib import Path\nPath({str(marker)!r}).touch()\n", encoding="utf-8")
+        command = f"{shlex.quote(sys.executable)} {shlex.quote(str(monitor))}"
+        (git_dir / "config").write_text(
+            "[core]\nrepositoryformatversion = 0\nbare = false\nfsmonitor = " + json.dumps(command) + "\n",
+            encoding="utf-8",
+        )
+        control = subprocess.run(
+            ["git", "status", "--porcelain"], cwd=child, capture_output=True, text=True, timeout=30, check=False
+        )
+        assert control.returncode == 0
+        assert marker.exists(), "negative control must actually execute the configured monitor"
+        marker.unlink()
+        _backdate(child)
+        monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+        states = _mod.sweep_worktrees(tmp_path, root, 14, ("agent-",), time.time())
+        assert len(states) == 1
+        assert not marker.exists()
+
+    @pytest.mark.parametrize("pattern", ["*", "HEAD", "packed-refs", "*.lock*"])
+    def test_lock_sweep_refuses_patterns_not_ending_in_lock(self, tmp_path, monkeypatch, capsys, pattern):
+        """An apply command cannot select ordinary Git metadata as aged lock files."""
+        config = _write_lock(tmp_path, "HEAD", "ref: refs/heads/main", age_minutes=60)
+        monkeypatch.setattr(_mod, "_git", _fake_repo_git(tmp_path, ""))
+        assert _mod.main(["locks", "--pattern", pattern, "--apply"]) == 2
+        assert "! SECURITY" in capsys.readouterr().err
+        assert config.read_text(encoding="utf-8") == "ref: refs/heads/main"
+
+    def test_populated_non_git_orphan_is_dirty_and_kept(self, tmp_path, monkeypatch):
+        """Managed-looking plain data stays non-removable even with both deletion opt-ins."""
+        orphan = _aged_dir(tmp_path / ".claude" / "worktrees" / "agent-data")
+        payload = orphan / "keep.txt"
+        payload.write_text("important data", encoding="utf-8")
+        _backdate(orphan)
+        monkeypatch.setattr(_mod, "_git", _fake_repo_git(tmp_path, f"worktree {tmp_path.resolve()}"))
+        states = _mod.sweep_worktrees(tmp_path, orphan.parent, 14, ("agent-",), time.time(), include_orphans=True)
+        assert states[0].tier is WorktreeTier.DIRTY
+        assert _mod.main(["worktrees", "--include-orphans", "--apply"]) == 0
+        assert payload.read_text(encoding="utf-8") == "important data"
+
+    def test_non_git_orphan_populated_since_sweep_is_kept(self, tmp_path, monkeypatch):
+        """The removal recheck catches data added to an empty orphan after inspection."""
+        orphan = _aged_dir(tmp_path / "agent-data")
+        state = _mod.WorktreeState(path=orphan, registered=False, dirty_files=0, age_days=1, tier=WorktreeTier.ORPHAN)
+        payload = orphan / "keep.txt"
+        payload.write_text("late data", encoding="utf-8")
+        _backdate(orphan)
+        monkeypatch.setattr(_mod, "_git", _fake_repo_git(tmp_path, f"worktree {tmp_path.resolve()}"))
+        assert _mod._remove_worktree(state, tmp_path) is False
+        assert payload.read_text(encoding="utf-8") == "late data"
+
+    def test_empty_orphan_filled_at_deletion_is_kept(self, tmp_path, monkeypatch):
+        """Removing a non-Git orphan uses an empty-directory operation that refuses newly added data."""
+        orphan = _aged_dir(tmp_path / "agent-data")
+        state = _mod.WorktreeState(path=orphan, registered=False, dirty_files=0, age_days=1, tier=WorktreeTier.ORPHAN)
+        real_rmdir = Path.rmdir
+
+        def fill_then_remove(path):
+            """Insert late data at the final filesystem operation."""
+            (path / "keep.txt").write_text("racing data", encoding="utf-8")
+            return real_rmdir(path)
+
+        monkeypatch.setattr(_mod, "_git", _fake_repo_git(tmp_path, f"worktree {tmp_path.resolve()}"))
+        monkeypatch.setattr(Path, "rmdir", fill_then_remove)
+        assert _mod._remove_worktree(state, tmp_path) is False
+        assert (orphan / "keep.txt").read_text(encoding="utf-8") == "racing data"
+
+    def test_lock_replaced_after_sweep_is_kept(self, tmp_path, monkeypatch):
+        """A stale lock snapshot cannot unlink a replacement held by a live session."""
+        lock = _write_lock(tmp_path, "oss-resolve-main.lock", "424242 x")
+
+        def alive_after_replacement(pid):
+            """Replace the stale lock when the liveness boundary is first inspected."""
+            lock.write_text(f"{os.getpid()} fresh", encoding="utf-8")
+            return pid == os.getpid()
+
+        monkeypatch.setattr(_mod, "pid_alive", alive_after_replacement)
+        monkeypatch.setattr(_mod, "_git", _fake_repo_git(tmp_path, ""))
+        assert _mod.main(["locks", "--pattern", _LOCK_GLOB, "--apply"]) == 0
+        assert lock.read_text(encoding="utf-8") == f"{os.getpid()} fresh"
+
+    @pytest.mark.parametrize("prefix", ["a", "data-"])
+    def test_unknown_managed_prefix_refused_before_apply(self, tmp_path, monkeypatch, capsys, prefix):
+        """A broad or unrecognized prefix cannot authorize cleanup of ordinary repository directories."""
+        root = tmp_path / "ordinary-data"
+        victim = _aged_dir(root / f"{prefix}archive")
+        monkeypatch.setattr(_mod, "_git", _fake_repo_git(tmp_path, f"worktree {tmp_path.resolve()}"))
+        argv = ["worktrees", "--root", str(root), "--managed-prefix", prefix, "--include-orphans", "--apply"]
+        assert _mod.main(argv) == 2
+        assert "! SECURITY" in capsys.readouterr().err
+        assert victim.is_dir()
+
+    def test_standalone_repository_is_kept(self, tmp_path, monkeypatch):
+        """An unregistered standalone repository is never treated as an abandoned linked worktree."""
+        orphan = _aged_dir(tmp_path / ".claude" / "worktrees" / "agent-checkout")
+        (orphan / ".git").mkdir()
+        payload = orphan / "tracked-data.txt"
+        payload.write_text("committed standalone data", encoding="utf-8")
+        _backdate(orphan)
+        monkeypatch.setattr(_mod, "_git", _fake_repo_git(tmp_path, f"worktree {tmp_path.resolve()}"))
+        states = _mod.sweep_worktrees(tmp_path, orphan.parent, 14, ("agent-",), time.time(), include_orphans=True)
+        assert states[0].tier is WorktreeTier.DIRTY
+        assert _mod.main(["worktrees", "--include-orphans", "--apply"]) == 0
+        assert payload.read_text(encoding="utf-8") == "committed standalone data"
+
+    def test_clean_orphan_with_git_file_remains_reclaimable(self, tmp_path, monkeypatch):
+        """An empty linked-worktree orphan with an owned Git marker remains removable."""
+        orphan = _aged_dir(tmp_path / ".claude" / "worktrees" / "agent-linked")
+        gitdir = tmp_path / "worktrees" / "linked"
+        gitdir.mkdir(parents=True)
+        (orphan / ".git").write_text(f"gitdir: {gitdir.as_posix()}\n", encoding="utf-8")
+        _backdate(orphan)
+        monkeypatch.setattr(_mod, "_git", _fake_repo_git(tmp_path, f"worktree {tmp_path.resolve()}"))
+        assert _mod.main(["worktrees", "--include-orphans", "--apply"]) == 0
+        assert not orphan.exists()
+
+    def test_owned_git_marker_does_not_allow_removing_nonempty_orphan(self, tmp_path, monkeypatch):
+        """Even a trusted Git marker cannot authorize deleting an unregistered directory's payload."""
+        orphan = _aged_dir(tmp_path / ".claude" / "worktrees" / "agent-linked")
+        gitdir = tmp_path / "worktrees" / "linked"
+        gitdir.mkdir(parents=True)
+        (orphan / ".git").write_text(f"gitdir: {gitdir.as_posix()}\n", encoding="utf-8")
+        (orphan / "payload").write_text("keep", encoding="utf-8")
+        _backdate(orphan)
+
+        def repository_only(args, cwd=None):
+            """Answer repository metadata queries while refusing any child Git invocation."""
+            assert cwd in {None, tmp_path}
+            return _fake_repo_git(tmp_path, f"worktree {tmp_path.resolve()}")(args, cwd)
+
+        monkeypatch.setattr(_mod, "_git", repository_only)
+        assert _mod.main(["worktrees", "--include-orphans", "--apply"]) == 0
+        assert (orphan / "payload").read_text(encoding="utf-8") == "keep"
+
+    def test_marker_only_orphan_filled_at_deletion_is_kept(self, tmp_path, monkeypatch):
+        """Late data survives when an owned marker-only orphan becomes populated at its deletion boundary."""
+        orphan = _aged_dir(tmp_path / "agent-linked")
+        gitdir = tmp_path / "worktrees" / "linked"
+        gitdir.mkdir(parents=True)
+        marker = orphan / ".git"
+        marker.write_text(f"gitdir: {gitdir.as_posix()}\n", encoding="utf-8")
+        _backdate(orphan)
+        state = _mod.WorktreeState(path=orphan, registered=False, dirty_files=0, age_days=1, tier=WorktreeTier.ORPHAN)
+        real_is_file = Path.is_file
+
+        def fill_at_removal(path):
+            """Insert data after the eligibility check, at the removal branch's marker inspection."""
+            if path == marker and not any(entry.name != ".git" for entry in orphan.iterdir()):
+                calls.append(path)
+                if len(calls) == 2:
+                    (orphan / "payload").write_text("racing data", encoding="utf-8")
+            return real_is_file(path)
+
+        calls = []
+        monkeypatch.setattr(_mod, "_git", _fake_repo_git(tmp_path, f"worktree {tmp_path.resolve()}"))
+        monkeypatch.setattr(Path, "is_file", fill_at_removal)
+        assert _mod._remove_worktree(state, tmp_path) is False
+        assert (orphan / "payload").read_text(encoding="utf-8") == "racing data"
+        assert marker.read_text(encoding="utf-8") == f"gitdir: {gitdir.as_posix()}\n"

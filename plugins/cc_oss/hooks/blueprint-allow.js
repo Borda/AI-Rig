@@ -90,6 +90,7 @@ const MANIFEST_NAME = "blueprint-manifest.json";
 const PY_WS =
   "\\t\\n\\v\\f\\r\\x1c\\x1d\\x1e\\x1f \\x85\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000";
 const RSTRIP_RE = new RegExp("[" + PY_WS + "]+$");
+const LSTRIP_RE = new RegExp("^[" + PY_WS + "]*");
 const WS_SPLIT_RE = new RegExp("[" + PY_WS + "]+");
 const BLANK_RE = new RegExp("^[" + PY_WS + "]*$");
 
@@ -196,11 +197,17 @@ const ESCAPED_BLANK_BEFORE_COMMENT = /(?<!\\)(?:\\\\)*\\[ \t]#/;
  * blanks (the shell ends the command there, normalization sees a continuation), or an escaped blank before `#` (the
  * shell passes it as an argument, normalization drops it as a comment). Raw text and normalized form are then different
  * commands sharing one digest, so the raw text is refused before any lookup.
- * Port of build_blueprint_manifest.aliases_escaped_blank.
+ * Matches build_blueprint_manifest.aliases_escaped_blank, including raw CR and non-shell trailing whitespace refusals.
  */
 function aliasesEscapedBlank(text) {
-  for (const line of text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n")) {
+  if (text.includes("\r")) return true;
+  let quote = null;
+  for (const line of text.split("\n")) {
     const trimmed = rstrip(line);
+    const [uncommented, nextQuote] = stripLineComment(trimmed, quote);
+    quote = nextQuote;
+    const discarded = line.slice(uncommented.length).match(LSTRIP_RE)[0];
+    if (/[^ \t]/.test(line.slice(trimmed.length)) || /[^ \t]/.test(discarded)) return true;
     if (trimmed.length < line.length && trailingBackslashes(trimmed) % 2 === 1) return true;
     if (ESCAPED_BLANK_BEFORE_COMMENT.test(line)) return true;
   }

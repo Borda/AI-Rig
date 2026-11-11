@@ -1481,7 +1481,9 @@ class TestReleaseSource:
         )
         assert completed.returncode == 0, completed.stderr
         recorded = json.loads((directory / "gates.json").read_text(encoding="utf-8"))
-        assert all(check["source"]["after"] == {"head": head, "status": ""} for check in recorded["checks"])
+        assert all(
+            check["source"]["after"] == {"head": head, "status": "", "ignored": "[]"} for check in recorded["checks"]
+        )
         result["metadata"]["release_head"] = head
         receipt = receipt_of(release_run)
         receipt.update(

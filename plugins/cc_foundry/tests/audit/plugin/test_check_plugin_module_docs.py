@@ -85,3 +85,23 @@ class TestRun:
         )
 
         assert checker.run(plugins) == []
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            pytest.param(b"# calf\xe9\n", id="non-utf8-source"),
+            pytest.param(("value = " + "+".join(["1"] * 10000)).encode(), id="deep-ast"),
+        ],
+    )
+    def test_unreadable_module_does_not_abort_other_findings(self, tmp_path: Path, source: bytes) -> None:
+        """Decoder and parser depth failures are reported while the rest of the scan continues."""
+        plugins = tmp_path / "plugins"
+        _write_modules(plugins, {"cc_example/bin/entry.py": "value = 1\n"})
+        broken = plugins / "cc_example" / "bin" / "broken.py"
+        broken.write_bytes(source)
+
+        findings = checker.run(plugins)
+
+        assert len(findings) == 2
+        assert findings[0].startswith("cc_example/bin/broken.py: cannot parse module (")
+        assert findings[1:] == _MISSING_ENTRY

@@ -224,7 +224,8 @@ def heuristic_tests(path: str, all_tests: list[str], repo: Path) -> list[str]:
     leaf = dotted.rsplit(".", 1)[-1] if dotted else stem
     named = {f"test_{stem}.py", f"{stem}_test.py"}
     importer = re.compile(
-        rf"^\s*(from\s+{re.escape(dotted)}\b|import\s+{re.escape(dotted)}\b|from\s+\S+\s+import\s+.*\b{re.escape(leaf)}\b)",
+        rf"^[ \t]*(from[ \t]+{re.escape(dotted)}\b|import[ \t]+{re.escape(dotted)}\b"
+        rf"|from[ \t]+\S+[ \t]+import\b[^\n]*?\b{re.escape(leaf)}\b)",
         re.M,
     )
     hits = []
@@ -233,7 +234,8 @@ def heuristic_tests(path: str, all_tests: list[str], repo: Path) -> list[str]:
             hits.append(test)
             continue
         try:
-            text = (repo / test).read_text(encoding="utf-8", errors="replace")
+            with (repo / test).open(encoding="utf-8", errors="replace") as handle:
+                text = handle.read(1_048_576)
         except OSError:
             continue
         if dotted and importer.search(text):

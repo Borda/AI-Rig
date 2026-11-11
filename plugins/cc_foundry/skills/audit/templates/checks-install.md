@@ -1,6 +1,6 @@
 # Install Checks — I1, I2, I3
 
-Checks validate post-install state in `~/.claude/`. Operate on home dir, not project `.claude/`. Run via `/foundry:audit setup` (or `/audit setup` after `foundry:setup link`).
+Checks validate post-install state in `~/.claude/`. Operate on home dir, not project `.claude/`. Run via `/foundry:audit setup`; initialize or repair the install with `/foundry:setup`.
 
 ## Check I1 — Plugin cache intact
 
@@ -58,11 +58,11 @@ One pass runs R1, R2 and R3 (`--check` omitted); the R2 and R3 sections below ca
 
 **Severity**:
 
-- `R1-FAIL` (file exists locally but absent from installed cache) → **high** — users who install plugin get broken dispatch at runtime; likely file added locally but plugin not re-installed
+- `R1-WARN` (file exists locally but absent from installed cache) → **medium**, advisory — none needed if newly added and not yet released; otherwise verify inclusion in the plugin manifest. Local source can legitimately lead the installed release.
 - `R1-WARN` (file exists in installed cache but absent locally) → **medium** — stale installed copy; breaks after plugin update
 - `R1-INFO` (plugin not installed) → **low/info** — cannot verify installed state; note in report only
 
-Fix: re-install plugin with `claude plugin install <plugin>@borda-ai-rig` to sync installed state with local source tree. WARN: restore missing local file or remove reference.
+Fix: local-only WARN needs no change for an unreleased addition; otherwise verify the file ships in the plugin manifest and update/reinstall the released plugin when appropriate. Installed-only WARN: restore missing local file or remove reference.
 
 ## Check R2 — Grep-visible referencing (orphan-risk detection)
 
@@ -99,7 +99,7 @@ Fix: create missing script locally (FAIL) or re-install plugin to sync (WARN).
 
 | Sub-check | Condition | Severity | Auto-fix |
 | -- | -- | -- | -- |
-| R1-FAIL — local-only file | resolved file exists locally but absent from installed cache | high | no — re-install plugin |
+| R1-WARN — local-only file | resolved file exists locally but absent from installed cache | medium | no — none needed if newly added and unreleased; otherwise verify manifest inclusion |
 | R1-WARN — installed-only file | file exists in cache but missing locally | medium | no — restore local file or remove ref |
 | R1-INFO — plugin not installed | cannot verify installed state | info | n/a |
 | R2-ORPHAN-RISK — grep-invisible | basename not literal in any consumer .md file | medium | no — add `# loads: <basename>` comment |
@@ -109,8 +109,6 @@ Fix: create missing script locally (FAIL) or re-install plugin to sync (WARN).
 ## Check R4 — bin/ Python test coverage
 
 For every `plugins/<plugin>/bin/<script>.py`, verify corresponding `plugins/<plugin>/tests/test_<script>.py` exists and non-empty. Skip if `LOCAL_MODE != true`.
-
-**Implementation note**: `check_orphaned_bin.py` lacks `--check-tests`; until that flag is added, run the check inline:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"

@@ -89,10 +89,12 @@ MAX_EVENT_ENVELOPE_BYTES = 16 * 1024
 MAX_EVENT_BYTES = MAX_CONTEXT_BYTES * 6 + MAX_EVENT_ENVELOPE_BYTES
 #: Event count used to size the total byte budget for buffered reviewer events.
 MAX_EVENTS = 512
-#: Preserve the former per-buffer ceiling while accepting larger individual contexts.
-MAX_BUFFERED_EVENT_BYTES = MAX_EVENTS * (MAX_FILE_BYTES * 6 + MAX_EVENT_ENVELOPE_BYTES)
+#: Bound each frame buffer to two maximum-size contexts, with backpressure while the parent consumes events.
+MAX_BUFFERED_EVENT_BYTES = 2 * MAX_EVENT_BYTES
 #: Capacity of the in-memory event queue, derived from the byte budget and the largest event size.
 MAX_BUFFERED_EVENTS = MAX_BUFFERED_EVENT_BYTES // MAX_EVENT_BYTES
+#: Preserve the small-event allowance independently of the aggregate pending-frame byte ceiling.
+MAX_PENDING_EVENTS = 64
 #: Largest reviewer output, in bytes, accepted as evidence or a final message.
 MAX_OUTPUT_BYTES = 128 * 1024
 #: Pattern for a valid reviewer role id: letters, digits, underscores, and hyphens.
@@ -104,14 +106,14 @@ RPC_METHOD_IDENTIFIER = re.compile(r"[A-Za-z][A-Za-z0-9]*/[A-Za-z][A-Za-z0-9/]{0
 #: Pattern for a lowercase 64-character hex SHA-256 digest.
 HEX_DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 #: Regular expressions for credential shapes (private keys, cloud and API tokens) that must not appear in evidence.
-SECRET_PATTERNS = (
-    re.compile(r"-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----"),
-    re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b"),
-    re.compile(r"(?i)authorization\s*:\s*bearer\s+\S+"),
-    re.compile(r"\b(?:gh[pousr]|github_pat)_[A-Za-z0-9_]{20,}\b"),
-    re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b"),
-    re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"),
+_SECRET_SPEC = importlib.util.spec_from_file_location(
+    "codex_rig_sensitive_patterns", Path(__file__).with_name("parallel_execution.py")
 )
+if _SECRET_SPEC is None or _SECRET_SPEC.loader is None:
+    raise ImportError("credential scanner unavailable")
+_SECRET_MODULE = importlib.util.module_from_spec(_SECRET_SPEC)
+_SECRET_SPEC.loader.exec_module(_SECRET_MODULE)
+SECRET_PATTERNS = _SECRET_MODULE._SECRET_PATTERNS
 #: Capabilities that must be reported as switched off for a reviewer to count as read-only and isolated.
 DISABLED_CAPABILITIES = frozenset(
     {
@@ -1047,6 +1049,7 @@ class _JsonRpcStdio:
         self._deadline = deadline
         self._next_id = 1
         self._pending: list[Mapping[str, object]] = []
+        self._pending_bytes = 0
         self._messages: queue.Queue[str | None] = queue.Queue(maxsize=MAX_BUFFERED_EVENTS)
         self._reader_error: str | None = None
         self._reader = threading.Thread(target=self._read_lines, args=(process.stdout,), daemon=True)
@@ -1059,12 +1062,12 @@ class _JsonRpcStdio:
                 if len(line.encode("utf-8")) > MAX_EVENT_BYTES:
                     self._reader_error = "app-server-frame-too-large"
                     return
-                self._messages.put_nowait(line)
+                self._messages.put(line, timeout=max(0, self._deadline - time.monotonic()))
         except queue.Full:
             self._reader_error = "app-server-frame-buffer-full"
         finally:
             try:
-                self._messages.put_nowait(None)
+                self._messages.put(None, timeout=max(0, self._deadline - time.monotonic()))
             except queue.Full:
                 self._reader_error = "app-server-frame-buffer-full"
 
@@ -1086,14 +1089,30 @@ class _JsonRpcStdio:
         return _mapping(value, "app-server-message")
 
     def send(self, payload: Mapping[str, object]) -> None:
-        """Write one compact JSON-RPC frame and fail closed on a broken pipe."""
+        """Write one compact JSON-RPC frame before the shared deadline."""
         frame = _json_frame(payload)
         if len(frame.encode("utf-8")) > MAX_EVENT_BYTES:
             raise ReviewRouteError("app-server-outbound-frame-too-large")
+        remaining = self._deadline - time.monotonic()
+        if remaining <= 0:
+            raise ReviewRouteError("app-server-timeout")
+        result: queue.Queue[OSError | None] = queue.Queue(maxsize=1)
+
+        def write_frame() -> None:
+            """Report completion without making a blocked pipe the parent's deadline owner."""
+            try:
+                self._stdin.write(frame)
+                self._stdin.flush()
+                result.put_nowait(None)
+            except OSError as error:
+                result.put_nowait(error)
+
+        threading.Thread(target=write_frame, daemon=True).start()
         try:
-            self._stdin.write(frame)
-            self._stdin.flush()
-        except OSError as error:
+            error = result.get(timeout=remaining)
+        except queue.Empty as error:
+            raise ReviewRouteError("app-server-timeout") from error
+        if error is not None:
             raise ReviewRouteError("app-server-stdin-write-failed") from error
 
     def request(self, method: str, params: Mapping[str, object]) -> Mapping[str, object]:
@@ -1107,9 +1126,14 @@ class _JsonRpcStdio:
                 raise ReviewRouteError("app-server-server-request-rejected")
             _validate_control_notification(message)
             if message.get("id") != request_id:
-                if len(self._pending) >= MAX_BUFFERED_EVENTS:
+                message_bytes = len(_json_frame(message).encode("utf-8"))
+                if (
+                    len(self._pending) >= MAX_PENDING_EVENTS
+                    or self._pending_bytes + message_bytes > MAX_BUFFERED_EVENT_BYTES
+                ):
                     raise ReviewRouteError("app-server-pending-events-overflow")
                 self._pending.append(message)
+                self._pending_bytes += message_bytes
                 continue
             if "error" in message:
                 raise ReviewRouteError(
@@ -1121,6 +1145,7 @@ class _JsonRpcStdio:
         """Return the next queued server event without retaining a transcript."""
         if self._pending:
             message = self._pending.pop(0)
+            self._pending_bytes -= len(_json_frame(message).encode("utf-8"))
         else:
             message = self._read()
         _validate_control_notification(message)
@@ -1130,18 +1155,17 @@ class _JsonRpcStdio:
         """Prove reader EOF after process cleanup and reject unprocessed trailing frames."""
         if self._process.poll() is None:
             raise ReviewRouteError("app-server-reader-cleanup-unproven")
-        self._reader.join(timeout=2)
-        if self._reader.is_alive() or self._reader_error is not None:
-            raise ReviewRouteError("app-server-reader-cleanup-unproven")
         for message in self._pending:
             _validate_control_notification(message)
             if not _is_harmless_lifecycle(message):
                 raise ReviewRouteError(f"app-server-events-after-cleanup:{_cleanup_method_label(message)}")
         self._pending.clear()
+        self._pending_bytes = 0
         eof = False
-        while True:
+        cleanup_deadline = time.monotonic() + 2
+        while not eof:
             try:
-                line = self._messages.get_nowait()
+                line = self._messages.get(timeout=max(0, cleanup_deadline - time.monotonic()))
             except queue.Empty:
                 break
             if line is None:
@@ -1154,7 +1178,8 @@ class _JsonRpcStdio:
                 _validate_control_notification(message)
                 if not _is_harmless_lifecycle(message):
                     raise ReviewRouteError(f"app-server-events-after-cleanup:{_cleanup_method_label(message)}")
-        if not eof:
+        self._reader.join(timeout=max(0, cleanup_deadline - time.monotonic()))
+        if not eof or self._reader.is_alive() or self._reader_error is not None:
             raise ReviewRouteError("app-server-reader-cleanup-unproven")
 
 
@@ -1354,13 +1379,30 @@ def _start_server(command: list[str], cwd: Path, deadline: float) -> tuple[subpr
     return process, client
 
 
-def _discover_mcp_servers(client: _JsonRpcStdio, cwd: Path) -> list[str]:
-    """Return only simple configured MCP identifiers, never raw configuration values."""
-    config = _mapping(client.request("config/read", {"cwd": str(cwd), "includeLayers": False}).get("config"), "config")
-    servers = config.get("mcp_servers")
-    if not isinstance(servers, Mapping):
+def _discover_mcp_servers(codex: Path, cwd: Path, deadline: float) -> list[str]:
+    """List configured MCP identifiers offline before any app server may start them."""
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise ReviewRouteError("app-server-timeout")
+    try:
+        completed = subprocess.run(  # noqa: S603 - local configuration listing, no MCP startup
+            [str(codex), "mcp", "list", "--json"],
+            cwd=cwd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=min(10, remaining),
+            check=False,
+        )
+        if completed.returncode != 0 or len(completed.stdout.encode("utf-8")) > MAX_FILE_BYTES:
+            raise ReviewRouteError("app-server-mcp-discovery-unavailable")
+        servers = json.loads(completed.stdout)
+    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as error:
+        raise ReviewRouteError("app-server-mcp-discovery-unavailable") from error
+    if not isinstance(servers, list) or any(not isinstance(server, Mapping) for server in servers):
         raise ReviewRouteError("app-server-mcp-servers-invalid")
-    names = list(servers)
+    names = [server.get("name") for server in servers]
     if any(not isinstance(name, str) or ROLE_IDENTIFIER.fullmatch(name) is None for name in names):
         raise ReviewRouteError("app-server-mcp-server-name-unsupported")
     return sorted(names)
@@ -1404,13 +1446,8 @@ def _verify_mcp_disabled(client: _JsonRpcStdio, cwd: Path) -> dict[str, bool]:
 def _prepared_host(
     codex: Path, cwd: Path, deadline: float
 ) -> tuple[subprocess.Popen[str], _JsonRpcStdio, dict[str, bool]]:
-    """Discover MCP names once, then return the restarted host with effective denials proven."""
-    discovery_process, discovery_client = _start_server(_server_command(codex, []), cwd, deadline)
-    try:
-        server_names = _discover_mcp_servers(discovery_client, cwd)
-    finally:
-        _terminate(discovery_process)
-        discovery_client.drain_after_exit()
+    """Discover MCP names offline, then start one host with effective denials proven."""
+    server_names = _discover_mcp_servers(codex, cwd, deadline)
     process, client = _start_server(_server_command(codex, server_names), cwd, deadline)
     try:
         capabilities = _verify_mcp_disabled(client, cwd)

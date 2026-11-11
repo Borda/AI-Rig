@@ -2,13 +2,13 @@
 
 Establish that a user decision is actually missing before inspecting question tools. This applies to generated questions as well as literal templates; internal self-review and specialist evidence requests retain their own output contracts.
 
-### Decide whether to ask
+## Decide whether to ask
 
 Routine preparation, internal recovery and completing authorized work need no new consent. Resolve implementation and workflow details from the user's request, retained answers and verified evidence. Do not manufacture a flow choice merely because a helper failed or a template contains a question. Preserve required runtime permission, sensitive/protected actions, exact-token confirmation and genuinely ambiguous scope or missing material input; authorization to review does not authorize editing source, installing permissions or publishing.
 
 For code review, follow the owning skill's entry route without a routine reuse/fresh question. A new review request proceeds fresh; explicit reuse or resume remains binding. Resume incomplete work at its first unmet checkpoint, or validate and emit a completed run's full summary table and findings. Reuse states the recorded reviewed revision and evidence limits; it never establishes current source freshness. Genuine missing decisions and runtime permissions retain their own controls.
 
-### Choose the control
+## Choose the control
 
 For each genuinely missing user decision, including scope expansions, finding selection, commit modes, merge recovery, protected repairs and follow-ups, select the control in this order. A workflow's quoted question, fenced menu, or slash-separated choices specifies content; it never establishes that consent is missing or directs plain-chat delivery.
 
@@ -23,7 +23,7 @@ Each pending decision has one delivery owner: its selected native control, or it
 
 An explicit current-host tool contract describing a rendered question UI, supported free text, and asynchronous answer delivery is evidence for selecting that route on its first use; no prior probe question is required. Exposure alone is insufficient. Honor known contrary evidence such as dismissed controls or text-only delivery. Route suitability does not establish that the particular call rendered: report actual delivery accurately and retain the pending owner. Never emit the same plain-chat question in commentary and final; choose plain fallback before sending and deliver it once as the final response.
 
-### Packaged native form
+## Packaged native form
 
 The plugin's `.codex-mcp.json` declares its local question provider. Inspect the exposed `ask_user` schema; do not print a tool payload instead of invoking it. Before calling, freeze the existing decision and compute a lowercase SHA-256 `scope_digest` from its immutable target, action and inventory. Reuse that digest while scope is unchanged. Pass `decision_id`, `scope_digest`, the live `question`, and optional closed-choice `options`; keep required report/context outside the question, delivered once. Preserve the exact original scope description in existing workflow metadata so a hash is not mistaken for evidence that the scope was authorized.
 
@@ -33,7 +33,7 @@ Consume only an `answered` receipt whose `decision_id` and `scope_digest` exactl
 
 The provider performs no commands, repository writes, credential reads, network access or permission changes. If the host does not advertise form elicitation, it fails before opening a form; inspect another permitted route and retain the pending decision. A built-in tool prohibition is not permission to evade a broader host prohibition through this provider.
 
-### Legacy async and delivery recovery
+## Legacy async and delivery recovery
 
 - If no independent work remains, yield after opening the async question; keep the decision pending and resume on an explicit valid answer. Do not append a final or status message after an accepted async question; later assistant output can dismiss or obscure the control. This includes an empty final message; it still closes the assistant turn after the question. Do not issue a duplicate chat question, poll, treat elapsed time as consent, or claim completion of dependent work.
 
@@ -65,7 +65,7 @@ A failed control call is not a submitted question or an answer. If sync rejects 
 
 Do not replay already-delivered report context after a failed question call. Preserve its immutable inventory and ask only the still-missing question through the eligible route; rerender context only when it changed or was never delivered to the user. A successful pending async submission is not a failure and must not be followed by another control or a chat menu.
 
-### Map the answer before asking
+## Map the answer before asking
 
 - Every option-based question, including plain-chat fallback, puts exactly one recommended choice first and appends `(Recommended)` to its visible label. Choose it from the user's goal and available evidence, not automatic approval; recommendation is not consent. Bind the complete displayed label, including any decision key and suffix, to the unchanged canonical value before asking; never strip arbitrary text or alter exact-digest confirmation syntax. If factual input is unknown and no answer can honestly be recommended, ask free text instead of suggesting a fact. Explain the recommendation briefly in supported context or description fields without duplicating the question.
 - Conversational binary authorization uses `Approve` / `Deny` or exact action labels such as `Approve local merge` / `Deny local merge`. Literal option lists and `(Approve / Deny)` in workflow templates name canonical values, not final display labels: apply the recommendation suffix and required decision key before presentation, including plain chat. Explain both effects: approval permits only the named scope; denial leaves that action unapproved and preserves unrelated authorized work.
@@ -75,7 +75,7 @@ Do not replay already-delivered report context after a failed question call. Pre
 - Exact-digest protocols retain their exact token and matching digest; generic Approve never replaces `approve <digest>` or other required syntax. Runtime permission requests use the dedicated runtime mechanism, not a workflow question tool. A workflow answer never grants sandbox, network, credential, or execution permission; preserve denial/retry rules and opt-ins.
 - Do not re-ask a decision already supplied. Reuse existing unambiguous authorization; changed presentation alone requires no reconfirmation. Never translate a label into arbitrary CLI arguments.
 
-### Bind pending decisions and resume safely
+## Bind pending decisions and resume safely
 
 1. Keep at most one unanswered authorization or flow-changing question per workflow. Bind a unique decision key to the exact target, action, immutable choice inventory, accepted grammar, canonical mapping, and required digest before asking. Record the original question and pending state in existing workflow metadata/ledger/notes, or conversation context for non-artifact skills; do not introduce a registry or mandatory new artifact lifecycle.
 2. Use host-provided question identity only when actually verified. Require a visible decision key in the answer when conversation context cannot bind it unambiguously. Otherwise the single unchanged pending decision may bind an explicit conversational answer under the rules above. Suggested labels may include a key, such as `decision-key: Approve`; bind each complete label and the permitted conversational aliases to the canonical answer before asking. Tool success is not an answer; use the actual host response contract, never an invented parser.

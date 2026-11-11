@@ -41,19 +41,16 @@ Continues the template's reasoning-progress bullets; the trigger bullet that nam
 
 - A material unresolved plan or implementation decision calls for one bounded higher-capability advisory pass when a permitted route exists. This is distinct from the stalled-workstream escalation procedure: preserve its ledger and observed-sandbox requirements when that trigger applies. Advice is evidence for the parent, never execution or acceptance authority; requested read-only behavior alone does not prove enforced isolation.
 
-- Parent, implementation, verification, and performance start at `medium`; data, research, and adversarial challenge use `high`.
+- Role-card `model_reasoning_effort` frontmatter is authoritative for registered roles. Starting effort for task work follows this mapping:
 
-- Documentation uses `high`; external evidence, including visual/browser inspection, uses `medium`.
-
-- Delegation, CI/CD, OSS triage, and curation use `high`; static analysis starts at `medium`.
+  | Starting effort | Work |
+  | -- | -- |
+  | `medium` | Parent execution, implementation, verification, performance, linting/static analysis, and external evidence including visual/browser inspection |
+  | `high` | Data/research method, adversarial challenge, documentation, delegation and coordination, CI/CD, OSS triage, curation, and explicitly selected architecture/security advice |
 
 - Bounded native task work follows `shared/specialist-orchestration.md` §"Delegation Lead And Model Routing". Preserve skill-specific ownership, required specialist evidence, and parent final acceptance.
 
-- `security-auditor` and `solution-architect` use `high`, only after explicit user request or agent selection; both remain read-only advisory passes.
-
-- `medium`: normal coding, verification, performance analysis, linting, and web-evidence work.
-
-- `high`: challenge, deep review, data/research method, coordination, documentation, CI, OSS triage, curation, architecture, and security work.
+- Select `security-auditor` and `solution-architect` only after explicit user request or agent selection; both remain read-only advisory passes at the effort mapped above.
 
 ## Markdown authoring
 
@@ -261,9 +258,12 @@ Parent agent responsibilities:
 **Handing off:**
 
 ```bash
-mkdir -p .codex/handover
-git diff -- <owned-paths> > .codex/handover/<from>→<to>-$(date +%s).patch
+PLUGIN_ROOT/bin/python -c "from pathlib import Path; Path('.codex/handover').mkdir(parents=True, exist_ok=True)"
+git add -N -- <owned-new-paths>
+git diff --binary --output=.codex/handover/<from>→<to>-<unix-timestamp>.patch -- <owned-paths>
 ```
+
+Use the host clock for `<unix-timestamp>`; on native Windows use `PLUGIN_ROOT/bin/python.cmd` (PowerShell prefixes a quoted launcher with `&`). Git writes the patch bytes directly, avoiding shell redirection encoding. Run intent-to-add only when task-owned new paths exist; `--binary` preserves binary edits. Never stage another owner's changes. This recipe covers unstaged changes, so if owned changes are already staged or index writes are forbidden, use the text handoff instead of producing an incomplete patch. Include every owned file in the handoff inventory, including additions and deletions.
 
 Also include short text handoff covering:
 
@@ -275,8 +275,11 @@ Also include short text handoff covering:
 **Receiving:**
 
 ```bash
+git apply --check .codex/handover/<patch-file>
 git apply .codex/handover/<patch-file>
 ```
+
+After the check and application succeed, verify every inventoried added or modified file exists and matches the handed-off content, and every inventoried deletion is absent; a successful patch check alone does not prove the inventory is complete.
 
 Apply only if no discarding of local changes required.
 

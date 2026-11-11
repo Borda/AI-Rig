@@ -302,7 +302,7 @@ class FakeRunner:
         elif argv == ["git", "remote"]:
             stdout = "".join(f"{remote}\n" for remote in self.github_remotes).encode()
         elif argv[:4] == ["git", "remote", "get-url", "--all"]:
-            remote = argv[4]
+            remote = argv[-1]
             if remote not in self.github_remotes:
                 return subprocess.CompletedProcess(argv, 2, stdout=b"", stderr=b"unknown remote")
             stdout = "".join(f"{url}\n" for url in self.github_remotes[remote]).encode()
@@ -966,6 +966,10 @@ def test_collect_pr_records_unavailable_diff_statistics_without_failing(
     assert (output / "numstat.txt").read_text(encoding="utf-8") == "unavailable:command-failed:diff-numstat\n"
     assert json.loads((output / "local-checkout.json").read_text())["head_matches_pr"] is True
     assert not (output / "pr-error.txt").exists()
+    calls = [argv for argv, _ in _runner.calls]
+    numstat = next(index for index, argv in enumerate(calls) if "--numstat" in argv)
+    binary = next(index for index, argv in enumerate(calls) if "--binary" in argv)
+    assert binary < numstat
 
 
 def test_collect_pr_uses_verified_local_diff_when_review_thread_fetch_fails(

@@ -127,10 +127,10 @@ def _parse_codemap_src_roots_toml(text: str) -> list[str]:
 def load_src_roots(root: Path) -> list[Path]:
     """Load explicit source roots from ``pyproject.toml`` ``[tool.codemap] src_roots``.
 
-    Joins each declared entry to *root* (without ``resolve()`` — kept in the same
+    Joins each declared entry to *root* (returned paths are kept in the same
     unresolved path space as the ``os.walk`` file paths so relative-path derivation
     never trips over ``/var`` → ``/private/var`` symlink canonicalisation on macOS),
-    keeping only entries that exist as directories, in declaration order — which is the
+    keeping only entries that resolve to directories inside *root*, in declaration order — which is the
     priority order applied by module naming and collision resolution (earlier entries
     win). Duplicate roots (by relative posix form) are dropped, preserving the first
     occurrence. Returns an empty list when the key is absent, so callers fall back to
@@ -143,7 +143,7 @@ def load_src_roots(root: Path) -> list[Path]:
         List of existing source-root directories under *root*, in priority order.
     """
     pyproject = root / "pyproject.toml"
-    if not pyproject.exists():
+    if pyproject.is_symlink() or not pyproject.exists():
         return []
     entries = _parse_codemap_src_roots_toml(pyproject.read_text(errors="replace"))
     roots: list[Path] = []
@@ -151,8 +151,8 @@ def load_src_roots(root: Path) -> list[Path]:
     for entry in entries:
         candidate = root / entry
         try:
-            rel = candidate.relative_to(root).as_posix()
-        except ValueError:
+            rel = candidate.resolve().relative_to(root.resolve()).as_posix()
+        except (OSError, RuntimeError, ValueError):
             continue  # entry escapes the project root (e.g. "../x") — ignore
         if rel and rel not in seen and candidate.is_dir():
             seen.add(rel)
@@ -206,10 +206,10 @@ def _load_exclusions(root: Path) -> Exclusions:
                 dirs.add(entry)
 
     pyproject = root / "pyproject.toml"
-    if pyproject.exists():
+    if not pyproject.is_symlink() and pyproject.exists():
         _ingest(_parse_codemap_exclude_toml(pyproject.read_text(errors="replace")), "pyproject.toml")
     ignore = root / ".codemapignore"
-    if ignore.exists():
+    if not ignore.is_symlink() and ignore.exists():
         _ingest(_parse_codemapignore(ignore.read_text(errors="replace")), ".codemapignore")
 
     return Exclusions(dirs=frozenset(dirs), globs=tuple(dict.fromkeys(globs)), sources=sources)

@@ -23,7 +23,7 @@ Sentinels written to ``${TMPDIR:-/tmp}/<name>-${CSID}``, each created fresh with
 Exit codes:
     0 — metadata resolved and persisted
     1 — the default branch is undeterminable, the PR head ref is the default branch, the PR head or base ref is
-        not a valid branch name, or ``--pr`` starts with ``-`` (argv-injection guard)
+        not a valid branch name, ``--pr`` starts with ``-`` (argv-injection guard), or the PR admission checks fail
 """
 
 from __future__ import annotations
@@ -37,6 +37,7 @@ import sys
 import tempfile
 from pathlib import Path
 from typing import Final
+from urllib.parse import urlsplit
 
 #: Sibling import: bin/ is not a package. Putting it on the path resolves the private writer whether this file runs as
 #: a script, under the test conftest, or as a doctest module.
@@ -47,7 +48,10 @@ if _BIN_DIR not in sys.path:
 from _sentinel_io import write_private_text  # noqa: E402
 
 #: Comma-separated JSON fields requested from ``gh pr view`` to resolve a PR's head and base refs.
-_PR_FIELDS: Final = "headRefName,baseRefName,isCrossRepository,headRefOid,headRepositoryOwner,headRepository"
+_PR_FIELDS: Final = (
+    "headRefName,baseRefName,isCrossRepository,headRefOid,headRepositoryOwner,headRepository,"
+    "state,maintainerCanModify,url"
+)
 #: Extracts the default branch name from the ``HEAD branch:`` line of ``git remote show`` output.
 _HEAD_BRANCH_RE: Final = re.compile(r"HEAD branch:\s*(\S+)")
 #: Printable characters ``git check-ref-format`` forbids anywhere in a ref name (control bytes are checked separately).
@@ -253,6 +257,48 @@ def head_repo_name(meta: dict) -> str:
     return str(repo.get("name") or "")
 
 
+def _repository_identity(value: str) -> tuple[str, str, str] | None:
+    """Identify a GitHub repository from an HTTPS/SSH remote or canonical PR URL."""
+    try:
+        parsed = urlsplit(value)
+        if parsed.scheme in {"https", "http", "ssh", "git"} and parsed.hostname:
+            host, path = parsed.hostname, parsed.path
+        elif match := re.fullmatch(r"(?:[^@/:]+@)?([^/:]+):([^:]+)", value):
+            host, path = match.groups()
+        else:
+            return None
+    except ValueError:
+        return None
+    parts = path.strip("/").lower().split("/")
+    if len(parts) == 4 and parts[2] == "pull" and parts[3].isdigit():
+        parts = parts[:2]
+    if len(parts) != 2 or not all(parts):
+        return None
+    return host.lower(), parts[0], parts[1].removesuffix(".git")
+
+
+def _pr_precheck(meta: dict, timeout: int) -> bool:
+    """Reject closed PRs or unverified checkout and push targets before publishing metadata."""
+    if meta.get("state") != "OPEN":
+        print("! BLOCKED — PR is not open or its state could not be verified")
+        return False
+    if meta.get("isCrossRepository") and meta.get("maintainerCanModify") is not True:
+        head = f"{head_repo_owner(meta)}/{head_repo_name(meta)}"
+        if _run(["gh", "api", f"repos/{head}", "--jq", ".permissions.push"], timeout) != "true":
+            print("! BLOCKED — fork PR does not allow maintainer edits and caller push access could not be verified")
+            return False
+    base = _repository_identity(str(meta.get("url") or ""))
+    origin = _repository_identity(_run(["git", "remote", "get-url", "origin"], timeout))
+    if base is not None and origin is not None:
+        if origin[1:] == base[1:]:
+            return True
+        canonical = _run(["gh", "api", f"repos/{origin[1]}/{origin[2]}", "--jq", ".full_name"], timeout)
+        if canonical.lower() == f"{base[1]}/{base[2]}":
+            return True
+    print("! BLOCKED — origin does not match the PR base repository or its identity could not be verified")
+    return False
+
+
 def _collect_ref_metadata(args: argparse.Namespace) -> dict[str, str] | None:
     """Resolve the default branch, the PR's head/base/fork metadata, and the current branch/sha.
 
@@ -262,7 +308,8 @@ def _collect_ref_metadata(args: argparse.Namespace) -> dict[str, str] | None:
     Returns:
         The 8-key sentinel-name-to-value mapping, or ``None`` when the default branch could not be
         determined, the PR head or base ref is not a valid branch name, or the PR head ref equals the
-        default branch — every case already printed its own failure message.
+        default branch, or the PR state, fork editability or origin/base identity checks fail — every case already
+        printed its own failure message.
     """
     base_default = default_branch(args.timeout)
     if not base_default:
@@ -270,12 +317,14 @@ def _collect_ref_metadata(args: argparse.Namespace) -> dict[str, str] | None:
         return None
 
     meta = fetch_pr_meta(args.pr, args.timeout)
+    if not _pr_precheck(meta, args.timeout):
+        return None
     head_ref = str(meta.get("headRefName") or "")
     base_ref = str(meta.get("baseRefName") or "") or base_default
     cross_repo = "true" if meta.get("isCrossRepository") else "false"
     head_oid = str(meta.get("headRefOid") or "")
     for label, ref in (("head", head_ref), ("base", base_ref)):
-        # empty head = failed PR fetch, which the later steps already handle; an invalid name never reaches a sentinel
+        # empty head ref: gh omitted it; an invalid name never reaches a sentinel
         if ref and not is_valid_branch_name(ref):
             print(
                 f"⛔ PR {label} ref {ref!r} is not a valid git branch name — refusing to persist it for later git commands"

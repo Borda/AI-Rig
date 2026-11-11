@@ -2,7 +2,7 @@
 name: debrief-coding
 description: 'Read local codemap telemetry logs and produce a diagnostic/usage report. Supports date filtering, session filtering, and optional anonymization before sharing. TRIGGER when: analyse recent codemap usage, debug query patterns, investigate errors, or prepare a shareable anonymized report of how codemap skills and CLI are being used.'
 argument-hint: '[--since YYYY-MM-DD] [--session ID] [--anonymize] [--output PATH]'
-allowed-tools: Read, Write, Bash, Glob
+allowed-tools: Bash, Write
 effort: low
 ---
 
@@ -31,7 +31,7 @@ One helper does all reading, filtering, anonymization and aggregation. Never Rea
 python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/debrief_stats.py" --arguments="$ARGUMENTS"  # timeout: 120000
 ```
 
-- Exit `1` → no shards under the resolved log root: relay its message ("No codemap telemetry found …"); stop.
+- Exit `1` → no shards under the resolved log root only when stderr starts with `No codemap telemetry found`: relay its message; stop. Any other exit `1` is a helper crash: relay stderr and stop; never report it as absent telemetry.
 - Exit `2` → bad flag (`Unknown flag(s)`, missing value, `--since` not `YYYY-MM-DD`): relay its `!` line; stop.
 - Exit `3` → `anonymize.py` or `join_avoidance.py` hung past its time cap; the scratch copy is already removed: relay its `!` line; stop.
 - Exit `0` → one JSON object on stdout; Steps 2–3 use only it.
@@ -147,12 +147,6 @@ Print report path on completion.
 ## Example invocations
 
 ```bash
-/codemap-py:debrief-coding
-
-/codemap-py:debrief-coding --since 2026-06-15
-
-/codemap-py:debrief-coding --session 3f2e1a90-...
-
 # use project-relative path, not /tmp; slash-command args are not shell-expanded, so write the date literally
 /codemap-py:debrief-coding --anonymize --output .reports/codemap/debrief-anon-2026-06-15.md
 ```

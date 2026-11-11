@@ -141,10 +141,10 @@ class TestSharedVectors:
 
     @pytest.mark.parametrize("vector", vector_params("aliases_escaped_blank"))
     def test_aliases_escaped_blank(self, vector: dict) -> None:
-        """Refuse raw text whose escaped blank normalization would erase, and only that.
+        """Refuse raw whitespace whose normalization could change shell behavior.
 
         A backslash-blank at a line end or before ``#`` makes the shell run a different command than the normalized text
-        the digest covers; both sides must refuse the same raw shapes.
+        the digest covers; carriage returns and discarded non-shell whitespace also refuse on both sides.
         """
         assert bbm.aliases_escaped_blank(vector["input"]) is vector["expected"]
 
@@ -482,6 +482,18 @@ class TestHashing:
         plugin_dir = _make_plugin(tmp_path, "cc_foundry", skill_md="```python\nprint(1)\n```\n")
         manifest, _ = bbm.build_plugin(plugin_dir)
         assert manifest["entries"] == {}
+
+    @pytest.mark.parametrize("vector", vector_params("aliases_escaped_blank"))
+    def test_raw_normalization_refusals_drop_whole_block(self, tmp_path: Path, vector: dict) -> None:
+        """Manifest extraction preserves raw whitespace refusals and counts each rejected block once."""
+        plugin_dir = _make_plugin(tmp_path, "cc_foundry", skill_md="```bash\necho safe\n```\n")
+        skill = plugin_dir / "skills" / "demo" / "SKILL.md"
+        skill.write_bytes(("```bash\n" + vector["input"] + "\n```\n").encode("utf-8"))
+
+        manifest, dropped = bbm.build_plugin(plugin_dir)
+
+        assert dropped == int(vector["expected"])
+        assert bool(manifest["entries"]) is (not vector["expected"])
 
 
 class TestPosixSrc:

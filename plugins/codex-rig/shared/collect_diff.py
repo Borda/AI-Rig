@@ -65,6 +65,9 @@ from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
 #: Git object name of a SHA-1 (40 hex digits) or SHA-256 (64 hex digits) repository.
 _REVISION_PATTERN = re.compile(rb"[0-9a-f]{40}(?:[0-9a-f]{24})?")
 
+#: Maximum runtime for each local Git process, including snapshot and review preparation.
+GIT_TIMEOUT_SECONDS = 60
+
 #: Output file name paired with the git diff arguments that produce it, one entry per diff artifact.
 ARTIFACT_COMMANDS = (
     ("diff.patch", ("diff",)),
@@ -112,7 +115,9 @@ def canonical_diff_arguments(arguments: tuple[str, ...]) -> tuple[str, ...]:
     """Disable configured diff transforms and stabilize patch presentation."""
     if not arguments or arguments[0] != "diff":
         return arguments
-    boundary = arguments.index("--") if "--" in arguments else len(arguments)
+    boundary = next(
+        (index for index, argument in enumerate(arguments) if argument in {"--", "--end-of-options"}), len(arguments)
+    )
     return (
         "-c",
         "core.quotePath=true",
@@ -143,13 +148,33 @@ def canonical_diff_environment() -> dict[str, str]:
 def run_git(arguments: tuple[str, ...], output: Path) -> int:
     """Run one Git argv vector and write its stdout bytes unchanged."""
     with output.open("wb") as stream:
-        completed = subprocess.run(  # noqa: S603 - argv list, no shell
-            ["git", *arguments],  # noqa: S607 - tool resolved via PATH on purpose
-            stdout=stream,
-            check=False,
-            env=canonical_diff_environment() if arguments[:3] == ("-c", "core.quotePath=true", "diff") else None,
-        )
+        try:
+            completed = subprocess.run(  # noqa: S603 - argv list, no shell
+                ["git", "-c", "core.fsmonitor=false", *arguments],  # noqa: S607 - tool resolved via PATH on purpose
+                stdout=stream,
+                check=False,
+                timeout=GIT_TIMEOUT_SECONDS,
+                env=canonical_diff_environment() if arguments[:3] == ("-c", "core.quotePath=true", "diff") else None,
+            )
+        except subprocess.TimeoutExpired:
+            print("Git command timed out", file=sys.stderr)
+            return 124
     return completed.returncode
+
+
+def _valid_commit_target(target: str, output: Path) -> bool:
+    """Reject option-shaped input and require revision expansion to produce only object IDs."""
+    if not target.startswith("-"):
+        resolved = output / "target-commit.txt"
+        if run_git(("rev-parse", "--end-of-options", target), resolved) == 0:
+            revisions = resolved.read_bytes().splitlines()
+            # Git echoes the option boundary before expanding revisions, including an empty parent set.
+            if revisions[:1] == [b"--end-of-options"]:
+                revisions = revisions[1:]
+            if all(_REVISION_PATTERN.fullmatch(revision.removeprefix(b"^")) for revision in revisions):
+                return True
+    (output / "scope-error.txt").write_text("invalid-commit-target\n", encoding="utf-8")
+    return False
 
 
 def collect_diff(scope: str, target: str, output: Path) -> int:
@@ -165,6 +190,8 @@ def collect_diff(scope: str, target: str, output: Path) -> int:
     if scope not in {"working-tree", "path", "commit"}:
         (output / "scope-error.txt").write_text(f"invalid-scope:{scope}\n", encoding="utf-8")
         return 2
+    if scope == "commit" and not _valid_commit_target(target, output):
+        return 2
 
     if scope == "working-tree":
         revision = ("HEAD",)
@@ -173,8 +200,8 @@ def collect_diff(scope: str, target: str, output: Path) -> int:
         revision = ("HEAD",)
         path_suffix = ("--", target)
     else:
-        revision = (target,)
-        path_suffix = ()
+        revision = ("--end-of-options", target)
+        path_suffix = ("--",)
 
     for filename, prefix in ARTIFACT_COMMANDS:
         arguments = (*prefix, *revision, *path_suffix)
@@ -199,12 +226,16 @@ def collect_diff(scope: str, target: str, output: Path) -> int:
 
 def _git_output(repository: Path, arguments: tuple[str, ...]) -> bytes:
     """Return stdout from one successful read-only Git invocation."""
-    completed = subprocess.run(  # noqa: S603 - argv list, no shell
-        ["git", "-C", os.fspath(repository), "--literal-pathspecs", *arguments],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
-        capture_output=True,
-        check=False,
-        env=canonical_diff_environment() if arguments[:3] == ("-c", "core.quotePath=true", "diff") else None,
-    )
+    try:
+        completed = subprocess.run(  # noqa: S603 - argv list, no shell
+            ["git", "-c", "core.fsmonitor=false", "-C", os.fspath(repository), "--literal-pathspecs", *arguments],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
+            capture_output=True,
+            check=False,
+            timeout=GIT_TIMEOUT_SECONDS,
+            env=canonical_diff_environment() if arguments[:3] == ("-c", "core.quotePath=true", "diff") else None,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError("Git source snapshot command timed out") from error
     if completed.returncode != 0:
         raise RuntimeError(f"Git source snapshot command failed: {' '.join(arguments)}")
     return completed.stdout
@@ -498,20 +529,26 @@ def capture_source_snapshot(repository: Path, scope_paths: list[str]) -> dict[st
 
 def _output_is_ignored(repository: Path, relative_path: str) -> bool:
     """Return whether Git excludes a prospective snapshot output path."""
-    completed = subprocess.run(  # noqa: S603 - argv list, no shell
-        [  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
-            "git",
-            "-C",
-            os.fspath(repository),
-            "check-ignore",
-            "-q",
-            "--no-index",
-            "--",
-            relative_path,
-        ],
-        capture_output=True,
-        check=False,
-    )
+    try:
+        completed = subprocess.run(  # noqa: S603 - argv list, no shell
+            [  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
+                "git",
+                "-c",
+                "core.fsmonitor=false",
+                "-C",
+                os.fspath(repository),
+                "check-ignore",
+                "-q",
+                "--no-index",
+                "--",
+                relative_path,
+            ],
+            capture_output=True,
+            check=False,
+            timeout=GIT_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError("Git ignored-path check timed out for source snapshot output") from error
     if completed.returncode not in {0, 1}:
         raise RuntimeError("Git ignored-path check failed for source snapshot output")
     return completed.returncode == 0
@@ -625,21 +662,50 @@ def collect_review_worktree(repository: Path, output: Path) -> dict[str, object]
     if snapshot != capture_source_snapshot(root, paths):
         raise RuntimeError("Repository changed while preparing local review worktree")
 
-    completed = subprocess.run(  # noqa: S603 - argv list, no shell
-        ["git", "-C", os.fspath(root), "worktree", "add", "--detach", os.fspath(review), str(snapshot["revision"])],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
-        capture_output=True,
-        check=False,
-    )
+    try:
+        completed = subprocess.run(  # noqa: S603 - argv list, no shell
+            [  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
+                "git",
+                "-c",
+                "core.fsmonitor=false",
+                "-C",
+                os.fspath(root),
+                "worktree",
+                "add",
+                "--detach",
+                os.fspath(review),
+                str(snapshot["revision"]),
+            ],
+            capture_output=True,
+            check=False,
+            timeout=GIT_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError("Git worktree creation timed out") from error
     if completed.returncode != 0:
         raise RuntimeError("Git could not create detached local review worktree")
     if patch:
         # New patch paths must be visible to the mirror's later Git diff without staging their contents.
-        completed = subprocess.run(  # noqa: S603 - argv list, no shell
-            ["git", "-C", os.fspath(review), "apply", "--binary", "--intent-to-add", "--"],  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
-            input=patch,
-            capture_output=True,
-            check=False,
-        )
+        try:
+            completed = subprocess.run(  # noqa: S603 - argv list, no shell
+                [  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
+                    "git",
+                    "-c",
+                    "core.fsmonitor=false",
+                    "-C",
+                    os.fspath(review),
+                    "apply",
+                    "--binary",
+                    "--intent-to-add",
+                    "--",
+                ],
+                input=patch,
+                capture_output=True,
+                check=False,
+                timeout=GIT_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise RuntimeError("Git patch application timed out") from error
         if completed.returncode != 0:
             raise RuntimeError("Git could not apply local review patch")
     _materialize_source(review, snapshot, set(_inventory_paths(untracked)))

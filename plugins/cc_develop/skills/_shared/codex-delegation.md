@@ -7,10 +7,12 @@ Delegate only small, bounded tasks needing code read — not single-command task
 
 For each qualifying task: read target code, form accurate self-contained brief, then use the installed bridge (requires `bridge@borda-ai-rig`):
 
+For `bridge:implement`, the orchestrating skill's task-confirmation gate must have a recorded user decision naming the approved task set; that decision is the approval. Workspace is the skill's absolute launch directory and network is `none` unless that decision names otherwise. Cite the decision and selected tasks in each dispatch brief; reuse it only for tasks in that set. A subagent may dispatch only when its brief carries the orchestrating skill's recorded approval; otherwise return `blocked` and never dispatch. If no approval exists, use AskUserQuestion before dispatch; if AskUserQuestion is unavailable, return `blocked` and never dispatch.
+
 ```text
 Skill(
   skill="bridge:implement",
-  args="Implement this bounded change after reading <file>: <specific task with an accurate description of the current behavior and required outcome>. Verify the focused behavior before returning."
+  args="Recorded user approval: <conversation reference and decision naming the approved task set>. Workspace: <absolute approved workspace>. Network: <approved mode, default none>. Implement this bounded change after reading <file>: <specific task with an accurate description of the current behavior and required outcome>. Verify the focused behavior before returning."
 )
 ```
 

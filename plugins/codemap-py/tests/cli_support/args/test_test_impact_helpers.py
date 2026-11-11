@@ -243,6 +243,40 @@ class TestSummarizeMain:
         assert summarize_test_impact.main(["--rc", "0", "--output-prefix", "codemap-p"]) == 1
         assert not (sentinel_dir / "codemap-p-ti-total-s1").exists()
 
+    def test_diff_summary_retains_tests_after_large_module_details(
+        self, sentinel_dir: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Large dependency details must not obscure the authoritative test union or coverage gaps."""
+        payload = {
+            "changed_modules": [
+                {"module": "pkg.a", "importers": ["long_name" * 4000], "errors": ["coupling unavailable"]},
+                {"module": "pkg.b", "changed_symbols": ["pkg.b::run"]},
+            ],
+            "unmapped_files": ["new.py"],
+            "test_impact": {"test_files": ["tests/test_a.py"], "total": 1, "pytest_cmd": "pytest tests/test_a.py"},
+            "index": {"query_complete": False, "stale": True, "completeness_reason": "degraded", "modules": 900},
+        }
+        raw = json.dumps(payload)
+        assert len(raw) > 30000
+        monkeypatch.setattr("sys.stdin", io.StringIO(raw))
+
+        rc = summarize_test_impact.main(["--diff-impact", "--rc", "0", "--output-prefix", "codemap-p"])
+
+        output = capsys.readouterr()
+        summary = json.loads(output.out)
+        assert rc == 0, output.err
+        assert summary == {
+            "test_impact": payload["test_impact"],
+            "unmapped_files": ["new.py"],
+            "changed_modules": [
+                {"module": "pkg.a", "errors": ["coupling unavailable"]},
+                {"module": "pkg.b", "errors": []},
+            ],
+            "index": {"query_complete": False, "stale": True, "completeness_reason": "degraded"},
+        }
+        assert len(output.out) < 1000
+        assert not (sentinel_dir / "codemap-p-ti-total-s1").exists()
+
 
 class TestExtractPayload:
     """Pull the JSON answer out of a provider's combined output."""

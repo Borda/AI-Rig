@@ -248,7 +248,7 @@ def _validate_fortify_dir(raw: str) -> Path | None:
         raw: Raw ``fortify_dir`` positional argument.
 
     Returns:
-        ``Path(raw)`` when ``raw`` is empty or resolves inside an allowed root; ``None``
+        The resolved path when ``raw`` is nonempty and inside an allowed root; ``None``
         when it resolves outside every allowed root.
     """
     if not raw:
@@ -266,7 +266,7 @@ def _validate_fortify_dir(raw: str) -> Path | None:
             resolved.relative_to(root)
         except ValueError:
             continue
-        return Path(raw)
+        return resolved
     return None
 
 
@@ -287,7 +287,7 @@ def _worktree_path(fortify_dir: str, variant_name: str) -> str:
     Forward-slash join, not pathlib: step 4a rebuilds this same string in the shell, and a Windows backslash join here
     would not match what ``git worktree add`` is handed there.
     """
-    return os.environ.get("FORTIFY_WORKTREE") or f"{fortify_dir}/worktrees/{variant_name}"
+    return f"{Path(fortify_dir).as_posix()}/worktrees/{variant_name}"
 
 
 def _register_cleanup_path(fortify_dir: str, variant_name: str) -> None:
@@ -298,7 +298,10 @@ def _register_cleanup_path(fortify_dir: str, variant_name: str) -> None:
     Over-registering is safe: the post-loop sweep skips paths with no directory on disk.
     """
     paths_file = Path(fortify_dir) / "worktree-paths.txt"
-    with paths_file.open("a", encoding="utf-8", newline="\n") as handle:
+    if paths_file.is_symlink():
+        raise OSError(f"refusing symlink cleanup accumulator: {paths_file}")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+    with os.fdopen(os.open(paths_file, flags, 0o600), "a", encoding="utf-8", newline="\n") as handle:
         handle.write(_worktree_path(fortify_dir, variant_name) + "\n")
 
 
@@ -383,7 +386,8 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError:
         index = 1
 
-    fortify_dir = args.fortify_dir
+    resolved = _validate_fortify_dir(args.fortify_dir)
+    fortify_dir = str(resolved) if resolved is not None else args.fortify_dir
     outcome = _resolve_pending_variant(fortify_dir, index)
     if isinstance(outcome, int):
         return outcome

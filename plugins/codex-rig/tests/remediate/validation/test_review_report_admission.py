@@ -1272,6 +1272,7 @@ def _run_source_gates(directory: Path, failed_lint: bool) -> tuple[dict, subproc
         environment.pop(gate + "_CMD", None)
     environment["LINT_CMD"] = f"exit {int(failed_lint)}"
     environment["FORMAT_CMD"] = "exit 0"
+    environment["REVIEW_CMD"] = "exit 0"
     script_arguments = (sys.executable, str(regression))
     environment["TESTS_CMD"] = (
         "& " + " ".join("'" + argument.replace("'", "''") + "'" for argument in script_arguments)

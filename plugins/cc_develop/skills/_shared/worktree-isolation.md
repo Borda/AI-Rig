@@ -29,6 +29,7 @@ IFS= read -r WORKTREE_ENABLED < "${TMPDIR:-/tmp}/dev-<skill>-worktree-${CSID}" 2
 # timeout: 15000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 git rev-parse --show-toplevel > "${TMPDIR:-/tmp}/dev-<skill>-orig-root-${CSID}"   # main-tree root, read later
+git rev-parse HEAD > "${TMPDIR:-/tmp}/dev-<skill>-wt-base-${CSID}"   # exact base for the final ahead check
 git status --porcelain 2>/dev/null | head -1 | grep -q . && echo "⚠ uncommitted changes will NOT appear in the worktree — commit/stash first if needed"
 WT=".claude/worktrees/dev-<skill>-<slug>"
 git worktree add -b "dev-<skill>-<slug>" "$WT" HEAD   # branch off current HEAD, not origin/default
@@ -86,7 +87,35 @@ Prefix final report/diagnosis path with `$_ORIG_ROOT` (absolute). Intermediate `
 
 After quality/review gates, before final summary:
 
-1. Capture branch — `git branch --show-current` (from worktree CWD).
+For code-editing skills, report uncommitted changes as a normal labelled handoff. Complete any already-authorized commit workflow first. Ignore run artifacts in `.developments/` and `.temp/` when inspecting changes. Offer the direct merge command only for a clean branch ahead of its recorded base. Read-only skills skip this inspection because their deliverable is the main-tree report. Branch capture and `ExitWorktree(action="keep")` always run, including when edits are uncommitted or inspection fails.
+
+```bash
+# timeout: 5000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+_WORKTREE_KNOWN=true
+_WORKTREE_DIRTY=$(git status --porcelain --untracked-files=all -- ':/' ':(top,exclude).developments' ':(top,exclude).temp') || _WORKTREE_KNOWN=false
+_WORKTREE_BRANCH=$(git branch --show-current)
+printf 'Worktree branch: %s\n' "$_WORKTREE_BRANCH"
+if [ "$_WORKTREE_KNOWN" != true ]; then
+    echo "Worktree — inspection unavailable; keep it and inspect changes before committing or merging"
+elif [ -n "$_WORKTREE_DIRTY" ]; then
+    echo "Worktree — uncommitted changes"
+    printf '%s\n' "$_WORKTREE_DIRTY"
+    echo "Review changes; commit inside the worktree first, then merge its branch from the original checkout"
+else
+    IFS= read -r _WORKTREE_BASE < "${TMPDIR:-/tmp}/dev-<skill>-wt-base-${CSID}" 2>/dev/null || _WORKTREE_BASE=""
+    _WORKTREE_AHEAD=0
+    [ -z "$_WORKTREE_BASE" ] || _WORKTREE_AHEAD=$(git rev-list --count "${_WORKTREE_BASE}..HEAD")
+    case "$_WORKTREE_AHEAD" in ''|*[!0-9]*) _WORKTREE_AHEAD=0;; esac
+    if [ "$_WORKTREE_AHEAD" -gt 0 ] && [ -n "$_WORKTREE_BRANCH" ]; then
+        printf 'Review, then git merge %s from the original checkout\n' "$_WORKTREE_BRANCH"
+    else
+        echo "Worktree — no verified commits ahead of its base; keep for inspection"
+    fi
+fi
+```
+
+1. Capture branch — `git branch --show-current` (from worktree CWD); the block above always attempts this.
 2. `ExitWorktree(action="keep")` — returns session to original dir, leaves worktree + branch on disk. **Never** `remove`; **never** auto-merge. (A `path`-entered worktree is never auto-removed by `ExitWorktree` — keep is the only sane action.)
 3. In Final Report, surface `Worktree` block:
 
@@ -94,7 +123,8 @@ After quality/review gates, before final summary:
 Worktree — isolated run (base: HEAD)
   path:   <final $WT from ${TMPDIR:-/tmp}/dev-<skill>-wt-${CSID}>/
   branch: <branch>
-  merge:  review, then `git merge <branch>` (or open PR from it)
+  status: <uncommitted changes / clean and ahead / no verified commits / inspection unavailable>
+  next:   <the matching recipe printed above; direct merge only when clean and ahead>
 ```
 
 ## §Team interaction

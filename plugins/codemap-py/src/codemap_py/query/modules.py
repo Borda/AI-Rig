@@ -324,12 +324,15 @@ def cmd_path(index: dict, frm: str, to: str) -> None:
     if to not in modules:
         _die_module_not_indexed(index, to)
 
-    queue: deque[list[str]] = deque([[frm]])
-    visited: set[str] = {frm}
+    queue: deque[str] = deque([frm])
+    parents: dict[str, str | None] = {frm: None}
     while queue:
-        path = queue.popleft()
-        node = path[-1]
+        node = queue.popleft()
         if node == to:
+            path = [node]
+            while (parent := parents[path[-1]]) is not None:
+                path.append(parent)
+            path.reverse()
             _print(
                 json.dumps(
                     {
@@ -346,9 +349,9 @@ def cmd_path(index: dict, frm: str, to: str) -> None:
             )
             return
         for neighbour in modules.get(node, {}).get("direct_imports", []):
-            if neighbour not in visited and neighbour in modules:
-                visited.add(neighbour)
-                queue.append([*path, neighbour])
+            if neighbour not in parents and neighbour in modules:
+                parents[neighbour] = node
+                queue.append(neighbour)
 
     _print(
         json.dumps(

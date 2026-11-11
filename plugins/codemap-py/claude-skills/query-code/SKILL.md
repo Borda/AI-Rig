@@ -57,6 +57,8 @@ Enabled plugin adds version-matched `bin/` to Bash `PATH`. If unavailable intera
 | coverage / documentation gaps | `coverage <target>` · `coverage-gap [module]` · `undocumented [module]` |
 | repository shape / package inventory | `packages` (per-package module/test/docs counts) · `list --limit 0` |
 
+`fixture-graph` expands each requested root independently. Within one root, `reference: true` with empty `depends_on` points to a dependency expanded earlier in that root. Top-level `truncated: true` reports graph omissions from the shared 1,000-node budget or depth cap; affected nodes can also carry `truncated: true`. A `cycle: true` node marks a dependency cycle.
+
 Direct/every/all/production/blast-radius callers → `fn-rdeps <module::symbol> --exclude-tests`; `fn-blast <module::symbol>` only for explicit transitive, closure, hops, or all-levels requests.
 
 Test modules directly importing module: use `rdeps <module>`, then filter/report tests. Reserve `test-impact <target>` for transitive affected-test selection. For the counts alone, `rdeps <module> --exclude-tests` reports `importer_count` and `excluded_test_importer_count` together; never derive one by subtracting a second call from the first.
@@ -77,7 +79,7 @@ Table is a routing shortlist, not the parser's full surface. If the operation is
 
 ## Index and completeness contract
 
-Resolve the installed launcher once and retain its literal in reasoning; shell variables do not persist between tool calls. Run selected queries directly; no preliminary scan, index-file check, or freshness query. An ordinary `codemap-py query` prepares the canonical project index before answering, including when no index exists yet, so run queries one at a time while that preparation may occur. With inherited `SCAN_NO_AUTOBUILD=1`, queries leave the existing index unchanged and independent read-only queries may run concurrently against that frozen index; dependent queries wait for their inputs. This skill's allowed tools run `codemap-py query` without an environment prefix or export, so it never sets the opt-out itself. Keep independent queries standalone, not `batch`, until its per-item completeness contract is verified. Use `test-impact` for test choice, not direct test-module import.
+Resolve the installed launcher once and retain its literal in reasoning; shell variables do not persist between tool calls. Run selected queries directly; no preliminary scan, index-file check, or freshness query. An ordinary `codemap-py query` prepares the canonical project index before answering, including when no index exists yet, so run queries one at a time while that preparation may occur. With inherited `SCAN_NO_AUTOBUILD=1`, queries leave the existing index unchanged and independent read-only queries may run concurrently against that frozen index; dependent queries wait for their inputs. This skill's allowed tools run `codemap-py query` without an environment prefix or export, so it never sets the opt-out itself. Independent queries may use `batch`: require every item's `ok` to be `true` and interpret that item's `result.index` for completeness, scope and truncation; the top-level `index` never replaces per-item metadata. Use `test-impact` for test choice, not direct test-module import.
 
 - Normal mode automatically prepares the canonical index for the query; this includes a bounded working-tree refresh and creating a missing index.
 - With `SCAN_NO_AUTOBUILD=1`, the query does not refresh or build. It reads the existing index unchanged; a missing frozen index returns a structured error.

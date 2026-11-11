@@ -17,9 +17,11 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/measure_config_size.py" --
 ## Check 13 — Markdown heading hierarchy continuity
 
 ````bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
+[ "$LOCAL_MODE" = "true" ] && _ROOT="plugins" || _ROOT=".claude"
 printf "=== Check 13: Heading hierarchy continuity ===\n"
-{ find .claude/agents .claude/rules -maxdepth 1 -name '*.md' -type f
-  find .claude/skills -mindepth 2 -maxdepth 2 -name SKILL.md -type f; } 2>/dev/null | {
+find "$_ROOT" \( -name worktrees -o -name node_modules -o -name .venv -o -path '*/tests/*' \) -prune -o \( -path '*/agents/*.md' -o -path '*/rules/*.md' -o -path '*/skills/*/SKILL.md' \) -print 2>/dev/null | {
 violations=0
 while IFS= read -r f; do # timeout: 5000
     awk -v file="$f" '
@@ -167,7 +169,19 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_codemap_guard.py"  #
 
 ## Check 15 — Hardcoded user paths
 
-Use Grep tool (pattern `/Users/|/home/`, glob `{agents/*.md,skills/*/SKILL.md}`, path `.claude/`, output mode `content`) to flag non-portable paths in agent and skill files. Run second Grep on `.claude/settings.json` with same pattern to catch absolute hook paths.
+Flag non-portable paths in agent and skill files and absolute hook paths in settings files. Derive the scan root in this fresh shell as defined in `checks-skills.md`:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
+[ "$LOCAL_MODE" = "true" ] && _ROOT="plugins" || _ROOT=".claude"
+{ find "$_ROOT" \( -name worktrees -o -name node_modules -o -name .venv -o -path '*/tests/*' \) -prune -o \( -path '*/agents/*.md' -o -path '*/skills/*/SKILL.md' -o -name settings.json -o -name settings.local.json \) -print 2>/dev/null
+  printf '%s\n' .claude/settings.json .claude/settings.local.json; } | sort -u |
+while IFS= read -r f; do # timeout: 5000
+    [ -f "$f" ] || continue
+    grep -HnE '/Users/|/home/' "$f" 2>/dev/null || true
+done
+```
 
 **Important**: run on every file regardless of prior critical/high findings — path portability orthogonal to other severity classes, must not deprioritize.
 
@@ -178,7 +192,11 @@ Also grep for bare `plugins/<name>/` prefix as primary path in skill/agent bodie
 First, detect whether project has local context files:
 
 ```bash
-for f in AGENTS.md CONTRIBUTING.md .claude/CLAUDE.md; do # timeout: 5000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
+[ "$LOCAL_MODE" = "true" ] && _ROOT="plugins" || _ROOT=".claude"
+{ printf '%s\n' AGENTS.md CONTRIBUTING.md; find "$_ROOT" \( -name worktrees -o -name node_modules -o -name .venv -o -path '*/tests/*' \) -prune -o -name CLAUDE.md -print 2>/dev/null; } |
+while IFS= read -r f; do # timeout: 5000
     [ -f "$f" ] && printf "✓ found: %s\n" "$f"
 done
 ```
@@ -186,8 +204,10 @@ done
 Scan agent and skill files for inline examples:
 
 ````bash
-{ find .claude/agents -maxdepth 1 -name '*.md' -type f
-  find .claude/skills -mindepth 2 -maxdepth 2 -name SKILL.md -type f; } 2>/dev/null |
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
+[ "$LOCAL_MODE" = "true" ] && _ROOT="plugins" || _ROOT=".claude"
+find "$_ROOT" \( -name worktrees -o -name node_modules -o -name .venv -o -path '*/tests/*' \) -prune -o \( -path '*/agents/*.md' -o -path '*/skills/*/SKILL.md' \) -print 2>/dev/null |
 while IFS= read -r f; do # timeout: 5000
     count=$(grep -cE '^```|^## Example|^### Example' "$f" 2>/dev/null || true)
     lines=$(wc -l <"$f" | tr -d ' ')
@@ -260,12 +280,18 @@ Severity: **high** — skill silently fails for any user who installed via marke
 
 ## Check 18 — Rules integrity and efficiency
 
-Four sub-checks covering `.claude/rules/`. Skip if `rules/` directory absent or empty.
+Four sub-checks covering rules under the mode-selected root (`plugins/` in local mode, `.claude/` otherwise). Each fresh shell re-derives the root per `checks-skills.md`. Skip if no rule files exist.
 
 **18a — Inventory vs MEMORY.md**:
 
 ```bash
-ls .claude/rules/*.md 2>/dev/null | xargs -I{} basename {} .md | sort # timeout: 5000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
+[ "$LOCAL_MODE" = "true" ] && _ROOT="plugins" || _ROOT=".claude"
+find "$_ROOT" \( -name worktrees -o -name node_modules -o -name .venv -o -path '*/tests/*' \) -prune -o -path '*/rules/*.md' -print 2>/dev/null |
+while IFS= read -r f; do # timeout: 5000
+    basename "$f" .md
+done | sort
 ```
 
 Rules on disk absent from MEMORY.md → **medium**. Rules in MEMORY.md absent on disk → **medium**.
@@ -273,7 +299,11 @@ Rules on disk absent from MEMORY.md → **medium**. Rules in MEMORY.md absent on
 **18b — Frontmatter completeness**:
 
 ```bash
-for f in .claude/rules/*.md; do # timeout: 5000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
+[ "$LOCAL_MODE" = "true" ] && _ROOT="plugins" || _ROOT=".claude"
+find "$_ROOT" \( -name worktrees -o -name node_modules -o -name .venv -o -path '*/tests/*' \) -prune -o -path '*/rules/*.md' -print 2>/dev/null |
+while IFS= read -r f; do # timeout: 5000
     desc=$(awk '/^---$/{c++; if(c==2)exit} c==1 && /^description:/{found=1} END{print found+0}' "$f")
     [ "$desc" -eq 0 ] && printf "MISSING description: %s\n" "$f"
 done
@@ -281,18 +311,30 @@ done
 
 Missing `description:` → **high**. Malformed `paths:` → **high**.
 
-**18c — Redundancy check**: Per rule file, identify 2–3 most specific directive phrases. Grep verbatim in `.claude/CLAUDE.md` and `.claude/agents/*.md`. Exact phrase in ≥2 locations outside rule file → **medium** (distillation incomplete).
+**18c — Redundancy check**: Per rule file, identify 2–3 most specific directive phrases. Grep verbatim in CLAUDE.md and agent files under the mode-selected root. Exact phrase in ≥2 locations outside rule file → **medium** (distillation incomplete).
+
+> The two phrases below are illustrative only. Replace every `-e` argument with the specific directive phrases selected from the actual rule being checked; do not treat the example list as the redundancy scan.
 
 ```bash
-{ find .claude/agents -maxdepth 1 -name '*.md' -type f -print0
-  find .claude -maxdepth 1 -name CLAUDE.md -type f -print0; } 2>/dev/null |
-  xargs -0 -r grep -Ho -e "Never switch to NumPy" -e "never git add" | sort -u # timeout: 5000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
+[ "$LOCAL_MODE" = "true" ] && _ROOT="plugins" || _ROOT=".claude"
+find "$_ROOT" \( -name worktrees -o -name node_modules -o -name .venv -o -path '*/tests/*' \) -prune -o \( -path '*/agents/*.md' -o -name CLAUDE.md \) -print 2>/dev/null |
+while IFS= read -r f; do # timeout: 5000
+    grep -HFo -e "Never switch to NumPy" -e "never git add" "$f" || true
+done | sort -u
 ```
 
 **18d — Cross-reference integrity**: Grep agent files, skill files, CLAUDE.md for `.claude/rules/<name>.md` patterns. Verify each referenced filename exists on disk → missing → **high**.
 
 ```bash
-grep -rh '\.claude/rules/[a-z_-]*\.md' .claude/agents/ .claude/skills/ .claude/CLAUDE.md 2>/dev/null |
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
+[ "$LOCAL_MODE" = "true" ] && _ROOT="plugins" || _ROOT=".claude"
+find "$_ROOT" \( -name worktrees -o -name node_modules -o -name .venv -o -path '*/tests/*' \) -prune -o \( -path '*/agents/*.md' -o -path '*/skills/*.md' -o -name CLAUDE.md \) -print 2>/dev/null |
+while IFS= read -r f; do
+    grep -h '\.claude/rules/[a-z_-]*\.md' "$f" 2>/dev/null || true
+done |
 grep -o 'rules/[a-z_-]*\.md' | sort -u # timeout: 5000
 ```
 
@@ -305,8 +347,14 @@ All agent dispatch calls must use fully-qualified plugin-prefixed form (`foundry
 Scan agent files, skill files, CLAUDE.md for `subagent_type=` patterns:
 
 ```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
+[ "$LOCAL_MODE" = "true" ] && _ROOT="plugins" || _ROOT=".claude"
 printf "=== Check 25: Implicit agent references ===\n"
-grep -rn 'subagent_type=' .claude/agents/ .claude/skills/ .claude/CLAUDE.md 2>/dev/null |
+find "$_ROOT" \( -name worktrees -o -name node_modules -o -name .venv -o -path '*/tests/*' \) -prune -o \( -path '*/agents/*.md' -o -path '*/skills/*.md' -o -name CLAUDE.md \) -print 2>/dev/null |
+while IFS= read -r f; do
+    grep -Hn 'subagent_type=' "$f" 2>/dev/null || true
+done |
 grep -v '^Binary' |
 grep 'subagent_type="[a-z]' |
 grep -v '"[a-z][a-z-]*:[a-z]' |
@@ -328,7 +376,17 @@ fix: use fully-qualified form, e.g. subagent_type="foundry:<name>"
 
 ## Check 29 — LLM context minimality (verbosity)
 
-Every token in agent, skill, rule file = inference cost on every invocation. Each file must be semantically minimal — all information retained, zero redundant wording. **Scan targets**: `.claude/agents/*.md`, `.claude/skills/*/SKILL.md`, `.claude/rules/*.md`.
+Every token in agent, skill, rule file = inference cost on every invocation. Each file must be semantically minimal — all information retained, zero redundant wording. **Scan targets**: agent, skill entrypoint, and rule files under the mode-selected root, including nested agents. Enumerate in a fresh shell per `checks-skills.md`:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
+[ "$LOCAL_MODE" = "true" ] && _ROOT="plugins" || _ROOT=".claude"
+find "$_ROOT" \( -name worktrees -o -name node_modules -o -name .venv -o -path '*/tests/*' \) -prune -o \( -path '*/agents/*.md' -o -path '*/skills/*/SKILL.md' -o -path '*/rules/*.md' \) -print 2>/dev/null |
+while IFS= read -r f; do # timeout: 5000
+    printf '%s\n' "$f"
+done
+```
 
 Via model reasoning, apply four criteria per file:
 
@@ -372,9 +430,11 @@ Three sub-checks for within-file consistency of emoji symbols, slash-command not
 Per agent or skill file, extract lines with emoji and annotated concept label. Group by concept. Flag concepts with 2+ distinct emoji in same file.
 
 ````bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
+[ "$LOCAL_MODE" = "true" ] && _ROOT="plugins" || _ROOT=".claude"
 printf "=== Check 26a: Emoji/symbol consistency ===\n"
-{ find .claude/agents -maxdepth 1 -name '*.md' -type f
-  find .claude/skills -mindepth 2 -maxdepth 2 -name SKILL.md -type f; } 2>/dev/null |
+find "$_ROOT" \( -name worktrees -o -name node_modules -o -name .venv -o -path '*/tests/*' \) -prune -o \( -path '*/agents/*.md' -o -path '*/skills/*/SKILL.md' \) -print 2>/dev/null |
 while IFS= read -r f; do # timeout: 5000
     awk '/^```/{skip=!skip} !skip && /[🔴🟡🟢🔵⛔✅❌⚠️💭▶️🔗🔹🔸🚫]/{print FILENAME": "NR": "$0}' "$f" 2>/dev/null
 done
@@ -389,9 +449,11 @@ Flag: `[medium] Inconsistent symbol for "<concept>" in <file>: <symbol-A> (line 
 Directive references to other skills (e.g., "run → /audit") must use `/name` form. Prose mentions (e.g., "the audit skill") may omit slash. Flag files mixing `` `/name` `` and `` `name` `` in same directive context.
 
 ```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
+[ "$LOCAL_MODE" = "true" ] && _ROOT="plugins" || _ROOT=".claude"
 printf "=== Check 26b: Slash command notation ===\n"
-{ find .claude/agents -maxdepth 1 -name '*.md' -type f
-  find .claude/skills -mindepth 2 -maxdepth 2 -name SKILL.md -type f; } 2>/dev/null |
+find "$_ROOT" \( -name worktrees -o -name node_modules -o -name .venv -o -path '*/tests/*' \) -prune -o \( -path '*/agents/*.md' -o -path '*/skills/*/SKILL.md' \) -print 2>/dev/null |
 while IFS= read -r f; do # timeout: 5000
     grep -n '→ `/\?[a-z][a-z:-]*`\|run `/\?[a-z][a-z:-]*`\|suggest.*`/\?[a-z][a-z:-]*`' "$f" 2>/dev/null
 done
@@ -536,7 +598,7 @@ Two failure modes:
 ```bash
 printf "=== Check 45: Policy-sibling marker symmetry ===\n"
 OUT=""
-for f in $(grep -rl "<!-- policy-sibling:" .claude plugins --include="*.md" 2>/dev/null); do  # timeout: 10000
+for f in $(grep -rl "<!-- policy-sibling:" .claude plugins --include="*.md" --exclude-dir=worktrees 2>/dev/null); do  # timeout: 10000
     siblings=$(grep -o '<!-- policy-sibling:[^—]*' "$f" | head -1 | sed 's/<!-- policy-sibling://')
     proot=$(printf '%s' "$f" | sed -n 's#^\(plugins/[^/]*/\).*#\1#p')  # plugin-relative sibling paths resolve here
     for sib in $(printf '%s' "$siblings" | tr ',' '\n' | awk '{print $1}' | grep -E '/.*\.md$'); do

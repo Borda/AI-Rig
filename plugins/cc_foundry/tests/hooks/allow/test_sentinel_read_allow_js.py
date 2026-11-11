@@ -496,6 +496,18 @@ class TestReviewedBypasses:
         result = _run(f"{READ_FORM}\n{command}")
         assert is_allowed(result), f"{command!r} should be allowed, got: {result}"
 
+    @pytest.mark.parametrize("condition", ["[[ a < b ]]", '[[ "a < b" < c ]]', '[[ a < "b ]] c" ]]'])
+    def test_conditional_less_than_keeps_sentinel_read_allowed(self, condition: str) -> None:
+        """String comparison operators inside double brackets are not input redirects."""
+        result = _run(f'{condition} && IFS= read -r V < "${{TMPDIR:-/tmp}}/x-${{CSID}}"')
+        assert is_allowed(result)
+
+    @pytest.mark.parametrize("condition", ["[[ a < b ]]", 'echo "[["', "echo x[["])
+    def test_brackets_do_not_hide_unsafe_input_redirect(self, condition: str) -> None:
+        """A comparison or bracket-like operand cannot exempt a later unsafe input path."""
+        result = _run(f"{READ_FORM}; {condition}; read -r V < /etc/passwd")
+        assert result == {}
+
     def test_genuine_line_continuation_still_allows(self) -> None:
         """A `\\` continuation outside a comment must keep working.
 
@@ -845,6 +857,61 @@ def _allowable(commands: list[str]) -> list[bool]:
 def _stdin(command: str, tool_name: str = "Bash") -> str:
     """Return a PreToolUse stdin payload as a JSON string literal for embedding in a node expression."""
     return json.dumps(json.dumps({"tool_name": tool_name, "tool_input": {"command": command}}))
+
+
+@_skip_node_unavailable
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cat < /dev/tcp/localhost/9",
+        'read -r X < "/dev/tcp/$HOST/9"',
+        "cat </dev/udp/localhost/9",
+        'cat < /dev/"tcp"/localhost/9',
+        "cat < /dev/t\\cp/localhost/9",
+        'cat < "$DEVICE"',
+        "cat /dev/tcp/localhost/9",
+        'cat "/dev/udp/$HOST/9"',
+        'cat /dev/"tcp"/localhost/9',
+        "read -r /dev/tcp/localhost/9",
+        'TMPDIR=/dev/tcp; read -r X < "${TMPDIR:-/tmp}/localhost/9"',
+        'read -r TMPDIR < "${TMPDIR:-/tmp}/root"; read -r X < "${TMPDIR:-/tmp}/localhost/9"',
+    ],
+)
+def test_network_device_reads_passthrough(command: str) -> None:
+    """A sentinel anchor cannot authorize network-device reads or unresolved input redirections."""
+    payload = _stdin(f"{READ_FORM}; {command}")
+    result = _node_eval_sentinel(f"[h.decide({payload}), h.evaluate({payload}).decision]")
+    assert result == [None, "passthrough"]
+
+
+@_skip_node_unavailable
+@pytest.mark.parametrize(
+    "export",
+    [
+        "export LD_DEBUG=all",
+        "export LD_DEBUG_OUTPUT=/tmp/log",
+        "export GCONV_PATH=/tmp/modules",
+        "export LOCPATH=/tmp/locale",
+        "export NLSPATH=/tmp/catalog",
+        "export NODE_OPTIONS=--require=/tmp/start.js",
+        'export "NODE_OPTIONS"=--require=/tmp/start.js',
+        "export N\\ODE_OPTIONS=--require=/tmp/start.js",
+        "export NODE_OPTIONS",
+        "export CSID=x NODE_OPTIONS=--require=/tmp/start.js",
+        "export UNREVIEWED=value",
+        "export -p",
+    ],
+)
+def test_unreviewed_exports_passthrough(export: str) -> None:
+    """Only explicitly reviewed export names can accompany a sentinel read."""
+    assert _run(f"{export}; {READ_FORM}") == {}
+
+
+@_skip_node_unavailable
+@pytest.mark.parametrize("name", ["CSID", "DEV_TESTS_VERDICT_NONCE", "SCAN_NO_AUTOBUILD", "KAGGLE_USERNAME"])
+def test_blueprint_exports_allow(name: str) -> None:
+    """Export names used by the shared lane's blueprints preserve their sentinel-read allow."""
+    assert is_allowed(_run(f'export {name}="${{VALUE:-value}}"; {READ_FORM}'))
 
 
 @_skip_node_unavailable

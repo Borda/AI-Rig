@@ -343,6 +343,12 @@ def _validate_and_resolve(args: argparse.Namespace) -> ValidatedArgs | None:
         print(f"✗ test_dir rejected (leading '-'/'@' is read by pytest as an option): {test_dir!r}", file=sys.stderr)
         return None
 
+    try:
+        Path(failing_test.split("::", 1)[0]).resolve().relative_to(Path.cwd().resolve())
+    except ValueError:
+        print(f"! SECURITY: failing_test must be within project root: {failing_test}", file=sys.stderr)
+        return None
+
     # Reject test_dir values that escape the project root (path traversal).
     # pytest loads conftest.py from any directory it collects, so a traversal
     # path (e.g. ``../../etc``) would cause arbitrary Python execution.

@@ -21,6 +21,8 @@ Use for a numeric `campaign` with `checkpoint=true`, or for `resume`. Existing n
 
 Recover the original run, objective, source, outputs and closing-gate state. Run `campaign.py resume --run-dir <source_run>`; optionally supply `--config <proposed-config>` to check equivalent configuration. Reuse the frozen configuration instead of accepting replacement commands or a fresh budget. Changed source/configuration requires diagnosis or an explicitly scoped new campaign, never silently rewriting old state.
 
+A campaign checkpointed by an earlier release that allowed textconv in snapshot diffs reports `source-mismatch` on resume in a repository whose changed tracked files use a diff textconv driver; restart it as a new campaign.
+
 An unrecorded pending attempt stops resume even if its code was restored. Inspect the recorded hypothesis and actual outputs, complete or safely revert the same attempt, then use `finish` with its observed result. Never rerun an interrupted measurement without first establishing whether it already completed. If append completed but pending removal was interrupted, `resume` verifies the final source and matching marker, removes only that redundant marker, and returns the next iteration without appending or executing again. A partial JSONL line remains corrupt evidence; do not truncate it automatically.
 
 `resume` refuses to schedule after budget exhaustion. `campaign.py validate --run-dir <run>` still validates a completed final state regardless of remaining budget, so finish normal gates and promotion rather than attempting another iteration. Restoring changed live source or completing an unresolved iteration is a parent-owned operation, not permission inferred from a matching path.

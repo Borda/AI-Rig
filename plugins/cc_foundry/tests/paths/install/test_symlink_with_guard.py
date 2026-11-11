@@ -13,6 +13,7 @@ target" cases below exist because an earlier implementation used a path substrin
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -928,10 +929,12 @@ class TestSkillPhase4Block:
     def test_block_creates_namespaced_links(self, env: tuple[Path, Path], tmp_path: Path) -> None:
         """Running the real block produces exactly the destinations ``_build_entries`` expects.
 
-        Capability-gated, not platform-gated: the block is the skill's own ``ln -sf`` loop, so a host whose ``bash``
+        Capability-gated, not platform-gated: the block uses the guarded native link helper, so a host whose ``bash``
         cannot link has nothing to assert about. The real shell run is the contract here, so it is not mocked.
         """
         plugin, home = env
+        (plugin / "bin").mkdir()
+        shutil.copy2(Path(symlink_with_guard.__file__), plugin / "bin/symlink_with_guard.py")
         # Phase 2 marks a completed conflict scan; Phase 4 refuses to link without it
         (tmp_path / "foundry-setup-scan-ok-test-session").write_text("true\n", encoding="utf-8")
 

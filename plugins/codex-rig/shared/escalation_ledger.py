@@ -20,6 +20,9 @@ progress, and non-empty evidence. Later ordinary cycles retain their normal stal
 to the action links records; it does not authenticate execution or establish evidence truth. The recovery header may
 remain while ordinary productive work resumes. Evidence-backed primary progress starts a new failed-attempt sequence;
 auxiliary rows cannot reset it. Earlier primary failures remain in the append-only cycle history.
+Appending an auxiliary cycle permits at most three such cycles since the last evidence-backed primary progress;
+exhausted preparation cannot remain an unbounded substitute for work on the user's goal. Validation of existing
+ledgers and historical archives does not apply this append-time limit retroactively.
 
 Current schema three keeps work cycles append-only. `reasoning-progress.json` is a header holding every field except
 `cycles` (goal, workstream, closure condition, outcome, advisory, recovery, handoff), rewritten in place as that state
@@ -33,7 +36,10 @@ it as an active ledger, as it rejects schema one, so an old shape cannot bypass 
 Record each work cycle by writing it as one JSON object to `<run-directory>/reasoning-cycles.jsonl.rec`, then running
 `python PLUGIN_ROOT/shared/escalation_ledger.py --ledger <run-directory>/reasoning-progress.json --append`. The staged
 cycle must continue the index sequence and satisfy the cycle rules; it is appended as one line and the staged file is
-deleted. Run the same command without `--append` after recording each triggered escalation state in the header and
+deleted. Append holds an exclusively created sibling `.lock` file through validation, writing and staged-file removal;
+the lock records its owner's pid and creation time. An existing lock fails closed without waiting or deleting another
+writer's lock. A lock whose owner is gone may be deleted by the run owner before retrying. Run the same command without
+`--append` after recording each triggered escalation state in the header and
 before another work cycle. A zero exit means the bounded state is internally consistent; a non-zero exit means the
 caller must stop and repair the record or hand off.
 
@@ -62,7 +68,10 @@ advice-routing instructions and executable validation cannot drift apart.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
+import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -72,6 +81,8 @@ SCHEMA_VERSION = 3
 HISTORICAL_SCHEMA_VERSION = 2
 #: Allowed values for the outcome of an escalation cycle.
 _OUTCOMES = {"working", "advisory", "recovery", "human_handoff", "closed"}
+#: Auxiliary preparation may consume at most three cycles before evidenced primary progress resumes.
+MAX_AUXILIARY_CYCLES = 3
 
 
 def _require_text(value: object, field: str) -> str:
@@ -141,13 +152,30 @@ def load_ledger(path: Path) -> dict[str, Any]:
 def append_cycle(ledger_path: Path) -> None:
     """Append the staged cycle record to the ledger's cycle log after validating the extended cycle sequence.
 
-    Only the cycle sequence is checked here, so an observed stall can always be recorded; escalation state is checked
-    by the following full validation, which then requires the owner to escalate before another cycle.
+    The cycle sequence and auxiliary budget are checked here. A primary stall can still be recorded; escalation state
+    is checked by the following full validation, which then requires the owner to escalate before another cycle.
 
     Raises:
         ValueError: With a stable reason when the staged record or the extended sequence is invalid.
     """
     log = cycles_path(ledger_path)
+    lock = log.with_name(f"{log.name}.lock")
+    try:
+        handle = lock.open("x", encoding="utf-8")
+    except FileExistsError as error:
+        raise ValueError("append-lock-busy: run owner may delete the lock if its owner is gone") from error
+    try:
+        with handle:
+            json.dump({"pid": os.getpid(), "created_at": time.time()}, handle)
+            handle.flush()
+            _append_locked_cycle(ledger_path, log)
+    finally:
+        with contextlib.suppress(OSError):
+            lock.unlink()
+
+
+def _append_locked_cycle(ledger_path: Path, log: Path) -> None:
+    """Validate and consume one staged record while its cycle log is exclusively locked."""
     staged = log.with_name(f"{log.name}.rec")
     try:
         record = json.loads(staged.read_bytes())
@@ -160,7 +188,8 @@ def append_cycle(ledger_path: Path) -> None:
     ledger = load_ledger(ledger_path)
     if ledger.get("schema_version") != SCHEMA_VERSION:
         raise ValueError("append-requires-current-schema")
-    _validate_cycles([*ledger["cycles"], record])
+    cycles = _validate_cycles([*ledger["cycles"], record])
+    _validate_auxiliary_budget(cycles)
     with log.open("a", encoding="utf-8", newline="\n") as handle:
         handle.write(json.dumps(record, sort_keys=True) + "\n")
     staged.unlink()
@@ -193,6 +222,18 @@ def _validate_cycles(value: object) -> list[dict[str, Any]]:
                 raise ValueError("auxiliary-work-is-not-primary-progress")
         cycles.append(cycle)
     return cycles
+
+
+def _validate_auxiliary_budget(cycles: list[dict[str, Any]]) -> None:
+    """Bound a new auxiliary cycle without rejecting earlier history or new primary work."""
+    auxiliary_cycles = 0
+    for cycle in cycles:
+        if cycle["work_kind"] == "auxiliary":
+            auxiliary_cycles += 1
+        elif cycle["material_progress"]:
+            auxiliary_cycles = 0
+    if cycles[-1]["work_kind"] == "auxiliary" and auxiliary_cycles > MAX_AUXILIARY_CYCLES:
+        raise ValueError("auxiliary-cycle-budget-exceeded")
 
 
 def _validate_advisory(value: object) -> None:

@@ -12,7 +12,7 @@
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r PUSH_AUTH < "${TMPDIR:-/tmp}/resolve-push-auth-${CSID}" 2>/dev/null || PUSH_AUTH="unset"
 echo "PUSH_AUTH=$PUSH_AUTH"
-# fresh shell (Check 41) — unbound here → empty push scope
+# fresh shell (Check 43) — unbound here → empty push scope
 IFS= read -r FORK_REMOTE < "${TMPDIR:-/tmp}/resolve-fork-remote-${CSID}" 2>/dev/null || FORK_REMOTE=""
 IFS= read -r HEAD_REF < "${TMPDIR:-/tmp}/resolve-head-ref-${CSID}" 2>/dev/null || HEAD_REF=""
 IFS= read -r BASE_REF < "${TMPDIR:-/tmp}/resolve-base-ref-${CSID}" 2>/dev/null || BASE_REF=""

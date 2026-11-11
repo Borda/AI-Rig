@@ -76,11 +76,9 @@ COVERED_READS = [
 
 #: Read-verb options and positionals the first per-verb option tables refused, covered since the relax pass.
 RELAXED_READS = [
-    pytest.param("gh pr view 1 --web", id="web"),
-    pytest.param("gh pr checks 1 --watch", id="watch"),
     pytest.param("gh pr view -- 1", id="end-of-options"),
     pytest.param("gh pr list -L50", id="attached-short-value"),
-    pytest.param("gh pr view -cw 1", id="short-cluster"),
+    pytest.param("gh pr view -c 1", id="short-flag"),
     pytest.param("gh pr view 1 --comments=true", id="flag-with-value"),
     pytest.param("gh pr list --author @me --app dependabot --some-future-flag x", id="unlisted-options"),
     pytest.param("gh pr view -", id="dash-positional"),
@@ -275,7 +273,7 @@ class TestAllowedShapes:
 
         These are the shapes a grant exists for. A classifier that rejected them would leave every gh read prompting
         even after the user answered ``Approve always``. The user asked for the grant to prompt only where tightness
-        buys safety: an unlisted option, a cluster, an attached value, ``--``, ``--web``, a filter with literal options,
+        buys safety: an unlisted option, a cluster, an attached value, ``--``, a filter with literal options,
         a ``?query`` endpoint or a variable after a literal path reaches no other host, prints no secret and writes
         nothing, so refusing it only re-created the prompt the grant exists to remove. Scheme-less positionals
         (``owner:branch``, ``//x``) are a branch or number to gh, never a host; github.com stays reachable through

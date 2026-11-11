@@ -1279,8 +1279,16 @@ def _run_checker(*arguments: str) -> subprocess.CompletedProcess[str]:
 
 def _run_check(chunks: Path, command: str, *extra: str) -> subprocess.CompletedProcess[str]:
     """Run a chunk checker command against the manifest and results of `chunks`."""
+    manifest = read_json(chunks / "chunks.json")
     return _run_checker(
-        command, "--manifest", str(chunks / "chunks.json"), "--results", str(chunks / "results.json"), *extra
+        command,
+        "--manifest",
+        str(chunks / "chunks.json"),
+        "--results",
+        str(chunks / "results.json"),
+        "--repository",
+        manifest["repository"],
+        *extra,
     )
 
 
@@ -1325,6 +1333,7 @@ def _build_real_chunked_review(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     """Plan three chunks with the real checker, review each plus their interactions, and check the whole set."""
     repository = tmp_path / "repository"
     _init_repository(repository, {name: f"VALUE = '{name}'\n" for name in ("alpha.py", "beta.py", "gamma.py")})
+    monkeypatch.chdir(repository)
     chunks = tmp_path / "chunks"
     request = {
         "goal": "Review all three files",

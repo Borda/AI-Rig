@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
 import shlex
 import shutil
 import subprocess
@@ -441,8 +442,7 @@ class TestReviewWorktree:
         """Move isolated review source out of the main tree when reports are not ignored.
 
         The report directory is inside the main repository and not ignored, so a sibling worktree there would show up in
-        git status. The worktree must move to a deterministic temporary path derived from the report path and the
-        receipt records the fallback.
+        git status. The worktree must move into a private temporary parent and the receipt records the fallback.
         """
         module = _load_collector()
         source, main, base, _old, head = _setup_repositories(tmp_path, repository_template)
@@ -452,10 +452,12 @@ class TestReviewWorktree:
 
         assert code == 0
         receipt = json.loads((output / "local-checkout.json").read_text(encoding="utf-8"))
-        digest = hashlib.sha256(output.resolve().as_posix().encode("utf-8")).hexdigest()[:16]
         review = Path(receipt["worktree"])
         assert receipt["worktree_location"] == "temporary-fallback"
-        assert review == Path(tempfile.gettempdir()).resolve() / f"codex-pr-review-{digest}-review-worktree"
+        assert review.name == "review-worktree"
+        assert review.parent.parent == Path(tempfile.gettempdir()).resolve()
+        assert review.parent.name.startswith("codex-pr-review-")
+        assert os.name == "nt" or review.parent.stat().st_mode & 0o077 == 0
         assert _git(review, "rev-parse", "HEAD") == head
         assert ["git", "worktree", "add", "--detach", str(review), head] in calls
         assert not (main / "reports" / "run-001-review-worktree").exists()
@@ -463,11 +465,10 @@ class TestReviewWorktree:
     def test_preserves_occupied_temporary_fallback(
         self, tmp_path: Path, repository_template: RepositoryTemplate, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Never replace an unregistered path at the deterministic temporary address.
+        """Preserve a squatted former temporary address while preparing isolated source elsewhere.
 
         Something already exists at the deterministic temporary path and Git does not know it as a worktree. The
-        collector must fail with review-worktree-path-not-registered and keep the unrelated file, never delete a path it
-        did not create.
+        collector must ignore that predictable address, keep the unrelated file, and create a private worktree instead.
         """
         module = _load_collector()
         source, main, base, _old, head = _setup_repositories(tmp_path, repository_template)
@@ -482,10 +483,14 @@ class TestReviewWorktree:
 
         code, calls = _collect(module, source, main, output, base, head)
 
-        assert code == 2
-        assert (output / "pr-error.txt").read_text(encoding="utf-8") == "review-worktree-path-not-registered\n"
+        assert code == 0
+        receipt = json.loads((output / "local-checkout.json").read_text(encoding="utf-8"))
+        review = Path(receipt["worktree"])
+        assert review != occupied
+        assert review.parent.parent == external
+        assert _git(review, "rev-parse", "HEAD") == head
         assert (occupied / "keep.txt").read_text(encoding="utf-8") == "not collector-owned\n"
-        assert not any(call[:3] == ["git", "worktree", "add"] for call in calls)
+        assert ["git", "worktree", "add", "--detach", str(review), head] in calls
 
     def test_preserves_occupied_report_adjacent_path(
         self, tmp_path: Path, repository_template: RepositoryTemplate

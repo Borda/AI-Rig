@@ -29,6 +29,9 @@ COLLECTOR = ROOT / "shared/collect_diff.py"
 
 def _run(*args: str) -> subprocess.CompletedProcess[str]:
     """Run the shipped chunk coordinator CLI."""
+    if "--manifest" in args:
+        manifest = json.loads(Path(args[args.index("--manifest") + 1]).read_bytes())
+        args = (*args, "--repository", manifest["repository"])
     return subprocess.run([sys.executable, str(CHECKER), *args], capture_output=True, text=True, check=False)
 
 

@@ -17,11 +17,15 @@ target/head evidence, and records checkout identity without using forced Git ope
 
 Run ``python collect_pr.py --target <number-or-url> --out <directory> [--checkout] [--checkout-mode review|remediate]``
 from code-review or code-remediate PR mode. Review creates or verifies a detached worktree at the exact fetched PR
-commit, beside the report when ignored by Git or in a deterministic temporary path otherwise; it never changes the
+commit, beside the report when ignored by Git or in a private temporary directory otherwise; it never changes the
 invoking checkout. Remediation first requires GitHub's attached branch checkout, then permits only a same-repository
 original branch recovery. Fork recovery stops for the remediation workflow's bounded adversarial path. Reusing an output
 directory is supported because the collector removes its own prior evidence before starting a new attempt; a prior
-review worktree is reused only when it remains clean and bound to the same repository and exact commit.
+report-adjacent review worktree is reused only when it remains clean and bound to the same repository and exact commit.
+Each temporary fallback gets a fresh private parent; its path is retained in the checkout evidence. Every fallback
+worktree and its private parent are retained, including on failure, and may be removed by the run owner with
+``git worktree remove <recorded-worktree>`` and removal of its empty private parent. A failed creation may leave only
+an empty private parent for the run owner to remove.
 
 ## Used by
 
@@ -50,7 +54,6 @@ and diagnostics from the current attempt if a later core step fails.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import re
@@ -70,7 +73,13 @@ if str(SHARED_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(SHARED_DIRECTORY))
 
 from collect_diff import canonical_diff_arguments, canonical_diff_environment  # noqa: E402
-from github_read import GitHubReadError, read_with_fallback, run_gh_read  # noqa: E402
+from github_read import (  # noqa: E402
+    DEFAULT_RUN_COMMAND,
+    GitHubReadError,
+    read_with_fallback,
+    run_bounded_command,
+    run_gh_read,
+)
 
 #: Largest ordinary command stdout or stderr; complete local untracked inventories are exempt on stdout.
 MAX_OUTPUT_BYTES = 16 * 1024 * 1024
@@ -253,27 +262,40 @@ def _run(run: RunCommand, argv: list[str], timeout: int, label: str, *, input_by
             return run_gh_read(run, argv, timeout=timeout, label=label)
         except GitHubReadError as error:
             raise CollectionError(str(error), diagnostics=error.diagnostics) from error
-    try:
-        completed = run(
-            argv,
-            input=input_bytes,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-            shell=False,
-            timeout=timeout,
-            env=canonical_diff_environment() if argv[0] == "git" else None,
-        )
-    except subprocess.TimeoutExpired as error:
-        raise CollectionError(f"command-timeout:{label}") from error
-    except OSError as error:
-        raise CollectionError(f"command-unavailable:{label}") from error
-    # These local inventories must be complete to protect ignored files during checkout. The runner already
-    # captures the full output; rejecting it afterward cannot bound memory and only blocks large workspaces.
     inventory = argv in (
         ["git", "ls-files", "--others", "-z"],
         ["git", "ls-files", "--others", "--exclude-standard", "-z"],
     )
+    environment = canonical_diff_environment() if argv[0] == "git" else None
+    try:
+        completed = (
+            run_bounded_command(
+                argv,
+                timeout=timeout,
+                max_output_bytes=MAX_OUTPUT_BYTES,
+                input_bytes=input_bytes,
+                env=environment,
+                unbounded_stdout=inventory,
+            )
+            if run is DEFAULT_RUN_COMMAND
+            else run(
+                argv,
+                input=input_bytes,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+                shell=False,
+                timeout=timeout,
+                env=environment,
+            )
+        )
+    except GitHubReadError as error:
+        raise CollectionError(f"{error}:{label}") from error
+    except subprocess.TimeoutExpired as error:
+        raise CollectionError(f"command-timeout:{label}") from error
+    except OSError as error:
+        raise CollectionError(f"command-unavailable:{label}") from error
+    # Injected runners still receive the same result checks as the bounded production transport.
     if (not inventory and len(completed.stdout) > MAX_OUTPUT_BYTES) or len(completed.stderr) > MAX_OUTPUT_BYTES:
         raise CollectionError(f"command-output-oversized:{label}")
     if completed.returncode != 0:
@@ -384,7 +406,7 @@ def _configured_github_repositories(run: RunCommand, timeout: int) -> dict[str, 
         urls = (
             _run(
                 run,
-                ["git", "remote", "get-url", "--all", remote_name],
+                ["git", "remote", "get-url", "--all", "--", remote_name],
                 timeout,
                 "github-remote-url",
             )
@@ -1084,8 +1106,7 @@ def _review_worktree_checkout(
                 raise
             if error.diagnostics.get("exit_code") != 1:
                 raise
-            key = hashlib.sha256(report.as_posix().encode("utf-8")).hexdigest()[:16]
-            review = Path(tempfile.gettempdir()).resolve() / f"codex-pr-review-{key}-review-worktree"
+            review = Path(tempfile.mkdtemp(prefix="codex-pr-review-")).resolve() / "review-worktree"
             worktree_location = "temporary-fallback"
             if source == review or source in review.parents:
                 raise CollectionError("review-worktree-temporary-path-not-isolated")

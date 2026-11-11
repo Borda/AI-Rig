@@ -26,7 +26,7 @@ _SKILL = _PLUGIN / "skills/fix/SKILL.md"
 _BASH = shutil.which("bash")
 _CSID = "fix-gate-test"
 _REPRODUCTION = ("dev-fix-gate-p1", "GATE_P1=$?")
-_STOP_GATE = ('IFS= read -r GATE_P1 < "${TMPDIR:-/tmp}/dev-fix-gate-p1',)
+_STOP_GATE = ('IFS= read -r GATE_P1 < "${TMPDIR:-/tmp}/dev-fix-gate-p1', 'if [ "$GATE_P1" = 0 ]')
 _OUTCOME_B = ("GATE_EXIT=$?", "Outcome B gate not satisfied")
 _CANDIDATE = ("pytest_gate.py", "CANDIDATE_EXIT=$?")
 _BROKEN_PYTHON = {"PYTHONHOME": "/nonexistent"}
@@ -51,6 +51,8 @@ def _block(*markers: str) -> str:
     """Return the fix skill's bash block containing every marker, with placeholders filled by a dummy target."""
     blocks = bash_blocks(_SKILL.read_text(encoding="utf-8"))
     block = next(block for block in blocks if all(marker in block for marker in markers))
+    if markers == _REPRODUCTION:
+        block += "\n" + next(block for block in blocks if "GATE_P2=$?" in block)
     return re.sub(r"<[a-z_]+>", "x", block)
 
 
@@ -91,6 +93,87 @@ def _gate_sentinels(tmp_path: Path) -> tuple[str, str]:
 @_skip_no_bash
 class TestPartBReproductionGate:
     """Part B: both new reproduction tests must fail with exit 1 before the stop gate lets the fix proceed."""
+
+    def test_omitting_path_two_cannot_inherit_reproduced_default(self, tmp_path: Path) -> None:
+        """Removing a test invocation leaves its gate missing rather than fabricating a reproduced failure."""
+        block = _block(*_REPRODUCTION)
+        lines = block.splitlines()
+        block = "\n".join(
+            line
+            for line in lines
+            if ('"$UNIT_TEST" -v' not in line and "test_x_unit -v" not in line and line.strip() != "GATE_P2=$?")
+        )
+        _run(block, tmp_path, 1)
+        stop = _run(_block(*_STOP_GATE), tmp_path, None)
+        assert stop.returncode == 1, stop.stdout
+        assert _gate_sentinels(tmp_path)[1] != "1"
+
+    @pytest.mark.parametrize(
+        ("path_one", "path_two", "expected"),
+        [
+            pytest.param("skipped", "1", 0, id="only-flow-skippable"),
+            pytest.param("1", "skipped", 1, id="unit-mandatory"),
+            pytest.param("skipped", "missing", 1, id="unit-never-ran"),
+            pytest.param("missing", "1", 1, id="flow-undocumented"),
+        ],
+    )
+    def test_skip_applies_only_to_path_one(self, tmp_path: Path, path_one: str, path_two: str, expected: int) -> None:
+        """The documented internal-only exception never permits a missing or skipped targeted reproduction."""
+        (tmp_path / f"dev-fix-gate-p1-{_CSID}").write_text(path_one + "\n", encoding="utf-8")
+        (tmp_path / f"dev-fix-gate-p2-{_CSID}").write_text(path_two + "\n", encoding="utf-8")
+        (tmp_path / f"dev-fix-dev-dir-{_CSID}").write_text(tmp_path.as_posix() + "\n", encoding="utf-8")
+        (tmp_path / "path-1-skip-reason.txt").write_text("No user-facing flow exists.\n", encoding="utf-8")
+        result = _run(_block(*_STOP_GATE), tmp_path, None)
+        assert result.returncode == expected, result.stdout
+
+    def test_checkpoint_init_invalidates_previous_run_results(self, tmp_path: Path) -> None:
+        """Starting a new fix in the same session prevents old Path 1 evidence from satisfying its stop gate."""
+        (tmp_path / f"dev-fix-gate-p1-{_CSID}").write_text("1\n", encoding="utf-8")
+        (tmp_path / f"dev-fix-gate-p2-{_CSID}").write_text("1\n", encoding="utf-8")
+        init = _run("python() { echo private-run; }\n" + _block("dev_run_dir.py"), tmp_path, None)
+        assert init.returncode == 0, init.stderr
+        assert _gate_sentinels(tmp_path) == ("missing", "missing")
+        (tmp_path / f"dev-fix-gate-p2-{_CSID}").write_text("1\n", encoding="utf-8")
+        stop = _run(_block(*_STOP_GATE), tmp_path, None)
+        assert stop.returncode == 1, stop.stdout
+
+    @pytest.mark.parametrize("previous", ["0", "1", "70"])
+    def test_skip_cannot_overwrite_a_run_result(self, tmp_path: Path, previous: str) -> None:
+        """A later skip attempt preserves an executed Path 1 verdict, including an uncaptured bug or runner error."""
+        sentinel = tmp_path / f"dev-fix-gate-p1-{_CSID}"
+        sentinel.write_text(previous + "\n", encoding="utf-8")
+        (tmp_path / f"dev-fix-dev-dir-{_CSID}").write_text(tmp_path.as_posix() + "\n", encoding="utf-8")
+        block = _block("echo skipped >").replace("<why no user-facing flow exists>", "Purely internal calculation.")
+        result = _run(block, tmp_path, None)
+        assert result.returncode == 1, result.stdout
+        assert sentinel.read_text(encoding="utf-8").strip() == previous
+
+    def test_skip_persists_reason_for_stop_gate(self, tmp_path: Path) -> None:
+        """The explicit skip route records its reason in the run directory and still requires Path 2 evidence."""
+        (tmp_path / f"dev-fix-gate-p1-{_CSID}").write_text("missing\n", encoding="utf-8")
+        (tmp_path / f"dev-fix-dev-dir-{_CSID}").write_text(tmp_path.as_posix() + "\n", encoding="utf-8")
+        block = _block("echo skipped >").replace("<why no user-facing flow exists>", "Purely internal calculation.")
+        skipped = _run(block, tmp_path, None)
+        assert skipped.returncode == 0, skipped.stdout
+        assert (tmp_path / "path-1-skip-reason.txt").read_text(
+            encoding="utf-8"
+        ).strip() == "Purely internal calculation."
+        assert _gate_sentinels(tmp_path) == ("skipped", "missing")
+        stopped = _run(_block(*_STOP_GATE), tmp_path, None)
+        assert stopped.returncode == 1, stopped.stdout
+        (tmp_path / f"dev-fix-gate-p2-{_CSID}").write_text("1\n", encoding="utf-8")
+        allowed = _run(_block(*_STOP_GATE), tmp_path, None)
+        assert allowed.returncode == 0, allowed.stdout
+
+    @pytest.mark.parametrize("record_name", ["unrelated.txt", "path-1-skip-reason.txt"])
+    def test_stop_gate_rejects_skip_without_reason(self, tmp_path: Path, record_name: str) -> None:
+        """A fabricated skipped sentinel cannot bypass the required record of why the flow is inapplicable."""
+        (tmp_path / f"dev-fix-gate-p1-{_CSID}").write_text("skipped\n", encoding="utf-8")
+        (tmp_path / f"dev-fix-gate-p2-{_CSID}").write_text("1\n", encoding="utf-8")
+        (tmp_path / f"dev-fix-dev-dir-{_CSID}").write_text(tmp_path.as_posix() + "\n", encoding="utf-8")
+        (tmp_path / record_name).write_text("", encoding="utf-8")
+        result = _run(_block(*_STOP_GATE), tmp_path, None)
+        assert result.returncode == 1, result.stdout
 
     def test_missing_runner_blocks_and_leaves_blocking_sentinels(self, tmp_path: Path) -> None:
         """No ``PYTEST_CMD`` sentinel stops the block before launching tests; the stop gate then refuses to continue.

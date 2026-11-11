@@ -127,7 +127,7 @@ def provider_gate() -> Path | None:
     except (OSError, subprocess.TimeoutExpired):
         return None
     directory = resolved.stdout.rstrip("\r\n")
-    if resolved.returncode != 0 or not directory:
+    if resolved.returncode != 0 or not directory or "using source-tree fallback" in resolved.stderr:
         return None
     gate = Path(directory) / "compact_gate.py"
     return gate if gate.is_file() else None

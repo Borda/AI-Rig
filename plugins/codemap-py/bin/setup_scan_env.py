@@ -11,7 +11,7 @@ Consolidates the per-invocation setup previously inlined in scan-codebase/SKILL.
    otherwise basename of the git toplevel (or the cwd when outside a repo).
 5. Drop a sentinel tmpfile when ``--incremental`` was requested but no prior index
    exists, so Step 2 can report the silent full-scan fallback.
-6. Write a sourceable ``KEY=VAL`` state file and the individual per-``PROJ_SLUG``
+6. Write a ``KEY='value'`` state file read as data and the individual per-``PROJ_SLUG``
    tmpfiles consumed by the second Step 1 block + Step 2.
 
 Usage:
@@ -77,8 +77,8 @@ _VALID_CSID_RE = re.compile(r"(?!\.\.?$)[A-Za-z0-9_.-]+")
 #: Script name used as the prefix of this script's error messages.
 _PROG = "setup_scan_env.py"
 
-#: Field order of the sourceable state file — pinned by tests and by the SKILL.md
-#: blocks that `source` it.
+#: Field order of the state file — pinned by tests and by the SKILL.md
+#: blocks that read it as data.
 _STATE_FIELDS = ("PROJ_SLUG", "SCAN_BIN", "SCAN_ARGS_RAW", "PROJ_NAME")
 
 
@@ -194,7 +194,7 @@ def _own_plugin_root() -> Path:
 def _resolve_plugin_root() -> Path:
     """Return the plugin root, trusting ``CLAUDE_PLUGIN_ROOT`` only when it names this install.
 
-    The root decides the ``SCAN_BIN`` path written into the state file the caller sources, so an
+    The root decides the ``SCAN_BIN`` path written into the state file the caller reads as data, so an
     environment value (or a cwd-relative ``plugins/codemap-py`` default, which an untrusted checkout
     can populate) must never choose it. Unset or empty means this script's own root; any other
     value must be absolute and resolve to that same directory.
@@ -469,7 +469,7 @@ def _mark_incremental_noop(arguments: str, tmpdir: Path, csid: str, state: dict[
 
 
 def _escape_single_quotes(value: str) -> str:
-    r"""Escape a value for embedding inside single quotes in a sourced shell file.
+    r"""Escape a value for embedding inside single quotes in a state file read as data.
 
     Args:
         value: Raw value.
@@ -487,13 +487,12 @@ def _escape_single_quotes(value: str) -> str:
 
 
 def _write_state_file(tmpdir: Path, state: dict[str, str]) -> Path:
-    """Write the sourceable ``KEY='value'`` state file and return its path.
+    """Write the ``KEY='value'`` state file for callers to read as data and return its path.
 
-    The caller ``source``s this file, which makes any integrity gap a code-execution
-    hole rather than a data-corruption one. ``mkstemp`` creates it atomically
+    The caller reads this file as data. ``mkstemp`` creates it atomically
     (``O_CREAT|O_EXCL``, mode 0600) under an unguessable name, so a co-located
     attacker in a shared temp dir cannot pre-plant a symlink at the exact target;
-    the caller additionally asserts ownership and non-symlink-ness before sourcing.
+    the caller additionally asserts ownership and non-symlink-ness before reading it as data.
 
     Args:
         tmpdir: Validated base temp directory.

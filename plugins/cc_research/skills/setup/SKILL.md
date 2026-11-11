@@ -43,11 +43,7 @@ NOT for: statusLine, `TEAM_PROTOCOL.md`, or plugin-cache purging — those are `
 
 Parse `$ARGUMENTS` for `--approve` (case-insensitive) → `APPROVE_ALL=true`, else `false`. Any other `--<token>` → print `` ! Unknown flag(s): `--<token>`. Supported: `--approve`. `` and stop.
 
-## Step 1: Python
-
-The probe runs at the head of the Step 2 block, in the same call: nothing is decided between them.
-
-## Step 2: Dry run — see what would change
+## Step 1: Python probe and dry run — see what would change
 
 `$CLAUDE_PLUGIN_ROOT` is the installed plugin version. `sync_rules.py` re-validates it (manifest exists, parses, declares `research`; `rules/` is a real directory holding at least one non-empty regular `*.md`) and aborts before touching anything if any check fails.
 
@@ -61,7 +57,7 @@ python "$PLUGIN_ROOT/bin/sync_rules.py" --plugin-name research --plugin-root "$P
 
 Non-zero exit → print stderr verbatim and stop; nothing was modified.
 
-## Step 3: Apply
+## Step 2: Apply
 
 Run without `--dry-run`. `APPROVE_ALL=true` → run the `--approve` block below instead:
 
@@ -70,7 +66,7 @@ PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}"
 python "$PLUGIN_ROOT/bin/sync_rules.py" --plugin-name research --plugin-root "$PLUGIN_ROOT"  # timeout: 15000
 ```
 
-`APPROVE_ALL=true` variant (also used when re-running after (b) in Step 4):
+`APPROVE_ALL=true` variant (also used when re-running after (b) in Step 3):
 
 ```bash
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}"
@@ -81,11 +77,11 @@ Output lines, one per destination: `linked:` · `unchanged:` · `replaced (--app
 
 Ownership is proved before any replace or remove: the existing link must resolve under the current plugin root, or under the same `~/.claude/plugins/cache/<marketplace>/research/` lineage as the current install. A link into another marketplace, another plugin, a source checkout, or a dotfiles tree is never adopted — path substrings are not evidence of ownership.
 
-## Step 4: Conflicts
+## Step 3: Conflicts
 
-No `conflict, kept as-is:` lines → skip to Step 5.
+No `conflict, kept as-is:` lines → skip to Step 4.
 
-`APPROVE_ALL=true` → conflicts were already replaced in Step 3; skip to Step 5.
+`APPROVE_ALL=true` → conflicts were already replaced in Step 2; skip to Step 4.
 
 Otherwise invoke `AskUserQuestion`, listing each conflicting destination and its current state:
 
@@ -93,9 +89,9 @@ Otherwise invoke `AskUserQuestion`, listing each conflicting destination and its
 - (b) **Replace all with plugin links** ★ recommended — existing content is overwritten
 - (c) **Abort** — leave everything as it is
 
-On **(b)**, run the `--approve` block from Step 3 and report the resulting `replaced (--approve):` lines. On (a) or (c), report which rules remain undelivered.
+On **(b)**, run the `--approve` block from Step 2 and report the resulting `replaced (--approve):` lines. On (a) or (c), report which rules remain undelivered.
 
-## Step 5: Merge permissions.allow and permissions.deny
+## Step 4: Merge permissions.allow and permissions.deny
 
 This plugin ships its own `permissions-allow.json` and `permissions-deny.json`. Claude Code does not read them from the plugin manifest, so without this step they are inert files — the allow entries never suppress a prompt and the deny entries never block anything.
 
@@ -115,7 +111,7 @@ Report: "Backed up ~/.claude/settings.json → ~/.claude/settings.json.bak-<time
 
 Before merging, remove exactly the entries in `permissions-allow-retired.json`: the obsolete `Bash(gh api repos/*:*)` entry and the broad `Bash(claude:*)`, `Bash(find:*)`, `Bash(node:*)`, `Bash(sed:*)` and `Bash(eval:*)` shell grants. Nothing replaces those retired entries. Preserve the four broad allow entries already in settings, because foundry uses the same strings: `Bash(gh api repos/*)`, `Bash(gh api graphql:*)`, `Bash(git branch:*)`, and `Bash(git tag:*)`. Preserve every other user allow entry, all deny entries, and unrelated settings.
 
-Writes merged `permissions.allow` and `permissions.deny` arrays via `merge_settings_permissions.py` — one atomic write covers both arrays, so allow never lands without deny. A missing or invalid shipped file aborts the block with settings unchanged. The same block then validates what was written: settings.json that no longer parses is restored from the backup taken above, the failure is printed, and the block exits 1 — report it and stop; zero exit → continue to Step 6:
+Writes merged `permissions.allow` and `permissions.deny` arrays via `merge_settings_permissions.py` — one atomic write covers both arrays, so allow never lands without deny. A missing or invalid shipped file aborts the block with settings unchanged. The same block then validates what was written: settings.json that no longer parses is restored from the backup taken above, the failure is printed, and the block exits 1 — report it and stop; zero exit → continue to Step 5:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -131,7 +127,7 @@ fi
 
 Writeback happens in-bash above (atomic rename). Report from the script's two output lines: "Added N new permissions.allow entries (M already present)." plus the total retired allow entries removed (`dropped`), and "Added N new permissions.deny entries (M already present)." Also report: "stale gh deny entries from older versions: run /foundry:setup" (requires `foundry` plugin).
 
-## Step 6: Report
+## Step 5: Report
 
 - Rules linked: N → `~/.claude/rules/research-*.md`
 - Unchanged: N · Obsolete removed: N · Conflicts kept: N (name each)
@@ -148,6 +144,6 @@ Writeback happens in-bash above (atomic rename). Report from the script's two ou
 
 **Testing**: setup is reachable only as `/research:setup` after the plugin is installed. To exercise it locally, bump `version` in `plugins/cc_research/.claude-plugin/plugin.json`, run `claude plugin install research@borda-ai-rig` from the repo root to refresh the cache, then invoke the skill. `bin/sync_rules.py` is a byte-identical propagated copy of the canonical helper; its regression suite lives beside that canonical copy in the AI-Rig repository.
 
-**Follow-up gate omitted** — setup is one-shot; Step 6 is terminal output.
+**Follow-up gate omitted** — setup is one-shot; Step 5 is terminal output.
 
 </notes>

@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -41,9 +42,6 @@ if _BIN_DIR not in sys.path:
     sys.path.insert(0, _BIN_DIR)
 
 from _sentinel_io import write_private_text  # noqa: E402
-
-#: Unquoted single token, mirroring the `--out <path>` spelling the sweep skill documents.
-_OUT_RE = re.compile(r"--out[ \t\r\f\v]+(\S+)")
 
 
 def is_within_root(candidate: str, root: str) -> bool:
@@ -86,8 +84,24 @@ def parse_out_flag(arguments: str) -> str:
         >>> parse_out_flag("goal text")
         ''
     """
-    match = _OUT_RE.search(arguments)
-    return match.group(1) if match else ""
+    lexer = shlex.shlex(arguments, posix=True)
+    lexer.whitespace_split = True
+    lexer.escape = ""
+    lexer.commenters = ""
+    try:
+        parsed = list(lexer)
+    except ValueError:
+        parsed = arguments.split()
+    tokens = iter(parsed)
+    for argument in tokens:
+        if argument == "--":
+            break
+        if argument == "--out" or argument.startswith("--out="):
+            value = next(tokens, "") if argument == "--out" else argument.partition("=")[2]
+            if not value or value.startswith("--"):
+                raise ValueError("--out requires a path")
+            return value
+    return ""
 
 
 def project_root(timeout: int = 5) -> str:
@@ -138,17 +152,21 @@ def _run_parse_out(args: argparse.Namespace) -> int:
         print("check_output_within_root: invalid sentinel slug or session identity", file=sys.stderr)
         return 2
     label = args.label or args.sentinel.split("-")[0]
-    out = parse_out_flag(args.parse_out)
-    if out and ".." in out:
+    try:
+        out = parse_out_flag(args.parse_out) or args.default_out
+    except ValueError as exc:
+        print(f"{label}: invalid arguments: {exc}", file=sys.stderr)
+        return 2
+    if ".." in out:
         print(f"{label}: invalid --out path (path traversal not allowed): {out}", file=sys.stderr)
         return 2
-    if out and not is_within_root(out, project_root(args.timeout)):
+    if not is_within_root(out, project_root(args.timeout)):
         print(f"{label}: --out path escapes project root: {out}", file=sys.stderr)
         return 2
     sentinel = _sentinel_dir() / f"{args.sentinel}-{csid}"
     try:
         # Trailing newline is the `IFS= read -r` reload contract.
-        write_private_text(sentinel, (out or args.default_out) + "\n")
+        write_private_text(sentinel, out + "\n")
     except OSError as exc:
         print(f"{label}: cannot write {sentinel}: {exc}", file=sys.stderr)
         return 2

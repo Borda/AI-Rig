@@ -8,17 +8,18 @@ Purpose:
     improving the code. This helper turns the boundary into a deterministic check that
     runs after the agent returns and before anything is committed.
 Scope:
-    Reads ``state.json`` (for ``program_file``), the program file's ``## Config``,
-    ``## Metric`` and ``## Guard`` fenced blocks, and ``git status --porcelain``. Never
-    modifies the working tree; cleanup of a violating iteration stays in the skill.
+    Reads ``state.json`` for ``program_file`` and persisted config constraints, falling
+    back to the program's fenced blocks only for absent keys, and reads
+    ``git status --porcelain``. Never modifies the working tree; cleanup of a violating
+    iteration stays in the skill. The program file itself is always protected.
 Usage:
     ``check_iteration_scope.py --state-json .experiments/state/<run-id>/state.json``
 Outputs:
     One JSON line on stdout: ``{"changed": [...], "untracked": [...], "violations": [...],
     "checked": true|false}``. ``changed`` lists every changed path (tracked and
     untracked, run-artifact dirs excluded); ``untracked`` is the subset git does not
-    track yet; ``violations`` lists paths outside ``scope_files`` or naming an evaluator
-    file. ``checked`` is false when there is no program file to read a scope from.
+    track yet; ``violations`` lists paths outside ``scope_files``, evaluator files, or
+    the program file. ``checked`` is false when the program file is missing.
 Exit codes:
     0 — no violation (or nothing to check against); 3 — at least one violation;
     1 — git or state.json could not be read; 2 — argparse usage error.
@@ -26,6 +27,8 @@ Evaluator set:
     Only tokens of ``metric_cmd``/``guard_cmd`` that name an existing *file* count.
     Directory arguments such as ``tests/`` are not evaluators, so a coverage campaign may
     still create new test files inside ``scope_files``.
+    Directory-changing shell commands, shell expansion and imported modules are not
+    resolved; this token check does not establish their evaluator dependencies.
 Used by:
     research:run Phase 3 (plugins/cc_research/skills/run/SKILL.md).
 """
@@ -117,6 +120,7 @@ def _glob_regex(pattern: str) -> re.Pattern[str]:
         Compiled regex anchored at both ends.
     """
     pattern = pattern.strip().removeprefix("./")
+    pattern = re.sub(r"(?:\*\*/){2,}", "**/", pattern)
     if pattern.endswith("/"):
         pattern += "**"
     out, i = [], 0
@@ -207,13 +211,29 @@ def changed_paths(root: Path) -> tuple[list[str], list[str]]:
     return changed, untracked
 
 
+def _scope_constraints(config: dict, program: Path, root: Path) -> tuple[list[str], set[str]]:
+    """Load persisted scope and evaluators, using the program only for absent config keys."""
+    blocks = {}
+    if not all(key in config for key in ("scope_files", "metric_cmd", "guard_cmd")):
+        blocks = _section_blocks(program.read_text(encoding="utf-8"))
+    scope = config.get("scope_files", _parse_kv(blocks.get("config", [])).get("scope_files", []))
+    commands = [
+        config[key] if key in config else "\n".join(_parse_kv(blocks.get(section, [])).get("command", []))
+        for key, section in (("metric_cmd", "metric"), ("guard_cmd", "guard"))
+    ]
+    protected = _evaluator_files([command for command in commands if command], root)
+    if program.is_relative_to(root):
+        protected.add(program.relative_to(root).as_posix())
+    return scope, protected
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the scope check and print the JSON result line."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--state-json", required=True, help="research:run state.json of the active run")
     parser.add_argument("--root", default=".", help="repository root (default: cwd)")
     args = parser.parse_args(argv)
-    root = Path(args.root)
+    root = Path(args.root).resolve()
     try:
         state = json.loads(Path(args.state_json).read_text(encoding="utf-8"))
         changed, untracked = changed_paths(root)
@@ -221,16 +241,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"! BLOCKED — scope check could not read state or git status: {exc}", file=sys.stderr)
         return 1
     program = state.get("program_file")
-    if not program or not Path(program).is_file():
+    program_path = (root / program).resolve() if program else None
+    if program_path is None or not program_path.is_file():
         print(json.dumps({"changed": changed, "untracked": untracked, "violations": [], "checked": False}))
         return 0
-    blocks = _section_blocks(Path(program).read_text(encoding="utf-8"))
-    scope = _parse_kv(blocks.get("config", [])).get("scope_files", [])
-    commands = [
-        value for section in ("metric", "guard") for value in _parse_kv(blocks.get(section, [])).get("command", [])
-    ]
-    evaluators = _evaluator_files(commands, root)
-    violations = [path for path in changed if path in evaluators or (scope and not _in_scope(path, scope, root))]
+    scope, protected = _scope_constraints(state.get("config", {}), program_path, root)
+    violations = [path for path in changed if path in protected or (scope and not _in_scope(path, scope, root))]
     print(json.dumps({"changed": changed, "untracked": untracked, "violations": violations, "checked": True}))
     return 3 if violations else 0
 

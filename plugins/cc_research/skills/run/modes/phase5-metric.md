@@ -2,7 +2,7 @@
 
 Loaded by the main iteration loop (Phase 5 step) in `run/SKILL.md`.
 
-#### Phase 5 — Verify metric
+## Phase 5 — Verify metric
 
 Reload the verify timeout first (R2 shell vars do not survive); use the printed number as the Bash tool `timeout` below:
 
@@ -17,6 +17,11 @@ echo "VERIFY_TIMEOUT_MS=$VERIFY_TIMEOUT_MS"
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+command -v jq >/dev/null 2>&1 || { echo "! MISSING — jq not on PATH; install jq and retry"; exit 1; }
+IFS= read -r RUN_ID < "${TMPDIR:-/tmp}/research-run-id-${CSID}" 2>/dev/null || RUN_ID=""
+[ -n "$RUN_ID" ] || { echo "! BLOCKED — Phase 5: run-id sentinel missing"; exit 1; }
+METRIC_CMD=$(jq -r '.config.metric_cmd // empty' ".experiments/state/$RUN_ID/state.json") || { echo "! BLOCKED — Phase 5: state.json unreadable"; exit 1; }
+[ -n "$METRIC_CMD" ] || { echo "! BLOCKED — Phase 5: config.metric_cmd missing from state.json"; exit 1; }
 IFS= read -r _CFG_NET < "${TMPDIR:-/tmp}/research-run-sandbox-network-${CSID}" 2>/dev/null || _CFG_NET=""
 SANDBOX_NETWORK="${SANDBOX_NETWORK:-${_CFG_NET:-none}}" python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/docker_sandbox_run.py" --mode verify "$METRIC_CMD"
 ```
@@ -60,6 +65,8 @@ if actual_sha != expected_sha:
 Runtime copy without `.git` (e.g. Drive-mounted) → compare sha256 of every file in this iteration's `files_modified` instead: local `shasum -a 256 <files>` vs runtime `hashlib.sha256(open(p, "rb").read()).hexdigest()`. Assertion raises or digests differ → print `! BLOCKED — Colab runtime code does not match local commit <sha>; update the runtime checkout (pull or re-upload) and re-run.` Stop — do not proceed to Phase 6.
 
 <!-- Colab assertions: MCP calls, not Bash — exempt from the script-file rule; correct as inline cells. -->
+
+**`metric_repeats` = 1** (default) — require a finite float from the configured metric output, not a stray number in a traceback or diagnostic. A non-zero exit alone does not invalidate a usable metric, preserving `run/SKILL.md`'s exit-code rule. A crash without a usable metric, missing float, or non-finite value is `metric-failed`: run the revert block below, record `status: reverted`, `metric: null`, and decision `metric-failed`; skip Phases 6–7 and continue at Phase 7a, then Phase 8. Never compare a failed measurement with `best_metric`. Timeout keeps the `status: timeout` handling below; Docker wrapper exit 2 follows R2's unsupported-command stop. R2's precondition probe instead shows the failed output and stops — no iteration exists to revert.
 
 **`metric_repeats` > 1** (state.json `config`) — run the route above that many times, each run its own call under `timeout: $VERIFY_TIMEOUT_MS`; never one call looping over runs, which would squeeze every run into one timeout. With `--colab` the GPU and code-identity checks run once, before the first run. After each run Write one line `{"iteration":<I>,"metric":<float or null>,"exit":<code>}` to `.experiments/state/<run-id>/metric-runs.jsonl.rec` with the Write tool (`<I>` = the `iteration=` Phase 0 printed), then run:
 

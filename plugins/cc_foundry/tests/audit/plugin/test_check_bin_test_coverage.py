@@ -92,6 +92,10 @@ class TestTestFunctions:
         """
         assert cbtc.test_functions(source) == expected
 
+    def test_deep_expression_is_left_to_the_syntax_checker(self) -> None:
+        """An AST recursion failure cannot abort the report-only coverage scan."""
+        assert cbtc.test_functions("value = " + "+".join(["1"] * 10000)) == (1, 1)
+
 
 class TestCheckScript:
     """Covers the per-script verdict."""
@@ -270,6 +274,25 @@ class TestCli:
         assert _main_local(monkeypatch, script.parent.parent.parent) == 0
         assert _MISSING_TEST in capsys.readouterr().out
 
+    def test_non_utf8_test_is_reported_without_aborting(
+        self, script: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """An undecodable same-named test produces an actionable finding and exit zero."""
+        (script.parent.parent / "tests" / "test_thing.py").write_bytes(b"# calf\xe9\n")
+
+        assert _main_local(monkeypatch, script.parent.parent.parent) == 0
+        out = capsys.readouterr().out
+        assert "R4-FAIL (unreadable test file)" in out
+        assert "test_thing.py" in out
+
+    def test_non_utf8_indirect_source_does_not_hide_valid_coverage(self, script: Path) -> None:
+        """The reference scan ignores unreadable files while retaining readable real tests."""
+        tests = script.parent.parent / "tests"
+        (tests / "test_invalid.py").write_bytes(b"# calf\xe9\n")
+        (tests / "test_behavior.py").write_text("import thing\n" + _PASSING_TEST, encoding="utf-8")
+
+        assert cbtc.check_script(script) is None
+
 
 class TestManifestCopies:
     """Covers manifest_copies(), the MANIFEST-driven split between copies and canonicals."""
@@ -344,6 +367,16 @@ class TestManifestCopiesForRepo:
         not. ``repo_root`` is the only git boundary, so it is mocked instead of spawning git outside a repository.
         """
         assert cbtc._manifest_copies_for_repo() == (None, set())
+
+    @mock.patch(
+        "check_bin_test_coverage.subprocess.run",
+        autospec=True,
+        side_effect=subprocess.TimeoutExpired(["git", "rev-parse", "--show-toplevel"], 30.0),
+    )
+    def test_git_timeout_degrades_to_no_exemptions(self, mock_run: mock.Mock) -> None:
+        """A stalled Git lookup has a finite timeout and cannot abort the report-only check."""
+        assert cbtc._manifest_copies_for_repo() == (None, set())
+        assert mock_run.call_args.kwargs["timeout"] == 30.0
 
 
 class TestMainManifestExemption:

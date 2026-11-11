@@ -6,7 +6,7 @@ Apply [Authorized Workflow Execution](native-skill-contract.md#authorized-workfl
 
 Before submitting a gate command, choose one test transport: free-form `--tests`, or import-bound `--pytest-python` with imports and JSON arguments. Never combine them, including an inherited `TESTS_CMD` in import-bound mode. An argument-validation failure is an agent-owned construction error; correct it under existing authorization after confirming that no gate executed. An unavailable required review remains open, not `not-applicable` merely because its reviewer or environment needs recovery.
 
-Helper option schemas live in `--help`, not skills. In plugin, derive `PLUGIN_ROOT` from selected `SKILL.md` path and require every helper in `package-manifest.json`; never choose cache with glob/latest/mtime logic or use source-tree fallback. The list below is full release closure: run entry only when current package manifest contains it. Before creating or changing invocation, run relevant packaged command:
+Helper option schemas live in `--help`, not skills. In plugin, derive `PLUGIN_ROOT` from selected `SKILL.md` path and require every helper in `package-manifest.json`; never choose cache with glob/latest/mtime logic or use source-tree fallback. The list below covers common shared and code-review helpers, not the complete release roster; other workflow helpers are documented by their owning skill. Run an entry only when current package manifest contains it. Before creating or changing invocation, run relevant packaged command:
 
 - `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/create_run.py --help`
 - `PLUGIN_ROOT/bin/python PLUGIN_ROOT/shared/run_gates.py --help`

@@ -551,6 +551,43 @@ def _blame_shares(
     return {sha: (direct.get(sha, 0.0) / total, context.get(sha, 0.0) / total) for sha in shas}
 
 
+def blame_only_on_pseudo(
+    entry: dict[str, Any],
+    evidence: dict[str, Any] | None,
+    sha_map: dict[str, Any],
+    weights: dict[str, float] | None = None,
+) -> bool:
+    """Report whether a fix's blamed lines all land on pseudo-columns, so no feature column can explain them.
+
+    Such a row has a deterministic answer already: its lines predate the window or belong to a commit no feature
+    owns. Overlap signals (file, symbol) can still give a real column a weak score, but an adjudicator asked to pick
+    among those columns can only answer ``unknown``, which would move the row from its pseudo bucket to the
+    ``unknown`` residue. Callers use this to keep such rows out of adjudication.
+
+    Args:
+        entry: The fix entry; its own ``commits`` are excluded from the blamed lines.
+        evidence: The fix's blame evidence record, or ``None``.
+        sha_map: The :func:`build_sha_map` result (``columns`` and ``fixes`` maps).
+        weights: Signal weights merged over :data:`DEFAULT_WEIGHTS`; only ``context-mass`` is read.
+
+    Returns:
+        ``True`` when at least one line is blamed and no blamed commit is in a column footprint or owned by another
+        fix (whose inherited shares could reach a real column); ``False`` otherwise, including with no blamed lines.
+
+    Examples:
+        >>> sha_map = {"columns": {"a1": ["1.1/A"]}, "fixes": {}}
+        >>> fix = {"entry_id": "1.3/F", "commits": ["f"]}
+        >>> blame_only_on_pseudo(fix, {"status": "ok", "blamed": {"p1": 4}, "context_blamed": {}}, sha_map)
+        True
+        >>> blame_only_on_pseudo(fix, {"status": "ok", "blamed": {"p1": 4, "a1": 1}, "context_blamed": {}}, sha_map)
+        False
+    """
+    own = set(entry.get("commits") or [])
+    blamed = _blame_shares(evidence, own, _resolve_weights(weights)["context-mass"])
+    columns, fixes = sha_map.get("columns") or {}, sha_map.get("fixes") or {}
+    return bool(blamed) and not any(sha in columns or sha in fixes for sha in blamed)
+
+
 def _verdict_of(adjudication: dict[str, Any] | None) -> tuple[dict[str, Any] | None, str | None]:
     """Split an adjudication (a stored record or a bare verdict) into ``(verdict, reuse key)``."""
     if not adjudication:

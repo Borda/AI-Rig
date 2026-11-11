@@ -117,7 +117,7 @@
     "resolution_scope": {
       "deferred_indexes": [],
       "omitted_resolved_online_count": 0,
-      "presentation_version": 2,
+      "presentation_version": 5,
       "prompt_presented": false,
       "requested": "all|critical|high|medium|low|indexes",
       "selected_indexes": [],

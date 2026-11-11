@@ -829,6 +829,23 @@ class TestDirectCoverage:
 class TestDirectRetry:
     """Protect the bounded replacement of a failed or source-incomplete direct review task."""
 
+    @pytest.mark.parametrize("schema", [2, 3])
+    def test_unreadable_session_prevents_no_child_retry(self, evidence: tuple[Path, Path], schema: int) -> None:
+        """Unknown child metadata cannot authorize replacing a possibly completed original task."""
+        run, home = evidence
+        plan_path = run / "direct-plan.json"
+        plan = read_json(plan_path)
+        plan["schema_version"] = schema
+        plan_path.write_bytes(json.dumps(plan).encode("utf-8"))
+        role = _first_role(run)
+        (home / "sessions/rollout-child-0.jsonl").write_bytes(b"\xff\n")
+
+        result = _retry_direct(run, home, role)
+
+        assert result.returncode != 0
+        assert "provenance-session-unreadable" in result.stderr
+        assert not (run / f"retry/{role}.json").exists()
+
     def test_retains_honest_missing_source_for_recovery(self, partial_run: SimpleNamespace) -> None:
         """Recovery keeps completed reviewer evidence while assessed-result admission rejects missing inspection.
 

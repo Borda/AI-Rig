@@ -59,7 +59,7 @@ def findings_for_module(module: Path, plugins_dir: Path) -> list[str]:
     relative = module.relative_to(plugins_dir).as_posix()
     try:
         document = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
-    except (OSError, SyntaxError) as error:
+    except (OSError, SyntaxError, UnicodeDecodeError, ValueError, RecursionError) as error:
         return [f"{relative}: cannot parse module ({error})"]
 
     docstring = ast.get_docstring(document, clean=False) or ""

@@ -29,6 +29,9 @@ def _meta(**overrides: object) -> dict:
         "headRefOid": "abc123",
         "headRepositoryOwner": {"login": "contributor"},
         "headRepository": {"id": "R_kgDO", "name": "renamed-fork"},
+        "state": "OPEN",
+        "maintainerCanModify": True,
+        "url": "https://github.com/upstream/repo/pull/42",
     }
     payload.update(overrides)
     return payload
@@ -46,6 +49,8 @@ def _wire(
         """Return the canned answer for one git or gh command."""
         if cmd[:2] == ["git", "symbolic-ref"]:
             return done(stdout=default_ref) if default_ref else done(returncode=1)
+        if cmd[:3] == ["git", "remote", "get-url"]:
+            return done(stdout="git@github.com:upstream/repo.git")
         if cmd[:2] == ["git", "remote"]:
             return done(stdout=remote_show) if remote_show else done(returncode=1)
         if cmd[:2] == ["git", "rev-parse"]:
@@ -290,17 +295,12 @@ class TestMain:
         assert rpr.main(["--pr", "42"]) == 1
         assert "cannot determine default branch" in capsys.readouterr().out
 
-    def test_failed_pr_fetch_still_yields_defaults(self, tmp_sentinels: Path, run: mock.MagicMock) -> None:
-        """A failed PR fetch still yields usable defaults: base ref from the repo, cross-repo false."""
+    def test_failed_pr_fetch_blocks_checkout(self, tmp_sentinels: Path, run: mock.MagicMock) -> None:
+        """A failed PR fetch cannot establish admission checks and leaves no checkout metadata."""
         _wire(run, default_ref="refs/remotes/origin/main", pr_meta=None)
         rc = rpr.main(["--pr", "42"])
-        names = ["resolve-base-ref", "resolve-is-cross-repo", "resolve-pr-head-oid"]
-        assert rc == 0
-        assert {name: read_shared_sentinel(tmp_sentinels, name) for name in names} == {
-            "resolve-base-ref": "main",
-            "resolve-is-cross-repo": "false",
-            "resolve-pr-head-oid": "",
-        }
+        assert rc == 1
+        assert list(tmp_sentinels.glob("resolve-*")) == []
 
     def test_emits_state_trace_on_stderr(
         self, tmp_sentinels: Path, run: mock.MagicMock, capsys: pytest.CaptureFixture[str]

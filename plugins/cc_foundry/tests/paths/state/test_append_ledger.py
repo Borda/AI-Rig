@@ -10,6 +10,9 @@ from pathlib import Path
 
 import append_ledger as al
 import pytest
+from _hook_env import _symlinks_supported
+
+_symlinks = pytest.mark.skipif(not _symlinks_supported(), reason="symlink creation unavailable")
 
 
 @pytest.fixture
@@ -120,3 +123,93 @@ class TestFromSources:
         source.write_bytes(b"r\n")
         al.main([str(ledger), "--from", str(source)])
         assert staged.exists()
+
+
+@_symlinks
+@pytest.mark.parametrize("linked", ["ledger", "source", "parent"])
+def test_linked_paths_are_refused(linked: str, tmp_path: Path) -> None:
+    """Linked ledgers, sources and ledger directories never copy or append another file's bytes."""
+    target = tmp_path / "target"
+    target.mkdir()
+    ledger = target / "ledger.jsonl"
+    source = target / "source.jsonl"
+    ledger.write_bytes(b"before\n")
+    source.write_bytes(b"secret\n")
+    paths = {"ledger": ledger, "source": source, "parent": target}
+    link = tmp_path / "linked"
+    link.symlink_to(paths[linked], target_is_directory=linked == "parent")
+    ledger_arg = {"ledger": link, "source": ledger, "parent": link / ledger.name}[linked]
+    source_arg = link if linked == "source" else source
+    assert al.main([str(ledger_arg), "--from", str(source_arg)]) == 1
+    assert ledger.read_bytes() == b"before\n"
+
+
+def test_missing_ledger_parent_is_not_created(tmp_path: Path) -> None:
+    """A mistaken ledger path cannot create directories outside an already prepared run."""
+    ledger = tmp_path / "missing" / "ledger.jsonl"
+    source = tmp_path / "source.jsonl"
+    source.write_bytes(b"record\n")
+    assert al.main([str(ledger), "--from", str(source)]) == 1
+    assert not ledger.parent.exists()
+
+
+def test_instruction_source_is_not_a_ledger(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A ledger variable pointing into plugin sources cannot append a staged record there."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(al.tempfile, "gettempdir", lambda: str(tmp_path / "system-temp"))
+    ledger = tmp_path / "plugins" / "cc_demo" / "bin" / "helper.py"
+    ledger.parent.mkdir(parents=True)
+    ledger.write_bytes(b"instructions\n")
+    staged = ledger.with_name(ledger.name + ".rec")
+    staged.write_bytes(b"record\n")
+    assert al.main([str(ledger)]) == 1
+    assert ledger.read_bytes() == b"instructions\n"
+    assert staged.exists()
+
+
+@pytest.mark.parametrize(
+    "directory", [".reports/run", ".temp/state", ".notes/logs", ".experiments/run", ".developments/run"]
+)
+def test_project_artifact_ledgers_remain_appendable(
+    directory: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Run ledgers and cross-run calibration history retain the same append-only behavior."""
+    monkeypatch.chdir(tmp_path)
+    ledger = tmp_path / directory / "events.jsonl"
+    ledger.parent.mkdir(parents=True)
+    ledger.with_name(ledger.name + ".rec").write_bytes(b"record\n")
+    assert al.main([str(ledger)]) == 0
+    assert ledger.read_bytes() == b"record\n"
+
+
+@pytest.mark.parametrize("cwd_relative", [".experiments/run/worktrees/variant", "src/package"])
+def test_artifact_ledger_above_cwd_remains_appendable(
+    cwd_relative: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An absolute artifact ledger remains appendable from a worktree or project subdirectory."""
+    project = tmp_path / "project"
+    cwd = project / cwd_relative
+    cwd.mkdir(parents=True)
+    ledger = project / ".experiments" / "run" / "metric-runs.jsonl"
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    ledger.with_name(ledger.name + ".rec").write_bytes(b"record\n")
+    monkeypatch.chdir(cwd)
+    monkeypatch.setattr(al.tempfile, "gettempdir", lambda: str(tmp_path / "system-temp"))
+
+    assert al.main([str(ledger)]) == 0
+    assert ledger.read_bytes() == b"record\n"
+
+
+def test_nonartifact_ledger_outside_cwd_and_temp_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Changing cwd cannot admit an ordinary project file as a ledger."""
+    project = tmp_path / "project"
+    cwd = project / "src"
+    cwd.mkdir(parents=True)
+    ledger = project / "events.jsonl"
+    staged = ledger.with_name(ledger.name + ".rec")
+    staged.write_bytes(b"record\n")
+    monkeypatch.chdir(cwd)
+    monkeypatch.setattr(al.tempfile, "gettempdir", lambda: str(tmp_path / "system-temp"))
+
+    assert al.main([str(ledger)]) == 1
+    assert staged.exists()

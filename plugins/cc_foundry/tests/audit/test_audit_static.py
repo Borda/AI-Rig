@@ -10,9 +10,13 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import stat
 from pathlib import Path
 
 import pytest
+from _file_modes import _file_modes_supported
+from _hook_env import _symlinks_supported
 
 _MOD_PATH = Path(__file__).resolve().parent.parent.parent / "bin" / "audit_static.py"
 _spec = importlib.util.spec_from_file_location("audit_static", _MOD_PATH)
@@ -35,10 +39,54 @@ SCOPE_AWARE = {
 _FENCE = "```"
 
 
+@pytest.mark.skipif(not _file_modes_supported(), reason="POSIX group permission bits unavailable")
+@pytest.mark.parametrize(
+    ("mask", "expected"), [pytest.param(0o022, 0o644, id="public-read"), pytest.param(0o027, 0o640, id="group-read")]
+)
+def test_jsonl_output_uses_umask_permissions(tmp_path: Path, mask: int, expected: int) -> None:
+    """Atomic JSONL output retains the read permissions of an ordinary newly created file."""
+    output = tmp_path / "report.jsonl"
+    previous = os.umask(mask)
+    try:
+        aud._write_jsonl(output, [])
+    finally:
+        os.umask(previous)
+    assert stat.S_IMODE(output.stat().st_mode) == expected
+
+
 def _write(path: Path, text: str) -> None:
     """Write ``text`` to ``path``, creating its parent directories."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
+
+
+@pytest.mark.skipif(not _symlinks_supported(), reason="symlink creation unavailable")
+def test_jsonl_replaces_symlink_without_touching_target(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A planted report symlink cannot redirect report bytes into another file."""
+    target = tmp_path / "instructions.md"
+    target.write_bytes(b"preserve\n")
+    output = tmp_path / "report.jsonl"
+    output.symlink_to(target)
+    monkeypatch.setattr(aud, "CHECKS", [])
+    assert aud.main(["--scan-dir", str(tmp_path), "--jsonl", str(output)]) == 0
+    assert target.read_bytes() == b"preserve\n"
+    assert not output.is_symlink()
+    assert output.read_bytes() == b""
+
+
+@pytest.mark.skipif(not _symlinks_supported(), reason="symlink creation unavailable")
+def test_jsonl_refuses_symlinked_report_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A tracked report-directory link cannot redirect an output into the instruction tree."""
+    source = tmp_path / "plugins"
+    source.mkdir()
+    target = source / "instructions.md"
+    target.write_bytes(b"preserve\n")
+    reports = tmp_path / ".reports"
+    reports.symlink_to(source, target_is_directory=True)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(aud, "CHECKS", [])
+    assert aud.main(["--scan-dir", ".", "--jsonl", str(reports / target.name)]) == 2
+    assert target.read_bytes() == b"preserve\n"
 
 
 def _seed_defective_plugin(root: Path) -> Path:

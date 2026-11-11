@@ -101,10 +101,12 @@ def _at_pr_head(tmp_path: Path, session: str, *, is_cross_repo: bool) -> Path:
     """
     repo = tmp_path / "repo"
     subprocess.run(["git", "init", "-q", "-b", "feature", str(repo)], check=True)
+    _git(repo, "commit", "--allow-empty", "-m", "PR head")
+    head = _git(repo, "rev-parse", "HEAD")
     sentinels = {
         "head-ref": "feature",
-        "pr-head-oid": "a" * 40,
-        "local-sha": "a" * 40,
+        "pr-head-oid": head,
+        "local-sha": head,
         "is-cross-repo": str(is_cross_repo).lower(),
     }
     _write_sentinels(tmp_path, session, {name: f"{value}\n" for name, value in sentinels.items()})

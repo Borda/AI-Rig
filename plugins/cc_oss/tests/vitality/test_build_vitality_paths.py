@@ -94,26 +94,37 @@ class TestReadVersion:
 
 
 class TestResolveVersionFile:
-    """Locating the manifest: newest cache entry, else the source tree."""
+    """Locate the newest installed manifest or the script's own plugin manifest."""
 
-    def test_prefers_lexically_last_cache_entry(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """The lexically last cache entry wins, matching the ``ls … | sort | tail -1`` pipeline it replaces.
-
-        The choice is lexical, not version-aware: ``0.9.0`` sorts after ``0.10.0``. Pinned so a "smarter" sort is a
-        deliberate change.
-        """
+    def test_prefers_newest_version_cache_entry(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A newer numeric version wins even when the older version sorts later lexically."""
         _install_cached_version(tmp_path, "0.9.0")
         _install_cached_version(tmp_path, "0.10.0")
         monkeypatch.setattr(bvp.Path, "home", staticmethod(lambda: tmp_path))
-        assert bvp.resolve_version_file().parts[-3] == "0.9.0"
+        assert bvp.resolve_version_file().parts[-3] == "0.10.0"
 
-    def test_falls_back_to_source_tree(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """With no installed cache, the source-tree manifest is used.
-
-        An empty home directory stands for a user who runs the skill straight from a repository checkout.
-        """
+    def test_fallback_is_anchored_to_script(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A checkout's current directory cannot substitute its manifest for the running plugin."""
         monkeypatch.setattr(bvp.Path, "home", staticmethod(lambda: tmp_path))
-        assert bvp.resolve_version_file() == Path("plugins/cc_oss/.claude-plugin/plugin.json")
+        monkeypatch.chdir(tmp_path)
+        assert bvp.resolve_version_file() == Path(bvp.__file__).resolve().parents[1] / ".claude-plugin/plugin.json"
+
+
+@pytest.mark.parametrize("version", ["1.2.3\nFORGED=value", "1.2", "01.2.3", "1.2.3-01", 123])
+def test_version_metadata_rejects_non_semver(tmp_path: Path, version: object) -> None:
+    """Invalid version fields cannot introduce output lines or YAML syntax."""
+    manifest = tmp_path / "plugin.json"
+    manifest.write_text(json.dumps({"version": version}), encoding="utf-8")
+    assert bvp.read_version(manifest) == "unknown"
+
+
+def test_version_order_places_release_after_prerelease(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A stable release wins over its prerelease, and malformed directories are ignored."""
+    _install_cached_version(tmp_path, "1.2.3")
+    _install_cached_version(tmp_path, "1.2.3-rc.9")
+    _install_cached_version(tmp_path, "999bad")
+    monkeypatch.setattr(bvp.Path, "home", staticmethod(lambda: tmp_path))
+    assert bvp.resolve_version_file().parts[-3] == "1.2.3"
 
 
 class TestAgentsYaml:

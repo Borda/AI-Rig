@@ -34,6 +34,7 @@ override it from candidate evidence. Import ``validate_loop_evidence`` when a pa
 A successful CLI invocation exits zero without changing files. A contract failure exits one with one stable error code
 on stderr, including mismatched current worktree source, unsupported review evidence, missing full context, conflicting
 reviewer findings, or a ledger that omits reviewer findings or changes fields outside recorded parent triage.
+Operational failures or malformed structures exit two with a stable diagnostic instead of a traceback.
 
 ## Failure
 
@@ -50,6 +51,7 @@ focused artifact tests exercise valid native evidence and forged identity, repor
 from __future__ import annotations
 
 import argparse
+import errno
 import hashlib
 import json
 import os
@@ -298,9 +300,19 @@ def _comparison_base(evidence: dict[str, Any], repository: Path) -> str:
     try:
         resolved = (
             subprocess.run(  # noqa: S603 - argv list, no shell
-                ["git", "-C", os.fspath(repository), "rev-parse", "--verify", base + "^{commit}"],  # noqa: S607 - tool resolved via PATH on purpose
+                [  # noqa: S607 - tool resolved via PATH on purpose
+                    "git",
+                    "-c",
+                    "core.fsmonitor=false",
+                    "-C",
+                    os.fspath(repository),
+                    "rev-parse",
+                    "--verify",
+                    base + "^{commit}",
+                ],
                 capture_output=True,
                 check=True,
+                timeout=30,
             )
             .stdout.decode("ascii")
             .strip()
@@ -320,6 +332,8 @@ def _current_scoped_diff(
         diff = subprocess.run(  # noqa: S603 - argv list, no shell
             [  # noqa: S607 - argv list, no shell; tool resolved via PATH on purpose
                 "git",
+                "-c",
+                "core.fsmonitor=false",
                 "-C",
                 os.fspath(repository_path),
                 "--literal-pathspecs",
@@ -327,6 +341,7 @@ def _current_scoped_diff(
             ],
             capture_output=True,
             check=True,
+            timeout=30,
             env=canonical_diff_environment(),
         ).stdout
         if capture_source_snapshot(repository_path, scopes) != expected_source:
@@ -972,6 +987,7 @@ def _validate_review_round(
                 or not isinstance(signature, str)
                 or not signature.strip()
                 or not isinstance(tier, str)
+                or tier not in {"security", "critical", "high", "medium", "low", "nit"}
                 or not isinstance(reason, str)
                 or not isinstance(proof, list)
                 or any(not isinstance(value, str) or not value.strip() for value in proof)
@@ -1193,7 +1209,12 @@ def validate_loop_evidence(run_dir: Path, codex_home: Path) -> None:
 
 def main() -> int:
     """Run the read-only loop-evidence validation command-line interface."""
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        epilog="Callers must check the ledger summary: exit zero validates retained evidence, including zero rounds; "
+        "it does not prove a completed or clean review. A tier or signature correction remains "
+        "self-attested by the parent triage.",
+    )
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--out", type=Path, help="Adversarial-loop run directory.")
     mode.add_argument(
@@ -1220,6 +1241,15 @@ def main() -> int:
             preflight_review_plan(args.preflight_plan, args.request_evidence, args.supporting_source)
         else:
             validate_loop_evidence(args.out, args.codex_home)
+    except OSError as error:
+        print(f"loop-evidence-os-error:{errno.errorcode.get(error.errno, 'UNKNOWN')}", file=sys.stderr)
+        return 2
+    except subprocess.TimeoutExpired:
+        print("loop-evidence-git-timeout", file=sys.stderr)
+        return 2
+    except (KeyError, TypeError, RecursionError):
+        print("loop-evidence-inspection-failed", file=sys.stderr)
+        return 2
     except ValueError as exception:
         print(str(exception), file=sys.stderr)
         return 1

@@ -101,16 +101,21 @@ cat "$SKILL_DIR/modes/delegation.md"  # timeout: 5000
 
 Follow above and execute. The breaking-waiver gate and unconfirmed notification below apply in every mode: delegated runs after the ledger reconcile in `modes/delegation.md`, inline runs after Truth check (below).
 
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r UNCONFIRMED_BREAKING < "${TMPDIR:-/tmp}/release-unconfirmed-breaking-${CSID}" 2>/dev/null || UNCONFIRMED_BREAKING=""
+```
+
 If `$UNCONFIRMED_BREAKING` is nonzero, require review before any release artifact is written.
 
 - Read this invocation's `$WAIVED_FILE` and show every `REMOVED:` or `NET-STATE-ADD:` entry marked ⚠️ Breaking Changes, with its old name, baseline/HEAD evidence, and proposed category.
-- The typed envelope count and marked ledger lines must agree exactly at the ledger reconcile in `modes/delegation.md`; a count alone is not item evidence.
+- Delegated runs require the typed envelope count and marked ledger lines to agree exactly at the ledger reconcile in `modes/delegation.md`; inline runs derive the count from the same marked ledger lines after Truth check. A count alone is not item evidence.
 - Invoke `AskUserQuestion` with one question per item, at most 4 per call (more items → successive calls of ≤4): **Approve the proposed classification** or **Abort release preparation**.
 - Proceed only after explicit approval of every item; an absent/ambiguous answer aborts.
 - Do not describe the automatic reclassification as already user-confirmed.
 - Apply this gate in both delegated `prepare`/`audit` runs before Phase 2b; inline `notes`/`demo`/`--append` runs use the same rule immediately after Truth check.
 
-When `unconfirmed > 0`, surface removed/reclassified items as notification (not a gate — already resolved) in the run's final reply — the Bash output below is not reply text the user reads, and text written before a tool call can arrive as an empty progress update. Read the waived-changes ledger, not `$GATHER_FILE`:
+When `unconfirmed > 0`, surface removed/reclassified items as notification in the run's final reply after every required breaking-waiver approval has completed — the Bash output below is not reply text the user reads, and text written before a tool call can arrive as an empty progress update. Read the waived-changes ledger, not `$GATHER_FILE`:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -145,9 +150,9 @@ echo "$WAIVED_FILE" > "${TMPDIR:-/tmp}/release-waived-${CSID}"  # persist for Ga
 | `prepare` | prepare | **Shared setup** first, then **Mode: prepare** |
 | `audit` | audit | **Shared setup** first, then **Mode: audit** |
 | `demo` | demo | **Shared setup** first, then **Mode: demo** |
-| `notes` | notes | Strip `notes` token; parse flags and range from remainder |
-| *(bare range or flag)* | notes | Parse flags and range from full string |
-| *(none)* | notes | `RANGE=""`, no flags; run all phases |
+| `notes` | notes | Strip `notes` token; parse flags and range from remainder (block below), then **Shared setup** |
+| *(bare range or flag)* | notes | Parse flags and range from full string (block below), then **Shared setup** |
+| *(none)* | notes | Parse with `RANGE=""`, no flags (block below), then **Shared setup**; run all phases |
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -159,8 +164,8 @@ IFS= read -r DO_MIGRATION < "${TMPDIR:-/tmp}/release-migration-${CSID}" 2>/dev/n
 IFS= read -r DO_APPEND < "${TMPDIR:-/tmp}/release-append-${CSID}" 2>/dev/null || DO_APPEND=false
 IFS= read -r CLEAN_ARGS < "${TMPDIR:-/tmp}/release-clean-args-${CSID}" 2>/dev/null || CLEAN_ARGS=""
 FIRST=$(echo "$CLEAN_ARGS" | awk '{print $1}')
-# REST keeps the raw blob's tail — downstream readers of the sentinel expect flags intact
-REST=""; case "$ARGUMENTS" in *" "*) REST="${ARGUMENTS#* }";; esac
+# REST keeps the parsed tail — flags remain available in their own sentinels for downstream readers
+REST=""; case "$CLEAN_ARGS" in *" "*) REST="${CLEAN_ARGS#* }";; esac
 echo "${REST:-}" > "${TMPDIR:-/tmp}/release-rest-${CSID}"
 # strip mode token — else leaks into RANGE
 _PARSE_INPUT="$CLEAN_ARGS"; case "$FIRST" in notes|prepare|audit|demo) case "$CLEAN_ARGS" in *" "*) _PARSE_INPUT="${CLEAN_ARGS#* }";; *) _PARSE_INPUT="";; esac;; esac
@@ -217,7 +222,7 @@ if [ "$RELEASE_MODE" = notes ]; then
 fi
 ```
 
-**Agent Resolution** — `agent-resolution.md` (loaded above): foundry check + fallback table. Foundry not installed → at every spawn substitute `foundry:X` with `general-purpose` + the table's role prefix and model. Agents this skill dispatches: `foundry:sw-engineer` (gather, size-guard gather, adversarial review), `foundry:doc-scribe` (changelog audit, contributors). The `foundry:humanizer` pass in `modes/release-draft-template.md` keeps its own availability rule. <!-- Inline fallback (if agent-resolution.md unreadable): foundry:sw-engineer → general-purpose, foundry:doc-scribe → general-purpose. -->
+**Agent Resolution** — `agent-resolution.md` (loaded above): foundry check + fallback table. Foundry not installed → at every spawn substitute `foundry:X` with `general-purpose` + the table's role prefix and model. Agents this skill dispatches: `foundry:sw-engineer` (gather, size-guard gather, adversarial review), `foundry:doc-scribe` (changelog audit, contributors), `oss:shepherd` (public-facing voice review, requires `oss` plugin). The `foundry:humanizer` pass in `modes/release-draft-template.md` keeps its own availability rule. <!-- Inline fallback (if agent-resolution.md unreadable): foundry:sw-engineer → general-purpose, foundry:doc-scribe → general-purpose. -->
 
 <!-- branch: no-stable-tags — isolated; ≤1 call; fires only when repo has no stable git tags -->
 
@@ -287,7 +292,7 @@ echo "${RANGE:-}" > "${TMPDIR:-/tmp}/release-range-${CSID}"
 # quote RANGE — tags may carry unusual chars (e.g. v1.2-rc.1+build.42)
 git log "$RANGE" --oneline --no-merges # timeout: 3000
 git log "$RANGE" --no-merges --format="--- %H%n%B" # timeout: 3000
-git diff --stat "$(echo "$RANGE" | sed 's/\.\.\./\ /;s/\.\./\ /')" # timeout: 3000
+git diff --stat "$RANGE" # timeout: 3000
 
 # prefer gh; fallback git remote show origin; never hardcode main
 TRUNK=$(gh repo view --json defaultBranchRef --jq '.defaultBranchRef.name' 2>/dev/null)  # timeout: 6000
@@ -303,16 +308,28 @@ else
 fi
 PR_COUNT=$(printf '%s' "$PRS" | jq 'length') || { echo "Error: could not count gh pr list results" >&2; exit 1; }
 if [ "$PR_COUNT" -eq 500 ]; then
-    echo "⚠ gh pr list reached its 500-item cap; recovering the complete merged-PR history"
-    PR_API_ARGS=(--method GET --paginate --slurp 'repos/{owner}/{repo}/pulls' -f state=closed -f per_page=100)
-    if [ -n "$TRUNK" ]; then
-        PR_API_ARGS+=(-f "base=$TRUNK")
+    echo "⚠ gh pr list reached its 500-item cap; retrying discovery within the release date window"
+    PR_SINCE=$(TZ=UTC git log "$RANGE" --date=format-local:%Y-%m-%d --format=%cd | sort | head -1)
+    if [ -n "$PR_SINCE" ]; then
+        PR_RECOVERY_ARGS=(pr list --state merged --limit 500 --json "$PR_FIELDS" --search "merged:>=$PR_SINCE")
+        if [ -n "$TRUNK" ]; then
+            PR_RECOVERY_ARGS+=(--base "$TRUNK")
+        fi
+        if RECOVERED_PRS=$(gh "${PR_RECOVERY_ARGS[@]}"); then  # timeout: 60000
+            PRS="$RECOVERED_PRS"
+            PR_COUNT=$(printf '%s' "$PRS" | jq 'length') || { echo "Error: could not count bounded PR recovery" >&2; exit 1; }
+        else
+            echo "⚠ PR discovery coverage gap: bounded recovery failed; retaining the initial contextual list" >&2
+        fi
     fi
-    PRS=$(gh api "${PR_API_ARGS[@]}") || { echo "Error: exhaustive PR recovery failed; do not claim release coverage is complete" >&2; exit 1; }  # timeout: 60000
-    PRS=$(printf '%s' "$PRS" | jq '[.[][] | select(.merged_at != null) | {number, title, body, labels, mergedAt: .merged_at, author: .user}]') || { echo "Error: could not normalize exhaustive PR recovery" >&2; exit 1; }
+    if [ "$PR_COUNT" -eq 500 ]; then
+        echo "⚠ PR discovery coverage gap: list remains capped; use per-commit associations below for release membership and credits" >&2
+    fi
 fi
 printf '%s\n' "$PRS"
 ```
+
+Record any printed `⚠ PR discovery coverage gap` in the gather evidence and list it as a Confidence Gap in the final reply for both `notes` and `prepare`; for every associated PR missing from `$PRS`, fetch its body with `gh pr view <N> --json body` before classifying it.
 
 Cross-reference commit bodies against PR descriptions — canonical source of truth for *why* change made. `BREAKING CHANGE:` footer = breaking change regardless of PR label.
 
@@ -348,7 +365,7 @@ Retain verified commit-to-PR associations and each in-range PR author's known lo
 
 **Detect revert pairs**: scan `git log $RANGE --no-merges --format="%H %s"` for revert subjects — those beginning with `Revert "` (git default) or a conventional `revert:` / `revert(<scope>):` type, case-insensitive. For each: match the original by the body's `This reverts commit <sha>` trailer first; no trailer → extract the original subject (the quoted text, or the text after the type prefix) and search the range for it. Both found → `REVERT_SET` pair (net effect zero).
 
-Record all `REVERT_SET` pairs before Classify. Commits in `REVERT_SET` excluded from standard sections; collected for 🔄 Reverted. If only revert is in range (original predates range) → classify as ✗ Removed (or ⚠ Breaking Changes if API surface changed without prior deprecation) — NOT 🔄 Reverted; net user effect is non-zero.
+Record all `REVERT_SET` pairs before Classify. Commits in `REVERT_SET` excluded from standard sections; collected for 🔄 Reverted. If only revert is in range (original predates range) → classify as ❌ Removed (or ⚠️ Breaking Changes if API surface changed without prior deprecation) — NOT 🔄 Reverted; net user effect is non-zero.
 
 **Cross-cycle revert/pivot detection** (`--append` only, when a prior `DRAFT.md`/`$CHANGELOG_FILE` exists — extends the "non-destructive except revert/pivot" rule across append cycles, not just within one range). Runs in the orchestrator after Detect revert pairs. Load the procedure and the Append notes only for an `--append` run:
 
@@ -407,11 +424,26 @@ Follow above and execute. Contains: category table, PR accumulation rules, dedup
 
 ## Truth check
 
-Follow `modes/classify-truth-check.md` (Truth check section, loaded above) and execute. Gate: runs after Classify, before Audit changelog. Verify 🚀 Added / 🌱 Changed final names at HEAD; verify ❌ Removed old names exist at `$LAST_TAG` and are absent at HEAD; check ⚠ Breaking Changes against the baseline before relabeling. Max 3 loop iterations.
+Follow `modes/classify-truth-check.md` (Truth check section, loaded above) and execute. Gate: runs after Classify, before Audit changelog. Verify 🚀 Added / 🌱 Changed final names at HEAD; verify ❌ Removed old names exist at `$LAST_TAG` and are absent at HEAD; check ⚠️ Breaking Changes against the baseline before relabeling. Max 3 loop iterations.
+
+Inline runs must derive and persist waiver counts from this invocation's ledger immediately after Truth check:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r WAIVED_FILE < "${TMPDIR:-/tmp}/release-waived-${CSID}" 2>/dev/null || WAIVED_FILE=""
+[ -n "$WAIVED_FILE" ] && [ -f "$WAIVED_FILE" ] || { echo "Error: waiver ledger missing after Truth check" >&2; exit 1; }
+UNCONFIRMED=$(grep -Ec '^(REMOVED|NET-STATE-ADD):' "$WAIVED_FILE" || true)
+UNCONFIRMED_BREAKING=$(grep -Ec '^(REMOVED|NET-STATE-ADD): ⚠️ Breaking Changes:' "$WAIVED_FILE" || true)
+printf '%s\n' "$UNCONFIRMED" > "${TMPDIR:-/tmp}/release-unconfirmed-${CSID}"
+printf '%s\n' "$UNCONFIRMED_BREAKING" > "${TMPDIR:-/tmp}/release-unconfirmed-breaking-${CSID}"
+printf 'unconfirmed=%s unconfirmed_breaking=%s\n' "$UNCONFIRMED" "$UNCONFIRMED_BREAKING"
+```
+
+Apply the Delegation strategy's breaking-waiver item-approval gate using these counts before proceeding. Fresh shells reload `$UNCONFIRMED_BREAKING` from `release-unconfirmed-breaking-${CSID}`; no artifact may be written before every required approval completes.
 
 ## Breaking-change classification
 
-Follow `modes/classify-truth-check.md` (Breaking-change classification section, loaded above) and execute. Codemap-gated (skips without a v3 index). For each diff-derived public symbol, `fn-rdeps --exclude-tests` labels it Breaking (caller outside its own package) or internal; Breaking symbols move to ⚠ Breaking Changes with caller evidence, and `migration_lines` feed the Draft migration guide as `breaking_callers` findings.
+Follow `modes/classify-truth-check.md` (Breaking-change classification section, loaded above) and execute. Codemap-gated (skips without a v3 index). For each diff-derived public symbol, `fn-rdeps --exclude-tests` labels it Breaking (caller outside its own package) or internal; Breaking symbols move to ⚠️ Breaking Changes with caller evidence, and `migration_lines` feed the Draft migration guide as `breaking_callers` findings.
 
 Apply the **post-promotion baseline and item-approval gate** in that section after codemap output and before Audit changelog or any artifact write. Earlier Truth check and the delegated gather envelope cannot approve a later Added/Changed → Breaking promotion.
 
@@ -440,7 +472,7 @@ printf '%s\n' "$MIGRATION_DOC" > "${TMPDIR:-/tmp}/release-migration-doc-${CSID}"
 
 Skip entirely when `$MIGRATION_DOC` empty — no migration/upgrade docs exist in project.
 
-**When found**: for every classified item in ⚠ Breaking Changes, 🗑️ Deprecated, and ✗ Removed — verify present and described in `$MIGRATION_DOC`. "Present" = migration doc contains symbol name or semantically equivalent reference with upgrade instructions.
+**When found**: for every classified item in ⚠️ Breaking Changes, 🗑️ Deprecated, and ❌ Removed — verify present and described in `$MIGRATION_DOC`. "Present" = migration doc contains symbol name or semantically equivalent reference with upgrade instructions.
 
 Check each item:
 
@@ -454,7 +486,7 @@ grep -i "<symbol_or_key>" "$MIGRATION_DOC" 2>/dev/null  # timeout: 3000
 
 - Found with upgrade path → `✓ <symbol> covered`
 - Found but no upgrade path → `[SHALLOW] <symbol> in <doc> — present but missing upgrade instructions`
-- Not found → `[MISSING-MIGRATION] <symbol> — ⚠ Breaking/🗑️ Deprecated but absent from <doc>`
+- Not found → `[MISSING-MIGRATION] <symbol> — ⚠️ Breaking/🗑️ Deprecated but absent from <doc>`
 
 Collect all findings as `migration_gaps` list. Zero findings → migration doc complete. Report them in the run's final reply, not before the next tool call (text written before a tool call can arrive as an empty progress update).
 
@@ -537,7 +569,14 @@ After resolving or creating `$CHANGELOG_FILE`, persist its exact path for fresh-
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 [ -n "$CHANGELOG_FILE" ] || IFS= read -r CHANGELOG_FILE < "${TMPDIR:-/tmp}/release-changelog-file-${CSID}" 2>/dev/null || CHANGELOG_FILE=""
-[ -n "$CHANGELOG_FILE" ] && [ -f "${EDIT_CHANGELOG_FILE:-$CHANGELOG_FILE}" ] || { echo "Error: changelog path unresolved" >&2; exit 1; }
+IFS= read -r RELEASE_MODE < "${TMPDIR:-/tmp}/release-mode-${CSID}" 2>/dev/null || RELEASE_MODE=""
+IFS= read -r APPEND_STAGE < "${TMPDIR:-/tmp}/release-append-stage-${CSID}" 2>/dev/null || APPEND_STAGE=""
+EDIT_CHANGELOG_FILE="$CHANGELOG_FILE"
+if [ "$RELEASE_MODE" = notes ]; then
+    [ -n "$APPEND_STAGE" ] && [ -d "$APPEND_STAGE" ] || { echo "Error: changelog candidate missing" >&2; exit 1; }
+    EDIT_CHANGELOG_FILE="$APPEND_STAGE/$CHANGELOG_FILE"
+fi
+[ -n "$CHANGELOG_FILE" ] && [ -f "$EDIT_CHANGELOG_FILE" ] || { echo "Error: changelog path unresolved" >&2; exit 1; }
 printf '%s\n' "$CHANGELOG_FILE" > "${TMPDIR:-/tmp}/release-changelog-file-${CSID}"
 ```
 
@@ -617,7 +656,7 @@ Pick top 3–5 most significant changes from Classify. Ranking: breaking changes
 
 ## Draft migration guide
 
-Always produce. No breaking changes → single line "No breaking changes in this release." Deprecations/removals → show before→after code examples. State in preamble: API deprecated in prior release and now removed → ✗ Removed (not Breaking).
+Always produce. No breaking changes → single line "No breaking changes in this release." Deprecations/removals → show before→after code examples. State in preamble: API deprecated in prior release and now removed → ❌ Removed (not Breaking).
 
 If `migration_gaps` non-empty (from Validate migration docs): for each `[MISSING-MIGRATION]` item, add dedicated section covering that symbol with before→after example. For each `[SHALLOW]` item, expand existing coverage to add concrete upgrade instructions.
 
@@ -809,7 +848,7 @@ Follow above and execute.
 - **Changelog audit preserves history**: add missing entries and flag unrelated or uncertain extras. Remove only the exact confirmed stale Unreleased claim for an unshipped revert/pivot; preserve historical entries and every unrelated item.
 - **`--append` notes** (marker location, patch-id provenance store, integration scope, post-merge re-validation gate, collapse guard, Summary folding): `modes/append-cross-cycle.md` § Append notes, loaded with the cross-cycle procedure for an `--append` run.
 - **Every completed `notes`-mode write refreshes the marker** — including plain (non-`--append`) runs. Marker refresh uses the completed range endpoint after the final truth gate; an explicit range ending before `HEAD` never certifies later commits. The workflow then records a receipt bound to branch, source `HEAD`, range endpoint, and exact nonempty draft bytes, and `write` refuses missing or stale receipts. This is a workflow gate against accidental direct writes, not an attestation against a local caller who forges workflow inputs. New side effect for users who've never used `--append`: a `.temp/release-state-v2/<branch-key>/marker` file now appears. It is gitignored and seeds the baseline for later `--append` adoption without changing `DRAFT.md`/`CHANGELOG.md` output.
-- **Confidence scores classification accuracy, not artifact completeness** (`notes` and `prepare` classification output; `audit` and `demo` keep the generic quality-gates Confidence rule): base the score on the evidence classification used — commit bodies, `BREAKING CHANGE:` footers, revert trailers, PR descriptions. Skipped Truth check / baseline / codemap verification and unresolved URLs or handles are listed as `(-0.00)` Gaps only when no specific classification depends on them. Deduct for a skipped Truth check with any ✗ Removed / ⚠ Breaking Changes item (the workflow's ❌ Removed category is included), or when a specific classification hinges on other repo state that went unverified: prior deprecation (✗ Removed vs ⚠ Breaking Changes), a revert whose original may predate `$RANGE`, or a Truth-check removal or reclassification.
+- **Confidence scores classification accuracy, not artifact completeness** (`notes` and `prepare` classification output; `audit` and `demo` keep the generic quality-gates Confidence rule): base the score on the evidence classification used — commit bodies, `BREAKING CHANGE:` footers, revert trailers, PR descriptions. Skipped Truth check / baseline / codemap verification and unresolved URLs or handles are listed as `(-0.00)` Gaps only when no specific classification depends on them. Deduct for a skipped Truth check with any ❌ Removed / ⚠️ Breaking Changes item, or when a specific classification hinges on other repo state that went unverified: prior deprecation (❌ Removed vs ⚠️ Breaking Changes), a revert whose original may predate `$RANGE`, or a Truth-check removal or reclassification.
 - Follow-up chains:
   - Readiness check → `/oss:release prepare <version>` runs built-in audit first; use standalone `/oss:release audit [version]` only for readiness check without cutting release
   - Breaking changes → `/oss:analyse` (requires `oss` plugin) for ecosystem impact

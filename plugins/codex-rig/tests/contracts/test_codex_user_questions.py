@@ -137,7 +137,7 @@ class TestQuestionContract:
         """
         assert compact.index("Ask only for a genuinely missing decision") < compact.index("discover deferred")
         assert "Routine preparation, internal recovery and completing authorized work need no new consent" in details
-        assert details.index("### Decide whether to ask") < details.index("### Choose the control")
+        assert details.index("## Decide whether to ask") < details.index("## Choose the control")
 
     @pytest.mark.installed_plugin
     def test_checkpoint_discovers_deferred_native_tools_before_async(self, compact: str, details: str) -> None:

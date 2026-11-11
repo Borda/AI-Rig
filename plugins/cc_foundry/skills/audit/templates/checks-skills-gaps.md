@@ -12,9 +12,9 @@ IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/de
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" calibrate modes skills.md $([ "$LOCAL_MODE" = "true" ] && echo --local) --fallback-source  # timeout: 5000
 ```
 
-**Step 2 — Scan all skill modes on disk**: Use Glob (`skills/*/SKILL.md`, path `.claude/`) and Glob (`skills/*/modes/*.md`, path `.claude/`) to enumerate every skill and mode file. Extract mode names from `argument-hint:` frontmatter and `## Mode:` / `### Mode:` headings.
+**Step 2 — Scan all skill modes on disk**: In local mode, enumerate `plugins/*/.claude-plugin/plugin.json`, parse each JSON `name` as the routing prefix and inspect that plugin root's `skills/*/SKILL.md`, `claude-skills/*/SKILL.md` and their `modes/*.md`. In non-local mode, read `~/.claude/plugins/installed_plugins.json` for installed marketplace/plugin identities, then invoke the audit plugin's own `bin/get_plugin_install_path.py <marketplace> <plugin-name>` for each identity and inspect the same subdirectories under its resolved active install path. Also include directly installed `.claude/skills/`. Do not infer routing prefixes from directory names or treat an unavailable install record as a missing target. Extract mode names from `argument-hint:` frontmatter and `## Mode:` / `### Mode:` headings.
 
-**Step 3 — Validate registered targets exist on disk**: For each registered target, verify matching skill/mode file exists. Registered target with no matching file → **medium** (calibrate fails at runtime).
+**Step 3 — Validate registered targets exist on disk**: For each registered target, resolve its routing prefix through the manifest/install map from Step 2, then verify the matching skill/mode file exists. Record unavailable resolution as unverified rather than a stale target. Registered target with no matching file → **medium** (calibrate fails at runtime).
 
 **Step 4 — Identify unregistered calibratable candidates** (model reasoning):
 
@@ -34,7 +34,7 @@ IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/de
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" calibrate modes agents.md $([ "$LOCAL_MODE" = "true" ] && echo --local) --fallback-source  # timeout: 5000
 ```
 
-**Step 6 — Scan all agent files on disk**: (When `LOCAL_MODE=false`, skip `plugins/*/agents/*.md` — scan `.claude/agents/` only.) Use Glob (`plugins/*/agents/*.md`, path project root) for plugin agent files; Glob (`agents/*.md`, path `.claude/`) for directly installed agents. Derive qualified name per file: `plugins/<plugin>/agents/<name>.md` → `<plugin>:<name>`; `.claude/agents/<name>.md` → `<name>`. Build full discovered-agent set.
+**Step 6 — Scan all agent files on disk**: Reuse Step 2's Claude manifest/active-install map, scan each resolved root's `agents/*.md` and qualify each basename with that manifest's JSON `name`. Also scan `.claude/agents/*.md` as bare names. In non-local mode, never infer installed agents from a project-local `plugins/` tree. Build the full discovered-agent set.
 
 **Step 7 — Validate registered agents exist on disk**: For each registered agent in domain table, verify it resolves to discovered file. Bare name (e.g. `sw-engineer`) matches `foundry:sw-engineer` when no `.claude/agents/sw-engineer.md` exists — apply model reasoning to resolve bare names against plugin-qualified discoveries. Registered agent with no matching file → **medium** (stale entry causes calibrate to fail at runtime; remove from domain table or correct prefix).
 
@@ -42,17 +42,31 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_mode.py" calibrate mo
 
 ## Check 40 — Health monitoring gap
 
-Any SKILL.md that spawns `Agent(...)` **must** implement the CLAUDE.md §6 deadline protocol: per-agent deadline armed in the spawn response, one `agent_watch.py` check per wake-up, immediate ⏱ for a notification without its deliverable — never a waiting tool (`ScheduleWakeup`, `ListAgents`, `Monitor`) or a `find -newer` poll. Every spawn is background; `run_in_background` no longer exists, so keying on it would make this check silently N/A.
+A Claude skill that actually dispatches `Agent(subagent_type=...)` must implement the deadline protocol in `agent-spawn-protocol.md` §Deadlines. Scan the owner's `SKILL.md` and child Markdown executed by that owner, excluding spawn-prompt templates (`templates/*prompt*.md`) and the audit skill's `templates/checks-*.md`; inherited references in that skill's `SKILL.md` apply to its mode and template files. Accept `agent-spawn-protocol`, `agent_watch`, or an explicit `agent-resolution.md` / `Agent waits` reference as protocol routing; inspect the routed contract during review. Mere prose mentioning `Agent()` is not a dispatch.
 
-Scan all SKILL.md files in scope. For each file spawning `Agent(`, verify that the SAME file references `agent-spawn-protocol` OR `agent_watch`. If not → flag. A file still prescribing `health_sentinel` or a `find ... -newer ... wc -l` probe → flag as the retired liveness poll.
+Local scope is only `skills/` and `claude-skills/` under plugins carrying `.claude-plugin/plugin.json`; non-local scope is directly installed `.claude/skills/`. Codex and OpenCode skills use their own host contracts.
 
 ```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
 printf "=== Check 40: Health monitoring gap ===\n"
-for f in $(find . -path "*skills/*/SKILL.md" 2>/dev/null | sort); do
-    grep -q "Agent(" "$f" 2>/dev/null || continue
-    grep -q "agent-spawn-protocol\|agent_watch" "$f" 2>/dev/null || printf "C40-HIGH: agent spawn without deadline protocol: %s\n" "$f"
-    grep -q "health_sentinel\|find.*-newer.*wc -l" "$f" 2>/dev/null && printf "C40-MEDIUM: retired liveness poll still prescribed: %s\n" "$f"
-done  # timeout: 5000
+while IFS= read -r owner; do  # timeout: 5000
+    while IFS= read -r f; do
+        tr '\n' ' ' < "$f" | grep -qE 'Agent[[:space:]]*\(.{0,200}.{0,200}subagent_type[[:space:]]*=' || continue
+        grep -qiE 'agent-spawn-protocol|agent_watch|agent-resolution\.md|Agent waits' "$owner" "$f" 2>/dev/null || printf "C40-HIGH: agent spawn without deadline protocol: %s (owner %s)\n" "$f" "$owner"
+        grep -qE 'health_sentinel|find.*-newer.*wc -l' "$f" 2>/dev/null && printf "C40-MEDIUM: retired liveness poll still prescribed: %s (owner %s)\n" "$f" "$owner"
+    done < <(find "$(dirname "$owner")" -type f -name '*.md' ! -path '*/templates/*prompt*.md' ! -path '*/audit/templates/checks-*.md' 2>/dev/null | sort)
+done < <(
+if [ "$LOCAL_MODE" = "true" ]; then
+    while IFS= read -r manifest; do
+        [ -f "$manifest" ] || continue
+        plugin_root=$(dirname "$(dirname "$manifest")")
+        find "$plugin_root/skills" "$plugin_root/claude-skills" -mindepth 2 -maxdepth 2 -name SKILL.md -type f 2>/dev/null
+    done < <(find plugins -mindepth 3 -maxdepth 3 -type f -path '*/.claude-plugin/plugin.json' 2>/dev/null | sort)
+else
+    find .claude/skills -mindepth 2 -maxdepth 2 -name SKILL.md -type f 2>/dev/null
+fi | sort
+)
 ```
 
-**Severity**: high — agents can silently time out with no user notification; lost work and false-progress indicators result. medium — a retired liveness poll costs a turn per probe and answers nothing the deadline check does not. Fix: reference `agent-spawn-protocol.md` §Deadlines; write `agent-watch-<batch>.tsv` in every spawn response.
+**Severity**: high — actual dispatch lacks protocol routing; medium — retired liveness polling remains. Fix: load the plugin's own `agent-spawn-protocol.md` §Deadlines, arm `agent-watch-<batch>.tsv` in the spawn response, check `agent_watch.py` once per wake-up and surface ⏱ immediately for missing deliverables. Review routed contracts before concluding coverage; a filename mention alone does not prove execution.

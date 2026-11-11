@@ -41,9 +41,10 @@
 //     4. No loader/lookup-poisoning assignment (PATH, LD_PRELOAD, IFS≠empty, …).
 //     5. The only WRITE-capable redirects reject: stderr-silence / stdout-to-null
 //        (`2>/dev/null`, `2>&1`, `N>/dev/null`, `N>&M`) are stripped, then any
-//        remaining `>` rejects. Input `<` is allowed — the `read < file` idiom
-//        needs it and it is no more capable than a whitelisted token reading the
-//        same path as an argument (`Bash(cat:*)` already reads any file).
+//        remaining `>` rejects. Input `<` targets must be sentinel-path shapes
+//        (which may carry run-time-resolved `$NAME` parts) or `/dev/null`; other
+//        unresolved paths and network devices reject.
+//        Exports are limited to the names used by shipped blueprints.
 //     5a. Every `$` the shell expands — unquoted or inside double quotes, outside
 //        comments and the safe spans of item 1 — is one the lane models
 //        (ADMITTED_DOLLAR): `$NAME` with no zsh subscript after it, `${NAME}`,
@@ -212,6 +213,33 @@ const SAFE_TOKENS = new Set([
   "export",
   "read",
 ]);
+const EXPORT_NAMES = new Set(["CSID", "DEV_TESTS_VERDICT_NONCE", "SCAN_NO_AUTOBUILD", "KAGGLE_USERNAME"]);
+const INPUT_PATH = new RegExp("^(?:" + QPATH + "|" + UPATH + "|/dev/null)$");
+
+/** Refuse unresolved input paths, network devices, and exports outside the blueprint names. */
+function operandsAreReadOnly(command) {
+  for (const [segment] of lookupRegions(command)) {
+    const masked = maskQuotes(segment).replace(
+      /^[ \t]*(?:(?:if|elif|while|until|!)[ \t]+)*\[\[[ \t]+[\s\S]*?[ \t]+\]\](?=[ \t]|$)/,
+      (test) => test.replace(/</g, "Q"),
+    );
+    for (let index = 0; index < masked.length; index++) {
+      if (masked[index] !== "<") continue;
+      let start = index + 1;
+      while (/[ \t]/.test(segment[start] || "\n")) start++;
+      const [target, end] = readWord(segment, start);
+      if (!INPUT_PATH.test(target.raw)) return false;
+      index = end - 1;
+    }
+    const words = shellWordSpans(segment).map(([word]) => word);
+    if (words.some((word) => /^\/dev\/(?:tcp|udp)\//.test(word.value))) return false;
+    const start = commandWordIndex(words);
+    if (start === null || words[start]?.value !== "export") continue;
+    const operands = words.slice(start + 1);
+    if (!operands.length || operands.some((word) => !EXPORT_NAMES.has(word.value.split("=")[0]))) return false;
+  }
+  return true;
+}
 
 /**
  * Mask quoted regions with 'Q' so shell metacharacters inside quotes cannot
@@ -322,7 +350,7 @@ const TRAVERSAL = /(?<![.\w])\.\.(?![.\w])/;
 // `read` target the blueprint danger gate refuses.
 const SENSITIVE_VARS =
   "PATH|path|LD_PRELOAD|LD_LIBRARY_PATH|LD_AUDIT|DYLD_[A-Z_]+|BASH_ENV|ENV|ZDOTDIR|SHELLOPTS|BASHOPTS|GLOBIGNORE|CDPATH|cdpath|PROMPT_COMMAND|PS[0-4]|PROMPT[0-4]?|RPROMPT2?|RPS[12]|SPROMPT|(?:precmd|preexec|chpwd|periodic|zshexit|zshaddhistory)_functions|options" +
-  "|fpath|FPATH|commands|functions|aliases|galiases|saliases|dis_[a-z_]+|BASH_CMDS|BASH_ALIASES";
+  "|fpath|FPATH|commands|functions|aliases|galiases|saliases|dis_[a-z_]+|BASH_CMDS|BASH_ALIASES|TMPDIR";
 // Raw and shell-decoded writes are checked before shape admission; only proven inert operands are exempt.
 const LOOKUP_WRITE_TOKEN_RE = new RegExp(
   "(?<![A-Za-z0-9_])(?:(?:\\+\\+|--)(?:" +
@@ -688,6 +716,7 @@ function isAllowable(cmd) {
   // Admit set over every other `$` the shell expands (item 5a), on comment-free text: a comment is never expanded.
   // The fd-variable test reads the admitted forms as plain text first, so `${X}<f` is no `{NAME}<` prefix.
   const liveRemaining = stripComments(remaining);
+  if (!operandsAreReadOnly(liveRemaining)) return false;
   if (dollarUnmodeled(liveRemaining)) return false;
   if (FD_VARIABLE_REDIRECT.test(maskQuotes(liveRemaining.replace(ADMITTED_DOLLARS, "V")))) return false;
   const masked = maskQuotes(remaining);
@@ -703,10 +732,8 @@ function isAllowable(cmd) {
   const liveMasked = maskQuotes(stripComments(remaining));
   if (liveMasked.includes("(") || liveMasked.includes(")")) return false;
   // Strip stderr-silence / stdout-to-null forms, then reject any remaining WRITE
-  // redirect (`>`, `>>`, `>|`, fd-dup `N>&M`). Input `<` is intentionally allowed:
-  // the `read` blueprint form (`IFS= read -r VAR < "$F"`) needs it, and it grants
-  // nothing beyond what a whitelisted read-only token already does with a path
-  // argument (`Bash(cat:*)` etc. already read any file without a prompt).
+  // redirect (`>`, `>>`, `>|`, fd-dup `N>&M`). Input paths were checked above;
+  // only sentinel-path shapes and `/dev/null` can reach this point.
   // Each stripped form must END at a token boundary. Without the lookaheads
   // `>/dev/nullpwned` had its `>/dev/null` prefix consumed, leaving no `>` for
   // the check below — so a real file write was allowed. Same class for `N>&M`.

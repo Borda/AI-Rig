@@ -31,8 +31,12 @@ from typing import Final
 
 #: Glob, relative to the home directory, locating installed oss plugin manifests in the Claude plugin cache.
 _VERSION_GLOB: Final = ".claude/plugins/cache/borda-ai-rig/oss/*/.claude-plugin/plugin.json"
-#: Repository-relative plugin manifest path used when no installed plugin manifest is found.
-_VERSION_FALLBACK: Final = "plugins/cc_oss/.claude-plugin/plugin.json"
+_SEMVER_RE: Final = re.compile(
+    r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+    r"(?:-((?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
+    r"(?:\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?"
+    r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
+)
 #: Agent list shown in the vitality run header for ``--quick`` runs.
 _QUICK_AGENTS: Final = "  - oss:analyse (orchestrator, --quick: core scoring only)"
 #: Agent list shown in the vitality run header for full runs.
@@ -135,18 +139,39 @@ def build_report_path(owner: str, repo: str, timestamp: str) -> str:
     return f".reports/analyse/vitality/output-analyse-vitality-{owner}-{repo}-{timestamp}.md"
 
 
+def _version_key(version: object) -> tuple[int, int, int, bool, tuple[tuple[bool, int | str], ...]] | None:
+    """Parse a bounded SemVer value into its precedence key."""
+    if not isinstance(version, str) or len(version) > 200:
+        return None
+    match = _SEMVER_RE.fullmatch(version)
+    if match is None:
+        return None
+    prerelease = match.group(4)
+    identifiers = (
+        tuple((not part.isdecimal(), int(part) if part.isdecimal() else part) for part in prerelease.split("."))
+        if prerelease
+        else ()
+    )
+    return int(match.group(1)), int(match.group(2)), int(match.group(3)), prerelease is None, identifiers
+
+
 def resolve_version_file() -> Path:
     """Locate the plugin manifest that reports the installed skill version.
 
-    The newest installed cache entry wins by plain lexical order of the glob results, matching the ``ls … | sort | tail
-    -1`` pipeline this replaces — deliberately not a version-aware sort. Falls back to the source tree when no cache
-    entry exists.
+    The newest valid installed SemVer entry wins. Without one, use the running plugin's manifest, independently of
+    the current working directory.
 
     Returns:
         Path to a ``plugin.json``; may not exist when neither location is populated.
     """
-    matches = sorted(str(p) for p in Path.home().glob(_VERSION_GLOB))
-    return Path(matches[-1]) if matches else Path(_VERSION_FALLBACK)
+    matches = [
+        (key, path) for path in Path.home().glob(_VERSION_GLOB) if (key := _version_key(path.parts[-3])) is not None
+    ]
+    return (
+        max(matches, key=lambda item: item[0])[1]
+        if matches
+        else Path(__file__).resolve().parents[1] / ".claude-plugin/plugin.json"
+    )
 
 
 def read_version(path: Path) -> str:
@@ -163,7 +188,7 @@ def read_version(path: Path) -> str:
     except (OSError, ValueError):
         return "unknown"
     version = data.get("version") if isinstance(data, dict) else None
-    return str(version) if version else "unknown"
+    return version if _version_key(version) is not None else "unknown"
 
 
 def agents_yaml(quick: bool, codex_available: bool) -> str:

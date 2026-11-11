@@ -6,7 +6,8 @@ Two report modes, both replacing inline shell blocks:
 ``--mode inventory`` (Check 17 size table)
     One row per ``.claude/agents/*.md``, ``.claude/skills/*/SKILL.md`` and
     ``.claude/rules/*.md`` with its estimated tokens and line count, flagging any
-    file over its per-kind budget.
+    file over its per-kind budget. These budgets are aspirational authoring targets, not calibrated pass/fail
+    thresholds for the current plugin inventory; exceeding one requests a size review rather than proving a defect.
 
 ``--mode overhead`` (Check 34)
     Total bytes of the always-loaded config — project ``CLAUDE.md``, the rules
@@ -34,7 +35,7 @@ import argparse
 import sys
 from pathlib import Path
 
-#: Per-kind token budget for the inventory report, in estimated tokens.
+#: Aspirational per-kind authoring targets, in estimated tokens; not calibrated inventory acceptance thresholds.
 BUDGETS: dict[str, int] = {"agents": 4000, "skills": 8000, "rules": 2500}
 
 #: Budget labels as they appear in the inventory findings.

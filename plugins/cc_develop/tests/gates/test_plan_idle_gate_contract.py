@@ -89,7 +89,6 @@ def test_every_namespace_read_is_guarded() -> None:
 @pytest.mark.parametrize(
     "gate_opening",
     [
-        pytest.param("At depth 0:", id="depth-cap"),
         pytest.param("**Breaking change gate**", id="breaking-change"),
         pytest.param("- **Blockers found**", id="challenger-blockers"),
         pytest.param("Before invoking `AskUserQuestion`, print the saved brief", id="final"),
@@ -98,8 +97,7 @@ def test_every_namespace_read_is_guarded() -> None:
 def test_idle_gate_refreshes_the_contract_and_carries_the_hint(gate_opening: str) -> None:
     """Each idle gate runs the contract block and puts the ``/compact`` hint in its question text.
 
-    These four gates are where a user can leave the session idle; without the refreshed contract a mid-wait ``/compact``
-    loses the goal and the plan path.
+    An idle decision gate needs a refreshed contract so a mid-wait ``/compact`` retains the goal and plan path.
     """
     gate = _gate_paragraph(gate_opening)
     assert (re.search(r"[Rr]un the Idle-gate contract block", gate) is not None, "`/compact` hint line" in gate) == (

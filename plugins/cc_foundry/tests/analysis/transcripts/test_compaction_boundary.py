@@ -15,6 +15,7 @@ from pathlib import Path
 
 import compaction_boundary as cb
 import pytest
+import resolve_shared_path as rsp
 
 _BIN = Path(__file__).resolve().parents[3] / "bin"
 _CONTRACT = Path(__file__).resolve().parents[3] / "skills" / "_shared" / "compaction-contract.md"
@@ -26,6 +27,33 @@ _GATE_ADVISE = "print('compact-gate: advise (stub)')\n"
 _GATE_FAILS = "import sys\nprint('compact-gate: stop (stub)')\nsys.exit(1)\n"
 _CONTRACT_TEXT = "## Intro\nignored\n## Boundary step\n1. go\n## Acceptance criteria\nignored\n"
 _EXCERPT = "## Boundary step\n1. go\n"
+
+
+@pytest.mark.integration
+def test_tier_three_warning_prevents_provider_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The real resolver warning contains the exact refusal text consumed by the boundary helper."""
+    home = tmp_path / "home"
+    home.mkdir()
+    provider = tmp_path / "plugins" / "cc_foundry"
+    (provider / "bin").mkdir(parents=True)
+    (provider / ".claude-plugin").mkdir()
+    (provider / ".claude-plugin" / "plugin.json").write_text('{"name":"foundry"}', encoding="utf-8")
+    marker = tmp_path / "executed"
+    (provider / "bin" / "compact_gate.py").write_text(
+        f"from pathlib import Path\nPath({str(marker)!r}).touch()\n", encoding="utf-8"
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
+    assert rsp.main(["foundry", "bin"]) == 0
+    captured = capsys.readouterr()
+    assert captured.out.strip() == "plugins/cc_foundry/bin"
+    assert "using source-tree fallback" in captured.err
+    assert cb.run_gate() is False
+    assert not marker.exists()
 
 
 def _stub_provider(tmp_path: Path, *, gate_body: str | None, resolver_exit: int = 0) -> Path:

@@ -381,8 +381,8 @@ With `--ab-test`, each target also runs against a `general-purpose` baseline and
 /foundry:calibrate all --full              # thorough benchmark (10 problems each)
 /foundry:calibrate routing --fast          # routing accuracy only — run after any agent description change
 /foundry:calibrate agents --full --ab-test # agents + general-purpose baseline comparison
-/foundry:calibrate all --fast --apply      # benchmark then immediately apply improvement proposals
-/foundry:calibrate --apply                 # apply proposals from the most recent past run
+/foundry:calibrate all --fast --apply      # benchmark, then review the concrete edits and approve before they apply
+/foundry:calibrate --apply                 # review the newest saved proposal per target and approve before it applies
 /foundry:calibrate foundry:sw-engineer --fast  # single agent (tier 3 by full name)
 
 # Tier 2 — plugin name
@@ -419,7 +419,7 @@ With `--ab-test`, each target also runs against a `general-purpose` baseline and
 - `<agent-name>` / `<skill-name>` — single target, bare or plugin-prefixed name
 - `all` — all above
 
-Results saved to `.reports/calibrate/<timestamp>/<target>/`. Improvement proposals written to `proposal.md` per target dir, applied with `--apply`. Agents and skills modes use dual-source evaluation: Claude + Codex generate problems and score responses independently, Claude 51% tiebreaker.
+Results saved to `.reports/calibrate/<timestamp>/<slug>/`, where the slug is the target name with `:`, `/` and spaces replaced by `-` (`foundry-sw-engineer`, `oss-analyse-vitality`; the communication mode uses `communication`). Improvement proposals written to `proposal.md` per slug dir; `--apply` shows the exact edits for approval first and applies only the approved ones, and never trusts a proposal without that review. Agents and skills modes use dual-source evaluation: Claude + Codex generate problems and score responses independently, Claude 51% tiebreaker.
 
 <a id="foundry-manage"></a>
 
@@ -479,7 +479,7 @@ Turns fuzzy idea into approved exploration tree, then spec, then ordered action 
 3. Presents 3-5 initial branches: core idea, tension resolved, what it trades away
 4. Interactive operations loop: deepen, reject, resolve, merge, add — up to 10 rounds
 5. Saves tree to `.plans/blueprint/YYYY-MM-DD-<slug>.md` with `Status: tree`
-6. Live tree viewer at URL printed during Step 1 (serve project root with `python -m http.server 8000`)
+6. Live tree viewer: Step 1 prints `python -m http.server 8080 --bind 127.0.0.1 --directory <dir>` with an isolated directory holding only `tree-viewer.html` and `tree.json`, never the project root. Run the printed command in a separate terminal and open `http://127.0.0.1:8080/tree-viewer.html?state=tree.json`.
 
 **Breakdown mode** (`breakdown <file>`):
 

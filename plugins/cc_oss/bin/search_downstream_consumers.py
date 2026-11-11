@@ -122,6 +122,8 @@ def search_consumers(package: str, symbols: list[str]) -> tuple[int, set[str]]:
                     gh,
                     "api",
                     "search/code",
+                    "--method",
+                    "GET",
                     "--field",
                     f"q=from {package} import {sym} language:python",
                     "--paginate",

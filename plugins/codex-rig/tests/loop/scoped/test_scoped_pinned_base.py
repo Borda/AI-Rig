@@ -31,6 +31,9 @@ class PinnedPlan(NamedTuple):
 
 def _planner(*args: str) -> subprocess.CompletedProcess[str]:
     """Run the shipped chunk planner CLI."""
+    if "--manifest" in args:
+        manifest = json.loads(Path(args[args.index("--manifest") + 1]).read_bytes())
+        args = (*args, "--repository", manifest["repository"])
     return subprocess.run([sys.executable, str(PLANNER), *args], capture_output=True, text=True, check=False)
 
 

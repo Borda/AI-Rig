@@ -50,17 +50,41 @@ For each 27b match, inspect the borrowed filename and surrounding context for de
 **Step 4 — Orphaned own-plugin \_shared files**:
 
 ```bash
-for f in plugins/*/*skills/_shared/*; do
-    plugin=$(echo "$f" | cut -d/ -f2)
-    fname=$(basename "$f")
-    grep -rq "$fname" "plugins/$plugin/" 2>/dev/null || echo "unreferenced: $f"
-done
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
+if [ "$LOCAL_MODE" != "true" ]; then
+    echo "[Check 27d] Skipped in non-local mode (no plugin source tree)"
+else
+    while IFS= read -r f; do
+        [ -f "$f" ] || continue
+        plugin=$(echo "$f" | cut -d/ -f2)
+        fname=$(basename "$f")
+        declared=$(sed -n 's/.*<!--[[:space:]]*file:.*consumers:[[:space:]]*\(.*\)-->.*/\1/p' "$f")
+        if printf '%s\n' "$declared" | tr ', ' '\n\n' | grep -vFx -e "$f" -e "$fname" | grep -q '[[:alnum:]]'; then
+            continue
+        fi
+        if awk -v target="$f" -F '"' '
+          /^MANIFEST[[:space:]:=]/ { active=1 }
+          active { for (i=2; i<NF; i+=2) if ($i == "canonical" && $(i+2) == target) found=1 }
+          /^]/ { active=0 }
+          END { exit !found }' plugins/cc_foundry/bin/propagate_shared.py 2>/dev/null; then
+            continue
+        fi
+        hit=0
+        while IFS= read -r consumer; do
+            [ "$consumer" = "$f" ] && continue
+            # A declaration in another file does not establish this file as its consumer.
+            grep -v '<!-- file:.*consumers:' "$consumer" | grep -qF "$fname" && { hit=1; break; }
+        done < <(find "plugins/$plugin" -type f -name '*.md' 2>/dev/null | sort)
+        [ "$hit" -eq 1 ] || echo "unreferenced: $f"
+    done < <(find plugins -type f \( -path 'plugins/*/skills/_shared/*' -o -path 'plugins/*/claude-skills/_shared/*' \) 2>/dev/null | sort)
+fi  # timeout: 5000
 ```
 
 Own-plugin `_shared/` IS reachable at runtime (each plugin's resolver finds it), so presence there is correct — but a file no consumer names is dead weight a grep-based sweep will eventually delete (see `plugins/CLAUDE.md` §Shared File Authoring Rule).
 
-- Unreferenced → **[low] 27d**: `<plugin>: _shared/<file> named by no consumer — add a `# loads:` reference or delete`
-- Exists in plugin-local `_shared/` but not referenced → **[low]**: unreachable dead file; suggest removal
+- A consumers header naming a consumer outside the file, or a `MANIFEST` `canonical` entry in `propagate_shared.py`, establishes reachability; a file naming only itself does not.
+- Unreferenced → **[low] 27d**: `<plugin>: _shared/<file> named by no consumer — add a literal consumer reference or confirm removal`.
 
 **Report only** — no auto-fix; resolution requires deciding whether to inline content or move file to `foundry/_shared/`.
 
@@ -84,11 +108,17 @@ IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/de
 if [ "$LOCAL_MODE" != "true" ]; then
     echo "[Check 28 Step 1] Skipped in non-local mode (no plugin source tree)"
 else
-    for f in plugins/*/*skills/*/SKILL.md; do
-        plugin=$(echo "$f" | cut -d/ -f2)
-        skill=$(echo "$f" | cut -d/ -f4)
-        echo "$plugin $skill $f"
-    done
+    while IFS= read -r manifest; do
+        [ -f "$manifest" ] || continue
+        plugin_root=$(dirname "$(dirname "$manifest")")
+        plugin=$(python -c "import json,sys; print(json.load(open(sys.argv[1]))['name'])" "$manifest")
+        while IFS= read -r owner; do
+            skill=$(basename "$(dirname "$owner")")
+            while IFS= read -r f; do
+                printf '%s %s %s owner=%s\n' "$plugin" "$skill" "$f" "$owner"
+            done < <(find "$(dirname "$owner")" -type f -name '*.md' 2>/dev/null | sort)
+        done < <(find "$plugin_root/skills" "$plugin_root/claude-skills" -mindepth 2 -maxdepth 2 -name SKILL.md -type f 2>/dev/null | sort)
+    done < <(find plugins -mindepth 3 -maxdepth 3 -type f -path '*/.claude-plugin/plugin.json' 2>/dev/null | sort)
 fi
 ```
 
@@ -100,17 +130,25 @@ IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/de
 if [ "$LOCAL_MODE" != "true" ]; then
     echo "[Check 28 Step 2] Skipped in non-local mode (no plugin source tree)"
 else
-    grep -rn 'subagent_type' plugins/*/*skills/*/SKILL.md 2>/dev/null | grep -v '^Binary'  # timeout: 5000
+    while IFS= read -r manifest; do
+        [ -f "$manifest" ] || continue
+        plugin_root=$(dirname "$(dirname "$manifest")")
+        while IFS= read -r owner; do
+            while IFS= read -r f; do
+                grep -nH 'subagent_type' "$f" 2>/dev/null || true
+            done < <(find "$(dirname "$owner")" -type f -name '*.md' 2>/dev/null | sort)
+        done < <(find "$plugin_root/skills" "$plugin_root/claude-skills" -mindepth 2 -maxdepth 2 -name SKILL.md -type f 2>/dev/null | sort)
+    done < <(find plugins -mindepth 3 -maxdepth 3 -type f -path '*/.claude-plugin/plugin.json' 2>/dev/null | sort)  # timeout: 5000
 fi
 ```
 
-For each match: extract `(skill_file, dispatched_plugin, dispatched_agent)`. Dispatch is **cross-plugin** when `dispatched_plugin ≠ owning_plugin`. Build map: `skill_file → [cross-plugin agents]`.
+For each match: resolve the owner through Step 1 and extract `(owner_SKILL.md, source_file, dispatched_plugin, dispatched_agent)`. Dispatch is **cross-plugin** when `dispatched_plugin ≠ owning_plugin` (the manifest JSON `name`, never the directory basename). Build map: `owner_SKILL.md → [cross-plugin agents, source locations]`.
 
 Skip: any `general-purpose` dispatch and any `codex:*` dispatch.
 
 **Step 3 — Verify fallback coverage:**
 
-For each skill with one or more cross-plugin dispatches, read skill file and search for fallback declaration. Valid fallback is any of:
+For each skill with one or more cross-plugin dispatches, read its owning `SKILL.md` and the dispatching child file, then search for fallback declarations or their explicitly loaded plugin-local shared contracts. Valid fallback is any of:
 
 - Section heading matching `Agent Resolution`, `Fallback`, or `Plugin Check` (case-insensitive)
 - Sentence containing cross-plugin agent name AND word from `{fallback, not installed, substitute, general-purpose, unavailable}` within 5 lines of each other
@@ -147,26 +185,28 @@ printf "=== Check 28c: Cross-plugin prose refs ===\n"
 if [ "$LOCAL_MODE" != "true" ]; then
     printf "✓: Check 28c skipped in non-local mode (no plugin source tree)\n"
 else
-    for f in plugins/*/*skills/*/SKILL.md; do
-      [ -f "$f" ] || continue
-      skill_dir=$(echo "$f" | cut -d/ -f2)
-      plugin_json="plugins/$skill_dir/.claude-plugin/plugin.json"
-      [ -f "$plugin_json" ] || plugin_json="plugins/$skill_dir/.codex-plugin/plugin.json"
+    while IFS= read -r plugin_json; do
+      [ -f "$plugin_json" ] || continue
+      plugin_root=$(dirname "$(dirname "$plugin_json")")
       # routing prefix is plugin.json `name` (cc_foundry -> foundry); author.name precedes it, so parse JSON, never grep
       routing_prefix=$(python -c "import json,sys; print(json.load(open(sys.argv[1]))['name'])" "$plugin_json" 2>/dev/null)
       # unreadable manifest must not silently drop the file from scan — fall back to no self-filter
       [ -n "$routing_prefix" ] || routing_prefix="__no_self_filter__"
+      while IFS= read -r owner; do
+        while IFS= read -r f; do
       # match backtick-wrapped or plain /plugin:skill refs
       matches=$(grep -nE '`/[a-z]+:[a-z]|/oss:|/develop:|/research:|/codemap:|/codemap-py:|/foundry:' "$f" 2>/dev/null |
         grep -v "subagent_type\|#.*requires\|requires.*plugin\|plugin.*installed\|if.*plugin" |
         grep -v "/${routing_prefix}:" || true)
       if [ -n "$matches" ]; then
         echo "$matches" | while IFS= read -r line; do
-          printf "⚠ 28c: %s — cross-plugin ref without availability guard: %s\n" "$f" "$line"
+          printf "⚠ 28c: %s (owner=%s) — cross-plugin ref without availability guard: %s\n" "$f" "$owner" "$line"
           printf "  fix: add '(requires <plugin> plugin)' inline, or wrap in availability check\n"
         done
       fi
-    done
+        done < <(find "$(dirname "$owner")" -type f -name '*.md' 2>/dev/null | sort)
+      done < <(find "$plugin_root/skills" "$plugin_root/claude-skills" -mindepth 2 -maxdepth 2 -name SKILL.md -type f 2>/dev/null | sort)
+    done < <(find plugins -mindepth 3 -maxdepth 3 -type f -path '*/.claude-plugin/plugin.json' 2>/dev/null | sort)
     printf "✓: Check 28c scan complete\n"
 fi  # timeout: 5000
 ```

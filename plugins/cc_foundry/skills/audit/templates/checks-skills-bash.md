@@ -5,20 +5,23 @@
 ## Check 23 — Bash command misuse / native tool substitution
 
 ```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
+[ "$LOCAL_MODE" = "true" ] && _ROOT="plugins" || _ROOT=".claude"
 printf "=== Check 23: Bash misuse candidates ===\n"
-grep -rn '\bcat \|`cat ' .claude/agents/ .claude/skills/ .claude/rules/ 2>/dev/null |
+find "$_ROOT" \( -name worktrees -o -name node_modules -o -name .venv -o -path '*/tests/*' \) -prune -o -type f -name '*.md' \( -path '*/agents/*' -o -path '*skills/*' -o -path '*/rules/*' \) -exec grep -Hn '\bcat \|`cat ' {} + 2>/dev/null |
 grep -v '^Binary' | grep -v '# ' &&
 printf "  hint: replace cat with Read tool\n" || true
-grep -rn '\bgrep \|\brg \b' .claude/agents/ .claude/skills/ .claude/rules/ 2>/dev/null |
+find "$_ROOT" \( -name worktrees -o -name node_modules -o -name .venv -o -path '*/tests/*' \) -prune -o -type f -name '*.md' \( -path '*/agents/*' -o -path '*skills/*' -o -path '*/rules/*' \) -exec grep -Hn '\bgrep \|\brg \b' {} + 2>/dev/null |
 grep -v '^Binary' | grep -v '# .*grep\|Grep tool\|Use Grep' &&
 printf "  hint: replace grep/rg with Grep tool\n" || true
-grep -rn '\bfind \b.*-name\|\bls \b.*\*' .claude/agents/ .claude/skills/ .claude/rules/ 2>/dev/null |
+find "$_ROOT" \( -name worktrees -o -name node_modules -o -name .venv -o -path '*/tests/*' \) -prune -o -type f -name '*.md' \( -path '*/agents/*' -o -path '*skills/*' -o -path '*/rules/*' \) -exec grep -Hn '\bfind \b.*-name\|\bls \b.*\*' {} + 2>/dev/null |
 grep -v '^Binary' | grep -v '# .*Glob\|Use Glob\|Glob tool' &&
 printf "  hint: replace find/ls with Glob tool\n" || true
-grep -rn 'echo .* >\|tee ' .claude/agents/ .claude/skills/ .claude/rules/ 2>/dev/null |
+find "$_ROOT" \( -name worktrees -o -name node_modules -o -name .venv -o -path '*/tests/*' \) -prune -o -type f -name '*.md' \( -path '*/agents/*' -o -path '*skills/*' -o -path '*/rules/*' \) -exec grep -Hn 'echo .* >\|tee ' {} + 2>/dev/null |
 grep -v '^Binary' | grep -v '# .*Write tool\|Use Write' &&
 printf "  hint: replace echo-redirect/tee with Write tool\n" || true
-grep -rn '\bsed \b\|\bawk \b' .claude/agents/ .claude/skills/ .claude/rules/ 2>/dev/null |
+find "$_ROOT" \( -name worktrees -o -name node_modules -o -name .venv -o -path '*/tests/*' \) -prune -o -type f -name '*.md' \( -path '*/agents/*' -o -path '*skills/*' -o -path '*/rules/*' \) -exec grep -Hn '\bsed \b\|\bawk \b' {} + 2>/dev/null |
 grep -v '^Binary' | grep -v '# .*Edit tool\|Use Edit\|awk.*{print\|awk.*BEGIN' &&
 printf "  hint: replace sed/awk text-substitution with Edit tool\n" || true
 printf "✓: Check 23 scan complete\n"
@@ -36,41 +39,42 @@ Never flag a shared-doc load — a `_shared/`, `modes/` or `templates/` file pri
 | `echo … >` / `tee` to write a file | Write tool | medium |
 | `sed`/`awk` for text substitution | Edit tool | medium |
 
-### Sub-check 23a — python inline policy (CLAUDE.md / MEMORY.md violation)
+### Sub-check 23a — Captured inline Python permission coverage
 
-`Bash(python:*)` in allow list, covers bare `python script.py`. But `python -c "..."` does NOT match `Bash(python:*)` — Claude Code's permission matcher tokenizes the full prefix, so `python -c` needs a separate `Bash(python -c:*)` entry (intentionally absent). Any `python -c` in a skill body pauses for a permission prompt mid-workflow; user deny = phase fails. Enforcement mechanism for the inline-Python antipattern, not a coverage gap.
+`Bash(python:*)` covers bare `python script.py` and `python -c "..."`. A command substitution such as `VALUE=$(python -c "...")` can still reach the expansion permission gate unless the plugin's blueprint hook admits the command. Collect captures from all skill Markdown, including modes and templates; bare `python -c` is not a permission finding. Inline-Python language restrictions remain a separate authoring policy.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
 [ "$LOCAL_MODE" = "true" ] && _ROOT="plugins" || _ROOT=".claude"
-printf "=== Check 23a: python inline policy ===\n"
-find "$_ROOT" -path "*skills/*/SKILL.md" -exec grep -Hn 'python -c\b' {} + 2>/dev/null |
+printf "=== Check 23a: captured Python review candidates ===\n"
+find "$_ROOT" \( -name worktrees -o -name node_modules -o -name .venv -o -path '*/tests/*' \) -prune -o -type f -path "*skills/*" -name '*.md' -exec grep -HnE '\$\([[:space:]]*python[[:space:]]+-c([[:space:]]|$)' {} + 2>/dev/null |
   grep -v '^Binary' | grep -v '^\s*#' &&
-printf "  hint: python not in allow list by design — move logic to bin/*.py or use native tools (Read/Write/Edit/Bash with jq)\n" || true
+printf "  hint: review the enclosing Bash block against its plugin blueprint manifest before flagging\n" || true
 printf "=== Check 23a: heredoc python policy ===\n"
-find "$_ROOT" -path "*skills/*/SKILL.md" -exec grep -Hn "python << '\|python <<\"" {} + 2>/dev/null |
+find "$_ROOT" \( -name worktrees -o -name node_modules -o -name .venv -o -path '*/tests/*' \) -prune -o -type f -path "*skills/*" -name '*.md' -exec grep -Hn "python << '\|python <<\"" {} + 2>/dev/null |
   grep -v '^Binary' | grep -v '^\s*#' &&
 printf "  hint: CLAUDE.md bans heredoc python; use bin/*.py instead\n" || true
 printf "✓: Check 23a scan complete\n"  # timeout: 5000
 ```
 
-Severity: **high** — permission prompt mid-workflow blocks automation; user deny = skill phase fails.
+For each capture candidate, resolve the owning plugin (its manifest directory locally, its active install record when installed), read its `blueprint-manifest.json`, and compare the enclosing executable Bash block using the hook's normalization contract. A whole-block digest hit or coverage of every logical command admits the block; a matching `src` path alone does not. Exclude admitted blocks and illustrative text. Only a live capture with verified missing coverage is a **high** permission finding. A missing or unreadable manifest leaves coverage **unverified**; report that limit rather than assert a permission failure. The grep output is candidate evidence, never a finding by itself.
 
 | Sub-check | Pattern | Severity |
 | -- | -- | -- |
-| 23a — python -c inline | `python -c` in skill body | high |
+| 23a — captured python -c | `$(python -c ...)` in a live Bash block without blueprint coverage | high after review |
 | 23a — python heredoc | `python << '` in skill body | high |
 
 **Report only** — never auto-fix; some Bash invocations in example/illustration code blocks intentional.
 
 ### Sub-check 23b — `# timeout:` annotation without shell enforcement
 
-`# timeout: N` on a bash line is a hint to Claude Code's Bash tool — no effect when the command runs outside the tool (bin/ scripts, CI, direct shell). Hard enforcement needs `timeout S <cmd>` prefix (bash) or `--timeout S` via argparse passed to every blocking call (Python subprocess). See `bin-authoring-guide.md §Timeout Policy` for patterns and ms→s conversion table.
+`# timeout: N` on a bash line supplies the timeout hint for Claude Code's Bash tool. The comment has no effect outside that tool (bin/ scripts, CI, direct shell), where the execution path must enforce its deadline using a supported runner or a Python `subprocess` timeout. Do not require a `timeout` binary: it is not available by default on macOS or native Windows. See `bin-authoring-guide.md §Timeout Policy` for patterns and ms→s conversion table.
 
 Rules:
 
-- **Bash call sites**: line with `# timeout: N` must have `timeout S` shell prefix (S = N ÷ 1000); no internal fallback exists.
+- **Bash tool call sites**: keep `# timeout: N` and pass N as the tool timeout; no shell wrapper is required.
+- **Non-tool shell call sites**: require deadline enforcement by the runner or a portable wrapper (S = N ÷ 1000); a comment alone is insufficient.
 - **Python call sites**: shell `timeout S` wrapper optional — timeout enforced internally via `--timeout` argparse parameter whose `default=` must equal N ÷ 1000 (from the calling site's `# timeout: N` annotation).
 - **Python `bin/` scripts with subprocess**: must expose `--timeout SECS` and pass it to every `subprocess.*` call.
 
@@ -81,11 +85,11 @@ IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/de
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_skill_contracts.py" --check 23b --root "$_ROOT"  # timeout: 30000
 ```
 
-After scan, apply model reasoning — exclude lines inside illustration/example code blocks (marked `# ✗`, surrounded by explanatory prose, or not reachable as actual tool-call commands). Flag only live executable lines. Severity: **medium** — bash comment-only timeout silently ignored at runtime; Python script missing `--timeout` default has no internal enforcement.
+After scan, apply model reasoning — exclude Bash tool call sites whose tool timeout uses the annotation, and lines inside illustration/example code blocks (marked `# ✗`, surrounded by explanatory prose, or not reachable as actual tool-call commands). The helper's shell-wrapper hint is not portable guidance; apply the execution-path rules above. Flag only live non-tool paths without enforcement or Python blocking calls without internal enforcement. Severity: **medium** — a deadline is silently ignored on that execution path.
 
 | Sub-check | Pattern | Severity |
 | -- | -- | -- |
-| 23b — bash comment-only timeout | `# timeout: N` without `timeout S` shell prefix (non-python invocations) | medium |
+| 23b — non-tool comment-only timeout | `# timeout: N` on a non-tool execution path without a runner or internal deadline | medium |
 | 23b — subprocess no timeout= | `subprocess.*` call without `timeout=` in `bin/*.py` | medium |
 | 23b — missing --timeout default | Python `bin/` script uses subprocess but no `--timeout` argparse arg | medium |
 
@@ -158,17 +162,43 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
 [ "$LOCAL_MODE" = "true" ] && _ROOT="plugins" || _ROOT=".claude"
 printf "=== Check 30a: Pipe exit code capture ===\n"
-# tail/head always exit 0 — $? after them ≠ upstream cmd's exit
-find "$_ROOT" -path "*skills/*" -name "*.md" -exec grep -Hn '| tail\b\|| head\b' {} + 2>/dev/null |
-  grep -v 'PIPESTATUS\|pipefail\|#.*tail\|#.*head' |
-  grep -v '^Binary' &&
-printf "  hint: set -o pipefail; \$? then captures the real upstream exit, not tail/head's (always 0) — PIPESTATUS is bash-only, absent under zsh\n" || true
+# Without pipefail, a pipeline reports its final command's status, not the upstream status.
+find "$_ROOT" \( -name worktrees -o -name node_modules -o -name .venv -o -path '*/tests/*' \) -prune -o -path "*skills/*" -name "*.md" -type f -exec awk '
+  BEGIN { tick = sprintf("%c", 96); fence = "^" tick tick tick tick "*" }
+  FNR == 1 { shell = 0; fenced = 0; guarded = 0; pending = ""; held = "" }
+  $0 ~ fence {
+    match($0, fence); size = RLENGTH
+    if (!fenced) {
+      fenced = size; shell = $0 ~ (fence "(bash|sh|zsh|shell)([[:space:]]|$)")
+      guarded = 0; pending = ""; held = ""; next
+    }
+    if (size >= fenced && substr($0, size + 1) ~ /^[[:space:]]*$/) {
+      fenced = 0; shell = 0; guarded = 0; pending = ""; held = ""; next
+    }
+  }
+  !shell || /^[[:space:]]*(#|$)/ { next }
+  /set[[:space:]]+-[[:alpha:]]*o[[:space:]]+pipefail/ { guarded = 1; pending = "" }
+  /set[[:space:]]+[+][[:alpha:]]*o[[:space:]]+pipefail/ { guarded = 0; pending = "" }
+  {
+    line = held $0; held = ""
+    if (line ~ /\\$/) { held = substr(line, 1, length(line) - 1); next }
+    $0 = line
+    consumes = $0 ~ /\$\?|\$\{?[[:alnum:]_]*_RC([[:space:]}";]|$)/
+    if (pending != "" && consumes) print pending
+    pending = ""
+    pipeline = match($0, /\|[[:space:]]*(head|tail)([[:space:]]|$)/)
+    if (!guarded && pipeline && $0 !~ /PIPESTATUS|pipefail/) {
+      candidate = FILENAME ":" FNR ":" $0
+      if (substr($0, pipeline) ~ /\$\?|\$\{?[[:alnum:]_]*_RC([[:space:]}";]|$)|&&|\|\|/ || substr($0, 1, pipeline - 1) ~ /(^|[;[:space:]])(if|while|until)[[:space:]]/) print candidate
+      else pending = candidate
+    }
+  }' {} + 2>/dev/null | awk '{ print; found=1 } END { if (found) print "  hint: review status dependence and intentional truncation before assigning severity" }'
 printf "✓: Check 30a scan complete\n"  # timeout: 5000
 ```
 
-Severity: **critical** — gate commands appear to pass on genuine failure; `$?` after `cmd | tail -N` = tail's exit code (0), not cmd's.
+Treat hits as candidates for model review. Confirm that `$?` or an `_RC` value is consumed after the pipeline, or that the pipeline gates `&&`, `||`, `if`, `while` or `until`; verify that the workflow needs the upstream status and that `pipefail` is not already enforced by the execution context. A resolver or display pipeline whose status is unused is not a finding. Severity: **critical** only when a verified gate can pass despite an upstream failure; otherwise report the supported severity or dismiss the candidate.
 
-Fix pattern: `set -o pipefail; cmd 2>&1 | tail -N; EXIT=$?` — never `${PIPESTATUS[0]}`, absent under zsh (Claude Code's Bash tool login shell on macOS).
+Fix pattern for a gate without intentional truncation: `set -o pipefail; cmd 2>&1 | tail -N; EXIT=$?`. Review `head` truncation separately because it can cause upstream SIGPIPE. Never `${PIPESTATUS[0]}`, absent under zsh (Claude Code's Bash tool login shell on macOS).
 
 ### 30b — SKIP variable guard missing
 
@@ -241,7 +271,7 @@ printf "  hint: CLAUDE.md bans python heredoc; use bin/*.py script instead\n" ||
 printf "✓: Check 30e scan complete\n"  # timeout: 5000
 ```
 
-Severity: **high** — heredoc triggers permission prompt; user deny = workflow block; violates CLAUDE.md §Pre-Authorized Operations.
+Severity: **high** — heredoc triggers permission prompt; user deny = workflow block; violates the inline-Python authoring policy.
 
 ### 30f — Missing exit on confirmed failure path
 
@@ -268,7 +298,7 @@ Fix pattern: add `exit 1` (or appropriate non-zero exit) immediately after the f
 
 | Sub-check | Pattern | Severity | Auto-fix |
 | -- | -- | -- | -- |
-| 30a — pipe exit code | `\| tail` / `\| head` without PIPESTATUS | critical | no |
+| 30a — pipe exit code | `\| tail` / `\| head` followed by status consumption without pipefail | critical only for a verified gate after model review | no |
 | 30b — SKIP guard missing | `SKIP_X=1` with no `[ "${SKIP_X:-0}" ]` guard | critical | no |
 | 30c — filename mismatch | spawn filename ≠ consolidator filename (model reasoning) | high | no |
 | 30d — TEST_CMD+pytest flags | `$TEST_CMD --tb` / `--co` / `::` / `--cov` without PYTEST_CMD | high | no |

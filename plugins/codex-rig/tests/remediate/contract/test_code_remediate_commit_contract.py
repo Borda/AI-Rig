@@ -234,8 +234,8 @@ class TestConvergenceAuthorization:
     def test_review_needs_explicit_authorization_for_a_loop(self) -> None:
         """Keep ordinary Code Review invocation from silently starting an extra review-and-fix loop.
 
-        The code-review skill text must say a review alone grants no loop, require asking before an unapproved loop,
-        allow reusing existing approval for the same scope, and defer to the shared loop contract once authorized.
+        A review grants no loop or unsolicited approval question. Reuse explicit same-scope approval and load the
+        shared loop contract only for an explicitly requested loop.
         """
         review = _read("skills", "code-review", "SKILL.md")
 
@@ -243,12 +243,14 @@ class TestConvergenceAuthorization:
             absent_phrases(
                 review,
                 "A review alone does not authorize Challenge Resolve or a review-and-fix loop",
-                "Ask before adding an unapproved loop",
-                "reuse existing explicit approval for the same scope",
-                "If authorized, apply `../../shared/adversarial-loop.md`",
+                "Enter the separate iterative workflow only when the user explicitly requests it",
+                "Do not propose or ask approval for an unsolicited loop",
+                "Existing explicit approval for the same scope remains valid; do not ask again",
+                "Only an explicitly requested loop applies `../../shared/adversarial-loop.md`",
             )
             == []
         )
+        assert "Ask before adding an unapproved loop" not in review
 
     def test_remediation_challenge_resolve_is_opt_in(self) -> None:
         """Keep ordinary Code Remediate invocation from silently starting an extra review-and-fix loop.

@@ -61,9 +61,9 @@
 //   `$'…'` escapes, bash 5.3's `${ cmd; }`, a spliced backslash-newline;
 //   lib/shell-git.js step 5) may hide
 //   the push itself, so a
-//   command holding it is blocked with its own message. If the library itself
-//   cannot load, every command naming both `git` and a push command or a
-//   `remote-` helper is blocked.
+//   command naming git and holding it requests ordinary permission with its own message. If the library itself
+//   cannot load, throws, or reaches its size, command, word, invocation, time or nesting limit, every command naming
+//   git requests permission. An unrelated unreadable command produces no guard verdict.
 //   LIMITS: a push assembled at run time — via a variable (`git push
 //   "$FLAGS"`), an alias or include from a config file, or a script on disk —
 //   is beyond what any string inspection can see, and some string-visible
@@ -183,8 +183,13 @@ const { execFileSync } = require("child_process");
 // as a non-blocking error — the push would go through. Without the parser, pushes fail closed below.
 let gitSubcommandArgs = null;
 let programInvocations = null;
+let coarseGitSubcommandArgs = null;
+// Library unavailable: ask on every Bash command rather than guessing program names.
+let namesProgram = () => true;
 try {
-  ({ gitSubcommandArgs, programInvocations } = require(path.join(__dirname, "lib", "shell-git.js")));
+  const lexer = require(path.join(__dirname, "lib", "shell-git.js"));
+  ({ gitSubcommandArgs, programInvocations, coarseGitSubcommandArgs } = lexer);
+  if (lexer.namesProgram) namesProgram = lexer.namesProgram;
 } catch {
   // gitSubcommandArgs stays null
 }
@@ -597,13 +602,14 @@ function readingScopeProblem(reading, scope) {
 
 // Why no approval can cover this command — the user runs it by hand — or null: a directory change, another
 // repository, inline config redirecting the push, or a push reading outside the approved branch's push.
-function uncoveredProblem(command, pushReadings, scope) {
+function uncoveredProblem(command, pushReadings, scope, deadline) {
   for (const name of DIRECTORY_CHANGERS) {
-    const found = programInvocations(command, name);
+    const found = programInvocations(command, name, { deadline });
     if (found === null) return "the command holds text the guard cannot read for a directory change";
     if (found.length > 0) return `the command changes directory (${name}), so the push may run in another repository`;
   }
-  const gits = programInvocations(command, "git");
+  const gits = programInvocations(command, "git", { deadline });
+  if (gits === null) return "the command holds text the guard cannot read for a git invocation";
   if (REPOSITORY_VARIABLE.test(command) || gits.some(switchesRepository)) {
     return "the push points git at another repository or work tree (-C, --git-dir, --work-tree, GIT_DIR)";
   }
@@ -699,7 +705,7 @@ function tokenProblem(grants, here, data) {
 // question can cover it), `byHand` (no approval can: the user runs it), `agent` (a spawned agent's call). Order:
 // the library, the caller, the checkout, the command's shape, its scope, git beside it, then the token. Reasons never
 // echo token values.
-function pushVerdict(command, data) {
+function pushVerdict(command, data, inspection) {
   const grants = loadGrants();
   if (!grants)
     return { kind: "ask", reason: "commit-guard cannot load hooks/lib/approval-grants.js to read the push token" };
@@ -709,12 +715,14 @@ function pushVerdict(command, data) {
   const here = grants.gitHead(data.cwd);
   if (here.reason) return { kind: "ask", reason: here.reason };
   const scoped = PLAIN_BRANCH.test(here.branch) ? command.replace(BRANCH_SUBSTITUTION, here.branch) : command;
-  const readings = gitSubcommandArgs(scoped);
+  const info = scoped === command ? inspection : { ...inspection };
+  const all = scoped === command ? inspection.readings : gitSubcommandArgs(scoped, info);
+  const readings = info.unreadable ? info.exactReadings || [] : all;
   const pushReadings = readings.filter((args) => asPush(args) !== null);
   const repeated = repeatProblem(scoped, pushReadings);
   if (repeated) return { kind: "ask", reason: repeated };
   const scope = { branch: here.branch, remotes: configuredRemotes(data.cwd, grants) };
-  const uncovered = uncoveredProblem(scoped, pushReadings, scope);
+  const uncovered = uncoveredProblem(scoped, pushReadings, scope, inspection.deadline);
   if (uncovered) return { kind: "byHand", reason: uncovered };
   const moving = movingGitProblem(readings.filter((args) => asPush(args) === null));
   if (moving) return { kind: "ask", reason: moving };
@@ -752,6 +760,25 @@ function runGrantCheck() {
 }
 
 let raw = "";
+
+/** Request ordinary permission when command inspection cannot establish git's arguments. */
+function askInspection(command, reason, executable = false) {
+  if (executable || namesProgram(command, "git")) {
+    if (reason.includes("size limit") && /\bcommit\b/i.test(command))
+      reason += "; pass a long commit message with -F <file>";
+    process.stdout.write(
+      JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "ask",
+          permissionDecisionReason: `commit-guard cannot read this command exactly: ${reason}; it may hold a push or GitHub write the guard could not read`,
+        },
+      }),
+    );
+  }
+  process.exit(0);
+}
+
 function handlePayload() {
   let data;
   try {
@@ -780,58 +807,67 @@ function handlePayload() {
   if (tool_name !== "Bash") process.exit(0);
 
   const command = (tool_input && tool_input.command) || "";
-  if (gitSubcommandArgs === null) {
-    if (!/\bgit\b[\s\S]*(?:\b(?:push|send-pack|http-push)\b|\bremote-\w)/i.test(command)) process.exit(0);
-    process.stderr.write(
-      "git push blocked — commit-guard cannot load hooks/lib/shell-git.js to inspect the command.\n" +
-        "Reinstall the foundry plugin; until then every command naming git and push is blocked.\n",
-    );
-    process.exit(2);
-  }
-  // Anchoring on /^\s*git push\b/ would miss `git -C /path push`, a push after
-  // a shell operator, and one inside a group or behind a prefix; all reach the
-  // same remote. Inspect every invocation the library finds instead.
-  const readings = gitSubcommandArgs(command).filter((args) => asPush(args) !== null);
-  if (readings.length === 0) process.exit(0);
-
-  // Force-push is forbidden on any branch, always — checked before any
-  // token lookup, so a valid push token never bypasses it.
-  if (readings.map(asPush).some(isForcePush)) {
-    const info = {};
-    programInvocations(command, "git", info);
-    // The lexer adds a synthetic force reading for syntax it cannot read exactly, so this branch also catches commands
-    // naming no git at all (`echo ${(U)HOME}`): name the syntax, never a push or a force ban.
-    if (info.unreadable) {
-      const construct = info.unreadableReason || "quoting bash and zsh read differently";
+  if (typeof command !== "string") process.exit(0);
+  const info = { deadline: Date.now() + 1000 };
+  try {
+    if (gitSubcommandArgs === null) {
+      askInspection(command, "cannot load hooks/lib/shell-git.js");
+    }
+    info.coarseReadings = coarseGitSubcommandArgs?.(command, info) || [];
+    if (info.coarseReadings.map(asPush).filter(Boolean).some(isForcePush)) {
       process.stderr.write(
-        `Bash command blocked — it holds shell syntax the guards cannot read exactly: ${construct}. Syntax that ` +
-          "bash and zsh read differently, or code no string inspection sees, may hide a git push. Rewrite the " +
-          "command without that syntax.\n",
+        "git push blocked — force-push is forbidden on any branch. No override, no token bypasses this.\n",
       );
       process.exit(2);
     }
-    process.stderr.write(
-      `git push blocked — force-push is forbidden on any branch. No override, no token bypasses this.\n`,
-    );
-    process.exit(2);
-  }
+    // Anchoring on /^\s*git push\b/ would miss `git -C /path push`, a push after
+    // a shell operator, and one inside a group or behind a prefix; all reach the
+    // same remote. Inspect every invocation the library finds instead.
+    const all = gitSubcommandArgs(command, info);
+    info.readings = all;
+    const readings = (info.unreadable ? info.exactReadings || [] : all).filter((args) => asPush(args) !== null);
+    // Force-push is forbidden on any branch, always — checked before any
+    // token lookup, so a valid push token never bypasses it.
+    if (
+      [...readings, ...(info.coarseReadings || []), ...(info.prefixReadings || [])]
+        .map(asPush)
+        .filter(Boolean)
+        .some(isForcePush)
+    ) {
+      process.stderr.write(
+        `git push blocked — force-push is forbidden on any branch. No override, no token bypasses this.\n`,
+      );
+      process.exit(2);
+    }
+    // A dry run sends nothing: no token needed, none spent.
+    if (readings.length === 0 || readings.every(isDryRun)) {
+      // The lexer adds a synthetic force reading for syntax it cannot read exactly, so this branch also catches commands
+      // naming no git at all (`echo ${(U)HOME}`): ask only when the command names git, never apply a synthetic force ban.
+      if (info.unreadable)
+        askInspection(command, info.unreadableReason || "unreadable shell syntax", info.unreadableExecutable);
+      process.exit(0);
+    }
 
-  // A dry run sends nothing: no token needed, none spent.
-  if (readings.every(isDryRun)) process.exit(0);
+    // Any exception from here on exits 2: exit 1 is a non-blocking error, which would let the push run.
+    let verdict;
+    try {
+      verdict = pushVerdict(command, data, info);
+    } catch (error) {
+      if (error.message === "command inspection deadline exceeded") askInspection(command, error.message);
+      verdict = { kind: "fault", reason: `the push approval check failed (${(error && error.message) || error})` };
+    }
+    if (verdict) {
+      process.stderr.write(`git push blocked — ${verdict.reason}.\n${PUSH_ADVICE[verdict.kind]}\n`);
+      process.exit(2);
+    }
 
-  // Any exception from here on exits 2: exit 1 is a non-blocking error, which would let the push run.
-  let verdict;
-  try {
-    verdict = pushVerdict(command, data);
+    if (info.unreadable)
+      askInspection(command, info.unreadableReason || "unreadable shell syntax", info.unreadableExecutable);
+
+    process.exit(0);
   } catch (error) {
-    verdict = { kind: "fault", reason: `the push approval check failed (${(error && error.message) || error})` };
+    askInspection(command, (error && error.message) || "lexer error");
   }
-  if (verdict) {
-    process.stderr.write(`git push blocked — ${verdict.reason}.\n${PUSH_ADVICE[verdict.kind]}\n`);
-    process.exit(2);
-  }
-
-  process.exit(0);
 }
 
 // `--check-grant` reads no stdin, so no payload reaches anything in that mode.

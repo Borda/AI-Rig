@@ -19,7 +19,9 @@ only for classified authentication, network, or rate-limit failures.
 
 Invoke ``python github_read.py --out <file> -- gh <allowed-read-command>`` or import its validators from a
 resource-specific collector. A caller may supply ``--fallback-url`` for a public REST GET, but the primary command
-still has to pass read-only validation before execution.
+still has to pass read-only validation before execution. The browser-flag check fails closed when a single-dash
+argument contains ``w`` before any ``=``; attached short-option values can therefore be rejected too. Use a separate
+value argument or the corresponding long option form.
 
 ## Used by
 
@@ -47,16 +49,19 @@ public URL fails closed. Read-command failures are surfaced as ``GitHubReadError
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import os
 import re
 import ssl
 import subprocess
 import sys
-import tempfile
 from collections.abc import Callable
+from concurrent.futures import FIRST_COMPLETED, Future, wait
 from pathlib import Path
-from typing import Any
+from threading import Event, Thread
+from time import monotonic
+from typing import Any, BinaryIO
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qsl, urlparse
 from urllib.request import Request, urlopen
@@ -95,7 +100,12 @@ class GitHubReadError(RuntimeError):
 
 def _has_forbidden_view_flag(arguments: list[str]) -> bool:
     """Return whether a nominal view command would open a browser instead of reading data."""
-    return any(argument in {"--web", "-w"} or argument.startswith(("--web=", "-w=")) for argument in arguments)
+    return any(
+        argument == "--web"
+        or argument.startswith("--web=")
+        or (argument.startswith("-") and not argument.startswith("--") and "w" in argument.partition("=")[0])
+        for argument in arguments
+    )
 
 
 def _is_read_only_graphql_query(arguments: list[str]) -> bool:
@@ -325,27 +335,122 @@ def _safe_job_log(payload: bytes) -> bytes:
     return encoded
 
 
-def _run_default_gh_command(argv: list[str], timeout: int) -> subprocess.CompletedProcess[bytes]:
-    """Run the production GitHub CLI path without buffering arbitrary output in memory."""
-    with (
-        tempfile.SpooledTemporaryFile(max_size=MAX_OUTPUT_BYTES, mode="w+b") as stdout_buffer,
-        tempfile.SpooledTemporaryFile(max_size=MAX_OUTPUT_BYTES, mode="w+b") as stderr_buffer,
-    ):
-        completed = DEFAULT_RUN_COMMAND(
-            argv,
-            stdout=stdout_buffer,
-            stderr=stderr_buffer,
-            check=False,
-            shell=False,
-            timeout=timeout,
+def _read_command_output(
+    stream: BinaryIO, limit: int | None, process: subprocess.Popen[bytes], oversized: Event, stopped: Event
+) -> bytes:
+    """Collect a bounded stream, killing the producer before retaining excess bytes."""
+    captured = bytearray()
+    while not stopped.is_set():
+        chunk = stream.read(65536)
+        if not chunk:
+            break
+        if limit is not None and len(captured) + len(chunk) > limit:
+            oversized.set()
+            process.kill()
+            return bytes(captured)
+        captured.extend(chunk)
+    return bytes(captured)
+
+
+def _send_command_input(stream: BinaryIO, payload: bytes, stopped: Event) -> None:
+    """Close the child's input after sending the patch, tolerating an already-exited consumer."""
+    try:
+        offset = 0
+        while offset < len(payload) and not stopped.is_set():
+            offset += stream.write(payload[offset:])
+    except BrokenPipeError:
+        pass
+    except OSError as error:
+        # Windows can report an exited consumer as EINVAL, matching subprocess's stdin writer.
+        if error.errno != errno.EINVAL:
+            raise
+    try:
+        stream.close()
+    except BrokenPipeError:
+        pass
+    except OSError as error:
+        if error.errno != errno.EINVAL:
+            raise
+
+
+def _start_command_io(operation: Callable[..., Any], *args: Any) -> Future[Any]:
+    """Retain worker results without an executor's unbounded shutdown join."""
+    result: Future[Any] = Future()
+
+    def run_io() -> None:
+        """Relay stream errors to the waiting command owner."""
+        try:
+            result.set_result(operation(*args))
+        except Exception as error:
+            result.set_exception(error)
+
+    Thread(target=run_io, daemon=True).start()
+    return result
+
+
+def run_bounded_command(
+    argv: list[str],
+    *,
+    timeout: float,
+    max_output_bytes: int,
+    input_bytes: bytes | None = None,
+    env: dict[str, str] | None = None,
+    unbounded_stdout: bool = False,
+) -> subprocess.CompletedProcess[bytes]:
+    """Drain both child streams concurrently and stop the child as soon as a stream exceeds its bound.
+
+    Complete local preservation inventories may opt out of the stdout bound; stderr is always bounded. Input is sent
+    concurrently with output reads so a patch consumer cannot deadlock on full pipes. One deadline covers the process
+    and inherited output handles; raw pipes and daemon readers let timeout cleanup close local handles without waiting
+    for a descendant to release its inherited copies.
+    """
+    oversized = Event()
+    stopped = Event()
+    deadline = monotonic() + timeout
+    with subprocess.Popen(  # noqa: S603 - validated argv, no shell
+        argv,
+        stdin=subprocess.PIPE if input_bytes is not None else subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        bufsize=0,
+        shell=False,
+        env=env,
+    ) as process:
+        stdout = _start_command_io(
+            _read_command_output,
+            process.stdout,
+            None if unbounded_stdout else max_output_bytes,
+            process,
+            oversized,
+            stopped,
         )
-        stdout_size = stdout_buffer.tell()
-        stderr_size = stderr_buffer.tell()
-        if stdout_size > MAX_OUTPUT_BYTES or stderr_size > MAX_OUTPUT_BYTES:
-            raise GitHubReadError("command-output-oversized")
-        stdout_buffer.seek(0)
-        stderr_buffer.seek(0)
-        return subprocess.CompletedProcess(argv, completed.returncode, stdout_buffer.read(), stderr_buffer.read())
+        stderr = _start_command_io(_read_command_output, process.stderr, max_output_bytes, process, oversized, stopped)
+        pending = {stdout, stderr}
+        if input_bytes is not None:
+            pending.add(_start_command_io(_send_command_input, process.stdin, input_bytes, stopped))
+        try:
+            while pending:
+                done, pending = wait(pending, timeout=max(0, deadline - monotonic()), return_when=FIRST_COMPLETED)
+                if not done:
+                    raise subprocess.TimeoutExpired(argv, timeout)
+                if oversized.is_set():
+                    raise GitHubReadError("command-output-oversized")
+                for result in done:
+                    result.result()
+            process.wait(timeout=max(0, deadline - monotonic()))
+            return subprocess.CompletedProcess(argv, process.returncode, stdout.result(), stderr.result())
+        except BaseException:
+            stopped.set()
+            process.kill()
+            process.wait()
+            raise
+        finally:
+            stopped.set()
+
+
+def _run_default_gh_command(argv: list[str], timeout: int) -> subprocess.CompletedProcess[bytes]:
+    """Run the production GitHub CLI path with live output limits."""
+    return run_bounded_command(argv, timeout=timeout, max_output_bytes=MAX_OUTPUT_BYTES)
 
 
 def run_gh_read(run: RunCommand, argv: list[str], *, timeout: int, label: str) -> bytes:

@@ -149,6 +149,25 @@ class TestMissingTimeoutFlag:
 class TestShadowedMode:
     """Covers Check 32f."""
 
+    @pytest.mark.parametrize(
+        ("mode_body", "inline"),
+        [
+            pytest.param(_LINES, [_LINES[0]] * 40, id="repeated-inline-line"),
+            pytest.param(_LINES + [f"unique {i}" for i in range(70)], _LINES, id="minority-of-mode"),
+            pytest.param(
+                _LINES + ["```bash", "fi", "else", "done", "}"] * 10,
+                ["```bash", "fi", "else", "done", "}"] * 10,
+                id="shared-control-lines",
+            ),
+        ],
+    )
+    def test_shared_boilerplate_does_not_create_inline_twin(
+        self, shadow_pair: Callable[..., tuple[Path, Path]], mode_body: list[str], inline: list[str]
+    ) -> None:
+        """A few repeated lines or shared shell controls do not prove that a mode body was copied inline."""
+        skill_md, mode_file = shadow_pair(mode_body, inline)
+        assert csc.shadowed_mode(skill_md, mode_file) is None
+
     def test_shadow_detected(self, shadow_pair: Callable[..., tuple[Path, Path]]) -> None:
         """A referenced mode file duplicated inline is reported with its overlap count.
 

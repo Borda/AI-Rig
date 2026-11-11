@@ -2,7 +2,7 @@
 
 Scope: GitHub issue/PR comments, release notes, CHANGELOG entries, contributor-facing replies. Other agents producing such text route through here. Out of scope: inline docstrings (foundry:doc-scribe), commit messages (see `git-commit.md` — same `#N`/`@name` scoping rule below, enforced there for commit bodies), internal notes.
 
-### GitHub Reference Scoping — mandatory before any draft is shown as ready-to-post
+## GitHub Reference Scoping — mandatory before any draft is shown as ready-to-post
 
 <!-- policy-sibling: plugins/CLAUDE.md (canonical), plugins/cc_foundry/rules/git-commit.md, plugins/cc_foundry/rules/_full/git-commit.md, plugins/cc_oss/skills/release/guidelines/writing-rules.md — same GH #/@ scoping policy restated for this consumer's context. Edit canonical first, then grep "policy-sibling" repo-wide to update every copy in lockstep. -->
 
@@ -18,11 +18,11 @@ Before finalizing any draft under this file's scope: scan for bare `#N` / `@name
 
 Reason: this draft is markdown headed straight for a live GitHub comment/issue/PR/release — `#N` and `@name` render as clickable links/notifications there. A false one cross-links the wrong issue (or the wrong repo), or pings someone who wasn't meant to be notified.
 
-### Humanizer Pass — companion, not a substitute
+## Humanizer Pass — companion, not a substitute
 
 Before any draft under this file's scope is shown as ready-to-post: run a `foundry:humanizer` pass (requires `foundry` plugin) after applying Shared Voice below, not instead of it. Shepherd Voice sets tone and structure; humanizer strips statistical AI-writing tells (banned vocabulary, formatting tics) voice rules alone don't catch. `foundry` plugin absent → skip the pass, post with Shared Voice alone — don't reconstruct the checklist from memory; an unverified imitation is exactly the training-knowledge-as-evidence substitution `quality-gates.md` §Evidence Grounding forbids.
 
-### Shared Voice
+## Shared Voice
 
 Tone: dev talking to dev — peer-to-peer, polite, warm, constructive. Not gatekeeper judging submissions; collaborator helping get work across line. Warm but direct. Prefers enabling over doing.
 
@@ -58,7 +58,7 @@ When included, vary phrasing: "apologies for not getting back sooner" / "apologi
 
 > Scope: annotation prefixes apply to PR review checklists and internal analysis only. See `<antipatterns-to-flag>` for enforcement.
 
-### PR Replies — structural divergences
+## PR Replies — structural divergences
 
 *Shared voice applies. Format and mandatory elements only.*
 
@@ -91,7 +91,7 @@ One unified table — all findings in single place, no separate prose:
 
 **When to produce both parts**: any request to write contributor reply, review summary for contributor, or `--reply` output from `/oss:review`. Produce Reply summary (Part 1) alone ONLY when no specific line-level issues (e.g., simple "LGTM"). Otherwise Part 2 table mandatory: any finding naming file:line MUST be table row, never embedded in Part 1 prose (Part 1 stays thematic per line 50).
 
-### Issue Replies — structural divergences
+## Issue Replies — structural divergences
 
 *Shared voice applies. Format and mandatory elements only.*
 
@@ -144,7 +144,7 @@ Optional inserts between 4 and 5: tag bystanders (@mention others who reported s
 
 Use code spans/blocks for tracebacks, commands, config snippets. Avoid headers in short replies, prose reads faster than structured sections.
 
-### Discussion Replies — structural divergences
+## Discussion Replies — structural divergences
 
 *Shared voice applies. Format and mandatory elements only.*
 

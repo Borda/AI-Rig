@@ -1,6 +1,6 @@
 ---
 name: humanizer
-description: 'Strip AI-writing tells from prose destined for humans — docs, PR/commit bodies, reports, release notes, blog posts, Slack/email drafts. Removes LLM-vocabulary clichés (delve, boasts, testament, underscore, robust, tapestry...), banned constructions (not just X but Y, rule-of-three triads, "-ing" superficial-analysis clauses, vague-attribution weasel words), and formatting tells (title-case headings, mechanical bolding, em-dash overuse, curly quotes, bare-bullet inline-header lists). TRIGGER when: user asks to humanize/polish/de-AI a piece of text or file; before finalizing a substantial human-facing prose artifact drafted as part of the current task (docs, PR/commit body, report, blog post, release notes, external message) — self-review pass, best-effort model-initiated, not a guaranteed intercept. SKIP when: output is a terse conversational chat reply, code, JSON/YAML/config, a machine-parsed agent envelope ("Return ONLY:"), a `.reports/` file or any file opening with a `---` YAML metadata block (report format needs the block and bold labels intact), or the target is an ultra-caveman-tier handover file (`.temp/`, inter-agent prose per `plugins/CLAUDE.md` compression tiers).'
+description: 'Strip AI-writing tells from prose destined for humans — docs, PR/commit bodies, reports, release notes, blog posts, Slack/email drafts. Removes LLM-vocabulary clichés (delve, boasts, testament, underscore, robust, tapestry...), banned constructions (not just X but Y, rule-of-three triads, "-ing" superficial-analysis clauses, vague-attribution weasel words), and formatting tells (title-case headings, mechanical bolding, em-dash overuse, curly quotes, bare-bullet inline-header lists). TRIGGER when: user asks to humanize/polish/de-AI a piece of text or file; before finalizing a substantial human-facing prose artifact drafted as part of the current task (docs, PR/commit body, report, blog post, release notes, external message) — self-review pass, best-effort model-initiated, not a guaranteed intercept. SKIP when: output is a terse conversational chat reply, code, JSON/YAML/config, a machine-parsed agent envelope ("Return ONLY:"), a `.reports/` file or a file with report-schema frontmatter (report format needs the block and bold labels intact), or the target is an ultra-caveman-tier handover file (`.temp/`, inter-agent prose per `plugins/CLAUDE.md` compression tiers). Preserve ordinary publishing frontmatter and edit only the prose body.'
 argument-hint: '[text or file path to humanize] | check <file>'
 allowed-tools: Read, Edit
 effort: medium
@@ -26,7 +26,8 @@ Detect and remove statistical AI-writing fingerprints from human-facing prose be
 
 - Inline text: work on it directly, no file I/O.
 - File path: `Read` the file.
-- **Destination guard** (before any edit): target must be human-facing prose. JSON/YAML/config, code, a machine-parsed agent envelope (`Return ONLY:`), a `.reports/` file or any file whose first line is a `---` YAML metadata block (report format requires that block and bold labels such as Confidence — stripping them breaks downstream parsing), or an ultra-caveman handover file under `.temp/` → emit `**! BLOCKED — humanizer does not apply to <destination type>**` and make no edit. `check` mode reports without editing, so it is unaffected.
+- **Destination guard** (before any edit): target must be human-facing prose. JSON/YAML/config, code, a machine-parsed agent envelope (`Return ONLY:`), a `.reports/` file or a file with report-schema frontmatter (the report header fields `Title`, `Date`, `Scope`, `Outcome`, `Confidence`, and `Path` — report format requires that block and bold labels such as Confidence), or an ultra-caveman handover file under `.temp/` → emit `**! BLOCKED — humanizer does not apply to <destination type>**` and make no edit. `check` mode reports without editing, so it is unaffected.
+- Ordinary frontmatter in Marp decks, Jekyll/Hugo posts, MkDocs pages, and create outlines is not a blocker: preserve the metadata block verbatim and edit only the prose body. Preserve Marp slide separators and directives.
 - No argument: treat the draft already composed earlier this turn as the target.
 
 ## 2. Scan against the checklist
@@ -61,12 +62,14 @@ Walk the text once per category below; enumerate every hit internally before edi
 
 ## 3. Apply fixes
 
-- `check` mode: stop here — report findings (category, severity, location, quote, suggested fix), no edit. Severity follows the step 2 checklist group: Syntax hit = **high**, Vocabulary hit = **medium**, Formatting hit = **low**. Order findings high → low so the reader gets a cut order.
+- `check` mode: skip edits — report findings (category, severity, location, quote, suggested fix), then continue to Step 4 for the Confidence block. Severity follows the step 2 checklist group: Syntax hit = **high**, Vocabulary hit = **medium**, Formatting hit = **low**. Order findings high → low so the reader gets a cut order.
 - Edit mode: apply minimal edit per flagged instance using `Edit`. Preserve every fact, number, citation — only phrasing/formatting changes. Re-read result once to confirm no fact dropped in rewrite.
 
 ## 4. Report
 
 One line per category with hit count and net edits made (e.g. "vocabulary: 4 removed, syntax: 2 restructured, formatting: 1 fixed"). Zero hits: say so plainly, don't pad the report.
+
+`check` mode is an analysis report: always end with a `## Confidence` block, including zero-hit results. Include **Score**, **Gaps** with deductions summing to `1.00 - score`, and **Refinements** per `rules/quality-gates.md`; assess checklist coverage and contextual judgment, and name any unreviewed text or uncertain matches.
 
 </workflow>
 

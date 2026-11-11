@@ -10,10 +10,15 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import stat
 import subprocess
+import sys
+from collections.abc import Iterator
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 
 import merge_settings_permissions as msp
 import pytest
@@ -62,8 +67,9 @@ _SETTINGS_FIXTURES = [
 
 
 @pytest.fixture(name="shipped")
-def _shipped(tmp_path: Path) -> dict[str, Path]:
+def _shipped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
     """Shipped allow/deny/retired lists, deliberately unsorted and with duplicates."""
+    monkeypatch.setattr(msp, "_PLUGIN_ROOT", tmp_path, raising=False)
     files = {
         "allow": ["Bash(gh api repos/*)", "Read", "Bash(gh api repos/*)", "Bash(ls:*)"],
         "deny": ["Bash(git push -f:*)", "Bash(git push --force:*)"],
@@ -534,3 +540,289 @@ def test_foundry_setup_passes_the_retirement_flags() -> None:
         "Bash(eval:*)",
     ]
     assert '--retire-deny-file "$PLUGIN_ROOT/.claude-plugin/permissions-deny-retired.json"' in calls[0]
+
+
+@pytest.mark.parametrize(
+    "rules",
+    [
+        pytest.param([17], id="non-string"),
+        pytest.param([None], id="null-entry"),
+        pytest.param(["Bash(*)"], id="wildcard-shell"),
+        pytest.param(["Bash"], id="unscoped-shell"),
+        pytest.param(["Bash(   )"], id="empty-shell-specifier"),
+        pytest.param(["Bash(ls)\nRead"], id="line-injection"),
+        pytest.param(["Bash(ls"], id="unclosed-specifier"),
+        pytest.param(["Read()"], id="empty-specifier"),
+    ],
+)
+def test_malformed_shipped_allows_leave_settings_unchanged(
+    rules: list[object], shipped: dict[str, Path], user_settings: Path
+) -> None:
+    """A shipped file cannot install malformed entries or grant unrestricted shell execution."""
+    shipped["allow"].write_text(json.dumps(rules), encoding="utf-8")
+    user_settings.write_text('{"theme": "dark"}', encoding="utf-8")
+    assert msp.main(["--allow", str(shipped["allow"])]) == 1
+    assert user_settings.read_text(encoding="utf-8") == '{"theme": "dark"}'
+
+
+@pytest.mark.parametrize("rule", ["Bash(*)", "Bash", "mcp__server__*", "Read(./**)"])
+def test_valid_deny_shapes_are_preserved(rule: str, shipped: dict[str, Path], user_settings: Path) -> None:
+    """Deny files may forbid an entire tool, including unrestricted Bash, without granting it."""
+    shipped["deny"].write_text(json.dumps([rule]), encoding="utf-8")
+    user_settings.write_text("{}", encoding="utf-8")
+    assert msp.main(["--deny", str(shipped["deny"])]) == 0
+    assert json.loads(user_settings.read_text(encoding="utf-8"))["permissions"]["deny"] == [rule]
+
+
+@pytest.mark.parametrize("rule", [None, 7, "Bash(ls", "Read()", "Read\nBash"])
+def test_invalid_shipped_denies_leave_settings_unchanged(
+    rule: object, shipped: dict[str, Path], user_settings: Path
+) -> None:
+    """Both incoming permission arrays require string rules with a valid tool and optional specifier."""
+    shipped["deny"].write_text(json.dumps([rule]), encoding="utf-8")
+    user_settings.write_text("{}", encoding="utf-8")
+    assert msp.main(["--deny", str(shipped["deny"])]) == 1
+    assert user_settings.read_text(encoding="utf-8") == "{}"
+
+
+@pytest.mark.parametrize("flag", ["--allow", "--deny", "--drop-allow-file", "--retire-deny-file"])
+def test_rule_sources_outside_plugin_are_refused(
+    flag: str, shipped: dict[str, Path], user_settings: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every source operand is confined to the invoking plugin, including retirement files."""
+    plugin = tmp_path / "plugin"
+    plugin.mkdir()
+    inside = plugin / "rules.json"
+    inside.write_text('["Read"]', encoding="utf-8")
+    monkeypatch.setattr(msp, "_PLUGIN_ROOT", plugin, raising=False)
+    user_settings.write_text("{}", encoding="utf-8")
+    argv = ["--allow", str(inside), "--deny", str(inside), flag, str(shipped["allow"])]
+    assert msp.main(argv) == 1
+    assert user_settings.read_text(encoding="utf-8") == "{}"
+
+
+@_requires_symlink
+def test_rule_symlink_outside_plugin_is_refused(
+    shipped: dict[str, Path], user_settings: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A lexical path inside the plugin cannot link to rules outside its resolved root."""
+    plugin = tmp_path / "plugin"
+    plugin.mkdir()
+    source = plugin / "linked.json"
+    source.symlink_to(shipped["allow"])
+    monkeypatch.setattr(msp, "_PLUGIN_ROOT", plugin, raising=False)
+    user_settings.write_text("{}", encoding="utf-8")
+    assert msp.main(["--allow", str(source)]) == 1
+    assert user_settings.read_text(encoding="utf-8") == "{}"
+
+
+@contextmanager
+def _held_settings_lock(settings: Path) -> Iterator[None]:
+    """Hold the same stable sibling lock across a real subprocess on POSIX and Windows."""
+    with (settings.parent / f".{settings.name}.lock").open("a+b") as handle:
+        handle.write(b"\0")
+        handle.flush()
+        handle.seek(0)
+        if sys.platform == "win32":
+            import msvcrt
+
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            handle.seek(0)
+            if sys.platform == "win32":
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+@contextmanager
+def _installed_merge_process(plugin: Path) -> Iterator[subprocess.Popen[str]]:
+    """Start an installed copy and terminate it if an assertion interrupts the lock handoff."""
+    command = (
+        "import runpy,sys; namespace=runpy.run_path(sys.argv[1]); "
+        "print('ready',flush=True); raise SystemExit(namespace['main'](sys.argv[2:]))"
+    )
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            command,
+            str(plugin / "bin" / "merge_settings_permissions.py"),
+            "--allow",
+            str(plugin / "allow.json"),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+    )
+    try:
+        yield process
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.communicate(timeout=10)
+
+
+@pytest.mark.integration
+def test_concurrent_merge_reads_settings_after_acquiring_lock(tmp_path: Path, user_settings: Path) -> None:
+    """A waiting session reads the prior writer's result after the lock is released, retaining both grants."""
+    plugin = tmp_path / "installed"
+    (plugin / "bin").mkdir(parents=True)
+    shutil.copy2(msp.__file__, plugin / "bin" / "merge_settings_permissions.py")
+    (plugin / "allow.json").write_text('["Bash(waiting:*)"]', encoding="utf-8")
+    user_settings.write_text("{}", encoding="utf-8")
+    with ExitStack() as processes:
+        with _held_settings_lock(user_settings):
+            process = processes.enter_context(_installed_merge_process(plugin))
+            assert process.stdout is not None
+            assert process.stdout.readline() == "ready\n"
+            with pytest.raises(subprocess.TimeoutExpired):
+                process.communicate(timeout=0.5)
+            user_settings.write_text('{"permissions":{"allow":["Bash(first:*)"]}}', encoding="utf-8")
+        stdout, stderr = process.communicate(timeout=10)
+        assert process.returncode == 0, (stdout, stderr)
+    assert json.loads(user_settings.read_text(encoding="utf-8"))["permissions"]["allow"] == [
+        "Bash(first:*)",
+        "Bash(waiting:*)",
+    ]
+
+
+def test_windows_lock_uses_first_byte_and_releases_after_error(
+    user_settings: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Windows locks and unlocks the same first byte even when merging raises an error."""
+    calls: list[tuple[int, int, int]] = []
+
+    def record_lock(descriptor: int, mode: int, size: int) -> None:
+        """Record the native byte-range request and the descriptor's current position."""
+        calls.append((mode, size, os.lseek(descriptor, 0, os.SEEK_CUR)))
+
+    monkeypatch.setitem(sys.modules, "msvcrt", SimpleNamespace(LK_LOCK=1, LK_UNLCK=0, locking=record_lock))
+    monkeypatch.setattr(sys, "platform", "win32")
+    with pytest.raises(RuntimeError, match="merge failed"), msp._settings_lock(user_settings):
+        raise RuntimeError("merge failed")
+    assert calls == [(1, 1, 0), (0, 1, 0)]
+
+
+@pytest.mark.parametrize("rule", ["mcp__server-name__tool", "mcp__server.name__tool-name", "mcp__server-name__*"])
+def test_mcp_tool_names_merge(rule: str, shipped: dict[str, Path], user_settings: Path) -> None:
+    """Hyphens and dots in incoming MCP tool names retain their exact spelling."""
+    shipped["allow"].write_text(json.dumps([rule]), encoding="utf-8")
+    user_settings.write_text("{}", encoding="utf-8")
+    assert msp.main(["--allow", str(shipped["allow"])]) == 0
+    assert json.loads(user_settings.read_text(encoding="utf-8"))["permissions"]["allow"] == [rule]
+
+
+@pytest.mark.parametrize(
+    ("pair", "expected"),
+    [
+        pytest.param("allow", ["Read", "Bash(gh api repos/*)", "Bash(ls:*)"], id="retire-allow"),
+        pytest.param("deny", ["Read", "Bash(git push -f:*)", "Bash(git push --force:*)"], id="retire-deny"),
+    ],
+)
+def test_retirement_removes_rules_outside_current_grammar(
+    pair: str, expected: list[str], shipped: dict[str, Path], user_settings: Path
+) -> None:
+    """Legacy strings can be retired even when the incoming-rule grammar refuses them."""
+    legacy = "Legacy tool()"
+    shipped["retired"].write_text(json.dumps([legacy]), encoding="utf-8")
+    user_settings.write_text(json.dumps({"permissions": {pair: [legacy, "Read"]}}), encoding="utf-8")
+    flag = "--drop-allow-file" if pair == "allow" else "--retire-deny-file"
+    assert msp.main([f"--{pair}", str(shipped[pair]), flag, str(shipped["retired"])]) == 0
+    assert json.loads(user_settings.read_text(encoding="utf-8"))["permissions"][pair] == expected
+
+
+@pytest.mark.parametrize("specifier", ["**", ":", " * : * ", "::**"])
+def test_wildcard_only_bash_grants_are_refused(specifier: str, shipped: dict[str, Path], user_settings: Path) -> None:
+    """Wildcard, colon and whitespace combinations cannot grant unrestricted Bash access."""
+    shipped["allow"].write_text(json.dumps([f"Bash({specifier})"]), encoding="utf-8")
+    user_settings.write_text("{}", encoding="utf-8")
+    assert msp.main(["--allow", str(shipped["allow"])]) == 1
+    assert user_settings.read_text(encoding="utf-8") == "{}"
+
+
+@_requires_symlink
+def test_symlink_settings_lock_stays_in_lexical_directory(user_settings: Path, tmp_path: Path) -> None:
+    """A settings link uses the authorized settings directory for its coordination file."""
+    destination = tmp_path / "dotfiles" / "user.json"
+    destination.parent.mkdir()
+    destination.write_text("{}", encoding="utf-8")
+    user_settings.symlink_to(destination)
+    with msp._settings_lock(user_settings) as resolved:
+        assert resolved == destination.resolve()
+        assert (user_settings.parent / ".settings.json.lock").is_file()
+        assert not (destination.parent / ".user.json.lock").exists()
+    assert user_settings.is_symlink()
+
+
+def test_windows_lock_retries_contention(user_settings: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A Windows writer keeps waiting after the native lock's finite retry period expires."""
+    calls: list[tuple[int, int, int]] = []
+
+    def contend_then_lock(descriptor: int, mode: int, size: int) -> None:
+        """Simulate two exhausted native waits before acquisition succeeds."""
+        calls.append((mode, size, os.lseek(descriptor, 0, os.SEEK_CUR)))
+        if mode == 1 and len(calls) < 3:
+            raise OSError("lock busy")
+
+    monkeypatch.setitem(sys.modules, "msvcrt", SimpleNamespace(LK_LOCK=1, LK_UNLCK=0, locking=contend_then_lock))
+    monkeypatch.setattr(sys, "platform", "win32")
+    with msp._settings_lock(user_settings):
+        assert calls == [(1, 1, 0)] * 3
+    assert calls == [(1, 1, 0)] * 3 + [(0, 1, 0)]
+
+
+@pytest.mark.integration
+def test_setup_merges_rules_from_the_resolved_cache_version(tmp_path: Path, user_settings: Path) -> None:
+    """Setup executes the installed helper beside its rule files despite a stale loaded plugin root."""
+    cache = user_settings.parent / "plugins" / "cache" / "market" / "foundry"
+    old = cache / "1.0.0"
+    current = cache / "1.1.0"
+    (old / "bin").mkdir(parents=True)
+    (current / "bin").mkdir(parents=True)
+    shutil.copy2(msp.__file__, old / "bin" / "merge_settings_permissions.py")
+    shutil.copy2(msp.__file__, current / "bin" / "merge_settings_permissions.py")
+    rules = current / ".claude-plugin"
+    rules.mkdir()
+    (rules / "permissions-allow.json").write_text('["Read"]', encoding="utf-8")
+    (rules / "permissions-deny.json").write_text('["Bash(*)"]', encoding="utf-8")
+    (rules / "permissions-allow-retired.json").write_text("[]", encoding="utf-8")
+    (rules / "permissions-deny-retired.json").write_text("[]", encoding="utf-8")
+    user_settings.write_text("{}", encoding="utf-8")
+    mismatch = subprocess.run(
+        [
+            sys.executable,
+            str(old / "bin" / "merge_settings_permissions.py"),
+            "--allow",
+            str(rules / "permissions-allow.json"),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert mismatch.returncode == 1
+    assert "allow file must be inside the plugin root" in mismatch.stderr
+    assert user_settings.read_text(encoding="utf-8") == "{}"
+    skill = Path(msp.__file__).resolve().parents[1] / "skills" / "setup" / "SKILL.md"
+    call = next(
+        line for line in skill.read_text(encoding="utf-8").splitlines() if "bin/merge_settings_permissions.py" in line
+    )
+    command = (
+        call.split(" || ", 1)[0]
+        .replace("${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}", str(old))
+        .replace("$PLUGIN_ROOT", str(current))
+    )
+    arguments = shlex.split(command)
+    result = subprocess.run([sys.executable, *arguments[1:]], capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(user_settings.read_text(encoding="utf-8"))["permissions"] == {
+        "allow": ["Read"],
+        "deny": ["Bash(*)"],
+    }

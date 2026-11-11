@@ -1,6 +1,6 @@
 # Shepherd Reply Protocol
 
-Shared invocation pattern, `oss:shepherd` reply generation — used by `oss:review` (Step 9) and `oss:analyse` (Step 7). Read file, spawn shepherd with skill-specific vars substituted.
+Shared invocation pattern, `oss:shepherd` reply generation — used by `/oss:review` (Step 8) and `/oss:analyse` (Step 7). Read file, spawn shepherd with skill-specific vars substituted.
 
 ## Spawn pattern
 
@@ -37,8 +37,8 @@ Agent(subagent_type="oss:shepherd", name="shepherd-reply", description="Draft co
 
 | Caller | Output path |
 | -- | -- |
-| `oss:review` | `.temp/output-reply-<PR#>-<date>.md` |
-| `oss:analyse` | `.reports/analyse/thread/output-reply-thread-<N>-<date>.md` |
+| `/oss:review` | `.temp/output-reply-<PR#>-<date>.md` |
+| `/oss:analyse` | `.reports/analyse/thread/output-reply-thread-<N>-<date>.md` |
 
 ## Terminal summary
 

@@ -109,7 +109,7 @@ printf "=== Check 32d: Orphaned bin/ scripts ===\n"
 if [ "$LOCAL_MODE" != "true" ]; then
     printf "✓: Check 32d skipped in non-local mode (no plugin source tree)\n"
 else
-    python "${CLAUDE_PLUGIN_ROOT}/bin/check_orphaned_bin.py" --plugins-dir plugins  # timeout: 10000
+    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_orphaned_bin.py" --plugins-dir plugins  # timeout: 10000
 fi
 ```
 
@@ -122,7 +122,7 @@ Severity: **high** — orphaned script = either dead code or incomplete extracti
 | 32a — dead mode file | `*/modes/*.md` | file exists but not referenced in parent SKILL.md | medium | delete file or add reference |
 | 32b — dead template file | `*/templates/*` | file exists but not referenced in parent SKILL.md | low | human review — may be indirect ref |
 | 32c — dead rule file | `*/rules/*.md` | `paths:` set but matches no project files | medium | remove `paths:` or delete file |
-| 32d — orphaned bin/ script | `plugins/*/bin/*.py`, `*.sh` | script not referenced in any plugin .md file | high | yes — see severity guidance above |
+| 32d — orphaned bin/ script | `plugins/*/bin/*.py`, `*.sh` | script not referenced in any plugin .md file | high | no — semantic review required |
 | 32e — bin/ script cross-similarity | `plugins/*/bin/*.py` | ≥ 2 scripts with structural similarity ≥ 0.8 after normalization | medium | no — semantic review required |
 
 ### Sub-check 32e — Cross-similarity between bin/ scripts
@@ -149,7 +149,7 @@ else
 fi
 ```
 
-**Delegation prompt** (when `_C32E_N ≥ 2`): spawn foundry:curator with the `_C32E_SCRIPTS` file list and this instruction:
+**Delegation prompt** (when `LOCAL_MODE=true` and `_C32E_N ≥ 2`): load the plugin's own `agent-spawn-protocol.md` §Deadlines before spawning `foundry:curator`. Name the analysis deliverable in the prompt, arm its per-agent deadline in `agent-watch-<batch>.tsv` in the same response (skill constant or protocol default), then end the turn. On completion/idle notification, run `agent_watch.py` once before consuming the deliverable; missing/empty deliverable or expired deadline means ⏱ `timed_out` immediately, retain partial results and report this check incomplete. Require the handoff to name reviewed scripts, evidence, exclusions and unresolved limits; never merge scripts automatically. Pass the `_C32E_SCRIPTS` file list and this instruction:
 
 > "Scan these bin/ Python scripts for cross-similarity. For each pair: strip docstrings and inline comments → normalize variable names to `<VAR>` → normalize string literals and path constants to `<STR>` → compare AST-level structure. Report pairs with structural similarity ≥ 0.8. For each candidate pair: script names, plugin origin, similarity score, what differs (constant, path, plugin name, threshold), lines saved by merge, and suggested parametrization (e.g. `--plugin-root` flag, `--output-dir` arg, or move shared logic to `_shared/` helper). Skip pairs serving clearly different semantic roles despite structural overlap. Skip pairs marked `# audit-skip: resilience-replication` in their module docstring (intentional per-plugin independence)."
 

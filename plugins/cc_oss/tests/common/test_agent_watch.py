@@ -76,6 +76,21 @@ class TestClassify:
 class TestWatch:
     """Classification of every agent row across all batch files in a state directory."""
 
+    @pytest.mark.parametrize(
+        "deadline",
+        ["²", "-1", pytest.param("9" * 5000, id="oversized-integer"), "31536001"],
+    )
+    def test_invalid_deadline_does_not_drop_other_agents(
+        self, tmp_path: Path, write_batch: Callable[[str, str], Path], deadline: str
+    ) -> None:
+        """An invalid deadline times out its row while a valid sibling still reports pending."""
+        write_batch("mixed", f"invalid\t-\t{deadline}\nvalid\t-\t900\n")
+
+        report = aw.watch(tmp_path, _SPAWNED + 10)
+
+        assert report["timed_out"] == ["invalid"]
+        assert report["pending"] == ["valid"]
+
     def test_reports_every_batch_and_lists_timeouts(
         self, tmp_path: Path, write_batch: Callable[[str, str], Path]
     ) -> None:

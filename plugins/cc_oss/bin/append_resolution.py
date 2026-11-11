@@ -97,6 +97,8 @@ def commit_for(item_id: int, cwd: Path, base_sha: str = "") -> str:
     Item ids restart at 1 every resolve run, so the search is limited to commits after ``base_sha`` (the run's starting
     head) whenever it is known; otherwise a commit from an earlier run on the same branch would match.
     """
+    if base_sha.startswith("-"):
+        return ""
     rev_range = [f"{base_sha}..HEAD"] if base_sha else []
     try:
         out = subprocess.run(  # noqa: S603 - argv list, no shell
@@ -228,6 +230,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repo", default=".", help="git checkout used to look up [resolve No.<id>] commits")
     parser.add_argument("--base-sha", default="", help="head when this resolve run started; scopes the commit lookup")
     args = parser.parse_args(argv)
+    if args.base_sha.startswith("-"):
+        print("! BLOCKED — --base-sha must not start with '-'", file=sys.stderr)
+        return 1
     impl_dir, review_dir = Path(args.impl_dir), Path(args.review_dir)
     if not review_dir.is_dir():
         print(f"! BLOCKED — review directory {review_dir.as_posix()} not found", file=sys.stderr)

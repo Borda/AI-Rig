@@ -40,7 +40,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" agent-
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" runner-detection.md
 ```
 
-Contains: foundry check + fallback table, and §Agent waits — no polling (applies to every spawn below, team mode included). If foundry not installed: substitute each `foundry:X` with `general-purpose` per table. Agents this skill uses: `foundry:sw-engineer`, `foundry:challenger`.
+Contains: foundry check + fallback table, and §Agent waits — no polling (applies to every spawn below, team mode included). If foundry not installed: substitute each `foundry:X` with `general-purpose` per table. Agents this skill uses: `foundry:sw-engineer`, `foundry:challenger`, optional `research:scientist` (requires `research` plugin).
 
 **Task hygiene** — task tools may be deferred; load before first use: `ToolSearch(query="select:TaskList,TaskCreate,TaskUpdate,TaskGet", max_results=4)`. Call `TaskList` first and triage each task it returns: `completed` if work clearly done, `deleted` if orphaned, keep `in_progress` only if genuinely continuing. Never spend a turn on bookkeeping alone — every `TaskCreate`/`TaskUpdate` ships in the same response as the next substantive tool call; one exception, `TaskUpdate(completed)` immediately before a long output block (`rules/task-lifecycle.md`).
 
@@ -303,26 +303,37 @@ Classify claim type and validate accordingly:
 | Algorithm correctness | "sorting is wrong — element 3 should come before element 1" | Trace comparison logic against documented sort key or invariant |
 | Behavioral invariant | "adding item twice should raise, not silently dedupe" | Check README, docs, or published contract — not assumed behavior |
 | Cross-version assumption | "this worked in v1, now broken" | Check changelog/release notes for intentional breaking change |
-| Domain-specific formula | ML metric, statistical estimator, signal processing | Spawn `research:scientist` (requires `research` plugin); pass metric name, formula used, claimed expected value; ask: "Is the claimed expected value correct per authoritative definition?" |
+| Domain-specific formula | ML metric, statistical estimator, signal processing | Check the research availability gate below, then spawn `research:scientist` only when available (requires `research` plugin); pass metric name, formula used, claimed expected value; ask: "Is the claimed expected value correct per authoritative definition?" |
+
+**Research availability gate** — run only for a domain-specific claim requiring literature; spawn `research:scientist` only when the block reports it available, otherwise retain the unverified-assumption warning:
+
+```bash
+# timeout: 5000
+if python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/get_plugin_install_path.py" borda-ai-rig research --registry "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/installed_plugins.json" >/dev/null 2>&1; then
+    echo "research:scientist available"
+else
+    echo "⚠ Expected value unverified — treating as assumption"
+fi
+```
 
 **Resolution rules:**
 
 1. Claim verifiable from docs/type hints/tests → read source now; confirm before proceeding
 2. Claim verifiable by quick computation → run inline script to compute expected value independently
-3. Domain-specific claim requiring literature → spawn `research:scientist`; if plugin absent flag: `⚠ Expected value unverified — treating as assumption`
+3. Domain-specific claim requiring literature → run the research availability gate, then spawn `research:scientist` only when available; if plugin absent flag: `⚠ Expected value unverified — treating as assumption`
 4. Claim contradicts docs/contract → it is a **documentation misunderstanding**, not a bug; surface this to user before any code change
 5. **Gate**: do not form root-cause hypothesis until claimed expectation confirmed or explicitly flagged as unverified; wrong expectation → wrong fix
 
 Use Grep (pattern: failing symbol, class, or error keyword) to trace call path, entry point to failure site. Path hint: `src/` if exists, else search from project root (`.`).
 
-Spawn **foundry:sw-engineer** agent to map execution path — Arm batch `scope` in the spawn response with deliverable `.temp/debug/<slug>-analysis.md` (`agent-resolution.md` §Agent waits — no polling, per-agent deadlines). The prompt tells the agent to write its full analysis to that file with the Write tool and return ONLY `{"status":"done","file":"<path>","summary":"<one-line>"}`. It must produce:
+Spawn **foundry:sw-engineer** agent to map execution path — Arm batch `scope` in the spawn response with deliverable `.temp/debug/<slug>-sw-engineer.md` (`agent-resolution.md` §Agent waits — no polling, per-agent deadlines). The prompt tells the agent to write its full analysis to that file with the Write tool and return ONLY `{"status":"done","file":"<path>","summary":"<one-line>"}`. It must produce:
 
 - Entry point to failure: which modules does call cross?
 - What state mutated along the way?
 - What invariant violated at failure point?
 - Any recent commit touching this path (from git log output)
 
-Carry the analysis summary in the diagnosis file. Write the full analysis to `.temp/debug/<slug>-analysis.md` first — the agent's deliverable above; a notification without that file is ⏱ timed out, surfaced, never silently skipped; when the next gate fires, print the analysis summary once as the last reply text before the question, as normal Markdown. The question text carries counts, headline and `→ .temp/debug/<slug>-analysis.md`, at most 6 plain lines (target 600 characters, hard cap 1,500), no table, pipe layout or code fence. Options carry a label and a one-line description, no `preview`; do not repeat the same analysis at later gates.
+Carry the analysis summary in the diagnosis file. Write the full analysis to `.temp/debug/<slug>-sw-engineer.md` first — the agent's deliverable above; a notification without that file is ⏱ timed out, surfaced, never silently skipped; when the next gate fires, print the analysis summary once as the last reply text before the question, as normal Markdown. The question text carries counts, headline and `→ .temp/debug/<slug>-sw-engineer.md`, at most 6 plain lines (target 600 characters, hard cap 1,500), no table, pipe layout or code fence. Options carry a label and a one-line description, no `preview`; do not repeat the same analysis at later gates.
 
 **Scope gate**: if root cause spans 3+ modules, flag complexity smell. Use `AskUserQuestion` to present scope concern before proceeding, with options: "Narrow scope (Recommended)" / "Proceed anyway".
 
@@ -330,7 +341,6 @@ Carry the analysis summary in the diagnosis file. Write the full analysis to `.t
 
 ```bash
 # resolve FAILING_TEST_NODE first:
-# FAILING_TEST_NODE=$(echo "$ARGUMENTS" | grep -oE 'tests?/[^[:space:]]+::test_[^[:space:]]+' | head -1)
 if [ -z "$FAILING_TEST_NODE" ]; then
     echo "⚠ FAILING_TEST_NODE not resolved — cannot run polluter isolation; surface failing test node ID first"
 else
@@ -356,10 +366,12 @@ Step catches non-obvious causes — ordering dependency, environment-specific st
 
 **Record candidates (loop guard)** — as each candidate cause identified, append it to hypothesis ledger with verdict `open`. Ledger inlined into compaction contract at boundary below, so a mid-investigation compaction never loses which causes were already weighed. Verdict values: `open` · `refuted (challenger)` · `ruled-out (probe)`. The ledger is append-only: a later verdict on a candidate is a new `<candidate cause> :: <verdict>` line, never an edit of the earlier one, and readers take the **last** line per candidate as its current verdict.
 
+Before the next real Bash block, stage the resolved `<candidate cause> :: open` line with the Write tool in `${TMPDIR:-/tmp}/dev-debug-hypotheses-${CSID}.rec`, then append it with this block. Keep candidate text in the staged file, never in shell command text. For multiple verdicts, stage one line per candidate in the same `.rec` file and consume it before staging another batch.
+
 ```bash
 # ledger survives compaction via contract — avoids re-testing refuted causes mid-investigation
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-echo "<candidate cause> :: open" >> ${TMPDIR:-/tmp}/dev-debug-hypotheses-${CSID}
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/append_ledger.py" "${TMPDIR:-/tmp}/dev-debug-hypotheses-${CSID}"  # timeout: 5000
 ```
 
 ## Challenger gate
@@ -373,7 +385,7 @@ Arm batch `challenge` in the spawn response (`agent-resolution.md` §Agent waits
 
 > "Review pattern analysis and candidate root causes. Challenge across all 5 dimensions: Assumptions, Missing Cases, Security Risks, Architectural Concerns, Complexity Creep. Apply mandatory refutation step."
 
-Parse result — record each candidate's verdict as you parse by appending a verdict event line to the hypothesis ledger (`${TMPDIR:-/tmp}/dev-debug-hypotheses-${CSID}`), one `echo` per verdict in one block, same shape as the Step 2 block — `echo "<candidate cause> :: refuted (challenger)" >> ${TMPDIR:-/tmp}/dev-debug-hypotheses-${CSID}`; never rewrite earlier lines:
+Parse result — stage each candidate's resolved verdict as a `<candidate cause> :: <verdict>` event line with the Write tool in `${TMPDIR:-/tmp}/dev-debug-hypotheses-${CSID}.rec`, then run the Step 2 `append_ledger.py` block before the boundary below; never rewrite earlier ledger lines. Use `refuted (challenger)` only for candidates the challenger actually refuted; surviving candidates remain `open`. Use the same staging and append mechanism for new `open (alt)` concerns:
 
 - **Blockers found** → STOP. Write the blocker findings (one line each: claim · file:line · evidence) to `.temp/debug/<slug>-blockers.md` first; print them once as the last reply text before invoking `AskUserQuestion`, as normal Markdown. The question text carries the blocker count, headline and `→ .temp/debug/<slug>-blockers.md`, at most 6 plain lines (target 600 characters, hard cap 1,500), no table, pipe layout or code fence. Options carry a label and a one-line description, no `preview` — "Challenger raised N blocker(s) on the candidate root cause. How to proceed?" · (a) **Address blockers** — revise candidates, re-run gate · (b) **Accept risk** — proceed to Step 3 with blockers documented in the diagnosis file · (c) **Abort**. On Abort: stop. Incorporate surviving challenges into the hypothesis list before the Step 3 gate; append a `<candidate cause> :: refuted (challenger)` event line for any candidate the challenger refuted.
 - **Concerns only** → add as alternative hypotheses in Step 3; append each new concern to ledger as `:: open (alt)`; continue.
@@ -385,9 +397,12 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _DEBUG_MODE < "${TMPDIR:-/tmp}/dev-debug-mode-${CSID}" 2>/dev/null || _DEBUG_MODE="symptom"
 IFS= read -r _CI_RUN < "${TMPDIR:-/tmp}/dev-ci-run-id-${CSID}" 2>/dev/null || _CI_RUN=""
 IFS= read -r _TEST_PATH < "${TMPDIR:-/tmp}/dev-debug-test-path-${CSID}" 2>/dev/null || _TEST_PATH=""
-_TRIED=$(tail -8 "${TMPDIR:-/tmp}/dev-debug-hypotheses-${CSID}" 2>/dev/null)  # cap keeps contract compact; tail keeps the latest verdict events (last line per candidate wins)
+_TRIED=$(awk -F ' :: ' '{ if (!($1 in verdict)) order[++n]=$1; verdict[$1]=$0 } END { for (i=1; i<=n; i++) print verdict[order[i]] }' "${TMPDIR:-/tmp}/dev-debug-hypotheses-${CSID}" 2>/dev/null)  # keep every candidate's latest verdict so early refutations survive later events
 _PRESERVE="mode=$_DEBUG_MODE, ci-run=${_CI_RUN:-none}, test_path=${_TEST_PATH:-full-suite}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" --keep-sentinel dev-debug-keep-items "develop:debug" "hypothesis+handoff (after evidence gathered and pattern analysis)" ".plans/active/" "$_PRESERVE" "state hypothesis with evidence (Step 3) → confirm root cause → write diagnosis → handoff to /develop:fix. Skip any candidate marked refuted/ruled-out in the tried list below." "tried (do NOT re-test refuted/ruled-out)" "$_TRIED"  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" --keep-sentinel dev-debug-keep-items "develop:debug" "hypothesis+handoff (after evidence gathered and pattern analysis)" ".plans/active/" "$_PRESERVE" "state hypothesis with evidence (Step 3) → confirm root cause → write diagnosis → handoff to /develop:fix. Skip any candidate marked refuted/ruled-out in the tried list below." "tried (do NOT re-test refuted/ruled-out)" "$_TRIED" -- calls_ahead=20 "drop=evidence gathering and pattern analysis"  # timeout: 5000
+IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _DEV_SHARED=""
+[ -z "$_DEV_SHARED" ] && _DEV_SHARED="plugins/cc_develop/skills/_shared"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/compaction_boundary.py" "$_DEV_SHARED"
 ```
 
 ## Step 3: Hypothesis and gate
@@ -410,7 +425,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" premis
 
 **Gate**: present hypothesis to user, wait for confirmation or challenge before proceeding to Step 4 — as the turn's final reply, or, when asked via `AskUserQuestion`, Write the hypothesis and its evidence to `.temp/debug/<slug>-hypothesis.md` first and print it once as the last reply text before the question, as normal Markdown. The question text carries the root-cause headline, confidence and `→ .temp/debug/<slug>-hypothesis.md`, at most 6 plain lines (target 600 characters, hard cap 1,500), no table, pipe layout or code fence. Options carry a label and a one-line description, no `preview`. Wrong hypothesis produces fix that passes tests but doesn't resolve underlying problem.
 
-If confidence low: propose targeted probe (minimal script, added log statement, single assertion) to gather missing signal — run before committing to fix. Probe rules out current hypothesis → append `<cause> :: ruled-out (probe)` to `${TMPDIR:-/tmp}/dev-debug-hypotheses-${CSID}`, re-run boundary contract block above before re-hypothesizing — keeps loop guard current so ruled-out cause not revisited.
+If confidence low: propose targeted probe (minimal script, added log statement, single assertion) to gather missing signal — run before committing to fix. Probe rules out current hypothesis → stage `<cause> :: ruled-out (probe)` with the Write tool in `${TMPDIR:-/tmp}/dev-debug-hypotheses-${CSID}.rec`, run the Step 2 `append_ledger.py` block, then re-run boundary contract block above before re-hypothesizing — keeps loop guard current so ruled-out cause not revisited.
 
 **Test impact (codemap-py) — hypothesis confirmed** — root cause now names a suspect module (and often a function). Query affected test set once here so `/develop:fix` reuses it instead of re-querying. Gated on `CODEMAP_ENABLED` + `codemap-py query` availability (same gate as Step 1). Assign `SUSPECT` (substitution token, Step 1 head) in the block below as the confirmed hypothesis in dotted qname form: `module.path::function` (fn known) or bare `module.path` (module-level), same derivation as `TARGET_MODULE` (Step 1: strip `src/`, drop `.py`, `/` → `.`):
 
@@ -455,6 +470,11 @@ IFS= read -r SLUG < "${TMPDIR:-/tmp}/dev-debug-slug-${CSID}" 2>/dev/null || SLUG
 IFS= read -r _DIAG_BASE < "${TMPDIR:-/tmp}/dev-debug-orig-root-${CSID}" 2>/dev/null || _DIAG_BASE="$(pwd)"
 [ -n "$_DIAG_BASE" ] || _DIAG_BASE="$(pwd)"
 DIAG_FILE="$_DIAG_BASE/.plans/active/debug_${SLUG}.md"
+N=2
+while [ -e "$DIAG_FILE" ]; do
+    DIAG_FILE="$_DIAG_BASE/.plans/active/debug_${SLUG}-${N}.md"
+    N=$((N+1))
+done
 mkdir -p "$_DIAG_BASE/.plans/active"
 echo "$DIAG_FILE" | tee "${TMPDIR:-/tmp}/dev-debug-diag-file-${CSID}"  # later blocks (Test Impact append, handoff) reload it — bash state is lost between calls
 ```
@@ -476,9 +496,18 @@ Write `$DIAG_FILE` with this structure:
 - [signal 1 that confirmed hypothesis]
 - [signal 2]
 
+## Reproduction
+- Test node ID / path: [exact existing or newly written reproduction test node ID, path, full-suite, or not run]
+- Runner exit: [recorded pytest exit code, or not run — reason]
+- Issue ref: [issue number or URL in issue mode; none in symptom mode]
+- --repo: [explicit repository override, or none — local repository]
+- Mode: [issue | symptom]
+
 ## Confidence
 [high | medium | low]
 ```
+
+Populate `Reproduction` from the evidence already gathered: test node ID/path from `${TMPDIR:-/tmp}/dev-debug-test-path-${CSID}` and any reproduction test written during probes, runner exit from `${TMPDIR:-/tmp}/dev-gate-exit-${CSID}`, repository override from `${TMPDIR:-/tmp}/dev-upstream-${CSID}`, and mode from `${TMPDIR:-/tmp}/dev-debug-mode-${CSID}`. Read issue ref from `${TMPDIR:-/tmp}/dev-debug-issue-num-${CSID}` only in issue mode; in symptom mode record `none` even if an earlier invocation left that sentinel behind. Record the actual failing node ID when known; an empty test-path sentinel means full-suite, not a missing reproduction test. For CI-only or team investigations without a local test run, record `not run` and the evidence source rather than reusing a prior runner exit. Keep an existing reproduction test's path so the fix handoff can reuse it.
 
 **Append Test Impact section** — only when Step 3 captured a non-empty, non-error result (`${TMPDIR:-/tmp}/dev-debug-test-impact-${CSID}` present). fix reads this to skip re-querying. Records raw JSON plus index `scanned_at` so fix can verify handoff is not older than current index (freshness guard):
 

@@ -179,18 +179,19 @@ def _relink_and_backup(release_dir: Path, link_path: Path, resolved_target: Path
         resolved_target: Resolved target the symlink should point to.
     """
     release_dir.mkdir(parents=True, exist_ok=True)
+    relative_target = os.path.relpath(resolved_target, link_path.parent.resolve())
 
     if link_path.is_symlink():
         # swap atomically: unlink-then-create leaves a window with no link, and a crash in it loses the old one
         pending = link_path.with_name(f".{link_path.name}.{os.getpid()}.new")
         pending.unlink(missing_ok=True)
         try:
-            pending.symlink_to(resolved_target)
+            pending.symlink_to(relative_target)
             os.replace(pending, link_path)
         finally:
             pending.unlink(missing_ok=True)
     else:
-        link_path.symlink_to(resolved_target)
+        link_path.symlink_to(relative_target)
 
     for name in _ARTIFACTS:
         target = release_dir / name

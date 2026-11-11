@@ -203,7 +203,7 @@ class TestRefusals:
         _seed(session, "pytest", "../../elsewhere/test_x.py")
         with pytest.raises(SystemExit) as exc:
             dev_run_repro.main([])
-        assert exc.value.code == 1
+        assert exc.value.code == 64
         mock_run_tail.assert_not_called()
 
     @mock.patch("dev_run_repro.which", autospec=True, return_value=None)

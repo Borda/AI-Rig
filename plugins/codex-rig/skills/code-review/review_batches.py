@@ -761,8 +761,10 @@ def _bounded_fragments(content: bytes, limit: int, identity: str, overlap: int =
         raise ValueError("review-interaction-fragment-coordinate-capacity")
     while offset < len(content):
         end = min(offset + budget, len(content))
-        while end < len(content) and content[end] & 0xC0 == 0x80:
+        while offset < end < len(content) and content[end] & 0xC0 == 0x80:
             end -= 1
+        if end <= offset:
+            raise ValueError("review-interaction-fragment-invalid-utf8")
         first_line = content[:offset].count(b"\n") + 1
         last_line = first_line + content[offset:end].count(b"\n")
         header = (
@@ -939,7 +941,14 @@ def _interaction_wave_paths(out: Path) -> list[Path]:
     schedule = validator._load_json(out / "interaction-dispatch.json")
     if schedule.get("schema_version") != 1:
         raise ValueError("review-interaction-schedule-schema")
-    return [out / wave["directory"] for wave in schedule["waves"]]
+    directories = []
+    for index, wave in enumerate(schedule["waves"], start=1):
+        expected = f"batches/interaction-{index:03d}"
+        directory = validator._resolve_path(out, wave["directory"])
+        if wave["directory"] != expected or directory != out.resolve() / expected:
+            raise ValueError("review-interaction-wave-order")
+        directories.append(directory)
+    return directories
 
 
 def consolidation_contexts(out: Path, inventory: dict[str, Any]) -> dict[str, bytes]:

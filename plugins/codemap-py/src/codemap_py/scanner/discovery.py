@@ -184,16 +184,17 @@ def _working_tree_file_hashes(root: Path, exclusions: Exclusions, algorithm: str
     # paths, so their bytes must remain in the fingerprint to keep incremental results equal to a full scan.
     config_files = set(_iter_config_files(root))
     ignore_file = root / ".codemapignore"
-    if ignore_file.exists():
+    if not ignore_file.is_symlink() and ignore_file.exists():
         config_files.add(ignore_file)
     hashes: dict[str, str] = {}
     for path in sorted({*py_files, *rst_files, *md_files, *config_files}):
         rel = path.relative_to(root).as_posix()
-        content = path.read_bytes()
         digest = hashlib.new(algorithm, usedforsecurity=False)
-        if git_blob:
-            digest.update(f"blob {len(content)}\0".encode("ascii"))
-        digest.update(content)
+        with path.open("rb") as handle:
+            if git_blob:
+                digest.update(f"blob {os.fstat(handle.fileno()).st_size}\0".encode("ascii"))
+            while chunk := handle.read(1024 * 1024):
+                digest.update(chunk)
         hashes[rel] = digest.hexdigest()
     return hashes
 
@@ -253,15 +254,19 @@ def _detect_src_root_from_config(root: Path) -> Path | None:
         root: project root to search for config files.
     """
     for config in (root / "pyproject.toml", root / "setup.cfg"):
-        if not config.exists():
+        if config.is_symlink() or not config.exists():
             continue
         # Regex matches TOML/ini array syntax only; does not handle multi-line or complex TOML
         m = re.search(r"where\s*=\s*\[([^\]]+)\]", config.read_text(errors="replace"))
         if not m:
             continue
         for entry in re.findall(r'["\']([^"\']+)["\']', m.group(1)):
-            candidate = root / entry
-            if candidate.is_dir():
+            try:
+                candidate = root / entry
+                resolved = candidate.resolve()
+            except (OSError, RuntimeError):
+                continue
+            if resolved.is_relative_to(root.resolve()) and candidate.is_dir():
                 return candidate
     return None
 

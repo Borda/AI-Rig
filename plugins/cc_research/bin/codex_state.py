@@ -73,7 +73,7 @@ def load_counters(state: Path) -> tuple[int, int]:
         return int(data.get("codex_iter", 0)), int(data.get("noop_streak", 0))
     except FileNotFoundError:
         return 0, 0
-    except (OSError, ValueError, TypeError, AttributeError) as exc:
+    except (OSError, ValueError, ArithmeticError, RecursionError, TypeError, AttributeError) as exc:
         print(f"codex_state: {state} unusable ({exc}); reading as 0/0", file=sys.stderr)
         return 0, 0
 
@@ -114,9 +114,13 @@ def bump(state: Path, outcome: str) -> tuple[int, int]:
     new = (codex_iter + 1, noop_streak + 1 if outcome == "noop" else 0)
     state.parent.mkdir(parents=True, exist_ok=True)
     # Same bytes the former printf wrote: json.dumps' default separators match `{"codex_iter": N, "noop_streak": M}`.
-    tmp = state.with_name(state.name + ".tmp")
-    tmp.write_text(json.dumps({"codex_iter": new[0], "noop_streak": new[1]}) + "\n", encoding="utf-8", newline="\n")
-    os.replace(tmp, state)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{state.name}.", suffix=".tmp", dir=state.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps({"codex_iter": new[0], "noop_streak": new[1]}) + "\n")
+        os.replace(tmp_name, state)
+    finally:
+        Path(tmp_name).unlink(missing_ok=True)
     return new
 
 

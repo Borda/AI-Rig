@@ -51,7 +51,7 @@ def test_functions(source: str) -> tuple[int, int]:
     """Return (test function count, non-stub test function count) for a test module."""
     try:
         tree = ast.parse(source)
-    except SyntaxError:
+    except (SyntaxError, RecursionError):
         # Unparsable is not this check's business; treat as "has content" so the
         # lint hooks report the syntax error instead of R4 double-reporting it.
         return (1, 1)
@@ -113,7 +113,10 @@ def indirect_test_sources(tests_dir: Path) -> str:
     """Read real test modules in deterministic order for a cheap plugin-local reference scan."""
     sources = []
     for test_file in sorted(tests_dir.rglob("test_*.py")):
-        source = test_file.read_text(encoding="utf-8")
+        try:
+            source = test_file.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
         if test_functions(source)[1]:
             sources.append(source)
     return "\n".join(sources)
@@ -134,7 +137,10 @@ def check_script(script: Path, indirect_sources: str | None = None) -> str | Non
                 return None
             return f"R4-FAIL (no test file): {script.as_posix()} → expected {test_file.as_posix()}"
         test_file = nested
-    source = test_file.read_text(encoding="utf-8")
+    try:
+        source = test_file.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        return f"R4-FAIL (unreadable test file): {test_file.as_posix()} — {error}"
     if not source.strip():
         return f"R4-FAIL (empty test file): {test_file.as_posix()}"
     total, real = test_functions(source)
@@ -152,6 +158,7 @@ def repo_root() -> Path:
         check=True,
         capture_output=True,
         text=True,
+        timeout=30.0,
     ).stdout.strip()
     return Path(output).resolve()
 
@@ -245,7 +252,7 @@ def _manifest_copies_for_repo() -> tuple[Path | None, set[str]]:
     """
     try:
         root = repo_root()
-    except (subprocess.CalledProcessError, OSError):
+    except (subprocess.SubprocessError, OSError):
         return None, set()
     return root, manifest_copies(root)
 

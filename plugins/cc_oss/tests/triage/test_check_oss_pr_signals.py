@@ -71,6 +71,11 @@ def _gh_diff_calls(state: dict[str, Any]) -> list[list[str]]:
 class TestMainArgValidation:
     """Argv plumbing — required flags, numeric check, missing tools."""
 
+    def test_newline_terminated_number_is_rejected(self, fake_subprocess: dict[str, Any]) -> None:
+        """A PR identifier must match the complete argument, including its final character."""
+        assert cops.main(["--clean-args", "42\n"]) == 1
+        assert fake_subprocess["calls"] == []
+
     def test_missing_clean_args_exits_2(self) -> None:
         """Argparse exits 2 when ``--clean-args`` is missing.
 
@@ -122,6 +127,10 @@ class TestMainArgValidation:
 
 class TestGrepSecrets:
     """Edge cases for the secret scan beyond the docstring examples."""
+
+    def test_jwt_prefix_inside_token_is_not_a_token_start(self) -> None:
+        """An embedded prefix cannot restart the JWT expression inside a long token."""
+        assert cops._grep_secrets("+value=prefixeyJabc.eyJdef.signature") == []
 
     def test_short_value_skipped(self) -> None:
         """A 7-char value below the 8-char threshold is not flagged.
@@ -303,19 +312,102 @@ class TestOutputRouting:
 
 
 class TestTimeoutResilience:
-    """Timeouts return empty strings rather than propagating."""
+    """Failures remain distinct from successful empty reads."""
 
     @mock.patch(
         "check_oss_pr_signals.subprocess.run",
         autospec=True,
         side_effect=subprocess.TimeoutExpired(cmd=["fake"], timeout=1),
     )
-    def test_timeout_yields_empty(self, mock_run: mock.MagicMock) -> None:
-        """A timed-out subprocess yields empty output instead of an exception.
+    def test_timeout_yields_failed_read(self, mock_run: mock.MagicMock) -> None:
+        """A timed-out subprocess returns a failure sentinel instead of empty successful output.
 
-        A hung ``gh`` call must degrade to "no signal" so the rest of the review still runs.
+        A hung ``gh`` call leaves the remaining checks runnable without reporting its slice as clean.
         """
-        assert cops._run(["/fake/gh", "pr", "diff", "1"], timeout=1) == ""
+        assert cops._run(["/fake/gh", "pr", "diff", "1"], timeout=1) is None
+
+    @pytest.mark.parametrize(
+        ("failed_slice", "status_key", "output_field"),
+        [
+            pytest.param(":(glob)src/**/__init__.py", "DEPRECATION_CHECK", "deprecation_findings", id="exports"),
+            pytest.param("CHANGELOG.md", "CHANGELOG_CHECK", "changelog_diff", id="changelog"),
+            pytest.param("pyproject.toml", "DEPENDENCY_CHECK", "deps_diff", id="dependencies"),
+        ],
+    )
+    def test_failed_diff_slice_reports_failure(
+        self, monkeypatch: pytest.MonkeyPatch, failed_slice: str, status_key: str, output_field: str
+    ) -> None:
+        """A failed read is explicit and successful empty slices retain their own status."""
+
+        def run(cmd: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+            """Fail just the selected diff slice without returning credential-bearing output."""
+            return subprocess.CompletedProcess(cmd, int(failed_slice in cmd), stdout="")
+
+        monkeypatch.setattr(cops.subprocess, "run", run)
+        signals = _collect("v1")
+
+        assert signals.check_status[status_key] == "failed"
+        assert f"{status_key}=failed" in getattr(signals, output_field)
+        assert list(signals.check_status.values()).count("failed") == 1
+        assert list(signals.check_status.values()).count("ok") == 3
+
+    @mock.patch("check_oss_pr_signals.subprocess.run", autospec=True)
+    def test_failed_release_read_never_marks_removal_clean(self, mock_run: mock.MagicMock) -> None:
+        """A failed Git show cannot classify an export as absent from the release."""
+        mock_run.return_value = subprocess.CompletedProcess([], 1, "partial output", "error")
+
+        assert cops._check_deprecations("git", "v1", ["Export"], timeout=5) == ["DEPRECATION_CHECK=failed"]
+
+    @mock.patch(
+        "check_oss_pr_signals.subprocess.run",
+        autospec=True,
+        side_effect=subprocess.TimeoutExpired(cmd=["fake"], timeout=1),
+    )
+    def test_timed_out_collection_reports_failed_checks(self, mock_run: mock.MagicMock) -> None:
+        """Timed-out subprocesses report failed checks without inventing secret matches."""
+        signals = _collect("")
+
+        assert signals.secret_matches == []
+        assert signals.check_status["SECRETS_SCAN"] == "failed"
+        assert signals.deprecation_findings == ["DEPRECATION_CHECK=failed"]
+
+
+@mock.patch("check_oss_pr_signals.subprocess.run", autospec=True)
+def test_failed_secret_read_has_no_matches(run: mock.Mock) -> None:
+    """A failed Python diff read reports only its check status, preserving match-list meaning."""
+    run.side_effect = [
+        subprocess.CompletedProcess([], 0, stdout=""),
+        subprocess.CompletedProcess([], 1, stdout=""),
+        subprocess.CompletedProcess([], 0, stdout=""),
+        subprocess.CompletedProcess([], 0, stdout=""),
+    ]
+    signals = _collect("v1")
+    assert signals.secret_matches == []
+    assert signals.check_status == {
+        "DEPENDENCY_CHECK": "ok",
+        "SECRETS_SCAN": "failed",
+        "DEPRECATION_CHECK": "ok",
+        "CHANGELOG_CHECK": "ok",
+    }
+
+
+@mock.patch("check_oss_pr_signals.subprocess.run", autospec=True)
+@pytest.mark.parametrize(
+    ("code", "tags", "expected"),
+    [
+        pytest.param(0, "", "", id="no-tags"),
+        pytest.param(0, "v1.0\n", None, id="tags-exist-but-describe-failed"),
+        pytest.param(128, "", None, id="tag-list-failed"),
+    ],
+)
+def test_describe_failure_checks_tag_inventory(run: mock.Mock, code: int, tags: str, expected: str | None) -> None:
+    """Only a successful empty tag inventory establishes that there is no release tag."""
+    run.side_effect = [
+        subprocess.CompletedProcess([], 128, stdout=""),
+        subprocess.CompletedProcess([], code, stdout=tags),
+    ]
+    assert cops._resolve_latest_tag("git", timeout=5) == expected
+    assert run.call_args.args[0] == ["git", "tag", "--list"]
 
 
 _SNAPSHOT_DIFF = (

@@ -12,6 +12,7 @@ from unittest import mock
 
 import audit_preflight as ap
 import pytest
+from _hook_env import _symlinks_supported
 
 _skip_no_posix_symlinks = pytest.mark.skipif(ap.os.name != "posix", reason="creating symlinks needs POSIX permissions")
 
@@ -49,8 +50,8 @@ class TestParseArguments:
         The default invocation names only a scope; any flag that came out true here would change the audit mode without
         the user asking for it.
         """
-        state, keep, scope = ap.parse_arguments("plugins")
-        assert (scope, keep, any(state.values())) == ("plugins", "", False)
+        state, keep, scope = ap.parse_arguments("agents")
+        assert (scope, keep, any(state.values())) == ("agents", "", False)
 
     @pytest.mark.parametrize(
         ("arguments", "keys", "scope"),
@@ -103,6 +104,91 @@ class TestParseArguments:
         """Scope tokens keep their order with flags removed from between them."""
         _, _, scope = ap.parse_arguments("agents --local skills")
         assert scope == "agents skills"
+
+    @pytest.mark.parametrize("scope", ["plugins", "cc_demo", "plugins/cc_demo", "plugins/cc_demo/"])
+    def test_plugin_scope_forces_local_mode(self, scope: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Plugin scopes select source templates even without the explicit local flag."""
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "plugins" / "cc_demo").mkdir(parents=True)
+        state, _, parsed = ap.parse_arguments(scope)
+        assert (state["local-mode"], parsed) == (True, scope)
+
+    @pytest.mark.parametrize(
+        ("arguments", "expected", "mode"),
+        [
+            pytest.param("foundry --efficiency", "cc_foundry", "efficiency", id="short-plugin-name"),
+            pytest.param("oss research --adversarial", "cc_oss cc_research", "adversarial", id="multiple-plugins"),
+            pytest.param("plugins foundry --efficiency", "plugins cc_foundry", "efficiency", id="qualified-plugin"),
+        ],
+    )
+    def test_plugin_aliases_resolve_before_local_inference(
+        self, arguments: str, expected: str, mode: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Short plugin names resolve to source directories without changing flags or quoted keep text."""
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "plugins" / "cc_foundry").mkdir(parents=True)
+        (tmp_path / "plugins" / "cc_oss").mkdir()
+        (tmp_path / "plugins" / "cc_research").mkdir()
+        state, keep, scope = ap.parse_arguments(f'{arguments} --keep "a b"')
+        assert (state["local-mode"], state[mode], keep, scope) == (True, True, "a b", expected)
+
+    @pytest.mark.parametrize(
+        ("arguments", "expected"),
+        [
+            pytest.param("bridge", "bridge_cc-codex", id="manifest-name"),
+            pytest.param("plugins bridge", "plugins bridge_cc-codex", id="qualified-manifest-name"),
+            pytest.param("bridge_cc-codex", "bridge_cc-codex", id="directory-name"),
+        ],
+    )
+    def test_manifest_name_resolves_a_nonstandard_plugin_directory(
+        self, arguments: str, expected: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A plugin's manifest name and directory name select the same source root."""
+        monkeypatch.chdir(tmp_path)
+        manifest = tmp_path / "plugins" / "bridge_cc-codex" / ".claude-plugin" / "plugin.json"
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text('{"name":"bridge"}', encoding="utf-8")
+        state, _, scope = ap.parse_arguments(arguments)
+        assert (state["local-mode"], scope) == (True, expected)
+
+    @pytest.mark.parametrize(
+        ("direct", "expected"),
+        [
+            pytest.param("demo", "demo", id="exact-directory"),
+            pytest.param("cc_demo", "cc_demo", id="prefixed-directory"),
+        ],
+    )
+    def test_directory_match_precedes_manifest_alias(
+        self, direct: str, expected: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An existing directory wins over another plugin's matching manifest name."""
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "plugins" / direct).mkdir(parents=True)
+        (tmp_path / "plugins" / "cc_demo").mkdir(exist_ok=True)
+        manifest = tmp_path / "plugins" / "custom-demo" / ".claude-plugin" / "plugin.json"
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text('{"name":"demo"}', encoding="utf-8")
+        state, _, scope = ap.parse_arguments("demo")
+        assert (state["local-mode"], scope) == (True, expected)
+
+    @pytest.mark.parametrize("manifest_text", ["not json", "[]", '{"name":"other"}'])
+    def test_unmatched_manifest_does_not_infer_local_mode(
+        self, manifest_text: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Malformed or unrelated manifests leave an unknown scope available for later validation."""
+        monkeypatch.chdir(tmp_path)
+        manifest = tmp_path / "plugins" / "custom-demo" / ".claude-plugin" / "plugin.json"
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text(manifest_text, encoding="utf-8")
+        state, _, scope = ap.parse_arguments("demo --unknown")
+        assert (state["local-mode"], scope) == (False, "demo --unknown")
+
+    def test_reserved_scope_precedes_a_plugin_alias(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A reserved scope cannot turn into a plugin selection with a coinciding name."""
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "plugins" / "cc_agents").mkdir(parents=True)
+        state, _, scope = ap.parse_arguments("agents")
+        assert (state["local-mode"], scope) == (False, "agents")
 
 
 class TestProbeTool:
@@ -309,10 +395,45 @@ class TestBindArguments:
 class TestCli:
     """The command-line contract: exit codes, output lines and the sentinels a successful run writes."""
 
-    def test_mutually_exclusive_flags_exit_one(self, cli: Callable[..., tuple[int, str]]) -> None:
-        """--upgrade with --efficiency is rejected before any work happens."""
-        code, out = cli("--arguments", "--upgrade --efficiency")
+    @pytest.mark.parametrize("other", ["--efficiency", "--adversarial", "--challenge"])
+    def test_mutually_exclusive_flags_exit_one(self, other: str, cli: Callable[..., tuple[int, str]]) -> None:
+        """Upgrade rejects either compatible audit mode and its alias before preparing state."""
+        code, out = cli("--arguments", f"--upgrade {other}")
         assert (code, "mutually exclusive" in out) == (1, True)
+
+    def test_adversarial_and_efficiency_can_combine(self, cli: Callable[..., tuple[int, str]]) -> None:
+        """The permitted pair remains runnable while excluded mode pairs are rejected."""
+        code, out = cli("--arguments", "plugins --adversarial --efficiency")
+        assert code == 0
+        assert "adversarial=true efficiency=true" in out
+
+    @pytest.mark.parametrize(
+        ("arguments", "expected"),
+        [
+            pytest.param("foundry --efficiency", "cc_foundry", id="short-plugin-name"),
+            pytest.param("plugins foundry --efficiency", "plugins cc_foundry", id="qualified-plugin"),
+        ],
+    )
+    def test_plugin_alias_prints_resolved_scope_without_claude_directory(
+        self, arguments: str, expected: str, tmp_path: Path, cli: Callable[..., tuple[int, str]]
+    ) -> None:
+        """The CLI selects source templates and prints the resolved directory before mode dispatch."""
+        (tmp_path / "plugins" / "cc_foundry").mkdir(parents=True)
+        code, out = cli("--arguments", arguments)
+        assert code == 0
+        assert f"scope={expected}" in out.splitlines()
+        assert (tmp_path / "audit-state-sess" / "local-mode").read_text(encoding="utf-8") == "true\n"
+        ap.resolve_subdir.assert_called_once_with("audit", "templates", local=True)
+
+    @pytest.mark.parametrize("arguments", ["--local agents", "plugins"])
+    def test_local_audit_needs_no_claude_directory(
+        self, arguments: str, tmp_path: Path, cli: Callable[..., tuple[int, str]]
+    ) -> None:
+        """Source audits resolve local templates and write local state without an installed tree."""
+        code, out = cli("--arguments", arguments, "--claude-dir", str(tmp_path / "absent"))
+        assert (code, "local-mode=true" in out) == (0, True)
+        assert (tmp_path / "audit-state-sess" / "local-mode").read_text(encoding="utf-8") == "true\n"
+        ap.resolve_subdir.assert_called_once_with("audit", "templates", local=True)
 
     @pytest.mark.parametrize(
         "other",
@@ -389,7 +510,7 @@ class TestCli:
 
     def test_missing_claude_dir_exits_one(self, tmp_path: Path, cli: Callable[..., tuple[int, str]]) -> None:
         """No .claude/ directory aborts with the BREAKING line."""
-        code, out = cli("--arguments", "plugins", "--claude-dir", str(tmp_path / "absent"))
+        code, out = cli("--arguments", "agents", "--claude-dir", str(tmp_path / "absent"))
         assert (code, "! BREAKING: .claude/ directory not found" in out) == (1, True)
 
     def test_success_prints_state_summary_and_writes_sentinels(
@@ -411,11 +532,11 @@ class TestCli:
     def test_unresolvable_templates_exit_one(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cli: Callable[..., tuple[int, str]]
     ) -> None:
-        """An unresolvable templates directory aborts with the setup hint."""
+        """An unresolvable templates directory aborts with a plugin reinstall hint."""
         (tmp_path / ".claude").mkdir()
         ap.resolve_subdir.return_value = None
         code, out = cli("--arguments", "plugins", "--claude-dir", str(tmp_path / ".claude"))
-        assert (code, "run /foundry:setup first" in out) == (1, True)
+        assert (code, "reinstall the foundry plugin" in out) == (1, True)
 
     def test_unsafe_session_token_exits_one(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cli: Callable[..., tuple[int, str]]
@@ -466,6 +587,49 @@ class TestStateDirectoryLinks:
 
 class TestStateChildLinks:
     """A link at a state path below ``.temp`` or ``.reports``, not only at ``.temp/state`` itself."""
+
+    def test_regular_reset_sentinels_allow_preflight(self, tmp_path: Path, cli: Callable[..., tuple[int, str]]) -> None:
+        """Ordinary stale sentinel files remain valid until the successful preflight's shell reset."""
+        state = tmp_path / "audit-state-sess"
+        state.mkdir()
+        (state / "run-dir").write_text("old run\n", encoding="utf-8")
+        (state / "unscanned-plugins").write_text("old coverage\n", encoding="utf-8")
+        (state / "precommit-validate.txt").write_text("old diagnostics\n", encoding="utf-8")
+        code, out = cli("--arguments", "plugins")
+        assert (code, "BLOCKED" in out) == (0, False)
+        assert (state / "run-dir").read_text(encoding="utf-8") == "old run\n"
+        assert (state / "unscanned-plugins").read_text(encoding="utf-8") == "old coverage\n"
+        assert (state / "precommit-validate.txt").read_text(encoding="utf-8") == "old diagnostics\n"
+
+    @pytest.mark.parametrize("name", ["run-dir", "unscanned-plugins", "precommit-validate.txt"])
+    @pytest.mark.parametrize(
+        "kind",
+        [
+            pytest.param(
+                "symlink",
+                marks=pytest.mark.skipif(not _symlinks_supported(), reason="file symlinks unavailable"),
+                id="symbolic-link",
+            ),
+            "hardlink",
+        ],
+    )
+    def test_linked_reset_sentinel_stops_before_state_changes(
+        self, name: str, kind: str, tmp_path: Path, cli: Callable[..., tuple[int, str]]
+    ) -> None:
+        """A shell reset must never truncate a linked target or replace prior evidence on a rejected run."""
+        target = tmp_path / "user.md"
+        target.write_text("user's uncommitted text\n", encoding="utf-8")
+        state = tmp_path / "audit-state-sess"
+        state.mkdir()
+        prior = state / "keep-items"
+        prior.write_text("prior state\n", encoding="utf-8")
+        sentinel = state / name
+        {"symlink": sentinel.symlink_to, "hardlink": sentinel.hardlink_to}[kind](target)
+        code, out = cli("--arguments", "plugins")
+        assert (code, "linked sentinel" in out) == (1, True)
+        assert target.read_text(encoding="utf-8") == "user's uncommitted text\n"
+        assert prior.read_text(encoding="utf-8") == "prior state\n"
+        ap.probe_tool.assert_not_called()
 
     @_skip_no_posix_symlinks
     @pytest.mark.parametrize(

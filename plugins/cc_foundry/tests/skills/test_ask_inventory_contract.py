@@ -37,7 +37,7 @@ _ASKS = [
         "manage/SKILL.md",
         "**Update/delete mode**",
         "**Update second-argument discrimination**",
-        "Multiple matches → `AskUserQuestion`: (a) agent, (b) skill, (c) rule",
+        "Multiple matches → use the single type-selection `AskUserQuestion` in Step 1",
         id="manage-type-ambiguity",
     ),
     pytest.param("manage/SKILL.md", *_FLAG, id="manage-unsupported-flag"),
@@ -106,7 +106,7 @@ _ASKS = [
         "audit/SKILL.md",
         "## Follow-up gate",
         "Option slot budget",
-        "**Always fires** unless `--skip-gate` passed",
+        "**Conditional gate**: fire only when a required decision or authorization is missing",
         id="audit-follow-up-gate",
     ),
     pytest.param(

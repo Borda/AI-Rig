@@ -26,7 +26,7 @@ function setup(project: Project, skill: string): { run: RunRecord; scope: ScopeR
   return { run: createRun(paths, { skill, scope }), scope }
 }
 
-function receipt(id: string, status: GateReceipt["status"]): GateReceipt {
+function receipt(id: string, status: GateReceipt["status"], source_digest?: string): GateReceipt {
   return {
     id,
     command: `npm run ${id}`,
@@ -37,6 +37,7 @@ function receipt(id: string, status: GateReceipt["status"]): GateReceipt {
     stdout_sha256: "a".repeat(64),
     stderr_sha256: "b".repeat(64),
     tail: "",
+    ...(source_digest ? { source_digest } : {}),
   }
 }
 
@@ -161,7 +162,7 @@ describe("finalizeRun", () => {
   it("reports a failed gate by id", () => {
     const project = Project.withCommit()
     const { run } = setup(project, "rig-implement")
-    const result = finalizeRun({ ...run, gates: [receipt("test", "failed")] }, { drift: false })
+    const result = finalizeRun({ ...run, gates: [receipt("test", "failed", run.scope.digest)] }, { drift: false })
     expect(result.ok).toBe(false)
     expect(result.problems).toContain("failed gates: test")
   })
@@ -169,7 +170,17 @@ describe("finalizeRun", () => {
   it("completes implementation with a passing gate", () => {
     const project = Project.withCommit()
     const { run } = setup(project, "rig-implement")
-    expect(finalizeRun({ ...run, gates: [receipt("test", "passed")] }, { drift: false }).ok).toBe(true)
+    expect(finalizeRun({ ...run, gates: [receipt("test", "passed", run.scope.digest)] }, { drift: false }).ok).toBe(
+      true,
+    )
+  })
+
+  it("rejects unstamped legacy receipts as stale", () => {
+    const project = Project.withCommit()
+    const { run } = setup(project, "rig-implement")
+    const result = finalizeRun({ ...run, gates: [receipt("test", "passed")] }, { drift: false })
+    expect(result.ok).toBe(false)
+    expect(result.problems).toContain("gate receipts do not match the current scope: test")
   })
 
   it("requires independent review evidence", () => {
@@ -221,7 +232,7 @@ describe("finalizeRun", () => {
     const result = finalizeRun(
       {
         ...run,
-        gates: [receipt("test", "passed")],
+        gates: [receipt("test", "passed", run.scope.digest)],
         review: { run_id: run.run_id, reviewer: "rig-reviewer", source_digest: run.scope.digest },
         findings: { ...findings, open: 1 },
       },
@@ -237,7 +248,7 @@ describe("finalizeRun", () => {
     const result = finalizeRun(
       {
         ...run,
-        gates: [receipt("test", "passed")],
+        gates: [receipt("test", "passed", run.scope.digest)],
         review: { run_id: run.run_id, reviewer: "rig-reviewer", source_digest: run.scope.digest },
         findings: { ...findings, fixed: 3 },
       },
@@ -246,18 +257,18 @@ describe("finalizeRun", () => {
     expect(result.ok).toBe(true)
   })
 
-  it("blocks a challenge run without a loop ledger", () => {
+  it("keeps a challenge run without a loop ledger in progress", () => {
     const project = Project.withCommit()
     const { run } = setup(project, "rig-challenge")
     const result = finalizeRun(
       {
         ...run,
-        gates: [receipt("test", "passed")],
+        gates: [receipt("test", "passed", run.scope.digest)],
         review: { run_id: run.run_id, reviewer: "rig-challenger", source_digest: run.scope.digest },
       },
       { drift: false },
     )
-    expect(result).toMatchObject({ ok: false, status: "blocked" })
+    expect(result).toMatchObject({ ok: false, status: "in_progress" })
     expect(result.problems).toContain("challenge loop ledger is missing; use rig_loop")
   })
 
@@ -267,7 +278,7 @@ describe("finalizeRun", () => {
     const result = finalizeRun(
       {
         ...run,
-        gates: [receipt("test", "passed")],
+        gates: [receipt("test", "passed", run.scope.digest)],
         review: { run_id: run.run_id, reviewer: "rig-challenger", source_digest: run.scope.digest },
         loop: { ...convergedLoop, stop_reason: "plateau" },
       },
@@ -283,7 +294,7 @@ describe("finalizeRun", () => {
     const result = finalizeRun(
       {
         ...run,
-        gates: [receipt("test", "passed")],
+        gates: [receipt("test", "passed", run.scope.digest)],
         review: { run_id: run.run_id, reviewer: "rig-challenger", source_digest: run.scope.digest },
         loop: { ...convergedLoop, open_security: 1, weighted: 20 },
       },
@@ -299,7 +310,7 @@ describe("finalizeRun", () => {
     const result = finalizeRun(
       {
         ...run,
-        gates: [receipt("test", "passed")],
+        gates: [receipt("test", "passed", run.scope.digest)],
         review: { run_id: run.run_id, reviewer: "rig-challenger", source_digest: run.scope.digest },
         loop: convergedLoop,
       },
@@ -316,7 +327,7 @@ describe("writeReport / renderReport", () => {
     const paths = resolvePaths(project.root, ".opencode-rig")
     const rendered = renderReport({
       ...run,
-      gates: [receipt("test", "passed")],
+      gates: [receipt("test", "passed", run.scope.digest)],
       findings,
       review: { run_id: run.run_id, reviewer: "rig-reviewer", source_digest: run.scope.digest },
       loop: convergedLoop,

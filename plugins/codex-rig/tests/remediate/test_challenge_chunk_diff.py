@@ -4,15 +4,19 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import errno
 import hashlib
 import importlib.util
 import itertools
 import json
+import os
+import shlex
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
+from unittest.mock import Mock
 
 import pytest
 from _artifact_files import read_json, write_json
@@ -109,9 +113,11 @@ def _check_cli(manifest: Path, *extra: str) -> subprocess.CompletedProcess[str]:
 
 
 @pytest.fixture
-def changed_repository(_committed_template: Path, tmp_path: Path) -> Path:
+def changed_repository(_committed_template: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Return a private repository copy with tracked edits, a deletion, and untracked source."""
-    return _copy_changed_repository(_committed_template, tmp_path / "repository")
+    repository = _copy_changed_repository(_committed_template, tmp_path / "repository")
+    monkeypatch.chdir(repository)
+    return repository
 
 
 @pytest.fixture(scope="module")
@@ -129,11 +135,14 @@ def _shared_plan(_committed_template: Path, tmp_path_factory: pytest.TempPathFac
 
 
 @pytest.fixture
-def planned_review(_shared_plan: tuple[Path, Path], tmp_path: Path) -> tuple[Path, Path]:
+def planned_review(
+    _shared_plan: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[Path, Path]:
     """Return the shared read-only repository and a private writable copy of its planned review."""
     repository, planned = _shared_plan
     out = tmp_path / "review"
     shutil.copytree(planned, out)
+    monkeypatch.chdir(repository)
     return repository, out
 
 
@@ -234,11 +243,14 @@ def _shared_continuation_plan(
 
 
 @pytest.fixture
-def continuation_plan(_shared_continuation_plan: tuple[Path, Path, Path], tmp_path: Path) -> tuple[Path, Path]:
+def continuation_plan(
+    _shared_continuation_plan: tuple[Path, Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[Path, Path]:
     """Return a private writable copy of the planned continuation review and its read-only caller run."""
-    _, planned, caller = _shared_continuation_plan
+    repository, planned, caller = _shared_continuation_plan
     out = tmp_path / "continued-review"
     shutil.copytree(planned, out)
+    monkeypatch.chdir(repository)
     return out, caller
 
 
@@ -806,6 +818,8 @@ def _stub_artifact_validator(monkeypatch: pytest.MonkeyPatch, chunker: ModuleTyp
     def validate_or_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
         """Record the public artifact validator while preserving local Git inspection."""
         if len(command) > 1 and Path(command[1]).name == "validate-artifacts.py":
+            assert isinstance(kwargs.get("timeout"), int)
+            assert 0 < kwargs["timeout"] <= 60
             calls.append(command)
             return subprocess.CompletedProcess(command, 0, b"", b"")
         return real_run(command, **kwargs)
@@ -1148,6 +1162,7 @@ def clean_review(
     review.out = tmp_path / "review"
     shutil.copytree(_shared_clean_review.out, review.out)
     review.validator_calls = _stub_artifact_validator(monkeypatch, chunker)
+    monkeypatch.chdir(review.repository)
     return review
 
 
@@ -1678,3 +1693,251 @@ def test_committed_template_skips_git_maintenance(
     repository = _copy_changed_repository(template, tmp_path / "repository")
     head = subprocess.run(["git", "rev-parse", "--verify", "HEAD"], cwd=repository, check=True, capture_output=True)
     assert head.stdout.strip()
+
+
+def test_planning_captures_only_finished_groups(
+    changed_repository: Path, tmp_path: Path, chunker: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Size the inventory without recapturing each growing candidate group."""
+    capture = Mock(wraps=chunker.capture_source_snapshot)
+    monkeypatch.setattr(chunker, "capture_source_snapshot", capture)
+    output = chunker.plan(changed_repository, tmp_path / "chunks", [], 1_000_000, "changed", _COORDINATOR_REQUEST)
+    manifest = read_json(output)
+    assert len(manifest["chunks"]) == 1
+    assert capture.call_count <= 3
+
+
+def test_sizing_retains_non_utf8_git_paths(chunker: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Git-quoted non-UTF-8 paths retain their full patch when the shared parser cannot decode them."""
+    path = "\udcff.py"
+    snapshot = {"scope_paths": [path], "files": [{"path": path, "content": "value = 1\n"}]}
+    patch = b'diff --git "a/\\377.py" "b/\\377.py"\n--- "a/\\377.py"\n+++ "b/\\377.py"\n@@ -1 +1 @@\n-old\n+new\n'
+    monkeypatch.setattr(chunker, "capture_source_snapshot", Mock(return_value=snapshot))
+    run = Mock(return_value=subprocess.CompletedProcess([], 0, stdout=patch))
+    monkeypatch.setattr(chunker.subprocess, "run", run)
+    assert chunker._sized_groups(Path.cwd(), [path], 1_000_000, "HEAD") == [[path]]
+    assert run.call_count == 2
+
+
+def test_sizing_keeps_exact_budget_boundary(changed_repository: Path, chunker: ModuleType) -> None:
+    """Incremental sizes agree with full source and patch bytes at the admission boundary."""
+    inventory = chunker._inventory(changed_repository, ["."], "changed")
+    source, diff = chunker._material(changed_repository, inventory)
+    budget = len(source) + len(diff)
+    assert chunker._sized_groups(changed_repository, inventory, budget, "HEAD") == [inventory]
+    assert len(chunker._sized_groups(changed_repository, inventory, budget - 1, "HEAD")) > 1
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("pinned", [False, True])
+def test_large_path_inventory_preserves_exact_material_with_bounded_argv(
+    changed_repository: Path, chunker: ModuleType, monkeypatch: pytest.MonkeyPatch, pinned: bool
+) -> None:
+    """Long inventories remain byte-exact without exceeding the portable Git argument budget."""
+    paths = [f"sources/{index:04d}-{'module-' * 6}.py" for index in range(450)]
+    _write_inventory(changed_repository, paths)
+    snapshot = chunker.capture_source_snapshot(changed_repository, paths)
+    source = (json.dumps(snapshot, indent=2, sort_keys=True, ensure_ascii=True) + "\n").encode()
+    diff = chunker._git(changed_repository, "diff", "HEAD", "--binary", "--no-renames", "--", *paths)
+    assert diff
+    budget = len(source) + len(diff)
+    assert len(" ".join(paths).encode()) > 24_000
+    original_run = subprocess.run
+
+    def bounded_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        """Exercise real Git while enforcing the portable path-argument ceiling."""
+        selected = argv[argv.index("--") + 1 :] if "--" in argv else []
+        assert sum(len(path.encode()) + 1 for path in selected) <= 24_000
+        return original_run(argv, **kwargs)
+
+    monkeypatch.setattr(chunker.subprocess, "run", bounded_run)
+    assert chunker._sized_groups(changed_repository, paths, budget, "HEAD") == [paths]
+    assert len(chunker._sized_groups(changed_repository, paths, budget - 1, "HEAD")) > 1
+    assert chunker._material(changed_repository, paths) == (source, diff)
+    manifest = chunker.plan(
+        changed_repository,
+        changed_repository.parent / "bounded-plan",
+        [],
+        budget,
+        "changed",
+        _COORDINATOR_REQUEST,
+        diff_base_oid=snapshot["revision"] if pinned else None,
+    )
+    assert len(read_json(manifest)["chunks"]) == 1
+
+
+def _write_inventory(repository: Path, paths: list[str]) -> None:
+    """Create tracked, modified files for a long-argv source and patch capture."""
+    for path in paths:
+        destination = repository / path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text("VALUE = 1\n", encoding="utf-8", newline="\n")
+    subprocess.run(["git", "add", "."], cwd=repository, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "inventory"],
+        cwd=repository,
+        check=True,
+        capture_output=True,
+    )
+    for path in paths:
+        (repository / path).write_text("VALUE = 2\n", encoding="utf-8", newline="\n")
+
+
+def test_git_patch_timeout_distinguishes_inventory_and_single_path(
+    chunker: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bulk binary patches get 120 seconds while single-path inspection keeps its 30-second bound."""
+    run = Mock(return_value=subprocess.CompletedProcess([], 0, stdout=b""))
+    monkeypatch.setattr(chunker.subprocess, "run", run)
+    chunker._git(Path.cwd(), "diff", "HEAD", "--binary", "--", "one.py", "two.py")
+    assert run.call_args.kwargs["timeout"] == 120
+    chunker._git(Path.cwd(), "diff", "HEAD", "--binary", "--", "one.py")
+    assert run.call_args.kwargs["timeout"] == 30
+
+
+def test_planner_rejects_excessive_inventory_before_capture(
+    changed_repository: Path, tmp_path: Path, chunker: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reject an oversized inventory before expensive source reads or output creation."""
+    monkeypatch.setattr(chunker, "MAX_FILES", 2)
+    monkeypatch.setattr(chunker, "_inventory", lambda *args: [f"source-{index}.py" for index in range(3)])
+    capture = Mock(side_effect=AssertionError("unexpected source read"))
+    monkeypatch.setattr(chunker, "capture_source_snapshot", capture)
+    with pytest.raises(ValueError, match=r"^chunk-file-count-limit:2$"):
+        chunker.plan(changed_repository, tmp_path / "chunks", [], 900, "changed", _COORDINATOR_REQUEST)
+    capture.assert_not_called()
+    assert not (tmp_path / "chunks").exists()
+
+
+def test_manifest_repository_is_bound_before_git_reads(
+    planned_review: tuple[Path, Path], chunker: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A manifest cannot redirect inspection away from its retained source repository."""
+    repository, out = planned_review
+    manifest_path = out / "chunks.json"
+    manifest = read_json(manifest_path)
+    manifest["repository"] = out.resolve().as_posix()
+    _redirect_source_repositories(out, manifest)
+    write_json(manifest_path, manifest)
+    git = Mock(side_effect=AssertionError("unexpected repository access"))
+    monkeypatch.setattr(chunker.subprocess, "run", git)
+    with pytest.raises(ValueError, match="chunk-source-repository-mismatch"):
+        chunker.check(manifest_path, repository=repository)
+    git.assert_not_called()
+
+
+def _redirect_source_repositories(out: Path, manifest: dict[str, object]) -> None:
+    """Forge every retained source repository coordinate to match a redirected manifest."""
+    for chunk in manifest["chunks"]:
+        snapshot_path = out / chunk["source_path"]
+        snapshot = read_json(snapshot_path)
+        snapshot["repository"] = manifest["repository"]
+        write_json(snapshot_path, snapshot)
+
+
+def test_git_reads_disable_fsmonitor_and_bound_runtime(chunker: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Git inspection explicitly disables executable fsmonitor config and limits runtime."""
+    run = Mock(return_value=subprocess.CompletedProcess([], 0, stdout=b"revision"))
+    monkeypatch.setattr(chunker.subprocess, "run", run)
+    assert chunker._git(Path.cwd(), "rev-parse", "HEAD") == b"revision"
+    argv = run.call_args.args[0]
+    assert argv[argv.index("-c") + 1] == "core.fsmonitor=false"
+    assert 0 < run.call_args.kwargs["timeout"] <= 60
+
+
+@pytest.mark.integration
+def test_plan_never_invokes_repository_fsmonitor(changed_repository: Path, tmp_path: Path) -> None:
+    """Planning suppresses fsmonitor in every Git read, including shared source snapshots."""
+    log = tmp_path / "monitor.log"
+    script = tmp_path / "monitor.py"
+    script.write_text(
+        "import pathlib, sys\n"
+        f"with pathlib.Path({str(log)!r}).open('a') as stream: stream.write('invoked\\n')\n"
+        "sys.stdout.buffer.write(b'token\\0')\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    command = [sys.executable, str(script)]
+    hook = subprocess.list2cmdline(command) if os.name == "nt" else shlex.join(command)
+    subprocess.run(["git", "config", "core.fsmonitor", hook], cwd=changed_repository, check=True, capture_output=True)
+    subprocess.run(["git", "ls-files"], cwd=changed_repository, check=True, capture_output=True)
+    assert log.read_text(encoding="utf-8").strip() == "invoked"
+    log.unlink()
+    planned = _plan(changed_repository, tmp_path / "review")
+    assert planned.returncode == 0, planned.stderr
+    assert not log.exists()
+
+
+def test_check_defaults_to_invoking_repository_and_accepts_explicit_root(
+    changed_repository: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A caller outside the planned repository must supply its trusted root explicitly."""
+    repository, out = changed_repository, tmp_path / "review"
+    planned = _plan(repository, out)
+    assert planned.returncode == 0, planned.stderr
+    manifest = out / "chunks.json"
+    child = repository / "nested"
+    child.mkdir(exist_ok=True)
+    monkeypatch.chdir(child)
+    assert _check_cli(manifest).returncode == 0
+    monkeypatch.chdir(CHUNKER.parents[3])
+    rejected = _check_cli(manifest)
+    assert rejected.returncode == 2
+    assert "chunk-source-repository-mismatch" in rejected.stderr
+    assert _check_cli(manifest, "--repository", str(repository)).returncode == 0
+
+
+def test_planner_help_documents_file_ceiling() -> None:
+    """The CLI exposes the inventory ceiling before planning begins."""
+    completed = _run("plan", "--help")
+    assert completed.returncode == 0
+    assert "10,000 files" in completed.stdout
+
+
+def test_check_help_discloses_filter_execution() -> None:
+    """Repository binding does not claim to disable configured clean or process filters."""
+    completed = _run("check", "--help")
+    assert completed.returncode == 0
+    assert "clean/process filters may still execute" in " ".join(completed.stdout.split())
+
+
+def test_output_check_disables_fsmonitor_and_bounds_runtime(
+    chunker: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Ignored-output inspection uses the same Git execution restrictions as source inspection."""
+    run = Mock(return_value=subprocess.CompletedProcess([], 0, stdout=b""))
+    monkeypatch.setattr(chunker.subprocess, "run", run)
+    destination = tmp_path / "reports"
+    assert chunker._safe_output(tmp_path, destination) == destination.resolve()
+    argv = run.call_args.args[0]
+    assert argv[argv.index("-c") + 1] == "core.fsmonitor=false"
+    assert 0 < run.call_args.kwargs["timeout"] <= 60
+
+
+@pytest.mark.parametrize(
+    ("error", "diagnostic"),
+    [
+        pytest.param(KeyError("private-key"), "inspection-failed", id="missing-field"),
+        pytest.param(TypeError("private-type"), "inspection-failed", id="wrong-type"),
+        pytest.param(RecursionError("private-path"), "inspection-failed", id="deep-json"),
+        pytest.param(OSError(errno.E2BIG, "private-path"), "os-error:E2BIG", id="argv-too-long"),
+        pytest.param(FileNotFoundError(errno.ENOENT, "private-path"), "os-error:ENOENT", id="missing-input"),
+        pytest.param(PermissionError(errno.EACCES, "private-path"), "os-error:EACCES", id="unreadable-input"),
+        pytest.param(OSError("private-path"), "os-error:UNKNOWN", id="unknown-os-error"),
+        pytest.param(subprocess.TimeoutExpired("private-command", 30), "git-timeout", id="child-timeout"),
+    ],
+)
+def test_cli_maps_unexpected_input_errors_to_exit_two(
+    chunker: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    error: Exception,
+    diagnostic: str,
+) -> None:
+    """Malformed evidence and child failures produce a bounded diagnostic without private details."""
+    monkeypatch.setattr(sys, "argv", [str(CHUNKER), "check", "--manifest", "unused.json"])
+    monkeypatch.setattr(chunker, "check", Mock(side_effect=error))
+    assert chunker.main() == 2
+    captured = capsys.readouterr()
+    assert captured.err == f"chunk-diff-error:{diagnostic}\n"
+    assert captured.out == ""

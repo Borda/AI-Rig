@@ -12,7 +12,7 @@ Source of truth for numeric limits in `release/SKILL.md`. Update when number cha
 | Current value | `500` |
 | Floor | GitHub CLI default: **30** (silent truncation) |
 | Evidence | `rules/external-data.md` §GitHub CLI: "set at least 10× higher than expected"; typical release = 2–4 sprints × 10–50 PRs/sprint = 40–200 PRs |
-| If insufficient | At exactly 500 results, recover with `gh api --paginate --slurp`; otherwise the result is below the documented cap. |
+| If insufficient | At exactly 500, retry with `--search merged:>=<UTC date of range's earliest commit>`; a still-capped or failed retry is a stated PR-discovery coverage gap. |
 
 ### Release convention scan — `--limit 5`
 

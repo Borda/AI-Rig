@@ -7,8 +7,8 @@
  */
 
 import { spawnSync } from "node:child_process"
-import { existsSync, readFileSync } from "node:fs"
-import { join } from "node:path"
+import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs"
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { sha256 } from "./digest.ts"
 import type { GateReceipt } from "./run.ts"
 
@@ -46,9 +46,16 @@ function readIfExists(path: string): string | undefined {
 
 function makefileTargets(text: string): Set<string> {
   const targets = new Set<string>()
+  let definitionDepth = 0
   for (const line of text.split("\n")) {
-    const match = /^([A-Za-z0-9_.-]+)\s*:(?!=)/.exec(line)
-    if (match?.[1] && !match[1].startsWith(".")) targets.add(match[1])
+    if (/^\s*(?:(?:override|export|private)\s+)*define\s+/.test(line)) definitionDepth += 1
+    else if (/^\s*endef\s*(?:#.*)?$/.test(line)) definitionDepth = Math.max(0, definitionDepth - 1)
+    else if (definitionDepth === 0) {
+      const match = /^([A-Za-z0-9_.-]+(?:[ \t]+[A-Za-z0-9_.-]+)*)\s*:(?!=)/.exec(line)
+      for (const target of match?.[1]?.split(/\s+/) ?? []) {
+        if (!target.startsWith(".")) targets.add(target)
+      }
+    }
   }
   return targets
 }
@@ -112,7 +119,14 @@ export function detectGates(projectRoot: string, explicit: readonly string[]): G
   }
 
   const pyproject = readIfExists(join(projectRoot, "pyproject.toml"))
-  if (pyproject && (/\[tool\.pytest/.test(pyproject) || existsSync(join(projectRoot, "pytest.ini")))) {
+  const setup = readIfExists(join(projectRoot, "setup.cfg"))
+  const tox = readIfExists(join(projectRoot, "tox.ini"))
+  if (
+    /^\s*\[\s*tool\s*\.\s*pytest(?:\s*\.\s*ini_options)?\s*\]/m.test(pyproject ?? "") ||
+    existsSync(join(projectRoot, "pytest.ini")) ||
+    /^\s*\[tool:pytest\]\s*$/m.test(setup ?? "") ||
+    /^\s*\[pytest\]\s*$/m.test(tox ?? "")
+  ) {
     return [{ id: "test", command: "pytest", source: "pytest configuration", needsFiles: false }]
   }
 
@@ -124,24 +138,61 @@ function tailOf(stdout: string, stderr: string, limit = 4_000): string {
   return combined.length <= limit ? combined : combined.slice(-limit)
 }
 
+/** Refuse file arguments that escape the project, including through symlinks. */
+function resolveInsideProject(projectRoot: string, file: string): string {
+  const absolute = resolve(projectRoot, file)
+  const rel = relative(resolve(projectRoot), absolute)
+  if (file.split(sep).includes("..") || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+    throw new GateError(`file escapes the project: ${file}`)
+  }
+  let physical: string
+  try {
+    let ancestor = absolute
+    while (!lstatSync(ancestor, { throwIfNoEntry: false })) ancestor = dirname(ancestor)
+    physical = relative(realpathSync(projectRoot), realpathSync(ancestor))
+  } catch (error) {
+    throw new GateError(`cannot resolve gate file ${file}: ${String(error)}`)
+  }
+  if (physical === ".." || physical.startsWith(`..${sep}`) || isAbsolute(physical)) {
+    throw new GateError(`file resolves outside the project: ${file}`)
+  }
+  return absolute
+}
+
+/** Validate the fixed pre-commit invocation before passing files as literal argv. */
+function preCommitArgs(spec: GateSpec, cwd: string, files: readonly string[]): string[] {
+  if (spec.command !== "pre-commit run --files") throw new GateError("unsupported file-based gate command")
+  if (files.length === 0) throw new GateError("pre-commit needs files")
+  for (const file of files) {
+    if (!file) throw new GateError(`invalid gate file: ${file}`)
+    resolveInsideProject(cwd, file)
+  }
+  return ["run", "--files", ...files.map((file) => (file.startsWith("-") ? `./${file}` : file))]
+}
+
 /**
- * Execute one gate. `files` replaces the `--files` placeholder for pre-commit.
+ * Execute one gate with bounded runtime and literal file arguments for pre-commit.
  */
 export function runGate(spec: GateSpec, cwd: string, files: readonly string[], timeoutMs: number): GateResult {
+  timeoutMs = Math.trunc(timeoutMs)
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1_000 || timeoutMs > 3_600_000) {
+    throw new GateError("timeout must be an integer between 1000 and 3600000 milliseconds")
+  }
+  const args = spec.needsFiles ? preCommitArgs(spec, cwd, files) : []
   const command = spec.needsFiles
-    ? `${spec.command} ${files.map((file) => `'${file.replace(/'/g, "'\\''")}'`).join(" ")}`
+    ? `pre-commit ${args.map((arg) => (/^[a-zA-Z0-9_./:-]+$/.test(arg) ? arg : `'${arg.replaceAll("'", `'"'"'`)}'`)).join(" ")}`
     : spec.command
   const started = Date.now()
-  const result = spawnSync(command, {
+  const result = spawnSync(spec.needsFiles ? "pre-commit" : command, args, {
     cwd,
-    shell: true,
+    shell: !spec.needsFiles,
     encoding: "utf8",
     timeout: timeoutMs,
     maxBuffer: 16 * 1024 * 1024,
   })
   const stdout = result.stdout ?? ""
   const stderr = result.stderr ?? ""
-  const timedOut = result.error?.name === "ETIMEDOUT" || result.signal === "SIGTERM"
+  const timedOut = (result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT"
   const receipt: GateReceipt = {
     id: spec.id,
     command,

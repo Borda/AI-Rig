@@ -8,10 +8,10 @@ Fix type reference:
 
 - Broken cross-reference "foo" → replace with correct name (verify exists on disk)
 - Inventory drift → update line to match disk state exactly
-- Hardcoded path → replace `$HOME/path` with `.claude/path` or `~/path`
+- Hardcoded user path (`/Users/<name>/…`, `/home/<name>/…`) → `~/…` in prose and unquoted shell, `$HOME/…` inside double quotes
 - Missing Confidence block → add `End your response with a ## Confidence block per CLAUDE.md output standards.` before closing `</workflow>` tag
 - Broken bash block → fix syntax per description (add missing opening fence, fix 4-backtick closer, unescape angle brackets)
-- Missing variable declaration → prepend `VAR="$(command)"` as first line of affected bash block
+- Missing variable declaration → for sentinel data, insert `IFS= read -r VAR < "<sentinel-path>" 2>/dev/null || VAR=<default>` immediately after the block's `export CSID=…` line (add that line first if absent); otherwise declare the variable using its documented producer
 - Stale cross-reference → replace `<old-name>` with `<correct-name>`
 - Duplicate section → remove listed lines verbatim
 

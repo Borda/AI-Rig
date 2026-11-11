@@ -4,10 +4,12 @@
 
 ## Phase 2c — Codex co-pilot (`--codex` only)
 
-> **Cost-bounded gate.** Run when `--codex` confirmed at R2 AND both gates pass:
+> **Cost-bounded gate.** Run when `--codex` has the user approval defined below and is available at R2 AND both gates pass:
 >
 > 1. **Cost ceiling** — `CODEX_ITER < MAX_CODEX_RUNS` (default `MAX_CODEX_RUNS=10`; even with `MAX_ITERATIONS=20`, Codex runs max 10 times).
 > 2. **Diminishing returns** — last 2 Codex passes both produced no code changes → skip Codex remaining iterations, append note to `diary.md`: `"Codex skipped from iter N — 2 consecutive no-ops"`.
+
+For `bridge:implement`, the co-pilot gate requires a recorded user decision naming the run's task set and authorizing `--codex`; a direct user `/research:run --codex` request naming that program and scope is that approval. R2 checks availability; a restored flag or internal invocation alone is not approval. Record the user's decision and its conversation reference before the first co-pilot dispatch; workspace is the skill's absolute launch directory and network is `none` unless that decision names otherwise. Cite the decision and approved goal and scope in each iteration brief; reuse it only for tasks in that set. A subagent may dispatch only when its brief carries the orchestrating skill's recorded approval; otherwise return `blocked` and never dispatch. If no approval exists, use AskUserQuestion before dispatch; if AskUserQuestion is unavailable, return `blocked` and never dispatch.
 
 **Counters live in a file, never in prose.** `CODEX_ITER` and `CODEX_NOOP_STREAK` are persisted to `.experiments/state/<run-id>/codex-state` as JSON and re-read at every gate check. Prose-tracked counters are lost to mid-run compaction — silently re-opens whole Codex budget. `CODEX_DISABLED` is **derived** at read time (`CODEX_NOOP_STREAK >= 2`), never stored — one less value that can go stale.
 
@@ -47,7 +49,7 @@ Codex runs a second pass in the same iteration, on the working tree Phase 2 left
 Run Codex ideation:
 
 ```text
-Skill(skill="bridge:implement", args="Goal: <goal>. Run clarification: <clarification_prompt> when present. Current metric: <metric_key>=<current_value> (baseline: <baseline>, direction: <higher|lower>). Scope files: <scope_files>. Compute: <compute>. Colab hardware: <colab_hw> when active. Read .experiments/state/<run-id>/context-<i>.md. Starting state: Claude's change is [present in the working tree, uncommitted and not yet evaluated | absent (Phase 2 was a no-op)]. Propose and implement one atomic optimization most likely to improve the metric without breaking <guard_cmd>. Write full reasoning to .experiments/state/<run-id>/codex-ideation-<i>.md.")
+Skill(skill="bridge:implement", args="Recorded user approval: <conversation reference and decision naming the approved task set>. Workspace: <absolute approved workspace>. Network: <approved mode, default none>. Goal: <goal>. Run clarification: <clarification_prompt> when present. Current metric: <metric_key>=<current_value> (baseline: <baseline>, direction: <higher|lower>). Scope files: <scope_files>. Compute: <compute>. Colab hardware: <colab_hw> when active. Read .experiments/state/<run-id>/context-<i>.md. Starting state: Claude's change is [present in the working tree, uncommitted and not yet evaluated | absent (Phase 2 was a no-op)]. Propose and implement one atomic optimization most likely to improve the metric without breaking <guard_cmd>. Write full reasoning to .experiments/state/<run-id>/codex-ideation-<i>.md.")
 ```
 
 - Codex proposes a change: proceed Phases 3–7 on the combined change set (verify files, commit, metric, guard, decide). Diary entry (Phase 7a) names the paths each pass touched.

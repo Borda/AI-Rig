@@ -55,6 +55,7 @@ TRUNK_LINE = "main"
 
 #: Seconds allowed for one clone or fetch of the dedicated clone; a large repository takes minutes.
 NETWORK_TIMEOUT_S = 1800
+MAX_RELEASES = 1000
 
 #: Exit code for a blocked run (shallow clone or no release tag).
 EXIT_BLOCKED = 3
@@ -497,6 +498,8 @@ def _select_releases(tags: list[_Tag]) -> tuple[list[_Release], list[str]]:
             continue
         first = kept.get(version.canonical)
         if first is None:
+            if len(kept) >= MAX_RELEASES:
+                raise EvolutionError(f"release count exceeds limit of {MAX_RELEASES}")
             kept[version.canonical] = _Release(tag.name, version, tag.commit, tag.timestamp)
         elif first.sha != tag.commit:
             excluded.append(tag.name)

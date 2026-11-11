@@ -10,7 +10,7 @@ both share pass unnoticed. The captures are the only party to the comparison tha
 
 Three properties are checked against them:
 
-* each module's standalone driver still writes exactly the bytes it wrote before;
+* each standalone driver retains its frozen stdout, except raw CR inputs now require blueprint passthrough;
 * the dispatcher writes ``payload ? JSON.stringify(payload) : <empty>`` for ``blueprint || shape`` — never the string
   ``"null"``, and never a byte either module would not have written;
 * the exit code is 0 on every path, for every input, including malformed stdin.
@@ -131,7 +131,7 @@ def _blueprint_scenarios() -> list:
 
 @_skip_node_unavailable
 class TestDecisionModuleDrivers:
-    """Each module's standalone driver still writes the bytes it wrote before the refactor."""
+    """Each driver retains captured bytes with explicit refusal of raw CR blueprint inputs."""
 
     @pytest.mark.parametrize(("scenario", "part"), _blueprint_scenarios())
     def test_blueprint_driver_bytes_unchanged(
@@ -140,9 +140,16 @@ class TestDecisionModuleDrivers:
         """Replay the blueprint module over one slice of a manifest scenario's commands.
 
         Starting state is the manifest that scenario was captured under (seeded, tampered, or absent); every command in
-        the slice must reproduce the frozen stdout bytes and exit code exactly.
+        the slice must reproduce the frozen stdout bytes and exit code exactly, except raw CR inputs must pass through.
         """
-        replay(scenario, part, BLUEPRINT_HOOK, lambda command: CAPTURES["blueprint"][scenario][command])
+        replay(
+            scenario,
+            part,
+            BLUEPRINT_HOOK,
+            lambda command: (
+                {"exit": 0, "stdout_b64": ""} if "\r" in command else CAPTURES["blueprint"][scenario][command]
+            ),
+        )
 
     @pytest.mark.parametrize("command", sorted(CAPTURES["shape"]["bash"]))
     def test_shape_driver_bytes_unchanged(self, command: str, bare_env: AuditEnv) -> None:
@@ -194,7 +201,7 @@ class TestDispatcherParity:
             shape = shape_cases.get(command)
             if shape is None:
                 return None
-            blueprint = CAPTURES["blueprint"][scenario][command]
+            blueprint = {"exit": 0, "stdout_b64": ""} if "\r" in command else CAPTURES["blueprint"][scenario][command]
             return blueprint if blueprint["stdout_b64"] else shape
 
         replay(scenario, part, DISPATCH_HOOK, expected_for)

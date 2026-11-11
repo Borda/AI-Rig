@@ -1108,3 +1108,41 @@ def test_submodule_snapshot_is_explicitly_unsupported(campaign: tuple[Path, Path
 
     assert "unsupported-source-submodule" in error["error"]
     assert (repo / ".git" / "index").read_bytes() == index
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("config_key", "probe_arguments"),
+    [
+        pytest.param("core.fsmonitor", ("ls-files", "-v"), id="filesystem-monitor"),
+        pytest.param("diff.probe.textconv", ("diff",), id="text-conversion"),
+        pytest.param("diff.external", ("diff",), id="external-diff"),
+    ],
+)
+def test_snapshot_ignores_git_configured_callbacks(
+    campaign: tuple[Path, Path, Path], tmp_path: Path, config_key: str, probe_arguments: tuple[str, ...]
+) -> None:
+    """Snapshot source changes without executing repository-configured Git callbacks."""
+    repo, run, config = campaign
+    (repo / "value.txt").write_bytes(b"8\n")
+    expected = cli("snapshot", run, "--root", str(repo), "--config", str(config))
+    marker = tmp_path / "callback-ran"
+    callback = tmp_path / "callback.py"
+    callback.write_text(
+        f"from pathlib import Path\nPath({str(marker)!r}).write_bytes(b'ran')\nprint('token\\0/\\0', end='')\n",
+        encoding="utf-8",
+    )
+    command = f'"{Path(sys.executable).as_posix()}" "{callback.as_posix()}"'
+    (repo / ".gitattributes").write_bytes(b"value.txt diff=probe\n")
+    git(repo, "config", "core.fsmonitorHookVersion", "2")
+    git(repo, "config", config_key, command)
+    git(repo, *probe_arguments)
+    assert marker.read_bytes() == b"ran"
+    marker.unlink()
+    index = (repo / ".git" / "index").read_bytes()
+
+    actual = cli("snapshot", run, "--root", str(repo), "--config", str(config))
+
+    assert not marker.exists()
+    assert actual == expected
+    assert (repo / ".git" / "index").read_bytes() == index

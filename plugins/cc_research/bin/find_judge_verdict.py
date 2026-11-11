@@ -1,10 +1,12 @@
 #!/usr/bin/env python
 """find_judge_verdict.py — locate the newest judge verdict and gate ablation on an approved baseline.
 
-Extracted from ``skills/fortify/SKILL.md`` step F1. Picks the most recent
+Extracted from ``skills/fortify/SKILL.md`` step F1. Picks the most recent matching
 ``.reports/research/judge-*.md``, pulls its ``Verdict:`` and ``Program:`` fields, and refuses to
 continue unless that verdict was issued for the experiment currently being fortified — otherwise
 fortify could ablate against some other program's approval.
+When the report carries ``Program SHA256:``, it must match the current program bytes;
+older reports without it are admitted with a note.
 
 Only the ``Verdict:`` field of the judge report is authoritative; ``methodology_rating: sound``
 is one input to a verdict, not the verdict.
@@ -26,6 +28,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -45,6 +48,7 @@ from _sentinel_io import write_private_text  # noqa: E402
 _VERDICT_LINE_RE = re.compile(r"^\**verdict\**:", re.IGNORECASE)
 #: Matches a judge report line that starts with a Program, program_file or program file label.
 _PROGRAM_LINE_RE = re.compile(r"^\**(program(_file)?|program file)\**:", re.IGNORECASE)
+_PROGRAM_HASH_LINE_RE = re.compile(r"^\**program[ _-]sha-?256\**:", re.IGNORECASE)
 #: Case-sensitive on purpose — faithful to the ``sed -E 's/.*[Vv]erdict[: ]+//'`` it replaces,
 #: which leaves an all-caps ``VERDICT:`` label in place.
 _VERDICT_STRIP_RE = re.compile(r".*[Vv]erdict[: ]+")
@@ -55,21 +59,36 @@ _TRAILING_WS_RE = re.compile(r"[ \t\r\f\v]*$")
 
 #: Default directory searched for judge reports, used when --reports-dir is not given.
 _REPORTS_DIR = Path(".reports/research")
+MAX_JSONL_BYTES = 64 * 1024 * 1024
 
 
-def newest_verdict_file(reports_dir: Path) -> Path | None:
-    """Return the most recently modified ``judge-*.md`` report, as ``ls -t | head -1`` did.
+def _read_limited_text(path: Path) -> str:
+    """Read UTF-8 metadata within the run-ledger byte ceiling."""
+    with path.open("rb") as stream:
+        content = stream.read(MAX_JSONL_BYTES + 1)
+    if len(content) > MAX_JSONL_BYTES:
+        raise ValueError(f"{path} exceeds {MAX_JSONL_BYTES} bytes")
+    return content.decode("utf-8")
+
+
+def newest_verdict_file(reports_dir: Path, program_file: str | None = None) -> Path | None:
+    """Return the most recently modified report matching the optional program path.
 
     Args:
         reports_dir: Directory holding judge reports.
+        program_file: Restrict selection to reports for this program when provided.
 
     Returns:
         The newest report path, or ``None`` when the directory holds none.
     """
     candidates = [p for p in reports_dir.glob("judge-*.md") if p.is_file()]
-    if not candidates:
-        return None
-    return sorted(candidates, key=lambda p: (-p.stat().st_mtime, p.name))[0]
+    for path in sorted(candidates, key=lambda p: (-p.stat().st_mtime, p.name)):
+        if program_file is None:
+            return path
+        program = extract_field(_read_limited_text(path).splitlines(), _PROGRAM_LINE_RE, _PROGRAM_STRIP_RE)
+        if program and _real_or_raw(program) == _real_or_raw(program_file):
+            return path
+    return None
 
 
 def extract_field(lines: list[str], line_re: re.Pattern[str], strip_re: re.Pattern[str]) -> str:
@@ -112,8 +131,8 @@ def state_program_file(state_json: Path) -> str:
         The recorded program path, empty when unreadable or absent.
     """
     try:
-        record = json.loads(state_json.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        record = json.loads(_read_limited_text(state_json))
+    except (OSError, ValueError, ArithmeticError, RecursionError):
         return ""
     value = record.get("program_file") if isinstance(record, dict) else None
     return value if isinstance(value, str) else ""
@@ -165,6 +184,45 @@ def _check_program_match(program_file: str, state_program: str) -> int:
     return 0
 
 
+def _check_program_hash(program_file: str, lines: list[str]) -> bool:
+    """Validate content binding when present, admitting older reports with a note."""
+    if not any(_PROGRAM_HASH_LINE_RE.search(line) for line in lines):
+        print(
+            "fortify: note — judge report predates content binding; program edits since judgment are not detected",
+            file=sys.stderr,
+        )
+        return True
+    expected = extract_field(lines, _PROGRAM_HASH_LINE_RE, _PROGRAM_STRIP_RE)
+    if not re.fullmatch(r"[0-9a-fA-F]{64}", expected):
+        print("fortify: BLOCKED — judge verdict missing valid Program SHA256: metadata; re-run /research:judge")
+        return False
+    digest = hashlib.sha256()
+    try:
+        with Path(program_file).open("rb") as stream:
+            for chunk in iter(lambda: stream.read(65536), b""):
+                digest.update(chunk)
+    except OSError as exc:
+        print(f"fortify: BLOCKED — cannot hash program: {exc}")
+        return False
+    if digest.hexdigest() != expected.lower():
+        print(f"fortify: BLOCKED — program content changed since judgment; re-run /research:judge {program_file}")
+        return False
+    return True
+
+
+def _state_path(state_dir_base: str, run_id: str) -> Path:
+    """Resolve a single run's state inside the project or its experiments directory."""
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", run_id) or ".." in run_id or run_id == ".":
+        raise ValueError("invalid run identity")
+    root = Path.cwd().resolve()
+    roots = (root, (root / ".experiments").resolve())
+    base = Path(state_dir_base).resolve()
+    state = (base / run_id / "state.json").resolve()
+    if not all(any(path.is_relative_to(allowed) for allowed in roots) for path in (base, state)):
+        raise ValueError("run state escapes project root")
+    return state
+
+
 def main(argv: list[str] | None = None) -> int:
     """Resolve the newest judge verdict and persist it for the approval gate.
 
@@ -187,13 +245,24 @@ def main(argv: list[str] | None = None) -> int:
         print("find_judge_verdict: invalid sentinel session identity", file=sys.stderr)
         return 2
 
-    verdict_file = newest_verdict_file(Path(args.reports_dir))
+    try:
+        state_json = _state_path(args.state_dir_base, args.run_id)
+    except (OSError, ValueError, RuntimeError) as exc:
+        print(f"find_judge_verdict: {exc}", file=sys.stderr)
+        return 2
+    state_program = state_program_file(state_json)
+    try:
+        reports = Path(args.reports_dir)
+        verdict_file = newest_verdict_file(reports, state_program or None) or newest_verdict_file(reports)
+        lines = _read_limited_text(verdict_file).splitlines() if verdict_file else []
+    except (OSError, ValueError) as exc:
+        print(f"fortify: BLOCKED — cannot read judge report: {exc}")
+        return 1
     if verdict_file is None:
         print("fortify: BLOCKED — no judge verdict found in .reports/research/.")
         print("Ablation studies require an approved baseline. Run: /research:judge <program.md>")
         return 1
 
-    lines = verdict_file.read_text(encoding="utf-8").splitlines()
     verdict = extract_field(lines, _VERDICT_LINE_RE, _VERDICT_STRIP_RE)
     program_file = extract_field(lines, _PROGRAM_LINE_RE, _PROGRAM_STRIP_RE)
     if not program_file:
@@ -204,10 +273,11 @@ def main(argv: list[str] | None = None) -> int:
         print("Re-run: /research:judge <program.md> to generate a fresh verdict with required metadata.")
         return 1
 
-    state_json = Path(args.state_dir_base) / args.run_id / "state.json"
-    blocked = _check_program_match(program_file, state_program_file(state_json))
+    blocked = _check_program_match(program_file, state_program)
     if blocked:
         return blocked
+    if not _check_program_hash(program_file, lines):
+        return 1
 
     tmp = _sentinel_dir()
     try:

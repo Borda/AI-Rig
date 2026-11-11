@@ -265,7 +265,7 @@ The verb skills accept the bridge's task text and these caller-selected fields:
 
 ### Detached jobs
 
-Long-running implementation work may be detached. Use the job identifier printed by the bridge to inspect or stop it — one check when you have a reason to look, never a polling loop; any state other than `queued` or `running` is final:
+Long-running implementation work may be detached. Use the job identifier printed by the bridge to inspect or stop it — one check when you have a reason to look, never a polling loop; any state other than `queued`, `running` or `cancel_requested` is final:
 
 ```text
 /bridge:status [--workspace PATH] <job-id>

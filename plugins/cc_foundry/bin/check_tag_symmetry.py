@@ -173,6 +173,20 @@ def strip_fenced_blocks(text: str) -> str:
     return "\n".join(out)
 
 
+def strip_comments(text: str) -> str:
+    """Remove complete HTML comments while retaining an unmatched opener and its remaining text."""
+    chunks = []
+    cursor = 0
+    while (start := text.find("<!--", cursor)) != -1:
+        end = text.find("-->", start + 4)
+        if end == -1:
+            break
+        chunks.append(text[cursor:start])
+        cursor = end + 3
+    chunks.append(text[cursor:])
+    return "".join(chunks)
+
+
 def discover_tags(normalized: str) -> list[str]:
     """Return the structural tag names a file actually uses, in first-seen order.
 
@@ -236,7 +250,7 @@ def check_file(path: Path) -> list[Finding]:
 
     # For empty-block check: strip HTML comments but preserve code fences
     # (a block is empty only when it has no content at all, including no code blocks).
-    content_for_empty = re.sub(r"<!--.*?-->", "", content, flags=re.DOTALL)
+    content_for_empty = strip_comments(content)
 
     # For balance check: fences, then code spans, then comments. Order matters — comments
     # first deletes the innards of a span that quotes one (`<!-- policy-sibling: … -->`),
@@ -245,7 +259,7 @@ def check_file(path: Path) -> list[Finding]:
     # mentions. Stripping spans while their delimiters still bracket text avoids that.
     content_for_balance = strip_fenced_blocks(content)
     content_for_balance = re.sub(r"`[^`\n]+`", "", content_for_balance)
-    content_for_balance = re.sub(r"<!--.*?-->", "", content_for_balance, flags=re.DOTALL)
+    content_for_balance = strip_comments(content_for_balance)
 
     # Escaped structural tags: \<tag> in prose (after comment+fence+backtick stripping).
     # Severity: low — prevents Claude navigation; autofix unsafe (may be intentional).
@@ -285,7 +299,7 @@ def check_file(path: Path) -> list[Finding]:
         # still pairs with its plain closing tag; the closing form never carries any.
         # Exclude backslash-escaped form \<tag> — those are flagged separately above.
         name = re.escape(tag)
-        opens = len(re.findall(rf"(?<!\\)<{name}(?:\s[^>]*)?>", content_for_balance, re.IGNORECASE))
+        opens = len(re.findall(rf"(?<!\\)<{name}(?:\s[^<>]*)?>", content_for_balance, re.IGNORECASE))
         closes = len(re.findall(rf"(?<!\\)</{name}>", content_for_balance, re.IGNORECASE))
         if opens != closes:
             violations.append(

@@ -3,22 +3,24 @@
 //
 // PURPOSE
 //   Transparently rewrites read-heavy Bash commands to their `rtk <cmd>`
-//   equivalents, giving 60–99% token savings without requiring duplicate
-//   allow entries in settings.json.
+//   equivalents for token savings, without making any permission decision.
 //
 // SECURITY MODEL — why the rewrite is safe
-//   Rewriting `gh …` to `rtk gh …` changes the command string, so the
-//   rewritten form no longer matches ANY allow OR deny prefix in
-//   settings.json. That means a rewrite carrying permissionDecision:"allow"
-//   BYPASSES the deny list entirely. Therefore the hook must never rewrite a
-//   command it has not itself proven read-only. Two prefix classes:
+//   Rewriting `gh …` to `rtk gh …` changes the command string. The rewritten
+//   form matches shipped rtk allow mirrors in permissions-allow.json only
+//   where the original command already has an allow rule;
+//   original-command deny prefixes may not match it. A rewrite carrying permissionDecision:"allow"
+//   BYPASSES the deny list entirely. Therefore this hook emits updatedInput
+//   without any permission decision; normal permission and deny rules decide.
+//   Two prefix classes limit which commands receive token compression:
 //
-//     SAFE_PREFIXES    — dev/build/search tools with no destructive subcommand
-//                        the deny list guards against. Rewritten + auto-allowed.
+//     SAFE_PREFIXES    — file/search tools, subject to argument checks below.
+//                        Rewritten without a permission decision.
 //     GUARDED_PREFIXES — CLIs that mix read and mutating subcommands (git, gh,
-//                        docker, kubectl, aws). Rewritten + auto-allowed ONLY
-//                        when the command matches a positive READ_ONLY_GUARDS
-//                        pattern. Anything else — including every unknown or
+//                        docker, kubectl, aws). Rewritten ONLY
+//                        when the command matches a READ_ONLY_GUARDS pattern.
+//                        These prefix patterns do not prove argument safety.
+//                        Anything else — including every unknown or
 //                        mutating subcommand — passes through UNCHANGED (exit 0)
 //                        to normal permission + deny checking on the original
 //                        string. No hand-copied deny mirror to drift.
@@ -40,41 +42,19 @@ if (spawnSync("which", ["rtk"]).status !== 0) {
   process.exit(0);
 }
 
-// Read-heavy CLIs with no destructive subcommand the deny list guards against.
-// Auto-allowed on match. `diff` is intentionally absent — rtk changes its exit
+// Read-heavy CLIs eligible for compression, with permissions left to the host.
+// `diff` is intentionally absent — rtk changes its exit
 // status and prints "Files are identical" for differing files, corrupting any
 // caller that branches on the result.
 //
 // `find` is intentionally absent: a bare prefix match cannot tell `find . -name x`
 // from `find . -delete` or `find . -exec rm {} +`. The `\;` form of -exec carries a
 // semicolon and so trips SHELL_META, but `+` and `-delete` do not — they would be
-// rewritten and auto-allowed, running a destructive command with no prompt.
+// rewritten despite their destructive intent.
 // `ls`/`tree`/`grep` cover the read-only token payoff without that hole.
-const SAFE_PREFIXES = [
-  // JS / TS
-  "tsc",
-  "jest",
-  "vitest",
-  "prettier",
-  "lint",
-  "format",
-  // Python
-  "ruff",
-  "pytest",
-  "mypy",
-  // Go
-  "golangci-lint",
-  // Ruby
-  "rubocop",
-  "rspec",
-  // Files & search
-  "ls",
-  "tree",
-  "grep",
-  "wc",
-];
+const SAFE_PREFIXES = ["ls", "tree", "grep", "wc"];
 
-// CLIs that mix read-only and mutating subcommands. Rewritten + auto-allowed
+// CLIs that mix read-only and mutating subcommands. Rewritten
 // ONLY when a READ_ONLY_GUARDS pattern matches; otherwise passthrough so the
 // original command hits the real allow/deny matcher. curl, wget, psql, and
 // prisma are deliberately NOT here — their read/write intent is hard to prove
@@ -87,15 +67,15 @@ const SAFE_PREFIXES = [
 const GUARDED_PREFIXES = ["git", "gh", "docker", "kubectl", "aws", "cargo", "next"];
 
 // Positive read-only allowlist for GUARDED_PREFIXES. A guarded command is
-// rewritten + allowed only if it matches one of these. Add patterns here to
-// grant token savings to more read-only subcommands — never widen to cover a
+// rewritten only if it matches one of these. Add patterns here to
+// grant token savings to more inspection subcommands — never widen to cover a
 // mutating one.
 const READ_ONLY_GUARDS = [
   // git — inspection verbs only; add/commit/checkout/merge/fetch passthrough
   // to the real allow list (they are low-output, so no token loss). `branch` is
   // intentionally absent: `git branch <name>` creates a branch (a mutation) and
   // the list output is tiny — no token payoff to justify the risk.
-  /^git\s+(status|log|diff|show|rev-parse|rev-list|describe|shortlog|ls-files|ls-tree|merge-base|blame|cat-file|for-each-ref|reflog|whatchanged|grep|tag\s+(?:-l|--list)|tag$|stash\s+list|remote(?:\s+(?:-v|show|get-url))?$|remote\s+-v)\b/,
+  /^git\s+(status|log|diff|show|rev-parse|rev-list|describe|shortlog|ls-files|ls-tree|merge-base|blame|cat-file|for-each-ref|reflog(?:\s+show\b|$)|whatchanged|grep|tag\s+(?:-l|--list)|tag$|stash\s+list|remote(?:\s+(?:-v|show|get-url))?$|remote\s+-v)\b/,
   // gh — read subcommands + gh api GET (no mutating --method)
   /^gh\s+(issue|pr|release|run|repo|search|cache|workflow)\s+(list|view|diff|checks|status|ls)\b/,
   /^gh\s+api\s+(?!.*(?:-X|--method)\s*(?:POST|PUT|PATCH|DELETE))(?!.*(?:-f|--field|--input)\b)/,
@@ -118,8 +98,8 @@ const READ_ONLY_GUARDS = [
 // Shell control operators that could chain, substitute, or redirect a second
 // command after a read-only prefix. A prefix-anchored read-only match proves
 // only the FIRST command is safe — `git status && git push` would otherwise get
-// the WHOLE string rewritten + auto-allowed, smuggling `git push` (deny-listed)
-// past the permission matcher. Any of these present → refuse to rewrite, so the
+// the WHOLE string rewritten, changing how the compound is matched.
+// Any of these present → refuse to rewrite, so the
 // original string reaches normal permission + deny checking intact.
 const SHELL_META = /[;&|`\n<>]|\$\(/;
 
@@ -132,15 +112,18 @@ function matchesPrefix(cmd, prefix) {
 }
 
 /**
- * Decide whether `cmd` may be rewritten to `rtk <cmd>` and auto-approved.
- * Returns true only when the ENTIRE command is provably read-only.
+ * Decide whether `cmd` is eligible for rewriting to `rtk <cmd>`.
+ * This selects token compression, never permission to execute.
  */
 function isRewritable(cmd) {
-  // A rewrite auto-approves the whole string, so a compound command is only as
-  // safe as its most dangerous segment — refuse to rewrite any of them.
+  // Preserve compound commands for normal matching on their original text.
   if (SHELL_META.test(cmd)) {
     return false;
   }
+  if (/(?:^|\s)["']?--output(?:=|\s|["']?(?:\s|$))/.test(cmd)) return false;
+  if (matchesPrefix(cmd, "tree") && /(?:^|\s)["']?-[^-\s]*o/.test(cmd)) return false;
+  if (/^git\s+grep\b/.test(cmd) && /(?:^|\s)["']?(?:-[^-\s]*O|--open-files-in-pager(?:=|\s|["']?(?:\s|$)))/.test(cmd))
+    return false;
   if (SAFE_PREFIXES.some((p) => matchesPrefix(cmd, p))) {
     return true;
   }
@@ -169,18 +152,17 @@ process.stdin.on("end", () => {
       process.exit(0);
     }
 
-    // Only rewrite commands proven read-only; everything else passes through
+    // Only rewrite eligible command prefixes; everything else passes through
     // to normal permission + deny checking on the ORIGINAL string.
     if (!isRewritable(cmd)) {
       process.exit(0);
     }
 
-    // Rewrite and auto-approve — command is read-only by construction.
+    // Rewrite without a permission decision so normal checks remain authoritative.
     process.stdout.write(
       JSON.stringify({
         hookSpecificOutput: {
           hookEventName: "PreToolUse",
-          permissionDecision: "allow",
           updatedInput: {
             command: "rtk " + cmd,
           },

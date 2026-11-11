@@ -27,6 +27,7 @@ NOT for local file review or current git diff — use `/develop:review` (require
   - `--full`: run **every** dimension the scope preselected, instead of only the `FANOUT_MAX` most relevant. Never widens the preselection itself — a dimension the scope ruled out stays out. **Not free**: each extra agent adds the fixed per-spawn overhead (Step 2 Spawn-count gate) however little work it does. Default stays capped; pass this when depth matters more than cost.
   - `--fill-gaps <path/to/review-report.md>` with `--roles "<role>,…"` and/or `--candidates "<id>,…"` (at least one): targeted rerun of one published run under `.reports/review/pr-<N>/run-<NNN>/`. Re-spawns only the dimension agents behind the named roles, re-validates only the named candidates, and carries every other assessment, candidate, open concern and finding row unchanged into a **new** run; the prior run is never edited. Names must match that run's `review-validation.json` exactly (`assessments[].role`, `candidates[].id`, any disposition); a named candidate already CONFIRMED but missing its `findings.jsonl` row, whose record passes every publication rule and has no open concern, is not re-validated — the new run only publishes its row; any other named candidate is re-validated. An unknown name, a moved PR head, or a combination with `--full`/`--reply` → `! BLOCKED`. Detail: `modes/fill-gaps.md`.
 - **--plan handoff not supported** — skill doesn't accept plan-mode output from `/develop:plan` (requires `develop` plugin).
+- **Repository prerequisite**: run from the repository's root, with the PR's base repository selected by `gh` (`gh repo set-default` when needed). A fork PR is read through the base repository's `refs/pull/<N>/head`; `origin` may point to the fork.
 
 </inputs>
 
@@ -37,14 +38,14 @@ FANOUT_MAX=3            # default: top-N most relevant of the scope-preselected 
                         # units: sw-engineer · perf+arch (one merged spawn) · docs+lint (one
                         # merged spawn) · challenger · cicd-steward
                         # OUTSIDE the cap, never ranked out: bridge review, the issue agent,
-                        # and qa-specialist (security-scan-every-PR contract pin)
+                        # and qa-specialist (security-scan-every-PR contract pin, except Docs-only mode)
                         # --full runs ALL scope-preselected units instead — no numeric cap
 AGENT_CALL_BUDGET=55    # target tool-calls per agent; past ~60 they stall without returning an envelope
 CHALLENGE_ENABLED=true  # set to false via --no-challenge
 CODEMAP_ENABLED=auto    # on by default if codemap installed + index found; --no-codemap = off; --codemap = strict (stop if not installed)
 ```
 
-> Agent health monitoring (CLAUDE.md §6) — applies to Step 2 parallel agent spawns. Spawns are background; orchestrator ends its turn, resumes on completion notification. The constant below is a per-agent deadline checked at wake-ups by `agent_watch.py` — not a poll cadence, nothing sleeps. Every spawn — the Step 2 batch, Step 4 verifiers, the Step 5 consolidator, the Step 8 shepherd — writes its rows to `$RUN_DIR/agent-watch-<batch>.tsv` (`review`, `verify`, `consolidate`, `reply`) in its own spawn response; never `ScheduleWakeup`, `ListAgents` or a `Monitor` loop to wait on any of them.
+> Agent health monitoring (CLAUDE.md §6) — applies to Step 2 parallel agent spawns. Spawns are background; orchestrator ends its turn, resumes on completion notification. The constant below is a per-agent deadline checked at wake-ups by `agent_watch.py` — not a poll cadence, nothing sleeps. Every spawn — the Step 2 batch, Step 4 verifiers, the Step 5 consolidator, the Step 8 shepherd — writes its rows to `$RUN_DIR/agent-watch-<batch>.tsv` (`review`, `verify`, `consolidate`, `reply`) in its own spawn response; never call `ScheduleWakeup`, `ListAgents`, or a `Monitor` loop to wait on any of them. No `Bash(true)`, filler "waiting" call or sleep to hold the turn open; completion notifications are the only resume signal.
 
 ```text
 AGENT_DEADLINE_S=1800  # per spawned agent, from its spawn; covers the former 900 s silence cutoff + 300 s extension with margin
@@ -176,7 +177,7 @@ fi
 # that died between Step 2 and Step 5 makes enforce-review-header.js deny every AskUserQuestion (Gate A,
 # the existing-report guard) for its 2h staleness window — this run has not reached Step 2, so it is stale.
 # run-dir sentinel likewise: Agent 0's gather reads it, a stale one points at a previous review's run dir
-rm -f "${TMPDIR:-/tmp}/oss-review-report-dir-${CSID}" "${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}"  # timeout: 5000
+rm -f "${TMPDIR:-/tmp}/oss-review-report-dir-${CSID}" "${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}" "${TMPDIR:-/tmp}/oss-review-snap-dir-${CSID}"  # timeout: 5000
 
 # flags sentinel; CHALLENGE_ENABLED kept in its own sentinel so the challenge-skip fence can rewrite it alone
 {
@@ -194,11 +195,11 @@ if [[ "$CLEAN_ARGS" == *.md ]]; then
         echo "Error: plan files cannot be used as review report input. Pass a review report from .reports/review/pr-<N>/run-<NNN>/review-report.md or a PR number."
         exit 1
     fi
-    if [ -f "$CLEAN_ARGS" ] && grep -qE '(^## Summary|^verdict:|APPROVE|MINOR_EDITS|NEEDS_WORK|INSUFFICIENT_BUT_PROMISING|REJECT|REQUEST_CHANGES)' "$CLEAN_ARGS" 2>/dev/null; then  # timeout: 5000
+    if [ -f "$CLEAN_ARGS" ] && grep -qE '^(Outcome: *(APPROVE|MINOR_EDITS|NEEDS_WORK|INSUFFICIENT_BUT_PROMISING|REJECT|REQUEST_CHANGES)|Gate: *(REVIEW_V1_)?(PASS|BLOCK|REJECT_[A-Z]+))([[:space:]]|$)' "$CLEAN_ARGS" 2>/dev/null; then  # timeout: 5000
         DIRECT_PATH_MODE=true
         REVIEW_FILE="$CLEAN_ARGS"
     else
-        echo "⚠ $CLEAN_ARGS is a .md file but lacks review-report markers (## Summary | verdict: | APPROVE|MINOR_EDITS|NEEDS_WORK|INSUFFICIENT_BUT_PROMISING|REJECT|REQUEST_CHANGES) — refusing direct-path fast-path; continuing with normal review path which expects a PR number."
+        echo "⚠ $CLEAN_ARGS is a .md file but lacks an Outcome: or Gate: review header — refusing direct-path fast-path; continuing with normal review path which expects a PR number."
     fi
 fi
 {
@@ -220,13 +221,50 @@ IFS= read -r CLEAN_ARGS < "${TMPDIR:-/tmp}/oss-review-pr-tag-${CSID}" 2>/dev/nul
 if [ "$DIRECT_PATH_MODE" = "false" ] && [[ "$CLEAN_ARGS" =~ ^[0-9]+$ ]]; then
     SNAP_DIR="${TMPDIR:-/tmp}/oss-review-snap-${CLEAN_ARGS}-${CSID}"
     mkdir -p "$SNAP_DIR"
-    gh pr view $CLEAN_ARGS --json number,title,body,url,labels,milestone,reviews,headRefOid > "$SNAP_DIR/pr-meta.json" 2>/dev/null  # timeout: 6000
-    gh pr diff $CLEAN_ARGS > "$SNAP_DIR/pr.diff" 2>/dev/null  # timeout: 15000
-    gh pr diff $CLEAN_ARGS --name-only > "$SNAP_DIR/files.txt" 2>/dev/null  # timeout: 6000
-    # two checks snapshots: --required = merge-blocking gate set (exits 1 when repo defines none — empty file is the correct signal), bare = full count base
-    gh pr checks $CLEAN_ARGS --json name,bucket > "$SNAP_DIR/checks.json" 2>/dev/null || : > "$SNAP_DIR/checks.json"  # timeout: 15000
-    gh pr checks $CLEAN_ARGS --required --json name,bucket > "$SNAP_DIR/checks-required.json" 2>/dev/null || : > "$SNAP_DIR/checks-required.json"  # timeout: 15000
-    [ -s "$SNAP_DIR/pr-meta.json" ] || { echo "! BLOCKED — gh pr view failed for PR #$CLEAN_ARGS (network, auth, or wrong number)"; exit 1; }
+    gh pr view "$CLEAN_ARGS" --json number,title,body,url,labels,milestone,reviews,headRefOid,baseRefName,baseRefOid > "$SNAP_DIR/pr-meta.json" || { echo "! BLOCKED — gh pr view failed for PR #$CLEAN_ARGS; check network/auth, PR number, cwd repository and gh repo set-default"; exit 1; }  # timeout: 6000
+    PR_HEAD_SHA=$(jq -er '.headRefOid | select(test("^[0-9a-f]{40}$"))' "$SNAP_DIR/pr-meta.json") || { echo "! BLOCKED — snapshot has no full PR head SHA"; exit 1; }
+    _PR_URL=$(jq -er '.url' "$SNAP_DIR/pr-meta.json") || { echo "! BLOCKED — PR repository URL unavailable"; exit 1; }
+    _PR_REPO_URL="${_PR_URL%/pull/*}.git"
+    _PR_REPO_PATH="${_PR_URL#*://}"; _PR_REPO_PATH="${_PR_REPO_PATH#*/}"; _PR_REPO_PATH="${_PR_REPO_PATH%/pull/*}"
+    _PR_SOURCE="$_PR_REPO_URL"
+    while IFS= read -r _REMOTE; do
+        _FETCH_URL=$(git remote get-url "$_REMOTE") || continue
+        case "$_FETCH_URL" in *[:/]"$_PR_REPO_PATH"|*[:/]"$_PR_REPO_PATH.git") _PR_SOURCE="$_REMOTE"; break ;; esac
+    done < <(git remote)
+    printf '%s\n' "$_PR_SOURCE" > "$SNAP_DIR/repo-source.txt"
+    git fetch --no-tags "$_PR_SOURCE" "refs/pull/$CLEAN_ARGS/head" || { echo "! BLOCKED — PR head fetch failed for $_PR_REPO_URL"; exit 1; }  # timeout: 120000
+    FETCHED_HEAD=$(git rev-parse 'FETCH_HEAD^{commit}') || { echo "! BLOCKED — fetched PR commit unavailable"; exit 1; }
+    [ "$FETCHED_HEAD" = "$PR_HEAD_SHA" ] || { echo "! BLOCKED — PR head moved during snapshot; restart Step 0"; exit 1; }
+    if gh pr diff "$CLEAN_ARGS" > "$SNAP_DIR/pr.diff"; then  # timeout: 15000
+        gh pr diff "$CLEAN_ARGS" --name-only > "$SNAP_DIR/files.txt" || { echo "! BLOCKED — changed-file read failed"; exit 1; }  # timeout: 6000
+    else
+        BASE_SHA=$(jq -er '.baseRefOid' "$SNAP_DIR/pr-meta.json") || { echo "! BLOCKED — snapshot base SHA unavailable"; exit 1; }
+        git fetch --no-tags "$_PR_SOURCE" "$BASE_SHA" || { echo "! BLOCKED — base commit fetch failed for $_PR_REPO_URL"; exit 1; }  # timeout: 120000
+        git diff "$BASE_SHA...$PR_HEAD_SHA" > "$SNAP_DIR/pr.diff" && git diff --name-only "$BASE_SHA...$PR_HEAD_SHA" > "$SNAP_DIR/files.txt" || { echo "! BLOCKED — local PR diff fallback failed"; exit 1; }
+        echo "⚠ PR diff via local git (gh diff unavailable)"
+    fi
+    [ -s "$SNAP_DIR/pr.diff" ] && [ -s "$SNAP_DIR/files.txt" ] || { echo "! BLOCKED — PR diff or changed-file snapshot empty"; exit 1; }
+    _REMOTE_HEAD=$(git ls-remote "$_PR_SOURCE" "refs/pull/$CLEAN_ARGS/head") || { echo "! BLOCKED — PR head recheck failed for $_PR_REPO_URL"; exit 1; }  # timeout: 15000
+    [ "${_REMOTE_HEAD%%[[:space:]]*}" = "$PR_HEAD_SHA" ] || { echo "! BLOCKED — PR head moved while collecting diff and files; restart Step 0"; exit 1; }
+    # Explicit no-checks diagnostics are different from failed reads; retain errors for diagnosis.
+    for _CHECK_SET in checks checks-required; do
+        _CHECK_FLAGS=(); [ "$_CHECK_SET" != "checks-required" ] || _CHECK_FLAGS=(--required)
+        gh pr checks "$CLEAN_ARGS" "${_CHECK_FLAGS[@]}" --json name,bucket > "$SNAP_DIR/$_CHECK_SET.json" 2> "$SNAP_DIR/$_CHECK_SET.err"  # timeout: 15000
+        _CHECK_RC=$?
+        case "$_CHECK_RC" in
+            0) ;;
+            1|8)
+                if jq -e 'type == "array"' "$SNAP_DIR/$_CHECK_SET.json" >/dev/null 2>&1; then
+                    :  # Status exits with complete JSON still carry usable check evidence.
+                elif grep -qE '^no (required )?checks reported on ' "$SNAP_DIR/$_CHECK_SET.err"; then
+                    printf '[]\n' > "$SNAP_DIR/$_CHECK_SET.json"
+                else
+                    cat "$SNAP_DIR/$_CHECK_SET.err"; echo "! BLOCKED — CI $_CHECK_SET read failed"; exit 1
+                fi ;;
+            *) cat "$SNAP_DIR/$_CHECK_SET.err"; echo "! BLOCKED — CI $_CHECK_SET read failed"; exit 1 ;;
+        esac
+    done
+    jq -se 'length == 2 and all(.[]; type == "array")' "$SNAP_DIR/checks.json" "$SNAP_DIR/checks-required.json" >/dev/null || { echo "! BLOCKED — invalid CI checks snapshot"; exit 1; }
     echo "$SNAP_DIR" > "${TMPDIR:-/tmp}/oss-review-snap-dir-${CSID}"
 fi
 ```
@@ -359,41 +397,64 @@ Agent lineup — `PR_TYPE != CODE` overrides scope-based rules in Step 1:
 | `TESTS_CI` | `foundry:qa-specialist` + `foundry:linting-expert` | skip | `foundry:qa-specialist` |
 | `CODE` | full scope-based lineup | per `--no-challenge` | `foundry:sw-engineer` |
 
-When `DOCS_TYPING_MODE=true` or `TESTS_CI_MODE=true`: skip Step 1's File scope detection, Scope pre-check, SCOPE classification and codemap sections; every other Step 1 block still runs — notably CI STATUS and the acceptance gate, since a red required check that never reaches Stage 2 leaves Step 5 defaulting to `Gate: PASS`. Then proceed to Step 2 agent launch.
+When `DOCS_TYPING_MODE=true` or `TESTS_CI_MODE=true`: skip Step 1's File scope detection, Scope pre-check, SCOPE classification and codemap sections; every other Step 1 block still runs — notably CI STATUS and the acceptance gate, since a red required check that never reaches Stage 2 leaves Step 5 defaulting to `Gate: REVIEW_V1_PASS`. Then proceed to Step 2 agent launch.
 
 ## Step 1: Identify scope and context (run in parallel for PR mode)
 
 Flags, `CLEAN_ARGS`, and `DIRECT_PATH_MODE` were parsed in Step 0 — reuse those values here.
 
+**Unsupported flag check** — after all supported flags extracted, scan `$ARGUMENTS` for remaining `--<token>` tokens. Found: invoke `AskUserQuestion` with question text `` ! Unknown flag(s): `--<token>`. Supported: `--reply`, `--no-challenge`, `--codemap`, `--no-codemap`, `--worktree`, `--full`, `--fill-gaps`, `--roles`, `--candidates`, `--keep`. `` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
+
+**Frozen PR source** — applies to the parent and every reviewer, verifier, bridge and consolidator. Read repository source with `git show <PR_HEAD_SHA>:<path>` and search with `git grep <pattern> <PR_HEAD_SHA> -- <paths>`. Never infer PR behavior from the invoking tree. Working-tree reads, codemap queries and targeted test runs are permitted only in a clean checkout whose `HEAD` equals the snapshot's full `headRefOid`; verify that equality and `git status --porcelain` immediately before each run. Otherwise use frozen Git reads and report execution as unavailable, or use `--worktree`. Load skill/protocol files and analysis artifacts from their resolved paths as usual.
+
+**Worktree isolation** — when `WT_ENABLED=true` and this is a PR review: create a detached worktree at the fetched PR SHA, never branch from the invoking HEAD. Run this block before codemap preparation or any repository-source read:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+[ -f "${TMPDIR:-/tmp}/oss-review-flags-${CSID}" ] && while IFS='=' read -r _SK _SV; do case "$_SK" in REPLY_MODE) REPLY_MODE=$_SV ;; WT_ENABLED) WT_ENABLED=$_SV ;; FILL_GAPS_MODE) FILL_GAPS_MODE=$_SV ;; DIRECT_PATH_MODE) DIRECT_PATH_MODE=$_SV ;; REVIEW_FILE) REVIEW_FILE=$_SV ;; esac; done < "${TMPDIR:-/tmp}/oss-review-flags-${CSID}"
+IFS= read -r SNAP_DIR < "${TMPDIR:-/tmp}/oss-review-snap-dir-${CSID}" 2>/dev/null || SNAP_DIR=""
+[ "${DIRECT_PATH_MODE:-false}" = "true" ] && exit 0
+PR_HEAD_SHA=$(jq -er '.headRefOid' "$SNAP_DIR/pr-meta.json") || { echo "! BLOCKED — frozen PR head unavailable"; exit 1; }
+_ORIG_ROOT=$(git rev-parse --show-toplevel) || exit 1
+printf '%s\n' "$_ORIG_ROOT" > "${TMPDIR:-/tmp}/oss-review-orig-root-${CSID}"
+if [ "${WT_ENABLED:-false}" = "true" ]; then
+    IFS= read -r CLEAN_ARGS < "${TMPDIR:-/tmp}/oss-review-pr-tag-${CSID}" || exit 1
+    mkdir -p "$_ORIG_ROOT/.claude/worktrees" || exit 1
+    WT=$(mktemp -d "$_ORIG_ROOT/.claude/worktrees/oss-review-${CLEAN_ARGS}-${PR_HEAD_SHA:0:8}-XXXXXX") || exit 1
+    git worktree add --detach "$WT" "$PR_HEAD_SHA" || { echo "! BLOCKED — detached PR worktree creation failed"; exit 1; }  # timeout: 15000
+    printf '%s\n' "$WT" > "${TMPDIR:-/tmp}/oss-review-wt-${CSID}"
+fi
+```
+
+`WT_ENABLED=true` → `EnterWorktree(path=<exact oss-review-wt sentinel path>)`, then verify `git rev-parse HEAD` equals `PR_HEAD_SHA`. Keep deliverables in the original root recorded above; at the follow-up gate use `ExitWorktree(action="keep")` and report the path and detached SHA. Never remove the worktree automatically. Without `--worktree`, use the frozen Git reads above. If HEAD differs or tracked/untracked source changes exist, disable codemap for this run (strict `--codemap` → `! BLOCKED`); never build or query an index for the invoking base tree and attribute it to the PR.
+
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # loads: detect_codemap.py — consumers: resolve/SKILL.md, review/SKILL.md
 _DETECT_CODEMAP="${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/detect_codemap.py"
+[ -f "${TMPDIR:-/tmp}/oss-review-flags-${CSID}" ] && while IFS='=' read -r _SK _SV; do case "$_SK" in DIRECT_PATH_MODE) DIRECT_PATH_MODE=$_SV ;; esac; done < "${TMPDIR:-/tmp}/oss-review-flags-${CSID}"
+[ "${DIRECT_PATH_MODE:-false}" = "true" ] && exit 0
 # codemap flags parsed inside the script: one argv slot, shlex-tokenised (same idiom as resolve)
-python "$_DETECT_CODEMAP" --prefix review --arguments "$ARGUMENTS" 2>&1  # timeout: 5000
+IFS= read -r SNAP_DIR < "${TMPDIR:-/tmp}/oss-review-snap-dir-${CSID}" 2>/dev/null || SNAP_DIR=""
+PR_HEAD_SHA=$(jq -er '.headRefOid' "$SNAP_DIR/pr-meta.json") || { echo "! BLOCKED — frozen PR head unavailable"; exit 1; }
+_TREE_SHA=$(git rev-parse HEAD) || { echo "! BLOCKED — checkout identity unavailable"; exit 1; }
+_TREE_DIRTY=$(git status --porcelain) || { echo "! BLOCKED — checkout status unavailable"; exit 1; }
+if [ "$_TREE_SHA" != "$PR_HEAD_SHA" ] || [ -n "$_TREE_DIRTY" ]; then
+    IFS= read -r _STRICT_CODEMAP < "${TMPDIR:-/tmp}/oss-review-codemap-${CSID}" 2>/dev/null || _STRICT_CODEMAP=false
+    [ "$_STRICT_CODEMAP" != "true" ] || { echo "! BLOCKED — strict codemap requires a clean checkout of the frozen PR head — rerun with --worktree"; exit 1; }
+    python "$_DETECT_CODEMAP" --prefix review --force-off 2>&1  # timeout: 5000
+else
+    python "$_DETECT_CODEMAP" --prefix review --arguments "$ARGUMENTS" 2>&1  # timeout: 5000
+fi
 [ $? -ne 0 ] && { echo "! BLOCKED — codemap strict mode requested but codemap not installed or index missing"; exit 1; }
 IFS= read -r CODEMAP_ENABLED < "${TMPDIR:-/tmp}/review-codemap-enabled-${CSID}" 2>/dev/null || CODEMAP_ENABLED="false"
 IFS= read -r CODEMAP_CURRENCY < "${TMPDIR:-/tmp}/review-codemap-currency-${CSID}" 2>/dev/null || CODEMAP_CURRENCY="off"
 IFS= read -r _OSS_SHARED < "${TMPDIR:-/tmp}/review-oss-shared-${CSID}" 2>/dev/null || _OSS_SHARED=""  # reload (Check 41)
 IFS= read -r CODEMAP_FORCE_OFF < "${TMPDIR:-/tmp}/review-codemap-forced-off-${CSID}" 2>/dev/null || CODEMAP_FORCE_OFF="false"
-[ "$CODEMAP_FORCE_OFF" = "false" ] && cat "$_OSS_SHARED/codemap-gates.md"  # timeout: 5000
+[ "$CODEMAP_FORCE_OFF" = "true" ] || cat "$_OSS_SHARED/codemap-gates.md"  # timeout: 5000
 ```
 
-**Codemap gates** — when `CODEMAP_FORCE_OFF=false`, run (from `codemap-gates.md`, loaded above): **Gate A** if `CODEMAP_ENABLED=false` (missing index → provider-owned preparation); **Gate B** if `CODEMAP_ENABLED=true` and `CODEMAP_CURRENCY=stale`. Follow the active provider contract: prepare automatically by default, preserve explicit `LAZY_CODEMAP` confirm-first and `SCAN_NO_AUTOBUILD=1` frozen preferences, and set `CODEMAP_ENABLED=true` only after successful foreground preparation; retain required-mode failures and optional file-read fallback — never model-invoke the `codemap-py:scan-codebase` skill, which is `disable-model-invocation: true` (user-slash-only). Skip both gates when `CODEMAP_FORCE_OFF=true` (`--no-codemap`).
-
-**Unsupported flag check** — after all supported flags extracted, scan `$ARGUMENTS` for remaining `--<token>` tokens. Found: invoke `AskUserQuestion` with question text `` ! Unknown flag(s): `--<token>`. Supported: `--reply`, `--no-challenge`, `--codemap`, `--no-codemap`, `--worktree`, `--full`, `--fill-gaps`, `--roles`, `--candidates`, `--keep`. `` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
-
-**Worktree isolation** — when `WT_ENABLED=true` **and** this is a PR review (not `--reply` / direct-report `.md` mode): run the review in an isolated git worktree so no dimension agent can mutate main sources. Load and follow the oss worktree protocol (§Enter now, §review deliverable routing, §Exit at the follow-up gate):
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r _OSS_SHARED < "${TMPDIR:-/tmp}/review-oss-shared-${CSID}" 2>/dev/null || _OSS_SHARED="$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/resolve_shared_path.py" oss skills/_shared 2>/dev/null)"  # timeout: 5000
-[ -f "${TMPDIR:-/tmp}/oss-review-flags-${CSID}" ] && while IFS='=' read -r _SK _SV; do case "$_SK" in REPLY_MODE) REPLY_MODE=$_SV ;; WT_ENABLED) WT_ENABLED=$_SV ;; FILL_GAPS_MODE) FILL_GAPS_MODE=$_SV ;; DIRECT_PATH_MODE) DIRECT_PATH_MODE=$_SV ;; REVIEW_FILE) REVIEW_FILE=$_SV ;; esac; done < "${TMPDIR:-/tmp}/oss-review-flags-${CSID}"
-[ "$WT_ENABLED" = "true" ] || WT_ENABLED=false
-[ "$WT_ENABLED" = "true" ] && [ -f "$_OSS_SHARED/worktree-isolation.md" ] && cat "$_OSS_SHARED/worktree-isolation.md"  # timeout: 5000
-```
-
-`WT_ENABLED=true` → follow §Enter (base off HEAD, `EnterWorktree(path=…)`) before Step 1; the report is routed to the main tree (§review). Else skip — run in main tree.
+**Codemap gates** — follow `codemap-gates.md` loaded above, including its preparation, preference, failure and fallback rules; apply the frozen-source restriction above before any query, and never model-invoke `codemap-py:scan-codebase` (`disable-model-invocation: true`, user-slash-only).
 
 > `file-handoff-protocol.md`, `foundry--cross-validation-protocol.md` and `codex-delegation.md` (Steps 5/7/consolidator) ship in **this** plugin's `_shared`, kept identical to foundry's canonical by `propagate_shared.py` (the `foundry--` prefix marks a propagated copy — a plugin-local file can never collide with it). No separate resolution needed — `$_OSS_SHARED` from Step 0 covers them, and none of those steps degrade when foundry is absent.
 
@@ -418,18 +479,21 @@ if [ "$DIRECT_PATH_MODE" = "false" ]; then
     printf '%s\n' "$CHANGED_FILES" > "${TMPDIR:-/tmp}/oss-review-changed-files-${CSID}"
     printf '%s\n' "$PR_LABELS" > "${TMPDIR:-/tmp}/oss-review-pr-labels-${CSID}"
     printf '%s\n' "$PR_TITLE" > "${TMPDIR:-/tmp}/oss-review-pr-title-${CSID}"
-fi
 # CI STATUS: jq over the snapshot — no tab-literal quoting, no `grep -P` (absent on BSD/macOS); `bucket` is gh's own pass/fail/pending classification
 IFS= read -r SNAP_DIR < "${TMPDIR:-/tmp}/oss-review-snap-dir-${CSID}" 2>/dev/null || SNAP_DIR=""
-# checks-required.json = merge-blocking set only (empty file when repo defines none)
-CI_FAILING_CHECKS=$(jq -r '[.[]|select(.bucket=="fail")|.name]|join(", ")' "$SNAP_DIR/checks-required.json" 2>/dev/null) || CI_FAILING_CHECKS=""  # timeout: 5000
-CI_COUNTS=$(jq -r '"\([.[]|select(.bucket=="pass")]|length)/\(length)"' "$SNAP_DIR/checks.json" 2>/dev/null) || CI_COUNTS=""  # timeout: 5000
+# checks-required.json = merge-blocking set; without required checks, use the full set.
+CI_CHECKS_FILE="$SNAP_DIR/checks-required.json"
+_REQUIRED_COUNT=$(jq -er 'if type == "array" then length else error("expected checks array") end' "$CI_CHECKS_FILE") || { echo "! BLOCKED — required CI snapshot unavailable"; exit 1; }
+[ "$_REQUIRED_COUNT" -gt 0 ] || CI_CHECKS_FILE="$SNAP_DIR/checks.json"
+CI_FAILING_CHECKS=$(jq -r '[.[]|select(.bucket=="fail")|.name]|join(", ")' "$CI_CHECKS_FILE") || { echo "! BLOCKED — CI snapshot unavailable"; exit 1; }  # timeout: 5000
+CI_COUNTS=$(jq -r '"\([.[]|select(.bucket=="pass")]|length)/\(length)"' "$SNAP_DIR/checks.json") || { echo "! BLOCKED — CI counts unavailable"; exit 1; }  # timeout: 5000
 if [ -n "$CI_FAILING_CHECKS" ]; then CI_RED=true; else CI_RED=false; fi
 # Stage-2 gate + consolidator run in fresh shells — w/o sentinels CI_RED reads unset, red CI never blocks
 printf '%s\n' "$CI_RED" > "${TMPDIR:-/tmp}/oss-review-ci-red-${CSID}"
 printf '%s\n' "$CI_FAILING_CHECKS" > "${TMPDIR:-/tmp}/oss-review-ci-failing-${CSID}"
 printf '%s\n' "$CI_COUNTS" > "${TMPDIR:-/tmp}/oss-review-ci-counts-${CSID}"
 echo "CI_RED=$CI_RED FAILING=[$CI_FAILING_CHECKS] COUNTS=$CI_COUNTS"
+fi
 ```
 
 **CI STATUS** (PR mode only): the block's last stdout line is the result — run the block verbatim, never hand-compose a checks parse. `CI_RED=true`: print `⚠ CI is red: [list failing check names] — review proceeds; status noted in report header.` Continue to Steps 2–8 regardless. Expand `$CI_RED`, `$CI_FAILING_CHECKS` and `$CI_COUNTS` to literal values in the consolidator spawn prompt (Step 5).
@@ -453,17 +517,17 @@ Follow above and execute its bash blocks inside the `DIRECT_PATH_MODE = "false"`
 
 **TESTS_CI mode** (`TESTS_CI_MODE=true`): test files, `tox.ini` and `Makefile` only. GitHub Actions and other YAML config never qualify — they stay CODE so File scope detection routes workflows to `oss:cicd-steward` and the CI status, acceptance gate and challenger still run. Spawn: `foundry:qa-specialist` + `foundry:linting-expert`; challenger disabled by Step 0; skip all other agents. Proceed directly to agent launch.
 
-**CI/CD-only mode** (`CICD_ONLY_MODE=true`): no `.py`/`.md`/`.rst` and no `OTHER_CODE_FILES` (notebook, manifest, config). Spawn: `oss:cicd-steward` + Agent 1 + Agent 7 (if `CHALLENGE_ENABLED=true`) + Codex; skip Agents 2–6. Proceed directly to agent launch.
+**CI/CD-only mode** (`CICD_ONLY_MODE=true`): no `.py`/`.md`/`.rst` and no `OTHER_CODE_FILES` (notebook, manifest, config). Spawn: `oss:cicd-steward` + Agent 1 + pinned Agent 2 + Agent 7 (if `CHALLENGE_ENABLED=true`) + Codex; skip Agents 3–6. Proceed directly to agent launch.
 
 **Docs-only mode** (`DOCS_ONLY_MODE=true`): no `.py`, no CI/CD and no `OTHER_CODE_FILES`. **foundry:doc-scribe (Agent 4) leads** — Agent 1 explicitly skipped (NOT for docs clause); linked-issue spawns also skip Agent 1. Spawn: Agent 4 + Agent 7 (if `CHALLENGE_ENABLED=true`) + Codex; skip Agents 1, 2, 3, 5, 6. Proceed directly to agent launch.
 
-**Docs + CI/CD mode** (`DOCS_CICD_MODE=true`): no Python and no `OTHER_CODE_FILES`. Spawn: `oss:cicd-steward` (Agent 8) + `foundry:doc-scribe` (Agent 4) + Agent 7 (if `CHALLENGE_ENABLED=true`) + Codex; skip Agents 1, 2, 3, 5, 6. Proceed directly to agent launch.
+**Docs + CI/CD mode** (`DOCS_CICD_MODE=true`): no Python and no `OTHER_CODE_FILES`. Spawn: `oss:cicd-steward` (Agent 8) + pinned Agent 2 + `foundry:doc-scribe` (Agent 4) + Agent 7 (if `CHALLENGE_ENABLED=true`) + Codex; skip Agents 1, 3, 5, 6. Proceed directly to agent launch.
 
 Before spawning agents (Python mode only — all three mode flags false), classify diff:
 
 - Count files changed, lines added/removed, new classes/modules
 - Classify: **FIX** (\<3 files, \<50 lines — a label only; review depth comes from `IMPACT_TIER`, never size), **REFACTOR** (internal restructure, no new public API), **FEATURE** (new public API or module), **CHORE** (deps, config, tooling — no logic changes), or **MIXED**
-- **Short-diff multi-concern refactors**: FIX heuristic classifies by diff size, not intent. Override FIX → REFACTOR when PR labels include `perf`, `performance`, `optimization`, `refactor`, `architecture`, `cleanup` OR commit message keywords `refactor:`, `perf:`, `rewrite` OR diff touches different modules. Detect via `gh pr view --json labels,title`. Small-diff perf refactors are exactly the case FIX would silently mishandle.
+- **Short-diff multi-concern refactors**: FIX heuristic classifies by diff size, not intent. Override FIX → REFACTOR when PR labels include `perf`, `performance`, `optimization`, `refactor`, `architecture`, `cleanup` OR commit message keywords `refactor:`, `perf:`, `rewrite` OR diff touches different modules. Reuse `PR_LABELS` and `PR_TITLE` from the snapshot sentinels above. Small-diff perf refactors are exactly the case FIX would silently mishandle.
 - **Complexity smell**: 8+ files changed OR `PY_LOC_DELTA >400` → note in report header
 
 Assign `SCOPE` shell variable so the `EXPECTED` array (Step 2 health monitor) can branch on it without comparing to an undefined value:
@@ -479,9 +543,9 @@ IFS= read -r PR_TITLE < "${TMPDIR:-/tmp}/oss-review-pr-title-${CSID}" 2>/dev/nul
 PY_FILE_COUNT=$(echo "$PY_FILES" | grep -c . 2>/dev/null)
 IFS= read -r SNAP_DIR < "${TMPDIR:-/tmp}/oss-review-snap-dir-${CSID}" 2>/dev/null || SNAP_DIR=""
 # PY_LOC_DELTA = total churn, not net — renames give >0 at net 0; label/keyword override handles it
-PY_LOC_DELTA=$(grep -E '^[+-][^+-]' "$SNAP_DIR/pr.diff" 2>/dev/null | grep -vE '^[+-]{3}' | wc -l | tr -d ' ')  # timeout: 5000
-# new API surface: added lines inside src/**/__init__.py sections of the snapshot diff
-NEW_API_LINES=$(awk '/^diff --git /{f=($0 ~ /^diff --git a\/src\/.*__init__\.py /)} f && /^\+[^+]/{c++} END{print c+0}' "$SNAP_DIR/pr.diff" 2>/dev/null)  # timeout: 5000
+PY_LOC_DELTA=$(awk '/^diff --git /{f=($0 ~ /\.py(\"?)$/); h=0; next} /^@@ /{h=1; next} f && h && /^[+-]/{c++} END{print c+0}' "$SNAP_DIR/pr.diff")  # timeout: 5000
+# new API surface: added lines inside non-test __init__.py sections of the snapshot diff
+NEW_API_LINES=$(awk '/^diff --git /{f=($0 ~ /\/__init__\.py(\"?)$/ && $0 !~ /\/(tests?|test_[^\/]*)\//); h=0; next} /^@@ /{h=1; next} f && h && /^\+/{c++} END{print c+0}' "$SNAP_DIR/pr.diff")  # timeout: 5000
 
 # pure config/deps changes (no .py logic changes)
 NON_CONFIG_PY=$(echo "$PY_FILES" | grep -vE '(pyproject\.toml|setup\.cfg|setup\.py|requirements.*\.txt|conftest\.py)' || true)
@@ -513,8 +577,7 @@ Skip optional agents by classification:
 - FIX scope → skip Agent 3 (perf-optimizer), Agent 6 (solution-architect) **only when `IMPACT_TIER=LIGHT`**; `FULL` → keep both (they enter relevance ranking)
 - REFACTOR scope → keep all agents; perf-optimizer runs to verify new structure isn't slower
 - FEATURE/MIXED → spawn all agents, plus Agent 0 (blind-solve) — see §Agent 0 below
-- CHORE scope → spawn Agents 1, 4, 5, 7 (challenger, if `CHALLENGE_ENABLED=true`), Codex (if available); skip Agents 2, 3, 6
-  - **CHORE + dependency files exception**: diff includes `requirements*.txt`, `pyproject.toml`, `package*.json`, `Pipfile`, `poetry.lock`, `setup.cfg`, `*.lock`, or a `*.ipynb` notebook (executable code) → keep Agent 2 (qa-specialist) for OWASP/CVE checks. Detect via `CHORE_DEPS` flag above. CHORE + non-deps → skip qa-specialist.
+- CHORE scope → spawn Agents 1, 2, 4, 5, 7 (challenger, if `CHALLENGE_ENABLED=true`), Codex (if available); skip Agents 3, 6. Agent 2 remains pinned for security checks with or without dependency changes.
 
 ### Structural context + review pre-flight (codemap-py — only if `CODEMAP_ENABLED=true`)
 
@@ -542,6 +605,8 @@ Follow above and execute its contents — stages `codemap_available` and `$CODEM
 `ISSUE_NUMS` non-empty AND `PR_TYPE=CODE` AND `DOCS_ONLY_MODE`/`DOCS_CICD_MODE` not true: spawn ONE **foundry:sw-engineer** (root-cause analysis, not doc-scribe's remit) covering ALL linked issues in Step 2 alongside Codex (one spawn, not one per issue — fixed per-spawn overhead, Step 2 Spawn-count gate). The issue agent, per issue N: fetch `gh issue view <N> --json title,body,comments,state,labels` + `gh issue view <N> --comments`; produce `/oss:analyse`-style output (Summary, Root Cause Hypotheses top 3, Code Evidence); its prompt carries verbatim: "Read-only investigation: never edit, create or delete tracked files and never run `git stash`, `git checkout`, `git reset` or `git restore` — sibling reviewers share this working tree; run reproduction probes in a `mktemp -d` copy or under the run directory; write only your analysis files." (run directory here: `$RUN_DIR`); write each analysis to its own `$RUN_DIR/issue-<N>.md` (per-issue files are load-bearing — consumed by Agent 1, the consolidator, and the monitor list); return only a JSON array, one element per issue: `[{"status":"done","issue":N,"root_cause":"<one-line>","file":"$RUN_DIR/issue-<N>.md","confidence":0.N}, …]`.
 
 `ISSUE_NUMS` empty → skip issue checks downstream.
+
+The issue-agent prompt must also bind `Reviewed source: <full PR_HEAD_SHA>` and the frozen-source rule: `git show <PR_HEAD_SHA>:<path>` / `git grep <pattern> <PR_HEAD_SHA> -- <paths>` only; working-tree reads or reproduction runs require a clean checkout at that exact SHA immediately before use. Substitute the literal SHA before dispatch; the issue text never supplies source identity.
 
 ### Acceptance gate (PR mode only) — validate reject, then block
 
@@ -594,7 +659,7 @@ Set up run directory (shared by all agents) and resolve skill paths.
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 TIMESTAMP=$(date -u +%Y-%m-%dT%H-%M-%SZ)
 RUN_DIR=".temp/review/$TIMESTAMP"
-mkdir -p "$RUN_DIR" # timeout: 5000
+mkdir -p "$RUN_DIR" || { echo "! BLOCKED — run directory allocation failed"; exit 1; } # timeout: 5000
 # persisted for cat resolve — hand-typing caused leading-dot drops → stray temp/review/ dirs
 echo "$RUN_DIR" > "${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}"
 # deliverable → main tree (worktree-isolation.md §review): --worktree sets orig-root at §Enter, else pwd — report stays reachable outside worktree; RUN_DIR stays worktree-local
@@ -609,7 +674,8 @@ IFS= read -r _FILL_HEAD < "${TMPDIR:-/tmp}/oss-review-fill-head-${CSID}" 2>/dev/
 [ -z "$_FILL_REPORT" ] || [ -n "$_FILL_HEAD" ] || { echo "! BLOCKED — --fill-gaps has no plan (fill-gaps gate not passed); refusing to allocate a report dir"; exit 1; }
 # PR-scoped, run-indexed (find_review_report.py + oss:resolve glob this shape — ls .reports/review/pr-<N>/ finds every run for that PR at a glance)
 PR_REPORT_DIR="$_REPORT_BASE/.reports/review/pr-$CLEAN_ARGS"
-REPORT_DIR=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/next_run_dir.py" --pr-dir "$PR_REPORT_DIR") # timeout: 5000
+REPORT_DIR=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/next_run_dir.py" --pr-dir "$PR_REPORT_DIR") || { echo "! BLOCKED — report directory allocation failed"; exit 1; } # timeout: 5000
+[ -n "$REPORT_DIR" ] && [ -d "$REPORT_DIR" ] || { echo "! BLOCKED — report allocator returned no directory"; exit 1; }
 echo "$REPORT_DIR" > "${TMPDIR:-/tmp}/oss-review-report-dir-${CSID}"  # persist for contract-write
 # sidecar, not a header field: lets Step 0's existing-report guard tell "covers this head" from "stale";
 # read from the snapshot, not the acceptance-gate sentinel (DOCS_TYPING/TESTS_CI never write that one)
@@ -631,6 +697,8 @@ cat "$REVIEW_SKILL_DIR/templates/agent-prompts.md"  # timeout: 10000
 Follow the handoff protocol above. File absent → warn and continue without it.
 
 **IMPORTANT**: Replace `$REPORT_DIR`, `$REVIEW_SKILL_DIR`, `$BRANCH`, and `$DATE` with actual literal computed values in every Agent spawn prompt. Do NOT pass as shell variables — agents receive text, not shell context. **Exception — `$RUN_DIR`**: never hand-substitute it; agents self-resolve via `export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"; cat "${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}"` per the run-dir preamble in `agent-prompts.md` (eliminates leading-dot transcription slips).
+
+Also substitute the full snapshot `PR_HEAD_SHA` and include the shared read-only/frozen-source preamble in every source-reading prompt, including issue agents, verifiers and the consolidator. Agent 0 alone reads the frozen base SHA instead of the head.
 
 Template (loaded above). Substitute `<REVIEW_SKILL_DIR>` → `$REVIEW_SKILL_DIR` before using content in spawn prompts. Leave `$RUN_DIR` literal in the prompt text — agents resolve it themselves via the run-dir preamble (`cat "${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}"`); the orchestrator must NOT retype the run-dir path.
 
@@ -661,7 +729,7 @@ fi
 Two stages, in order — never collapse them:
 
 1. **Scope preselection** (always): scope/mode rules above decide which dimensions are *relevant at all*. A dimension with no changed file in its territory is out here, never comes back, at any flag. Paired dimensions (perf+arch, docs+lint — see agent-prompts.md §Merged spawn units) form one spawn unit: unit survives when either member does, prompt carries only surviving members' instructions.
-2. **Relevance ranking** (default only): rank surviving units by evidence — changed files/lines in each unit's territory, what Step 1 pre-classification found, what structural context flagged — spawn top `FANOUT_MAX` (3). **qa-specialist pinned outside cap** — spawns on every CODE PR its scope rules allow (security-scan-every-PR contract), never occupies ranked slot. With `--full` (`FANOUT_CAP=0`) skip this stage, spawn every survivor of stage 1.
+2. **Relevance ranking** (default only): rank surviving units by evidence — changed files/lines in each unit's territory, what Step 1 pre-classification found, what structural context flagged — spawn top `FANOUT_MAX` (3). **qa-specialist pinned outside cap** — spawns on every CODE PR, except Docs-only mode, including CI-only, docs+CI and CHORE; scope preselection never removes it outside that exception and it never occupies a ranked slot. With `--full` (`FANOUT_CAP=0`) skip this stage, spawn every survivor of stage 1.
 
 - More work → give each agent more, never add agents.
 - **Spawn fewest that keep each near `AGENT_CALL_BUDGET`** — not the most the cap allows. Small diff → merge surviving units into fewer spawns, **never zero**.
@@ -675,7 +743,9 @@ Two stages, in order — never collapse them:
 
 Launch the bridge review, the issue agent (one spawn for all linked issues), and the review agents ranked under `FANOUT_MAX` in one message batch. When `CODEX_AVAILABLE=1` and DOCS_TYPING_MODE/TESTS_CI_MODE are false, that message also carries `Skill(skill="bridge:review", args="Read-only adversarial review of <REVIEW_TARGET>, using changed files and <RUN_DIR>/codemap-context.md when present. Identify bugs, missed edge cases, and inconsistencies; return every finding with its severity and exact file:line evidence, and do not apply fixes.")`. The `Skill()` call returns bridge instructions, not a running review: run its `bridge_call.py review` command as a background Bash call (`run_in_background: true` — the spawned agents are the independent work bridge:review names), then end the turn. Codex runs read-only and cannot write files, so on that call's exit notification Write its findings (envelope plus the transcript at the artifact path it reports) to `$RUN_DIR/foundry--codex.md` with the Write tool; a failed, timed-out or blocked envelope → write the status and fault there instead, never an empty file.
 
-Spawns are background: issue the whole batch in one message, then **end the turn**. Each agent's completion notification wakes the orchestrator; check expected output files then. Never `Bash(true)`, a "waiting" line, or a sleep to hold the turn open — and never call `ScheduleWakeup`, `ListAgents`, or a `Monitor` loop to wait for agents: the notification is the only resume signal. An agent whose completion or idle notification arrives while its expected output file is still missing is ⏱ `timed_out` at once — never wait on it further, and never leave it for the user to ask about.
+Append to the bridge `args` and its resulting review prompt before execution: `Reviewed source: <full PR_HEAD_SHA>. Read repository source with git show <PR_HEAD_SHA>:<path> and search with git grep <pattern> <PR_HEAD_SHA> -- <paths>. Working-tree reads, codemap and targeted tests require a clean checkout whose HEAD equals that SHA immediately before use; otherwise use frozen Git reads and report execution unavailable. Never edit tracked files or mutate the project environment.` Substitute the snapshot SHA as a literal; `<REVIEW_TARGET>` is that frozen commit, never the invoking branch.
+
+Spawns are background: issue the whole batch in one message, then **end the turn**; follow `<constants>` §Agent health monitoring. Each agent's completion notification wakes the orchestrator; check expected output files then. An agent whose completion or idle notification arrives while its expected output file is still missing is ⏱ `timed_out` at once — never wait on it further, and never leave it for the user to ask about.
 
 Persist the monitor list from the **actual launch batch** — never re-derive it from scope/mode flags (flag-derived lists include ranking-dropped dimensions; the monitor would then wait out a deadline per never-spawned agent). In the same turn as the launch message, use the **Write tool** (the lineup is a ranking decision the shell cannot see) to create `$RUN_DIR/agent-watch-review.tsv`: one row per output file of every agent actually spawned, `<agent name><TAB><absolute output path><TAB>1800` (`AGENT_DEADLINE_S`) — a merged spawn gets one row per file it writes. In the same response also write `$RUN_DIR/.expected-files` exactly as before (one absolute path per line, one line per output file of every agent actually spawned), so the run dir keeps every artifact it always had:
 
@@ -683,7 +753,7 @@ Persist the monitor list from the **actual launch batch** — never re-derive it
 - `$RUN_DIR/issue-<N>.md` — one per linked issue the issue agent covers
 - one `$RUN_DIR/<agent>.md` per spawned review agent — basenames: `foundry--sw-engineer.md`, `foundry--qa-specialist.md`, `foundry--perf-optimizer.md`, `foundry--doc-scribe.md`, `foundry--linting-expert.md`, `foundry--solution-architect.md`, `foundry--challenger.md`, `oss--cicd-steward.md`, `foundry--blind-solve.md` (Agent 0, FEATURE/MIXED only)
 
-On each wake-up — a completion or idle notification, never a self-scheduled timer — run this once, before reading any agent output (fresh shell; it fails closed on an unbound run dir):
+On each wake-up — a completion or idle notification per `<constants>` §Agent health monitoring — run this once, before reading any agent output (fresh shell; it fails closed on an unbound run dir):
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -727,12 +797,11 @@ Step 3a/3b may run concurrently with still-executing Step 2 agents — issue the
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r SNAP_DIR < "${TMPDIR:-/tmp}/oss-review-snap-dir-${CSID}" 2>/dev/null || SNAP_DIR=""
-# rate-limit guard: on 429, retry once after 10s, else log+continue
 # exported symbols only (import/assignment targets on changed __init__.py lines), portable ERE — grep -oP absent on BSD/macOS; cap 5 to bound the 30s-per-search loop
-CHANGED_EXPORTS=$(awk '/^diff --git /{f=($0 ~ /^diff --git a\/src\/.*__init__\.py /)} f && /^[-+][^-+]/{print substr($0,2)}' "$SNAP_DIR/pr.diff" 2>/dev/null | grep -oE '(^|[[:space:],])[A-Za-z_][A-Za-z0-9_]*' | tr -d ' ,' | grep -vE '^(from|import|as|all|__all__)$' | sort -u | head -5)
+CHANGED_EXPORTS=$(awk '/^diff --git /{f=($0 ~ /\/__init__\.py(\"?)$/ && $0 !~ /\/(tests?|test_[^\/]*)\//); h=0; next} /^@@ /{h=1; next} f && h && /^[+-]/{print substr($0,2)}' "$SNAP_DIR/pr.diff" 2>/dev/null | grep -oE '(^|[[:space:],])[A-Za-z_][A-Za-z0-9_]*' | tr -d ' ,' | grep -vE '^(from|import|as|all|__all__)$' | sort -u | head -5)
 for export in $CHANGED_EXPORTS; do
     echo "=== $export ==="
-    gh api "search/code" --method GET --field "q=$export language:python" --jq '.items[:5] | .[].repository.full_name' 2>/dev/null # timeout: 30000
+    gh api "search/code" --method GET --field "q=$export language:python" --jq '.items[:5] | .[].repository.full_name' || echo "⚠ Usage search failed for $export — downstream usage unknown" # timeout: 30000
 done
 
 grep -A2 "deprecated" "$SNAP_DIR/pr.diff" 2>/dev/null # timeout: 5000
@@ -786,11 +855,11 @@ Scenarios:
 2. FEATURE scope: new feature PR with API changes → units sw-engineer, perf+arch, docs+lint, challenger = 4 survive preselection; default cap spawns top 3 ranked (dropped unit listed in report) + pinned qa-specialist = 4 spawns; `--full` spawns all 4 units + qa-specialist = 5 spawns.
 3. --reply mode: existing review report + --reply flag → skip to Step 8, no agents spawned
 4. DOCS_TYPING scope: PR with only docs and `.pyi` stub changes (no Python logic file) → Step 0 sets PR_TYPE=DOCS_TYPING, CHALLENGE_ENABLED=false, CONSOLIDATOR_AGENT=foundry:doc-scribe; only doc-scribe spawned; Step 5 uses doc-scribe consolidator.
-5. TESTS_CI scope: PR with only test files (plus `tox.ini`/`Makefile`) → Step 0 sets PR_TYPE=TESTS_CI, CHALLENGE_ENABLED=false, CONSOLIDATOR_AGENT=foundry:qa-specialist; qa-specialist + linting-expert spawned; Step 5 uses qa-specialist consolidator. Contrast: a PR touching only `.github/workflows/*.yml` stays PR_TYPE=CODE → File scope detection sets CICD_ONLY_MODE → `oss:cicd-steward` + Agent 1 + challenger + Codex, CI status and acceptance gate run; a `requirements.txt`- or `.ipynb`-only PR stays CODE → CHORE with qa-specialist kept for OWASP/CVE.
-6. REJECT_GOAL: PR body states "make recall exceed 1.0" as the goal → gate finds the metric bounded [0,1] by spec, contradicts stated goal regardless of diff quality → skip Step 2–4, orchestrator writes report with Gate=REJECT_GOAL, no agents spawned.
-7. REJECT_CONDUCT: PR diff silently exfiltrates env vars to an external URL, body claims unrelated bugfix → gate spawns foundry:challenger, confirms `conduct.verdict=BY_DESIGN` at confidence ≥0.7 → skip Step 2–4, Gate=REJECT_CONDUCT. Contrast: same diff pattern but challenger returns `ACCIDENTAL` (e.g. leftover debug logging) → treat as normal `[critical]` finding, proceed to full fanout.
-8. REJECT_DUPLICATE: PR body says "Closes #40", `gh issue view 40` shows `state=CLOSED` closed by a different, already-merged PR → `DUPLICATE_HIT=true` → skip Step 2–4, Gate=REJECT_DUPLICATE, no agents spawned, no challenger needed (mechanical evidence, orchestrator judgment only).
-9. Fill-gaps: `/oss:review 8 --fill-gaps .reports/review/pr-8/run-002/review-report.md --roles "QA specialist" --candidates V13` at an unchanged head → existing-report guard and Stage 1 skipped; new `run-003` allocated with run-002's `head-sha.txt` string; one spawn `review-qa` + consolidator (cost line 2 × ~120,851 tok); parent re-validates V13 plus the new QA claims only; every other assessment, candidate, open concern and finding row carried verbatim, proven by the carry check, then the publication gate. Same call after a push, or naming role `Security auditor` absent from run-002 → `! BLOCKED`, nothing allocated or spawned.
+5. TESTS_CI scope: PR with only test files (plus `tox.ini`/`Makefile`) → Step 0 sets PR_TYPE=TESTS_CI, CHALLENGE_ENABLED=false, CONSOLIDATOR_AGENT=foundry:qa-specialist; qa-specialist + linting-expert spawned; Step 5 uses qa-specialist consolidator. Contrast: a PR touching only `.github/workflows/*.yml` stays PR_TYPE=CODE → File scope detection sets CICD_ONLY_MODE → `oss:cicd-steward` + Agent 1 + pinned qa-specialist + challenger + Codex, CI status and acceptance gate run; a `requirements.txt`- or `.ipynb`-only PR stays CODE → CHORE with qa-specialist kept for OWASP/CVE.
+6. REJECT_GOAL: PR body states "make recall exceed 1.0" as the goal → gate finds the metric bounded [0,1] by spec, contradicts stated goal regardless of diff quality → skip Step 2–4, orchestrator writes report with `Gate: REVIEW_V1_REJECT_GOAL`, no agents spawned.
+7. REJECT_CONDUCT: PR diff silently exfiltrates env vars to an external URL, body claims unrelated bugfix → gate spawns foundry:challenger, confirms `conduct.verdict=BY_DESIGN` at confidence ≥0.7 → skip Step 2–4, `Gate: REVIEW_V1_REJECT_CONDUCT`. Contrast: same diff pattern but challenger returns `ACCIDENTAL` (e.g. leftover debug logging) → treat as normal `[critical]` finding, proceed to full fanout.
+8. REJECT_DUPLICATE: PR body says "Closes #40", the GraphQL issue query shows `state=CLOSED` with a different, already-merged closing PR → `DUPLICATE_HIT=true` → skip Step 2–4, `Gate: REVIEW_V1_REJECT_DUPLICATE`, no agents spawned, no challenger needed (mechanical evidence, orchestrator judgment only).
+9. Fill-gaps: `/oss:review 8 --fill-gaps .reports/review/pr-8/run-002/review-report.md --roles "QA specialist" --candidates V13` at an unchanged head → existing-report guard and Stage 1 skipped; new `run-003` allocated with run-002's `head-sha.txt` string; one spawn `review-qa` + consolidator (cost per Step 2 Spawn-count gate); parent re-validates V13 plus the new QA claims only; every other assessment, candidate, open concern and finding row carried verbatim, proven by the carry check, then the publication gate. Same call after a push, or naming role `Security auditor` absent from run-002 → `! BLOCKED`, nothing allocated or spawned.
 
 </calibration>
 
@@ -812,7 +881,7 @@ Scenarios:
 - Critical issues always surfaced regardless of scope
 - Skip sections with no issues — no padding. Isolated code without git context → skip OSS Checks and Performance Concerns unless evidence of perf issues (nested loops, I/O in tight loops) or OSS concerns (hardcoded secrets, new deps).
 - **Signal-to-noise gate**: Function/class ≤50 lines with 1–2 critical/high issues → max 2 additional medium/low findings. Rest as `[nit]` in "Minor Observations". First 3 findings reader sees = most impactful.
-- PR mode: CI red sets `Gate: BLOCK` (Step 1) — review still proceeds through full fanout, the block is surfaced up front in the header, never a reason to skip review
+- PR mode: CI red sets `Gate: REVIEW_V1_BLOCK` (Step 1) — review still proceeds through full fanout, the block is surfaced up front in the header, never a reason to skip review
 - Blocking issues need explicit `[blocking]` prefix
 - Follow-up chains:
   - `[blocking]` bugs or regressions → `/develop:fix` (requires `develop` plugin) to reproduce with test, apply targeted fix

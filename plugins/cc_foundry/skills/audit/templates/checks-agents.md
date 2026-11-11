@@ -22,7 +22,7 @@ Use model reasoning. Classify each agent by tier from `<role>`, `description`, w
 - `focused-execution` + `opus` → **medium** (potential overkill)
 - `opusplan` in agent frontmatter → **medium**: `opusplan` as subagent frontmatter runs `sonnet` (subagents never enter plan mode) — use `opus` or `sonnet` explicitly
 - `deep-reasoning` + `sonnet` → **high** (likely underpowered)
-- **Orchestration signal**: workflow body contains `Spawn`, `Agent tool`, or explicit sub-agent delegation → classify `deep-reasoning` regardless of description — `sonnet` on orchestrating agent → **high**
+- **Orchestration signal**: workflow delegates judgment or consolidation to 2+ agents → classify `deep-reasoning` regardless of description — `sonnet` on that orchestrating agent → **high**. A single mechanical fetch/handoff is not this signal; classify from the role's actual judgment requirements.
 - `high-stakes design/config` + `sonnet` → **high**
 - `focused-execution` + `haiku` → **not a finding**
 

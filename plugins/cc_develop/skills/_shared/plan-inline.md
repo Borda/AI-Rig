@@ -22,7 +22,6 @@
 - `[SKILL_VERB]` = implementation
 - `[PLAN_SECTIONS]` = Summary (2–3 sentences: what needs to change and why), Affected files, Risks (breaking changes, blast radius, performance implications), Approach (ordered implementation steps numbered)
 - `[RISK_FOCUS]` = breaking changes, blast radius, performance implications
-- `[PROCEED_TEXT]` = continue implementation using this plan
 
 **fix**:
 
@@ -30,7 +29,6 @@
 - `[SKILL_VERB]` = fix
 - `[PLAN_SECTIONS]` = Root cause summary (from Step 1 analysis), Affected files, Risks (breaking changes, blast radius, regressions), Approach (ordered fix steps)
 - `[RISK_FOCUS]` = breaking changes, blast radius, regressions
-- `[PROCEED_TEXT]` = continue with fix using this plan
 
 **refactor**:
 
@@ -39,4 +37,3 @@
 - `[SKILL_VERB]` = refactor
 - `[PLAN_SECTIONS]` = Refactor goal and motivation, Affected files, Risks (API surface changes, caller impact, test coverage gaps), Approach (ordered refactor steps with clear checkpoints)
 - `[RISK_FOCUS]` = API surface changes, caller impact, test coverage gaps
-- `[PROCEED_TEXT]` = continue refactor using this plan

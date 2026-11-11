@@ -59,16 +59,21 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import stat
 import sys
 import tempfile
-from contextlib import suppress
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 #: Default target: the user-level settings file Claude Code reads.
 _DEFAULT_SETTINGS = "~/.claude/settings.json"
+_PLUGIN_ROOT = Path(__file__).resolve().parent.parent
+_RULE_RE = re.compile(r"(?P<tool>[A-Za-z][A-Za-z0-9_.-]*\*?)(?:\((?P<specifier>[^\x00-\x1f\x7f]+)\))?")
 
 
 class MergeError(Exception):
@@ -177,7 +182,19 @@ def _load_json(path: Path, label: str) -> Any:
         raise MergeError(f"{label} unreadable or invalid JSON: {path}: {exc}") from exc
 
 
-def _load_rule_list(path: Path, label: str, *, retirement: bool = False) -> list[Any]:
+def _validate_rule(rule: Any, label: str, *, allow: bool = False) -> None:
+    """Refuse malformed permission rules and unrestricted incoming Bash grants."""
+    match = _RULE_RE.fullmatch(rule) if isinstance(rule, str) else None
+    if match is None:
+        raise MergeError(f"{label} contains an invalid permission rule: {rule!r}")
+    specifier = match["specifier"]
+    if specifier is not None and not specifier.strip():
+        raise MergeError(f"{label} contains an empty permission specifier: {rule!r}")
+    if allow and match["tool"] == "Bash" and (specifier is None or not re.sub(r"[\s*:]", "", specifier)):
+        raise MergeError(f"{label} contains an unrestricted Bash rule: {rule!r}")
+
+
+def _load_rule_list(path: Path, label: str, *, retirement: bool = False, allow: bool = False) -> list[Any]:
     """Load a shipped rule file; jq's ``X + null`` is X, so a JSON null contributes no rules.
 
     A ``retirement`` list names rules to remove, so a damaged file must stop the merge instead of silently retiring
@@ -193,19 +210,57 @@ def _load_rule_list(path: Path, label: str, *, retirement: bool = False) -> list
         raise MergeError(f"{label} must hold a JSON array: {path}")
     if retirement and not all(isinstance(rule, str) for rule in value):
         raise MergeError(f"{label} must hold only string rules: {path}")
+    if not retirement:
+        for rule in value:
+            _validate_rule(rule, label, allow=allow)
     return value
 
 
 def _option_path(value: str, label: str) -> Path:
-    """Turn an option operand into a path, refusing an empty one that :class:`Path` would read as the current directory.
+    """Resolve a rule source inside this plugin, refusing empty operands and paths outside its root.
 
     Examples:
-        >>> _option_path("rules.json", "allow file").name
+        >>> _option_path(str(_PLUGIN_ROOT / "rules.json"), "allow file").name
         'rules.json'
     """
     if value == "":
         raise MergeError(f"{label} path is empty")
-    return Path(value)
+    path = Path(value).resolve()
+    if not path.is_relative_to(_PLUGIN_ROOT.resolve()):
+        raise MergeError(f"{label} must be inside the plugin root: {path}")
+    return path
+
+
+@contextmanager
+def _settings_lock(target: Path) -> Iterator[Path]:
+    """Serialize merges through a lock beside the lexical settings path, preserving its symlink target."""
+    destination = target.resolve()
+    with (target.parent / f".{target.name}.lock").open("a+b") as handle:
+        if sys.platform == "win32":
+            import msvcrt  # Windows-only locking API; importing it on POSIX fails.
+
+            if handle.tell() == 0:
+                handle.write(b"\0")
+                handle.flush()
+            handle.seek(0)
+            while True:
+                try:
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+                    break
+                except OSError:
+                    time.sleep(0.1)
+        else:
+            import fcntl  # POSIX-only locking API; importing it on Windows fails.
+
+            fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield destination
+        finally:
+            if sys.platform == "win32":
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(handle, fcntl.LOCK_UN)
 
 
 def merge_allow(permissions: dict[str, Any], shipped: list[Any], drop: list[Any]) -> MergeCounts:
@@ -329,32 +384,8 @@ def run(args: argparse.Namespace) -> int:
         print(f"! merge_settings_permissions: {exc}", file=sys.stderr)
         return 4
     try:
-        settings, permissions = _settings_permissions(_load_json(target, "settings"))
-        report: list[str] = []
-        if args.allow is not None:
-            shipped = _load_rule_list(_option_path(args.allow, "allow file"), "allow file")
-            dropped: list[Any] = list(args.drop_allow)
-            if args.drop_allow_file is not None:
-                dropped += _load_rule_list(
-                    _option_path(args.drop_allow_file, "retired allow file"), "retired allow file", retirement=True
-                )
-            counts = merge_allow(permissions, shipped, dropped)
-            report.append(
-                f"permissions.allow: added {counts.added}, already present {counts.present}, dropped {counts.removed}"
-            )
-        if args.deny is not None:
-            shipped = _load_rule_list(_option_path(args.deny, "deny file"), "deny file")
-            retired: list[Any] = []
-            if args.retire_deny_file is not None:
-                retired = _load_rule_list(
-                    _option_path(args.retire_deny_file, "retired deny file"), "retired deny file", retirement=True
-                )
-            counts = merge_deny(permissions, shipped, retired)
-            report.append(
-                f"permissions.deny: added {counts.added}, already present {counts.present}, retired {counts.removed}"
-            )
-        # jq prints two-space indented JSON with non-ASCII kept raw; the shell form added one trailing newline.
-        _atomic_replace(target, json.dumps(settings, indent=2, ensure_ascii=False) + "\n")
+        with _settings_lock(target) as destination:
+            report = _merge_settings(destination, args)
     except MergeError as exc:
         print(f"! merge_settings_permissions: {exc} — settings unchanged", file=sys.stderr)
         return 1
@@ -363,6 +394,37 @@ def run(args: argparse.Namespace) -> int:
         return 1
     print("\n".join(report))
     return 0
+
+
+def _merge_settings(target: Path, args: argparse.Namespace) -> list[str]:
+    """Merge both permission arrays while the caller holds the settings lock."""
+    settings, permissions = _settings_permissions(_load_json(target, "settings"))
+    report: list[str] = []
+    if args.allow is not None:
+        shipped = _load_rule_list(_option_path(args.allow, "allow file"), "allow file", allow=True)
+        dropped: list[Any] = list(args.drop_allow)
+        if args.drop_allow_file is not None:
+            dropped += _load_rule_list(
+                _option_path(args.drop_allow_file, "retired allow file"), "retired allow file", retirement=True
+            )
+        counts = merge_allow(permissions, shipped, dropped)
+        report.append(
+            f"permissions.allow: added {counts.added}, already present {counts.present}, dropped {counts.removed}"
+        )
+    if args.deny is not None:
+        shipped = _load_rule_list(_option_path(args.deny, "deny file"), "deny file")
+        retired: list[Any] = []
+        if args.retire_deny_file is not None:
+            retired = _load_rule_list(
+                _option_path(args.retire_deny_file, "retired deny file"), "retired deny file", retirement=True
+            )
+        counts = merge_deny(permissions, shipped, retired)
+        report.append(
+            f"permissions.deny: added {counts.added}, already present {counts.present}, retired {counts.removed}"
+        )
+    # jq prints two-space indented JSON with non-ASCII kept raw; the shell form added one trailing newline.
+    _atomic_replace(target, json.dumps(settings, indent=2, ensure_ascii=False) + "\n")
+    return report
 
 
 def main(argv: list[str] | None = None) -> int:

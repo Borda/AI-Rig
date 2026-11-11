@@ -5,9 +5,11 @@
  * leaves mutation to `opencode-rig init` or an explicit user action.
  */
 
+import { spawnSync } from "node:child_process"
+import { sha256 } from "./digest.ts"
 import { existsSync, lstatSync, readFileSync, readdirSync } from "node:fs"
 import { homedir } from "node:os"
-import { join, relative, sep } from "node:path"
+import { isAbsolute, join, relative, resolve, sep } from "node:path"
 import { detectGates } from "./gates.ts"
 import { readGrant } from "./git-grant.ts"
 import { SKILLS } from "./skill-manifest.ts"
@@ -109,6 +111,13 @@ export function installedAgentStatus(agentDir: string, version: string): string[
     if (!stamp) problems.push(`agents: ${name} has no opencode-rig stamp`)
     else if (stamp[1] !== version)
       problems.push(`agents: ${name} is v${stamp[1]}, expected v${version} (run opencode-rig init --upgrade)`)
+    if (stamp) {
+      const body = content
+        .split("\n")
+        .filter((line) => !/^<!-- opencode-rig: v(\S+) sha256:([a-f0-9]{64}) -->$/.test(line.trim()))
+        .join("\n")
+      if (sha256(body) !== stamp[2]) problems.push(`agents: ${name} was modified after installation`)
+    }
   }
   return problems
 }
@@ -267,33 +276,67 @@ export function checkAssets(resourcesRoot: string): AssetCheck {
   }
 }
 
+/** Find expired terminal evidence while preserving active runs and their frozen plans. */
 export function staleRuns(runsRoot: string, ttlDays: number, now: Date = new Date()): string[] {
   if (!existsSync(runsRoot)) return []
-  const stale: string[] = []
+  const runs: { path: string; record: Record<string, unknown> | undefined }[] = []
   const cutoff = now.getTime() - ttlDays * 24 * 60 * 60 * 1000
+  // Active and unreadable runs get four TTL periods before abandoned evidence expires.
+  const hardCutoff = now.getTime() - ttlDays * 4 * 24 * 60 * 60 * 1000
   for (const skill of readdirSync(runsRoot, { withFileTypes: true })) {
     if (!skill.isDirectory()) continue
     for (const run of readdirSync(join(runsRoot, skill.name), { withFileTypes: true })) {
       if (!run.isDirectory()) continue
       const path = join(runsRoot, skill.name, run.name)
-      const info = lstatSync(path, { throwIfNoEntry: false })
-      if (info && info.mtimeMs < cutoff) stale.push(path)
+      runs.push({ path, record: readJsonSafe(join(path, "run.json")) })
     }
   }
-  return stale
+  const protectedPaths: string[] = []
+  const referencedPlans: string[] = []
+  for (const { path, record } of runs) {
+    const activity = Math.max(
+      lstatSync(path, { throwIfNoEntry: false })?.mtimeMs ?? 0,
+      record ? (lstatSync(join(path, "run.json"), { throwIfNoEntry: false })?.mtimeMs ?? 0) : 0,
+    )
+    if ((!record || record.status === "in_progress") && activity >= hardCutoff) {
+      protectedPaths.push(resolve(path))
+      const plan = record?.plan as { path?: unknown } | undefined
+      if (typeof plan?.path === "string") {
+        if (isAbsolute(plan.path)) protectedPaths.push(resolve(plan.path))
+        else referencedPlans.push(plan.path.replaceAll("\\", "/"))
+      }
+    }
+  }
+  return runs
+    .filter(({ path, record }) => {
+      // Relative plan references include the configured artifact prefix. Match the
+      // run suffix conservatively rather than assuming how deeply artifacts nest.
+      const suffix = `${relative(runsRoot, path).split(sep).join("/")}/`
+      if (
+        referencedPlans.some((plan) => `/${plan}`.includes(`/${suffix}`)) ||
+        protectedPaths.some((target) => {
+          const rel = relative(resolve(path), target)
+          return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))
+        })
+      )
+        return false
+      return (lstatSync(path, { throwIfNoEntry: false })?.mtimeMs ?? Infinity) < cutoff
+    })
+    .map(({ path }) => path)
 }
 
-function isIgnored(projectRoot: string, artifactRoot: string): boolean {
-  const gitignore = join(projectRoot, ".gitignore")
-  if (!existsSync(gitignore)) return false
-  const text = readFileSync(gitignore, "utf8")
+/** Ask Git to apply ignore files, nested rules, exclusions, and global configuration. */
+function isIgnored(projectRoot: string, artifactRoot: string): boolean | string {
   const artifactPath = relative(projectRoot, artifactRoot).split(sep).join("/")
-  return text
-    .split("\n")
-    .some(
-      (line) =>
-        line.trim() === `${artifactPath}/` || line.trim() === artifactPath || line.trim() === `/${artifactPath}/`,
-    )
+  if (artifactPath === ".." || artifactPath.startsWith("../") || isAbsolute(artifactPath)) return "outside project"
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.toUpperCase().startsWith("GIT_")))
+  const repository = spawnSync("git", ["rev-parse", "--is-inside-work-tree"], { cwd: projectRoot, env })
+  if (repository.error) return "git unavailable"
+  if (repository.status !== 0) return "non-repository"
+  const result = spawnSync("git", ["check-ignore", "--quiet", "--", `${artifactPath}/`], { cwd: projectRoot, env })
+  if (result.error) return "git unavailable"
+  if (result.status !== 0 && result.status !== 1) return "Git check-ignore failed"
+  return result.status === 0
 }
 
 export function doctorReport(input: DoctorInput): DoctorReport {
@@ -331,8 +374,10 @@ export function doctorReport(input: DoctorInput): DoctorReport {
   if (existsSync(input.artifactRoot)) pass(`artifact root exists (${input.artifactRoot})`)
   else warn(`artifact root does not exist yet (${input.artifactRoot}); it is created on first run`)
 
-  if (isIgnored(input.projectRoot, input.artifactRoot)) pass("artifact root is gitignored")
-  else warn(`add '${input.options.artifacts}/' to .gitignore`)
+  const ignored = isIgnored(input.projectRoot, input.artifactRoot)
+  if (ignored === true) pass("artifact root is gitignored")
+  else if (ignored === false) warn(`add '${input.options.artifacts}/' to .gitignore`)
+  else warn(`artifact ignore check unavailable: ${ignored}`)
 
   const gates = detectGates(input.projectRoot, input.options.gates)
   if (gates.length > 0) pass(`gates: ${gates.map((gate) => gate.id).join(", ")} (${gates[0]?.source})`)

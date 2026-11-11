@@ -99,9 +99,11 @@ def config(value: Any) -> dict[str, Any]:
 
 
 def git(root: Path, *arguments: str) -> bytes:
-    """Read local Git state without shell evaluation or environment redirection."""
+    """Read snapshot Git state with fsmonitor, external diff and textconv callbacks disabled."""
     env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
-    return subprocess.check_output(["git", "-C", str(root), *arguments], env=env, stderr=subprocess.PIPE)  # noqa: S603,S607 - fixed local read-only Git recipes, no shell
+    command = ["git", "-c", "core.fsmonitor=false", "-C", str(root), *arguments]
+    # Repository clean/process filters may still execute when Git re-hashes working-tree files.
+    return subprocess.check_output(command, env=env, stderr=subprocess.PIPE)  # noqa: S603 - fixed local read-only Git recipes, no shell
 
 
 def file_identity(root: Path, name: str) -> dict[str, Any] | None:
@@ -151,11 +153,15 @@ def snapshot(root: Path, settings: dict[str, Any]) -> dict[str, Any]:
     exclusions = [f":(exclude,literal){name}" for name in sorted(scope)]
     state = {
         "head": git(root, "rev-parse", "HEAD").decode().strip(),
-        "tracked_diff": hashlib.sha256(git(root, "diff", "--binary", "--no-ext-diff", "HEAD", "--")).hexdigest(),
-        "outside_scope": hashlib.sha256(
-            git(root, "diff", "--binary", "--no-ext-diff", "HEAD", "--", ".", *exclusions)
+        "tracked_diff": hashlib.sha256(
+            git(root, "diff", "--binary", "--no-ext-diff", "--no-textconv", "HEAD", "--")
         ).hexdigest(),
-        "index": hashlib.sha256(git(root, "diff", "--cached", "--binary", "--no-ext-diff", "HEAD", "--")).hexdigest(),
+        "outside_scope": hashlib.sha256(
+            git(root, "diff", "--binary", "--no-ext-diff", "--no-textconv", "HEAD", "--", ".", *exclusions)
+        ).hexdigest(),
+        "index": hashlib.sha256(
+            git(root, "diff", "--cached", "--binary", "--no-ext-diff", "--no-textconv", "HEAD", "--")
+        ).hexdigest(),
         "files": files,
         "tracked_bytes": digest(identities),
         "outside_scope_bytes": digest({name: identity for name, identity in identities.items() if name not in scope}),

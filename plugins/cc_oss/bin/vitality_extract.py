@@ -171,7 +171,7 @@ _ABANDON_WORD = (
 _WARNING_SIGN = r"[\U000026a0\U000026d4\U00002757\U0000274c\U0001f6a8\U0001f6ab\U0001f6d1]\U0000fe0f?"
 #: Opening and closing marks around a description's status: bold/italic, a bracket, a warning sign.
 #: Bold or italic mark, a raw string because docformatter 1.7.8 on CPython 3.12.3 corrupts ``\*{{1,2}}`` in an f-string.
-_EMPHASIS_MARK = r"\*{1,2}|_{1,2}"
+_EMPHASIS_MARK = r"[*_]"
 _ABANDON_OPEN = rf"(?:{_EMPHASIS_MARK}|\[|\(|{_WARNING_SIGN}[ \t]*)"
 _ABANDON_CLOSE = rf"(?:{_EMPHASIS_MARK}|\]|\)|[ \t]*{_WARNING_SIGN})"
 #: Description tail — the status ends the description or its sentence ("**DEPRECATED**", "Archived.", "No longer
@@ -334,9 +334,9 @@ _DISPLAY_DIGITS: dict[str, int] = {
 #: ``commits_50`` author placeholder when GitHub resolves neither a login nor a git name.
 _UNKNOWN_AUTHOR = "unknown"
 #: Axis 8 SECURITY.md depth — a contact e-mail address.
-_EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+_EMAIL_RE = re.compile(r"(?<![\w.+-])[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 #: Axis 8 SECURITY.md depth — a response SLA (a number next to hour/day/week).
-_SLA_RE = re.compile(r"\d+\s*(?:business\s+|working\s+)?(?:hours?|days?|weeks?)\b", re.IGNORECASE)
+_SLA_RE = re.compile(r"(?<!\d)\d+\s*(?:business\s+|working\s+)?(?:hours?|days?|weeks?)\b", re.IGNORECASE)
 #: Month names and abbreviations, for changelog dates.
 _MONTH = r"(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?"
 _MONTH_NUMBERS = {
@@ -1222,6 +1222,7 @@ def abandonment_statements(
         >>> abandonment_statements("# DEPRECATED\\nDeprecated: use --new-flag instead of --old-flag\\n", None, "foo")
         ['# deprecated']
     """
+    description = description[:400] if description is not None else None
     texts = [text for text in (head, description) if text is not None]
     if not texts:
         return None
@@ -1908,6 +1909,7 @@ def _security_md(view: DataView, *listings: frozenset[str] | None) -> tuple[dict
     """
     text = view.text("security_text")
     if text is not None:
+        text = text[:65_536]
         depth = 1 + bool(_EMAIL_RE.search(text)) + bool(_SLA_RE.search(text))
         return _cp(Checkpoint.MET, f"depth {depth}/3"), depth
     listed = [_listed(listing, _policy_file("security")) for listing in listings]

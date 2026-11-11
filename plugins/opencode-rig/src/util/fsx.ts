@@ -5,7 +5,18 @@
  * never leaves a half-written JSON artifact that later looks authoritative.
  */
 
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
+import {
+  appendFileSync,
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs"
+import { randomUUID } from "node:crypto"
 import { dirname, join } from "node:path"
 
 export function ensureDir(path: string): string {
@@ -22,11 +33,22 @@ export function readJsonIfExists<T>(path: string): T | undefined {
   return readJson<T>(path)
 }
 
+/** Replace JSON through an exclusively created sibling, preserving existing temporary aliases. */
 export function writeJsonAtomic(path: string, value: unknown): void {
   ensureDir(dirname(path))
-  const temporary = `${path}.tmp-${process.pid}-${Date.now()}`
-  writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, "utf8")
-  renameSync(temporary, path)
+  const temporary = `${path}.tmp-${randomUUID()}`
+  const descriptor = openSync(temporary, "wx", 0o600)
+  try {
+    try {
+      writeFileSync(descriptor, `${JSON.stringify(value, null, 2)}\n`, "utf8")
+    } finally {
+      closeSync(descriptor)
+    }
+    renameSync(temporary, path)
+  } finally {
+    // Only a successfully created sibling belongs to this writer; never remove a planted collision.
+    if (existsSync(temporary)) unlinkSync(temporary)
+  }
 }
 
 export function appendLine(path: string, line: string): void {

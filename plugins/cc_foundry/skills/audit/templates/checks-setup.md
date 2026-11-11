@@ -2,13 +2,13 @@
 
 ## Check 1 — Inventory drift (MEMORY.md vs disk)
 
-Use Glob (`agents/*.md`, path `.claude/`) to list agent files; extract basenames, sort, write to `/tmp/agents_disk.txt` via Bash:
+Use Glob (`agents/*.md`, path `.claude/`) to list agent files; extract basenames and sort the returned inventory for comparison.
 
 ```bash
-ls .claude/agents/*.md 2>/dev/null | xargs -n1 basename 2>/dev/null | sed 's/\.md$//' | sort >/tmp/agents_disk.txt || true # timeout: 5000
+ls .claude/agents/*.md 2>/dev/null | xargs -n1 basename 2>/dev/null | sed 's/\.md$//' | sort || true # timeout: 5000
 ```
 
-Read `- Agents:` and `- Skills:` roster lines from MEMORY.md content injected in conversation context (auto-memory at session start). Don't Grep file path — MEMORY.md not under `.claude/` but in Claude Code's auto-memory system. Repeat with Glob (`skills/*/`, path `.claude/`) for skills on disk — write to `/tmp/skills_disk.txt`.
+Read `- Agents:` and `- Skills:` roster lines from MEMORY.md content injected in conversation context (auto-memory at session start). Don't Grep file path — MEMORY.md not under `.claude/` but in Claude Code's auto-memory system. Repeat with Glob (`skills/*/`, path `.claude/`) for skills on disk and compare the returned inventory directly.
 
 **macOS caution**: BSD grep treats args starting with `-` as option flags. Building bash comparison from MEMORY.md roster via grep: use `grep -E 'Agents:'` (no leading `- `) or `grep -- '- Agents:'`, not `grep '- Agents:'` — latter exits 2 on macOS, silently produces empty result. Safest: use Read tool (not grep) for MEMORY.md.
 
@@ -25,25 +25,25 @@ Use Grep tool (pattern `gh |python -m|ruff|mypy|pytest`, glob `skills/*/SKILL.md
 Every allow entry must appear in guide, and vice versa.
 
 ```bash
-if [ "${JQ_AVAILABLE:-false}" = "false" ] || ! command -v jq &>/dev/null; then  # timeout: 5000
+if [ "${JQ_AVAILABLE:-false}" = "false" ] || ! command -v jq &>/dev/null; then
     printf "⚠ SKIPPED: Check 4 — jq not available\n"
 elif [ ! -f ".claude/settings.json" ]; then
     printf "⚠ SKIPPED: Check 4 — .claude/settings.json not found\n"
 elif [ ! -f ".claude/permissions-guide.md" ]; then
     printf "⚠ SKIPPED: Check 4 — .claude/permissions-guide.md not found\n"
 else
-    jq -r '.permissions.allow[]' .claude/settings.json 2>/dev/null | \  # timeout: 5000
+    jq -r '.permissions.allow[]' .claude/settings.json 2>/dev/null | \
     while IFS= read -r perm; do
         grep -qF "\`$perm\`" .claude/permissions-guide.md 2>/dev/null \
             || printf "⚠ MISSING from guide: %s\n" "$perm"
     done
 
-    grep '^| `' .claude/permissions-guide.md 2>/dev/null | awk -F'`' '{print $2}' | \  # timeout: 5000
+    grep '^| `' .claude/permissions-guide.md 2>/dev/null | awk -F'`' '{print $2}' | \
     while IFS= read -r perm; do
-        jq -e --arg p "$perm" '(.permissions.allow // []) + (.permissions.deny // []) | contains([$p])' .claude/settings.json > /dev/null 2>&1 \  # timeout: 5000
+        jq -e --arg p "$perm" '(.permissions.allow // []) + (.permissions.deny // []) | contains([$p])' .claude/settings.json > /dev/null 2>&1 \
         || printf "⚠ ORPHANED in guide: %s\n" "$perm"
     done
-fi
+fi # timeout: 5000
 ```
 
 ## Check 5 — Permission safety audit
@@ -114,14 +114,22 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_plugin_layout.py" --
 ## Check 9 — Agent color drift (statusline COLOR_MAP vs frontmatter)
 
 ```bash
-for f in .claude/agents/*.md; do # timeout: 5000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
+[ "$LOCAL_MODE" = "true" ] && _ROOT="plugins" || _ROOT=".claude"
+[ "$LOCAL_MODE" = "true" ] && statusline="plugins/cc_foundry/hooks/statusline.js" || statusline=".claude/hooks/statusline.js"
+palette=$(awk '/const COLOR_MAP =/{active=1; next} active && /};/{exit} active {sub(/:.*/, ""); gsub(/[[:space:]]/, ""); print}' "$statusline" 2>/dev/null)
+find "$_ROOT" \( -name worktrees -o -name node_modules -o -name .venv -o -path '*/tests/*' \) -prune -o -type f -path '*/agents/*.md' -print 2>/dev/null | while IFS= read -r f; do # timeout: 5000
     name=$(basename "$f" .md)
     color=$(awk '/^---$/{c++; if(c==2)exit} c==1 && /^color:/{sub(/^color: */,""); print}' "$f")
     [ -n "$color" ] && printf "%s: %s\n" "$name" "$color"
+    if [ -n "$color" ] && [ -n "$palette" ] && ! printf '%s\n' "$palette" | grep -qxF "$color"; then
+        printf "C9-MEDIUM: %s color '%s' absent from %s COLOR_MAP\n" "$f" "$color" "$statusline"
+    fi
 done
 ```
 
-Use model reasoning to cross-reference each extracted color name against `COLOR_MAP` keys in `.claude/hooks/statusline.js`. Flag:
+Use model reasoning to cross-reference every extracted agent color against foundry's `hooks/statusline.js` `COLOR_MAP` in local mode or `.claude/hooks/statusline.js` otherwise. Foundry's statusline colors agents from every plugin; a sibling plugin does not need its own statusline. Skip the comparison when that shared statusline hook is absent. Flag:
 
 - Color in agent frontmatter but **not a key in `COLOR_MAP`** → **medium** (agent appears uncolored)
 - Color in `COLOR_MAP` not declared by any agent → **low** (dead mapping, no functional impact)
@@ -184,7 +192,7 @@ Note: thresholds were calibrated against a total that counted the global `CLAUDE
 
 ## Check 39 — Plugin version freeze
 
-`plugins/CLAUDE.md` versioning policy requires bumping `plugin.json` version in every commit that modifies plugin files. A frozen version misrepresents what changed and defeats changelog reconstruction.
+`plugins/CLAUDE.md` versioning policy requires bumping `plugin.json` version in commits that modify plugin product files; test-only changes are exempt. A frozen version misrepresents product changes and defeats changelog reconstruction. Review a generated package manifest separately when its only changes record shipped test bytes.
 
 Skip if `LOCAL_MODE != true` (no git history accessible).
 
@@ -204,7 +212,8 @@ else
         head_ver=$(git show HEAD:"$plugin_json" 2>/dev/null | python -c "import sys,json; print(json.load(sys.stdin)['version'])" 2>/dev/null)
         [ -z "$head_ver" ] && continue  # new plugin, no HEAD yet
         if [ "$disk_ver" = "$head_ver" ]; then
-            changed=$(git diff --name-only HEAD -- "$plugin_dir" 2>/dev/null | wc -l | tr -d ' ')
+            changed=$({ git diff --name-only HEAD -- "$plugin_dir"; git ls-files --others --exclude-standard -- "$plugin_dir"; } 2>/dev/null |
+                sort -u | grep -v "^${plugin_dir}tests/" | grep -c .)
             if [ "$changed" -gt 0 ]; then
                 printf "C39-MEDIUM: plugin '%s' has %s modified file(s) but version unchanged (%s)\n" \
                     "$plugin_name" "$changed" "$disk_ver"

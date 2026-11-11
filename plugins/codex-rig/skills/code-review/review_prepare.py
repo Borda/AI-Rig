@@ -716,7 +716,10 @@ def _direct_failure_evidence(out: Path, codex_home: Path, context: dict[str, Any
     ]
     if len(receipts) != 1:
         raise ValueError(f"review-direct-failure-receipt-missing:{role}")
-    children = _child_sessions(codex_home, plan["parent_thread_id"]).get(task, [])
+    child_sessions = _child_sessions(codex_home, plan["parent_thread_id"])
+    children = child_sessions.get(task, [])
+    if not children and child_sessions.get("provenance-session-unreadable"):
+        raise ValueError("provenance-session-unreadable")
     evidence = {"spawn": call, "receipt": receipts[0], "child": []}
     if children:
         if len(children) != 1:
@@ -1320,14 +1323,17 @@ def prepare(
 
 
 def _child_sessions(codex_home: Path, parent_thread_id: str) -> dict[str, list[Path]]:
-    """Index matching child metadata once rather than rescanning logs for every reviewer."""
+    """Index matching children once and retain unknown files for no-child checks."""
     children: dict[str, list[Path]] = {}
     for path in (codex_home / "sessions").rglob("*.jsonl"):
-        with path.open(encoding="utf-8") as stream:
-            first = stream.readline()
         try:
-            row = json.loads(first)
-        except json.JSONDecodeError:
+            with path.open("rb") as stream:
+                first = stream.readline(8 * 1024 * 1024)
+            if len(first) == 8 * 1024 * 1024:
+                raise ValueError("provenance-session-unreadable")
+            row = json.loads(first.decode("utf-8"))
+        except (OSError, ValueError, RecursionError):
+            children.setdefault("provenance-session-unreadable", []).append(path)
             continue
         if not isinstance(row, dict) or row.get("type") != "session_meta":
             continue

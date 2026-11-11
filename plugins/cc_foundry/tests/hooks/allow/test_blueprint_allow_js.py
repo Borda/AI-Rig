@@ -223,7 +223,6 @@ class TestVerbatimAllow:
             pytest.param(BLOCK, id="whole-block"),
             pytest.param(f"{SINGLE}  # resolve the run dir", id="trailing-comment"),
             pytest.param(SINGLE + "   ", id="trailing-whitespace"),
-            pytest.param(BLOCK.replace("\n", "\r\n"), id="crlf-line-endings"),
         ],
     )
     def test_manifest_entry_text_allowed(self, run_blueprint: Callable[..., dict], seeded: bytes, command: str) -> None:
@@ -234,8 +233,7 @@ class TestVerbatimAllow:
         NOT in the manifest, so its allow proves the whole-block digest path fired rather than the per-command
         fallback. Comment stripping runs before hashing, so an explanatory trailing ``# ...`` (no separator) does not
         cost the allow. Trailing whitespace is right-stripped by the generator too (leading whitespace must still
-        miss, see ``TestPassthrough``). A CRLF block from a Windows-side command still matches the digest the
-        pre-commit host generated.
+        miss, see ``TestPassthrough``). Only shell space and tab can be discarded safely at line endings.
         """
         result = run_blueprint(command, manifest=seeded)
 
@@ -494,6 +492,29 @@ def _evaluate(plugin_root: Path, stdin: str) -> dict:
     proc = _run_node(["-e", script], plugin_root=plugin_root)
     assert proc.returncode == 0, f"node failed: {proc.stderr}"
     return json.loads(proc.stdout)
+
+
+@_skip_node_unavailable
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param(SINGLE + "\r# ; echo hidden", id="cr-before-comment-command"),
+        pytest.param(SINGLE + "\r\n# comment", id="crlf-before-comment"),
+        pytest.param(SINGLE + "\r" + OTHER, id="cr-composition"),
+        pytest.param(BLOCK.replace("\n", "\r\n"), id="crlf-block"),
+        *[
+            pytest.param(SINGLE + char, id=f"trailing-u{ord(char):04x}")
+            for char in "\v\f\x1c\x1d\x1e\x1f\x85\xa0\u1680\u2000\u2028\u2029\u202f\u205f\u3000"
+        ],
+        pytest.param(OTHER + "\xa0 # comment", id="non-shell-blank-before-comment"),
+    ],
+)
+def test_normalization_alias_passthrough(command: str, run_blueprint: Callable[..., dict], seeded_root: Path) -> None:
+    """Shell word characters discarded by normalization never acquire a manifest allow in either entry point."""
+    assert run_blueprint(command) == {}
+    result = _evaluate(seeded_root, _bash_stdin(command))
+    assert result["decision"] == "passthrough"
+    assert result["payload"] is None
 
 
 @_skip_node_unavailable

@@ -53,7 +53,12 @@ def slash_branch_repo(tmp_path: Path) -> Path:
     """Create a real repository on the slash-named branch ``feature/x`` and return the lock path the prelude uses."""
     _git(tmp_path, "init", "-q")
     _git(tmp_path, "symbolic-ref", "HEAD", "refs/heads/feature/x")
-    return tmp_path / ".git" / "oss-resolve-feature-x.lock"
+    key = (
+        subprocess.check_output([_GIT, "hash-object", "--stdin"], cwd=tmp_path, input=b"refs/heads/feature/x\n")
+        .decode()
+        .strip()
+    )
+    return tmp_path / ".git" / f"oss-resolve-{key}.lock"
 
 
 class TestStopPathRelease:

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -26,7 +27,7 @@ from pathlib import Path
 
 import pytest
 from _codemap_skill_text import between, flat_file
-from codemap_py import integration
+from codemap_py import integration, query
 
 _PLUGIN_ROOT = Path(__file__).parent.parent.parent
 _PLUGINS_DIR = _PLUGIN_ROOT.parent
@@ -134,6 +135,162 @@ def _queries(tmp_path: Path) -> list[str]:
     """Return the query lines the stubbed ``codemap-py`` recorded, or an empty list when none ran."""
     trace = tmp_path / "queries.txt"
     return trace.read_text(encoding="utf-8").splitlines() if trace.exists() else []
+
+
+def _run_gap(cwd: Path, payload: str, **env: str) -> subprocess.CompletedProcess[str]:
+    """Execute the documented shell and Python with only git-root discovery replaced at its process boundary."""
+    lines = _CONTEXT_CONTRACT.read_text(encoding="utf-8").splitlines()
+    section = lines.index("## Coverage metadata in output")
+    start = lines.index("```bash", section)
+    end = lines.index("```", start + 1)
+    snippet = "\n".join(lines[start + 1 : end]).replace(
+        '{"cmd": "<subcommand>", "target": "<target>", "index": <raw_index_json>}', payload
+    )
+    driver = r"""
+import os, subprocess, sys
+def git_root(args, **kwargs):
+    assert args == ["git", "rev-parse", "--show-toplevel"]
+    status = os.environ["FAKE_GIT_STATUS"]
+    if status == "missing":
+        raise FileNotFoundError("git")
+    return subprocess.CompletedProcess(args, int(status), stdout=os.environ["FAKE_REPO"] + "\n", stderr="")
+subprocess.run = git_root
+exec(compile(sys.argv[1], "<gap-example>", "exec"))
+"""
+    full_env = {key: value for key, value in os.environ.items() if not key.startswith("CODEMAP_GAP_")}
+    full_env.update(
+        {
+            "FAKE_REPO": cwd.as_posix(),
+            "FAKE_GIT_STATUS": "0",
+            "PYTHON_EXE": Path(sys.executable).as_posix(),
+            "GAP_DRIVER": driver,
+            **env,
+        }
+    )
+    stubs = (
+        'git() { test "$FAKE_GIT_STATUS" = 0 || return 128; printf "%s\\n" "$FAKE_REPO"; }\n'
+        'python() { "$PYTHON_EXE" -c "$GAP_DRIVER" "${@:2}"; }\n'
+    )
+    return subprocess.run(
+        [_POSIX_BASH, "-c", "set -e\n" + stubs + snippet + '\nprintf "task continues\\n"'],
+        cwd=cwd,
+        env=full_env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+
+
+@_skip_no_posix_bash
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.parametrize("hint", ["grep \"hook\\name\" 'quoted' $(touch injected)\nCODEMAP_GAP\nnext line", "", None])
+def test_gap_example_appends_valid_json_at_project_root(tmp_path: Path, nested: bool, hint: str | None) -> None:
+    """Heredoc data survives shell metacharacters and nested runs append to the project-root ledger."""
+    cwd = tmp_path / "src" if nested else tmp_path
+    cwd.mkdir(exist_ok=True)
+    ledger = tmp_path / ".cache" / "codemap" / "gaps.jsonl"
+    ledger.parent.mkdir(parents=True)
+    ledger.write_text('{"prior":true}\n', encoding="utf-8")
+    index = {"not_covered": ["lazy-loading"], **({"hint": hint} if hint is not None else {})}
+    target = "package.module'\"$(touch target_injected)"
+    payload = json.dumps({"cmd": "rdeps", "target": target, "index": index})
+
+    result = _run_gap(cwd, payload, FAKE_REPO=tmp_path.as_posix())
+
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == ""
+    assert result.stdout == "task continues\n"
+    records = [json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines()]
+    assert len(records) == 2
+    assert records[0] == {"prior": True}
+    assert records[1] == {
+        "ts": records[1]["ts"],
+        "cmd": "rdeps",
+        "target": target,
+        "not_covered": ["lazy-loading"],
+        "hint": hint or "",
+    }
+    assert not (cwd / ".cache" / "codemap" / "gaps.jsonl").exists() or cwd == tmp_path
+    assert not (cwd / "injected").exists()
+    assert not (cwd / "target_injected").exists()
+
+
+@_skip_no_posix_bash
+@pytest.mark.parametrize("git_status", ["128", "missing"])
+def test_gap_example_without_git_uses_cwd_and_continues(tmp_path: Path, git_status: str) -> None:
+    """Absent repositories or git executables fall back to the working directory with a visible diagnostic."""
+    payload = json.dumps({"cmd": "rdeps", "target": "package.module", "index": {"not_covered": ["lazy-loading"]}})
+
+    result = _run_gap(tmp_path, payload, FAKE_GIT_STATUS=git_status)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "task continues\n"
+    assert result.stderr == "codemap gap log: using current directory (git root unavailable)\n"
+    record = json.loads((tmp_path / ".cache" / "codemap" / "gaps.jsonl").read_text(encoding="utf-8"))
+    assert record["not_covered"] == ["lazy-loading"]
+    assert record["hint"] == ""
+
+
+@_skip_no_posix_bash
+@pytest.mark.parametrize("index_json", ["{}", "null", "not-json"])
+def test_gap_example_missing_or_invalid_values_diagnoses_and_continues(tmp_path: Path, index_json: str) -> None:
+    """Missing coverage values and invalid query JSON cannot abort the caller under errexit."""
+    payload = '{"cmd": "rdeps", "target": "package.module", "index": ' + index_json + "}"
+
+    result = _run_gap(tmp_path, payload)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "task continues\n"
+    assert result.stderr == "codemap gap log skipped\n"
+    assert not (tmp_path / ".cache" / "codemap" / "gaps.jsonl").exists()
+
+
+@_skip_no_posix_bash
+def test_gap_example_failed_append_diagnoses_and_continues(tmp_path: Path) -> None:
+    """An unwritable ledger produces one diagnostic and preserves caller progress."""
+    (tmp_path / ".cache").write_text("occupied", encoding="utf-8")
+    payload = json.dumps({"cmd": "rdeps", "target": "package.module", "index": {"not_covered": ["lazy-loading"]}})
+
+    result = _run_gap(tmp_path, payload)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "task continues\n"
+    assert result.stderr == "codemap gap log skipped\n"
+    assert (tmp_path / ".cache").read_text(encoding="utf-8") == "occupied"
+
+
+@_skip_no_posix_bash
+def test_evidence_timestamp_requests_utc(tmp_path: Path) -> None:
+    """The Z-suffixed index timestamp requests UTC even when the host timezone differs."""
+    _make_index(tmp_path)
+    index = tmp_path / ".cache" / "codemap" / f"{tmp_path.name}.json"
+    os.utime(index, (1672531200, 1672531200))
+    result = _run_batch(
+        tmp_path, _help_branch("usage") + _RECORD_QUERY, CODEMAP_QUERY_KIND="central", TZ="Pacific/Honolulu"
+    )
+
+    assert "index_mtime=2023-01-01T00:00:00Z" in result.stdout
+
+
+@pytest.mark.integration
+def test_extended_scan_example_uses_supported_production_importer_query(
+    project: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The documented fallback runs on a real index and exposes the count used for risk tiering."""
+    root, index_path = project
+    lines = _CONTEXT_CONTRACT.read_text(encoding="utf-8").splitlines()
+    fallback = next(line for line in lines if "Fallback for one known module:" in line)
+    command = fallback.split("`codemap-py query ", 1)[1].split("`", 1)[0].replace("<mod>", "gamma")
+    monkeypatch.chdir(root)
+
+    query.main(["--index", str(index_path), "--no-heal", *shlex.split(command)])
+
+    result = json.loads(capsys.readouterr().out)
+    assert result["imported_by"] == ["alpha", "beta"]
+    assert result["importer_count"] == 2
+    assert result["excluded_test_importer_count"] == 0
+    assert any("Risk tier by `importer_count`" in line for line in lines)
+    assert any("unknown" in line.lower() and "failure" in line.lower() for line in lines[lines.index(fallback) :])
 
 
 class TestContextContract:
@@ -595,7 +752,7 @@ class TestDevelopWrapper:
         """
         qname = _DEVELOP_QNAME.read_text(encoding="utf-8")
 
-        assert "fails safe to standard" in flat_file(_DEVELOP_FIX)
+        assert "empty fails safe to {_DEFAULT_QUERY_KIND}" in qname
         assert '_DEFAULT_QUERY_KIND = "standard"' in qname
         assert "query_kind = _DEFAULT_QUERY_KIND" in qname
 

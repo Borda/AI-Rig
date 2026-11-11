@@ -25,6 +25,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_load_shared.py" prefli
 Compute run directory:
 
 ```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_setup_worktree_wrap.py" feature  # timeout: 5000
 ```
 
@@ -59,7 +60,7 @@ cat "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/skills/feature/templates/team-spa
 
 Summary below:
 
-- **Teammate 1 — foundry:sw-engineer (model=opus)**: implement feature (Steps 2-3: demo test, TDD loop); edit source only, not `tests/`; write to `.temp/develop/$_SPAWN_TS/feature-sw-engineer-$_SPAWN_TS.md`; return compact JSON. Append to this teammate's spawn prompt: capture the Step 2 demo's failing exit code before implementing, report it in the output file as `"demo_red_exit": N` and in the return envelope as `demo_red_exit:N`; demo already passes pre-implementation → return `status: blocked` instead of proceeding.
+- **Teammate 1 — foundry:sw-engineer (model=opus)**: implement feature (Steps 2-3: demo test, TDD loop); edit source and create primary red-green test files under `tests/` as scoped in the canonical prompt; write to `.temp/develop/$_SPAWN_TS/feature-sw-engineer-$_SPAWN_TS.md`; return compact JSON with the demo evidence required by that prompt.
 - **Teammate 2 — foundry:qa-specialist (model=sonnet)**: add edge-case/regression/security tests; edit `tests/` only, not source; write to `.temp/develop/$_SPAWN_TS/feature-qa-specialist-$_SPAWN_TS.md`; return compact JSON.
 - **Teammate 3 — foundry:doc-scribe (model=sonnet)**: prepare docstrings and README only (no CHANGELOG); write to `.temp/develop/$_SPAWN_TS/feature-doc-scribe-$_SPAWN_TS.md`; return compact JSON.
 
@@ -110,7 +111,7 @@ done
 
 After all teammates complete: read output files from `.temp/develop/$TS/`, synthesize, then run only these solo blocks, in order:
 
-1. CHANGELOG entry — the lead inserts it under `Unreleased` with the Edit tool, as in Step 5 (doc-scribe wrote none).
+1. CHANGELOG entry — the lead detects and follows the existing changelog convention, as in Step 5; absent convention or suitable section → note in Follow-up (doc-scribe wrote none).
 2. Step 5's `foundry--quality-stack.md` load block and the steps it lists (Branch Safety Guard, Quality Stack, bounded implementation challenge, Codex Mechanical Delegation; Codex Pre-pass only when selected as the challenge, Progressive Review Loop only on explicit request) — run the bounded implementation challenge in the calling skill; the Step 4 review does not run.
 3. Step 5's Final gate rerun block (full suite with `$TEST_CMD`) — the quality stack's wide run is its first full-suite run only when `$TEST_CMD` is that same pytest invocation (else run the block once); rerun after any later code change, max 3 gate iterations.
 

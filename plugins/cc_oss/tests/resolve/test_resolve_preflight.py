@@ -209,44 +209,41 @@ class TestGhAuthCache:
 
 
 class TestRemoteAhead:
-    """``main`` — pulling when the remote is ahead of the local branch."""
+    """The preflight CLI refreshes origin without pulling the caller's branch."""
 
     @pytest.mark.parametrize(
-        ("remote_stdout", "log_stdout", "pull_rc", "expected_rc", "expected_message"),
+        ("remote_stdout", "log_stdout", "fetch_rc", "expected_rc", "expected_message"),
         [
             pytest.param(
                 "origin\t... (fetch)\n",
                 "abc123 commit1\ndef456 commit2\n",
                 0,
                 0,
-                "git pull: merged",
-                id="remote-ahead-by-2-pulls-and-merges",
+                "fetched origin (current branch unchanged)",
+                id="remote-ahead-fetches-without-merging",
             ),
-            pytest.param("", "abc123 commit\n", 1, 1, "git pull had conflicts", id="pull-conflict-exits-1"),
+            pytest.param("", "abc123 commit\n", 1, 1, "cannot fetch origin", id="fetch-failure-exits-1"),
         ],
     )
-    def test_pull_outcome_sets_exit_code_and_message(
+    def test_fetch_outcome_sets_exit_code_and_message(
         self,
         preflight_env: Path,
         stub_tools: Callable,
         capsys: pytest.CaptureFixture[str],
         remote_stdout: str,
         log_stdout: str,
-        pull_rc: int,
+        fetch_rc: int,
         expected_rc: int,
         expected_message: str,
     ) -> None:
-        """Remote ahead → git pull invoked; the exit code and stderr message follow the pull outcome.
-
-        A clean pull exits 0 with 'merged'; a non-zero pull exits 1 with a conflict message.
-        """
+        """Fetch errors block the CLI; a successful fetch preserves the current branch."""
         stub_tools(
             {
                 "gh auth": (0, ""),
                 "git remote": (0, remote_stdout),
                 "git rev-parse": (0, "origin/main"),
                 "git log": (0, log_stdout),
-                "git pull": (pull_rc, ""),
+                "git fetch": (fetch_rc, ""),
             }
         )
         assert rp.main([]) == expected_rc

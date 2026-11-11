@@ -86,7 +86,7 @@ if [ "${CODEMAP_ENABLED:-true}" != "false" ] && [ "$_CM_ROUTE" != "skip" ] && co
             [ -n "$TARGET_FN" ] && _cq symbol --with-imports "$TARGET_FN"
             ;;
     esac
-    _IDX_MTIME=$(date -r "${_IDX}/${PROJ}.json" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "?")
+    _IDX_MTIME=$(date -u -r "${_IDX}/${PROJ}.json" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "?")
     if [ "$_CM_STALE" -eq 1 ]; then _CM_COMPL="stale"
     elif [ "$_CM_H" -eq 0 ]; then _CM_COMPL="unknown"
     elif [ "$_CM_NONEXH" -eq 1 ] || [ "$_CM_H" -lt "$_CM_N" ]; then _CM_COMPL="partial"
@@ -130,11 +130,31 @@ Each `codemap-py query` result carries `index` block with per-command coverage f
 
 **Codemap = primary codebase navigation tool.** Do NOT grep/bash to re-verify what codemap already returned. When `not_covered` non-empty: (1) include one-line caveat — "Note: callers via [not_covered items] not included — structurally invisible to static AST"; (2) log gap:
 
+In the data heredoc below, supply the subcommand and target as JSON strings and replace `<raw_index_json>` with the query result's raw `index` object. Keep JSON string escapes, including escaped newlines, so no data line can equal the distinctive `CODEMAP_GAP` delimiter; never splice these values into shell source. The Python extracts `not_covered` and optional `hint`, resolves the git top level with a current-directory (`$PWD`) fallback, and appends the record. Gap logging never blocks the caller: a failed write or invalid input emits one stderr diagnostic and continues.
+
 ```bash
-mkdir -p .cache/codemap
-printf '{"ts":"%s","cmd":"%s","target":"%s","not_covered":%s,"hint":"%s"}\n' \
-    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "<subcommand>" "<target>" '<not_covered_json>' "<hint_or_empty>" \
-    >> .cache/codemap/gaps.jsonl 2>/dev/null || true
+python -c '
+import datetime, json, pathlib, subprocess, sys
+try:
+    payload = json.load(sys.stdin)
+    index = payload["index"]
+    record = {"ts": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "cmd": payload["cmd"], "target": payload["target"], "not_covered": index["not_covered"], "hint": index.get("hint", "")}
+    try:
+        repo = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=False)
+        root = repo.stdout.strip() if repo.returncode == 0 else ""
+    except OSError:
+        root = ""
+    ledger = (pathlib.Path(root) if root else pathlib.Path.cwd()) / ".cache" / "codemap" / "gaps.jsonl"
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    with ledger.open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps(record) + "\n")
+    if not root:
+        print("codemap gap log: using current directory (git root unavailable)", file=sys.stderr)
+except (OSError, ValueError, KeyError, TypeError):
+    print("codemap gap log skipped", file=sys.stderr)
+' <<'CODEMAP_GAP' || printf '%s\n' 'codemap gap log skipped' >&2
+{"cmd": "<subcommand>", "target": "<target>", "index": <raw_index_json>}
+CODEMAP_GAP
 ```
 
 (3) Continue achieving goal — do NOT abandon task because of structural gap.
@@ -153,13 +173,14 @@ Set `CODEMAP_QUERY_KIND=skip`, skip Codemap when exact file+symbol supplied for 
 
 ## Extended scan — multi-file / API changes
 
-Task touches multiple modules or changes public-API surface → run per-affected-module reverse-dependency scan. Interpret: any `rdeps` output = external callers affected; `coupled` output = co-change pairs. Fallback for one known module: `codemap-py query rdeps <mod> --top 10 2>/dev/null || true`.
+Task touches multiple modules or changes public-API surface → run per-affected-module reverse-dependency scan. Interpret: non-empty `rdeps.imported_by` = external callers affected; `coupled` output = co-change pairs. Fallback for one known module: `codemap-py query rdeps <mod> --exclude-tests`.
 
-Risk tier by `rdep_count`:
+Risk tier by `importer_count` from a successful result:
 
 - `>= 5` → HIGH blast radius — flag before proceeding.
 - `1–4` → MODERATE — note in plan/report.
 - `0` → LOW — proceed normally.
+- Query failure or missing `importer_count` → unknown — report unavailable evidence; never substitute zero or LOW.
 
 > Batch producer (plugin `bin/` script or inline per-module loop) and any persisted-cache artifact are plugin-local — those paths live in wrapper, not here.
 

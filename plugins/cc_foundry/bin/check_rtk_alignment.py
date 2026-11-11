@@ -26,6 +26,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import shutil
 import subprocess
@@ -79,6 +80,26 @@ def compare(prefixes: list[str], help_text: str) -> tuple[list[str], list[str]]:
     return invalid, missing
 
 
+def resolve_rtk() -> str | None:
+    """Find an absolute RTK executable outside the checkout without implicit cwd lookup."""
+    root = Path.cwd().resolve()
+    extensions = [""]
+    if sys.platform == "win32":
+        extensions.extend(ext for ext in os.environ.get("PATHEXT", "").split(os.pathsep) if ext)
+    for entry in os.get_exec_path():
+        directory = Path(entry or os.curdir).resolve()
+        if directory.is_relative_to(root):
+            continue
+        for extension in extensions:
+            found = shutil.which(str(directory / ("rtk" + extension)))
+            if found is None:
+                continue
+            candidate = Path(found).resolve()
+            if not candidate.is_relative_to(root):
+                return str(candidate)
+    return None
+
+
 def main() -> int:
     """Compare the RTK rewrite hook's prefix list against the installed RTK."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -87,7 +108,8 @@ def main() -> int:
     args = parser.parse_args()
 
     print("=== Check 10: RTK hook alignment ===")
-    if shutil.which("rtk") is None:
+    executable = resolve_rtk()
+    if executable is None:
         print("⚠ SKIPPED: Check 10 — rtk not installed")
         return 0
     hook = Path(args.hook)
@@ -101,8 +123,8 @@ def main() -> int:
         return 0
 
     try:
-        result = subprocess.run(
-            ["rtk", "--help"],  # noqa: S607
+        result = subprocess.run(  # noqa: S603 - absolute executable resolved outside the checkout
+            [executable, "--help"],
             capture_output=True,
             text=True,
             timeout=args.timeout,

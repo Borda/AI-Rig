@@ -41,7 +41,7 @@ Code Review schema-eight native waves follow these rules:
 5. A validated capacity refusal plus complete ordered/refill and all-role evidence permits a smaller pool, including one slot, to finish native schema-eight review as `independent-spawned` without falsely claiming parallelism or accepting arbitrary serial fallback. Historical overlap gates remain strict.
 6. Replenishing the same frozen roster is part of that wave, not new fan-out. Join every required role before assembly or the next predeclared dependent source, interaction or consolidation wave; those waves remain serial.
 
-Never add fan-out, bypass required authorization, or start dependencies. Code-remediate alone may declare exact shared-file ownership across isolated child worktrees under its schema-v2 reconciliation lifecycle; no other parallel writer may overlap ownership. When parallelism is unavailable, code-remediate asks for sequential fallback and stops if the user denies or does not answer; other consumers keep their own equal-gate serial fallback rules.
+Never add fan-out, bypass required authorization, or start dependencies. Code-remediate alone may declare exact shared-file ownership across isolated child worktrees under its schema-v2 reconciliation lifecycle; no other parallel writer may overlap ownership. When parallelism is unavailable, code-remediate continues parent-owned or sequential execution with the concrete parallel ineligibility reason recorded, without asking a fallback question; other consumers keep their own equal-gate serial fallback rules.
 
 An explicitly requested [adversarial convergence loop](adversarial-loop.md) may pre-plan serial independent review rounds under the shared strictly decreasing nonnegative integer score rule, with complete join, parent-owned local fixes, and a freshly frozen context before the next reviewer. There is no implicit three-round cap; stricter explicit caller reviewer or retry budgets remain binding. This is a bounded sequential-review exception, not another parallel wave or write delegation. Existing consumer admission, source/provenance checks, stop rules, and approvals still apply; new scope or authority still requires re-planning with the user.
 
@@ -58,8 +58,7 @@ Use `delegation-lead` for 2+ separable workstreams when delegation beats context
 Classify each workstream from current task evidence before selecting a role; task label, file count, or cheaper available model is not evidence of capability:
 
 - Bounded coordination, CI/CD, OSS triage, static analysis and curation retain their role-specific scopes; curation decisions return to the parent.
-- Documentation uses high effort; external evidence, including visual/browser inspection, uses medium. Web evidence remains read-only.
-- Use medium for routine implementation, testing, and performance; high for data/research method and challenge.
+- Use the canonical starting-effort mapping and role-card precedence in [Runtime effort policy](global-baseline-details.md#runtime-effort-policy). Web evidence remains read-only.
 - Architecture or security advisory: select `solution-architect` or `security-auditor` only after the user expressly requests that advisory pass or selects the role; otherwise the parent/session retains work.
 
 Respect explicit user model choice; select a concrete model only for an actual subagent dispatch. Preserve each role card's trigger and NOT-for boundary. Escalate effort or model only for a specific mandatory boundary or observed insufficiency; record evidence. De-escalate after an evidenced scope split leaves bounded support without parent-owned authority. Cost alone never overrides a quality gate.

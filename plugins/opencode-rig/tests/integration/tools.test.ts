@@ -1,4 +1,4 @@
-import { existsSync, utimesSync } from "node:fs"
+import { existsSync, readFileSync, utimesSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
 import { Project, createHarness } from "../helpers/harness.ts"
@@ -81,7 +81,8 @@ describe("rig_evidence", () => {
     expect(finalized.content).toMatch(/Run completed/)
     expect(existsSync(finalized.metadata.report_path as string)).toBe(true)
 
-    const run = JSON.parse((await harness.call("rig_evidence", { action: "inspect" })).content)
+    const completedRun = await harness.call("rig_evidence", { action: "inspect", run_id: runId })
+    const run = JSON.parse(completedRun.content)
     expect(run.status).toBe("completed")
     expect(run.outputs).toHaveLength(1)
     expect(run.limits).toEqual(["No Windows host"])
@@ -443,7 +444,7 @@ describe("rig_loop", () => {
     ).rejects.toThrow(/baseline only/)
   })
 
-  it("refuses to finalize with open security residue", async () => {
+  it("records a security plateau while refusing run completion", async () => {
     const { harness } = await challengeHarness()
     await harness.call("rig_loop", {
       action: "start",
@@ -455,9 +456,15 @@ describe("rig_loop", () => {
       reviewer: "rig-challenger",
       findings: [{ signature: "src/a.ts:leak", severity: "security", status: "open" }],
     })
-    await expect(
-      harness.call("rig_loop", { action: "finalize", reviewer: "rig-challenger", stop_reason: "plateau" }),
-    ).rejects.toThrow(/cannot finalize with 1 security and 0 critical/)
+    const stopped = await harness.call("rig_loop", {
+      action: "finalize",
+      reviewer: "rig-challenger",
+      stop_reason: "plateau",
+    })
+    expect(stopped.metadata.stop_reason).toBe("plateau")
+    const finalized = await harness.call("rig_evidence", { action: "finalize" })
+    expect(finalized.metadata).toMatchObject({ ok: false, status: "blocked" })
+    expect(finalized.content).toContain("retains 1 security and 0 critical")
   })
 
   it("requires a reviewer and operates only on a challenge run", async () => {
@@ -577,36 +584,38 @@ describe("rig_dispatch", () => {
     expect(harness.removedSessions).toEqual(["child-1"])
   })
 
-  it("rejects a reported change outside the recorded scope and names it", async () => {
+  it("returns a reported scope violation with the child evidence and retains its session", async () => {
     const harness = await createHarness(changedProject())
     await harness.call("rig_evidence", { action: "start", skill: "rig-plan", paths: ["src"] })
     harness.childReply = "Edited an unrelated test.\nchanged: tests/b.test.ts"
-    await expect(
-      harness.call("rig_dispatch", {
-        role: "rig-implementer",
-        task: "implement",
-        read_only: false,
-        paths: ["src"],
-      }),
-    ).rejects.toThrow(/outside the recorded run scope: tests\/b\.test\.ts; recorded scope: src/)
-    expect(harness.removedSessions).toEqual(["child-1"])
+    const result = await harness.call("rig_dispatch", {
+      role: "rig-implementer",
+      task: "implement",
+      read_only: false,
+      paths: ["src"],
+    })
+    expect(result.content).toContain("Edited an unrelated test.")
+    expect(result.content).toContain("SCOPE VIOLATION: true")
+    expect(result.content).toContain("outside the recorded run scope: tests/b.test.ts; recorded scope: src")
+    expect(harness.removedSessions).toEqual([])
   })
 
   it("rejects a sibling path that only shares the scope prefix", async () => {
     const harness = await createHarness(changedProject())
     await harness.call("rig_evidence", { action: "start", skill: "rig-plan", paths: ["src"] })
     harness.childReply = "changed: srcs/b.ts"
-    await expect(
-      harness.call("rig_dispatch", {
-        role: "rig-implementer",
-        task: "implement",
-        read_only: false,
-        paths: ["src"],
-      }),
-    ).rejects.toThrow(/outside the recorded run scope: srcs\/b\.ts/)
+    const result = await harness.call("rig_dispatch", {
+      role: "rig-implementer",
+      task: "implement",
+      read_only: false,
+      paths: ["src"],
+    })
+    expect(result.content).toContain("SCOPE VIOLATION: true")
+    expect(result.content).toContain("outside the recorded run scope: srcs/b.ts")
+    expect(harness.removedSessions).toEqual([])
   })
 
-  it("behaves as today without an active run", async () => {
+  it("enforces input paths without an active run", async () => {
     const harness = await createHarness(changedProject())
     harness.childReply = "changed: lib/b.ts"
     const result = await harness.call("rig_dispatch", {
@@ -616,9 +625,12 @@ describe("rig_dispatch", () => {
       paths: ["src"],
     })
     expect(result.content).toContain("changed: lib/b.ts")
+    expect(result.content).toContain("SCOPE VIOLATION: true")
+    expect(result.content).toContain("outside the input scope: lib/b.ts")
+    expect(harness.removedSessions).toEqual([])
   })
 
-  it("rejects nothing when the run recorded every changed path", async () => {
+  it("enforces input paths when the recorded scope covers every changed path", async () => {
     const harness = await createHarness(changedProject())
     await harness.call("rig_evidence", { action: "start", skill: "rig-plan" })
     harness.childReply = "changed: lib/b.ts"
@@ -629,6 +641,9 @@ describe("rig_dispatch", () => {
       paths: ["src"],
     })
     expect(result.content).toContain("changed: lib/b.ts")
+    expect(result.content).toContain("SCOPE VIOLATION: true")
+    expect(result.content).toContain("outside the input scope: lib/b.ts")
+    expect(harness.removedSessions).toEqual([])
   })
 
   it.each([
@@ -663,20 +678,22 @@ describe("rig_dispatch", () => {
 
   it("checks only the calling session's recorded scope", async () => {
     const project = changedProject()
+    project.write("tests/b.test.ts", "existing scoped test")
     const first = await createHarness(project, {}, "session-a")
     await first.call("rig_evidence", { action: "start", skill: "rig-plan", paths: ["src"] })
     const second = await createHarness(project, {}, "session-b")
     await second.call("rig_evidence", { action: "start", skill: "rig-plan", paths: ["tests"] })
 
     second.childReply = "Edited a source file.\nchanged: src/b.ts"
-    await expect(
-      second.call("rig_dispatch", {
-        role: "rig-implementer",
-        task: "implement",
-        read_only: false,
-        paths: ["tests"],
-      }),
-    ).rejects.toThrow(/outside the recorded run scope: src\/b\.ts/)
+    const rejected = await second.call("rig_dispatch", {
+      role: "rig-implementer",
+      task: "implement",
+      read_only: false,
+      paths: ["tests"],
+    })
+    expect(rejected.content).toContain("SCOPE VIOLATION: true")
+    expect(rejected.content).toContain("outside the recorded run scope: src/b.ts")
+    expect(second.removedSessions).toEqual([])
 
     first.childReply = "Edited a source file.\nchanged: src/b.ts"
     const accepted = await first.call("rig_dispatch", {
@@ -715,6 +732,9 @@ describe("rig_doctor", () => {
     const harness = await createHarness(project)
     const started = await harness.call("rig_evidence", { action: "start", skill: "rig-investigate", paths: ["src"] })
     const directory = join(project.root, ".opencode-rig", "runs", "rig-investigate", started.metadata.run_id as string)
+    const runPath = join(directory, "run.json")
+    const terminal = JSON.parse(readFileSync(runPath, "utf8"))
+    writeFileSync(runPath, JSON.stringify({ ...terminal, status: "completed" }))
     const old = new Date(Date.now() - 400 * 24 * 60 * 60 * 1000)
     utimesSync(directory, old, old)
 

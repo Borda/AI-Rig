@@ -131,7 +131,14 @@ class TestModule:
         """
         proc = _node("process.stdout.write(JSON.stringify(Object.keys(lib)));")
 
-        assert json.loads(proc.stdout) == ["gitSubcommandArgs", "programInvocations", "XARGS_TAIL"]
+        assert json.loads(proc.stdout) == [
+            "gitSubcommandArgs",
+            "programInvocations",
+            "coarseProgramInvocations",
+            "coarseGitSubcommandArgs",
+            "namesProgram",
+            "XARGS_TAIL",
+        ]
 
     @pytest.mark.parametrize("command", [None, 42, ["git", "push"]])
     def test_non_string_command_yields_nothing(self, command: object) -> None:
@@ -438,12 +445,11 @@ _NO_PUSH_DATA_BODY = _prefixed(
 
 # [shell-body] Both bash and zsh feed these lines to ``cat`` (probed live), so no reading is a push.
 #
-# Two heredocs on one line are read in order; a body with no delimiter line runs to the end of the input.
+# Two heredocs on one line are read in order; every body must have its terminating delimiter.
 _NO_PUSH_SHELL_BODY = _prefixed(
     "shell-body",
     [
         pytest.param("cat <<'EOF' <<'E2'\none\nEOF\ngit push origin main\nE2", id="second-heredoc-body"),
-        pytest.param("cat <<'EOF'\ngit push origin main", id="unterminated-body"),
     ],
 )
 
@@ -2365,6 +2371,8 @@ fi
         ("command", "program", "construct"),
         [
             pytest.param("echo ${(U)HOME}", "gh", "${(flags)…}", id="zsh-flags"),
+            pytest.param("cat <<'EOF'\ngit push origin main", "git", "unterminated heredoc", id="unterminated-body"),
+            pytest.param("gh pr view 'unbalanced", "gh", "unterminated", id="unbalanced-quote"),
             pytest.param("echo ${(e)HOME}", "git", "${(flags)…}", id="zsh-eval-flag-git"),
             pytest.param('echo $"x"', "gh", '$"…"', id="locale-string"),
             pytest.param("echo .(e:'date':)", "gh", "glob qualifier", id="zsh-glob-qualifier"),
@@ -2392,13 +2400,12 @@ fi
         [
             pytest.param("gh pr view 1", id="plain"),
             pytest.param("gh pr $'cr\\x65ate'", id="readable-escape"),
-            pytest.param("gh pr view 'unbalanced", id="unbalanced-is-not-shell-dependent"),
         ],
     )
     def test_unreadable_reason_is_empty_for_readable_quoting(self, command: str) -> None:
-        """A command bash and zsh read alike carries no reason, unbalanced quoting included (that is not unreadable).
+        """A completely readable command carries no unreadable reason.
 
-        A plain call, a decodable escape and unbalanced quoting all leave the reason text empty. A guard that prints a
+        A plain call and a decodable escape leave the reason text empty. A guard that prints a
         reason for a readable command would mislead the user.
         """
         assert _unreadable_reason(command) == ""

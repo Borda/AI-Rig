@@ -5,7 +5,7 @@ description: Check opencode-rig install health and report exact remediation step
 
 # Rig Doctor
 
-Run `rig_doctor` and interpret the report. Doctor is read-only.
+Run `rig_doctor` with `action: "report"` and interpret the report. Diagnosis is read-only; deletion requires the separate confirmed cleanup path below.
 
 ## Checks
 
@@ -27,7 +27,13 @@ Report each line as pass, warn, or fail. For every failure, give the exact comma
 - Missing Git grant: answer **Approve always** once in the main checkout, or keep per-commit questions.
 - Missing artifact ignore: add `.opencode-rig/` to `.gitignore`.
 - No gates: configure a Makefile or package script, or set `options.gates`.
-- Asset roster drift: update `rig.json` and `src/resources/agents.json` together with the card.
+- Asset roster drift: update the installed package's `rig.json`, `src/resources/agents.json`, `src/skill-manifest.ts`, and `src/dispatch.ts` `ROLE_IDS` together with the card, keeping skill and role rosters consistent.
 - Dead reference link or duplicated prose: fix the link, or move the shared text into a reference file.
 
 Do not change files while diagnosing. Do not run paid checks.
+
+## Confirmed cleanup
+
+1. Run `rig_doctor` with `action: "report"` and show the stale-run count and configured TTL.
+2. Obtain the user's explicit confirmation for deleting all stale run directories selected by the tool under that TTL. Without confirmation, stop after the read-only report.
+3. Only after confirmation, call `rig_doctor` with `action: "clean"` and `confirm: true`. Report the removed directories or the tool's failure; do not delete runs manually or edit configuration as part of cleanup.

@@ -36,7 +36,7 @@ echo "$RUN_TS" > "${TMPDIR:-/tmp}/vitality-run-ts-${CSID}"
 
 > **Agent budget** — each spawn costs ~120,851 tok of fixed overhead (~73 tool-calls' worth) plus ~12.0 s/call, so work under ~73 calls is cheaper done inline: spawn nothing — work-displacement only; an isolation-motivated spawn (adversarial reviewer, distinct specialist role, model tier, worktree) runs regardless of size. Keep each agent near ~55 tool-calls; past ~60 they stall without returning an envelope, forcing reconstruction from disk. Every spawn prompt must require an envelope even on exhaustion — `partial: true` plus what was finished.
 
-> `Agent(subagent_type="oss:gh-scraper", name="gh-scraper", description="Fetch repo vitality data", prompt="DATA_FILE=$DATA_FILE GH_OWNER=$GH_OWNER GH_REPO=$GH_REPO")`
+> `Agent(subagent_type="oss:gh-scraper", name="gh-scraper", description="Fetch repo vitality data", prompt="Fetch raw GitHub vitality data using the caller's session sentinels.")`
 
 In the spawn response write `<WATCH_DIR>/agent-watch-fetch.tsv` (`gh-scraper<TAB>$DATA_FILE<TAB>1800`, path expanded), end the turn, and resume on the completion notification (SKILL.md §Health monitoring — no polling). Verify `$DATA_FILE` exists and non-empty. The envelope's coverage fields come from `bin/assemble_vitality_data.py`, not the agent's judgement:
 
@@ -52,11 +52,11 @@ TaskUpdate "Step 1 Data Fetch" completed, riding with the next step's first call
 
 Spawn all 3 `oss:repo-warden` agents simultaneously in single response:
 
-> `Agent(subagent_type="oss:repo-warden", name="repo-warden-A", description="Score axes 1, 2, 5, 6", prompt="AXIS_GROUP=A PARTIAL_FILE=$PARTIAL_A GH_OWNER=$GH_OWNER GH_REPO=$GH_REPO DATA_FILE=$DATA_FILE")`
+> `Agent(subagent_type="oss:repo-warden", name="repo-warden-A", description="Score axes 1, 2, 5, 6", prompt="AXIS_GROUP=A")`
 >
-> `Agent(subagent_type="oss:repo-warden", name="repo-warden-B", description="Score axes 4, 7, 8", prompt="AXIS_GROUP=B PARTIAL_FILE=$PARTIAL_B GH_OWNER=$GH_OWNER GH_REPO=$GH_REPO DATA_FILE=$DATA_FILE")`
+> `Agent(subagent_type="oss:repo-warden", name="repo-warden-B", description="Score axes 4, 7, 8", prompt="AXIS_GROUP=B")`
 >
-> `Agent(subagent_type="oss:repo-warden", name="repo-warden-C", description="Score axes 3, 9", prompt="AXIS_GROUP=C PARTIAL_FILE=$PARTIAL_C GH_OWNER=$GH_OWNER GH_REPO=$GH_REPO DATA_FILE=$DATA_FILE")`
+> `Agent(subagent_type="oss:repo-warden", name="repo-warden-C", description="Score axes 3, 9", prompt="AXIS_GROUP=C")`
 
 **Health monitoring** — SKILL.md §Health monitoring: in this spawn response write `<WATCH_DIR>/agent-watch-score.tsv` with one row per agent (`repo-warden-A<TAB>$PARTIAL_A<TAB>1800`, same for B and C, paths expanded). Never poll — no periodic `find`, no `ScheduleWakeup`, `ListAgents` or `Monitor` loop. At each completion notification, parse the returned envelope before checking for a partial file or running the SKILL.md watch block. `status: "declined"` → surface `declined` and its `reason`, including a Step 1 missing-sentinel failure; no partial file is expected, so do not label it `timed_out`. Stop before Step 3 assembly and report the affected group and input to repair. Otherwise run the watch block: `timed_out`, or a notification without its partial file → read the tail of any partial output; surface with ⏱ now.
 

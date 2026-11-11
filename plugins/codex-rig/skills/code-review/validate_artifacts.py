@@ -139,6 +139,7 @@ from review_execution_validation import _recovery_arguments as _recovery_argumen
 from review_execution_validation import _related_capacity_release as _related_capacity_release  # noqa: E402
 from review_execution_validation import _resolve_path as _resolve_path  # noqa: E402
 from review_execution_validation import _retained_reviewer_rating as _retained_reviewer_rating  # noqa: E402
+from review_execution_validation import _session_metadata as _session_metadata  # noqa: E402
 from review_execution_validation import _sha256 as _sha256  # noqa: E402
 from review_execution_validation import _text_reviewer_assessment as _text_reviewer_assessment  # noqa: E402
 from review_execution_validation import _validate_context_read as _validate_context_read  # noqa: E402
@@ -563,10 +564,11 @@ def _validate_routing(out_dir: Path, risk_tier: str) -> set[str]:
 
 
 def _require_notes_sections(notes_path: Path) -> None:
+    """Require each report section to appear as a standalone Markdown heading."""
     text = notes_path.read_text(encoding="utf-8")
     missing = []
     for section in REQUIRED_SECTIONS:
-        if f"## {section}" not in text and f"# {section}" not in text:
+        if not re.search(r"^#{1,2}[ \t]+" + re.escape(section) + r"(?:[ \t]+#+)?[ \t]*\r?$", text, re.MULTILINE):
             missing.append(section)
     if missing:
         raise SystemExit("missing-review-note-sections:" + ",".join(missing))
@@ -2523,6 +2525,7 @@ def _validate_review_runtime(
     *,
     require_assessment: bool = True,
     roles_dir: Path = PLUGIN_ROOT / "roles",
+    session_index: list[dict[str, Any]] | None = None,
 ) -> dict[str, object]:
     """Validate route-specific execution evidence before granting reviewer independence."""
     if manifest.get("schema_version") == 10:
@@ -2541,7 +2544,9 @@ def _validate_review_runtime(
             retained_role_cards=roles_dir == out_dir / "role-cards",
         )
     if manifest.get("schema_version") in {5, 6, 7, 8} or _paged_native_manifest(manifest):
-        return _validate_instruction_bounded_review(out_dir, manifest, passes, codex_home, parent_thread_id, roles_dir)
+        return _validate_instruction_bounded_review(
+            out_dir, manifest, passes, codex_home, parent_thread_id, roles_dir, session_index
+        )
     if manifest.get("schema_version") == 4:
         return _validate_local_reviewer_wave(
             out_dir, manifest, passes, require_assessment=require_assessment, roles_dir=roles_dir
@@ -2715,6 +2720,7 @@ def _validate_manifest_entries(
     elif manifest.get("app_server_execution") is not None or any(item.get("mode") == "app-server" for item in passes):
         raise SystemExit("review-app-server-schema-required")
     parent_rows: list[dict[str, Any]] | None = None
+    session_index: list[dict[str, Any]] | None = None
     used_threads: set[str] = set()
     used_context_paths: set[Path] = set()
     used_output_paths: set[Path] = set()
@@ -2762,6 +2768,7 @@ def _validate_manifest_entries(
         if mode in {"spawned", "inspection"}:
             if parent_rows is None:
                 parent_rows = _read_jsonl(_find_rollout(codex_home, parent_thread_id))
+                session_index = _session_metadata(codex_home)
             _validate_spawn_attempts(
                 out_dir,
                 item,
@@ -2772,6 +2779,7 @@ def _validate_manifest_entries(
                 role_card,
                 used_context_paths,
                 used_output_paths,
+                session_index=session_index,
             )
         elif mode == "app-server":
             if output_path in used_output_paths:
@@ -2797,7 +2805,9 @@ def _validate_manifest_entries(
     if set(by_role) != triggered_roles:
         raise SystemExit("manifest-triggered-role-set-mismatch")
     if schema_version in {7, 8}:
-        summary = _validate_review_runtime(out_dir, manifest, passes, codex_home, parent_thread_id, roles_dir=roles_dir)
+        summary = _validate_review_runtime(
+            out_dir, manifest, passes, codex_home, parent_thread_id, roles_dir=roles_dir, session_index=session_index
+        )
         if "reviewer_findings_version" in manifest:
             import review_batches  # Reuse the existing circular batch boundary after native provenance admission.
 
@@ -3940,7 +3950,9 @@ def _assessed_review_steps(
 
     def decision() -> None:
         """Require the current admission contract for a fresh review before interpreting any ratings."""
-        if _is_fresh_candidate(out_dir, result_path) and metadata.get("finding_records_version") != 2:
+        if _is_fresh_candidate(out_dir, result_path) and (
+            result.get("schema_version") != 3 or metadata.get("finding_records_version") != 2
+        ):
             raise SystemExit("review-current-validation-required-rerun-code-review")
         _validate_review_decision(metadata, result)
         _validate_candidate_source(out_dir, metadata)
@@ -4024,8 +4036,9 @@ def collect_result_errors(
     env = _ReviewEnvironment(codex_home=codex_home, parent_thread_id=parent_thread_id, project_root=project_root)
     try:
         context = _result_context(result_path)
-    except SystemExit as error:
-        errors = [{"step": "result-shape", "code": str(error.code)}]
+    except (SystemExit, Exception) as error:
+        code = str(error.code) if isinstance(error, SystemExit) else f"result-shape-unchecked:{type(error).__name__}"
+        errors = [{"step": "result-shape", "code": code}]
         return {
             "status": "fail",
             "errors": errors,
@@ -4045,7 +4058,7 @@ def collect_result_errors(
         except SystemExit as error:
             failed.add(step.name)
             errors.append({"step": step.name, "code": str(error.code)})
-        except (KeyError, TypeError, AttributeError, ValueError, OSError, IndexError) as error:
+        except Exception as error:
             failed.add(step.name)
             errors.append({"step": step.name, "code": f"{step.name}-unchecked:{type(error).__name__}"})
     return {"status": "fail" if errors or not_run else "pass", "errors": errors, "not_run": not_run}

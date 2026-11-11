@@ -9,6 +9,7 @@ Covers:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -52,6 +53,9 @@ def _write_state(work: Path, run_id: str, program_file: str) -> None:
 
 def _write_report(work: Path, name: str, text: str) -> Path:
     """Write a judge report called ``name`` into ``work/reports`` and return its path."""
+    program = extract_field(text.splitlines(), _mod._PROGRAM_LINE_RE, _mod._PROGRAM_STRIP_RE)
+    if program and (work / program).is_file():
+        text += "Program SHA256: " + hashlib.sha256((work / program).read_bytes()).hexdigest() + "\n"
     report = work / "reports" / name
     report.write_text(text, encoding="utf-8")
     return report
@@ -146,9 +150,9 @@ class TestGate:
 
         An older REJECTED report must not override a newer APPROVED one (nor the reverse), so mtimes are set explicitly.
         """
+        work.joinpath("prog.md").write_text("x", encoding="utf-8")
         old = _write_report(work, "judge-old.md", "Verdict: REJECTED\nProgram: prog.md\n")
         new = _write_report(work, "judge-new.md", "Verdict: APPROVED\nProgram: prog.md\n")
-        work.joinpath("prog.md").write_text("x", encoding="utf-8")
         _write_state(work, "r1", str(work / "prog.md"))
         os.utime(old, (1_000_000, 1_000_000))
         os.utime(new, (2_000_000, 2_000_000))

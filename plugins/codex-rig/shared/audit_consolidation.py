@@ -41,6 +41,18 @@ import re
 from pathlib import Path
 from typing import Any
 
+#: Largest report or individual instruction source accepted for in-memory consolidation.
+MAX_INPUT_BYTES = 16 * 1024 * 1024
+
+
+def _read_bounded(path: Path) -> bytes:
+    """Read a report or source without allocating beyond its byte budget."""
+    with path.open("rb") as stream:
+        content = stream.read(MAX_INPUT_BYTES + 1)
+    if len(content) > MAX_INPUT_BYTES:
+        raise ValueError("consolidation-input-oversized")
+    return content
+
 
 def _records(value: object, label: str) -> list[dict[str, Any]]:
     """Require object lists before inspecting untrusted artifact fields."""
@@ -82,7 +94,7 @@ def _inventory(report: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], dict[
             raise ValueError("consolidation-invalid-source-path")
         if path.is_symlink() or any(parent.is_symlink() for parent in path.parents):
             raise ValueError("consolidation-linked-source")
-        content = path.read_bytes()
+        content = _read_bounded(path)
         if hashlib.sha256(content).hexdigest() != source["sha256"]:
             raise ValueError("consolidation-source-drift")
         texts[identity] = content.decode("utf-8")
@@ -295,7 +307,7 @@ def main() -> int:
     parser.add_argument("--report", required=True, type=Path)
     args = parser.parse_args()
     try:
-        result = settle_consolidation(json.loads(args.report.read_text(encoding="utf-8")))
+        result = settle_consolidation(json.loads(_read_bounded(args.report).decode("utf-8")))
     except (OSError, ValueError) as error:
         parser.exit(1, f"consolidation: {error}\n")
     print(json.dumps(result, indent=2, sort_keys=True))

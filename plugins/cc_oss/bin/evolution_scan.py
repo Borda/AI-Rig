@@ -75,6 +75,7 @@ from evolution_score import (
     DEFAULT_THRESHOLD,
     DEFAULT_WEIGHTS,
     aggregate,
+    blame_only_on_pseudo,
     build_columns,
     build_sha_map,
     pseudo_columns,
@@ -451,13 +452,23 @@ def _ambiguous(row: dict[str, Any], threshold: float) -> bool:
 
 
 def _adjudication_plan(rows: list[dict[str, Any]], ctx: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """Return ``(verdicts by fix, new requests)``: stored verdicts reused by key, new ones requested up to the cap."""
+    """Return ``(verdicts by fix, new requests)``: stored verdicts reused by key, new ones requested up to the cap.
+
+    A row whose blamed lines all land on pseudo-columns is never adjudicated, and a verdict stored for it earlier is
+    not reused: its pseudo bucket is already the answer, and an ``unknown`` verdict would move it to the ``unknown``
+    residue.
+    """
     stored = load_adjudications(ctx["paths"])
     columns = {col["column_id"]: col for col in ctx["columns"]}
     verdicts: dict[str, Any] = {}
     requests: list[dict[str, Any]] = []
     for row in rows:
         if not _ambiguous(row, ctx["threshold"]):
+            continue
+        fix_id = row["fix_id"]
+        if blame_only_on_pseudo(
+            ctx["fixes"][fix_id], ctx["evidence"].get(fix_id), ctx["sha_map"], ctx["score_kw"]["weights"]
+        ):
             continue
         top = sorted(_real_cells(row), key=lambda c: (-c["raw_score"], c["column_id"]))[:ADJ_CANDIDATES]
         cands = [

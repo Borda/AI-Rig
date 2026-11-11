@@ -75,6 +75,9 @@ DEFAULT_BUG_LABELS: Final = ("bug", "type: bug", "kind/bug", "type/bug")
 #: Default per-git-call timeout in seconds (the release helpers' convention).
 GIT_TIMEOUT_S: Final = 60
 
+MAX_INPUT_BYTES: Final = 10 * 1024 * 1024
+MAX_ENTRY_LINE_CHARS: Final = 10000
+
 #: Required keys per record kind. Extra keys are allowed; missing keys fail :func:`check_record`.
 RECORD_FIELDS: Final = {
     # One entry of index.json["releases"].
@@ -299,10 +302,10 @@ def digest_lines(lines: list[str]) -> str:
 
 
 _REF_PATTERNS = (
-    re.compile(r"\[#\d+\]\([^)]*\)"),  # [#12](url)
+    re.compile(r"\[#\d+\]\([^\n)]*\)"),  # [#12](url)
     re.compile(r"\(\s*#\d+(?:\s*,\s*#\d+)*\s*\)"),  # (#12) or (#12, #13)
     re.compile(r"\(\s*[0-9a-f]{7,40}\s*\)"),  # (abc1234)
-    re.compile(r"\[[0-9a-f]{7,40}\]\([^)]*\)"),  # [abc1234](url)
+    re.compile(r"\[[0-9a-f]{7,40}\]\([^\n)]*\)"),  # [abc1234](url)
 )
 
 
@@ -316,9 +319,10 @@ def normalise_entry_text(text: str) -> str:
         'fix crash in load()'
     """
     out = unicodedata.normalize("NFKC", text)
+    out = "\n".join(line[:MAX_ENTRY_LINE_CHARS] for line in out.split("\n"))
     for pattern in _REF_PATTERNS:
         out = pattern.sub(" ", out)
-    out = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", out)  # markdown link -> its text
+    out = re.sub(r"\[([^\[\]\n]*)\]\([^\n)]*\)", r"\1", out)  # markdown link -> its text
     out = re.sub(r"[*_`]+", "", out)
     return " ".join(out.lower().split())
 
@@ -391,11 +395,28 @@ def check_record(kind: str, record: dict[str, Any]) -> list[str]:
 # --------------------------------------------------------------------------------------------------------------------
 
 
+def read_bounded_bytes(path: Path) -> bytes:
+    """Read at most ten MiB, rejecting larger files before allocation and after a bounded read."""
+    if path.stat().st_size > MAX_INPUT_BYTES:
+        raise ValueError(f"{path}: exceeds size limit of {MAX_INPUT_BYTES} bytes")
+    with path.open("rb") as handle:
+        data = handle.read(MAX_INPUT_BYTES + 1)
+    if len(data) > MAX_INPUT_BYTES:
+        raise ValueError(f"{path}: exceeds size limit of {MAX_INPUT_BYTES} bytes")
+    return data
+
+
+def read_bounded_text(path: Path, *, errors: str = "strict") -> str:
+    """Read UTF-8 text under the shared ten-MiB file-size ceiling."""
+    text = read_bounded_bytes(path).decode("utf-8", errors=errors)
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
 def repair_tail(path: Path) -> int:
     """Truncate a torn last line (bytes after the final newline); return the number of bytes removed."""
     if not path.exists():
         return 0
-    data = path.read_bytes()
+    data = read_bounded_bytes(path)
     if not data or data.endswith(b"\n"):
         return 0
     keep = data.rfind(b"\n") + 1
@@ -412,7 +433,7 @@ def read_jsonl(path: Path) -> tuple[list[dict[str, Any]], int]:
     """
     if not path.exists():
         return [], 0
-    data = path.read_text(encoding="utf-8")
+    data = read_bounded_bytes(path).decode("utf-8").replace("\r\n", "\n")
     lines = data.split("\n")
     dropped = 0
     if lines and lines[-1] != "":
@@ -471,7 +492,7 @@ _SAFE_COMPONENT = re.compile(r"^[A-Za-z0-9._-]+$")
 
 def safe_component(part: str) -> bool:
     """Return True when ``part`` is a single safe path component (not ``.``/``..``, no separators)."""
-    return bool(_SAFE_COMPONENT.match(part)) and part not in (".", "..")
+    return bool(_SAFE_COMPONENT.fullmatch(part)) and part not in (".", "..")
 
 
 @dataclass(frozen=True)
@@ -577,9 +598,9 @@ def parse_remote_url(url: str) -> list[str] | None:
         ['gitlab.com', 'group', 'sub', 'proj']
     """
     text = url.strip()
-    match = re.match(r"^[a-z][a-z0-9+.-]*://(?:[^@/]+@)?(?P<host>[^/:]+)(?::\d+)?/(?P<path>.+)$", text, re.I)
-    if match is None:
-        match = _SCP_REMOTE.match(text)
+    match = re.fullmatch(r"[a-z][a-z0-9+.-]*://(?:[^@/]+@)?(?P<host>[^/:]+)(?::\d+)?/(?P<path>.+)", text, re.I)
+    if match is None and "://" not in text:
+        match = _SCP_REMOTE.fullmatch(text)
     if match is None:
         return None
     path = match.group("path").strip("/")
@@ -608,6 +629,9 @@ def run_git(
     git = which("git")
     if git is None:
         raise GitError("git executable not found on PATH")
+    protocols = ["https", "ssh", "git"]
+    if "GIT_ALLOW_PROTOCOL" in os.environ:
+        protocols = [protocol for protocol in protocols if protocol in os.environ["GIT_ALLOW_PROTOCOL"].split(":")]
     try:
         proc = subprocess.run(  # noqa: S603 - argv list, no shell
             [git, "-C", str(repo), *args],
@@ -618,6 +642,7 @@ def run_git(
             timeout=timeout,
             check=False,
             input=stdin,
+            env={**os.environ, "GIT_ALLOW_PROTOCOL": ":".join(protocols)},
         )
     except subprocess.TimeoutExpired as exc:
         raise GitTimeout(f"git {' '.join(args)} timed out after {timeout}s") from exc

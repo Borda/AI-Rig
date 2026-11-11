@@ -168,7 +168,7 @@ Write the combined results (parsed JSON plus computed `r`) to `$RUN_DIR/stats-re
 
 ### Step T3: Dead iteration detection
 
-**Definition**: dead iteration window = 3+ consecutive iterations (any status) where `abs(metric_delta) < threshold` (default `--threshold 0.001`).
+**Definition**: dead iteration window = 3+ consecutive iterations (any status) where `abs(delta) < threshold` (default `--threshold 0.001`) or `delta: null` (no measurement). `delta: null` counts as a dead iteration for window detection and is excluded from T4 jump statistics.
 
 **Scale check** (after loading baseline_metric in T1): if `baseline_metric > 100 * threshold`, print:
 
@@ -182,7 +182,7 @@ Apply advisory threshold automatically only when `--threshold` not explicitly pr
 
 **Timeout detection**: when scanning reverted iterations, check `status` field. If `status == "timeout"`: classify as `unreliable-timeout` (see Notes). Else: flag any reverted iteration where `delta` is in correct improvement direction (metric moved toward goal) as "possible timeout — verify commit [sha]"; don't count delta as valid.
 
-Scan `experiments.jsonl` sequentially, skipping iteration 0 (baseline). For each window of 3+ consecutive iterations where `abs(delta) < threshold`:
+Scan `experiments.jsonl` sequentially, skipping iteration 0 (baseline). For each window of 3+ consecutive iterations where `delta: null` or `abs(delta) < threshold`:
 
 - Record: `start_iter`, `end_iter`, `count`
 - Classify type: `dead-plateau` if all iterations in window have `status: kept`; `dead-churn` if mixed `kept`/`reverted`/other

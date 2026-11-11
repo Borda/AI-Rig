@@ -19,6 +19,10 @@ Staged sources, consumed in sorted order:
 and leaves them in place. Missing ``--from`` paths are reported and skipped, so an
 unmatched shell glob does not abort the append.
 
+Ledger parents must already exist. Ledgers stay under the project's ``.reports``,
+``.temp``, ``.notes``, ``.experiments`` or ``.developments`` directories, or in system
+temp storage. Linked ledger and source paths are refused.
+
 Every appended chunk ends with exactly one newline it would otherwise lack: a record the
 Write tool saved without a trailing newline would otherwise glue the next record onto it.
 
@@ -30,7 +34,9 @@ from __future__ import annotations
 
 import argparse
 import glob
+import os
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -87,11 +93,50 @@ def _parse(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _refuse_linked_path(path: Path) -> None:
+    """Reject links along a ledger or source path below the project or system temp directory."""
+    trusted = {Path.cwd(), Path(tempfile.gettempdir()).absolute()}
+    current = path.absolute()
+    while current not in trusted:
+        if current.is_symlink():
+            raise OSError(f"refusing symlinked path: {current}")
+        parent = current.parent
+        if parent == current:
+            break
+        current = parent
+
+
+def _read_source(path: Path) -> bytes:
+    """Read one regular source without following a source or parent symlink."""
+    _refuse_linked_path(path)
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    with os.fdopen(fd, "rb") as handle:
+        return terminated(handle.read())
+
+
+def _validate_paths(ledger: Path, sources: list[Path]) -> None:
+    """Keep ledger writes in project artifact directories or external temp storage and refuse linked paths."""
+    _refuse_linked_path(ledger)
+    target = ledger.resolve()
+    artifact_roots = (".reports", ".temp", ".notes", ".experiments", ".developments")
+    allowed = any(parent.name in artifact_roots for parent in target.parents)
+    allowed = allowed or target.is_relative_to(Path(tempfile.gettempdir()).resolve())
+    if not allowed:
+        raise OSError(f"ledger is outside project artifact directories and system temp storage: {ledger}")
+    for source in sources:
+        _refuse_linked_path(source)
+
+
 def main(argv: list[str] | None = None) -> int:
     """Append staged records (or ``--from`` files) to the ledger, consuming staged files."""
     args = _parse(list(sys.argv[1:] if argv is None else argv))
     ledger = Path(args.ledger)
     sources = [Path(raw) for raw in args.sources]
+    try:
+        _validate_paths(ledger, sources)
+    except OSError as error:
+        print(f"append_ledger: {error}", file=sys.stderr)
+        return 1
     for missing in [path for path in sources if not path.is_file()]:
         print(f"append_ledger: skipped missing source {missing.as_posix()}", file=sys.stderr)
     sources = [path for path in sources if path.is_file()]
@@ -101,9 +146,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"append_ledger: nothing staged for {ledger.as_posix()}")
         return 0
     try:
-        chunks = [terminated(path.read_bytes()) for path in inputs]
-        ledger.parent.mkdir(parents=True, exist_ok=True)
-        with ledger.open("ab") as handle:
+        chunks = [_read_source(path) for path in inputs]
+        fd = os.open(ledger, os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        with os.fdopen(fd, "ab") as handle:
             handle.write(b"".join(chunks))
         for path in staged:
             path.unlink()

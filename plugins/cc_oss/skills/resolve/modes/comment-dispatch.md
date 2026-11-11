@@ -77,9 +77,10 @@ Record initial dispatch outcome (code changed or no change + reason).
 
 ```bash
 git diff HEAD --stat  # timeout: 3000
+git status --porcelain --untracked-files=normal  # timeout: 3000
 ```
 
-No changes: skip loop; set `CODEX_REVIEW_FINDINGS=""`.
+Both outputs empty: skip loop; set `CODEX_REVIEW_FINDINGS=""`. Untracked files in the status output count as changes.
 
 Otherwise:
 
@@ -110,7 +111,7 @@ If code changed, delegate to the gate (it reads `resolve-change-scope`, set to `
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r _OSS_RESOLVE < "${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}" 2>/dev/null || _OSS_RESOLVE=""  # reload (Check 41)
+IFS= read -r _OSS_RESOLVE < "${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}" 2>/dev/null || _OSS_RESOLVE=""  # reload (Check 43)
 cat "$_OSS_RESOLVE/modes/lint-qa-gate.md"  # timeout: 5000
 ```
 

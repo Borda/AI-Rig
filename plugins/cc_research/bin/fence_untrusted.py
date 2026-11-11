@@ -29,9 +29,11 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import os
 import re
 import secrets
 import sys
+import tempfile
 from pathlib import Path
 
 #: Matches any spelling of the closing marker body, so `end  untrusted` or `END untrusted` cannot close the fence.
@@ -84,15 +86,45 @@ def main(argv: list[str] | None = None) -> int:
         print("! BLOCKED — fence_untrusted: label must be non-empty and must not contain '-->'", file=sys.stderr)
         return 2
     try:
-        body = args.raw.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as exc:
-        print(f"! BLOCKED — fence_untrusted: cannot read {args.raw}: {exc}", file=sys.stderr)
+        raw, out = _run_paths(args.raw, args.out)
+        body = raw.read_text(encoding="utf-8")
+        _write_fenced(out, fence(body, label))
+        if not args.keep_raw:
+            raw.unlink()
+    except (OSError, UnicodeDecodeError, ValueError, RuntimeError) as exc:
+        print(f"! BLOCKED — fence_untrusted: cannot fence {args.raw}: {exc}", file=sys.stderr)
         return 2
-    args.out.write_text(fence(body, label), encoding="utf-8")
-    if not args.keep_raw:
-        args.raw.unlink()
     print(f"FENCED={args.out}")
     return 0
+
+
+def _run_paths(raw: Path, out: Path) -> tuple[Path, Path]:
+    """Confine staging and output files to the same run directory under an allowed root."""
+    run_dir = out.parent.resolve()
+    roots = (
+        Path.cwd().resolve(),
+        (Path.cwd() / ".experiments").resolve(),
+        Path.home() / ".claude" / "projects",
+        Path(tempfile.gettempdir()).resolve(),
+    )
+    if not any(run_dir.is_relative_to(root.resolve()) for root in roots):
+        raise ValueError("run directory is outside allowed roots")
+    if raw.is_symlink() or raw.resolve().parent != run_dir or out.resolve().parent != run_dir:
+        raise ValueError("raw and output must stay within the same run directory without a raw symlink")
+    if raw.resolve() == out.resolve():
+        raise ValueError("raw and output must name different files")
+    return raw.resolve(), run_dir / out.name
+
+
+def _write_fenced(out: Path, text: str) -> None:
+    """Publish a complete fenced file atomically without following the output entry."""
+    fd, temporary = tempfile.mkstemp(prefix=f".{out.name}.", dir=out.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text)
+        os.replace(temporary, out)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

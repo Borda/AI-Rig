@@ -20,8 +20,7 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r TEST_CMD < "${TMPDIR:-/tmp}/dev-test-cmd-${CSID}" 2>/dev/null || TEST_CMD="python -m pytest"
 case "$TEST_CMD" in
     tox*|"make test")
-        if command -v uv >/dev/null 2>&1; then PYTEST_CMD="uv run pytest"
-        else PYTEST_CMD="python -m pytest"; fi ;;
+        PYTEST_CMD="python -m pytest" ;;
     *) PYTEST_CMD="$TEST_CMD" ;;
 esac
 echo "$PYTEST_CMD" > "${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}"

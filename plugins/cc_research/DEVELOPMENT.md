@@ -214,7 +214,7 @@ Records follow the twelve mandatory fields of ["Agent Audit Trail: A Standard Lo
 - `.claude-plugin/permissions-allow.json` lists the tool calls the skills expect to be pre-approved.
 - `.claude-plugin/permissions-allow-retired.json` lists allow rules earlier versions shipped; `/research:setup` removes exactly those from `settings.json` through `--drop-allow-file`, keeping the rule text out of the command line. The setup summary counts removals from this complete retirement set.
 - `.claude-plugin/permissions-deny.json` lists operations that stay denied however broad the allow list becomes: destructive shell and git commands (`rm -rf`, `sudo`, `ssh`, `chmod 777`, force-push, `claude --dangerously-skip-permissions`).
-- Both allow and deny files are merged into `~/.claude/settings.json` by `/research:setup` (Step 5); the merge is otherwise additive and idempotent.
+- Both allow and deny files are merged into `~/.claude/settings.json` by `/research:setup` (Step 4); the merge is otherwise additive and idempotent.
 - Deny entries are prefix matches, so they stop the documented command forms rather than every possible flag ordering.
 
 ## Generated files

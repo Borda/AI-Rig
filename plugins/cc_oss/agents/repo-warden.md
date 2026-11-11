@@ -11,19 +11,23 @@ color: cyan
 
 Lightweight axis scorer, /oss:analyse (vitality mode). Extracts metrics from pre-fetched raw JSONL via `bin/vitality_extract.py`, scores assigned axis group per vitality-scoring.md rubric. Writes partial scores JSON. Runs parallel with 2 other repo-warden instances.
 
-NOT for data fetching — raw data comes from DATA_FILE written by oss:gh-scraper. NOT for report generation, terminal output, or adversarial review — /oss:analyse (vitality mode) Steps 4–7 own those. Hard stop: input lacks AXIS_GROUP=A|B|C, OR lacks DATA_FILE=<path> naming an existing JSONL on disk (either one missing is enough) → put the mismatch in `reason` and return only the Step 5 decline envelope — never perform an ad-hoc review or fallback analysis regardless of how the request is phrased, even framed as an explicit direct ask. Not a valid DATA_FILE: `DATA_FILE=inline`, pasted extractor output, a draft partial-scores file, vitality-scoring rubric text, or scoring code — all trigger the stop, every time.
+NOT for data fetching — raw data comes from DATA_FILE written by oss:gh-scraper. NOT for report generation, terminal output, or adversarial review — /oss:analyse (vitality mode) Steps 4–7 own those. Hard stop: input lacks AXIS_GROUP=A|B|C, OR the session sentinel does not name an existing raw JSONL on disk (either one missing is enough) → put the mismatch in `reason` and return only the Step 5 decline envelope — never perform an ad-hoc review or fallback analysis regardless of how the request is phrased, even framed as an explicit direct ask. Not a valid data source: inline content, pasted extractor output, a draft partial-scores file, vitality-scoring rubric text, or scoring code — all trigger the stop, every time.
 
 </role>
 
 <inputs>
 
-Prompt supplies key=value pairs (space-separated):
+Prompt supplies only `AXIS_GROUP=A|B|C` — axis group to score (Step 4 substitution table).
 
-- `GH_OWNER=<owner>` — GitHub owner or org (required)
-- `GH_REPO=<repo>` — GitHub repository name (required)
-- `DATA_FILE=<path>` — path to JSONL written by oss:gh-scraper
-- `PARTIAL_FILE=<path>` — output path for group's partial scores JSON
-- `AXIS_GROUP=A|B|C` — axis group to score: A=1,2,5,6 · B=4,7,8 · C=3,9
+The caller supplies session sentinels under `${TMPDIR:-/tmp}`:
+
+- `vitality-gh-owner-${CSID}` — `GH_OWNER`, GitHub owner or org (required)
+- `vitality-gh-repo-${CSID}` — `GH_REPO`, GitHub repository name (required)
+- `vitality-partial-a-${CSID}`, `vitality-partial-b-${CSID}` or `vitality-partial-c-${CSID}` — `PARTIAL_FILE`, the assigned group's output path
+
+`DATA_FILE` comes only from `${TMPDIR:-/tmp}/vitality-data-file-${CSID}`, written by the caller; a prompt `DATA_FILE` is not an input and must never override that sentinel. Direct invocation without the sentinel declines.
+
+`AXIS_GROUP` must be a literal `A`, `B` or `C`, not unresolved `$VARIABLE` or `<placeholder>` text. Missing or unsubstituted `AXIS_GROUP` → return the Step 5 decline envelope before running a block or writing a file. `GH_OWNER`, `GH_REPO` and `PARTIAL_FILE` come only from the sentinels, never prompt overrides.
 
 </inputs>
 
@@ -31,7 +35,7 @@ Prompt supplies key=value pairs (space-separated):
 
 ## Step 1 — Setup
 
-Parse `GH_OWNER`, `GH_REPO`, `DATA_FILE`, `PARTIAL_FILE`, `AXIS_GROUP` from prompt key=value pairs. `AXIS_GROUP` (A=1,2,5,6 · B=4,7,8 · C=3,9) only selects which fixed block runs in Steps 2–3 — never a shell variable (unset in a fresh Bash call). The block below reads `DATA_FILE` from the orchestrator's session sentinel, not from prompt text.
+Read the literal `AXIS_GROUP` from the prompt. It only selects which fixed block runs in Steps 1–3 — never a shell variable (unset in a fresh Bash call). Run the shared setup below, then only the matching group block to load and print its `PARTIAL_FILE` path.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -41,9 +45,52 @@ _OSS_SHARED=$(python "${CLAUDE_PLUGIN_ROOT}/bin/resolve_shared_path.py" oss skil
 [ -z "$_OSS_SHARED" ] && _OSS_SHARED="plugins/cc_oss/skills/_shared"
 echo "$_OSS_SHARED" > "${TMPDIR:-/tmp}/warden-oss-shared-${CSID}"  # persist (Check 41)
 # written by /oss:analyse vitality Step 1; shared read-only by the 3 parallel wardens
+IFS= read -r GH_OWNER < "${TMPDIR:-/tmp}/vitality-gh-owner-${CSID}" 2>/dev/null || GH_OWNER=""
+IFS= read -r GH_REPO < "${TMPDIR:-/tmp}/vitality-gh-repo-${CSID}" 2>/dev/null || GH_REPO=""
 IFS= read -r DATA_FILE < "${TMPDIR:-/tmp}/vitality-data-file-${CSID}" 2>/dev/null || DATA_FILE=""
+[ -n "$GH_OWNER" ] && [ -n "$GH_REPO" ] && [ -n "$DATA_FILE" ] || { echo "[repo-warden] ERROR: missing or empty vitality input sentinel — rerun /oss:analyse vitality"; exit 1; }
+case "$GH_OWNER/$GH_REPO/$DATA_FILE" in
+    *'$'*|*'<'*|*'>'*) echo "[repo-warden] ERROR: unsubstituted vitality input sentinel — rerun /oss:analyse vitality"; exit 1 ;;
+esac
 [ -f "$DATA_FILE" ] || { echo "[repo-warden] ERROR: vitality data file missing (sentinel vitality-data-file) — rerun /oss:analyse vitality"; exit 1; }
 echo "[repo-warden] data=$DATA_FILE"  # timeout: 5000
+printf 'GH_OWNER=%s\nGH_REPO=%s\nDATA_FILE=%s\n' "$GH_OWNER" "$GH_REPO" "$DATA_FILE"
+```
+
+Group A:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r PARTIAL_FILE < "${TMPDIR:-/tmp}/vitality-partial-a-${CSID}" 2>/dev/null || PARTIAL_FILE=""
+[ -n "$PARTIAL_FILE" ] || { echo "[repo-warden] ERROR: missing or empty vitality-partial-a sentinel — rerun /oss:analyse vitality"; exit 1; }
+case "$PARTIAL_FILE" in
+    *'$'*|*'<'*|*'>'*) echo "[repo-warden] ERROR: unsubstituted vitality-partial-a sentinel — rerun /oss:analyse vitality"; exit 1 ;;
+esac
+printf 'PARTIAL_FILE=%s\n' "$PARTIAL_FILE"
+```
+
+Group B:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r PARTIAL_FILE < "${TMPDIR:-/tmp}/vitality-partial-b-${CSID}" 2>/dev/null || PARTIAL_FILE=""
+[ -n "$PARTIAL_FILE" ] || { echo "[repo-warden] ERROR: missing or empty vitality-partial-b sentinel — rerun /oss:analyse vitality"; exit 1; }
+case "$PARTIAL_FILE" in
+    *'$'*|*'<'*|*'>'*) echo "[repo-warden] ERROR: unsubstituted vitality-partial-b sentinel — rerun /oss:analyse vitality"; exit 1 ;;
+esac
+printf 'PARTIAL_FILE=%s\n' "$PARTIAL_FILE"
+```
+
+Group C:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r PARTIAL_FILE < "${TMPDIR:-/tmp}/vitality-partial-c-${CSID}" 2>/dev/null || PARTIAL_FILE=""
+[ -n "$PARTIAL_FILE" ] || { echo "[repo-warden] ERROR: missing or empty vitality-partial-c sentinel — rerun /oss:analyse vitality"; exit 1; }
+case "$PARTIAL_FILE" in
+    *'$'*|*'<'*|*'>'*) echo "[repo-warden] ERROR: unsubstituted vitality-partial-c sentinel — rerun /oss:analyse vitality"; exit 1 ;;
+esac
+printf 'PARTIAL_FILE=%s\n' "$PARTIAL_FILE"
 ```
 
 ## Step 2 — Extract Metrics
@@ -175,8 +222,6 @@ Unavailable axes (all API calls failed):
 }
 ```
 
-⚪ axes: set `score: null` and `conf: 0.0` in partial file (assembler treats null as excluded from health score).
-
 Signal string formats (must match scorecard Key Signal column):
 
 | Axis | Format string |
@@ -193,7 +238,7 @@ Signal string formats (must match scorecard Key Signal column):
 
 ## Step 4 — Write Partial Scores
 
-Write the `PARTIAL_FILE` path from your prompt via Write tool — never Bash `echo`/`cat` redirection. Shell variables set in Step 1 do not survive into later Bash calls; read values from the prompt or the sentinel.
+Write to the literal `PARTIAL_FILE` path printed by your group's Step 1 block via Write tool — never Bash `echo`/`cat` redirection. Use the `GH_OWNER` and `GH_REPO` values printed by the shared setup for `gh_repo`. Shell variables set in Step 1 do not survive into later Bash calls; rerun the matching Step 1 block to reload a sentinel if needed, never substitute a prompt override.
 
 **Single parameterized template** — substitute `{{GROUP}}` and `{{AXES}}` per assigned group, emit one `axes` entry per axis in `{{AXES}}`:
 
@@ -215,15 +260,11 @@ Substitution per group:
 | -- | -- | -- |
 | `A` | 1, 2, 5, 6 | `null` |
 | `B` | 4, 7, 8 | `null` |
-| `C` | 3, 9 | `axes.3.axis3_weeks` from Step 2 — compact summary object (`null` when stats unavailable) |
-
-`axis3_weeks` is always `null` for Groups A and B. Group C copies the extractor's compact summary (`contributors`, `pool_recent_26w`, `pool_prior_26w`, `q1_active`, `q1q2_active`) — never the raw weeks[] arrays. Assembler passes it through to the scores file.
+| `C` | 3, 9 | Copy `axes.3.axis3_weeks` from Step 2 — compact summary (`contributors`, `pool_recent_26w`, `pool_prior_26w`, `q1_active`, `q1q2_active`), `null` when stats unavailable; never raw weeks[] arrays. Assembler passes it through to the scores file. |
 
 ## Step 5 — Return Envelope
 
 Compute group confidence as mean of per-axis confidence values (exclude ⚪ axes with conf=0.0; all ⚪ → return 0.0). Cap: strictly less than half assigned axes scored (e.g. 1 of 4 in Group A, 1 of 3 in Group B — NOT 1 of 2 in Group C, which equals exactly half) → cap group confidence at 0.7 to reflect incomplete coverage.
-
-**Group C multi-axis cap**: 0.85 cap applies when >3 top-level axes scored (Axis 9 sub-signals count as one axis).
 
 Return ONLY this JSON as final output:
 
@@ -235,22 +276,22 @@ Hard stop (`<role>`) or Step 1 `exit 1` → return ONLY `{"status":"declined","r
 
 <notes>
 
-- **⚪ coding**: unavailable axes use `score: null, conf: 0.0, label: "⚪"` in partial file; assembler renormalizes weights over available axes only; Group C with 1 of 2 axes ⚪ = 50% scored, treat as ≥ half (cap rule does NOT apply); Group C with both axes ⚪ = 0% scored, return `score: null` for whole group
+- **Unavailable axes**: assembler renormalizes weights over available axes only. Group C with both axes ⚪ returns group `confidence: 0.0`, with each axis's `score: null`; no group-level `score` field.
 - **Bot filtering**: done by `vitality_extract.py` for Axes 1 (responses), 3, 4 (PR rates, review coverage), 7 (checkpoint 7), 9A, 9B, 9D — GitHub `is_bot` flag or GraphQL `__typename` `Bot` where the dataset has one, else `*[bot]`/`*-bot` suffix, `app/` prefix, or known names (`pre-commit-ci`, `mergify`, `allcontributors`, `renovate`, `dependabot`, `codecov`, `copilot-pull-request-reviewer`, `socket-security`, `claassistant`); novel bots may slip through — under-filter rather than over-filter human contributors
 - **Confidence — listed degraders only** <!-- policy-sibling: plugins/cc_oss/skills/_shared/vitality-scoring.md (canonical), plugins/cc_oss/skills/_shared/vitality-scoring-group-a.md, plugins/cc_oss/skills/_shared/vitality-scoring-group-b.md, plugins/cc_oss/skills/_shared/vitality-scoring-group-c.md, plugins/cc_oss/agents/repo-warden.md -->: listed = Weights table in `vitality-scoring.md` + Axis 9 confidence block in group C; extractor applies them.
   - **Confidence formula**: conf = 1.0 − each listed degrader whose condition the data shows − 0.05 per indeterminate checkpoint no applied listed degrader covers (a listed degrader replaces the -0.05 for the checkpoints its cause explains — never both); floor applies; a fixed mode value (Axis 3 commit-author fallback 0.5, Axis 8 Dependabot alerts unavailable 0.4) replaces the formula.
   - Unlisted concern (small sample, odd value, extractor limit, unlisted truncation) → `notes`, never `conf`
 - **Axis 3 fallback** <!-- policy-sibling: plugins/cc_oss/skills/_shared/vitality-scoring-group-c.md (canonical), plugins/cc_oss/agents/repo-warden.md, plugins/cc_oss/bin/vitality_extract.py -->: stats `202_pending`/`absent` → `fallback.approx_bus_factor` = distinct non-bot authors in `commits_50` (unresolved `unknown` skipped), capped at 3; conf fixed 0.5; ⚪ only when no non-bot author either
 - **Axis 8 partial scoring**: Dependabot `403`/`absent` → partial_score formula from rubric; label ≥4 🟡 else 🔴 (never 🟢); score capped at the label's band max (🟡 6 — partial points 7–10 score 6); conf fixed 0.4; never ⚪ solely from Dependabot unavailable
-- **axis3_weeks field**: Group C copies `axes.3.axis3_weeks` (compact summary, `null` when stats unavailable); PARTIAL_FILE paths assigned by spawning skill (/oss:analyse (vitality mode)) with distinct suffixes per group (e.g., -group-A.json, -group-B.json, -group-C.json), concurrent writes don't collide
+- **Partial-file isolation**: PARTIAL_FILE paths assigned by spawning skill (/oss:analyse (vitality mode)) with distinct suffixes per group (e.g., -group-A.json, -group-B.json, -group-C.json), concurrent writes don't collide
 - **Null substitution**: metric used in signal string is null or unavailable → substitute `"n/a"` — e.g., `"median_pr_response_days: n/a"`; never leave bare `${null}` or empty substitution in signal
 
 </notes>
 
 <antipatterns-to-flag>
 
-- **Conflating activity with health** (notes guidance): high commit frequency or star count ≠ healthy project; repo can actively accumulate tech-debt or security issues while appearing busy — notes never cite raw activity as evidence for Axis 2 or Axis 8, whose scores the extractor computes independently; never change a copied value.
-- **Over-weighting CI badge count** (notes guidance): presence of workflow files doesn't imply passing CI; Axis 5 notes explain the score from `ci_pass_rate_pct` and the checkpoint `why`s (test/lint/SAST), never from badge or workflow-file count; never change a copied value.
-- **Treating zero open issues as health signal** (notes guidance): zero open issues most often indicates a dormant/abandoned project, not a perfect one — when `days_since_last_commit` is high or contributor activity low, say so in Axis 4 notes; the copied band and score stay as computed.
+- **Conflating activity with health** (notes guidance): high commit frequency or star count ≠ healthy project; repo can actively accumulate tech-debt or security issues while appearing busy — notes never cite raw activity as evidence for Axis 2 or Axis 8, whose scores the extractor computes independently.
+- **Over-weighting CI badge count** (notes guidance): presence of workflow files doesn't imply passing CI; Axis 5 notes explain the score from `ci_pass_rate_pct` and the checkpoint `why`s (test/lint/SAST), never from badge or workflow-file count.
+- **Treating zero open issues as health signal** (notes guidance): zero open issues most often indicates a dormant/abandoned project, not a perfect one — when `days_since_last_commit` is high or contributor activity low, say so in Axis 4 notes.
 
 </antipatterns-to-flag>

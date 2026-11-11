@@ -83,9 +83,13 @@ def _write_sentinels(tmp_path: Path, project: Path, skill: str, state: dict[str,
 
 
 def _recipe_block(document: str, ordinal: int) -> str:
-    """Return the *ordinal*-th bash fence of the skill document that calls ``dev_test_targets.py``."""
+    """Return the requested loop fence, excluding the separately parameterized pre-edit baseline."""
     source = (ROOT / "plugins/cc_develop/skills" / document).read_text(encoding="utf-8")
-    return [block for block in nested_bash_fences(source) if 'bin/dev_test_targets.py"' in block][ordinal]
+    return [
+        block
+        for block in nested_bash_fences(source)
+        if 'bin/dev_test_targets.py"' in block and "BASELINE_EXIT" not in block
+    ][ordinal]
 
 
 @pytest.fixture(name="run_recipe")

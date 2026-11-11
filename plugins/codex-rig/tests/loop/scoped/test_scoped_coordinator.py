@@ -32,6 +32,9 @@ class ScopedPlan(NamedTuple):
 
 def _command(*args: str) -> subprocess.CompletedProcess[str]:
     """Run the real coordinator without invoking an external reviewer."""
+    if "--manifest" in args:
+        manifest = json.loads(Path(args[args.index("--manifest") + 1]).read_bytes())
+        args = (*args, "--repository", manifest["repository"])
     return subprocess.run([sys.executable, str(CHUNK_DIFF), *args], capture_output=True, text=True, check=False)
 
 

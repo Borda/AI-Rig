@@ -18,6 +18,7 @@ import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
+from functools import lru_cache
 
 #: Commands that are destructive enough that no auto-allow is ever warranted.
 DANGER_COMMANDS: frozenset[str] = frozenset({"rm", "dd", "chmod", "chown", "mkfs", "shutdown", "kill", "pkill"})
@@ -864,6 +865,8 @@ def _git_is_dangerous(tokens: list[str]) -> bool:
         True
     """
     present = set(tokens)
+    if _git_config_override(tokens[1:]):
+        return True
     if present & GIT_DANGER_TOKENS or present & GIT_FORCE_TOKENS:
         return True
     if "worktree" in present and "remove" in present:
@@ -873,6 +876,19 @@ def _git_is_dangerous(tokens: list[str]) -> bool:
     if "branch" in present and present & GIT_BRANCH_DELETE_TOKENS:
         return True
     return "stash" in present and bool(present & {"drop", "clear"})
+
+
+def _git_config_override(tokens: list[str]) -> bool:
+    """Detect executing configuration among git global options before its subcommand."""
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if not token.startswith("-") or token in {"--"}:
+            return False
+        if token.startswith("-c") or token in {"--config-env"} or token.startswith("--config-env="):
+            return True
+        index += 2 if token in {"-C", "--git-dir", "--work-tree", "--namespace", "--super-prefix"} else 1
+    return False
 
 
 def _has_short_flag(tokens: list[str], letter: str) -> bool:
@@ -1016,6 +1032,28 @@ def _assignment_end(words: list[str], start: int) -> int:
     return start + 1
 
 
+def _raw_shell_words(text: str) -> list[str]:
+    """Preserve quoted whitespace while splitting raw shell words without expansion."""
+    words: list[str] = []
+    start = index = 0
+    while index < len(text):
+        char = text[index]
+        if char.isspace():
+            if start < index:
+                words.append(text[start:index])
+            start = index = index + 1
+        elif char == "\\":
+            index += 2
+        elif char in "'\"$`":
+            end = _close_quote(text, index) if char in "'\"" else _close_expansion(text, index)
+            index = len(text) if end is None else end
+        else:
+            index += 1
+    if start < len(text):
+        words.append(text[start:])
+    return words
+
+
 def _command_words(segment: str) -> list[str]:
     """Return a segment's whitespace words starting at its command word.
 
@@ -1039,7 +1077,7 @@ def _command_words(segment: str) -> list[str]:
         >>> _command_words("V=1")
         []
     """
-    words = segment.split()
+    words = _raw_shell_words(segment)
     index = 0
     while index < len(words):
         bare = words[index].strip("(){}")
@@ -1776,13 +1814,15 @@ _LOOKUP_VARIABLES = (
     r"PATH|path|CDPATH|cdpath|BASH_ENV|ENV|ZDOTDIR|SHELLOPTS|BASHOPTS|GLOBIGNORE|PROMPT_COMMAND"
     r"|LD_PRELOAD|LD_LIBRARY_PATH|LD_AUDIT|DYLD_[A-Z_]+|PS[0-4]|PROMPT[0-4]?|RPROMPT2?|RPS[12]|SPROMPT"
     r"|(?:precmd|preexec|chpwd|periodic|zshexit|zshaddhistory)_functions|IFS|options"
+    r"|GIT_(?:SSH_COMMAND|SSH|PROXY_COMMAND|EXTERNAL_DIFF|PAGER|EDITOR|SEQUENCE_EDITOR|ASKPASS|EXEC_PATH"
+    r"|CONFIG_[A-Z0-9_]+|TEMPLATE_DIR)|NODE_OPTIONS|PYTHONPATH|LESSOPEN|LESSCLOSE|PAGER"
 )
 #: A word assigning a lookup variable (``PATH=…``, ``path+=(…)``, ``path[1]=…``), wherever it stands in a segment.
 _LOOKUP_VARIABLE_ASSIGNMENT = re.compile(rf"(?:{_LOOKUP_VARIABLES})(?:\[[^\]]*\])?\+?=.*", re.DOTALL)
 #: Refuse writes regardless of which operand a shell evaluates as arithmetic; comparisons are reads.
 _LOOKUP_WRITE_TOKEN = re.compile(
     rf"(?<![A-Za-z0-9_])(?:(?:\+\+|--)(?:{_LOOKUP_VARIABLES})(?![A-Za-z0-9_])"
-    rf"|(?:{_LOOKUP_VARIABLES})(?:\[[^\]]*\])?(?:\+\+|--|[ \t\n\r\v\f]*(?:"
+    rf"|(?:{_LOOKUP_VARIABLES})(?:\[[^\[\]]*\])?(?:\+\+|--|[ \t\n\r\v\f]*(?:"
     r"\*\*=|<<=|>>=|&&=|\|\|=|\^\^=|[+*/%&|^\-]=|=(?!=))))"
 )
 #: These complete flag prefixes cannot be arithmetic lvalues; their values are still scanned for other writes.
@@ -2191,7 +2231,7 @@ def _defines_shadowing_function(segment: str) -> bool:
     return len(names) != 1 or "_" not in names[0] or not _FUNCTION_NAME.fullmatch(names[0])
 
 
-def _command_texts(segment: str) -> list[str]:
+def _command_texts(segment: str) -> tuple[str, ...]:
     """Return the segment and every command text it runs behind syntax that hides it from the command-word check.
 
     A ``case`` arm label (``b) rm x``), an arm written on the ``case … in`` line itself, a function definition
@@ -2208,20 +2248,21 @@ def _command_texts(segment: str) -> list[str]:
 
     Examples:
         >>> _command_texts("b) rm -rf /")
-        ['b) rm -rf /', ' rm -rf /']
+        ('b) rm -rf /', ' rm -rf /')
         >>> _command_texts("case x in x) case y in y) rm -rf /")[1:]
-        [' case y in y) rm -rf /', ' rm -rf /']
+        (' case y in y) rm -rf /', ' rm -rf /')
         >>> _command_texts("f() { rm -rf x")
-        ['f() { rm -rf x', 'rm -rf x']
+        ('f() { rm -rf x', 'rm -rf x')
         >>> _command_texts("case x in x) if true { eval x }")[1:]
-        [' if true { eval x }', 'eval x }', '']
+        (' if true { eval x }', 'eval x }', '')
         >>> _command_texts("echo hi")
-        ['echo hi']
+        ('echo hi',)
     """
     return _command_reading(segment)[0]
 
 
-def _command_reading(segment: str) -> tuple[list[str], bool]:
+@lru_cache(maxsize=512)
+def _command_reading(segment: str) -> tuple[tuple[str, ...], bool]:
     """Read a segment's command texts (:func:`_command_texts`) and whether it holds brace syntax the reader skips.
 
     A bare ``{`` or ``}`` word opens or closes a body only where the reader follows it to the command it runs:
@@ -2249,20 +2290,26 @@ def _command_reading(segment: str) -> tuple[list[str], bool]:
     # each text carries whether its braces are already followed: a compound body is a suffix of a text whose every
     # brace word starts another suffix
     queue: list[tuple[str, bool]] = [(segment, False)]
-    while queue:
-        text, followed = queue.pop(0)
-        if text in texts:
-            continue
+    queued = {segment}
+    for text, followed in queue:
         texts.append(text)
         words = _command_words(text)
         defines = _function_name(words) is not None
         if not (followed or defines or _is_case_syntax(text)) and _brace_unfollowed(text):
             unmodeled = True
-        queue.extend((arm, False) for arm in _case_arm_chain(text)[1:])
+        arm = _case_line_arm(text)
+        if arm is None:
+            end = _case_label_end(text)
+            arm = text[end:] if end else None
+        children = [(arm, False)] if arm is not None else []
         if defines:
-            queue.append((" ".join(_function_body(words)), False))
-        queue.extend((body, True) for body in _compound_bodies(text))
-    return texts, unmodeled
+            children.append((" ".join(_function_body(words)), False))
+        children.extend((body, True) for body in _compound_bodies(text))
+        for child, followed_braces in children:
+            if child not in queued:
+                queued.add(child)
+                queue.append((child, followed_braces))
+    return tuple(texts), unmodeled
 
 
 def _brace_unfollowed(text: str) -> bool:
@@ -2297,6 +2344,7 @@ def _brace_unfollowed(text: str) -> bool:
     return any(start < index < closing for index in braces)
 
 
+@lru_cache(maxsize=512)
 def _is_case_syntax(text: str) -> bool:
     """Report whether a text opens with ``case`` syntax rather than a command: an arm label or a ``case … in`` arm.
 
@@ -2359,6 +2407,7 @@ def _compound_bodies(segment: str) -> list[str]:
     return [" ".join(words[start:]) for start in sorted(starts) if start <= len(words)]
 
 
+@lru_cache(maxsize=512)
 def _command_is_dangerous(segment: str) -> bool:
     """Judge one command by its command word, scanning the arguments of a deferring command too.
 
@@ -2951,6 +3000,7 @@ def _segment_rebinds(segment: str) -> bool:
     return any(_text_rebinds(text) for text in _judged_texts(segment))
 
 
+@lru_cache(maxsize=512)
 def _text_rebinds(text: str) -> bool:
     """Report whether one command text, ``case`` syntax already read off (:func:`_judged_texts`), rebinds a name.
 

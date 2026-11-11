@@ -1,6 +1,6 @@
 ---
 name: scan-codebase
-description: 'Scan the Python codebase and build a structural JSON index (import graph + blast-radius metrics). TRIGGER when: user asks to build, refresh, or rebuild the codemap index; user mentions stale index, missing symbols, or re-indexing after significant project changes; phrases: "build codemap", "scan codebase", "refresh structural index", "rebuild import graph".'
+description: Scan the Python codebase and build or refresh a structural JSON index of imports, symbols, and blast-radius metrics.
 argument-hint: '[--root <path>] [--incremental]'
 allowed-tools: Bash
 disable-model-invocation: true
@@ -25,7 +25,7 @@ NOT for: querying existing index (use `/codemap-py:query-code`); integration hea
 
 Build invocation from `$ARGUMENTS`. Pass supplied `--root <path>` and/or `--incremental`; never literal placeholders.
 
-**Unknown-flag check**: `setup_scan_env.py` validates `$ARGUMENTS` with the same tokenizer that extracts `--root` (quoted paths stay one token). Any `--` token except `--root <path>` and `--incremental` → it prints `! Unknown flag(s): <tokens>` then `Supported: --root <path>, --incremental` and exits 5; the block prints that stderr unchanged and exits 1. Never AskUserQuestion: disable-model-invocation:true makes it unreachable. Rosters + shell must use exact `Unknown flag(s)` wording, no synonym. Preflight exit `1` is skill-local shortcut accepted in `shared/capability-contract.md`; CLI syntax errors remain exit `2` per its §Shared exit-code contract. `--root` with no value (would silently fall back to default-root scan): `! --root requires a value` + same `Supported:` line; exit 1 — distinct message, never the `Unknown flag(s)` wording.
+**Unknown-flag check**: `setup_scan_env.py` validates `$ARGUMENTS` with the same tokenizer that extracts `--root` (quoted paths stay one token). Any `--` token except `--root <path>` and `--incremental` → it prints `! Unknown flag(s): <tokens>` then `Supported: --root <path>, --incremental` and exits 5; the block prints that stderr unchanged and exits 1. Never AskUserQuestion: disable-model-invocation:true makes it unreachable. `--root` with no value (would silently fall back to default-root scan): `! --root requires a value` + same `Supported:` line; exit 1 — distinct message, never the `Unknown flag(s)` wording.
 
 Step 1 exits non-zero → report its error and stop; never run Step 2 or Step 3.
 
@@ -39,16 +39,27 @@ SETUP_STDERR="${TMPDIR:-/tmp}/codemap-setup-err-$$-${CSID}"
 SCAN_STATE_FILE=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/setup_scan_env.py" --arguments "$ARGUMENTS" 2>"$SETUP_STDERR")
 _SETUP_RC=$?
 # 5 = $ARGUMENTS rejected — stderr already holds the exact pinned wording; a prefix would bury it
+# Rosters + shell require exact Unknown flag(s) wording; skill-local exit 1 is accepted in shared/capability-contract.md, while CLI syntax errors remain exit 2.
 [ "$_SETUP_RC" -eq 5 ] && { cat "$SETUP_STDERR" >&2; exit 1; }
 if [ "$_SETUP_RC" -ne 0 ] || [ -z "$SCAN_STATE_FILE" ]; then
   printf "! setup_scan_env.py failed"; [ -s "$SETUP_STDERR" ] && printf ": %s" "$(cat "$SETUP_STDERR")"; printf "\n"; exit 1
 fi
 # project-scoped — bare CSID collides across concurrent repos in one session
 printf '%s\n' "$SCAN_STATE_FILE" > "${TMPDIR:-/tmp}/codemap-state-ref-${_CM_PROJ_SLUG}-${CSID}"  # Step 2 reads without knowing PID
-# -O owned-by-uid, ! -L not-symlink — defense-in-depth on mktemp; last check before sourcing (executed), fails closed on shared-TMPDIR collision
+# -O owned-by-uid, ! -L not-symlink — defense-in-depth on mktemp; last check before reading, fails closed on shared-TMPDIR collision
 [ -O "$SCAN_STATE_FILE" ] && [ ! -L "$SCAN_STATE_FILE" ] || { printf "! codemap state file failed ownership/symlink check — aborting\n" >&2; exit 1; }
-# shellcheck source=/dev/null
-. "$SCAN_STATE_FILE"
+unset PROJ_SLUG SCAN_BIN SCAN_ARGS_RAW PROJ_NAME
+while IFS='=' read -r _SK _SV; do
+  case "$_SV" in \'*\') ;; *) printf "! codemap state incomplete — re-run /codemap-py:scan-codebase\n" >&2; exit 1;; esac
+  _SV=${_SV#\'}; _SV=${_SV%\'}; _SV=${_SV//\'\\\'\'/\'}
+  case "$_SK" in
+    PROJ_SLUG) PROJ_SLUG=$_SV;;
+    SCAN_BIN) SCAN_BIN=$_SV;;
+    SCAN_ARGS_RAW) SCAN_ARGS_RAW=$_SV;;
+    PROJ_NAME) PROJ_NAME=$_SV;;
+  esac
+done < "$SCAN_STATE_FILE"
+[ "${PROJ_SLUG+x}${SCAN_BIN+x}${SCAN_ARGS_RAW+x}${PROJ_NAME+x}" = "xxxx" ] || { printf "! codemap state incomplete — re-run /codemap-py:scan-codebase\n" >&2; exit 1; }
 # NUL-delimited — avoids eval; written by parse_scan_args.py
 _ARGS_FILE="${TMPDIR:-/tmp}/codemap-scan-args-nul-$$-${CSID}"
 # unchecked failure left SCAN_ARGS empty → silent default git-root full scan reported as success
@@ -97,8 +108,19 @@ IFS= read -r _SCAN_OK < "${TMPDIR:-/tmp}/codemap-scan-ok-${_CM_PROJ_SLUG}-${CSID
 [ "$_SCAN_OK" = "ok" ] || { printf "! Step 1 scan did not succeed — not reporting stats\n"; exit 1; }
 IFS= read -r SCAN_STATE_FILE < "${TMPDIR:-/tmp}/codemap-state-ref-${_CM_PROJ_SLUG}-${CSID}" 2>/dev/null || SCAN_STATE_FILE=""
 [ -n "$SCAN_STATE_FILE" ] && [ -f "$SCAN_STATE_FILE" ] || { printf "! codemap state missing — re-run /codemap-py:scan-codebase\n"; exit 1; }
-# shellcheck source=/dev/null
-. "$SCAN_STATE_FILE"
+[ -O "$SCAN_STATE_FILE" ] && [ ! -L "$SCAN_STATE_FILE" ] || { printf "! codemap state file failed ownership/symlink check — aborting\n" >&2; exit 1; }
+unset PROJ_SLUG SCAN_BIN SCAN_ARGS_RAW PROJ_NAME
+while IFS='=' read -r _SK _SV; do
+  case "$_SV" in \'*\') ;; *) printf "! codemap state incomplete — re-run /codemap-py:scan-codebase\n" >&2; exit 1;; esac
+  _SV=${_SV#\'}; _SV=${_SV%\'}; _SV=${_SV//\'\\\'\'/\'}
+  case "$_SK" in
+    PROJ_SLUG) PROJ_SLUG=$_SV;;
+    SCAN_BIN) SCAN_BIN=$_SV;;
+    SCAN_ARGS_RAW) SCAN_ARGS_RAW=$_SV;;
+    PROJ_NAME) PROJ_NAME=$_SV;;
+  esac
+done < "$SCAN_STATE_FILE"
+[ "${PROJ_SLUG+x}${SCAN_BIN+x}${SCAN_ARGS_RAW+x}${PROJ_NAME+x}" = "xxxx" ] || { printf "! codemap state incomplete — re-run /codemap-py:scan-codebase\n" >&2; exit 1; }
 PROJ_NAME="${PROJ_NAME:-$(basename "$_GIT_ROOT")}"
 # scanner writes <scan-root>/.cache/codemap (graph._resolve_out_path); no --root (or ".") = git root
 # sentinel, not $(…) capture — `>` truncates first, so a failed call never leaves an earlier root
@@ -118,7 +140,8 @@ if [ -f "${_IDX}/${PROJ_NAME}.json" ]; then
     fi
     [ "$_STATS_RC" -eq 0 ] || { printf "! scan-stats.py failed (exit %d) — index written by Step 1, stats not reported\n" "$_STATS_RC"; exit 1; }
 else
-    echo "[codemap] Skipping stats — no index found (Step 1 may have failed)"
+    printf "! Index not found after scan at %s — stats not reported\n" "${_IDX}/${PROJ_NAME}.json"
+    exit 1
 fi
 ```
 
